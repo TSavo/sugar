@@ -3745,26 +3745,27 @@ struct VisualUniverseGroup<'a> {
 
 /// Pure grouping for the universe visual: merge by exact contract name when a
 /// function-contract anchors that name; otherwise keep each row standalone.
-fn group_contracts_for_universe_visual(contracts: &[Value]) -> Vec<VisualUniverseGroup<'_>> {
+fn group_contracts_for_universe_visual<'a>(report: &'a LiftSourceReport) -> Vec<VisualUniverseGroup<'a>> {
+    let contracts = &report.contracts;
     let anchored_names: BTreeSet<String> = contracts
         .iter()
         .filter(|contract| {
             contract.get("kind").and_then(Value::as_str) == Some("function-contract")
         })
-        .map(contract_visual_identity)
+        .map(|contract| contract_visual_identity(report, contract))
         .collect();
 
     let mut groups = Vec::new();
     let mut emitted_anchored: BTreeSet<String> = BTreeSet::new();
     for contract in contracts {
-        let identity = contract_visual_identity(contract);
+        let identity = contract_visual_identity(report, contract);
         if anchored_names.contains(&identity) {
             if !emitted_anchored.insert(identity.clone()) {
                 continue;
             }
             let mut members: Vec<&Value> = contracts
                 .iter()
-                .filter(|row| contract_visual_identity(row) == identity)
+                .filter(|row| contract_visual_identity(report, row) == identity)
                 .collect();
             // Anchor first so post leads FOL and warrants drive the source walk.
             members.sort_by_key(|row| {
@@ -3810,9 +3811,16 @@ fn group_contracts_for_universe_visual(contracts: &[Value]) -> Vec<VisualUnivers
     groups
 }
 
-fn contract_visual_identity(contract: &Value) -> String {
+fn contract_visual_identity(report: &LiftSourceReport, contract: &Value) -> String {
+    let qualified = contract_qualified_owner(report, contract);
+    let cid = contract_cid_of_ir_decl(contract).unwrap_or_else(|| "cid-unavailable".to_string());
+    format!("{qualified} [{}]", short_cid(&cid))
+}
+
+fn contract_qualified_owner(report: &LiftSourceReport, contract: &Value) -> String {
     let surface = contract_value_name(contract).unwrap_or("<unknown contract>");
-    let warrant = contract_source_warrants(contract).into_iter().next();
+    let warrant = source_memento_for_contract(report, surface)
+        .or_else(|| contract_source_warrants(contract).into_iter().next());
     let owner = warrant
         .and_then(|w| {
             w.get("sourceFunctionName")
@@ -3821,16 +3829,78 @@ fn contract_visual_identity(contract: &Value) -> String {
         .and_then(Value::as_str)
         .filter(|name| !name.is_empty())
         .unwrap_or("<module>");
-    let qualified = if owner == "<module>" || owner.contains('.') || owner.contains("::") {
+    if owner == "<module>" || owner.contains('.') || owner.contains("::") {
         owner.to_string()
     } else {
+        let warrant_file = warrant.and_then(|w| w.get("file")).and_then(Value::as_str);
+        let warrant_line = warrant
+            .and_then(|w| w.get("span"))
+            .and_then(|span| span.get("start_line").or_else(|| span.get("startLine")))
+            .and_then(Value::as_u64);
+        let audit_owner = report.factory_walk.iter().find_map(|row| {
+            let memento = row.get("sourceMemento")?;
+            let same_file = warrant_file.map_or(true, |file| {
+                memento.get("file").and_then(Value::as_str) == Some(file)
+            });
+            let same_line = warrant_line.map_or(true, |line| {
+                memento
+                    .get("span")
+                    .and_then(|span| span.get("start_line").or_else(|| span.get("startLine")))
+                    .and_then(Value::as_u64)
+                    == Some(line)
+            });
+            if !same_file || !same_line {
+                return None;
+            }
+            let function = memento
+                .get("sourceFunctionName")
+                .or_else(|| memento.get("source_function_name"))?
+                .as_str()?;
+            function.ends_with(&format!(".{owner}")).then_some(function)
+        });
+        if let Some(qualified) = audit_owner {
+            return qualified.to_string();
+        }
         let class_owner = surface.rsplit_once('.').map(|(prefix, _)| prefix);
         class_owner
             .map(|prefix| format!("{prefix}.{owner}"))
             .unwrap_or_else(|| format!("<module>.{owner}"))
-    };
-    let cid = contract_cid_of_ir_decl(contract).unwrap_or_else(|| "cid-unavailable".to_string());
-    format!("{qualified} [{cid}]")
+    }
+}
+
+fn short_cid(cid: &str) -> String {
+    let body = cid.strip_prefix("blake3-512:").unwrap_or(cid);
+    if body.len() <= 12 {
+        return cid.to_string();
+    }
+    format!("{}…", &body[..12])
+}
+
+fn render_contract_mementos_appendix(out: &mut String, report: &LiftSourceReport) {
+    let mut rows = BTreeSet::new();
+    for contract in &report.contracts {
+        let qualified = contract_qualified_owner(report, contract);
+        if let Some(cid) = contract_cid_of_ir_decl(contract) {
+            rows.insert(("contract", qualified.clone(), cid));
+        }
+        for warrant in contract_visual_warrants(report, contract) {
+            if let Some(cid) = warrant
+                .get("sourceCid")
+                .or_else(|| warrant.get("source_cid"))
+                .and_then(Value::as_str)
+            {
+                rows.insert(("source", qualified.clone(), cid.to_string()));
+            }
+        }
+    }
+    if rows.is_empty() {
+        return;
+    }
+    out.push_str("mementos appendix:\n");
+    out.push_str("  inline CID references use the first 12 digest characters plus ellipsis\n");
+    for (kind, qualified, cid) in rows {
+        out.push_str(&format!("  - {kind} {qualified} = {cid}\n"));
+    }
 }
 
 fn render_universe_visual_report(
@@ -3843,7 +3913,7 @@ fn render_universe_visual_report(
     let boundaries = visual_boundary_rows(&report.factory_walk, source_lookup);
     let mut out = String::new();
     out.push_str("universe visual:\n");
-    for group in group_contracts_for_universe_visual(&report.contracts) {
+    for group in group_contracts_for_universe_visual(report) {
         let contract = group.anchor;
         let identity = &group.identity;
         // Predicates for line citations: every member's formulas (assert invs
@@ -3941,6 +4011,7 @@ fn render_universe_visual_report(
             mode,
         );
     }
+    render_contract_mementos_appendix(&mut out, report);
     out
 }
 
@@ -4226,10 +4297,10 @@ fn render_provenanced_fol_row(
     report: &LiftSourceReport,
     source_lookup: VisualSourceLookup<'_>,
     contract: &Value,
-    identity: &str,
+    _identity: &str,
 ) {
     let lifted = normalize_report_fol(
-        &format_contract_visual_fol(contract),
+        &contract_universe_reading(contract),
         report.project_root.as_deref(),
     );
     let warrants = contract_visual_warrants(report, contract);
@@ -4258,16 +4329,20 @@ fn render_provenanced_fol_row(
             render_pretty_fol_with_provenance(
                 out,
                 &lifted,
-                &format!("@ {file}:{line} warrant={source_cid}"),
+                &format!("@ {file}:{line} warrant={}", short_cid(source_cid)),
             );
             out.push_str(&format!("      stated: {}\n", stated.trim()));
         }
     }
     out.push_str("    symbols:\n");
-    out.push_str(&format!("      out -> {identity}::return\n"));
+    out.push_str("      out -> return\n");
+    let formals = contract_formal_names(contract);
     for symbol in contract_formula_symbols(contract) {
         if symbol != "out" {
-            out.push_str(&format!("      {symbol} -> {identity}::{symbol}\n"));
+            out.push_str(&format!(
+                "      {symbol} -> {}\n",
+                resolve_report_symbol(report, contract, &symbol, &formals)
+            ));
         }
     }
 }
@@ -4287,7 +4362,7 @@ fn render_provenanced_vendor_assertion_row(
     report: &LiftSourceReport,
     source_lookup: VisualSourceLookup<'_>,
     contract: &Value,
-    identity: &str,
+    _identity: &str,
 ) {
     let formula = ["post", "inv", "pre"]
         .iter()
@@ -4324,14 +4399,65 @@ fn render_provenanced_vendor_assertion_row(
         render_pretty_fol_with_provenance(
             out,
             &lifted,
-            &format!("@ {file}:{line} warrant={source_cid}"),
+            &format!("@ {file}:{line} warrant={}", short_cid(source_cid)),
         );
         out.push_str(&format!("      stated: {}\n", stated.trim()));
     }
     out.push_str("    symbols:\n");
+    let formals = contract_formal_names(contract);
     for symbol in contract_formula_symbols(contract) {
-        out.push_str(&format!("      {symbol} -> {identity}::{symbol}\n"));
+        let target = if symbol == "out" {
+            "return".to_string()
+        } else {
+            resolve_report_symbol(report, contract, &symbol, &formals)
+        };
+        out.push_str(&format!("      {symbol} -> {target}\n"));
     }
+}
+
+fn contract_formal_names(contract: &Value) -> BTreeSet<String> {
+    contract
+        .get("formals")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|formal| {
+            formal
+                .as_str()
+                .or_else(|| formal.get("name").and_then(Value::as_str))
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+fn resolve_report_symbol(
+    report: &LiftSourceReport,
+    current: &Value,
+    symbol: &str,
+    formals: &BTreeSet<String>,
+) -> String {
+    const BUILTINS: &[&str] = &[
+        "abs", "bool", "bytes", "dict", "float", "int", "len", "list", "max",
+        "min", "range", "set", "str", "sum", "tuple", "type",
+    ];
+    if BUILTINS.contains(&symbol) {
+        return format!("python:builtin/{symbol}");
+    }
+    if formals.contains(symbol) {
+        return "formal".to_string();
+    }
+    let current_cid = contract_cid_of_ir_decl(current);
+    if let Some(target) = report.contracts.iter().find(|candidate| {
+        let qualified = contract_qualified_owner(report, candidate);
+        qualified == symbol || qualified.ends_with(&format!(".{symbol}"))
+    }) {
+        let qualified = contract_qualified_owner(report, target);
+        let cid = contract_cid_of_ir_decl(target).unwrap_or_else(|| "cid-unavailable".to_string());
+        if current_cid.as_deref() != Some(cid.as_str()) || qualified.ends_with(&format!(".{symbol}")) {
+            return format!("{qualified} [{}]", short_cid(&cid));
+        }
+    }
+    "local".to_string()
 }
 
 fn contract_formula_symbols(contract: &Value) -> BTreeSet<String> {
@@ -13203,7 +13329,9 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 }
             }),
         ];
-        let groups = group_contracts_for_universe_visual(&contracts);
+        let mut grouping_report = minimal_source_report();
+        grouping_report.contracts = contracts.clone();
+        let groups = group_contracts_for_universe_visual(&grouping_report);
         assert_eq!(
             groups.len(),
             3,
@@ -13251,7 +13379,9 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             }),
         ];
 
-        let groups = group_contracts_for_universe_visual(&contracts);
+        let mut grouping_report = minimal_source_report();
+        grouping_report.contracts = contracts;
+        let groups = group_contracts_for_universe_visual(&grouping_report);
         assert_eq!(
             contract_value_name(groups[0].anchor),
             Some("vendor::assertion")
@@ -13818,17 +13948,23 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "name": "_cmp",
             "kind": "function-contract",
             "post": {"kind": "atom", "name": "=", "args": []},
-            "sourceWarrants": [{"sourceFunctionName": "date._cmp", "file": "datetime.py"}]
+            "sourceWarrants": [{"sourceFunctionName": "_cmp", "file": "datetime.py", "span": {"start_line": 100}}]
         });
         let time_cmp = serde_json::json!({
             "name": "_cmp",
             "kind": "function-contract",
             "post": {"kind": "atom", "name": "=", "args": []},
-            "sourceWarrants": [{"sourceFunctionName": "time._cmp", "file": "datetime.py"}]
+            "sourceWarrants": [{"sourceFunctionName": "_cmp", "file": "datetime.py", "span": {"start_line": 200}}]
         });
 
-        let date = contract_visual_identity(&date_cmp);
-        let time = contract_visual_identity(&time_cmp);
+        let mut report = minimal_source_report();
+        report.contracts = vec![date_cmp.clone(), time_cmp.clone()];
+        report.factory_walk = vec![
+            serde_json::json!({"sourceMemento": {"sourceFunctionName": "date._cmp", "file": "datetime.py", "span": {"start_line": 100}}}),
+            serde_json::json!({"sourceMemento": {"sourceFunctionName": "time._cmp", "file": "datetime.py", "span": {"start_line": 200}}}),
+        ];
+        let date = contract_visual_identity(&report, &date_cmp);
+        let time = contract_visual_identity(&report, &time_cmp);
         assert!(date.starts_with("date._cmp ["), "{date}");
         assert!(time.starts_with("time._cmp ["), "{time}");
         assert_ne!(date, time);
@@ -13843,5 +13979,49 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         assert_eq!(rendered, "¬(call:f(./source.py))");
         assert!(!rendered.contains("formula:"));
         assert!(!rendered.contains("/tmp/"));
+    }
+
+    #[test]
+    fn symbol_targets_use_callee_identity_builtins_and_formal_markers() {
+        let callee = serde_json::json!({
+            "name": "_cmp", "kind": "function-contract", "formals": ["a", "b"],
+            "post": {"kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"}, {"kind": "var", "name": "a"}
+            ]},
+            "sourceWarrants": [{"sourceFunctionName": "<module>._cmp", "file": "datetime.py"}]
+        });
+        let caller = serde_json::json!({
+            "name": "date._cmp", "kind": "function-contract", "formals": ["self", "other"],
+            "post": {"kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"},
+                {"kind": "ctor", "name": "call:_cmp", "args": []}
+            ]},
+            "sourceWarrants": [{"sourceFunctionName": "date._cmp", "file": "datetime.py"}]
+        });
+        let mut report = minimal_source_report();
+        report.contracts = vec![callee.clone(), caller.clone()];
+        let formals = contract_formal_names(&caller);
+
+        let target = resolve_report_symbol(&report, &caller, "_cmp", &formals);
+        assert!(target.starts_with("<module>._cmp ["), "{target}");
+        assert_ne!(target, contract_visual_identity(&report, &caller));
+        assert_eq!(resolve_report_symbol(&report, &caller, "tuple", &formals), "python:builtin/tuple");
+        assert_eq!(resolve_report_symbol(&report, &caller, "self", &formals), "formal");
+    }
+
+    #[test]
+    fn inline_hashes_are_short_and_appendix_carries_full_mementos() {
+        let cid = format!("blake3-512:{}", "a".repeat(128));
+        assert_eq!(short_cid(&cid), "aaaaaaaaaaaa…");
+        let mut report = minimal_source_report();
+        report.contracts = vec![serde_json::json!({
+            "name": "date._cmp", "kind": "function-contract",
+            "post": {"kind": "atomic", "name": "=", "args": []},
+            "sourceWarrants": [{"sourceFunctionName": "date._cmp", "file": "datetime.py"}]
+        })];
+        let mut appendix = String::new();
+        render_contract_mementos_appendix(&mut appendix, &report);
+        assert!(appendix.contains("mementos appendix:"), "{appendix}");
+        assert!(appendix.contains("blake3-512:"), "{appendix}");
     }
 }
