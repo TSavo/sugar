@@ -13,12 +13,12 @@ from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
 
 # Minority demo (enc + test_enc): the FALSE-RED case that #4084 fact rows fix.
 _MINORITY_DEMO = (
-    'def enc(x):\n'
+    "def enc(x):\n"
     '    if x == "ccc":\n'
     '        return "yyy"\n'
-    '    return x\n'
-    '\n'
-    'def test_enc():\n'
+    "    return x\n"
+    "\n"
+    "def test_enc():\n"
     '    assert enc("ccc") == "yyy"\n'
 )
 
@@ -102,10 +102,7 @@ def test_while_before_assert_gap_site_is_while_not_assert() -> None:
     locus unless a fact row or a gap on the assert line appears.
     """
     source = (
-        "def bad(x):\n"
-        "    while x:\n"
-        "        x = x - 1\n"
-        "    assert x == 0\n"
+        "def bad(x):\n" "    while x:\n" "        x = x - 1\n" "    assert x == 0\n"
     )
     # Report path holds the While gap as a red factory_walk row.
     held = lift_file_payload(source, "bad.py")

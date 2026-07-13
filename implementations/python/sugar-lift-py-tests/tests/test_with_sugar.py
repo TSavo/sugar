@@ -34,8 +34,7 @@ def _site(source: str):
 def test_with_body_threads_and_binds_enter_coordinate() -> None:
     """(1) Body contributes; as-target is call:__enter__(cm)."""
     block = compose_block(
-        "    with z as g:\n"
-        "        return g\n",
+        "    with z as g:\n" "        return g\n",
         binds={"z": SymbolicValue(make_var("z"))},
     )
     assert isinstance(block, BlockValue)
@@ -52,13 +51,11 @@ def test_with_body_threads_and_binds_enter_coordinate() -> None:
 def test_context_expression_discriminates_the_enter_coordinate() -> None:
     """(2) Different cm produces a different enter coordinate."""
     with_z = compose_block(
-        "    with z as g:\n"
-        "        return g\n",
+        "    with z as g:\n" "        return g\n",
         binds={"z": SymbolicValue(make_var("z"))},
     )
     with_w = compose_block(
-        "    with w as g:\n"
-        "        return g\n",
+        "    with w as g:\n" "        return g\n",
         binds={"w": SymbolicValue(make_var("w"))},
     )
     term_z = with_z.statements[0].value.term
@@ -101,8 +98,7 @@ def test_multi_item_with_is_a_loud_factory_gap() -> None:
 def test_with_without_as_still_reduces_context_and_body() -> None:
     # Context expr is not dropped when there is no as-target.
     block = compose_block(
-        "    with z:\n"
-        "        return 1\n",
+        "    with z:\n" "        return 1\n",
         binds={"z": SymbolicValue(make_var("z"))},
     )
     ret = block.statements[0]
@@ -122,8 +118,7 @@ def test_callsite_context_manager_substitutes_coordinate_for_as_name() -> None:
     )
 
     outcome = compose_block(
-        "    with manager as entered:\n"
-        "        return entered\n",
+        "    with manager as entered:\n" "        return entered\n",
         binds={"manager": opaque},
     )
 
@@ -144,8 +139,7 @@ def test_enter_result_twin_cannot_inherit_bare_manager_coordinate() -> None:
         body=None,
     )
     block = compose_block(
-        "    with manager as cursor:\n"
-        "        return cursor\n",
+        "    with manager as cursor:\n" "        return cursor\n",
         binds={"manager": manager},
     )
 
@@ -164,8 +158,7 @@ def test_unresolved_exit_contract_keeps_raise_carrying_body_loud() -> None:
     )
     with pytest.raises(FactoryPanic, match="__exit__"):
         compose_block(
-            "    with manager:\n"
-            "        raise ValueError('boom')\n",
+            "    with manager:\n" "        raise ValueError('boom')\n",
             binds={"manager": manager},
         )
 

@@ -47,7 +47,9 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A(z):\n" "    if z == 1:\n" "        return 7\n" "    return 0\n" "\n"
+        prefix = (
+            "def A(z):\n" "    if z == 1:\n" "        return 7\n" "    return 0\n" "\n"
+        )
         return _call_pair(
             name="if_return",
             owner_sugar="IfSugar",

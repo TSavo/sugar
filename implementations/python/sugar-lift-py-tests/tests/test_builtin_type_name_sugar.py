@@ -12,10 +12,7 @@ from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
 
 
 def test_isinstance_bytes_lifts_not_silent() -> None:
-    src = (
-        "def test_i():\n"
-        "    assert isinstance(b'ab', bytes)\n"
-    )
+    src = "def test_i():\n" "    assert isinstance(b'ab', bytes)\n"
     rpc = lift_file_payload(src, "t.py").to_rpc()
     ax = account_lift_coverage(census_source(src, file="t.py"), rpc).to_json()[
         "assertions"
@@ -27,11 +24,7 @@ def test_isinstance_bytes_lifts_not_silent() -> None:
 
 
 def test_isinstance_with_local_var_lifts() -> None:
-    src = (
-        "def test_i():\n"
-        "    x = b'ab'\n"
-        "    assert isinstance(x, bytes)\n"
-    )
+    src = "def test_i():\n" "    x = b'ab'\n" "    assert isinstance(x, bytes)\n"
     rpc = lift_file_payload(src, "t.py").to_rpc()
     ax = account_lift_coverage(census_source(src, file="t.py"), rpc).to_json()[
         "assertions"
@@ -45,10 +38,7 @@ def test_isinstance_with_local_var_lifts() -> None:
 
 def test_unbound_user_name_still_panics_loud() -> None:
     """User names must not soft-resolve — TemporalContext panic → refuse-loud."""
-    src = (
-        "def test_u():\n"
-        "    assert no_such_name == 1\n"
-    )
+    src = "def test_u():\n" "    assert no_such_name == 1\n"
     payload, gaps = audit_lift_file(src, "t.py", hold_panic=True)
     rpc = payload.to_rpc()
     ax = account_lift_coverage(census_source(src, file="t.py"), rpc).to_json()[

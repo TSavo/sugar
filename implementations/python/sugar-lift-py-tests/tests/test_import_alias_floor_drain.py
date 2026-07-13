@@ -9,7 +9,12 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import BlockValue, ImportAliasValue, PredicateValue, TermValue
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    ImportAliasValue,
+    PredicateValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import make_var, py_truthy
 from sugar_lift_py_tests.outcome import Complete, complete_value
 
@@ -19,10 +24,7 @@ def _statement(source: str) -> SourceFragment:
 
 
 def test_import_statement_constructs_every_named_binding() -> None:
-    block = compose_block(
-        "    import numpy as np, pandas.core\n"
-        "    return np\n"
-    )
+    block = compose_block("    import numpy as np, pandas.core\n" "    return np\n")
 
     assert block.statements[:2] == (
         ImportAliasValue("numpy", "np"),
@@ -68,9 +70,7 @@ def test_import_alias_subscript_projects_its_import_coordinate() -> None:
 def test_import_alias_truth_projects_python_truthiness() -> None:
     alias = ImportAliasValue("pandas.compat.PY310", "PY310")
 
-    predicate = complete_value(
-        alias.truth(_statement("import pandas")), owner="test"
-    )
+    predicate = complete_value(alias.truth(_statement("import pandas")), owner="test")
 
     assert isinstance(predicate, PredicateValue)
     assert predicate.formula == py_truthy(alias.to_term(owner="test"))
@@ -97,7 +97,5 @@ def test_import_statement_owner_is_structural_and_star_is_excluded() -> None:
         )
     ] == ["ImportFromSugar"]
     assert not list(
-        catalog.candidates_for(
-            SugarRole.STATEMENT, _statement("from pandas import *")
-        )
+        catalog.candidates_for(SugarRole.STATEMENT, _statement("from pandas import *"))
     )

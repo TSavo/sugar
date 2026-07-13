@@ -107,9 +107,7 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
                 spec = ""
             parts.append(
                 _FormattedPart(
-                    value=ctx.build_body(
-                        part.formatted_value_value(), SugarRole.TERM
-                    ),
+                    value=ctx.build_body(part.formatted_value_value(), SugarRole.TERM),
                     dynamic_spec=None,
                     conversion=part.formatted_value_conversion(),
                     spec=spec,
@@ -120,11 +118,7 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def witnesses(cls):
         # Pure-literal f-string folds to the concrete string face.
-        prefix = (
-            "def A():\n"
-            "    return f'numpy-totality'\n"
-            "\n"
-        )
+        prefix = "def A():\n" "    return f'numpy-totality'\n" "\n"
         return _call_pair(
             name="joined_str_literal_return",
             owner_sugar="JoinedStrSugar",
@@ -136,18 +130,14 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
     def desugar(self, ctx: object = None) -> Outcome:
         return self._collect(0, (), ctx)
 
-    def _collect(
-        self, index: int, accumulated: tuple, ctx: object
-    ) -> Outcome:
+    def _collect(self, index: int, accumulated: tuple, ctx: object) -> Outcome:
         if index == len(self.parts):
             return self._finish(accumulated)
         part = self.parts[index]
         if type(part) is _LiteralPart:
             from sugar_lift_py_tests.floor import StringValue
 
-            return self._collect(
-                index + 1, (*accumulated, StringValue(part.text)), ctx
-            )
+            return self._collect(index + 1, (*accumulated, StringValue(part.text)), ctx)
         if part.dynamic_reason is not None:
             if part.value is None or part.dynamic_spec is None:
                 from sugar_lift_py_tests.factory import factory_panic_gap
@@ -181,23 +171,17 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
                 fix="formatted string literal field has no reducible value",
             )
         return part.value.reduce(ctx).and_then(
-            lambda value: self._after_formatted(
-                value, part, index, accumulated, ctx
-            )
+            lambda value: self._after_formatted(value, part, index, accumulated, ctx)
         )
 
     def _after_formatted(
         self, value, part: _FormattedPart, index: int, accumulated: tuple, ctx
     ) -> Outcome:
-        ground = _try_ground_format(
-            value, part.conversion, part.spec, self.site
-        )
+        ground = _try_ground_format(value, part.conversion, part.spec, self.site)
         if ground is not None:
             from sugar_lift_py_tests.floor import StringValue
 
-            return self._collect(
-                index + 1, (*accumulated, StringValue(ground)), ctx
-            )
+            return self._collect(index + 1, (*accumulated, StringValue(ground)), ctx)
         # Symbolic (or non-foldable ground): py.format coordinate.
         from sugar_lift_py_tests.floor import SymbolicValue
         from sugar_lift_py_tests.ir import ctor, num, str_const
@@ -210,9 +194,7 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
                 num(part.conversion),
             ],
         )
-        return self._collect(
-            index + 1, (*accumulated, SymbolicValue(term)), ctx
-        )
+        return self._collect(index + 1, (*accumulated, SymbolicValue(term)), ctx)
 
     def _finish(self, accumulated: tuple) -> Outcome:
         from sugar_lift_py_tests.floor import StringValue, SymbolicValue
@@ -221,12 +203,8 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
         if not accumulated:
             return Complete(StringValue(""))
         if all(type(piece) is StringValue for piece in accumulated):
-            return Complete(
-                StringValue("".join(piece.value for piece in accumulated))
-            )
-        terms = [
-            piece.to_term(owner=str(self.site)) for piece in accumulated
-        ]
+            return Complete(StringValue("".join(piece.value for piece in accumulated)))
+        terms = [piece.to_term(owner=str(self.site)) for piece in accumulated]
         return Complete(SymbolicValue(ctor("py.fstring", terms)))
 
     def walk_children(self):

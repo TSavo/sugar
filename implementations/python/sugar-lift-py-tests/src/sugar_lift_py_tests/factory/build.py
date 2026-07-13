@@ -73,8 +73,6 @@ def _fallback_role(site: SourceFragment, requested: SugarRole) -> SugarRole:
     return requested
 
 
-
-
 def _build_site(
     site: SourceFragment,
     *,

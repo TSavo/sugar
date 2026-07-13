@@ -178,8 +178,7 @@ class PredicateValue(FloorValue):
 
         before = {binding.name: binding.value for binding in ctx.temporal.bindings}
         surviving = {
-            binding.name: binding.value
-            for binding in surviving_scope.temporal.bindings
+            binding.name: binding.value for binding in surviving_scope.temporal.bindings
         }
         bindings = []
         effects = []

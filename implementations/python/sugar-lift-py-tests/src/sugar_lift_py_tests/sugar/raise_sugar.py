@@ -42,7 +42,7 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
         prefix = (
             "def A(z):\n"
             "    if z < 0:\n"
-            "        raise ValueError(\"neg\")\n"
+            '        raise ValueError("neg")\n'
             "    return z\n"
             "\n"
         )

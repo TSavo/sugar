@@ -36,7 +36,9 @@ class FactoryAuditSummaryDto:
             "factoryWalk": walk,
         }
         if self.source_factory_conservation is not None:
-            out["sourceFactoryConservation"] = self.source_factory_conservation.to_json()
+            out["sourceFactoryConservation"] = (
+                self.source_factory_conservation.to_json()
+            )
             if not self.source_factory_conservation.complete:
                 out["complete"] = False
         return out

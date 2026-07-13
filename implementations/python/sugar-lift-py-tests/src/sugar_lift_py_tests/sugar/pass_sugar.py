@@ -39,4 +39,3 @@ class PassSugar(Sugar, role=SugarRole.STATEMENT):
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx  # pass is inert control-flow support
         return Complete(SupportValue())
-

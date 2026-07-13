@@ -34,7 +34,9 @@ def test_report_path_holds_while_and_keeps_clean_def() -> None:
     ]
     assert red_rows, f"expected a red factory_walk row; walk={payload.factory_walk}"
     while_rows = [row for row in red_rows if row.ast_kind == "While"]
-    assert while_rows, f"expected While red row; red={[(r.ast_kind, r.reason) for r in red_rows]}"
+    assert (
+        while_rows
+    ), f"expected While red row; red={[(r.ast_kind, r.reason) for r in red_rows]}"
     gap_row = while_rows[0]
     assert gap_row.status == "unclassified"
     assert "write more Sugar" in gap_row.reason

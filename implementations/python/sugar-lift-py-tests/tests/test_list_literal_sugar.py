@@ -39,10 +39,10 @@ def test_empty_list_literal_reduces_to_empty_list_value() -> None:
 
 def test_large_list_literal_reduces_without_recursive_collection() -> None:
     ctx = FactoryBuildContext(filename="generated.py", catalog=default_catalog())
-    node = ast.parse("[" + ",".join(str(value) for value in range(1500)) + "]", mode="eval").body
-    result = build_node(
-        node, filename="generated.py", role=SugarRole.TERM, ctx=ctx
-    )
+    node = ast.parse(
+        "[" + ",".join(str(value) for value in range(1500)) + "]", mode="eval"
+    ).body
+    result = build_node(node, filename="generated.py", role=SugarRole.TERM, ctx=ctx)
 
     outcome = result.sugar.desugar(ctx)
 
@@ -50,7 +50,6 @@ def test_large_list_literal_reduces_without_recursive_collection() -> None:
     assert len(outcome.value.elements) == 1500
     assert outcome.value.elements[0] == TermValue(0)
     assert outcome.value.elements[-1] == TermValue(1499)
-
 
 
 def test_list_expression_statement_is_discarded_in_block() -> None:

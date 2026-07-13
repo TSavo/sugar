@@ -263,11 +263,9 @@ class SymbolicValue(FloorValue):
 
         return Complete(SymbolicValue(ctor("py.invert", [self.term])))
 
-
     def subscript(self, index, site):
         # A symbolic receiver stays the py.subscript coordinate regardless of index.
         return self.py_subscript_coordinate(index, site)
-
 
     def project_callsite_with(self, operation, ctx):
         return operation.project_symbolic(self, ctx)
@@ -311,7 +309,22 @@ class SymbolicValue(FloorValue):
 
             # hash never folds statically — marker only; wrap → call:hash, no companion.
             return Complete(self)
-        if operation.name in {"__repr__", "__bytes__", "__abs__", "__float__", "__complex__", "__index__", "__round__", "__floor__", "__ceil__", "__trunc__"} and not operation.arguments:
+        if (
+            operation.name
+            in {
+                "__repr__",
+                "__bytes__",
+                "__abs__",
+                "__float__",
+                "__complex__",
+                "__index__",
+                "__round__",
+                "__floor__",
+                "__ceil__",
+                "__trunc__",
+            }
+            and not operation.arguments
+        ):
             from sugar_lift_py_tests.outcome import Complete
 
             # Pure-value builtins on an opaque receiver: non-concrete marker for wrap.
@@ -354,16 +367,18 @@ class SymbolicValue(FloorValue):
         from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
         from sugar_lift_py_tests.outcome import Incomplete
 
-        factory_panic_gap(owner=operation.owner,
-                blame=operation.blame,
-                observed=f"SymbolicValue.{operation.name}",
-                requested="symbolic receiver method floor",
-                fix=(
-                    f"add cited warrant for SymbolicValue.{operation.name} "
-                    "or keep the opaque runtime method as a typed effect"
-                ),
-                gap_kind=GapKind.FLOOR,
-                gap_locus=GapLocus.CONSTRUCTION,)
+        factory_panic_gap(
+            owner=operation.owner,
+            blame=operation.blame,
+            observed=f"SymbolicValue.{operation.name}",
+            requested="symbolic receiver method floor",
+            fix=(
+                f"add cited warrant for SymbolicValue.{operation.name} "
+                "or keep the opaque runtime method as a typed effect"
+            ),
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
 
     def add_with(self, operation, ctx):
         """``.add(operand)`` on a symbolic receiver.
@@ -524,7 +539,10 @@ class SymbolicValue(FloorValue):
 
     def setitem(self, index, value, site):
         del index, value
-        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect, runtime_effect_witness
+        from sugar_lift_py_tests.effect import (
+            SubscriptStoreRuntimeEffect,
+            runtime_effect_witness,
+        )
         from sugar_lift_py_tests.outcome import Incomplete
 
         return Incomplete(

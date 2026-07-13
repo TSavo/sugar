@@ -250,7 +250,9 @@ def _run_lift_rpc(project: Path) -> dict:
     return run_lift_rpc(project)
 
 
-def hermetic_sugar_env(project: Path, *, base: dict[str, str] | None = None) -> dict[str, str]:
+def hermetic_sugar_env(
+    project: Path, *, base: dict[str, str] | None = None
+) -> dict[str, str]:
     """Point the sugar binary at this project's staged `.sugar` only.
 
     `SUGAR_HOME` is the exclusive component-discovery door (see
@@ -322,7 +324,9 @@ def run_sugar_cli(
     )
 
 
-def mint_project(project: Path, *, sugar_bin: Path | None = None) -> subprocess.CompletedProcess[str]:
+def mint_project(
+    project: Path, *, sugar_bin: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     """Hermetic `sugar mint --out . --quiet` against a staged project."""
     clear_stale_project_proofs(project)
     capture = project / ".sugar" / "lift" / "python" / "lift-rpc-capture.jsonl"

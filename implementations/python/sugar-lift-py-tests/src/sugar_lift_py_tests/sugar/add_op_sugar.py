@@ -47,11 +47,7 @@ class AddOpSugar(Sugar, role=SugarRole.TERM):
         # CallSiteValue binary dispatch + install-source body dig: `g(2) + 1`
         # folds to ground post `out = 3`. Truthful asserts 3; lying asserts 4.
         dig_prefix = (
-            "def g(x):\n"
-            "    return x\n"
-            "def A():\n"
-            "    return g(2) + 1\n"
-            "\n"
+            "def g(x):\n" "    return x\n" "def A():\n" "    return g(2) + 1\n" "\n"
         )
         return (
             _call_pair(

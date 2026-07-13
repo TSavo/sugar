@@ -24,9 +24,7 @@ class BlockValue(FloorValue):
 
     def inv_contribution(self):
         return tuple(
-            formula
-            for entry in self.statements
-            for formula in entry.inv_contribution()
+            formula for entry in self.statements for formula in entry.inv_contribution()
         )
 
     def post_contribution(self):

@@ -21,9 +21,7 @@ def _site(source: str) -> SourceFragment:
 def _build(source: str):
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse(source).body[0]
-    return build_node(
-        node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx
-    ).sugar
+    return build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx).sugar
 
 
 @pytest.mark.parametrize(
@@ -61,9 +59,7 @@ def test_bitor_subscript_augassign_stays_loud() -> None:
 
 
 def test_nested_tuple_unpack_recursively_projects_names() -> None:
-    record = compose_block(
-        "    (a, b), (c, d) = ((1, 2), (3, 4))\n    return a + d\n"
-    )
+    record = compose_block("    (a, b), (c, d) = ((1, 2), (3, 4))\n    return a + d\n")
     assert record == BlockValue((ReturnValue(TermValue(5)),))
 
 
@@ -84,12 +80,8 @@ def test_assignment_residue_owners_are_structurally_disjoint() -> None:
     for source, expected in cases.items():
         names = [
             candidate.name
-            for candidate in catalog.candidates_for(
-                SugarRole.STATEMENT, _site(source)
-            )
+            for candidate in catalog.candidates_for(SugarRole.STATEMENT, _site(source))
         ]
         assert names == [expected]
 
-    assert not list(
-        catalog.candidates_for(SugarRole.STATEMENT, _site("global x"))
-    )
+    assert not list(catalog.candidates_for(SugarRole.STATEMENT, _site("global x")))

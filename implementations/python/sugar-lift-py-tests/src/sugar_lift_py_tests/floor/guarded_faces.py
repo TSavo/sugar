@@ -27,24 +27,17 @@ class GuardedFaces(FloorValue):
 
         return (
             *self.entries,
-            *(
-                ScopeRebind(name, value)
-                for name, value in self.joined_bindings
-            ),
+            *(ScopeRebind(name, value) for name, value in self.joined_bindings),
         )
 
     def inv_contribution(self):
         return tuple(
-            formula
-            for entry in self.entries
-            for formula in entry.inv_contribution()
+            formula for entry in self.entries for formula in entry.inv_contribution()
         )
 
     def post_contribution(self):
         return tuple(
-            formula
-            for entry in self.entries
-            for formula in entry.post_contribution()
+            formula for entry in self.entries for formula in entry.post_contribution()
         )
 
     def edge_contribution(self, source_contract):

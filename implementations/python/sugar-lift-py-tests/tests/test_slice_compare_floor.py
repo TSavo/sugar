@@ -54,7 +54,9 @@ def test_line_preserving_datetime_slice_unit_fixture_lifts_and_cites() -> None:
     ]
 
 
-def test_full_datetime_artifact_accounts_slice_assertions_and_named_blockers(cpython_311_datetime_path) -> None:
+def test_full_datetime_artifact_accounts_slice_assertions_and_named_blockers(
+    cpython_311_datetime_path,
+) -> None:
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
     assert len(source.splitlines()) == 2635
@@ -68,12 +70,9 @@ def test_full_datetime_artifact_accounts_slice_assertions_and_named_blockers(cpy
 
     assert assertions["stated"] == 45
     assert assertions["lifted_cited"] == 14
-    assert lifted_target_lines <= {
-        locus["line"] for locus in assertions["lifted_loci"]
-    }
+    assert lifted_target_lines <= {locus["line"] for locus in assertions["lifted_loci"]}
     assert any(
-        gap.label.endswith(":182:0")
-        and gap.info.get("observed") == "GuardedValue"
+        gap.label.endswith(":182:0") and gap.info.get("observed") == "GuardedValue"
         for gap in gaps
     )
 

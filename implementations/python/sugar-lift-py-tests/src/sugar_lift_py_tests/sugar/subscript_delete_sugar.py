@@ -25,10 +25,7 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
         if site.observed != "Delete":
             return False
         targets = site.delete_targets()
-        return (
-            len(targets) == 1
-            and targets[0].observed == "Subscript"
-        )
+        return len(targets) == 1 and targets[0].observed == "Subscript"
 
     @classmethod
     def new(cls, site, ctx) -> "SubscriptDeleteSugar":
@@ -44,10 +41,7 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def witnesses(cls):
         prefix = (
-            "def A():\n"
-            "    xs = [1, 2, 3]\n"
-            "    del xs[1]\n"
-            "    return xs[1]\n\n"
+            "def A():\n" "    xs = [1, 2, 3]\n" "    del xs[1]\n" "    return xs[1]\n\n"
         )
         return _call_pair(
             name="subscript_delete_post_state",

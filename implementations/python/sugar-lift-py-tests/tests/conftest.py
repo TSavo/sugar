@@ -46,7 +46,10 @@ def _is_sugar_project_cli(cmd: object) -> bool:
             }
         )
         if is_main_cli:
-            if index + 1 < len(parts) and parts[index + 1] in _SUGAR_PROJECT_SUBCOMMANDS:
+            if (
+                index + 1 < len(parts)
+                and parts[index + 1] in _SUGAR_PROJECT_SUBCOMMANDS
+            ):
                 return True
     return False
 

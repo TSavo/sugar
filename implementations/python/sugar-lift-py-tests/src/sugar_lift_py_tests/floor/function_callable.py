@@ -56,8 +56,7 @@ class FunctionCallable(FloorValue):
                 gap_locus=GapLocus.CONSTRUCTION,
             )
         simple = all(
-            kind in {"positional", "positional-only"}
-            for kind in self.parameter_kinds
+            kind in {"positional", "positional-only"} for kind in self.parameter_kinds
         )
         if not simple or keyword_names or len(arg_values) != len(self.parameters):
             factory_panic_gap(

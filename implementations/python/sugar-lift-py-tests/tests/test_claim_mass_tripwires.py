@@ -10,7 +10,6 @@ from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_covera
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 
-
 VENDOR = Path(__file__).parent / "vendor"
 
 

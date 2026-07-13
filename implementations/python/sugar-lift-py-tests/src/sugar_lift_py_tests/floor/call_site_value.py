@@ -34,9 +34,7 @@ class CallSiteValue(FloorValue):
     # A callee contract may cite the Python type object returned by this call.
     # Absent that citation, Python must execute the call to know whether its
     # result is a valid isinstance type operand.
-    python_type_coordinate: Term | None = dataclass_field(
-        default=None, compare=False
-    )
+    python_type_coordinate: Term | None = dataclass_field(default=None, compare=False)
 
     def to_term(self, *, owner: str):
         del owner
@@ -73,7 +71,10 @@ class CallSiteValue(FloorValue):
         if type_coordinate is None and self.target_name == "type":
             type_coordinate = self.term
         if type_coordinate is None:
-            from sugar_lift_py_tests.effect import CallResultTypeRuntimeEffect, runtime_effect_witness
+            from sugar_lift_py_tests.effect import (
+                CallResultTypeRuntimeEffect,
+                runtime_effect_witness,
+            )
             from sugar_lift_py_tests.outcome import Incomplete
 
             return Incomplete(
@@ -121,7 +122,10 @@ class CallSiteValue(FloorValue):
         mutated post-state. Preserve those coordinates in the effect fact and
         never fabricate a replacement receiver.
         """
-        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect, runtime_effect_witness
+        from sugar_lift_py_tests.effect import (
+            SubscriptStoreRuntimeEffect,
+            runtime_effect_witness,
+        )
         from sugar_lift_py_tests.outcome import Incomplete
         from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
@@ -152,12 +156,14 @@ class CallSiteValue(FloorValue):
             parameters=(),
             term=ctor(
                 f"call:{method_name}",
-                [self.to_term(owner=str(site)), *(arg.to_term(owner=str(site)) for arg in args)],
+                [
+                    self.to_term(owner=str(site)),
+                    *(arg.to_term(owner=str(site)) for arg in args),
+                ],
             ),
             body=None,
             site=site,
         )
-
 
     def add(self, other, site):
         """Addition floor via interface dispatch: dig then redispatch, else EUF +.
@@ -190,10 +196,14 @@ class CallSiteValue(FloorValue):
         )
 
     def bitwise_or(self, other, site):
-        return self._dig_or_symbolic_binop(other, site, op="|", floor_method="bitwise_or")
+        return self._dig_or_symbolic_binop(
+            other, site, op="|", floor_method="bitwise_or"
+        )
 
     def matrix_multiply(self, other, site):
-        return self._dig_or_symbolic_binop(other, site, op="@", floor_method="matrix_multiply")
+        return self._dig_or_symbolic_binop(
+            other, site, op="@", floor_method="matrix_multiply"
+        )
 
     def _dig_or_symbolic_binop(self, other, site, *, op: str, floor_method: str):
         """Dig body when present; redispatch op on dug floor; else SymbolicValue join.
@@ -318,9 +328,7 @@ class CallSiteValue(FloorValue):
             ctx,
             owner=f"{operation.owner} {owner_suffix}",
         )
-        receiver: FloorValue = (
-            floor if floor is not None else SymbolicValue(self.term)
-        )
+        receiver: FloorValue = floor if floor is not None else SymbolicValue(self.term)
         return perform_operation(
             owner=operation.owner,
             blame=operation.blame,
@@ -357,9 +365,7 @@ class CallSiteValue(FloorValue):
             )
         # Opaque receiver with a real EUF term: join, do not force_floor-panic.
         if operation.name == "__len__" and not operation.arguments:
-            return Complete(
-                OpaqueOpCallsite(callee="len", arg=self, computed=None)
-            )
+            return Complete(OpaqueOpCallsite(callee="len", arg=self, computed=None))
         if not operation.name.startswith("__") and all(
             isinstance(arg, FloorValue) for arg in operation.arguments
         ):
@@ -596,7 +602,8 @@ def _force_floor_gap(
     fix: str,
 ) -> NoReturn:
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow, factory_panic,
+        FactoryAuditRow,
+        factory_panic,
         FactoryGapInfo,
         GapKind,
         GapLocus,

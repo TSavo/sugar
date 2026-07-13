@@ -99,6 +99,4 @@ def test_aug_pow_assign_equals_the_power():
 def test_subscript_aug_assign_composes_read_add_and_store_post_state():
     updated = _block("    x = [0]\n    x[0] += 1\n    return x\n")
 
-    assert updated == BlockValue(
-        (ReturnValue(ListValue((TermValue(1),))),)
-    )
+    assert updated == BlockValue((ReturnValue(ListValue((TermValue(1),))),))

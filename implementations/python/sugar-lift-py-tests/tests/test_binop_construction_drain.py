@@ -29,8 +29,9 @@ def _reduce_sourced(source: str):
         temporal=temporal,
     )
     return complete_value(
-        build_node(site, filename="t.py", role=SugarRole.TERM, ctx=ctx)
-        .sugar.desugar(ctx),
+        build_node(site, filename="t.py", role=SugarRole.TERM, ctx=ctx).sugar.desugar(
+            ctx
+        ),
         owner="test",
     )
 
@@ -69,4 +70,7 @@ def test_bit_or_annotation_union_stays_unowned_and_loud() -> None:
 
 def test_matmult_owner_does_not_claim_an_unowned_operator() -> None:
     with pytest.raises(FactoryPanic, match="observed=BinOp requested=term"):
-        reduce_value("x | y", {"x": SymbolicValue(make_var("x")), "y": SymbolicValue(make_var("y"))})
+        reduce_value(
+            "x | y",
+            {"x": SymbolicValue(make_var("x")), "y": SymbolicValue(make_var("y"))},
+        )

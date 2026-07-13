@@ -56,9 +56,7 @@ def test_unprojectable_floor_value_gap_panics() -> None:
 
 
 def test_named_function_callable_projects_as_its_binding_coordinate() -> None:
-    assert FunctionCallable(name="helper").to_term(owner="post") == make_var(
-        "helper"
-    )
+    assert FunctionCallable(name="helper").to_term(owner="post") == make_var("helper")
 
 
 _FLOOR_TYPES = {

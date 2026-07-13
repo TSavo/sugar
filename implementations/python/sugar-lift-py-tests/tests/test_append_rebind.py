@@ -21,9 +21,7 @@ from sugar_lift_py_tests.floor import BlockValue, ListValue, ReturnValue, TermVa
 
 def test_append_folds_history_into_returned_list() -> None:
     record = compose_block("    xs = [1]\n    xs.append(2)\n    return xs\n")
-    assert record == BlockValue(
-        (ReturnValue(ListValue((TermValue(1), TermValue(2)))),)
-    )
+    assert record == BlockValue((ReturnValue(ListValue((TermValue(1), TermValue(2)))),))
 
 
 def test_append_statement_contributes_nothing_to_the_record() -> None:

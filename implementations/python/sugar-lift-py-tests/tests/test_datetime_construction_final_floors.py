@@ -24,9 +24,9 @@ def test_string_add_folds_strings_and_cites_opaque_peer() -> None:
         StringValue("leftright")
     )
     opaque = CallSiteValue("fragment", (), (), ctor("call:fragment", []), None)
-    assert StringValue("left").add(opaque, "t.py:1").value.to_term(owner="test") == ctor(
-        "+", [str_const("left"), ctor("call:fragment", [])]
-    )
+    assert StringValue("left").add(opaque, "t.py:1").value.to_term(
+        owner="test"
+    ) == ctor("+", [str_const("left"), ctor("call:fragment", [])])
 
 
 def test_numeric_add_cites_imported_opaque_peer() -> None:
@@ -52,7 +52,9 @@ def test_guarded_arithmetic_distributes_over_both_faces() -> None:
 
 def test_bound_var_projects_by_recomposing_its_cited_source() -> None:
     body = SugarBody(
-        build_node(ast.parse("5", mode="eval").body, filename="t.py", role=SugarRole.TERM).sugar,
+        build_node(
+            ast.parse("5", mode="eval").body, filename="t.py", role=SugarRole.TERM
+        ).sugar,
         SugarRole.TERM,
     )
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())

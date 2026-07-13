@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-
 _TOOL = Path(__file__).parents[4] / "tools" / "restored_suite_telemetry.py"
 _SPEC = importlib.util.spec_from_file_location("restored_suite_telemetry", _TOOL)
 assert _SPEC is not None and _SPEC.loader is not None

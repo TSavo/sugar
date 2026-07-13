@@ -31,10 +31,7 @@ class SubscriptAssignSugar(Sugar, role=SugarRole.STATEMENT):
         if site.observed != "Assign":
             return False
         targets = site.assign_targets()
-        return (
-            len(targets) == 1
-            and targets[0].observed == "Subscript"
-        )
+        return len(targets) == 1 and targets[0].observed == "Subscript"
 
     @classmethod
     def new(cls, site, ctx) -> "SubscriptAssignSugar":

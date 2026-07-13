@@ -83,6 +83,7 @@ def _call_pair(
         lying=WitnessSource(source=lying, expected="unsat"),
     )
 
+
 def _call_return_pair(
     *,
     name: str,
@@ -101,6 +102,7 @@ def _call_return_pair(
         family="literal-call",
     )
 
+
 def _boolop_wrapped_pair(
     *,
     name: str,
@@ -117,6 +119,7 @@ def _boolop_wrapped_pair(
         family="assertion",
     )
 
+
 def inert_statement_return_witness(
     *,
     name: str,
@@ -132,6 +135,7 @@ def inert_statement_return_witness(
         truthful=source + "def test_a():\n    assert A(1) == 1\n",
         lying=source + "def test_a():\n    assert A(1) == 2\n",
     )
+
 
 def typed_red_effect_witness(
     *,
@@ -167,6 +171,7 @@ def typed_red_effect_witness(
         ),
     )
 
+
 def ord_byte_return_witness(*, owner_sugar: str) -> SugarWitnessPair:
     source = "def A(s):\n" "    return ord(s[0])\n" "\n"
     return _call_pair(
@@ -175,6 +180,7 @@ def ord_byte_return_witness(*, owner_sugar: str) -> SugarWitnessPair:
         truthful=source + "def test_a():\n    assert A('x') == 120\n",
         lying=source + "def test_a():\n    assert A('x') == 121\n",
     )
+
 
 def collection_len_return_witness(
     *,

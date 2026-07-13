@@ -87,9 +87,7 @@ def test_subscript_delete_reuses_store_post_state_and_negative_index_floor() -> 
 
 
 def test_full_slice_delete_constructs_the_list_post_state() -> None:
-    block = compose_block(
-        "    xs = [1, 2, 3]\n    del xs[:]\n    return len(xs)\n"
-    )
+    block = compose_block("    xs = [1, 2, 3]\n    del xs[:]\n    return len(xs)\n")
     returned = block.statements[0]
     assert isinstance(returned, ReturnValue)
     assert isinstance(returned.value, OpaqueOpCallsite)
@@ -105,7 +103,9 @@ def test_runtime_slice_delete_is_a_named_store_effect() -> None:
         binds={"start": SymbolicValue(make_var("start"))},
     )
 
-    effect = next(statement for statement in block.statements if isinstance(statement, Incomplete))
+    effect = next(
+        statement for statement in block.statements if isinstance(statement, Incomplete)
+    )
     assert isinstance(effect.effect, SubscriptStoreRuntimeEffect)
     assert "runtime slice bounds" in effect.reason
 
@@ -115,7 +115,9 @@ def test_heterogeneous_multi_delete_remains_loud() -> None:
         _build_statement("del xs[:], name")
 
 
-def test_full_datetime_delete_is_owned_and_later_assertions_now_lift(cpython_311_datetime_path) -> None:
+def test_full_datetime_delete_is_owned_and_later_assertions_now_lift(
+    cpython_311_datetime_path,
+) -> None:
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
     assert len(source.splitlines()) == 2635
@@ -136,6 +138,4 @@ def test_full_datetime_delete_is_owned_and_later_assertions_now_lift(cpython_311
         census_source(source, file=str(path)), payload
     ).to_json()["assertions"]
     assert assertions["stated"] == 45
-    assert {2044, 2047} <= {
-        locus["line"] for locus in assertions["lifted_loci"]
-    }
+    assert {2044, 2047} <= {locus["line"] for locus in assertions["lifted_loci"]}

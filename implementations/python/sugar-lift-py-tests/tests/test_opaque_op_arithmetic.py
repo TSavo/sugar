@@ -37,7 +37,14 @@ def test_opaque_operator_unary_minus_cites_coordinate() -> None:
 
 def test_opaque_operator_declares_full_arithmetic_surface() -> None:
     expected = {
-        "add", "subtract", "multiply", "divide", "floor_divide", "modulo",
-        "left_shift", "right_shift", "unary_minus",
+        "add",
+        "subtract",
+        "multiply",
+        "divide",
+        "floor_divide",
+        "modulo",
+        "left_shift",
+        "right_shift",
+        "unary_minus",
     }
     assert expected <= OpaqueOpCallsite.__dict__.keys()

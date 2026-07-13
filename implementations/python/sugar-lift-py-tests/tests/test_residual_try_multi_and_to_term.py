@@ -33,6 +33,7 @@ def test_try_sugar_owns_multi_type_except() -> None:
 
 def test_list_dict_class_to_term_projects() -> None:
     lv = ListValue((TermValue(1), TermValue(2)))
+
     def _name(term):
         return term.name if hasattr(term, "name") else term.get("name")
 

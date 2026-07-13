@@ -6,7 +6,6 @@ from pathlib import Path
 
 from sugar_lift_py_tests.effect import RuntimeEffect
 
-
 PACKAGE = Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests"
 
 

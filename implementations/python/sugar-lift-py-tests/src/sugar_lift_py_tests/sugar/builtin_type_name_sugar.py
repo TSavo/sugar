@@ -7,7 +7,6 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
-
 # Names that stand as types / builtins without a local binding. Not a soft
 # fallback for every Name — only this closed set. Unbound user names still panic
 # (TemporalContext) — that is correct instrument behaviour.
@@ -77,6 +76,4 @@ class BuiltinTypeNameSugar(Sugar, role=SugarRole.TERM, comes_before=("NameSugar"
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor, str_const
 
-        return Complete(
-            SymbolicValue(ctor("python:type", [str_const(self.name)]))
-        )
+        return Complete(SymbolicValue(ctor("python:type", [str_const(self.name)])))

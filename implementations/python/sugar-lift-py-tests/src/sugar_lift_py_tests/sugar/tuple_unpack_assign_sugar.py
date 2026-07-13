@@ -82,13 +82,17 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
         leaves = _target_leaves(target)
         receiver = ctx.build_body(site.assign_value(), SugarRole.TERM)
         stores = []
-        from sugar_lift_py_tests.sugar.attribute_assign_sugar import AttributeAssignSugar
+        from sugar_lift_py_tests.sugar.attribute_assign_sugar import (
+            AttributeAssignSugar,
+        )
         from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 
         for kind, first, second, path in leaves:
             projection = _projection(receiver, path, site)
             if kind == "name":
-                stores.append(SugarBody(TupleNameStore(first, projection), SugarRole.STATEMENT))
+                stores.append(
+                    SugarBody(TupleNameStore(first, projection), SugarRole.STATEMENT)
+                )
             else:
                 receiver_body = SugarBody(NameSugar(first, site), SugarRole.TERM)
                 stores.append(

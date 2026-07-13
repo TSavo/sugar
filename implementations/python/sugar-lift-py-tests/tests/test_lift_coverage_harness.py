@@ -69,12 +69,7 @@ def _stage_and_report(source_file: Path) -> tuple[dict, Path]:
 
 
 def test_independent_census_counts_asserts_and_bodies() -> None:
-    src = (
-        "def dug():\n"
-        "    assert 1 == 1\n"
-        "def idle():\n"
-        "    return 0\n"
-    )
+    src = "def dug():\n" "    assert 1 == 1\n" "def idle():\n" "    return 0\n"
     disk = census_source(src, file="t.py")
     assert disk.asserts and len(disk.asserts) == 1
     assert disk.asserts[0].line == 2
@@ -225,8 +220,12 @@ def statistics_report() -> dict:
         return _run_lift_report_json(ws)
 
 
-def test_statistics_report_emits_dual_axis_lift_coverage(statistics_report: dict) -> None:
-    cov = statistics_report.get("liftCoverage") or statistics_report.get("lift_coverage")
+def test_statistics_report_emits_dual_axis_lift_coverage(
+    statistics_report: dict,
+) -> None:
+    cov = statistics_report.get("liftCoverage") or statistics_report.get(
+        "lift_coverage"
+    )
     assert cov is not None, (
         "lift --report must emit liftCoverage line items (#4013); "
         f"keys={sorted(statistics_report.keys())}"
@@ -341,19 +340,21 @@ def test_statistics_human_report_contains_literal_minority_report_header() -> No
             or "refused-loud" in human
             or "accounted=" in human
         )
-        assert ok, (
-            f"expected Minority Report or doctrine accounting in human report:\n{human[:2500]}"
-        )
+        assert (
+            ok
+        ), f"expected Minority Report or doctrine accounting in human report:\n{human[:2500]}"
         # Forbidden qualifier must not appear in human output (any case).
         _forbidden = "MA" + "JORITY"
-        assert _forbidden not in human.upper(), (
-            f"human report must not contain {_forbidden}; got:\n{human[:2500]}"
-        )
+        assert (
+            _forbidden not in human.upper()
+        ), f"human report must not contain {_forbidden}; got:\n{human[:2500]}"
         # No dual-axis section-title framing on the default body.
         assert "lift coverage (" not in human.lower()
 
 
-def test_discrimination_inject_unaccounted_construct_reds_assertions(tmp_path: Path) -> None:
+def test_discrimination_inject_unaccounted_construct_reds_assertions(
+    tmp_path: Path,
+) -> None:
     """Live lift: source with 2 asserts, only one cited-capable shape still
     measures silent residue via independent census (unit twin above is pure).
 
@@ -527,7 +528,9 @@ def test_crime2_bad_twin_inject_forged_floor_flips_red() -> None:
 
 def test_crime2_production_dig_floor_stamps_warranting_assert() -> None:
     pytest.importorskip("sugar_lift_py_tests.factory.literal_call_report")
-    from sugar_lift_py_tests.factory.literal_call_report import build_literal_call_report
+    from sugar_lift_py_tests.factory.literal_call_report import (
+        build_literal_call_report,
+    )
 
     src = (
         "def A():\n"
@@ -535,15 +538,17 @@ def test_crime2_production_dig_floor_stamps_warranting_assert() -> None:
         "def test_it():\n"
         "    assert A() == 3\n"
     )
-    built = build_literal_call_report(source=src, filename="stamp.py", memento_file="stamp.py")
+    built = build_literal_call_report(
+        source=src, filename="stamp.py", memento_file="stamp.py"
+    )
     assert built is not None
     diags = list(built.payload.diagnostics or [])
     floors = [d for d in diags if isinstance(d, dict) and d.get("kind") == "dig-floor"]
     assert floors, f"expected dig-floor stamps; diagnostics={diags[:8]}"
     for f in floors:
-        assert f.get("warrantingAssert") is not None, (
-            f"production dig-floor must stamp warranting assert; got {f}"
-        )
+        assert (
+            f.get("warrantingAssert") is not None
+        ), f"production dig-floor must stamp warranting assert; got {f}"
         wa = f["warrantingAssert"]
         assert wa.get("line") == 4, f"assert is on line 4; got {wa}"
     from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
@@ -557,14 +562,20 @@ def test_crime2_production_dig_floor_stamps_warranting_assert() -> None:
 
 def test_crime2_statistics_forged_warrant_gate_is_zero() -> None:
     stats = _resolve_installed_package_path("statistics")
-    target = stats if stats.is_file() else (
-        stats / "statistics.py" if (stats / "statistics.py").exists() else stats
+    target = (
+        stats
+        if stats.is_file()
+        else (stats / "statistics.py" if (stats / "statistics.py").exists() else stats)
     )
-    report, _ws = _stage_and_report(target if Path(target).is_file() else Path(str(stats)))
+    report, _ws = _stage_and_report(
+        target if Path(target).is_file() else Path(str(stats))
+    )
     cov = report.get("liftCoverage") or report.get("lift_coverage") or {}
     if not cov and "sources" in report:
         for s in report.get("sources") or []:
-            if isinstance(s, dict) and (s.get("liftCoverage") or s.get("lift_coverage")):
+            if isinstance(s, dict) and (
+                s.get("liftCoverage") or s.get("lift_coverage")
+            ):
                 cov = s.get("liftCoverage") or s.get("lift_coverage")
                 break
     totals = (cov or {}).get("totals") or {}

@@ -19,10 +19,7 @@ class StringLiteralSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def owns(cls, site) -> bool:
-        return (
-            site.observed == "PrimitiveLiteral"
-            and type(site.literal_value()) is str
-        )
+        return site.observed == "PrimitiveLiteral" and type(site.literal_value()) is str
 
     @classmethod
     def new(cls, site, ctx) -> "StringLiteralSugar":

@@ -39,11 +39,7 @@ def _tag_install_source(fn: SourceFragment, source: str, path: str) -> SourceFra
 
 def test_minimal_module_global_binds_on_body_dig() -> None:
     """GLOBAL = b\"x\"; def f(s): return s.translate(GLOBAL) — Name binds."""
-    src = (
-        "GLOBAL = b\"x\"\n"
-        "def f(s):\n"
-        "    return s.translate(GLOBAL)\n"
-    )
+    src = 'GLOBAL = b"x"\n' "def f(s):\n" "    return s.translate(GLOBAL)\n"
     root = SourceFragment.from_source(src, "mod_globals.py")
     fn = next(
         f
@@ -71,11 +67,7 @@ def test_minimal_module_global_binds_on_body_dig() -> None:
 
 def test_minimal_module_global_without_sugar_tag_does_not_seed() -> None:
     """Without install-source tags, formal-only temporal (no silent ambient seed)."""
-    src = (
-        "GLOBAL = b\"x\"\n"
-        "def f(s):\n"
-        "    return s.translate(GLOBAL)\n"
-    )
+    src = 'GLOBAL = b"x"\n' "def f(s):\n" "    return s.translate(GLOBAL)\n"
     root = SourceFragment.from_source(src, "mod_globals.py")
     fn = next(
         f
@@ -98,9 +90,7 @@ def test_urlsafe_encode_translation_binds_from_install_source() -> None:
     assert resolved is not None
     # Prefer full-module sibling node when available (real file path + source).
     siblings = _module_sibling_function_nodes("base64")
-    node = siblings.get("base64.urlsafe_b64encode") or siblings.get(
-        "urlsafe_b64encode"
-    )
+    node = siblings.get("base64.urlsafe_b64encode") or siblings.get("urlsafe_b64encode")
     if node is not None:
         fn = SourceFragment.from_node(
             node, getattr(node, "_sugar_file", inspect.getsourcefile(base64) or "")
