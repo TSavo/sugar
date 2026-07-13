@@ -1,5 +1,0 @@
-[[plugins]]
-name = "python-audit-lift"
-kind = "lift"
-surface = "python"
-emit = "ir-document"
