@@ -39,3 +39,14 @@ def test_no_runtime_effect_subclass_is_instantiable_without_a_witness() -> None:
 
 def test_statically_known_global_scope_cannot_mint_a_runtime_witness() -> None:
     assert not hasattr(effects, "GlobalScopeRuntimeEffect")
+
+
+def test_runtime_effect_witness_refuses_absolute_workspace_identity() -> None:
+    from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+
+    with pytest.raises(FactoryPanic, match="workspace-relative source locus"):
+        RuntimeEffectWitness(
+            operation=ctor("py.runtime", []),
+            operand=make_var("operand"),
+            locus="/tmp/checkout/vendor.py:1:0",
+        )
