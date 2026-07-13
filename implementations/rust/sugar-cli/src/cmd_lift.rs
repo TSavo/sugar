@@ -8219,10 +8219,12 @@ fn format_contract_asserted_fact(
 }
 
 fn contract_inv_is_observed_fact(contract: &Value) -> bool {
-    let Some(name) = contract_value_name(contract) else {
-        return false;
-    };
-    name.ends_with("::assertion") || name.contains("::tests::")
+    let legacy_name_marks_fact = contract_value_name(contract)
+        .is_some_and(|name| name.ends_with("::assertion") || name.contains("::tests::"));
+    legacy_name_marks_fact
+        || contract_source_warrants(contract)
+            .iter()
+            .any(|warrant| warrant.get("role").and_then(Value::as_str) == Some("assertion"))
 }
 
 fn contract_source_warrant(contract: &Value) -> Option<&Value> {
@@ -13437,6 +13439,9 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "def _cmp(self, other):\n    return 0\n    assert isinstance(other, date)\n",
         )
         .expect("fixture");
+        // Real datetime.py payload shape from UniverseValue.inv_payload_rows:
+        // the assertion repeats its parent's name and is distinguished by the
+        // source warrant role, not an `::assertion` name suffix.
         let warrant = serde_json::json!({
             "kind": "source-memento", "file": "datetime.py", "role": "assertion",
             "sourceFunctionName": "date._cmp", "span": {"start_line": 3, "end_line": 3}
@@ -13456,7 +13461,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 }]
             }),
             serde_json::json!({
-                "kind": "contract", "name": "date._cmp::assertion",
+                "kind": "contract", "name": "date._cmp",
                 "inv": {"kind": "atomic", "name": "adt.is_python_type", "args": [
                     {"kind": "var", "name": "other"},
                     {"kind": "ctor", "name": "python:type:date", "args": []}
