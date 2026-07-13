@@ -4551,8 +4551,8 @@ fn resolve_report_symbol(
     formals: &BTreeSet<String>,
 ) -> String {
     const BUILTINS: &[&str] = &[
-        "abs", "bool", "bytes", "dict", "float", "int", "len", "list", "max", "min", "range",
-        "set", "str", "sum", "tuple", "type",
+        "abs", "bool", "bytes", "dict", "divmod", "float", "int", "len", "list", "max", "min",
+        "range", "set", "str", "sum", "tuple", "type",
     ];
     if kind == ReportFormulaSymbolKind::Constructor && symbol.starts_with("python:type:") {
         return "coordinate".to_string();
@@ -14305,6 +14305,16 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 &formals,
             ),
             "python:builtin/tuple"
+        );
+        assert_eq!(
+            resolve_report_symbol(
+                &report,
+                &caller,
+                "divmod",
+                ReportFormulaSymbolKind::Constructor,
+                &formals,
+            ),
+            "python:builtin/divmod"
         );
         assert_eq!(
             resolve_report_symbol(
