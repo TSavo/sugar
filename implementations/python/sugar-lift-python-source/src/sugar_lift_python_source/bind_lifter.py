@@ -1530,11 +1530,13 @@ def _decorator_contract_witnesses(
             text = keyword.value.value
             try:
                 from sugar_lift_py_tests.canonicalizer import encode_jcs
-                from sugar_lift_py_tests.decorators import _parse_expr_string
+                from sugar_lift_py_tests.contract_expression import (
+                    parse_contract_expression,
+                )
                 from sugar_lift_py_tests.ir import formula_to_value
 
                 names = [*param_names, "out"] if role == "post" else param_names
-                formula = _parse_expr_string(text, names)
+                formula = parse_contract_expression(text, names)
                 predicate = json.loads(encode_jcs(formula_to_value(formula)))
             except Exception as exc:
                 diagnostics.append(
