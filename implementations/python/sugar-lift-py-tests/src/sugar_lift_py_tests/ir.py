@@ -523,9 +523,7 @@ def subst_var_in_term(t: Term, formal: str, actual: Term) -> Term:
     if isinstance(t, _Var):
         return actual if t.name == formal else t
     if isinstance(t, _Ctor):
-        return ctor(
-            t.name, [subst_var_in_term(a, formal, actual) for a in t.args]
-        )
+        return ctor(t.name, [subst_var_in_term(a, formal, actual) for a in t.args])
     return t  # const variants are inert
 
 

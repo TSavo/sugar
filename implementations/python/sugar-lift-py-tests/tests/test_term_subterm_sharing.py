@@ -47,9 +47,7 @@ def _lift_terms(monkeypatch) -> tuple[Term, ...]:
         captured.append(_distributed_terms())
         return LiftReportPayloadDto(source_ledger={}), []
 
-    monkeypatch.setattr(
-        "sugar_lift_py_tests.lift_rpc.audit_lift_file", audit_lift_file
-    )
+    monkeypatch.setattr("sugar_lift_py_tests.lift_rpc.audit_lift_file", audit_lift_file)
     lift_file_payload("def f(): pass\n", "nested-guards.py")
     return captured[0]
 
