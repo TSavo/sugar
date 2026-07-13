@@ -35,8 +35,7 @@ def _site(source: str):
 def test_while_body_threads_into_the_record() -> None:
     """(1) Body statement contributes; test is reduced (method coordinate)."""
     block = compose_block(
-        "    while z.ready():\n"
-        "        return 1\n",
+        "    while z.ready():\n" "        return 1\n",
         binds={"z": SymbolicValue(make_var("z"))},
     )
     assert isinstance(block, BlockValue)
@@ -50,8 +49,7 @@ def test_while_body_threads_into_the_record() -> None:
 def test_while_test_coordinate_carries_when_body_returns_it() -> None:
     """(1) Test coordinate rides when the body returns the condition name."""
     block = compose_block(
-        "    while z:\n"
-        "        return z\n",
+        "    while z:\n" "        return z\n",
         binds={"z": SymbolicValue(make_var("z"))},
     )
     ret = block.statements[0]
@@ -63,13 +61,11 @@ def test_test_or_body_discriminates_the_contribution() -> None:
     """(2) Different test or body produces a different contribution/term."""
     # Different test, body returns the condition name.
     while_z = compose_block(
-        "    while z:\n"
-        "        return z\n",
+        "    while z:\n" "        return z\n",
         binds={"z": SymbolicValue(make_var("z"))},
     )
     while_w = compose_block(
-        "    while w:\n"
-        "        return w\n",
+        "    while w:\n" "        return w\n",
         binds={"w": SymbolicValue(make_var("w"))},
     )
     assert while_z.statements[0].value == SymbolicValue(make_var("z"))
@@ -78,13 +74,11 @@ def test_test_or_body_discriminates_the_contribution() -> None:
 
     # Different body with the same test shape.
     ret_one = compose_block(
-        "    while z:\n"
-        "        return 1\n",
+        "    while z:\n" "        return 1\n",
         binds={"z": SymbolicValue(make_var("z"))},
     )
     ret_two = compose_block(
-        "    while z:\n"
-        "        return 2\n",
+        "    while z:\n" "        return 2\n",
         binds={"z": SymbolicValue(make_var("z"))},
     )
     assert ret_one.statements[0].value == TermValue(1)
@@ -97,8 +91,7 @@ def test_method_test_is_reduced_before_body() -> None:
     # Body does not use the test result; reducing the test must still succeed
     # so call:ready(z) is the address a dig lands on.
     block = compose_block(
-        "    while z.ready():\n"
-        "        return 1\n",
+        "    while z.ready():\n" "        return 1\n",
         binds={"z": SymbolicValue(make_var("z"))},
     )
     assert block.statements[0].value == TermValue(1)
@@ -117,9 +110,7 @@ def test_owns_empty_orelse_while_not_for_or_else_or_expr() -> None:
     assert ForSugar.owns(_site("while y:\n    pass\n")) is False
     assert WhileSugar.owns(_site("x = 1\n")) is False
     # Non-empty else: not owned this arm.
-    assert (
-        WhileSugar.owns(_site("while y:\n    pass\nelse:\n    pass\n")) is False
-    )
+    assert WhileSugar.owns(_site("while y:\n    pass\nelse:\n    pass\n")) is False
 
     catalog = default_catalog()
     simple = _site("while y:\n    pass\n")

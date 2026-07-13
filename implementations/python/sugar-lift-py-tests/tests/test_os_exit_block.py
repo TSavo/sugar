@@ -31,9 +31,11 @@ def test_block_short_circuits_on_os_exit() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse(_SOURCE).body[0]
 
-    record = build_node(
-        node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx
-    ).sugar.desugar(ctx).value.statements
+    record = (
+        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+        .sugar.desugar(ctx)
+        .value.statements
+    )
 
     assert len(record) == 3
 

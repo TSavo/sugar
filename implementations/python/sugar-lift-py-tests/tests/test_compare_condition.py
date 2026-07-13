@@ -19,7 +19,10 @@ from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSug
 def _if(source: str):
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse(source).body[0]
-    return build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx).sugar, ctx
+    return (
+        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx).sugar,
+        ctx,
+    )
 
 
 def test_equality_condition_folds_to_true_and_takes_the_then_branch() -> None:

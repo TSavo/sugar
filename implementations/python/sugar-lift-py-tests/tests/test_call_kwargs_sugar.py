@@ -172,9 +172,7 @@ def test_kwargs_expansion_rides_a_distinct_coordinate() -> None:
         "z.m(**k)",
         binds={**binds, "z": SymbolicValue(make_var("z"))},
     )
-    assert plain.term == ctor(
-        "call:f", [ctor("kw", [str_const("**"), make_var("k")])]
-    )
+    assert plain.term == ctor("call:f", [ctor("kw", [str_const("**"), make_var("k")])])
     assert positional.term == ctor("call:f", [make_var("k")])
     assert plain.term != positional.term
     assert plain.parameters == ("**",)

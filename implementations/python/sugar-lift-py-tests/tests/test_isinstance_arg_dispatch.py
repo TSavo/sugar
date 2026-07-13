@@ -54,9 +54,7 @@ def test_builtin_type_call_emits_native_tester_atom() -> None:
     )
 
     assert isinstance(value, PredicateValue)
-    assert value.formula == _tester(
-        make_var("x"), ctor("call:type", [make_var("y")])
-    )
+    assert value.formula == _tester(make_var("x"), ctor("call:type", [make_var("y")]))
     assert "call:isinstance" not in repr(value)
 
 
@@ -99,9 +97,7 @@ def test_known_contract_call_result_emits_native_tester_atom() -> None:
 
 def test_arbitrary_call_result_type_is_a_named_runtime_effect() -> None:
     node = ast.parse("isinstance(x, factory())", mode="eval").body
-    temporal = TemporalContext.empty().bind_value(
-        "x", SymbolicValue(make_var("x"))
-    )
+    temporal = TemporalContext.empty().bind_value("x", SymbolicValue(make_var("x")))
     ctx = FactoryBuildContext(
         filename="t.py", catalog=default_catalog(), temporal=temporal
     )

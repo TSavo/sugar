@@ -6,7 +6,10 @@ from sugar_lift_py_tests.idd.lift_coverage_census import (
 )
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.idd.pandas_wall import summarize_pandas_completed_wall
-from sugar_lift_py_tests.idd.pandas_wall import PandasWallFloors, check_pandas_wall_floors
+from sugar_lift_py_tests.idd.pandas_wall import (
+    PandasWallFloors,
+    check_pandas_wall_floors,
+)
 
 
 def test_bad_twin_pre_factory_skip_is_a_typed_conservation_violation() -> None:
@@ -37,9 +40,7 @@ def test_good_twins_constructed_and_loud_parent_gap_conserve_subtree() -> None:
             row["verdict"] = "gap"
             row["status"] = "unresolved"
             row["reason"] = "loud parent refusal"
-    census = reconcile_body_owner_loci(
-        source, file="twins.py", factory_rows=rows
-    )
+    census = reconcile_body_owner_loci(source, file="twins.py", factory_rows=rows)
     by_id = {entry.locus.identity: entry.disposition for entry in census.entries}
 
     assert census.complete is True
@@ -89,16 +90,12 @@ def test_pandas_wall_counts_a_conservation_violation_as_a_gap() -> None:
     summary = summarize_pandas_completed_wall(report)
 
     assert summary.gaps_total == 1
-    assert summary.gap_templates == {
-        "Conservation|source→factory|If|classification": 1
-    }
+    assert summary.gap_templates == {"Conservation|source→factory|If|classification": 1}
 
     floors = PandasWallFloors(
         mode="complete",
         gaps_total_ceiling=99,
-        gap_template_ceilings={
-            "Conservation|source→factory|If|classification": 99
-        },
+        gap_template_ceilings={"Conservation|source→factory|If|classification": 99},
         green=summary.green,
         pre_bearing=summary.pre_bearing,
         implications=summary.implications,
@@ -113,10 +110,7 @@ def test_pandas_wall_counts_a_conservation_violation_as_a_gap() -> None:
 
 
 def test_generator_expression_registers_its_deferred_body_universe() -> None:
-    source = (
-        "def validate(tz_comps):\n"
-        "    return all(x == 0 for x in tz_comps)\n"
-    )
+    source = "def validate(tz_comps):\n" "    return all(x == 0 for x in tz_comps)\n"
     payload, _ = audit_lift_file(source, "datetime.py")
     conservation = payload.source_factory_conservation
     assert conservation is not None
@@ -126,6 +120,5 @@ def test_generator_expression_registers_its_deferred_body_universe() -> None:
     )
     assert generator.disposition is BodyOwnerDisposition.CONSTRUCTED
     assert any(
-        row.ast_kind == "GeneratorExp" and row.line == 2
-        for row in payload.factory_walk
+        row.ast_kind == "GeneratorExp" and row.line == 2 for row in payload.factory_walk
     )

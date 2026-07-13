@@ -35,12 +35,8 @@ def test_ground_interpolation_folds() -> None:
 
 def test_symbolic_interpolation_carries_the_value() -> None:
     """(2) f'x{a}' and f'x{b}' produce different terms -- value is carried."""
-    with_a = reduce_term(
-        "f'x{a}'", binds={"a": SymbolicValue(make_var("a"))}
-    )
-    with_b = reduce_term(
-        "f'x{b}'", binds={"b": SymbolicValue(make_var("b"))}
-    )
+    with_a = reduce_term("f'x{a}'", binds={"a": SymbolicValue(make_var("a"))})
+    with_b = reduce_term("f'x{b}'", binds={"b": SymbolicValue(make_var("b"))})
     assert fol(with_a) != fol(with_b)
     assert "py.fstring" in repr(with_a) or "py.format" in repr(with_a)
     # The free var rides inside the format coordinate.
@@ -73,17 +69,12 @@ def test_owns_joined_str_not_plain_str_or_binop() -> None:
     assert JoinedStrSugar.owns(_site("'a' + 'b'")) is False
 
     catalog = default_catalog()
-    cands = [
-        c.name
-        for c in catalog.candidates_for(SugarRole.TERM, _site("f'z'"))
-    ]
+    cands = [c.name for c in catalog.candidates_for(SugarRole.TERM, _site("f'z'"))]
     assert "JoinedStrSugar" in cands
 
 
 def test_format_spec_rides_in_the_coordinate() -> None:
-    result = reduce_term(
-        "f'{x:.2f}'", binds={"x": SymbolicValue(make_var("x"))}
-    )
+    result = reduce_term("f'{x:.2f}'", binds={"x": SymbolicValue(make_var("x"))})
     assert fol(result) == fol(
         ctor(
             "py.fstring",

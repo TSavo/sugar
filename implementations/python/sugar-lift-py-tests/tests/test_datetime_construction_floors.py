@@ -5,7 +5,12 @@ import builtins
 import pytest
 
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-from sugar_lift_py_tests.floor import CallSiteValue, GuardedValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    GuardedValue,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import atomic, ctor, formula_term, make_var, num, str_const
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.temporal.builtin_name_bindings import (

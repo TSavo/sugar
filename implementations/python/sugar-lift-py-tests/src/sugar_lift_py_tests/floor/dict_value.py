@@ -72,7 +72,10 @@ class DictValue(FloorValue):
                         return Complete(value)
                     if type(key) is TermValue and key.value == index.value:
                         return Complete(value)
-            from sugar_lift_py_tests.effect import KeyErrorRuntimeEffect, runtime_effect_witness
+            from sugar_lift_py_tests.effect import (
+                KeyErrorRuntimeEffect,
+                runtime_effect_witness,
+            )
 
             return Incomplete(
                 KeyErrorRuntimeEffect(
@@ -96,7 +99,10 @@ class DictValue(FloorValue):
                     return Complete(DictValue(tuple(entries)))
             entries.append((index, value))
             return Complete(DictValue(tuple(entries)))
-        from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect, runtime_effect_witness
+        from sugar_lift_py_tests.effect import (
+            SubscriptStoreRuntimeEffect,
+            runtime_effect_witness,
+        )
 
         return Incomplete(
             SubscriptStoreRuntimeEffect(

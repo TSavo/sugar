@@ -9,7 +9,6 @@ import threading
 import time
 from typing import Iterator
 
-
 LOGGER = logging.getLogger("sugar_lift_py_tests.engine")
 _HEARTBEAT_SECONDS = float(os.environ.get("SUGAR_ENGINE_HEARTBEAT_SECONDS", "5"))
 _CYCLE_THRESHOLD = int(os.environ.get("SUGAR_ENGINE_CYCLE_THRESHOLD", "8"))
@@ -37,7 +36,13 @@ def reduction_span(*, sugar: str, role: str, site: str) -> Iterator[None]:
     try:
         yield
     except BaseException as error:
-        _finish(frame, event="error", level=logging.ERROR, error_type=type(error).__name__, error=str(error))
+        _finish(
+            frame,
+            event="error",
+            level=logging.ERROR,
+            error_type=type(error).__name__,
+            error=str(error),
+        )
         raise
     else:
         _finish(frame, event="exit", level=logging.DEBUG)
@@ -107,7 +112,9 @@ def _watchdog() -> None:
         _emit_heartbeats()
 
 
-def _emit_heartbeats(*, now: float | None = None, minimum_seconds: float | None = None) -> None:
+def _emit_heartbeats(
+    *, now: float | None = None, minimum_seconds: float | None = None
+) -> None:
     now = time.monotonic() if now is None else now
     minimum = _HEARTBEAT_SECONDS if minimum_seconds is None else minimum_seconds
     with _LOCK:

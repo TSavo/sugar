@@ -127,8 +127,14 @@ def reconcile_body_owner_loci(
             if is_owner
             else None
         )
-        row = reached.get((node.lineno, node.col_offset, type(node).__name__)) if locus else None
-        this_active = active or isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        row = (
+            reached.get((node.lineno, node.col_offset, type(node).__name__))
+            if locus
+            else None
+        )
+        this_active = active or isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef)
+        )
         next_loud = loud_ancestor
         if locus is not None:
             if loud_ancestor is not None:
@@ -154,11 +160,15 @@ def reconcile_body_owner_loci(
             walk(child, this_active, next_loud)
 
     walk(tree, False, None)
-    entries.sort(key=lambda entry: (entry.locus.line, entry.locus.col, entry.locus.kind))
+    entries.sort(
+        key=lambda entry: (entry.locus.line, entry.locus.col, entry.locus.kind)
+    )
     return SourceFactoryConservation(tuple(entries))
 
 
-def _factory_row_index(rows: Sequence[Any]) -> dict[tuple[int, int, str], tuple[bool, str]]:
+def _factory_row_index(
+    rows: Sequence[Any],
+) -> dict[tuple[int, int, str], tuple[bool, str]]:
     indexed: dict[tuple[int, int, str], tuple[bool, str]] = {}
     for raw in rows:
         row: Mapping[str, Any]
@@ -181,7 +191,10 @@ def _factory_row_index(rows: Sequence[Any]) -> dict[tuple[int, int, str], tuple[
         if isinstance(line, int) and isinstance(kind, str):
             key = (line, col, kind)
             gap = row.get("verdict") == "gap"
-            indexed[key] = (gap, str(row.get("reason") or row.get("status") or "factory reached"))
+            indexed[key] = (
+                gap,
+                str(row.get("reason") or row.get("status") or "factory reached"),
+            )
     return indexed
 
 

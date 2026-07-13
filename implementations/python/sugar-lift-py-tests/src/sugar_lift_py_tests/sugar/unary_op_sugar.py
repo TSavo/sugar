@@ -61,9 +61,7 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM, comes_before=("NotOpSugar",)):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        return self.operand.reduce(ctx).and_then(
-            lambda value: self._apply(value)
-        )
+        return self.operand.reduce(ctx).and_then(lambda value: self._apply(value))
 
     def _apply(self, value) -> Outcome:
         if self.op == "Not":

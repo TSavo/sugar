@@ -20,7 +20,9 @@ _SOURCE = 'def enc(x):\n    if x == "ccc":\n        return "yyy"\n    return x\n
 
 def _function_def() -> SourceFragment:
     # module -> Block (the module suite) -> the FunctionDef site
-    return SourceFragment.from_source(_SOURCE, "vendor.py").statements()[0].statements()[0]
+    return (
+        SourceFragment.from_source(_SOURCE, "vendor.py").statements()[0].statements()[0]
+    )
 
 
 def test_a_fragment_emits_its_memento() -> None:

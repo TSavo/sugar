@@ -418,7 +418,8 @@ class ObjectValue(FloorValue):
         fix: str,
     ) -> NoReturn:
         from sugar_lift_py_tests.factory import (
-            FactoryAuditRow, factory_panic,
+            FactoryAuditRow,
+            factory_panic,
             FactoryGapInfo,
             GapKind,
             GapLocus,

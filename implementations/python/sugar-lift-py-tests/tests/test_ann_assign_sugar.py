@@ -133,8 +133,7 @@ def test_owns_ann_assign_not_plain_assign() -> None:
 
     catalog = default_catalog()
     ann = [
-        c.name
-        for c in catalog.candidates_for(SugarRole.STATEMENT, _site("x: int = 5"))
+        c.name for c in catalog.candidates_for(SugarRole.STATEMENT, _site("x: int = 5"))
     ]
     plain = [
         c.name for c in catalog.candidates_for(SugarRole.STATEMENT, _site("x = 5"))

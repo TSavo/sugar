@@ -14,8 +14,12 @@ def _events(caplog):
 def test_reduction_span_logs_nested_engine_progress(caplog) -> None:
     caplog.set_level(logging.DEBUG, logger="sugar_lift_py_tests.engine")
 
-    with engine_log.reduction_span(sugar="BlockSugar", role="statement", site="t.py:1:0"):
-        with engine_log.reduction_span(sugar="ReturnSugar", role="statement", site="t.py:2:4"):
+    with engine_log.reduction_span(
+        sugar="BlockSugar", role="statement", site="t.py:1:0"
+    ):
+        with engine_log.reduction_span(
+            sugar="ReturnSugar", role="statement", site="t.py:2:4"
+        ):
             pass
 
     events = _events(caplog)
@@ -31,7 +35,9 @@ def test_engine_heartbeat_reports_the_live_reduction_stack(caplog) -> None:
     with engine_log.reduction_span(sugar="AwaitSugar", role="term", site="t.py:3:11"):
         engine_log._emit_heartbeats(now=time.monotonic() + 1.0, minimum_seconds=0.01)
 
-    heartbeat = next(event for event in _events(caplog) if event["event"] == "heartbeat")
+    heartbeat = next(
+        event for event in _events(caplog) if event["event"] == "heartbeat"
+    )
     assert heartbeat["oldest_elapsed_ms"] >= 1000
     assert heartbeat["active_stack"] == ["AwaitSugar|term|t.py:3:11"]
 
@@ -53,7 +59,9 @@ def test_engine_live_log_is_flushed_outside_log_capture(tmp_path) -> None:
         engine_log._LIVE_HANDLER = previous
 
 
-def test_engine_log_serialization_cannot_break_deep_reduction(monkeypatch, caplog) -> None:
+def test_engine_log_serialization_cannot_break_deep_reduction(
+    monkeypatch, caplog
+) -> None:
     caplog.set_level(logging.DEBUG, logger="sugar_lift_py_tests.engine")
 
     def recursion_boundary(*args, **kwargs):

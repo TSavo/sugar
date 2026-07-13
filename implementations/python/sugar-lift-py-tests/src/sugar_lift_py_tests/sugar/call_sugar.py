@@ -62,9 +62,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             name = kw.keyword_arg_name()
             # **kwargs expansion: parameter name is "**" (not dropped).
             keyword_names.append(name if name is not None else "**")
-            keyword_bodies.append(
-                ctx.build_body(kw.keyword_value(), SugarRole.TERM)
-            )
+            keyword_bodies.append(ctx.build_body(kw.keyword_value(), SugarRole.TERM))
         return cls(
             target_name=site.call_target_name(),
             args=(*positional, *keyword_bodies),
@@ -117,17 +115,22 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             fn = resolve_call_funcdef(self.target_name, ctx)
             body = build_dig_body(fn, ctx) if fn is not None else None
             if body is None:
-                return Complete(CallSiteValue(
-                    target_name=self.target_name,
-                    arg_values=accumulated,
-                    parameters=self.keyword_names,
-                    term=ctor(
-                        f"call:{self.target_name}",
-                        [value.to_term(owner=str(self.site)) for value in accumulated],
-                    ),
-                    body=body,
-                    site=self.site,
-                ))
+                return Complete(
+                    CallSiteValue(
+                        target_name=self.target_name,
+                        arg_values=accumulated,
+                        parameters=self.keyword_names,
+                        term=ctor(
+                            f"call:{self.target_name}",
+                            [
+                                value.to_term(owner=str(self.site))
+                                for value in accumulated
+                            ],
+                        ),
+                        body=body,
+                        site=self.site,
+                    )
+                )
 
             source_term = ctor(
                 f"call:{self.target_name}",

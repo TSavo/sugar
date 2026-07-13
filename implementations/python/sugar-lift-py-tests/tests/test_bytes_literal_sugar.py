@@ -30,10 +30,7 @@ def test_bytes_literal_in_call_arg_does_not_unresolved_constant() -> None:
 
 
 def test_bytes_eq_bytes_lifts() -> None:
-    src = (
-        "def test_eq():\n"
-        "    assert b'ab' == b'ab'\n"
-    )
+    src = "def test_eq():\n" "    assert b'ab' == b'ab'\n"
     # Ground tautology may fold; if silent that's ok for tautology.
     # Prefer: at least no Constant unresolved on the walk.
     rpc = lift_file_payload(src, "t.py").to_rpc()

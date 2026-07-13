@@ -63,11 +63,16 @@ class LenCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
             from sugar_lift_py_tests.floor import SymbolicValue
             from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.outcome import Complete
+
             return self.arg.reduce(ctx).and_then(
-                lambda value: Complete(SymbolicValue(ctor(
-                    f"call:{self.external_target}",
-                    [value.to_term(owner=str(self.site))],
-                )))
+                lambda value: Complete(
+                    SymbolicValue(
+                        ctor(
+                            f"call:{self.external_target}",
+                            [value.to_term(owner=str(self.site))],
+                        )
+                    )
+                )
             )
 
         return self.arg.reduce(ctx).and_then(lambda value: self._finish(value, ctx))
@@ -88,7 +93,9 @@ class LenCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                 method_name="call_method_with",
                 operation=MethodCallOperation(),
             )
-        computed = TermValue(len(value.items)) if isinstance(value, ArrayLiteral) else None
+        computed = (
+            TermValue(len(value.items)) if isinstance(value, ArrayLiteral) else None
+        )
         if computed is None and hasattr(value, "elements"):
             computed = TermValue(len(value.elements))
         if computed is None and type(value).__name__ == "StringValue":

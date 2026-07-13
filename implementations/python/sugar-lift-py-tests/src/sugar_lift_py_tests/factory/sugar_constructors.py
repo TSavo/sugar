@@ -357,9 +357,7 @@ def _ctx_with_module_global_binds(site: SourceFragment, ctx):
         if isinstance(outcome, Incomplete):
             continue
         try:
-            complete_value(
-                outcome, owner="sugar_constructors.module_global_binds"
-            )
+            complete_value(outcome, owner="sugar_constructors.module_global_binds")
         except Exception:
             continue
         # BoundVar / ScopeRebind extend_scope so GLOBAL is visible to formals.

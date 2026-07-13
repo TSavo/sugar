@@ -44,12 +44,8 @@ def test_len_of_symbolic_is_the_call_len_coordinate() -> None:
 
 
 def test_len_coordinate_joins_assert_sentences() -> None:
-    universe = _universe(
-        "def A(z):\n    assert len(z) == 3\n    return z\n"
-    )
-    assert universe.invs() == (
-        py_eq(ctor("call:len", [make_var("z")]), num(3)),
-    )
+    universe = _universe("def A(z):\n    assert len(z) == 3\n    return z\n")
+    assert universe.invs() == (py_eq(ctor("call:len", [make_var("z")]), num(3)),)
 
 
 def test_len_of_number_panics_on_the_length_floor() -> None:

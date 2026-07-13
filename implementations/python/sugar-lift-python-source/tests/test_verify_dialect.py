@@ -585,7 +585,9 @@ def test_lift_workspace_resolves_nested_functions_sharing_a_leaf_name():
         )
         ir, _diag = lift_workspace(str(root), "contracts")
         by_fn = {
-            item["fnName"]: item for item in ir if item.get("kind") == "function-contract"
+            item["fnName"]: item
+            for item in ir
+            if item.get("kind") == "function-contract"
         }
 
     helper1 = by_fn["lib.outer1.<locals>.helper"]
@@ -767,9 +769,7 @@ def test_contracts_surface_lifts_all_functions(tmp_path):
     )
     assert fn_names == ["declared", "undeclared"]
     assert all(
-        "authoringKind" not in i
-        for i in ir
-        if i.get("kind") == "function-contract"
+        "authoringKind" not in i for i in ir if i.get("kind") == "function-contract"
     )
 
 

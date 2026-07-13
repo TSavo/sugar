@@ -33,8 +33,7 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
         # Each statement is a factory-built sugar (nesting is blocks within blocks).
         return cls(
             statements=tuple(
-                ctx.build_body(stmt, SugarRole.STATEMENT)
-                for stmt in site.statements()
+                ctx.build_body(stmt, SugarRole.STATEMENT) for stmt in site.statements()
             ),
             site=site,
         )

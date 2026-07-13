@@ -36,7 +36,10 @@ class _Server:
         self._next_id += 1
         msg_id = self._next_id
         self.proc.stdin.write(
-            json.dumps({"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params}) + "\n"
+            json.dumps(
+                {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params}
+            )
+            + "\n"
         )
         self.proc.stdin.flush()
         while True:
@@ -52,7 +55,9 @@ class _Server:
 
     def close(self) -> None:
         try:
-            self.proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 99, "method": "shutdown"}) + "\n")
+            self.proc.stdin.write(
+                json.dumps({"jsonrpc": "2.0", "id": 99, "method": "shutdown"}) + "\n"
+            )
             self.proc.stdin.flush()
         except Exception:
             pass
@@ -73,7 +78,8 @@ def test_the_dotted_path_end_to_end(tmp_path) -> None:
         assert names == ["enc", "A"]  # no duplicate enclosing-only node
 
         a_memento = next(
-            n["memento"] for n in functions
+            n["memento"]
+            for n in functions
             if n["memento"].get("source_function_name") == "A"
         )
         sites = server.call(

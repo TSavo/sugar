@@ -7,15 +7,15 @@ from __future__ import annotations
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
 _DEMO = (
-    'def enc(x):\n'
+    "def enc(x):\n"
     '    if x == "ccc":\n'
     '        return "yyy"\n'
-    '    return x\n'
-    '\n'
-    'def A(z):\n'
-    '    y = f(3)\n'
-    '    assert y == 7\n'
-    '    return z\n'
+    "    return x\n"
+    "\n"
+    "def A(z):\n"
+    "    y = f(3)\n"
+    "    assert y == 7\n"
+    "    return z\n"
 )
 
 _ENC_SELECTED = [

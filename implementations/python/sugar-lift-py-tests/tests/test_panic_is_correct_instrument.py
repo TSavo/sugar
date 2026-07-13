@@ -17,11 +17,7 @@ def test_registry_rejects_incomplete_construction_by_construction() -> None:
 def test_unimplemented_shape_refuses_loud_not_silent() -> None:
     """When factory cannot build, stated assert is refuse-loud — panic path."""
     # Nested For without ForSugar historically gaps; assert inside still stated.
-    src = (
-        "def test_loop():\n"
-        "    for x in [1]:\n"
-        "        assert x == 1\n"
-    )
+    src = "def test_loop():\n" "    for x in [1]:\n" "        assert x == 1\n"
     rpc = lift_file_payload(src, "t.py").to_rpc()
     ax = account_lift_coverage(census_source(src, file="t.py"), rpc).to_json()[
         "assertions"

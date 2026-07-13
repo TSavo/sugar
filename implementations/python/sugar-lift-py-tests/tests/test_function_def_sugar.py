@@ -34,9 +34,7 @@ def test_the_def_binds_its_parameter_and_reduces_the_body() -> None:
 
 
 def test_the_spine_runs_without_harness_binds() -> None:
-    universe = _universe(
-        "def A(z):\n    y = f(3)\n    assert y == 7\n    return z\n"
-    )
+    universe = _universe("def A(z):\n    y = f(3)\n    assert y == 7\n    return z\n")
     assert universe.invs() == (py_eq(ctor("call:f", [num(3)]), num(7)),)
     assert universe.post() == eq(make_var("out"), make_var("z"))
 

@@ -50,6 +50,5 @@ class ExprSugar(Sugar, role=SugarRole.STATEMENT):
             lambda value: value.as_expression_statement()
         )
 
-
     def walk_children(self):
         return (self.value,)

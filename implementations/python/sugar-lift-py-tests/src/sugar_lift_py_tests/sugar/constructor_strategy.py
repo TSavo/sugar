@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow, factory_panic,
+    FactoryAuditRow,
+    factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,

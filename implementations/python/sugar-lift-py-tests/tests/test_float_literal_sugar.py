@@ -35,13 +35,9 @@ def test_float_literal_builds_and_desugars_to_term_value() -> None:
     assert sugar.desugar(ctx) == Complete(TermValue(3.5))
 
 
-
-
 def test_float_less_than_folds_to_true() -> None:
     # the collapsed Number rides the ordering floor for free
-    assert isinstance(
-        _condition("if 1.5 < 2.5:\n    pass").value, TrueBoolLiteralSugar
-    )
+    assert isinstance(_condition("if 1.5 < 2.5:\n    pass").value, TrueBoolLiteralSugar)
 
 
 def test_float_equality_folds_to_true() -> None:

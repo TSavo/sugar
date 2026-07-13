@@ -117,19 +117,49 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             return outcome
 
         if not isinstance(cm, ObjectValue):
-            return cm._floor_gap(owner=type(self).__name__, blame=str(self.site), observed=type(cm).__name__, requested="context manager data-model methods", fix="construct __enter__ and __exit__")
-        class ContextManagerOperation: pass
-        ctx.record_operation(owner="WithSugar", method_name="context_manager_with", operation=ContextManagerOperation())
-        enter = cm.call_method_value("__enter__", (), owner=type(self).__name__, blame=str(self.site), ctx=ctx).value
+            return cm._floor_gap(
+                owner=type(self).__name__,
+                blame=str(self.site),
+                observed=type(cm).__name__,
+                requested="context manager data-model methods",
+                fix="construct __enter__ and __exit__",
+            )
+
+        class ContextManagerOperation:
+            pass
+
+        ctx.record_operation(
+            owner="WithSugar",
+            method_name="context_manager_with",
+            operation=ContextManagerOperation(),
+        )
+        enter = cm.call_method_value(
+            "__enter__", (), owner=type(self).__name__, blame=str(self.site), ctx=ctx
+        ).value
         entered = force_floor(enter, ctx, owner="WithSugar.__enter__")
         body_ctx = ctx
         if as_name is not None:
-            class BindValueOperation: pass
-            ctx.record_operation(owner="WithSugar", method_name="bind_with", operation=BindValueOperation())
+
+            class BindValueOperation:
+                pass
+
+            ctx.record_operation(
+                owner="WithSugar",
+                method_name="bind_with",
+                operation=BindValueOperation(),
+            )
             body_ctx = ScopeRebind(as_name, entered).extend_scope(ctx)
         outcome = self._enter_items(remaining, body_ctx)
-        exit_call = cm.call_method_value("__exit__", (entered, entered, entered), owner=type(self).__name__, blame=str(self.site), ctx=ctx).value
-        exit_value = force_floor(exit_call, ctx, owner="WithSugar.__exit__", project_callsite=False)
+        exit_call = cm.call_method_value(
+            "__exit__",
+            (entered, entered, entered),
+            owner=type(self).__name__,
+            blame=str(self.site),
+            ctx=ctx,
+        ).value
+        exit_value = force_floor(
+            exit_call, ctx, owner="WithSugar.__exit__", project_callsite=False
+        )
         if isinstance(exit_value, TermValue) and bool(exit_value.value):
             force_floor(exit_call, ctx, owner="WithSugar.__exit__")
         return outcome
@@ -139,7 +169,12 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
 
 
 def _carries_raise_effect(outcome) -> bool:
-    from sugar_lift_py_tests.floor import BlockValue, GuardedRaise, RaiseValue, RaisesWithValue
+    from sugar_lift_py_tests.floor import (
+        BlockValue,
+        GuardedRaise,
+        RaiseValue,
+        RaisesWithValue,
+    )
     from sugar_lift_py_tests.outcome import Incomplete
 
     if isinstance(outcome, Incomplete):

@@ -95,8 +95,7 @@ def test_owns_simple_lambda_not_function_def_or_defaults() -> None:
 
     catalog = default_catalog()
     names = [
-        c.name
-        for c in catalog.candidates_for(SugarRole.TERM, _site("lambda x: x"))
+        c.name for c in catalog.candidates_for(SugarRole.TERM, _site("lambda x: x"))
     ]
     assert "LambdaSugar" in names
 

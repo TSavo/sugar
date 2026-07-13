@@ -24,7 +24,6 @@ class NotOpSugar(Sugar, role=SugarRole.TERM):
         del site
         return False
 
-
     @classmethod
     def new(cls, site, ctx) -> "NotOpSugar":
         return cls(

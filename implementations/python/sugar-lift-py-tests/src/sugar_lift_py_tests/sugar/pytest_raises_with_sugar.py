@@ -104,7 +104,7 @@ class PytestRaisesWithSugar(
         prefix = (
             "import pytest\n"
             "def boom():\n"
-            "    raise ValueError(\"x\")\n"
+            '    raise ValueError("x")\n'
             "def A(z):\n"
             "    with pytest.raises(ValueError):\n"
             "        boom()\n"

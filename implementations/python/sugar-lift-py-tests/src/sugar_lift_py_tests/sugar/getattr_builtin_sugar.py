@@ -22,7 +22,13 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
 
     @classmethod
     def owns(cls, site) -> bool:
-        return site.observed == "Call" and site.call_receiver() is None and site.call_target_name() == "getattr" and site.call_arg_count() == 2 and not site.call_has_keywords()
+        return (
+            site.observed == "Call"
+            and site.call_receiver() is None
+            and site.call_target_name() == "getattr"
+            and site.call_arg_count() == 2
+            and not site.call_has_keywords()
+        )
 
     @classmethod
     def new(cls, site, ctx):
@@ -39,10 +45,17 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
     @classmethod
     def witnesses(cls):
         prefix = "class Box:\n    def __init__(self):\n        self.x = 1\n\ndef A():\n    return getattr(Box(), 'x')\n\n"
-        return _call_pair(name="getattr_builtin_return", owner_sugar=cls.__name__, truthful=prefix+"def test_a():\n    assert A() == 1\n", lying=prefix+"def test_a():\n    assert A() == 2\n")
+        return _call_pair(
+            name="getattr_builtin_return",
+            owner_sugar=cls.__name__,
+            truthful=prefix + "def test_a():\n    assert A() == 1\n",
+            lying=prefix + "def test_a():\n    assert A() == 2\n",
+        )
 
     def desugar(self, ctx=None) -> Outcome:
-        return self.receiver.reduce(ctx).and_then(lambda receiver: self._finish(receiver, ctx))
+        return self.receiver.reduce(ctx).and_then(
+            lambda receiver: self._finish(receiver, ctx)
+        )
 
     def _finish(self, receiver, ctx):
         if self.static_name is None:

@@ -15,6 +15,7 @@ def _is_suite(value) -> bool:
         and all(isinstance(item, ast.stmt) for item in value)
     )
 
+
 def _dotted_expr_name(node: ast.AST) -> str | None:
     if isinstance(node, ast.Name):
         return node.id
@@ -187,7 +188,10 @@ class SourceFragment:
         for node in ast.walk(tree):
             if isinstance(node, ast.arg) and node.annotation is not None:
                 roots.append(node.annotation)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.returns is not None:
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.returns is not None
+            ):
                 roots.append(node.returns)
             if isinstance(node, ast.AnnAssign):
                 roots.append(node.annotation)
@@ -202,15 +206,22 @@ class SourceFragment:
         every other AST child is its own fragment."""
         node = self.node
         if isinstance(node, Block):
-            return [SourceFragment.from_node(stmt, self.filename, source=self.source) for stmt in node.body]
+            return [
+                SourceFragment.from_node(stmt, self.filename, source=self.source)
+                for stmt in node.body
+            ]
         children: List[SourceFragment] = []
         for _field, value in ast.iter_fields(node):
             if _is_suite(value):
                 children.append(
-                    SourceFragment.from_node(Block.of(value), self.filename, source=self.source)
+                    SourceFragment.from_node(
+                        Block.of(value), self.filename, source=self.source
+                    )
                 )
             elif isinstance(value, ast.AST):
-                children.append(SourceFragment.from_node(value, self.filename, source=self.source))
+                children.append(
+                    SourceFragment.from_node(value, self.filename, source=self.source)
+                )
             elif isinstance(value, list):
                 children.extend(
                     SourceFragment.from_node(item, self.filename, source=self.source)
@@ -419,19 +430,31 @@ class SourceFragment:
         """Return a SourceFragment for a Slice lower bound, or None for an omitted bound."""
         self._require(ast.Slice)
         lower = self.node.lower  # type: ignore[attr-defined]
-        return None if lower is None else SourceFragment.from_node(lower, self.filename, source=self.source)
+        return (
+            None
+            if lower is None
+            else SourceFragment.from_node(lower, self.filename, source=self.source)
+        )
 
     def slice_upper(self) -> "SourceFragment | None":
         """Return a SourceFragment for a Slice upper bound, or None for an omitted bound."""
         self._require(ast.Slice)
         upper = self.node.upper  # type: ignore[attr-defined]
-        return None if upper is None else SourceFragment.from_node(upper, self.filename, source=self.source)
+        return (
+            None
+            if upper is None
+            else SourceFragment.from_node(upper, self.filename, source=self.source)
+        )
 
     def slice_step(self) -> "SourceFragment | None":
         """Return a SourceFragment for a Slice step bound, or None for an omitted bound."""
         self._require(ast.Slice)
         step = self.node.step  # type: ignore[attr-defined]
-        return None if step is None else SourceFragment.from_node(step, self.filename, source=self.source)
+        return (
+            None
+            if step is None
+            else SourceFragment.from_node(step, self.filename, source=self.source)
+        )
 
     def lambda_body(self) -> "SourceFragment":
         """Return a SourceFragment for the body expression of a Lambda."""
@@ -560,7 +583,9 @@ class SourceFragment:
 
         self._require(ast.Try, ast.TryStar)
         body = self.node.body  # type: ignore[attr-defined]
-        return SourceFragment.from_node(Block.of(body), self.filename, source=self.source)
+        return SourceFragment.from_node(
+            Block.of(body), self.filename, source=self.source
+        )
 
     def try_handlers(self) -> "list[SourceFragment]":
         """Return SourceFragments for the Try except handlers."""
@@ -591,7 +616,9 @@ class SourceFragment:
 
         self._require(ast.ExceptHandler)
         body = self.node.body  # type: ignore[attr-defined]
-        return SourceFragment.from_node(Block.of(body), self.filename, source=self.source)
+        return SourceFragment.from_node(
+            Block.of(body), self.filename, source=self.source
+        )
 
     def except_handler_type_names(self) -> "tuple[str, ...] | None":
         """Return handler exception names, or None for a bare except."""
@@ -729,7 +756,9 @@ class SourceFragment:
             (
                 arg.arg,
                 (
-                    SourceFragment.from_node(arg.annotation, self.filename, source=self.source)
+                    SourceFragment.from_node(
+                        arg.annotation, self.filename, source=self.source
+                    )
                     if arg.annotation is not None
                     else None
                 ),
@@ -920,7 +949,13 @@ class SourceFragment:
         self._require(ast.Dict)
         return [
             (
-                None if key is None else SourceFragment.from_node(key, self.filename, source=self.source),
+                (
+                    None
+                    if key is None
+                    else SourceFragment.from_node(
+                        key, self.filename, source=self.source
+                    )
+                ),
                 SourceFragment.from_node(value, self.filename, source=self.source),
             )
             for key, value in zip(self.node.keys, self.node.values)  # type: ignore[attr-defined]
@@ -1001,7 +1036,9 @@ class SourceFragment:
         spec = self.node.format_spec  # type: ignore[attr-defined]
         if spec is None:
             return None
-        return SourceFragment.from_node(spec, self.filename, source=self.source).joined_str_static_text()
+        return SourceFragment.from_node(
+            spec, self.filename, source=self.source
+        ).joined_str_static_text()
 
     def formatted_value_format_spec(self) -> "SourceFragment":
         """Return the dynamic format-spec expression of a formatted field."""
@@ -1220,7 +1257,9 @@ class SourceFragment:
         """Return the context expression for a With/AsyncWith item."""
         self._require(ast.With, ast.AsyncWith)
         item = self.node.items[index]  # type: ignore[attr-defined]
-        return SourceFragment.from_node(item.context_expr, self.filename, source=self.source)
+        return SourceFragment.from_node(
+            item.context_expr, self.filename, source=self.source
+        )
 
     def with_optional_vars_name(self, index: int = 0) -> "str | None":
         """Return the simple `as name` binding for a With/AsyncWith item, if any."""
@@ -1246,7 +1285,9 @@ class SourceFragment:
 
         self._require(ast.With, ast.AsyncWith)
         body = self.node.body  # type: ignore[attr-defined]
-        return SourceFragment.from_node(Block.of(body), self.filename, source=self.source)
+        return SourceFragment.from_node(
+            Block.of(body), self.filename, source=self.source
+        )
 
     # --- await ------------------------------------------------------------
 
@@ -1305,7 +1346,9 @@ class SourceFragment:
                 return False
             if path:
                 nested = True
-            return all(visit(item, (*path, index)) for index, item in enumerate(node.elts))
+            return all(
+                visit(item, (*path, index)) for index, item in enumerate(node.elts)
+            )
 
         if not visit(target, ()) or not nested:
             return None
@@ -1322,7 +1365,9 @@ class SourceFragment:
 
         self._require(ast.For, ast.AsyncFor)
         body = self.node.body  # type: ignore[attr-defined]
-        return SourceFragment.from_node(Block.of(body), self.filename, source=self.source)
+        return SourceFragment.from_node(
+            Block.of(body), self.filename, source=self.source
+        )
 
     def for_orelse_count(self) -> int:
         """Return the number of else statements on a For/AsyncFor node."""
@@ -1342,7 +1387,9 @@ class SourceFragment:
 
         self._require(ast.While)
         body = self.node.body  # type: ignore[attr-defined]
-        return SourceFragment.from_node(Block.of(body), self.filename, source=self.source)
+        return SourceFragment.from_node(
+            Block.of(body), self.filename, source=self.source
+        )
 
     def while_orelse_count(self) -> int:
         """Return the number of else statements on a While node."""
@@ -1374,8 +1421,7 @@ class SourceFragment:
         return frozenset(
             node.id
             for node in ast.walk(self.node)
-            if isinstance(node, ast.Name)
-            and isinstance(node.ctx, (ast.Store, ast.Del))
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
         )
 
 

@@ -14,7 +14,11 @@ def _carried_names(site) -> tuple[str, ...]:
 
     names: list[str] = []
     for node in ast.walk(site.node):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id not in names:
+        if (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Store)
+            and node.id not in names
+        ):
             names.append(node.id)
         if (
             isinstance(node, ast.Subscript)
@@ -29,7 +33,9 @@ def _carried_names(site) -> tuple[str, ...]:
 def _has_loop_control(site) -> bool:
     import ast
 
-    return any(isinstance(node, (ast.Break, ast.Continue)) for node in ast.walk(site.node))
+    return any(
+        isinstance(node, (ast.Break, ast.Continue)) for node in ast.walk(site.node)
+    )
 
 
 def _has_unclassified_mutation(site) -> bool:
@@ -41,9 +47,8 @@ def _has_unclassified_mutation(site) -> bool:
             for target in targets:
                 if isinstance(target, (ast.Name, ast.Tuple)):
                     continue
-                if (
-                    isinstance(target, ast.Subscript)
-                    and isinstance(target.value, ast.Name)
+                if isinstance(target, ast.Subscript) and isinstance(
+                    target.value, ast.Name
                 ):
                     continue
                 return True
@@ -114,12 +119,20 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
         if not self.curried:
             return self.test.reduce(ctx).and_then(lambda _test: self.body.reduce(ctx))
         from sugar_lift_py_tests.factory import factory_panic_gap
-        from sugar_lift_py_tests.floor import CurriedLoopBody, CurriedLoopScope, FunctionCallable
-        from sugar_lift_py_tests.sugar.install_source_dig import _contextualized_dig_body
+        from sugar_lift_py_tests.floor import (
+            CurriedLoopBody,
+            CurriedLoopScope,
+            FunctionCallable,
+        )
+        from sugar_lift_py_tests.sugar.install_source_dig import (
+            _contextualized_dig_body,
+        )
 
         if self.unclassified_mutation:
             factory_panic_gap(
-                owner="WhileSugar", blame=str(self.site), observed="nonlocal mutation",
+                owner="WhileSugar",
+                blame=str(self.site),
+                observed="nonlocal mutation",
                 requested="classifiable loop-carried local state",
                 fix="rewrite attribute or subscript mutation as explicit carried locals",
             )
@@ -127,7 +140,9 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
         values = tuple(ctx.temporal.value_if_bound(name) for name in self.carried)
         if any(value is None for value in values):
             factory_panic_gap(
-                owner="WhileSugar", blame=str(self.site), observed=self.carried,
+                owner="WhileSugar",
+                blame=str(self.site),
+                observed=self.carried,
                 requested="statically bound loop-carried locals",
                 fix="bind every carried local before currying the loop",
             )
@@ -139,8 +154,10 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
             ctx,
         )
         callable_value = FunctionCallable(
-            name=name, parameters=self.carried,
-            parameter_kinds=("positional",) * len(self.carried), body=body,
+            name=name,
+            parameters=self.carried,
+            parameter_kinds=("positional",) * len(self.carried),
+            body=body,
         )
         callsite = callable_value.callsite(values, (), self.site).value
         return Complete(CurriedLoopScope(callsite, self.carried))

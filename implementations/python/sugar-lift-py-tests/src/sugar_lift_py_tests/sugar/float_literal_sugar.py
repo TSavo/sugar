@@ -21,8 +21,7 @@ class FloatLiteralSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, site) -> bool:
         return (
-            site.observed == "PrimitiveLiteral"
-            and type(site.literal_value()) is float
+            site.observed == "PrimitiveLiteral" and type(site.literal_value()) is float
         )
 
     @classmethod

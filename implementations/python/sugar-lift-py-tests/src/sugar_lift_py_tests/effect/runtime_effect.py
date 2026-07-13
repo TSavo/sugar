@@ -48,7 +48,8 @@ def runtime_effect_witness(operation: str, operand, locus) -> RuntimeEffectWitne
 class RuntimeEffect:
     """A runtime effect: a value that does not exist until the program runs. Abstract --
     never constructed directly. The KIND of runtime effect is a TYPE, so you build a
-    named subclass (OSExitRuntimeEffect, ...); a generic RuntimeEffect does not exist."""
+    named subclass (OSExitRuntimeEffect, ...); a generic RuntimeEffect does not exist.
+    """
 
     reason: str
     witness: RuntimeEffectWitness

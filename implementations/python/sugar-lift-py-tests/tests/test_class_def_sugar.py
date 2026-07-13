@@ -52,11 +52,7 @@ def _class_value(source: str, *, binds: dict | None = None) -> ClassValue:
 
 def test_class_body_method_threads_into_the_record() -> None:
     """(1) Method FunctionDef in the body becomes a deferred callable."""
-    cls = _class_value(
-        "class C:\n"
-        "    def m(self):\n"
-        "        return 1\n"
-    )
+    cls = _class_value("class C:\n" "    def m(self):\n" "        return 1\n")
     assert cls.name == "C"
     assert cls.bases == ()
     # Body contribution is the method callable.
@@ -70,8 +66,7 @@ def test_class_body_method_threads_into_the_record() -> None:
 def test_class_bases_are_carried_as_coordinates() -> None:
     """(1) Bases reduce to type coordinates (not dropped)."""
     cls = _class_value(
-        "class C(Base):\n"
-        "    pass\n",
+        "class C(Base):\n" "    pass\n",
         binds={"Base": SymbolicValue(make_var("Base"))},
     )
     assert cls.name == "C"
@@ -83,28 +78,18 @@ def test_class_bases_are_carried_as_coordinates() -> None:
 def test_base_or_body_discriminates() -> None:
     """(2) Different base or body method produces a different contribution."""
     with_base_a = _class_value(
-        "class C(A):\n"
-        "    pass\n",
+        "class C(A):\n" "    pass\n",
         binds={"A": SymbolicValue(make_var("A"))},
     )
     with_base_b = _class_value(
-        "class C(B):\n"
-        "    pass\n",
+        "class C(B):\n" "    pass\n",
         binds={"B": SymbolicValue(make_var("B"))},
     )
     assert with_base_a.bases[0] != with_base_b.bases[0]
     assert with_base_a.base_terms() != with_base_b.base_terms()
 
-    with_m = _class_value(
-        "class C:\n"
-        "    def m(self):\n"
-        "        return 1\n"
-    )
-    with_n = _class_value(
-        "class C:\n"
-        "    def n(self):\n"
-        "        return 1\n"
-    )
+    with_m = _class_value("class C:\n" "    def m(self):\n" "        return 1\n")
+    with_n = _class_value("class C:\n" "    def n(self):\n" "        return 1\n")
     assert with_m.contribution()[0].name == "m"
     assert with_n.contribution()[0].name == "n"
     assert with_m.contribution()[0].name != with_n.contribution()[0].name
@@ -113,9 +98,7 @@ def test_base_or_body_discriminates() -> None:
 def test_class_binds_name_for_later_reference() -> None:
     """Class statement extends scope so a later name resolves to ClassValue."""
     block = compose_block(
-        "    class C:\n"
-        "        pass\n"
-        "    return C\n",
+        "    class C:\n" "        pass\n" "    return C\n",
     )
     assert isinstance(block, BlockValue)
     # Class body is empty (pass is support); return resolves C.

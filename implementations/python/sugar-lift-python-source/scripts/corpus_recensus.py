@@ -12,7 +12,14 @@ from sugar_lift_python_source.lifter import lift_source
 
 PACKAGES = ("numpy", "pandas")
 
-DATACLASS_FAMILY_NAMES = {"dataclass", "dataclasses.dataclass", "attr.s", "attrs.define", "attr.attrs", "attrs.frozen"}
+DATACLASS_FAMILY_NAMES = {
+    "dataclass",
+    "dataclasses.dataclass",
+    "attr.s",
+    "attrs.define",
+    "attr.attrs",
+    "attrs.frozen",
+}
 CACHE_FAMILY_NAMES = {"lru_cache", "functools.lru_cache", "cache", "functools.cache"}
 
 
@@ -48,7 +55,12 @@ def bucket_subscript_base(base_text: str) -> str:
     if tail in {"list", "dict", "tuple", "set", "frozenset", "type"}:
         return "builtin-generic[...]()"
     if root.startswith(("typing.", "t.")) or tail in {
-        "Callable", "Optional", "Union", "Sequence", "Mapping", "TypeVar",
+        "Callable",
+        "Optional",
+        "Union",
+        "Sequence",
+        "Mapping",
+        "TypeVar",
     }:
         return "typing.*[...]()"
     return "dynamic-subscript-dispatch(genuine-runtime-lookup)"
@@ -122,7 +134,9 @@ def main() -> None:
                     if isinstance(line, int):
                         base = find_subscript_call_at_line(root, rel, line)
                     if base is None:
-                        subscript_shape_counts["unresolved(could-not-relocate-node)"] += 1
+                        subscript_shape_counts[
+                            "unresolved(could-not-relocate-node)"
+                        ] += 1
                     else:
                         subscript_shape_counts[bucket_subscript_base(base)] += 1
 

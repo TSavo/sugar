@@ -61,5 +61,7 @@ def mint_recovered_frontier(
         raise RuntimeError(f"{label} frontier artifact lacks recovery override")
     for field in ("panics", "suppressedDescendants", "effects"):
         if not isinstance(payload.get(field), list):
-            raise RuntimeError(f"{label} frontier artifact field `{field}` must be a list")
+            raise RuntimeError(
+                f"{label} frontier artifact field `{field}` must be a list"
+            )
     return payload

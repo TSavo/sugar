@@ -26,7 +26,10 @@ class SubscriptAugAssignSugar(Sugar, role=SugarRole.STATEMENT):
         if site.observed != "AugAssign" or site.aug_assign_op() != "Add":
             return False
         target = site.aug_assign_target()
-        return target.observed == "Subscript" and target.subscript_index().observed != "Slice"
+        return (
+            target.observed == "Subscript"
+            and target.subscript_index().observed != "Slice"
+        )
 
     @classmethod
     def new(cls, site, ctx) -> "SubscriptAugAssignSugar":
@@ -56,9 +59,9 @@ class SubscriptAugAssignSugar(Sugar, role=SugarRole.STATEMENT):
                 lambda index: receiver.subscript(index, self.site).and_then(
                     lambda old: self.value.reduce(ctx).and_then(
                         lambda value: old.add(value, self.site).and_then(
-                            lambda updated: receiver.setitem(index, updated, self.site).and_then(
-                                self._cite_update
-                            )
+                            lambda updated: receiver.setitem(
+                                index, updated, self.site
+                            ).and_then(self._cite_update)
                         )
                     )
                 )

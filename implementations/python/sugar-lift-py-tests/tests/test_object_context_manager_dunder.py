@@ -138,7 +138,11 @@ def t():
 
     assert isinstance(block, BlockValue)
     assert block.statements == (ReturnValue(TermValue(20)),)
-    assert ("WithSugar", "context_manager_with", "ContextManagerOperation") in operation_log
+    assert (
+        "WithSugar",
+        "context_manager_with",
+        "ContextManagerOperation",
+    ) in operation_log
 
 
 def test_multi_item_with_enters_left_to_right_and_exits_right_to_left() -> None:

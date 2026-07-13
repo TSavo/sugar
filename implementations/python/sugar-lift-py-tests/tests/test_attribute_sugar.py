@@ -17,9 +17,7 @@ from sugar_lift_py_tests.ir import ctor, make_var, num, py_eq
 
 
 def test_attribute_reduces_to_call_attr_coordinate() -> None:
-    value = reduce_value(
-        "arr.shape", binds={"arr": SymbolicValue(make_var("arr"))}
-    )
+    value = reduce_value("arr.shape", binds={"arr": SymbolicValue(make_var("arr"))})
     assert isinstance(value, CallSiteValue)
     assert value.term == ctor("call:shape", [make_var("arr")])
     assert value.target_name == "shape"
@@ -31,9 +29,7 @@ def test_nested_attribute_is_nested_coordinate() -> None:
         "arr.shape.dtype", binds={"arr": SymbolicValue(make_var("arr"))}
     )
     assert isinstance(value, CallSiteValue)
-    assert value.term == ctor(
-        "call:dtype", [ctor("call:shape", [make_var("arr")])]
-    )
+    assert value.term == ctor("call:dtype", [ctor("call:shape", [make_var("arr")])])
 
 
 def test_assert_on_an_attribute_states_the_dig_coordinate() -> None:

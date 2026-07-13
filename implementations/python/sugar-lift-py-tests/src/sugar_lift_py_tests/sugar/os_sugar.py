@@ -24,17 +24,14 @@ class OsSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def owns(cls, site) -> bool:
         return (
-            site.observed == "Call"
-            and site.call_qualified_target_name() == "os.exit"
+            site.observed == "Call" and site.call_qualified_target_name() == "os.exit"
         )
 
     @classmethod
     def new(cls, site, ctx) -> "OsSugar":
         # The arguments are factory-built (audited), never reduced here.
         return cls(
-            args=tuple(
-                ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()
-            ),
+            args=tuple(ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()),
             site=site,
         )
 

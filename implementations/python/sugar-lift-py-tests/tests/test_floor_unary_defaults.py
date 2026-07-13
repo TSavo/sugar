@@ -18,7 +18,6 @@ from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
-
 # -- anti-hard-crash teeth: FactoryPanic, never AttributeError --------------
 
 
@@ -51,7 +50,9 @@ def test_not_true_as_expression_statement_does_not_attribute_error() -> None:
     # compose_block threads the expression statement then returns.
     block = compose_block("    not True\n    return 1\n")
     assert isinstance(block, BlockValue)
-    assert any(isinstance(s, ReturnValue) and s.value == TermValue(1) for s in block.statements)
+    assert any(
+        isinstance(s, ReturnValue) and s.value == TermValue(1) for s in block.statements
+    )
 
 
 def test_audit_door_holds_unary_on_bool_as_floor_gap() -> None:
@@ -69,7 +70,9 @@ def test_audit_door_holds_unary_on_bool_as_floor_gap() -> None:
         for g in gaps
     ) or any(g.info.get("gap_kind") == "Floor" for g in gaps), [g.info for g in gaps]
     # The def panicked -- no function-contract row; the gap is the signal.
-    assert not any(getattr(row, "kind", None) == "function-contract" for row in payload.ir)
+    assert not any(
+        getattr(row, "kind", None) == "function-contract" for row in payload.ir
+    )
 
 
 # -- do not regress ground folds -------------------------------------------

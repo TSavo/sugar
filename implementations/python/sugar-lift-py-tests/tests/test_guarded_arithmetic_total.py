@@ -52,7 +52,14 @@ def test_guarded_unary_minus_distributes_to_both_faces() -> None:
 
 def test_guarded_value_declares_full_arithmetic_surface() -> None:
     expected = {
-        "add", "subtract", "multiply", "divide", "floor_divide", "modulo",
-        "left_shift", "right_shift", "unary_minus",
+        "add",
+        "subtract",
+        "multiply",
+        "divide",
+        "floor_divide",
+        "modulo",
+        "left_shift",
+        "right_shift",
+        "unary_minus",
     }
     assert expected <= GuardedValue.__dict__.keys()

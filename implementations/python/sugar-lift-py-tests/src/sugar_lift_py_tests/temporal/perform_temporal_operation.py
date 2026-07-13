@@ -9,7 +9,8 @@ _DECLARED_OPERATION_MODULE = "sugar_lift_py_tests.temporal."
 
 def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow, factory_panic,
+        FactoryAuditRow,
+        factory_panic,
         FactoryGapInfo,
         GapKind,
         GapLocus,
@@ -57,7 +58,8 @@ def _missing_temporal_floor_gap(
     method_name: str,
 ):
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow, factory_panic,
+        FactoryAuditRow,
+        factory_panic,
         FactoryGapInfo,
         GapKind,
         GapLocus,
@@ -109,7 +111,8 @@ def perform_temporal_operation(
                 method_name=method_name,
             )
         from sugar_lift_py_tests.factory import (
-            FactoryAuditRow, factory_panic,
+            FactoryAuditRow,
+            factory_panic,
             FactoryGapInfo,
             GapKind,
             GapLocus,

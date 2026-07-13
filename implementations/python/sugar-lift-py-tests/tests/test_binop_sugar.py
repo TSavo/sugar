@@ -177,9 +177,7 @@ def test_large_tuple_repetition_carries_the_concrete_count_witness():
     assert type(outcome.effect).__name__ == "SequenceRepetitionRuntimeEffect"
     assert outcome.effect.witness is not None
     assert outcome.effect.witness.operand == num(65521)
-    assert outcome.effect.witness.operation == ctor(
-        "py.sequence_repeat", [num(65521)]
-    )
+    assert outcome.effect.witness.operation == ctor("py.sequence_repeat", [num(65521)])
     assert operation_log == []
 
 

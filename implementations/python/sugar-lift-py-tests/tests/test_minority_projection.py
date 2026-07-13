@@ -10,15 +10,15 @@ from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
 _DEMO = (
-    'def enc(x):\n'
+    "def enc(x):\n"
     '    if x == "ccc":\n'
     '        return "yyy"\n'
-    '    return x\n'
-    '\n'
-    'def A(z):\n'
-    '    y = f(3)\n'
-    '    assert y == 7\n'
-    '    return z\n'
+    "    return x\n"
+    "\n"
+    "def A(z):\n"
+    "    y = f(3)\n"
+    "    assert y == 7\n"
+    "    return z\n"
 )
 
 
@@ -46,10 +46,7 @@ def test_no_testimony_all_bodies_are_minority() -> None:
 
 
 def test_testimony_digs_enc_out_of_the_minority() -> None:
-    source = _DEMO + (
-        '\ndef test_enc():\n'
-        '    assert enc("ccc") == "yyy"\n'
-    )
+    source = _DEMO + ("\ndef test_enc():\n" '    assert enc("ccc") == "yyy"\n')
     cov, payload = _coverage(source)
     m = cov.to_json()["minority"]
     assert m["present"] == 2

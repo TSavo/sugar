@@ -100,9 +100,7 @@ class DictCompSugar(Sugar, role=SugarRole.TERM):
         return reduce_clauses(
             self.clauses,
             ctx,
-            lambda bound_ctx, generator_args: self.key_body.reduce(
-                bound_ctx
-            ).and_then(
+            lambda bound_ctx, generator_args: self.key_body.reduce(bound_ctx).and_then(
                 lambda key: self.value_body.reduce(bound_ctx).and_then(
                     lambda value: Complete(
                         ComprehensionValue(

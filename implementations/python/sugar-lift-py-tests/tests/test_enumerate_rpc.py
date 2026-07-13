@@ -18,14 +18,14 @@ import pytest
 
 from sugar_lift_py_tests import lift_rpc
 
-FIXTURE_SOURCE = '''\
+FIXTURE_SOURCE = """\
 def add(a, b):
     return a + b
 
 
 def test_add():
     assert add(2, 3) == 5
-'''
+"""
 
 
 @pytest.fixture()
@@ -88,9 +88,8 @@ def test_functions_finds_both_the_contract_owner_and_the_enclosing_test(
 def test_call_sites_scoped_to_enclosing_function(project: Path) -> None:
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
     functions = {
-        n["memento"].get("function_name") or n["memento"].get("source_function_name"): n[
-            "memento"
-        ]
+        n["memento"].get("function_name")
+        or n["memento"].get("source_function_name"): n["memento"]
         for n in _enumerate("functions", project, at=file_memento)["nodes"]
     }
     add_call_sites = _enumerate("call_sites", project, at=functions["add"])["nodes"]
@@ -105,9 +104,8 @@ def test_call_sites_scoped_to_enclosing_function(project: Path) -> None:
 def test_assertions_and_facts_carry_the_fol(project: Path) -> None:
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
     functions = {
-        n["memento"].get("function_name") or n["memento"].get("source_function_name"): n[
-            "memento"
-        ]
+        n["memento"].get("function_name")
+        or n["memento"].get("source_function_name"): n["memento"]
         for n in _enumerate("functions", project, at=file_memento)["nodes"]
     }
     call_sites = _enumerate("call_sites", project, at=functions["test_add"])["nodes"]
@@ -130,7 +128,11 @@ def test_assertions_and_facts_carry_the_fol(project: Path) -> None:
     assert call_ctor["kind"] == "ctor"
     assert call_ctor["name"] == "call:add"
     literal = formula["args"][1]
-    assert literal == {"kind": "const", "value": 5, "sort": {"kind": "primitive", "name": "Int"}}
+    assert literal == {
+        "kind": "const",
+        "value": 5,
+        "sort": {"kind": "primitive", "name": "Int"},
+    }
 
 
 def test_facts_seek_is_idempotent(project: Path) -> None:
@@ -139,14 +141,13 @@ def test_facts_seek_is_idempotent(project: Path) -> None:
     byte-identical node."""
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
     functions = {
-        n["memento"].get("function_name") or n["memento"].get("source_function_name"): n[
-            "memento"
-        ]
+        n["memento"].get("function_name")
+        or n["memento"].get("source_function_name"): n["memento"]
         for n in _enumerate("functions", project, at=file_memento)["nodes"]
     }
-    call_site_memento = _enumerate(
-        "call_sites", project, at=functions["test_add"]
-    )["nodes"][0]["memento"]
+    call_site_memento = _enumerate("call_sites", project, at=functions["test_add"])[
+        "nodes"
+    ][0]["memento"]
     assertion_memento = _enumerate(
         "assertions", project, at=call_site_memento, seek=True
     )["nodes"][0]["memento"]
@@ -212,7 +213,9 @@ def test_enumerate_refuses_path_traversal(project) -> None:
     the workspace root is refused as a gap, never lifted."""
     outside = project.parent / "outside_secret.py"
     outside.write_text("def f():\n    assert 1 == 1\n", encoding="utf-8")
-    response = _enumerate_raw("call_sites", project, at={"file": "../outside_secret.py"})
+    response = _enumerate_raw(
+        "call_sites", project, at={"file": "../outside_secret.py"}
+    )
     assert "error" not in response, response
     result = response["result"]
     assert result["nodes"] == []
@@ -246,14 +249,13 @@ def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
     """CallSite-style seek: call:add → mathy::add::callable universe."""
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
     functions = {
-        n["memento"].get("function_name") or n["memento"].get("source_function_name"): n[
-            "memento"
-        ]
+        n["memento"].get("function_name")
+        or n["memento"].get("source_function_name"): n["memento"]
         for n in _enumerate("functions", project, at=file_memento)["nodes"]
     }
-    call_site_memento = _enumerate(
-        "call_sites", project, at=functions["test_add"]
-    )["nodes"][0]["memento"]
+    call_site_memento = _enumerate("call_sites", project, at=functions["test_add"])[
+        "nodes"
+    ][0]["memento"]
     result = _enumerate("universe", project, at=call_site_memento, seek=True)
     assert len(result["nodes"]) == 1
     node = result["nodes"][0]

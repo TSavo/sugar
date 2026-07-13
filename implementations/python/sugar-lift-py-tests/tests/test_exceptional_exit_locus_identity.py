@@ -38,15 +38,15 @@ def test_exceptional_exit_refuses_an_absolute_uncanonicalized_locus() -> None:
     filename = "/tmp/build/vendor/pkg/module.py"
     ctx = FactoryBuildContext(filename=filename, catalog=default_catalog())
     site = SourceFragment.from_source(source, filename).statements()[0]
-    sugar = build_node(
-        site, filename=filename, role=SugarRole.STATEMENT, ctx=ctx
-    ).sugar
+    sugar = build_node(site, filename=filename, role=SugarRole.STATEMENT, ctx=ctx).sugar
 
     with pytest.raises(FactoryPanic, match="workspace-relative source locus"):
         sugar.desugar(ctx)
 
 
-def test_same_source_under_two_workspaces_has_identical_contract_identity(tmp_path) -> None:
+def test_same_source_under_two_workspaces_has_identical_contract_identity(
+    tmp_path,
+) -> None:
     source = "def stop():\n    raise TypeError('bad')\n"
     relative = "vendor/pkg/module.py"
     payloads = []

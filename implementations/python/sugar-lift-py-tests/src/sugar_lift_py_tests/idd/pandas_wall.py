@@ -307,9 +307,7 @@ def _completed_wall_gap_rows(
                             "owner": "source→factory",
                             "observed": violation.get("astKind", "unknown"),
                             "requested": "classification",
-                            "reason": violation.get(
-                                "reason", "conservation violation"
-                            ),
+                            "reason": violation.get("reason", "conservation violation"),
                         }
                     )
     return tuple(rows)

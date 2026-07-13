@@ -10,9 +10,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class IsinstanceCallSugar(
-    Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)
-):
+class IsinstanceCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
     """The vendor call ``isinstance(value, builtin_type)``.
 
     This sugar recognizes the vendor's runtime type predicate. It never

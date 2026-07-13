@@ -124,11 +124,7 @@ def test_attribute_on_self_dig_resolves_scope_rebind() -> None:
 
 def test_attribute_on_self_unbound_stays_coordinate_not_invent() -> None:
     """return self.n with no prior assign → coordinate / opaque dig (lawful)."""
-    src = (
-        "class Box:\n"
-        "    def get(self):\n"
-        "        return self.n\n"
-    )
+    src = "class Box:\n" "    def get(self):\n" "        return self.n\n"
     box = CallSiteValue(
         target_name="Box",
         arg_values=(),
@@ -137,9 +133,7 @@ def test_attribute_on_self_unbound_stays_coordinate_not_invent() -> None:
         body=None,
         site=None,
     )
-    dug, csv, ctx = _dig_method(
-        src, class_name="Box", method="get", self_floor=box
-    )
+    dug, csv, ctx = _dig_method(src, class_name="Box", method="get", self_floor=box)
     # No ScopeRebind → dig of call:n(self) has no body → opaque None.
     assert dug is None
     # Body reduce still completes as coordinate CallSiteValue (not panic invent).
@@ -156,11 +150,7 @@ def test_attribute_on_self_unbound_stays_coordinate_not_invent() -> None:
 
 def test_object_value_field_attribute_resolves() -> None:
     """ObjectValue.fields resolve via AttributeSugar (interface field table)."""
-    src = (
-        "class Box:\n"
-        "    def get(self):\n"
-        "        return self.n\n"
-    )
+    src = "class Box:\n" "    def get(self):\n" "        return self.n\n"
     obj = ObjectValue(
         class_name="Box",
         fields=(ObjectField(name="n", value=TermValue(9)),),
@@ -296,9 +286,7 @@ def test_signer_nested_get_signature_body_attaches_systemic() -> None:
     ), captured
 
     # Direct resolve of nested method is install-source class method (systemic).
-    fn_gs = resolve_install_source_class_method(
-        "itsdangerous.Signer", "get_signature"
-    )
+    fn_gs = resolve_install_source_class_method("itsdangerous.Signer", "get_signature")
     assert fn_gs is not None
     assert method_body_is_attachable(fn_gs)
 

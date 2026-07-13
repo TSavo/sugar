@@ -105,9 +105,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             if isinstance(false_outcome, Incomplete):
                 return false_outcome.guarded(not_(value.guard))
             return Complete(
-                GuardedValue(
-                    value.guard, true_outcome.value, false_outcome.value
-                )
+                GuardedValue(value.guard, true_outcome.value, false_outcome.value)
             )
         return self._collect(remaining, (*accumulated, value), ctx)
 
@@ -130,8 +128,11 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                 and isinstance(source_values[0], ObjectValue)
             ):
                 return source_values[0].call_method_value(
-                    "__index__", (), owner=type(self).__name__,
-                    blame=str(self.site), ctx=ctx,
+                    "__index__",
+                    (),
+                    owner=type(self).__name__,
+                    blame=str(self.site),
+                    ctx=ctx,
                 )
             numpy_value = _numpy_literal_call(source_name, source_values)
             if numpy_value is not None:
@@ -182,9 +183,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             )
         head, *rest = remaining
         return head.reduce(ctx).and_then(
-            lambda value: self._collect_value(
-                tuple(rest), accumulated, value, ctx
-            )
+            lambda value: self._collect_value(tuple(rest), accumulated, value, ctx)
         )
 
     def walk_children(self):

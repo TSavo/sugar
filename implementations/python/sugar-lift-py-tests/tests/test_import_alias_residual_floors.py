@@ -112,9 +112,7 @@ def test_python_source_constant_digs_and_constructs_through_floor_op(
 def test_python_source_dig_gap_panics_instead_of_becoming_effect(
     tmp_path, monkeypatch
 ) -> None:
-    (tmp_path / "gapped_import.py").write_text(
-        "VALUE = lambda *, x: x\n"
-    )
+    (tmp_path / "gapped_import.py").write_text("VALUE = lambda *, x: x\n")
     monkeypatch.syspath_prepend(str(tmp_path))
     importlib.invalidate_caches()
     ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())

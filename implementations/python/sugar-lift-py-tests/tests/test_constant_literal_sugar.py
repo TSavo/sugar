@@ -38,9 +38,7 @@ def test_fractional_complex_parts_preserve_real_terms() -> None:
     sugar, ctx = _build(ast.Constant(value=complex(1.5, -2.25)))
 
     assert sugar.desugar(ctx) == Complete(
-        SymbolicValue(
-            ctor("py.complex", [real_lit("1.5"), real_lit("-2.25")])
-        )
+        SymbolicValue(ctor("py.complex", [real_lit("1.5"), real_lit("-2.25")]))
     )
 
 

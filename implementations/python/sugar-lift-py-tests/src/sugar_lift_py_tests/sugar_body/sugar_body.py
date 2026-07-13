@@ -59,7 +59,9 @@ class SugarBody(Generic[ReductionT_co]):
         site = (
             self.audit_row.blame
             if self.audit_row is not None
-            else str(getattr(self.sugar, "site", getattr(self.sugar, "blame", "<unknown>")))
+            else str(
+                getattr(self.sugar, "site", getattr(self.sugar, "blame", "<unknown>"))
+            )
         )
         with reduction_span(
             sugar=type(self.sugar).__name__,

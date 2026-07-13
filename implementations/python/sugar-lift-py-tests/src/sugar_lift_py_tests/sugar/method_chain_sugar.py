@@ -90,9 +90,7 @@ class MethodChainSugar(
     @classmethod
     def witnesses(cls):
         prefix = (
-            "def A(z):\n"
-            "    sideways = z.replace().utcoffset()\n"
-            "    return 1\n\n"
+            "def A(z):\n" "    sideways = z.replace().utcoffset()\n" "    return 1\n\n"
         )
         return _call_pair(
             name="method_chain_linear_temporal",

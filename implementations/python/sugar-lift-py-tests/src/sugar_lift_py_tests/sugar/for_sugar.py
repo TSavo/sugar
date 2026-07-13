@@ -72,11 +72,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     def witnesses(cls):
         # Loop body return face: truthful rides 1, lying asserts 0.
         prefix = (
-            "def A(z):\n"
-            "    for x in z:\n"
-            "        return 1\n"
-            "    return 0\n"
-            "\n"
+            "def A(z):\n" "    for x in z:\n" "        return 1\n" "    return 0\n" "\n"
         )
         return _call_pair(
             name="for_return",
@@ -105,9 +101,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             return Complete(BlockValue((*entries, *bindings)))
         head, *rest = remaining
         return head.reduce(ctx).and_then(
-            lambda element: self._unfold_iteration(
-                element, tuple(rest), ctx, entries
-            )
+            lambda element: self._unfold_iteration(element, tuple(rest), ctx, entries)
         )
 
     def _unfold_iteration(self, element, remaining, ctx, entries):
@@ -139,19 +133,29 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         )
         body_ctx = ScopeRebind(self.target_name, elem).extend_scope(ctx)
         if self.curried:
-            from sugar_lift_py_tests.floor import CurriedLoopBody, CurriedLoopScope, FunctionCallable
-            from sugar_lift_py_tests.sugar.install_source_dig import _contextualized_dig_body
+            from sugar_lift_py_tests.floor import (
+                CurriedLoopBody,
+                CurriedLoopScope,
+                FunctionCallable,
+            )
+            from sugar_lift_py_tests.sugar.install_source_dig import (
+                _contextualized_dig_body,
+            )
 
             if self.unclassified_mutation:
                 from sugar_lift_py_tests.factory import factory_panic_gap
 
                 factory_panic_gap(
-                    owner="ForSugar", blame=str(self.site), observed="nonlocal mutation",
+                    owner="ForSugar",
+                    blame=str(self.site),
+                    observed="nonlocal mutation",
                     requested="classifiable loop-carried local state",
                     fix="rewrite attribute or subscript mutation as explicit carried locals",
                 )
 
-            values = tuple(body_ctx.temporal.value_if_bound(name) for name in self.carried)
+            values = tuple(
+                body_ctx.temporal.value_if_bound(name) for name in self.carried
+            )
             if all(value is not None for value in values):
                 name = f"loop:{self.site}"
                 body = _contextualized_dig_body(
@@ -162,8 +166,10 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
                     body_ctx,
                 )
                 callable_value = FunctionCallable(
-                    name=name, parameters=self.carried,
-                    parameter_kinds=("positional",) * len(self.carried), body=body,
+                    name=name,
+                    parameters=self.carried,
+                    parameter_kinds=("positional",) * len(self.carried),
+                    body=body,
                 )
                 callsite = callable_value.callsite(values, (), self.site).value
                 return Complete(CurriedLoopScope(callsite, self.carried))
@@ -192,10 +198,17 @@ def _static_iterable_elements(iterable_site, ctx, loop_site):
 
     node = iterable_site.node
     values = None
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "range":
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "range"
+    ):
         if node.keywords or not 1 <= len(node.args) <= 3:
             return None
-        if not all(isinstance(arg, ast.Constant) and type(arg.value) is int for arg in node.args):
+        if not all(
+            isinstance(arg, ast.Constant) and type(arg.value) is int
+            for arg in node.args
+        ):
             return None
         values = tuple(range(*(arg.value for arg in node.args)))
     elif isinstance(node, (ast.Tuple, ast.List)):
@@ -215,9 +228,11 @@ def _static_iterable_elements(iterable_site, ctx, loop_site):
         )
     return tuple(
         ctx.build_body(
-            ast.copy_location(ast.Constant(value=value), node)
-            if not isinstance(value, ast.AST)
-            else value,
+            (
+                ast.copy_location(ast.Constant(value=value), node)
+                if not isinstance(value, ast.AST)
+                else value
+            ),
             SugarRole.TERM,
         )
         for value in values

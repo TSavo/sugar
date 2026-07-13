@@ -109,8 +109,7 @@ def test_owns_supported_list_comprehension_clauses() -> None:
 
     catalog = default_catalog()
     single = [
-        c.name
-        for c in catalog.candidates_for(SugarRole.TERM, _site("[x for x in xs]"))
+        c.name for c in catalog.candidates_for(SugarRole.TERM, _site("[x for x in xs]"))
     ]
     multi = [
         c.name
@@ -153,9 +152,7 @@ def test_nested_list_comprehension_is_a_citable_coordinate() -> None:
 
 
 def test_async_list_comprehension_stays_loud() -> None:
-    function = ast.parse(
-        "async def f(xs):\n    return [x async for x in xs]\n"
-    ).body[0]
+    function = ast.parse("async def f(xs):\n    return [x async for x in xs]\n").body[0]
     site = SourceFragment.from_node(function.body[0].value, "t.py")
 
     assert ListCompSugar.owns(site) is False

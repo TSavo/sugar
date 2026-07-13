@@ -86,8 +86,6 @@ class MinorityAxis:
         }
 
 
-
-
 @dataclass
 class Crime2Axis:
     """Dig floors with no warranting assertion (#4016 Crime 2)."""
@@ -118,6 +116,7 @@ class Crime2Axis:
             ),
         }
 
+
 @dataclass
 class LiftCoverageReport:
     assertions: AssertionAxis
@@ -130,7 +129,6 @@ class LiftCoverageReport:
 
     def to_json(self) -> dict:
         body = {
-
             "kind": "lift-coverage",
             "version": "4016.crime2.v1",
             "files": list(self.files),
@@ -234,9 +232,7 @@ def _account_assertions(
             )
 
     # Refused-loud: audit door gap rows (site = blame file:line:col).
-    for gap in (
-        payload.get("auditOnlyGaps") or payload.get("audit_only_gaps") or []
-    ):
+    for gap in payload.get("auditOnlyGaps") or payload.get("audit_only_gaps") or []:
         if not isinstance(gap, Mapping):
             continue
         file, line, col = _gap_site(gap)
@@ -336,7 +332,9 @@ def _factory_instrument_engaged(payload: Mapping[str, Any]) -> bool:
     """
     if payload.get("auditOnlyGaps") or payload.get("audit_only_gaps"):
         return True
-    fas = payload.get("factoryAuditSummary") or payload.get("factory_audit_summary") or {}
+    fas = (
+        payload.get("factoryAuditSummary") or payload.get("factory_audit_summary") or {}
+    )
     if not isinstance(fas, Mapping):
         return False
     counts = fas.get("statusCounts") or fas.get("status_counts") or {}
@@ -361,7 +359,14 @@ def _factory_instrument_notes(payload: Mapping[str, Any]) -> list[str]:
     if isinstance(fas, Mapping):
         for row in (fas.get("unresolvedSites") or [])[:5]:
             if isinstance(row, Mapping):
-                notes.append(str(row.get("reason") or row.get("message") or row.get("status") or "unresolved"))
+                notes.append(
+                    str(
+                        row.get("reason")
+                        or row.get("message")
+                        or row.get("status")
+                        or "unresolved"
+                    )
+                )
     for gap in (payload.get("auditOnlyGaps") or [])[:5]:
         if isinstance(gap, Mapping):
             notes.append(str(gap.get("message") or gap.get("label") or "auditOnlyGap"))
@@ -396,9 +401,7 @@ def _assertion_warrant_spans(
         if not isinstance(span, Mapping):
             span = {}
         start_line = int(span.get("start_line") or span.get("startLine") or 0)
-        end_line = int(
-            span.get("end_line") or span.get("endLine") or start_line or 0
-        )
+        end_line = int(span.get("end_line") or span.get("endLine") or start_line or 0)
         col = int(span.get("start_col") or span.get("startCol") or 0)
         if file or start_line:
             spans.append((file, start_line, col, end_line))
@@ -438,7 +441,6 @@ def _parse_file_line_col(site: str) -> tuple[str, int, int]:
         except ValueError:
             return site, 0, 0
     return site, 0, 0
-
 
 
 def _matched(a: AssertLocus, keys: set[tuple[str, int, int]]) -> bool:
@@ -511,7 +513,9 @@ def _iter_report_assertion_loci(
         )
         yield (file, line, None, status, {"surface": True})
 
-    for memento in payload.get("sourceMementos") or payload.get("source_mementos") or []:
+    for memento in (
+        payload.get("sourceMementos") or payload.get("source_mementos") or []
+    ):
         if not isinstance(memento, Mapping):
             continue
         span = memento.get("span") or {}
@@ -565,7 +569,9 @@ def _collapse_bodies(payload: Mapping[str, Any]) -> list[dict]:
         name = str(item.get("name") or "")
         if not name:
             continue
-        bridge = item.get("bridgeSourceSymbol") or item.get("bridge_source_symbol") or name
+        bridge = (
+            item.get("bridgeSourceSymbol") or item.get("bridge_source_symbol") or name
+        )
         file, line, col = _warrant_locus(item)
         bodies.append(
             {
@@ -639,9 +645,7 @@ def _census_disagreement(
     the cross-check matches the collapse definition of a body. Disagreement is
     a lift hole; agreement returns None (field stays absent).
     """
-    census_production = [
-        b for b in census_bodies if not b.name.startswith("test_")
-    ]
+    census_production = [b for b in census_bodies if not b.name.startswith("test_")]
     census_names = sorted({b.name for b in census_production})
     collapse_names = sorted({str(b.get("name") or "") for b in minority.on_disk})
     if len(census_production) == minority.present and census_names == collapse_names:
@@ -656,8 +660,6 @@ def _census_disagreement(
             "function-contract rows -- a lift hole, not silent preference"
         ),
     }
-
-
 
 
 def _account_crime2(payload: Mapping[str, Any]) -> Crime2Axis:

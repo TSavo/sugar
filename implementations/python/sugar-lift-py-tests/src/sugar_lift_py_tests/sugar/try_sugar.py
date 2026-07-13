@@ -25,9 +25,11 @@ class TryExceptArm:
         return (
             "<runtime>"
             if self.type_names is None
-            else self.type_names[0]
-            if len(self.type_names) == 1
-            else ",".join(self.type_names)
+            else (
+                self.type_names[0]
+                if len(self.type_names) == 1
+                else ",".join(self.type_names)
+            )
         )
 
 
@@ -163,12 +165,14 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
                 lambda value: self._sequence_finally(value, ctx)
             )
         # Thread try body, then each guarded handler into one spliced BlockValue.
-        return self.body.reduce(ctx).and_then(
-            lambda body_val: self._collect_handlers(
-                tuple(body_val.contribution()), 0, ctx
+        return (
+            self.body.reduce(ctx)
+            .and_then(
+                lambda body_val: self._collect_handlers(
+                    tuple(body_val.contribution()), 0, ctx
+                )
             )
-        ).and_then(
-            lambda value: self._sequence_finally(value, ctx)
+            .and_then(lambda value: self._sequence_finally(value, ctx))
         )
 
     def _collect_handlers(self, accumulated: tuple, index: int, ctx: object) -> Outcome:

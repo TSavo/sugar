@@ -35,11 +35,11 @@ def _universe(source: str) -> UniverseValue:
 
 def test_exhaustive_if_else_emits_both_guarded_exits() -> None:
     universe = _universe(
-        'def enc(x):\n'
+        "def enc(x):\n"
         '    if x == "ccc":\n'
         '        return "yyy"\n'
-        '    else:\n'
-        '        return x\n'
+        "    else:\n"
+        "        return x\n"
     )
     guard = py_eq(make_var("x"), str_const("ccc"))
     assert universe.post() == and_(
@@ -52,12 +52,12 @@ def test_exhaustive_if_else_emits_both_guarded_exits() -> None:
 
 def test_dead_code_after_exhaustive_if_else_stays_raw() -> None:
     universe = _universe(
-        'def enc(x):\n'
+        "def enc(x):\n"
         '    if x == "ccc":\n'
         '        return "yyy"\n'
-        '    else:\n'
-        '        return x\n'
-        '    return 0\n'
+        "    else:\n"
+        "        return x\n"
+        "    return 0\n"
     )
     guard = py_eq(make_var("x"), str_const("ccc"))
     assert universe.post() == and_(

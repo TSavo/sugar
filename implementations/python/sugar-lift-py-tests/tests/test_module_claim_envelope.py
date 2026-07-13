@@ -15,7 +15,9 @@ def test_module_assertion_uses_the_existing_testimony_claim_envelope() -> None:
     assert assertions["lifted_cited"] == 1
     assert assertions["refused_loud"] == 0
     assert assertions["silently_unaccounted"] == 0
-    rows = [row for row in payload.to_rpc()["ir"] if row["name"] == "<module>::assertion"]
+    rows = [
+        row for row in payload.to_rpc()["ir"] if row["name"] == "<module>::assertion"
+    ]
     assert len(rows) == 1
     assert rows[0]["kind"] == "contract"
     assert rows[0]["sourceWarrants"][0]["role"] == "assertion"

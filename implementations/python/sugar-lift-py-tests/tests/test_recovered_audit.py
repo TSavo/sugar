@@ -52,7 +52,10 @@ def test_panicked_parent_suppresses_descendants() -> None:
         "poison.py:6:0",
     ]
     assert wire["suppressedDescendants"] == [
-        {"locus": "poison.py:3:4", "reason": "ancestor FactoryPanic poisoned this source locus"}
+        {
+            "locus": "poison.py:3:4",
+            "reason": "ancestor FactoryPanic poisoned this source locus",
+        }
     ]
 
 

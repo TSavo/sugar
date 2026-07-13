@@ -44,9 +44,7 @@ class GuardedValue(FloorValue):
             if isinstance(false_outcome, Incomplete):
                 return false_outcome.guarded(not_(other.guard))
             return Complete(
-                GuardedValue(
-                    other.guard, true_outcome.value, false_outcome.value
-                )
+                GuardedValue(other.guard, true_outcome.value, false_outcome.value)
             )
 
         true_outcome = getattr(self.when_true, method)(*args)
@@ -106,8 +104,16 @@ class GuardedValue(FloorValue):
                 ),
                 args[-1],
                 operand_callsites=(
-                    *(true_value.operand_callsites if isinstance(true_value, PredicateValue) else ()),
-                    *(false_value.operand_callsites if isinstance(false_value, PredicateValue) else ()),
+                    *(
+                        true_value.operand_callsites
+                        if isinstance(true_value, PredicateValue)
+                        else ()
+                    ),
+                    *(
+                        false_value.operand_callsites
+                        if isinstance(false_value, PredicateValue)
+                        else ()
+                    ),
                 ),
             )
         )

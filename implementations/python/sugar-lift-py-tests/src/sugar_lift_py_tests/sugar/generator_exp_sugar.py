@@ -53,9 +53,7 @@ class GeneratorExpSugar(Sugar, role=SugarRole.TERM):
         return reduce_clauses(
             self.clauses,
             ctx,
-            lambda bound_ctx, generator_args: self.elt_body.reduce(
-                bound_ctx
-            ).and_then(
+            lambda bound_ctx, generator_args: self.elt_body.reduce(bound_ctx).and_then(
                 lambda elt: Complete(
                     ComprehensionValue(
                         ctor(

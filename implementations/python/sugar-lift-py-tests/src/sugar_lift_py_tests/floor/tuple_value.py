@@ -79,9 +79,13 @@ class TupleValue(FloorValue):
                 )
             )
 
-        return self.elements[index].test_python_type(value, site).and_then(
-            lambda result: self._continue_type_test(
-                value, site, index, predicates, result
+        return (
+            self.elements[index]
+            .test_python_type(value, site)
+            .and_then(
+                lambda result: self._continue_type_test(
+                    value, site, index, predicates, result
+                )
             )
         )
 
@@ -149,9 +153,7 @@ class TupleValue(FloorValue):
                 SequenceRepetitionRuntimeEffect(
                     "sequence repetition by symbolic count: TupleValue depends "
                     f"on runtime __index__/length semantics; site={site}",
-                    witness=runtime_effect_witness(
-                        "py.sequence_repeat", other, site
-                    ),
+                    witness=runtime_effect_witness("py.sequence_repeat", other, site),
                 )
             )
         return super().multiply(other, site)

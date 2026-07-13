@@ -132,9 +132,7 @@ def test_nested_tuple_owner_excludes_starred_and_for_else() -> None:
     from sugar_lift_py_tests.sugar.nested_tuple_for_sugar import NestedTupleForSugar
 
     assert NestedTupleForSugar.owns(_site("for i, (x, y) in rows:\n    pass\n"))
-    assert not NestedTupleForSugar.owns(
-        _site("for i, (x, *rest) in rows:\n    pass\n")
-    )
+    assert not NestedTupleForSugar.owns(_site("for i, (x, *rest) in rows:\n    pass\n"))
     assert not NestedTupleForSugar.owns(
         _site("for i, (x, y) in rows:\n    pass\nelse:\n    pass\n")
     )

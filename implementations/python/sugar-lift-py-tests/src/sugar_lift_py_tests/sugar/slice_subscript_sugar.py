@@ -70,12 +70,7 @@ class SliceSubscriptSugar(Sugar, role=SugarRole.TERM, comes_before=("SubscriptSu
 
     @classmethod
     def witnesses(cls):
-        prefix = (
-            "def A(z):\n"
-            "    xs = [10, 20, 30, 40]\n"
-            "    return xs[1:3]\n"
-            "\n"
-        )
+        prefix = "def A(z):\n" "    xs = [10, 20, 30, 40]\n" "    return xs[1:3]\n" "\n"
         return _call_pair(
             name="slice_subscript_return",
             owner_sugar="SliceSubscriptSugar",
@@ -88,11 +83,15 @@ class SliceSubscriptSugar(Sugar, role=SugarRole.TERM, comes_before=("SubscriptSu
     def desugar(self, ctx: Any = None) -> Outcome:
         return self.receiver.reduce(ctx).and_then(
             lambda recv: self._reduce_bound(
-                self.lower, ctx, lambda lo: self._reduce_bound(
-                    self.upper, ctx, lambda hi: self._reduce_bound(
+                self.lower,
+                ctx,
+                lambda lo: self._reduce_bound(
+                    self.upper,
+                    ctx,
+                    lambda hi: self._reduce_bound(
                         self.step, ctx, lambda st: self._emit(recv, lo, hi, st)
-                    )
-                )
+                    ),
+                ),
             )
         )
 

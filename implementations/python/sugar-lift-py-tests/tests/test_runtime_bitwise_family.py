@@ -36,11 +36,14 @@ def test_symbolic_bitwise_uses_native_operator_coordinate(
 
 @pytest.mark.parametrize(
     ("source", "operator"),
-    [("x & 15", "bv32.and"), ("x ^ 3", "bv32.xor"), ("x << 2", "bv32.shl"), ("x >> 2", "bv32.lshr")],
+    [
+        ("x & 15", "bv32.and"),
+        ("x ^ 3", "bv32.xor"),
+        ("x << 2", "bv32.shl"),
+        ("x >> 2", "bv32.lshr"),
+    ],
 )
-def test_bv32_bitwise_uses_existing_bv32_vocabulary(
-    source: str, operator: str
-) -> None:
+def test_bv32_bitwise_uses_existing_bv32_vocabulary(source: str, operator: str) -> None:
     assert reduce_value(source, {"x": Bv32Value(make_var("x"))}) == Bv32Value(
         ctor(operator, [make_var("x"), num(int(source.rsplit(" ", 1)[1]))])
     )

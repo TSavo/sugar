@@ -12,7 +12,6 @@ from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_covera
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 
-
 PREFIX = """\
 class Clock:
     def replace(self, hour=0):
@@ -36,8 +35,7 @@ def _audit(body: str):
 
 def test_chained_method_call_is_the_same_linear_temporal_rewrite() -> None:
     two_line, two_line_gaps, two_line_axis = _audit(
-        "        tmp = self.replace(hour=0)\n"
-        "        assert tmp.utcoffset() == 0\n"
+        "        tmp = self.replace(hour=0)\n" "        assert tmp.utcoffset() == 0\n"
     )
     chained, chained_gaps, chained_axis = _audit(
         "        assert self.replace(hour=0).utcoffset() == 0\n"
@@ -69,6 +67,7 @@ def test_method_chain_has_one_factory_owner() -> None:
         candidate.name
         for candidate in default_catalog().candidates_for(SugarRole.TERM, site)
     } == {"MethodChainSugar", "MethodCallSugar"}
-    assert type(
-        build_node(node, filename="clock.py", role=SugarRole.TERM).sugar
-    ).__name__ == "MethodChainSugar"
+    assert (
+        type(build_node(node, filename="clock.py", role=SugarRole.TERM).sugar).__name__
+        == "MethodChainSugar"
+    )

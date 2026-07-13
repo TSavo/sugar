@@ -42,7 +42,8 @@ class NoneValue(FloorValue):
             return Incomplete(
                 TypeErrorRuntimeEffect(
                     f"unorderable types runtime boundary: "
-                    f"NoneValue and {type(other).__name__}; site={site}", witness=runtime_effect_witness("py.lt", other, site)
+                    f"NoneValue and {type(other).__name__}; site={site}",
+                    witness=runtime_effect_witness("py.lt", other, site),
                 )
             )
         return super().less_than(other, site)

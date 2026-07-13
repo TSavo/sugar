@@ -67,17 +67,15 @@ def test_local_assign_shadows_module_global_in_body_dig() -> None:
     blob = str(sugar.constraint_formulas())
     # Local wins in the post.
     assert "6c6f63616c" in blob, f"expected local hex in dig post, got {blob}"
-    assert "6d6f64756c65" not in blob, f"module hex must not appear after local shadow: {blob}"
+    assert (
+        "6d6f64756c65" not in blob
+    ), f"module hex must not appear after local shadow: {blob}"
     assert "call:translate" in blob
 
 
 def test_formal_shadows_module_global_on_formal_binds() -> None:
     """def f(GLOBAL): ... formal binds after module seed and wins."""
-    src = (
-        'GLOBAL = b"module"\n'
-        "def f(GLOBAL):\n"
-        "    return GLOBAL\n"
-    )
+    src = 'GLOBAL = b"module"\n' "def f(GLOBAL):\n" "    return GLOBAL\n"
     fn = _fn(src)
     ctx = FactoryBuildContext(
         filename="shadow.py",
@@ -99,11 +97,7 @@ def test_formal_shadows_module_global_on_formal_binds() -> None:
 
 def test_unshadowed_module_global_still_seeds() -> None:
     """Control: without local shadow, module GLOBAL still digs (good twin of free-name)."""
-    src = (
-        'GLOBAL = b"module"\n'
-        "def f(s):\n"
-        "    return s.translate(GLOBAL)\n"
-    )
+    src = 'GLOBAL = b"module"\n' "def f(s):\n" "    return s.translate(GLOBAL)\n"
     fn = _fn(src)
     ctx = FactoryBuildContext(
         filename="shadow.py",

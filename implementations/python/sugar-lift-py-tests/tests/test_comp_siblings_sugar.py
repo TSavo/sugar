@@ -175,15 +175,9 @@ def test_kinds_do_not_cross_own() -> None:
     assert GeneratorExpSugar.owns(gen_site) and not GeneratorExpSugar.owns(list_site)
 
     catalog = default_catalog()
-    set_names = [
-        c.name for c in catalog.candidates_for(SugarRole.TERM, set_site)
-    ]
-    dict_names = [
-        c.name for c in catalog.candidates_for(SugarRole.TERM, dict_site)
-    ]
-    gen_names = [
-        c.name for c in catalog.candidates_for(SugarRole.TERM, gen_site)
-    ]
+    set_names = [c.name for c in catalog.candidates_for(SugarRole.TERM, set_site)]
+    dict_names = [c.name for c in catalog.candidates_for(SugarRole.TERM, dict_site)]
+    gen_names = [c.name for c in catalog.candidates_for(SugarRole.TERM, gen_site)]
     assert "SetCompSugar" in set_names
     assert "DictCompSugar" in dict_names
     assert "GeneratorExpSugar" in gen_names

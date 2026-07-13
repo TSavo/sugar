@@ -139,6 +139,7 @@ def collect_dunder_frontier(root: Path) -> DunderFrontierReport:
 def _owned_dunder_slots() -> dict[str, str]:
     from sugar_lift_py_tests.floor import object_value
     from sugar_lift_py_tests.sugar import builtin_dunder_call_sugar
+
     rich_comparison_dunders = {
         "NotEq": "__ne__",
         "Lt": "__lt__",

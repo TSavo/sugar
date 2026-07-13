@@ -56,7 +56,12 @@ class BoolOpSugar(Sugar, role=SugarRole.TERM):
     def desugar(self, ctx: object = None) -> Outcome:
         # Left-to-right short-circuit over the operands.
         if not self.operands:
-            from sugar_lift_py_tests.factory import factory_panic, FactoryGapInfo, GapKind, GapLocus
+            from sugar_lift_py_tests.factory import (
+                factory_panic,
+                FactoryGapInfo,
+                GapKind,
+                GapLocus,
+            )
 
             factory_panic(
                 FactoryGapInfo(
@@ -72,8 +77,10 @@ class BoolOpSugar(Sugar, role=SugarRole.TERM):
         return self._reduce_from(0, ctx)
 
     def _reduce_from(self, index: int, ctx: object) -> Outcome:
-        return self.operands[index].reduce(ctx).and_then(
-            lambda value: self._after_operand(value, index, ctx)
+        return (
+            self.operands[index]
+            .reduce(ctx)
+            .and_then(lambda value: self._after_operand(value, index, ctx))
         )
 
     def _after_operand(self, value, index: int, ctx: object) -> Outcome:
@@ -144,9 +151,7 @@ class BoolOpSugar(Sugar, role=SugarRole.TERM):
         if values and all(type(v) is PredicateValue for v in values):
             formulas = [v.formula for v in values]
             formula = and_(formulas) if self.kind == "and" else or_(formulas)
-            callsites = tuple(
-                site for v in values for site in v.operand_callsites
-            )
+            callsites = tuple(site for v in values for site in v.operand_callsites)
             return PredicateValue(formula, self.site, callsites)
 
         # Value-shaped: py.and / py.or coordinate over operand terms.

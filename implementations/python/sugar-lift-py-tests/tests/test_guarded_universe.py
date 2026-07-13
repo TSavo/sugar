@@ -51,21 +51,14 @@ def test_the_dig_shape_emits_the_guarded_implication() -> None:
 
 def test_an_inv_stated_under_a_guard_is_an_implication() -> None:
     universe = _universe(
-        "def A(z):\n"
-        "    if z == 1:\n"
-        "        assert z < 2\n"
-        "    return z\n"
+        "def A(z):\n" "    if z == 1:\n" "        assert z < 2\n" "    return z\n"
     )
     guard = py_eq(make_var("z"), num(1))
-    assert universe.invs() == (
-        implies(guard, py_lt(make_var("z"), num(2))),
-    )
+    assert universe.invs() == (implies(guard, py_lt(make_var("z"), num(2))),)
     # the then-face states but does not exit: the continuation is unconditional
     assert universe.post() == eq(make_var("out"), make_var("z"))
 
 
 def test_a_ground_condition_still_picks_its_face() -> None:
-    universe = _universe(
-        "def A(z):\n    if 1 == 1:\n        return z\n    return 0\n"
-    )
+    universe = _universe("def A(z):\n    if 1 == 1:\n        return z\n    return 0\n")
     assert universe.post() == eq(make_var("out"), make_var("z"))

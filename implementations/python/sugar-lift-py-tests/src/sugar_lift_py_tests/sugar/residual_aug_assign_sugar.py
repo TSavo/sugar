@@ -10,7 +10,6 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
-
 _RESIDUAL_NAME_OPS = frozenset({"BitAnd", "BitXor", "LShift", "RShift"})
 
 
@@ -142,9 +141,9 @@ class ResidualSubscriptAugAssignSugar(Sugar, role=SugarRole.STATEMENT):
         return self.receiver.reduce(ctx).and_then(
             lambda receiver: self.index.reduce(ctx).and_then(
                 lambda index: self.updated_value.reduce(ctx).and_then(
-                    lambda updated: receiver.setitem(index, updated, self.site).and_then(
-                        self._cite_update
-                    )
+                    lambda updated: receiver.setitem(
+                        index, updated, self.site
+                    ).and_then(self._cite_update)
                 )
             )
         )

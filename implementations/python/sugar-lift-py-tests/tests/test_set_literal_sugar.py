@@ -18,6 +18,4 @@ def test_set_literal_selects_and_reduces_elements() -> None:
     result = build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx)
 
     assert result.audit_row.selected == "SetLiteralSugar"
-    assert result.sugar.desugar(ctx) == Complete(
-        SetValue((TermValue(1), TermValue(2)))
-    )
+    assert result.sugar.desugar(ctx) == Complete(SetValue((TermValue(1), TermValue(2))))

@@ -32,6 +32,7 @@ def module_sibling_function_nodes(module_name: str) -> dict:
     Also indexes ``Class.method`` / ``module.Class.method`` for method body dig.
     """
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
     sourcefile = None
     source = None
     try:
@@ -43,7 +44,14 @@ def module_sibling_function_nodes(module_name: str) -> dict:
         if origin and origin.endswith((".py", ".pyi")):
             sourcefile = origin
             source = Path(origin).read_text(encoding="utf-8")
-    except (ImportError, ModuleNotFoundError, OSError, TypeError, UnicodeError, ValueError):
+    except (
+        ImportError,
+        ModuleNotFoundError,
+        OSError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+    ):
         pass
 
     if source is None:
@@ -184,20 +192,29 @@ def resolve_install_source_value(import_target: str, ctx):
                 if isinstance(statement, ast.Assign)
                 else [statement.target]
             )
-            if any(isinstance(target, ast.Name) and target.id == attr for target in targets):
+            if any(
+                isinstance(target, ast.Name) and target.id == attr for target in targets
+            ):
                 value_node = statement.value
-        elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)) and statement.name == attr:
+        elif (
+            isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and statement.name == attr
+        ):
             body = ctx.build_body(
                 SourceFragment.from_node(statement, sourcefile, source=source),
                 SugarRole.STATEMENT,
             )
-            return complete_value(body.reduce(ctx), owner="install-source imported function")
+            return complete_value(
+                body.reduce(ctx), owner="install-source imported function"
+            )
         if value_node is not None:
             body = ctx.build_body(
                 SourceFragment.from_node(value_node, sourcefile, source=source),
                 SugarRole.TERM,
             )
-            return complete_value(body.reduce(ctx), owner="install-source imported value")
+            return complete_value(
+                body.reduce(ctx), owner="install-source imported value"
+            )
     return None
 
 
@@ -430,7 +447,10 @@ class SequentialDigBody:
         if last_return is not None:
             # Dig wants the returned floor, not the ReturnValue wrapper.
             return Complete(last_return.value)
-        from sugar_lift_py_tests.effect import ConditionalExpressionRuntimeEffect, RuntimeEffectWitness
+        from sugar_lift_py_tests.effect import (
+            ConditionalExpressionRuntimeEffect,
+            RuntimeEffectWitness,
+        )
         from sugar_lift_py_tests.ir import ctor, str_const
 
         terminal = self.statements[-1] if self.statements else None
@@ -595,8 +615,10 @@ def bind_positional_defaults(fn_site, arg_values: tuple, ctx: Any):
         if not remaining:
             return Complete((formals, (*arg_values, *accumulated)))
         head, *rest = remaining
-        return ctx.build_body(head, SugarRole.TERM).reduce(ctx).and_then(
-            lambda value: collect(tuple(rest), (*accumulated, value))
+        return (
+            ctx.build_body(head, SugarRole.TERM)
+            .reduce(ctx)
+            .and_then(lambda value: collect(tuple(rest), (*accumulated, value)))
         )
 
     return collect(selected, ())
