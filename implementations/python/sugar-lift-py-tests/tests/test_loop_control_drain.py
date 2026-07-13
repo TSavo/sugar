@@ -12,6 +12,7 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import GuardedLoopControl, LoopControlValue
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
+from sugar_lift_py_tests.ir import ctor, num
 
 
 def _statement(source: str, kind: type[ast.stmt]):
@@ -70,6 +71,9 @@ def test_yield_is_a_named_generator_protocol_effect() -> None:
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, GeneratorYieldRuntimeEffect)
     assert "py.generator_yield" in outcome.reason
+    assert outcome.effect.witness is not None
+    assert outcome.effect.witness.operand == num(1)
+    assert outcome.effect.witness.operation == ctor("py.generator_yield", [num(1)])
 
 
 def test_yield_outside_a_function_stays_loud() -> None:

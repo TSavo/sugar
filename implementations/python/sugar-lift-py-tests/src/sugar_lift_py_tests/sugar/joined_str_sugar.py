@@ -17,6 +17,7 @@ class _LiteralPart:
 @dataclass(frozen=True)
 class _FormattedPart:
     value: SugarBody | None
+    dynamic_spec: SugarBody | None
     conversion: int
     spec: str
     # When set, this part cannot lift statically -- desugar is a typed red.
@@ -57,6 +58,7 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
                 parts.append(
                     _FormattedPart(
                         value=None,
+                        dynamic_spec=None,
                         conversion=-1,
                         spec="",
                         dynamic_reason=(
@@ -70,6 +72,7 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
                 parts.append(
                     _FormattedPart(
                         value=None,
+                        dynamic_spec=None,
                         conversion=-1,
                         spec="",
                         dynamic_reason=(
@@ -85,7 +88,12 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
                     # Dynamic format_spec -- carry the fact loudly, do not drop.
                     parts.append(
                         _FormattedPart(
-                            value=None,
+                            value=ctx.build_body(
+                                part.formatted_value_value(), SugarRole.TERM
+                            ),
+                            dynamic_spec=ctx.build_body(
+                                part.formatted_value_format_spec(), SugarRole.TERM
+                            ),
                             conversion=part.formatted_value_conversion(),
                             spec="",
                             dynamic_reason=(
@@ -102,6 +110,7 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
                     value=ctx.build_body(
                         part.formatted_value_value(), SugarRole.TERM
                     ),
+                    dynamic_spec=None,
                     conversion=part.formatted_value_conversion(),
                     spec=spec,
                 )
@@ -140,11 +149,36 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
                 index + 1, (*accumulated, StringValue(part.text)), ctx
             )
         if part.dynamic_reason is not None:
-            return _runtime_format_effect(str(self.site), part.dynamic_reason)
+            if part.value is None or part.dynamic_spec is None:
+                from sugar_lift_py_tests.factory import factory_panic_gap
+
+                factory_panic_gap(
+                    owner="JoinedStrSugar",
+                    blame=str(self.site),
+                    observed="FormattedValue",
+                    requested="term",
+                    fix=part.dynamic_reason,
+                )
+            return part.value.reduce(ctx).and_then(
+                lambda value: part.dynamic_spec.reduce(ctx).and_then(
+                    lambda spec: _runtime_format_effect(
+                        str(self.site),
+                        part.dynamic_reason,
+                        value,
+                        spec,
+                        part.conversion,
+                    )
+                )
+            )
         if part.value is None:
-            return _runtime_format_effect(
-                str(self.site),
-                "formatted string literal field has no reducible value",
+            from sugar_lift_py_tests.factory import factory_panic_gap
+
+            factory_panic_gap(
+                owner="JoinedStrSugar",
+                blame=str(self.site),
+                observed="FormattedValue",
+                requested="term",
+                fix="formatted string literal field has no reducible value",
             )
         return part.value.reduce(ctx).and_then(
             lambda value: self._after_formatted(
@@ -228,13 +262,33 @@ def _try_ground_format(value, conversion: int, spec: str, site) -> str | None:
         return None
 
 
-def _runtime_format_effect(blame: str, reason: str) -> Incomplete:
-    from sugar_lift_py_tests.effect import DynamicFormatRuntimeEffect
+def _runtime_format_effect(
+    blame: str, reason: str, value, spec, conversion: int
+) -> Incomplete:
+    from sugar_lift_py_tests.effect import (
+        DynamicFormatRuntimeEffect,
+        RuntimeEffectWitness,
+    )
+    from sugar_lift_py_tests.ir import ctor, num
+
+    operand = ctor(
+        "py.format.arguments",
+        [
+            value.to_term(owner=blame),
+            spec.to_term(owner=blame),
+            num(conversion),
+        ],
+    )
 
     return Incomplete(
         DynamicFormatRuntimeEffect(
             "formatted string runtime boundary: "
             f"{reason}; keep as typed red until a narrower floor owns this "
-            f"shape. blame={blame}"
+            f"shape. blame={blame}",
+            witness=RuntimeEffectWitness(
+                operation=ctor("py.format.dynamic_spec", [operand]),
+                operand=operand,
+                locus=blame,
+            ),
         )
     )

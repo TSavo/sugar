@@ -100,8 +100,34 @@ def test_format_spec_rides_in_the_coordinate() -> None:
 def test_dynamic_format_spec_is_a_named_runtime_effect() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     body = ctx.build_body(_site("f'{x:{width}}'"), SugarRole.TERM)
+    ctx = ctx.with_temporal(
+        ctx.temporal.bind_value("x", SymbolicValue(make_var("x"))).bind_value(
+            "width", SymbolicValue(make_var("width"))
+        )
+    )
 
     outcome = body.reduce(ctx)
 
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, DynamicFormatRuntimeEffect)
+    witness = outcome.effect.witness
+    assert witness is not None
+    assert witness.operation == ctor("py.format.dynamic_spec", [witness.operand])
+    assert fol(witness.operand) == fol(
+        ctor(
+            "py.format.arguments",
+            [
+                make_var("x"),
+                ctor(
+                    "py.fstring",
+                    [
+                        ctor(
+                            "py.format",
+                            [make_var("width"), str_const(""), num(-1)],
+                        )
+                    ],
+                ),
+                num(-1),
+            ],
+        )
+    )
