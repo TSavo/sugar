@@ -1,6 +1,8 @@
 # Native Bridge Producer Contract
 
-**Status:** DESIGN SPIKE (sugar#3700) — spec only, no implementation
+**Status:** FIRST VERTICAL IMPLEMENTED (sugar#3700) -- typed exports scan/seek
+and production linker resolution; producer discovery and broad native surfaces
+remain follow-on work
 **Date:** 2026-07-09
 **Layer:** kit-membrane wire protocol (extends `sugar.enumerate`) + linker join discipline
 **Sequencing:** #3700 is a parallel design track, NOT on the Python critical path
