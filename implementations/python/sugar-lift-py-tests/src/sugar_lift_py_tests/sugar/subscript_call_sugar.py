@@ -11,16 +11,19 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class SubscriptCallSugar(Sugar, role=SugarRole.TERM):
-    """A positional call through a subscript-selected callable.
+    """A call through a subscript-selected callable.
 
     ``dispatch[key](arg)`` first reduces ``dispatch[key]`` through the existing
     subscript floor. That resulting value is the callable address, so it rides
     first in the same receiver-first call coordinate used by MethodCallSugar.
-    Keyword and expansion shapes remain separate loud factory partitions.
+    Keyword names and values ride after the positional coordinates. A
+    ``**kwargs`` expansion uses the same explicit ``**`` parameter spelling as
+    the other call-coordinate owners, so no dynamic call input is dropped.
     """
 
     receiver: SugarBody
     args: tuple[SugarBody, ...]
+    kwargs: tuple[tuple[str, SugarBody], ...]
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -28,7 +31,6 @@ class SubscriptCallSugar(Sugar, role=SugarRole.TERM):
         return (
             site.observed == "Call"
             and site.call_func().observed == "Subscript"
-            and not site.call_has_keywords()
             and all(arg.observed != "Starred" for arg in site.call_args())
         )
 
@@ -37,6 +39,13 @@ class SubscriptCallSugar(Sugar, role=SugarRole.TERM):
         return cls(
             receiver=ctx.build_body(site.call_func(), SugarRole.TERM),
             args=tuple(ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()),
+            kwargs=tuple(
+                (
+                    keyword.keyword_arg_name() or "**",
+                    ctx.build_body(keyword.keyword_value(), SugarRole.TERM),
+                )
+                for keyword in site.call_keywords()
+            ),
             site=site,
         )
 
@@ -69,23 +78,41 @@ class SubscriptCallSugar(Sugar, role=SugarRole.TERM):
             return head.reduce(ctx).and_then(
                 lambda value: self._collect(tuple(rest), (*accumulated, value), ctx)
             )
+        return self._collect_kwargs(self.kwargs, accumulated, (), ctx)
 
+    def _collect_kwargs(
+        self,
+        remaining: tuple[tuple[str, SugarBody], ...],
+        positional: tuple,
+        keywords: tuple,
+        ctx: object,
+    ) -> Outcome:
+        if remaining:
+            (name, body), *rest = remaining
+            return body.reduce(ctx).and_then(
+                lambda value: self._collect_kwargs(
+                    tuple(rest), positional, (*keywords, (name, value)), ctx
+                )
+            )
         from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        term_args = [value.to_term(owner=str(self.site)) for value in positional]
+        term_args.extend(
+            ctor("kw", [str_const(name), value.to_term(owner=str(self.site))])
+            for name, value in keywords
+        )
 
         return Complete(
             CallSiteValue(
                 target_name="__call__",
-                arg_values=accumulated,
-                parameters=(),
-                term=ctor(
-                    "call:__call__",
-                    [value.to_term(owner=str(self.site)) for value in accumulated],
-                ),
+                arg_values=positional,
+                parameters=tuple(name for name, _ in keywords),
+                term=ctor("call:__call__", term_args),
                 body=None,
                 site=self.site,
             )
         )
 
     def walk_children(self):
-        return (self.receiver, *self.args)
+        return (self.receiver, *self.args, *(body for _, body in self.kwargs))
