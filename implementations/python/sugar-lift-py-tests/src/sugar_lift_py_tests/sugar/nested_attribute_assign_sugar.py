@@ -12,9 +12,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class NestedAttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
-    """Bind one exact ``Name.attr.field = rhs`` dotted source address."""
+    """Bind one exact name-rooted dotted assignment source address."""
 
-    path: tuple[str, str, str]
+    path: tuple[str, ...]
     value: SugarBody
     site: object = dataclass_field(compare=False)
 
@@ -23,13 +23,13 @@ class NestedAttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
         if site.observed != "Assign":
             return False
         path = site.assign_target_dotted_attribute_path()
-        return path is not None and len(path) == 3
+        return path is not None and len(path) >= 3
 
     @classmethod
     def new(cls, site, ctx) -> "NestedAttributeAssignSugar":
         path = site.assign_target_dotted_attribute_path()
         return cls(
-            path=(path[0], path[1], path[2]),
+            path=path,
             value=ctx.build_body(site.assign_value(), SugarRole.TERM),
             site=site,
         )
