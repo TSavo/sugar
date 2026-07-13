@@ -73,13 +73,18 @@ class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
     def stated(self, site):
         # Ground False under assert is a recognized fact the program halts --
         # a named runtime effect, per the gap/fact discriminator; never a panic.
-        from sugar_lift_py_tests.effect import AssertionFailedRuntimeEffect
+        from sugar_lift_py_tests.effect import (
+            AssertionFailedRuntimeEffect,
+            runtime_effect_witness,
+        )
+        from sugar_lift_py_tests.ir import bool_const
         from sugar_lift_py_tests.outcome import Incomplete
 
         return Incomplete(
             AssertionFailedRuntimeEffect(
                 f"assertion failed runtime boundary: the condition is concretely "
-                f"False; owner=FalseBoolLiteralSugar site={site}"
+                f"False; owner=FalseBoolLiteralSugar site={site}",
+                witness=runtime_effect_witness("py.assert", bool_const(False), site),
             )
         )
 
@@ -114,4 +119,3 @@ class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
         from sugar_lift_py_tests.ir import bool_const
 
         return bool_const(False)
-

@@ -152,10 +152,13 @@ class ResidualSubscriptAugAssignSugar(Sugar, role=SugarRole.STATEMENT):
     def _cite_update(self, updated) -> Outcome:
         if self.receiver_name is not None:
             return Complete(ScopeRebind(self.receiver_name, updated))
+        from sugar_lift_py_tests.effect import runtime_effect_witness
+
         return Incomplete(
             SubscriptStoreRuntimeEffect(
                 "augmented subscript store completed on a non-name receiver whose "
-                f"post-state cannot be rebound; site={self.site}"
+                f"post-state cannot be rebound; site={self.site}",
+                witness=runtime_effect_witness("py.setitem", updated, self.site),
             )
         )
 

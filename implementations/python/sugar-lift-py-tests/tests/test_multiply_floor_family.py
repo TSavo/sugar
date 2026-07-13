@@ -4,7 +4,10 @@ import pytest
 
 from factory_reduce import reduce_value
 
-from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+from sugar_lift_py_tests.effect import (
+    SubscriptStoreRuntimeEffect,
+    runtime_effect_witness,
+)
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     ListValue,
@@ -103,7 +106,14 @@ def test_unprojectable_multiplier_remains_a_loud_floor_gap() -> None:
 
 
 def test_guarded_descendant_preserves_the_typed_store_effect() -> None:
-    effect = Incomplete(SubscriptStoreRuntimeEffect("symbolic store"))
+    effect = Incomplete(
+        SubscriptStoreRuntimeEffect(
+            "symbolic store",
+            witness=runtime_effect_witness(
+                "py.setitem", make_var("runtime_index"), "t.py:1:0"
+            ),
+        )
+    )
     guard = atomic("guard", [])
 
     guarded = effect.guarded(guard)

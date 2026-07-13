@@ -130,14 +130,32 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             (arm for arm in self.handlers if arm.type_names is None), None
         )
         if dynamic_arm is not None:
-            from sugar_lift_py_tests.effect import TryHandlerDispatchRuntimeEffect
+            from sugar_lift_py_tests.effect import (
+                TryHandlerDispatchRuntimeEffect,
+                runtime_effect_witness,
+            )
             from sugar_lift_py_tests.outcome import Incomplete
 
-            return Incomplete(
-                TryHandlerDispatchRuntimeEffect(
-                    "try handler dispatch runtime boundary: handler type "
-                    "expression is not a source-citable Name, Attribute, tuple, "
-                    f"or bare catch-all; site={self.site}"
+            if dynamic_arm.type_body is None:
+                from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+                factory_panic_gap(
+                    owner="TrySugar",
+                    blame=str(self.site),
+                    observed="dynamic except handler without type body",
+                    requested="runtime handler dispatch operand",
+                    fix="construct the handler expression or keep this FactoryPanic",
+                )
+            return dynamic_arm.type_body.reduce(ctx).and_then(
+                lambda operand: Incomplete(
+                    TryHandlerDispatchRuntimeEffect(
+                        "try handler dispatch runtime boundary: handler type "
+                        "expression is not a source-citable Name, Attribute, tuple, "
+                        f"or bare catch-all; site={self.site}",
+                        witness=runtime_effect_witness(
+                            "py.try_handler_dispatch", operand, self.site
+                        ),
+                    )
                 )
             )
         if self.else_body is not None:
