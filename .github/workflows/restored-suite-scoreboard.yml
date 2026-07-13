@@ -32,6 +32,11 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
+      - name: Install system deps (z3, GNU time, b3sum)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends z3 time b3sum
+
       - name: Install restored-suite environment
         run: |
           make bcargo-python-kit-env \
