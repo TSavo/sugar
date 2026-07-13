@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class RaiseEffect:
     exception_name: str | None = None
     blame: str | None = None
+    source_sha256: str | None = None
 
     @property
     def reason(self) -> str:

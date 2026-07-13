@@ -3735,7 +3735,7 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
 /// function-contract anchor render together (post + invs). Rows with no
 /// function-contract anchor stay standalone (enclosing-only test functions).
 struct VisualUniverseGroup<'a> {
-    name: &'a str,
+    identity: String,
     /// Drives source walk, mode, and forensic context -- the function-contract
     /// when present, otherwise the sole row.
     anchor: &'a Value,
@@ -3746,25 +3746,25 @@ struct VisualUniverseGroup<'a> {
 /// Pure grouping for the universe visual: merge by exact contract name when a
 /// function-contract anchors that name; otherwise keep each row standalone.
 fn group_contracts_for_universe_visual(contracts: &[Value]) -> Vec<VisualUniverseGroup<'_>> {
-    let anchored_names: BTreeSet<&str> = contracts
+    let anchored_names: BTreeSet<String> = contracts
         .iter()
         .filter(|contract| {
             contract.get("kind").and_then(Value::as_str) == Some("function-contract")
         })
-        .filter_map(|contract| contract_value_name(contract))
+        .map(contract_visual_identity)
         .collect();
 
     let mut groups = Vec::new();
-    let mut emitted_anchored: BTreeSet<&str> = BTreeSet::new();
+    let mut emitted_anchored: BTreeSet<String> = BTreeSet::new();
     for contract in contracts {
-        let name = contract_value_name(contract).unwrap_or("<unknown contract>");
-        if anchored_names.contains(name) {
-            if !emitted_anchored.insert(name) {
+        let identity = contract_visual_identity(contract);
+        if anchored_names.contains(&identity) {
+            if !emitted_anchored.insert(identity.clone()) {
                 continue;
             }
             let mut members: Vec<&Value> = contracts
                 .iter()
-                .filter(|row| contract_value_name(row) == Some(name))
+                .filter(|row| contract_visual_identity(row) == identity)
                 .collect();
             // Anchor first so post leads FOL and warrants drive the source walk.
             members.sort_by_key(|row| {
@@ -3776,19 +3776,39 @@ fn group_contracts_for_universe_visual(contracts: &[Value]) -> Vec<VisualUnivers
             });
             let anchor = members[0];
             groups.push(VisualUniverseGroup {
-                name,
+                identity,
                 anchor,
                 members,
             });
         } else {
             groups.push(VisualUniverseGroup {
-                name,
+                identity,
                 anchor: contract,
                 members: vec![contract],
             });
         }
     }
     groups
+}
+
+fn contract_visual_identity(contract: &Value) -> String {
+    let surface = contract_value_name(contract).unwrap_or("<unknown contract>");
+    let warrant = contract_source_warrants(contract).into_iter().next();
+    let owner = warrant
+        .and_then(|w| w.get("sourceFunctionName").or_else(|| w.get("source_function_name")))
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("<module>");
+    let qualified = if owner == "<module>" || owner.contains('.') || owner.contains("::") {
+        owner.to_string()
+    } else {
+        let class_owner = surface.rsplit_once('.').map(|(prefix, _)| prefix);
+        class_owner
+            .map(|prefix| format!("{prefix}.{owner}"))
+            .unwrap_or_else(|| format!("<module>.{owner}"))
+    };
+    let cid = contract_cid_of_ir_decl(contract).unwrap_or_else(|| "cid-unavailable".to_string());
+    format!("{qualified} [{cid}]")
 }
 
 fn render_universe_visual_report(
@@ -3803,7 +3823,7 @@ fn render_universe_visual_report(
     out.push_str("universe visual:\n");
     for group in group_contracts_for_universe_visual(&report.contracts) {
         let contract = group.anchor;
-        let name = group.name;
+        let identity = &group.identity;
         // Predicates for line citations: every member's formulas (assert invs
         // pair with their own warrants when factory walk is empty).
         let predicates: Vec<String> = group
@@ -3839,7 +3859,7 @@ fn render_universe_visual_report(
         } else {
             UniverseVisualMode::BodyComplete
         };
-        out.push_str(&format!("  universe {name}\n"));
+        out.push_str(&format!("  universe {identity}\n"));
         match mode {
             UniverseVisualMode::BodyIncomplete => {
                 let reason = incomplete_boundary
@@ -3854,10 +3874,13 @@ fn render_universe_visual_report(
                         || member.get("inv").is_some()
                         || member.get("pre").is_some()
                     {
-                        out.push_str(&format!(
-                            "    FOL: {}\n",
-                            format_contract_visual_fol(member)
-                        ));
+                        render_provenanced_fol_row(
+                            &mut out,
+                            report,
+                            source_lookup,
+                            member,
+                            identity,
+                        );
                     }
                 }
             }
@@ -3915,6 +3938,109 @@ fn format_contract_visual_fol(contract: &Value) -> String {
     let name = contract_value_name(contract).unwrap_or("<unknown contract>");
     let rendered = contract_universe_reading(contract);
     format!("{name} ⊢ {rendered}")
+}
+
+fn render_provenanced_fol_row(
+    out: &mut String,
+    report: &LiftSourceReport,
+    source_lookup: VisualSourceLookup<'_>,
+    contract: &Value,
+    identity: &str,
+) {
+    let lifted = normalize_report_fol(
+        &format_contract_visual_fol(contract),
+        report.project_root.as_deref(),
+    );
+    let warrants = contract_visual_warrants(report, contract);
+    if warrants.is_empty() {
+        out.push_str(&format!(
+            "    FOL: {lifted} @ <missing provenance> warrant=<missing>\n"
+        ));
+    } else {
+        for warrant in warrants {
+            let file = report_relative_path(
+                warrant.get("file").and_then(Value::as_str).unwrap_or("<unknown>"),
+                report.project_root.as_deref(),
+            );
+            let line = warrant
+                .get("span")
+                .and_then(|span| span.get("start_line").or_else(|| span.get("startLine")))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let source_cid = warrant
+                .get("sourceCid")
+                .or_else(|| warrant.get("source_cid"))
+                .and_then(Value::as_str)
+                .unwrap_or("cid-unavailable");
+            let stated = resolve_source_memento_visual_source(source_lookup, warrant);
+            out.push_str(&format!(
+                "    FOL: {lifted} @ {file}:{line} warrant={source_cid}\n"
+            ));
+            out.push_str(&format!("      stated: {}\n", stated.trim()));
+        }
+    }
+    out.push_str("    symbols:\n");
+    out.push_str(&format!("      out -> {identity}::return\n"));
+    for symbol in contract_formula_symbols(contract) {
+        if symbol != "out" {
+            out.push_str(&format!("      {symbol} -> {identity}::{symbol}\n"));
+        }
+    }
+}
+
+fn contract_formula_symbols(contract: &Value) -> BTreeSet<String> {
+    fn visit(value: &Value, symbols: &mut BTreeSet<String>) {
+        match value {
+            Value::Object(object) => {
+                if matches!(object.get("kind").and_then(Value::as_str), Some("var") | Some("ctor")) {
+                    if let Some(name) = object.get("name").and_then(Value::as_str) {
+                        let surface = name
+                            .strip_prefix("call:")
+                            .or_else(|| name.strip_prefix("method:"))
+                            .unwrap_or(name);
+                        symbols.insert(surface.to_string());
+                    }
+                }
+                for child in object.values() {
+                    visit(child, symbols);
+                }
+            }
+            Value::Array(values) => {
+                for child in values {
+                    visit(child, symbols);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut symbols = BTreeSet::new();
+    for field in ["post", "inv", "pre"] {
+        if let Some(formula) = contract.get(field) {
+            visit(formula, &mut symbols);
+        }
+    }
+    symbols
+}
+
+fn report_relative_path(path: &str, project_root: Option<&Path>) -> String {
+    if let Some(root) = project_root {
+        if let Ok(relative) = Path::new(path).strip_prefix(root) {
+            return relative.display().to_string();
+        }
+    }
+    if path.starts_with("/tmp/") {
+        return path.rsplit('/').take(2).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("/");
+    }
+    path.to_string()
+}
+
+fn normalize_report_fol(rendered: &str, project_root: Option<&Path>) -> String {
+    let mut normalized = rendered.replace("formula:", "");
+    if let Some(root) = project_root {
+        normalized = normalized.replace(&root.display().to_string(), ".");
+    }
+    normalized = normalized.replace("not(", "¬(");
+    normalized
 }
 
 enum UniverseVisualItem<'a> {
@@ -13136,5 +13262,38 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 }
             ]
         })
+    }
+
+    #[test]
+    fn universe_identity_qualifies_same_surface_name_by_owner_and_cid() {
+        let date_cmp = serde_json::json!({
+            "name": "_cmp",
+            "kind": "function-contract",
+            "post": {"kind": "atom", "name": "=", "args": []},
+            "sourceWarrants": [{"sourceFunctionName": "date._cmp", "file": "datetime.py"}]
+        });
+        let time_cmp = serde_json::json!({
+            "name": "_cmp",
+            "kind": "function-contract",
+            "post": {"kind": "atom", "name": "=", "args": []},
+            "sourceWarrants": [{"sourceFunctionName": "time._cmp", "file": "datetime.py"}]
+        });
+
+        let date = contract_visual_identity(&date_cmp);
+        let time = contract_visual_identity(&time_cmp);
+        assert!(date.starts_with("date._cmp ["), "{date}");
+        assert!(time.starts_with("time._cmp ["), "{time}");
+        assert_ne!(date, time);
+    }
+
+    #[test]
+    fn fol_normalization_has_one_negation_and_no_register_or_absolute_root() {
+        let rendered = normalize_report_fol(
+            "formula:not(call:f(/tmp/work/source.py))",
+            Some(Path::new("/tmp/work")),
+        );
+        assert_eq!(rendered, "¬(call:f(./source.py))");
+        assert!(!rendered.contains("formula:"));
+        assert!(!rendered.contains("/tmp/"));
     }
 }
