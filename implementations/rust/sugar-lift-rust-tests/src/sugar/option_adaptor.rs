@@ -1658,7 +1658,7 @@ fn monadic_result_expr(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<
 // `option_adaptor` claim's Result arm), so a real Rust fixture can never drive
 // a symbolic RECEIVER through `Carrier::Any` for `unwrap_or` -- every existing
 // symbolic-receiver source shape this crate recognizes (`checked_add` et al.
-    // over a runtime operand) becomes incomplete upstream as a runtime NUMERIC operand
+// over a runtime operand) becomes incomplete upstream as a runtime NUMERIC operand
 // before the monadic receiver is even built (`RuntimeNumericOperand`), never
 // reaching a bare symbolic Option/Result term. These receipts therefore
 // exercise `symbolic_unwrap_or_guarded_split` directly against a synthesized
