@@ -3694,16 +3694,6 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
     let rows = visual_factory_walk_rows(&report.factory_walk, source_lookup);
     let mut out = String::new();
     out.push_str(&render_report_plan_roll_call(report));
-    // Dual-axis + Minority Report with actual source (not summary-only).
-    if let Some(coverage) = &report.lift_coverage {
-        out.push_str(&render_lift_coverage_human(
-            coverage,
-            report.project_root.as_deref(),
-        ));
-        if !out.ends_with('\n') {
-            out.push('\n');
-        }
-    }
     out.push_str(&render_universe_visual_report(report, source_lookup));
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
@@ -3725,6 +3715,17 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
         out.push_str("call edges observed:\n");
         for edge in &report.call_edges {
             out.push_str(&format!("  - {}\n", format_call_edge(edge)));
+        }
+    }
+    // The constructed factory/universe report leads. The Minority Report is
+    // the complete remainder and renders only after the proven code.
+    if let Some(coverage) = &report.lift_coverage {
+        out.push_str(&render_lift_coverage_human(
+            coverage,
+            report.project_root.as_deref(),
+        ));
+        if !out.ends_with('\n') {
+            out.push('\n');
         }
     }
     out
@@ -5279,7 +5280,7 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
         ));
         if min_un > 0 {
             if let Some(un) = minority.get("un_asserted_loci").and_then(Value::as_array) {
-                for locus in un.iter().take(32) {
+                for locus in un {
                     append_unaccounted_source_block(
                         &mut out,
                         project_root,
@@ -5287,9 +5288,6 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
                         VisualTone::Yellow,
                         /*body=*/ true,
                     );
-                }
-                if un.len() > 32 {
-                    out.push_str(&format!("    (+{} more)\n", un.len() - 32));
                 }
             }
         }
@@ -5443,8 +5441,7 @@ fn read_unaccounted_source_lines(
     let header = lines[start_idx];
     let header_indent = header.chars().take_while(|c| c.is_whitespace()).count();
     let mut end_idx = start_idx + 1;
-    let max_end = (start_idx + 64).min(lines.len()); // hard cap so dumps stay readable
-    while end_idx < max_end {
+    while end_idx < lines.len() {
         let l = lines[end_idx];
         if l.trim().is_empty() {
             end_idx += 1;
@@ -5482,12 +5479,6 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         "source audit: {}\n",
         format_counts(&report.ledger)
     ));
-    if let Some(coverage) = &report.lift_coverage {
-        out.push_str(&render_lift_coverage_human(
-            coverage,
-            report.project_root.as_deref(),
-        ));
-    }
     let universes = distinct_universes_per_method(&report.contracts);
     tracing::info!(
         stage = "render_source_report_human.after_superposition_scan",
@@ -5966,6 +5957,13 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         }
     }
 
+    // Proven factory rows lead; the complete un-asserted remainder follows.
+    if let Some(coverage) = &report.lift_coverage {
+        out.push_str(&render_lift_coverage_human(
+            coverage,
+            report.project_root.as_deref(),
+        ));
+    }
     trace_lift_render_checkpoint("render_source_report_human.end", out.len());
     out
 }
@@ -12914,6 +12912,42 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             full.contains("Minority Report") && full.contains("def orphan():"),
             "render_report_visual must surface actual Minority source; got:\n{full}"
         );
+    }
+
+    #[test]
+    fn visual_factory_report_renders_before_minority_report() {
+        let mut report = minimal_source_report();
+        report.lift_coverage = Some(serde_json::json!({
+            "totals": {"stated": 0, "accounted": 0, "silently_unaccounted": 0,
+                "minority_present": 1, "minority_dug": 0, "minority_un_asserted": 1},
+            "minority": {"present": 1, "dug": 0, "un_asserted": 1,
+                "un_asserted_loci": [{"file": "t.py", "line": 1, "name": "orphan"}]}
+        }));
+        let rendered = render_report_visual(&report, None);
+        assert!(
+            rendered.find("factory visual:").unwrap()
+                < rendered.find("Minority Report").unwrap(),
+            "factory report must lead the Minority Report:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn minority_report_renders_every_locus_without_elision() {
+        let loci = (0..137)
+            .map(|index| serde_json::json!({
+                "file": "t.py", "line": index + 1, "name": format!("body_{index}")
+            }))
+            .collect::<Vec<_>>();
+        let coverage = serde_json::json!({
+            "totals": {"stated": 0, "accounted": 0, "silently_unaccounted": 0,
+                "minority_present": 137, "minority_dug": 0, "minority_un_asserted": 137},
+            "minority": {"present": 137, "dug": 0, "un_asserted": 137,
+                "un_asserted_loci": loci}
+        });
+        let rendered = render_lift_coverage_human(&coverage, None);
+        assert_eq!(rendered.matches("t.py:").count(), 137, "{rendered}");
+        assert!(!rendered.contains(" more)"), "{rendered}");
+        assert!(rendered.contains("body_0") && rendered.contains("body_136"));
     }
 
     #[test]
