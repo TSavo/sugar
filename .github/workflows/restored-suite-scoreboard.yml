@@ -48,7 +48,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          SUGAR_BIN="$PWD/implementations/rust/target/release/sugar" \
+          SUGAR_BIN="$(bin/sugarbin --profile release)" \
             "$RUNNER_TEMP/restored-suite-python/bin/python" -m pytest -q \
             implementations/python/sugar-lift-py-tests/tests \
             2>&1 | tee restored-suite.log
