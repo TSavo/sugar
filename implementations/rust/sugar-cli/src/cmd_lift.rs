@@ -3795,7 +3795,10 @@ fn contract_visual_identity(contract: &Value) -> String {
     let surface = contract_value_name(contract).unwrap_or("<unknown contract>");
     let warrant = contract_source_warrants(contract).into_iter().next();
     let owner = warrant
-        .and_then(|w| w.get("sourceFunctionName").or_else(|| w.get("source_function_name")))
+        .and_then(|w| {
+            w.get("sourceFunctionName")
+                .or_else(|| w.get("source_function_name"))
+        })
         .and_then(Value::as_str)
         .filter(|name| !name.is_empty())
         .unwrap_or("<module>");
@@ -3935,9 +3938,251 @@ fn render_visual_forensic_context(out: &mut String, report: &LiftSourceReport, c
 }
 
 fn format_contract_visual_fol(contract: &Value) -> String {
+    format_contract_visual_fol_with_color(contract, std::env::var_os("NO_COLOR").is_none())
+}
+
+fn format_contract_visual_fol_with_color(contract: &Value, color: bool) -> String {
     let name = contract_value_name(contract).unwrap_or("<unknown contract>");
-    let rendered = contract_universe_reading(contract);
-    format!("{name} ⊢ {rendered}")
+    let formula = ["post", "inv", "pre"]
+        .iter()
+        .find_map(|field| contract.get(field));
+    match formula {
+        Some(formula) => format!(
+            "{} {}\n{}",
+            fol_paint(name, FolRegister::Callee, color),
+            fol_paint("⊢", FolRegister::Out, color),
+            indent_lines(&pretty_visual_formula(formula, color), 2)
+        ),
+        None => format!("{name} ⊢ {}", contract_universe_reading(contract)),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FolRegister {
+    Connective,
+    Callee,
+    Variable,
+    Literal,
+    Out,
+}
+
+fn fol_paint(text: &str, register: FolRegister, color: bool) -> String {
+    if !color {
+        return text.to_string();
+    }
+    let ansi = match register {
+        FolRegister::Connective => ANSI_YELLOW,
+        FolRegister::Callee => ANSI_BLUE,
+        FolRegister::Variable => "\u{1b}[36m",
+        FolRegister::Literal => "\u{1b}[35m",
+        FolRegister::Out => ANSI_GREEN,
+    };
+    format!("{ansi}{text}{ANSI_RESET}")
+}
+
+fn indent_lines(rendered: &str, width: usize) -> String {
+    let indent = " ".repeat(width);
+    rendered
+        .lines()
+        .map(|line| format!("{indent}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn pretty_visual_formula(formula: &Value, color: bool) -> String {
+    match formula.get("kind").and_then(Value::as_str) {
+        Some("and") => pretty_visual_join(formula, "∧", color),
+        Some("or")
+            if formula_operands(formula)
+                .iter()
+                .all(|operand| operand.get("kind").and_then(Value::as_str) == Some("implies")) =>
+        {
+            pretty_visual_cases(formula, color)
+        }
+        Some("or") => pretty_visual_join(formula, "∨", color),
+        Some("implies") => {
+            let operands = formula_operands(formula);
+            match operands.as_slice() {
+                [guard, consequence] => format!(
+                    "{}\n{}\n{}",
+                    indent_lines(&pretty_visual_formula(guard, color), 2),
+                    fol_paint("⇒", FolRegister::Connective, color),
+                    indent_lines(&pretty_visual_formula(consequence, color), 2)
+                ),
+                _ => proofir_formula_to_fol_with_instances(formula),
+            }
+        }
+        Some("not") => {
+            let operands = formula_operands(formula);
+            match operands.as_slice() {
+                [operand] => format!(
+                    "{} {}",
+                    fol_paint("¬", FolRegister::Connective, color),
+                    pretty_visual_formula(operand, color)
+                ),
+                _ => proofir_formula_to_fol_with_instances(formula),
+            }
+        }
+        Some("forall" | "exists") => {
+            let quantifier = if formula["kind"] == "forall" {
+                "∀"
+            } else {
+                "∃"
+            };
+            let name = formula.get("name").and_then(Value::as_str).unwrap_or("?");
+            let sort = formula
+                .get("sort")
+                .map(proofir_sort_to_fol)
+                .unwrap_or_else(|| "?".to_string());
+            let body = formula.get("body").map_or_else(
+                || "<missing body>".to_string(),
+                |body| pretty_visual_formula(body, color),
+            );
+            format!(
+                "{} {}:{}\n{}",
+                fol_paint(quantifier, FolRegister::Connective, color),
+                fol_paint(name, FolRegister::Variable, color),
+                sort,
+                indent_lines(&body, 2)
+            )
+        }
+        Some("atomic" | "Atomic") => pretty_visual_atomic(formula, color),
+        Some("true" | "True") => fol_paint("⊤", FolRegister::Literal, color),
+        Some("false" | "False") => fol_paint("⊥", FolRegister::Literal, color),
+        _ => proofir_formula_to_fol_with_instances(formula),
+    }
+}
+
+fn pretty_visual_join(formula: &Value, connective: &str, color: bool) -> String {
+    let mut rows = Vec::new();
+    for (index, operand) in formula_operands(formula).iter().enumerate() {
+        if index > 0 {
+            rows.push(fol_paint(connective, FolRegister::Connective, color));
+        }
+        rows.push(pretty_visual_formula(operand, color));
+    }
+    rows.join("\n")
+}
+
+fn pretty_visual_cases(formula: &Value, color: bool) -> String {
+    let arms = formula_operands(formula)
+        .into_iter()
+        .filter_map(|operand| {
+            let pair = formula_operands(&operand);
+            match pair.as_slice() {
+                [guard, consequence] => Some((
+                    pretty_visual_formula(guard, color),
+                    pretty_visual_formula(consequence, color),
+                )),
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>();
+    let guard_width = arms
+        .iter()
+        .map(|(guard, _)| visible_width(guard))
+        .max()
+        .unwrap_or(0);
+    let mut rows = vec![fol_paint("cases", FolRegister::Connective, color)];
+    rows.extend(arms.into_iter().map(|(guard, consequence)| {
+        let padding = " ".repeat(guard_width.saturating_sub(visible_width(&guard)));
+        format!(
+            "  {guard}{padding}  {}  {}",
+            fol_paint("⇒", FolRegister::Connective, color),
+            consequence
+        )
+    }));
+    rows.join("\n")
+}
+
+fn visible_width(rendered: &str) -> usize {
+    let mut in_escape = false;
+    rendered
+        .chars()
+        .filter(|character| {
+            if *character == '\u{1b}' {
+                in_escape = true;
+                return false;
+            }
+            if in_escape {
+                if *character == 'm' {
+                    in_escape = false;
+                }
+                return false;
+            }
+            true
+        })
+        .count()
+}
+
+fn pretty_visual_atomic(formula: &Value, color: bool) -> String {
+    let name = formula.get("name").and_then(Value::as_str).unwrap_or("?");
+    let args = formula
+        .get("args")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if args.len() == 2 && is_infix_predicate(name) {
+        return format!(
+            "{} {} {}",
+            pretty_visual_term(&args[0], color),
+            fol_paint(fol_predicate_symbol(name), FolRegister::Connective, color),
+            pretty_visual_term(&args[1], color)
+        );
+    }
+    let args = args
+        .iter()
+        .map(|term| pretty_visual_term(term, color))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{}({args})", fol_paint(name, FolRegister::Callee, color))
+}
+
+fn pretty_visual_term(term: &Value, color: bool) -> String {
+    if let Some(name) = term.get("var").and_then(Value::as_str).or_else(|| {
+        matches!(
+            term.get("kind").and_then(Value::as_str),
+            Some("var" | "Var")
+        )
+        .then(|| term.get("name").and_then(Value::as_str))
+        .flatten()
+    }) {
+        let register = if name == "out" {
+            FolRegister::Out
+        } else {
+            FolRegister::Variable
+        };
+        return fol_paint(name, register, color);
+    }
+    if matches!(
+        term.get("kind").and_then(Value::as_str),
+        Some("ctor" | "Ctor")
+    ) {
+        let name = term.get("name").and_then(Value::as_str).unwrap_or("?");
+        let raw_args = term
+            .get("args")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if let Some(symbolic) = format_symbolic_ctor(name, raw_args) {
+            return fol_paint(&symbolic, FolRegister::Literal, color);
+        }
+        let display = name.strip_prefix("call:").unwrap_or(name);
+        let args = raw_args
+            .iter()
+            .map(|arg| pretty_visual_term(arg, color))
+            .collect::<Vec<_>>();
+        return if args.is_empty() && !name.starts_with("call:") {
+            fol_paint(display, FolRegister::Literal, color)
+        } else {
+            format!(
+                "{}({})",
+                fol_paint(display, FolRegister::Callee, color),
+                args.join(", ")
+            )
+        };
+    }
+    fol_paint(&proofir_term_to_fol(term), FolRegister::Literal, color)
 }
 
 fn render_provenanced_fol_row(
@@ -3953,13 +4198,14 @@ fn render_provenanced_fol_row(
     );
     let warrants = contract_visual_warrants(report, contract);
     if warrants.is_empty() {
-        out.push_str(&format!(
-            "    FOL: {lifted} @ <missing provenance> warrant=<missing>\n"
-        ));
+        render_pretty_fol_with_provenance(out, &lifted, "@ <missing provenance> warrant=<missing>");
     } else {
         for warrant in warrants {
             let file = report_relative_path(
-                warrant.get("file").and_then(Value::as_str).unwrap_or("<unknown>"),
+                warrant
+                    .get("file")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<unknown>"),
                 report.project_root.as_deref(),
             );
             let line = warrant
@@ -3973,9 +4219,11 @@ fn render_provenanced_fol_row(
                 .and_then(Value::as_str)
                 .unwrap_or("cid-unavailable");
             let stated = resolve_source_memento_visual_source(source_lookup, warrant);
-            out.push_str(&format!(
-                "    FOL: {lifted} @ {file}:{line} warrant={source_cid}\n"
-            ));
+            render_pretty_fol_with_provenance(
+                out,
+                &lifted,
+                &format!("@ {file}:{line} warrant={source_cid}"),
+            );
             out.push_str(&format!("      stated: {}\n", stated.trim()));
         }
     }
@@ -3988,11 +4236,24 @@ fn render_provenanced_fol_row(
     }
 }
 
+fn render_pretty_fol_with_provenance(out: &mut String, fol: &str, provenance: &str) {
+    for (index, line) in fol.lines().enumerate() {
+        if index == 0 {
+            out.push_str(&format!("    FOL: {line} {provenance}\n"));
+        } else {
+            out.push_str(&format!("         {line}\n"));
+        }
+    }
+}
+
 fn contract_formula_symbols(contract: &Value) -> BTreeSet<String> {
     fn visit(value: &Value, symbols: &mut BTreeSet<String>) {
         match value {
             Value::Object(object) => {
-                if matches!(object.get("kind").and_then(Value::as_str), Some("var") | Some("ctor")) {
+                if matches!(
+                    object.get("kind").and_then(Value::as_str),
+                    Some("var") | Some("ctor")
+                ) {
                     if let Some(name) = object.get("name").and_then(Value::as_str) {
                         let surface = name
                             .strip_prefix("call:")
@@ -4029,7 +4290,14 @@ fn report_relative_path(path: &str, project_root: Option<&Path>) -> String {
         }
     }
     if path.starts_with("/tmp/") {
-        return path.rsplit('/').take(2).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("/");
+        return path
+            .rsplit('/')
+            .take(2)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("/");
     }
     path.to_string()
 }
@@ -8176,6 +8444,23 @@ mod tests {
         }
     }
 
+    fn without_ansi(rendered: &str) -> String {
+        let mut plain = String::new();
+        let mut in_escape = false;
+        for character in rendered.chars() {
+            if character == '\u{1b}' {
+                in_escape = true;
+            } else if in_escape {
+                if character == 'm' {
+                    in_escape = false;
+                }
+            } else {
+                plain.push(character);
+            }
+        }
+        plain
+    }
+
     fn stamp_source_oracles(value: &mut Value, source_text: &str) {
         match value {
             Value::Object(object) => {
@@ -10517,11 +10802,12 @@ mod tests {
         })];
 
         let visual = render_report_visual(&report, None);
+        let plain = without_ansi(&visual);
 
         assert!(visual.contains("universe visual:"), "{visual}");
         assert!(visual.contains("  universe encode_len"), "{visual}");
         assert!(
-            visual.contains("FOL: encode_len ⊢ out = expected"),
+            plain.contains("FOL: encode_len ⊢ @") && plain.contains("out = expected"),
             "{visual}"
         );
         assert!(
@@ -11339,6 +11625,7 @@ fn sample() {
         report.project_root = Some(root.path().to_path_buf());
 
         let visual = render_visual_source_report(&report);
+        let plain = without_ansi(&visual);
 
         assert!(visual.contains("universe visual:"), "{visual}");
         assert!(
@@ -11346,7 +11633,10 @@ fn sample() {
             "{visual}"
         );
         assert!(
-            visual.contains("    FOL: src/lib.rs::tests::sample ⊢ setup = 1 ∧ 10 = 10"),
+            plain.contains("    FOL: src/lib.rs::tests::sample ⊢ @")
+                && plain.contains("setup = 1\n")
+                && plain.contains("∧\n")
+                && plain.contains("10 = 10\n"),
             "{visual}"
         );
         assert!(
@@ -11642,11 +11932,14 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         report.project_root = Some(root.path().to_path_buf());
 
         let visual = render_visual_source_report(&report);
+        let plain = without_ansi(&visual);
 
         assert!(visual.contains("  universe encoded_len"), "{visual}");
         assert!(
-            visual
-                .contains("    FOL: encoded_len ⊢ rem = (bytes_len % 3) ∧ encoded_rem = (rem + 1)"),
+            plain.contains("    FOL: encoded_len ⊢ @")
+                && plain.contains("rem = (bytes_len % 3)\n")
+                && plain.contains("∧\n")
+                && plain.contains("encoded_rem = (rem + 1)\n"),
             "{visual}"
         );
         assert!(
@@ -11796,9 +12089,11 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         report.project_root = Some(root.path().to_path_buf());
 
         let visual = render_visual_source_report(&report);
+        let plain = without_ansi(&visual);
 
         assert!(
-            visual.contains("    FOL: encoded_len ⊢ result = if rem > 0 then Some(4) else Some(0)"),
+            plain.contains("    FOL: encoded_len ⊢ @")
+                && plain.contains("result = if rem > 0 then Some(4) else Some(0)\n"),
             "visual FOL must use turnstile and symbols, not JSON:\n{visual}"
         );
         assert!(
@@ -12815,13 +13110,13 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             2,
             "expected one merged A + one standalone assert"
         );
-        assert_eq!(groups[0].name, "A");
+        assert_eq!(groups[0].identity, "A");
         assert_eq!(groups[0].members.len(), 2);
         assert_eq!(
             groups[0].anchor.get("kind").and_then(Value::as_str),
             Some("function-contract")
         );
-        assert_eq!(groups[1].name, "tests::only_assert::assertion");
+        assert_eq!(groups[1].identity, "tests::only_assert::assertion");
         assert_eq!(groups[1].members.len(), 1);
 
         // Full visual: exactly one "universe A" heading; both formulas present.
@@ -13051,8 +13346,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         }));
         let rendered = render_report_visual(&report, None);
         assert!(
-            rendered.find("factory visual:").unwrap()
-                < rendered.find("Minority Report").unwrap(),
+            rendered.find("factory visual:").unwrap() < rendered.find("Minority Report").unwrap(),
             "factory report must lead the Minority Report:\n{rendered}"
         );
     }
@@ -13060,9 +13354,11 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     #[test]
     fn minority_report_renders_every_locus_without_elision() {
         let loci = (0..137)
-            .map(|index| serde_json::json!({
-                "file": "t.py", "line": index + 1, "name": format!("body_{index}")
-            }))
+            .map(|index| {
+                serde_json::json!({
+                    "file": "t.py", "line": index + 1, "name": format!("body_{index}")
+                })
+            })
             .collect::<Vec<_>>();
         let coverage = serde_json::json!({
             "totals": {"stated": 0, "accounted": 0, "silently_unaccounted": 0,
@@ -13074,6 +13370,81 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         assert_eq!(rendered.matches("t.py:").count(), 137, "{rendered}");
         assert!(!rendered.contains(" more)"), "{rendered}");
         assert!(rendered.contains("body_0") && rendered.contains("body_136"));
+    }
+
+    #[test]
+    fn visual_fol_pretty_prints_nested_guarded_formula() {
+        let contract = serde_json::json!({
+            "name": "choose",
+            "post": {
+                "kind": "and",
+                "operands": [
+                    {"kind": "atomic", "name": ">=", "args": [
+                        {"kind": "var", "name": "out"}, {"kind": "const", "value": 0}
+                    ]},
+                    {"kind": "or", "operands": [
+                        {"kind": "implies", "operands": [
+                            {"kind": "atomic", "name": "=", "args": [
+                                {"kind": "var", "name": "mode"}, {"kind": "const", "value": 1}
+                            ]},
+                            {"kind": "atomic", "name": "=", "args": [
+                                {"kind": "var", "name": "out"},
+                                {"kind": "ctor", "name": "call:fast", "args": [
+                                    {"kind": "var", "name": "input"}
+                                ]}
+                            ]}
+                        ]},
+                        {"kind": "implies", "operands": [
+                            {"kind": "atomic", "name": "!=", "args": [
+                                {"kind": "var", "name": "mode"}, {"kind": "const", "value": 1}
+                            ]},
+                            {"kind": "atomic", "name": "=", "args": [
+                                {"kind": "var", "name": "out"}, {"kind": "const", "value": 0}
+                            ]}
+                        ]}
+                    ]}
+                ]
+            }
+        });
+
+        assert_eq!(
+            format_contract_visual_fol_with_color(&contract, false),
+            "choose ⊢\n  out ≥ 0\n  ∧\n  cases\n    mode = 1  ⇒  out = fast(input)\n    mode ≠ 1  ⇒  out = 0"
+        );
+    }
+
+    #[test]
+    fn visual_fol_case_table_aligns_implication_arrows() {
+        let formula = serde_json::json!({"kind": "or", "operands": [
+            {"kind": "implies", "operands": [
+                {"kind": "atomic", "name": "ready", "args": [{"var": "x"}]},
+                {"kind": "atomic", "name": "done", "args": [{"var": "out"}]}
+            ]},
+            {"kind": "implies", "operands": [
+                {"kind": "atomic", "name": "long_guard", "args": [{"var": "input"}]},
+                {"kind": "atomic", "name": "fallback", "args": [{"var": "out"}]}
+            ]}
+        ]});
+        let rendered = pretty_visual_formula(&formula, false);
+        let arrows = rendered
+            .lines()
+            .filter_map(|line| line.find('⇒'))
+            .collect::<Vec<_>>();
+        assert_eq!(arrows.len(), 2, "{rendered}");
+        assert_eq!(arrows[0], arrows[1], "case arrows must align:\n{rendered}");
+    }
+
+    #[test]
+    fn visual_fol_no_color_mode_emits_no_ansi() {
+        let formula = serde_json::json!({
+            "kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"}, {"kind": "const", "value": 7}
+            ]
+        });
+        let plain = pretty_visual_formula(&formula, false);
+        let colored = pretty_visual_formula(&formula, true);
+        assert!(!plain.contains("\u{1b}["), "{plain:?}");
+        assert!(colored.contains("\u{1b}["), "{colored:?}");
     }
 
     #[test]
