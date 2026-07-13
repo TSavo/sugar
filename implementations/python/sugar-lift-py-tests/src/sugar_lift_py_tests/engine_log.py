@@ -130,6 +130,8 @@ def _emit_heartbeats(*, now: float | None = None, minimum_seconds: float | None 
 
 
 def _emit(level: int, event: str, frame: _Frame, **fields) -> None:
+    if not LOGGER.isEnabledFor(level):
+        return
     payload = {
         "schema": "sugar.engine.log.v1",
         "event": event,
@@ -140,7 +142,13 @@ def _emit(level: int, event: str, frame: _Frame, **fields) -> None:
         "fingerprint": frame.fingerprint,
         **fields,
     }
-    LOGGER.log(level, json.dumps(payload, sort_keys=True, default=str))
+    try:
+        message = json.dumps(payload, sort_keys=True, default=str)
+    except RecursionError:
+        # Reduction can lawfully approach Python's recursion limit. Telemetry is
+        # observational and must never turn that reduction into a factory gap.
+        return
+    LOGGER.log(level, message)
 
 
 def configure_live_log(path: str | None = None) -> None:

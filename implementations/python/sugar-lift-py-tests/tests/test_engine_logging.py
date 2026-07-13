@@ -51,3 +51,17 @@ def test_engine_live_log_is_flushed_outside_log_capture(tmp_path) -> None:
             engine_log.LOGGER.removeHandler(engine_log._LIVE_HANDLER)
             engine_log._LIVE_HANDLER.close()
         engine_log._LIVE_HANDLER = previous
+
+
+def test_engine_log_serialization_cannot_break_deep_reduction(monkeypatch, caplog) -> None:
+    caplog.set_level(logging.DEBUG, logger="sugar_lift_py_tests.engine")
+
+    def recursion_boundary(*args, **kwargs):
+        raise RecursionError("no encoder stack remains")
+
+    monkeypatch.setattr(engine_log.json, "dumps", recursion_boundary)
+
+    with engine_log.reduction_span(sugar="ListSugar", role="term", site="deep.py:1:0"):
+        pass
+
+    assert engine_log._ACTIVE == {}
