@@ -2090,7 +2090,6 @@ fn build_implication_obligation(post_formula: &Json, pre_formula: &Json) -> Resu
 #[cfg(test)]
 mod consistency_owned_callsite_tests {
     use super::*;
-    use crate::BridgePin;
     use serde_json::json;
 
     fn cid_string(seed: &str) -> String {

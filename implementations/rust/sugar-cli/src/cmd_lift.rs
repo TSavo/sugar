@@ -3810,6 +3810,7 @@ struct VisualUniverseGroup<'a> {
 
 /// Pure grouping for the universe visual: merge by exact contract name when a
 /// function-contract anchors that name; otherwise keep each row standalone.
+#[cfg(test)]
 fn group_contracts_for_universe_visual<'a>(
     report: &'a LiftSourceReport,
 ) -> Vec<VisualUniverseGroup<'a>> {
@@ -3818,6 +3819,7 @@ fn group_contracts_for_universe_visual<'a>(
     })
 }
 
+#[cfg(test)]
 fn group_contracts_for_universe_visual_with_identity<'a, F>(
     report: &'a LiftSourceReport,
     mut identity_for: F,
@@ -3907,6 +3909,7 @@ fn group_contracts_for_universe_visual_with_identities<'a>(
     groups
 }
 
+#[cfg(test)]
 fn contract_visual_identity(report: &LiftSourceReport, contract: &Value) -> String {
     let qualified = contract_qualified_owner(report, contract);
     let cid = contract_cid_of_ir_decl(contract).unwrap_or_else(|| "cid-unavailable".to_string());
