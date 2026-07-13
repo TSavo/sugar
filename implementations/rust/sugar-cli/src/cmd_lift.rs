@@ -3873,7 +3873,7 @@ fn short_cid(cid: &str) -> String {
     if body.len() <= 12 {
         return cid.to_string();
     }
-    format!("{}…", &body[..12])
+    format!("blake3-512:{}\u{2026}", &body[..12])
 }
 
 fn render_contract_mementos_appendix(out: &mut String, report: &LiftSourceReport) {
@@ -5767,13 +5767,6 @@ fn plan_role_label(role: &str) -> &'static str {
     }
 }
 
-fn short_cid(cid: &str) -> String {
-    if let Some(rest) = sugar_canonicalizer::cid_hex(cid) {
-        let short: String = rest.chars().take(12).collect();
-        return format!("blake3-512:{short}");
-    }
-    cid.to_string()
-}
 
 /// #3766 named terminal: THE ONE DOOR TEST is a raw `git clone <vendor>; sugar
 /// lift`, and a vendor tree with real source but no test corpus checked out
