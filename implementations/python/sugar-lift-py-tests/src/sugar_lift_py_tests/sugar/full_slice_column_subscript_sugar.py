@@ -10,7 +10,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class FullSliceColumnSubscriptSugar(Sugar, role=SugarRole.TERM):
+class FullSliceColumnSubscriptSugar(
+    Sugar, role=SugarRole.TERM, comes_before=("SubscriptSugar",)
+):
     """A two-axis ``receiver[:, integer]`` subscript coordinate.
 
     The index is the existing tuple literal containing a full SliceValue and
