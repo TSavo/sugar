@@ -432,11 +432,11 @@ def test_bitwise_literal_fold_witness_discharges_and_refutes(tmp_path: Path) -> 
     }
     print(json.dumps(trace, indent=2, sort_keys=True))
 
-    assert "BitwiseOpSugar" in truthful_result.selected_sugars
+    assert "RuntimeBitwiseOpSugar" in truthful_result.selected_sugars
     assert truthful_result.verdict == "sat"
     assert _prove_statuses(truthful_result.prove_doc) == ["discharged"]
 
-    assert "BitwiseOpSugar" in lying_result.selected_sugars
+    assert "RuntimeBitwiseOpSugar" in lying_result.selected_sugars
     assert lying_result.verdict == "unsat"
     assert _prove_statuses(lying_result.prove_doc) == ["unsatisfied"]
 
