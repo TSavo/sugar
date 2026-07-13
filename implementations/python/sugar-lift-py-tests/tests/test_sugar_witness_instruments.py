@@ -961,10 +961,11 @@ def test_effectful_binary_dunder_body_refuses_without_fabricated_derived_fact(
 def test_display_conversion_trace_emits_derived_fact_and_refutes_lie(
     tmp_path: Path,
 ) -> None:
+    # #4400: the live format seed currently exposes the typed lifter crash.
     seed = next(
         item
         for item in DEFAULT_SUGAR_WITNESS_SEEDS
-        if item.name == "object_display_conversion_callsite"
+        if item.name == "format_dunder_return"
     )
 
     truthful = run_source_through_real_solver(
@@ -991,14 +992,14 @@ def test_display_conversion_trace_emits_derived_fact_and_refutes_lie(
     }
     print(json.dumps(trace, indent=2, sort_keys=True))
 
-    assert "CallSugar" in truthful.selected_sugars
+    assert "FormatDunderCallSugar" in truthful.selected_sugars
     assert truthful.verdict == "sat"
     truthful_rows = _euf_rows(truthful.lift_doc)
     assert len(truthful_rows) == 1
     assert _euf_rhs_values(truthful_rows) == [20]
     assert _warrant_kinds(truthful_rows[0]) == {"Stated", "Derived"}
 
-    assert "CallSugar" in lying.selected_sugars
+    assert "FormatDunderCallSugar" in lying.selected_sugars
     assert lying.verdict == "unsat"
     lying_rows = _euf_rows(lying.lift_doc)
     assert len(lying_rows) == 2
