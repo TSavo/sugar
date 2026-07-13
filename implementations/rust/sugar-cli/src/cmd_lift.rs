@@ -4871,7 +4871,11 @@ fn resolve_report_symbol(
         "abs", "bool", "bytes", "dict", "divmod", "float", "int", "len", "list", "max", "min",
         "range", "set", "str", "sum", "tuple", "type",
     ];
+    const PYTHON_COORDINATES: &[&str] = &["py.invert", "py.neg", "py.subscript"];
     if kind == ReportFormulaSymbolKind::Constructor && symbol.starts_with("python:type:") {
+        return "coordinate".to_string();
+    }
+    if kind == ReportFormulaSymbolKind::Constructor && PYTHON_COORDINATES.contains(&symbol) {
         return "coordinate".to_string();
     }
     if kind == ReportFormulaSymbolKind::Constructor && BUILTINS.contains(&symbol) {
@@ -14792,6 +14796,46 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             ),
             "local"
         );
+    }
+
+    #[test]
+    fn visual_report_renders_explicit_python_coordinate_constructors() {
+        let contract = serde_json::json!({
+            "name": "dispatch", "kind": "function-contract", "formals": ["table", "key", "x"],
+            "post": {"kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"},
+                {"kind": "ctor", "name": "call:__call__", "args": [
+                    {"kind": "ctor", "name": "py.subscript", "args": [
+                        {"kind": "var", "name": "table"},
+                        {"kind": "var", "name": "key"}
+                    ]},
+                    {"kind": "ctor", "name": "py.neg", "args": [
+                        {"kind": "ctor", "name": "py.invert", "args": [
+                            {"kind": "var", "name": "x"}
+                        ]}
+                    ]}
+                ]}
+            ]},
+            "sourceWarrants": [{
+                "sourceFunctionName": "dispatch", "file": "dispatch.py",
+                "span": {"start_line": 1}
+            }]
+        });
+        let mut report = minimal_source_report();
+        let callable = serde_json::json!({
+            "name": "__call__", "kind": "function-contract", "formals": ["receiver", "x"],
+            "post": {"kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"}, {"kind": "var", "name": "x"}
+            ]},
+            "sourceWarrants": [{"sourceFunctionName": "__call__", "file": "dispatch.py"}]
+        });
+        report.contracts = vec![callable, contract];
+
+        let visual = render_report_visual(&report, None);
+
+        assert!(visual.contains("py.subscript -> coordinate"), "{visual}");
+        assert!(visual.contains("py.neg -> coordinate"), "{visual}");
+        assert!(visual.contains("py.invert -> coordinate"), "{visual}");
     }
 
     #[test]
