@@ -711,7 +711,7 @@ fn enumerate_rpc(
             reason: "empty command".to_string(),
         });
     }
-    let result = conn
+    let response = conn
         .transport
         .request(&json!({
             "level": level.wire(),
@@ -724,6 +724,7 @@ fn enumerate_rpc(
             plugin: plugin.clone(),
             reason: error.to_string(),
         })?;
+    let result = enumerate_result_from_response(&plugin, response)?;
     let nodes = result
         .get("nodes")
         .and_then(Value::as_array)
@@ -739,6 +740,20 @@ fn enumerate_rpc(
         .map(|arr| arr.iter().map(decode_gap).collect())
         .unwrap_or_default();
     Ok((nodes, gaps))
+}
+
+/// The resident transport returns the complete JSON-RPC envelope.  Keep the
+/// protocol boundary explicit here: enumeration consumes `result`, while an
+/// RPC error is a loud enumeration error.  Treating the envelope itself as
+/// the result makes every lawful `nodes` array look empty.
+fn enumerate_result_from_response(plugin: &str, response: Value) -> Result<Value, EnumerateError> {
+    if let Some(error) = response.get("error") {
+        return Err(EnumerateError::RpcError {
+            plugin: plugin.to_string(),
+            error: error.clone(),
+        });
+    }
+    Ok(response.get("result").cloned().unwrap_or(Value::Null))
 }
 
 /// Consumer fold for recovered construction audit. Every work-producing step
@@ -1191,5 +1206,38 @@ mod tests {
     #[test]
     fn decode_node_refuses_missing_memento() {
         assert!(decode_node(&json!({"payload": {"x": 1}})).is_err());
+    }
+
+    #[test]
+    fn enumerate_transport_unwraps_json_rpc_result_envelope() {
+        let result = enumerate_result_from_response(
+            "fixture-kit",
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {"nodes": [{"memento": {"file": "src/lib.rs"}}], "gaps": []}
+            }),
+        )
+        .expect("lawful result envelope");
+
+        assert_eq!(result["nodes"][0]["memento"]["file"], "src/lib.rs");
+    }
+
+    #[test]
+    fn enumerate_transport_preserves_json_rpc_error_as_loud_failure() {
+        let error = enumerate_result_from_response(
+            "fixture-kit",
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "error": {"code": -32601, "message": "unknown method"}
+            }),
+        )
+        .expect_err("RPC error must not degrade to an empty child set");
+
+        assert!(matches!(
+            error,
+            EnumerateError::RpcError { plugin, .. } if plugin == "fixture-kit"
+        ));
     }
 }

@@ -3451,6 +3451,71 @@ fn mint_ir_document(
     )
 }
 
+/// Same-name inv coalescing combines formulas from several independently
+/// warranted rows. Preserve the union of those warrants on the surviving
+/// declaration, otherwise the formula survives while the source testimony
+/// that licensed one of its conjuncts disappears.
+fn merge_coalesced_contract_provenance(target: &mut Value, incoming: &Value) {
+    merge_unique_array_field(target, incoming, "sourceWarrants");
+    merge_unique_array_field(target, incoming, "source_warrants");
+
+    let Some(incoming_warrants) = incoming
+        .get("proofirProvenance")
+        .or_else(|| incoming.get("proofir_provenance"))
+        .and_then(|provenance| provenance.get("warrants"))
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    let key = if target.get("proofirProvenance").is_some() {
+        "proofirProvenance"
+    } else {
+        "proofir_provenance"
+    };
+    let Some(target_object) = target.as_object_mut() else {
+        return;
+    };
+    let provenance = target_object
+        .entry(key.to_string())
+        .or_insert_with(|| json!({"warrants": []}));
+    let Some(target_warrants) = provenance
+        .get_mut("warrants")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    append_unique_json(target_warrants, incoming_warrants);
+}
+
+fn merge_unique_array_field(target: &mut Value, incoming: &Value, key: &str) {
+    let Some(incoming_values) = incoming.get(key).and_then(Value::as_array) else {
+        return;
+    };
+    let Some(target_object) = target.as_object_mut() else {
+        return;
+    };
+    let target_values = target_object
+        .entry(key.to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Some(target_values) = target_values.as_array_mut() else {
+        return;
+    };
+    append_unique_json(target_values, incoming_values);
+}
+
+fn append_unique_json(target: &mut Vec<Value>, incoming: &[Value]) {
+    let mut keys: std::collections::BTreeSet<String> = target
+        .iter()
+        .map(|value| encode_jcs(json_to_cvalue(value).as_ref()))
+        .collect();
+    for value in incoming {
+        let key = encode_jcs(json_to_cvalue(value).as_ref());
+        if keys.insert(key) {
+            target.push(value.clone());
+        }
+    }
+}
+
 fn mint_ir_document_with_source_mementos(
     ir: &[Value],
     source_mementos: Option<&Vec<Value>>,
@@ -3931,6 +3996,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
                     group.operand_keys.push(operand_key);
                     group.operands.push(inv.clone());
                 }
+                merge_coalesced_contract_provenance(&mut group.template, decl);
                 // The stream slot was already added when the first decl for this name arrived.
             } else {
                 // First decl for this name: create the group and add the stream slot.
@@ -8486,6 +8552,28 @@ mod tests {
                 {"kind": "const", "sort": {"kind": "primitive", "name": "Int"}, "value": val}
             ]
         })
+    }
+
+    #[test]
+    fn coalesced_inv_contract_preserves_each_source_warrant() {
+        let mut first = json!({
+            "kind": "contract",
+            "sourceWarrants": [{"kind": "source-memento", "source_cid": "a"}]
+        });
+        let second = json!({
+            "kind": "contract",
+            "sourceWarrants": [{"kind": "source-memento", "source_cid": "b"}]
+        });
+
+        merge_coalesced_contract_provenance(&mut first, &second);
+
+        assert_eq!(
+            first["sourceWarrants"]
+                .as_array()
+                .expect("source warrant array")
+                .len(),
+            2
+        );
     }
 
     #[test]

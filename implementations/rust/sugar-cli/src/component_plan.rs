@@ -25,7 +25,7 @@ use sugar_ir_compiler::{
 };
 use tracing::{debug, info, warn};
 
-use crate::project_config::PluginEntry;
+use crate::project_config::{read_project_config, PluginEntry, ProjectConfig};
 
 pub const COMPONENT_PROTOCOL_VERSION: &str = "sugar-component/1";
 pub const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
@@ -247,6 +247,8 @@ pub fn plan_workspace_with_options(
 ) -> ComponentPlan {
     let project_root = absolute_path(project_root);
     let census = census_workspace(&project_root);
+    let project_config = read_project_config(&project_root);
+    let authored_lift_languages = authored_lift_languages(&project_config);
     let mut plan = ComponentPlan {
         census,
         ..Default::default()
@@ -271,6 +273,10 @@ pub fn plan_workspace_with_options(
                 .and_then(|meta| meta.modified().ok());
             key.push_str(&format!("component={component:?} mtime={binary_mtime:?}\n"));
         }
+        key.push_str(&format!(
+            "authored_lift_languages={authored_lift_languages:?}\nplugins={:?}\n",
+            project_config.plugins
+        ));
         blake3_512_of(key.as_bytes())
     };
     if let Ok(cache) = component_plan_cache().lock() {
@@ -345,7 +351,10 @@ pub fn plan_workspace_with_options(
     dedupe_ir_compilers(&mut plan.ir_compilers);
     order_component_plugins(&mut plan.plugins);
     for language in census_languages {
-        if !claimed_languages.contains(&language) && !declined_languages.contains(&language) {
+        if !claimed_languages.contains(&language)
+            && !declined_languages.contains(&language)
+            && !authored_lift_languages.contains(&language)
+        {
             if let Some(message) = missing_kit_message_for_language(&plan.census, &language) {
                 plan.diagnostics.push(ComponentDiagnostic {
                     level: DiagnosticLevel::Error,
@@ -358,6 +367,24 @@ pub fn plan_workspace_with_options(
         cache.insert(cache_key, plan.clone());
     }
     plan
+}
+
+/// An authored lift plugin is the user's explicit owner for the declared
+/// platform language. Component discovery is the zero-config fallback and
+/// must not reject that workspace merely because no installed component also
+/// claims it.
+fn authored_lift_languages(config: &ProjectConfig) -> BTreeSet<String> {
+    if !config.plugins.iter().any(PluginEntry::is_lift_plugin) {
+        return BTreeSet::new();
+    }
+    config
+        .platform_profile
+        .as_ref()
+        .and_then(|profile| profile.language.as_ref())
+        .filter(|language| !language.trim().is_empty())
+        .cloned()
+        .into_iter()
+        .collect()
 }
 
 #[allow(dead_code)] // called by discharge_config in the binary module tree
@@ -2632,6 +2659,41 @@ done
                 "rust-cargo-test-witness"
             ]
         );
+    }
+
+    #[test]
+    fn authored_lift_plugin_claims_its_declared_platform_language() {
+        let config = ProjectConfig {
+            plugins: vec![PluginEntry {
+                name: Some("java-test-assertions-lift".to_string()),
+                kind: Some("lift".to_string()),
+                surface: "java-test-assertions".to_string(),
+                ..Default::default()
+            }],
+            platform_profile: Some(crate::project_config::PlatformProfile {
+                language: Some("java".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            authored_lift_languages(&config),
+            BTreeSet::from(["java".to_string()])
+        );
+    }
+
+    #[test]
+    fn platform_language_without_authored_lift_plugin_stays_unclaimed() {
+        let config = ProjectConfig {
+            platform_profile: Some(crate::project_config::PlatformProfile {
+                language: Some("java".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert!(authored_lift_languages(&config).is_empty());
     }
 
     #[test]
