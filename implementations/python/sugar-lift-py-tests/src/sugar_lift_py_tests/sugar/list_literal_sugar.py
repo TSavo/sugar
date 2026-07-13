@@ -4,7 +4,7 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import ListValue
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -47,16 +47,15 @@ class ListLiteralSugar(Sugar, role=SugarRole.TERM):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # Reduce each element; the result is a list of them.
-        return self._collect(self.elements, (), ctx)
-
-    def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:
-        if not remaining:
-            return Complete(ListValue(accumulated))
-        head, *rest = remaining
-        return head.reduce(ctx).and_then(
-            lambda value: self._collect(tuple(rest), (*accumulated, value), ctx)
-        )
+        # Preserve source order without spending one Python stack frame per item.
+        # Large generated tables are ordinary list literals, not recursive syntax.
+        accumulated = []
+        for element in self.elements:
+            outcome = element.reduce(ctx)
+            if isinstance(outcome, Incomplete):
+                return outcome
+            accumulated.append(outcome.value)
+        return Complete(ListValue(tuple(accumulated)))
 
     def walk_children(self):
         return self.elements
