@@ -429,7 +429,7 @@ def test_bitwise_literal_fold_witness_discharges_and_refutes(tmp_path: Path) -> 
     assert _prove_statuses(lying_result.prove_doc) == ["unsatisfied"]
 
 
-def test_bitwise_symbolic_witness_uses_number_sort_universe(
+def test_bitwise_symbolic_witness_preserves_int_term_without_number_supersort(
     tmp_path: Path,
 ) -> None:
     prefix = "def A(z):\n    return z & 3\n\n"
@@ -443,53 +443,45 @@ def test_bitwise_symbolic_witness_uses_number_sort_universe(
         tmp_path / "bitwise-symbolic-lie", lying
     )
 
-    truthful_atom = _single_int32_eq_bv_expr_atom(truthful_result.lift_doc)
-    lying_atom = _single_int32_eq_bv_expr_atom(lying_result.lift_doc)
-    truthful_formula = _single_linked_int32_eq_bv_expr_atom(truthful_result.prove_doc)
-    lying_formula = _single_linked_int32_eq_bv_expr_atom(lying_result.prove_doc)
+    truthful_contract = next(
+        row
+        for row in truthful_result.lift_doc["ir"]
+        if row.get("kind") == "function-contract"
+    )
+    lying_contract = next(
+        row
+        for row in lying_result.lift_doc["ir"]
+        if row.get("kind") == "function-contract"
+    )
     trace = {
         "truthful": {
             "verdict": truthful_result.verdict,
             "selectedSugars": truthful_result.selected_sugars,
-            "universeAtom": truthful_atom,
-            "finalFormula": truthful_formula,
+            "universePost": truthful_contract["post"],
             "ir": _a_callsite_euf_rows(truthful_result.lift_doc),
             "rows": truthful_result.prove_doc.get("rows"),
         },
         "lying": {
             "verdict": lying_result.verdict,
             "selectedSugars": lying_result.selected_sugars,
-            "universeAtom": lying_atom,
-            "finalFormula": lying_formula,
+            "universePost": lying_contract["post"],
             "ir": _a_callsite_euf_rows(lying_result.lift_doc),
             "rows": lying_result.prove_doc.get("rows"),
         },
     }
     print(json.dumps(trace, indent=2, sort_keys=True))
 
-    assert "BitwiseOpSugar" in truthful_result.selected_sugars
-    assert truthful_atom == lying_atom
-    assert truthful_atom["args"][0] == {"kind": "var", "name": "out"}
-    assert _ctor_names(truthful_atom["args"][1]) == {"bv32.and"}
-
-    assert truthful_formula == lying_formula
-    assert truthful_formula["args"][0] == {
-        "kind": "ctor",
-        "name": "call:A",
-        "args": [
-            {
-                "kind": "const",
-                "value": 6,
-                "sort": {"kind": "primitive", "name": "Int"},
-            }
-        ],
-    }
-    assert _ctor_names(truthful_formula["args"][1]) == {"bv32.and"}
+    assert "RuntimeBitwiseOpSugar" in truthful_result.selected_sugars
+    assert truthful_contract["post"] == lying_contract["post"]
+    assert truthful_contract["formals"] == ["z"]
+    assert _ctor_names(truthful_contract["post"]) == {"&"}
+    assert "Number" not in json.dumps(truthful_contract)
 
     assert truthful_result.verdict == "sat"
     assert _prove_statuses(truthful_result.prove_doc) == ["discharged"]
 
-    assert "BitwiseOpSugar" in lying_result.selected_sugars
+    assert "RuntimeBitwiseOpSugar" in lying_result.selected_sugars
+    # #4394: the grounded Int bitwise constructor must refute this lie.
     assert lying_result.verdict == "unsat"
     assert _prove_statuses(lying_result.prove_doc) == ["unsatisfied"]
 
