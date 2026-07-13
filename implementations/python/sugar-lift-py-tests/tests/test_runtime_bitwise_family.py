@@ -10,6 +10,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import Bv32Value, CallSiteValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import ctor, make_var, num
 
@@ -57,7 +58,7 @@ def test_callsite_invert_uses_existing_symbolic_invert_coordinate() -> None:
     )
 
 
-def test_runtime_owner_excludes_bit_or_annotation_ambiguity() -> None:
+def test_runtime_and_annotation_bit_or_have_distinct_owners() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     owned = build_node(
         ast.parse("x & y", mode="eval").body,
@@ -67,13 +68,17 @@ def test_runtime_owner_excludes_bit_or_annotation_ambiguity() -> None:
     )
 
     assert owned.audit_row.selected == "RuntimeBitwiseOpSugar"
-    with pytest.raises(FactoryPanic, match="observed=BinOp requested=term"):
-        build_node(
-            ast.parse("int | str", mode="eval").body,
-            filename="t.py",
-            role=SugarRole.TERM,
-            ctx=ctx,
-        )
+    source = "def f(value: int | str):\n    return value\n"
+    module = ast.parse(source)
+    union = next(node for node in ast.walk(module) if isinstance(node, ast.BinOp))
+    annotation = build_node(
+        SourceFragment.from_node(union, "t.py", source=source),
+        filename="t.py",
+        role=SugarRole.TERM,
+        ctx=ctx,
+    )
+
+    assert annotation.audit_row.selected == "AnnotationUnionSugar"
 
 
 def test_bv32_invert_stays_loud_without_a_native_vocabulary_term() -> None:
