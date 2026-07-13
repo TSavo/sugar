@@ -3745,7 +3745,9 @@ struct VisualUniverseGroup<'a> {
 
 /// Pure grouping for the universe visual: merge by exact contract name when a
 /// function-contract anchors that name; otherwise keep each row standalone.
-fn group_contracts_for_universe_visual<'a>(report: &'a LiftSourceReport) -> Vec<VisualUniverseGroup<'a>> {
+fn group_contracts_for_universe_visual<'a>(
+    report: &'a LiftSourceReport,
+) -> Vec<VisualUniverseGroup<'a>> {
     let contracts = &report.contracts;
     let anchored_names: BTreeSet<String> = contracts
         .iter()
@@ -3951,12 +3953,18 @@ fn render_universe_visual_report(
         } else {
             UniverseVisualMode::BodyComplete
         };
-        if fact_universe
-            && warrants
+        if fact_universe {
+            let assertion_scope = if warrants
                 .iter()
                 .any(|warrant| is_module_level_warrant(warrant))
-        {
-            out.push_str(&format!("  vendor assertion (module level) {identity}\n"));
+            {
+                "module level".to_string()
+            } else {
+                format!("in {}", contract_qualified_owner(report, contract))
+            };
+            out.push_str(&format!(
+                "  vendor assertion ({assertion_scope}) {identity}\n"
+            ));
             for member in &group.members {
                 render_provenanced_vendor_assertion_row(
                     &mut out,
@@ -4437,8 +4445,8 @@ fn resolve_report_symbol(
     formals: &BTreeSet<String>,
 ) -> String {
     const BUILTINS: &[&str] = &[
-        "abs", "bool", "bytes", "dict", "float", "int", "len", "list", "max",
-        "min", "range", "set", "str", "sum", "tuple", "type",
+        "abs", "bool", "bytes", "dict", "float", "int", "len", "list", "max", "min", "range",
+        "set", "str", "sum", "tuple", "type",
     ];
     if BUILTINS.contains(&symbol) {
         return format!("python:builtin/{symbol}");
@@ -4453,7 +4461,9 @@ fn resolve_report_symbol(
     }) {
         let qualified = contract_qualified_owner(report, target);
         let cid = contract_cid_of_ir_decl(target).unwrap_or_else(|| "cid-unavailable".to_string());
-        if current_cid.as_deref() != Some(cid.as_str()) || qualified.ends_with(&format!(".{symbol}")) {
+        if current_cid.as_deref() != Some(cid.as_str())
+            || qualified.ends_with(&format!(".{symbol}"))
+        {
             return format!("{qualified} [{}]", short_cid(&cid));
         }
     }
@@ -5766,7 +5776,6 @@ fn plan_role_label(role: &str) -> &'static str {
         _ => "component",
     }
 }
-
 
 /// #3766 named terminal: THE ONE DOOR TEST is a raw `git clone <vendor>; sugar
 /// lift`, and a vendor tree with real source but no test corpus checked out
@@ -13421,6 +13430,65 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
+    fn universe_visual_nests_method_assertion_vocabulary_under_its_parent_identity() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            root.path().join("datetime.py"),
+            "def _cmp(self, other):\n    return 0\n    assert isinstance(other, date)\n",
+        )
+        .expect("fixture");
+        let warrant = serde_json::json!({
+            "kind": "source-memento", "file": "datetime.py", "role": "assertion",
+            "sourceFunctionName": "date._cmp", "span": {"start_line": 3, "end_line": 3}
+        });
+        let mut report = minimal_source_report();
+        report.project_root = Some(root.path().to_path_buf());
+        report.contracts = vec![
+            serde_json::json!({
+                "kind": "function-contract", "name": "date._cmp", "formals": ["self", "other"],
+                "post": {"kind": "atomic", "name": "=", "args": [
+                    {"kind": "var", "name": "out"},
+                    {"kind": "const", "value": 0, "sort": {"name": "Int"}}
+                ]},
+                "sourceWarrants": [{
+                    "kind": "source-memento", "file": "datetime.py",
+                    "sourceFunctionName": "date._cmp", "span": {"start_line": 1, "end_line": 2}
+                }]
+            }),
+            serde_json::json!({
+                "kind": "contract", "name": "date._cmp::assertion",
+                "inv": {"kind": "atomic", "name": "adt.is_python_type", "args": [
+                    {"kind": "var", "name": "other"},
+                    {"kind": "ctor", "name": "python:type:date", "args": []}
+                ]},
+                "sourceWarrants": [warrant]
+            }),
+        ];
+
+        let visual = render_universe_visual_report(
+            &report,
+            VisualSourceLookup {
+                project_root: report.project_root.as_deref(),
+            },
+        );
+        assert!(visual.contains("universe date._cmp ["), "{visual}");
+        assert!(
+            visual.contains("vendor assertion (in date._cmp)"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("assert isinstance(other, date)"),
+            "{visual}"
+        );
+        assert!(visual.contains("adt.is_python_type"), "{visual}");
+        assert_eq!(
+            visual.matches("universe date._cmp [").count(),
+            1,
+            "{visual}"
+        );
+    }
+
+    #[test]
     fn universe_visual_prefers_function_contract_embedded_warrant() {
         let mut report = minimal_source_report();
         report.contracts = vec![serde_json::json!({
@@ -13998,8 +14066,14 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let target = resolve_report_symbol(&report, &caller, "_cmp", &formals);
         assert!(target.starts_with("<module>._cmp ["), "{target}");
         assert_ne!(target, contract_visual_identity(&report, &caller));
-        assert_eq!(resolve_report_symbol(&report, &caller, "tuple", &formals), "python:builtin/tuple");
-        assert_eq!(resolve_report_symbol(&report, &caller, "self", &formals), "formal");
+        assert_eq!(
+            resolve_report_symbol(&report, &caller, "tuple", &formals),
+            "python:builtin/tuple"
+        );
+        assert_eq!(
+            resolve_report_symbol(&report, &caller, "self", &formals),
+            "formal"
+        );
     }
 
     #[test]
