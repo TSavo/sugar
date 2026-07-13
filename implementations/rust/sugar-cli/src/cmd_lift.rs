@@ -4393,6 +4393,7 @@ const VISUAL_FORMULA_MAX_DEPTH: usize = 24;
 const VISUAL_FORMULA_MAX_SUBTREE_NODES: usize = 512;
 const VISUAL_FORMULA_MAX_SUBTREE_BYTES: usize = 16 * 1024;
 const VISUAL_FORMULA_SHARED_MIN_NODES: usize = 10;
+const VISUAL_FORMULA_MAX_LINE_WIDTH: usize = 120;
 
 #[derive(Clone, Copy)]
 struct VisualSubtreeMeta {
@@ -4434,43 +4435,48 @@ impl VisualFormulaRenderer {
         let mut bytes = 0usize;
         match value {
             Value::Null => {
-                hasher.update(b"null");
+                hasher.update(b"N");
             }
             Value::Bool(boolean) => {
-                hasher.update(if *boolean { b"true" } else { b"false" });
+                hasher.update(if *boolean { b"B1" } else { b"B0" });
             }
             Value::Number(number) => {
                 let rendered = number.to_string();
                 bytes += rendered.len();
+                hasher.update(b"D");
+                hasher.update(&(rendered.len() as u64).to_le_bytes());
                 hasher.update(rendered.as_bytes());
             }
             Value::String(string) => {
                 bytes += string.len();
+                hasher.update(b"S");
+                hasher.update(&(string.len() as u64).to_le_bytes());
                 hasher.update(string.as_bytes());
             }
             Value::Array(values) => {
-                hasher.update(b"[");
+                hasher.update(b"A");
+                hasher.update(&(values.len() as u64).to_le_bytes());
                 for child in values {
                     let child_meta = self.inventory(child);
                     nodes += child_meta.nodes;
                     bytes += child_meta.bytes;
                     hasher.update(&child_meta.fingerprint);
                 }
-                hasher.update(b"]");
             }
             Value::Object(fields) => {
-                hasher.update(b"{");
+                hasher.update(b"O");
+                hasher.update(&(fields.len() as u64).to_le_bytes());
                 let mut names = fields.keys().collect::<Vec<_>>();
                 names.sort_unstable();
                 for name in names {
                     bytes += name.len();
+                    hasher.update(&(name.len() as u64).to_le_bytes());
                     hasher.update(name.as_bytes());
                     let child_meta = self.inventory(&fields[name]);
                     nodes += child_meta.nodes;
                     bytes += child_meta.bytes;
                     hasher.update(&child_meta.fingerprint);
                 }
-                hasher.update(b"}");
             }
         }
         let meta = VisualSubtreeMeta {
@@ -4659,12 +4665,8 @@ impl VisualFormulaRenderer {
         let args = args
             .iter()
             .map(|term| self.term(term, depth + 1))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(
-            "{}({args})",
-            fol_paint(name, FolRegister::Callee, self.color)
-        )
+            .collect::<Vec<_>>();
+        format_visual_application(&fol_paint(name, FolRegister::Callee, self.color), &args)
     }
 
     fn term(&mut self, term: &Value, depth: usize) -> String {
@@ -4724,15 +4726,32 @@ impl VisualFormulaRenderer {
             return if args.is_empty() && !name.starts_with("call:") {
                 fol_paint(display, FolRegister::Literal, self.color)
             } else {
-                format!(
-                    "{}({})",
-                    fol_paint(display, FolRegister::Callee, self.color),
-                    args.join(", ")
+                format_visual_application(
+                    &fol_paint(display, FolRegister::Callee, self.color),
+                    &args,
                 )
             };
         }
         fol_paint(&proofir_term_to_fol(term), FolRegister::Literal, self.color)
     }
+}
+
+fn format_visual_application(callee: &str, args: &[String]) -> String {
+    let inline = format!("{callee}({})", args.join(", "));
+    if !inline.contains('\n') && visible_width(&inline) <= VISUAL_FORMULA_MAX_LINE_WIDTH {
+        return inline;
+    }
+    let mut rows = Vec::with_capacity(args.len() + 2);
+    rows.push(format!("{callee}("));
+    for (index, arg) in args.iter().enumerate() {
+        let mut row = indent_lines(arg, 2);
+        if index + 1 < args.len() {
+            row.push(',');
+        }
+        rows.push(row);
+    }
+    rows.push(")".to_string());
+    rows.join("\n")
 }
 
 fn is_visual_formula_shape(value: &Value) -> bool {
@@ -14554,6 +14573,62 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "{rendered}"
         );
         assert!(rendered.contains("shared cid=blake3-512:"), "{rendered}");
+    }
+
+    #[test]
+    fn visual_fol_sharing_keeps_json_scalar_types_distinct() {
+        fn wrapped(value: Value) -> Value {
+            serde_json::json!({
+                "kind": "ctor", "name": "call:outer", "args": [{
+                    "kind": "ctor", "name": "call:middle", "args": [{
+                        "kind": "ctor", "name": "call:leaf", "args": [value]
+                    }]
+                }]
+            })
+        }
+        let formula = serde_json::json!({
+            "kind": "and", "operands": [
+                {"kind": "atomic", "name": "=", "args": [
+                    {"kind": "var", "name": "left"}, wrapped(Value::String("5".into()))
+                ]},
+                {"kind": "atomic", "name": "=", "args": [
+                    {"kind": "var", "name": "right"}, wrapped(serde_json::json!(5))
+                ]}
+            ]
+        });
+
+        let rendered = pretty_visual_formula(&formula, false);
+
+        assert!(rendered.contains("leaf(\"5\")"), "{rendered}");
+        assert!(rendered.contains("leaf(5)"), "{rendered}");
+        assert!(
+            !rendered.contains("as above"),
+            "different typed leaves are not the same subtree:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn visual_fol_wraps_wide_shallow_constructor_arguments() {
+        let args = (0..24)
+            .map(|index| {
+                serde_json::json!({
+                    "kind": "const", "value": format!("argument-{index:02}-value")
+                })
+            })
+            .collect::<Vec<_>>();
+        let formula = serde_json::json!({
+            "kind": "atomic", "name": "py.truthy", "args": [{
+                "kind": "ctor", "name": "call:wide", "args": args
+            }]
+        });
+
+        let rendered = pretty_visual_formula(&formula, false);
+
+        assert!(rendered.lines().count() > 2, "{rendered}");
+        assert!(
+            rendered.lines().all(|line| line.chars().count() <= 120),
+            "wide shallow calls must shape instead of escaping to one line:\n{rendered}"
+        );
     }
 
     #[test]
