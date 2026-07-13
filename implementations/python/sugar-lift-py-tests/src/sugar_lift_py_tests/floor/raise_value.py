@@ -54,7 +54,10 @@ def _exceptional_exit_formula(effect: RaiseEffect, guards: tuple = ()):
             "py.exceptional_exit",
             [
                 str_const(effect.exception_name),
-                str_const(effect.blame or "<unknown raise locus>"),
+                str_const(
+                    f"{effect.blame or '<unknown raise locus>'}"
+                    f"#source-sha256={effect.source_sha256 or 'unavailable'}"
+                ),
             ],
         ),
     )
