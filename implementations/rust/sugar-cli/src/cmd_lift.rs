@@ -4,6 +4,7 @@
 // and emit the raw lifted ProofIR response. Minting is a separate composition
 // step owned by `sugar mint`.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -3812,29 +3813,56 @@ struct VisualUniverseGroup<'a> {
 fn group_contracts_for_universe_visual<'a>(
     report: &'a LiftSourceReport,
 ) -> Vec<VisualUniverseGroup<'a>> {
+    group_contracts_for_universe_visual_with_identity(report, |contract| {
+        contract_visual_identity(report, contract)
+    })
+}
+
+fn group_contracts_for_universe_visual_with_identity<'a, F>(
+    report: &'a LiftSourceReport,
+    mut identity_for: F,
+) -> Vec<VisualUniverseGroup<'a>>
+where
+    F: FnMut(&Value) -> String,
+{
     let contracts = &report.contracts;
-    let anchored_names: BTreeSet<String> = contracts
+    let identities = contracts.iter().map(&mut identity_for).collect::<Vec<_>>();
+    group_contracts_for_universe_visual_with_identities(report, identities)
+}
+
+fn group_contracts_for_universe_visual_with_identities<'a>(
+    report: &'a LiftSourceReport,
+    identities: Vec<String>,
+) -> Vec<VisualUniverseGroup<'a>> {
+    let contracts = &report.contracts;
+    let anchored_names = contracts
         .iter()
-        .filter(|contract| {
+        .zip(&identities)
+        .filter(|(contract, _)| {
             contract.get("kind").and_then(Value::as_str) == Some("function-contract")
         })
-        .map(|contract| contract_visual_identity(report, contract))
-        .collect();
+        .map(|(_, identity)| identity.clone())
+        .collect::<BTreeSet<_>>();
+    let mut members_by_identity = BTreeMap::<String, Vec<&Value>>::new();
+    for (contract, identity) in contracts.iter().zip(&identities) {
+        members_by_identity
+            .entry(identity.clone())
+            .or_default()
+            .push(contract);
+    }
 
     let mut groups = Vec::new();
     let mut emitted_anchored: BTreeSet<String> = BTreeSet::new();
     let mut heartbeat = RenderHeartbeat::new("universe_grouping.contracts");
-    for (index, contract) in contracts.iter().enumerate() {
+    for (index, (contract, identity)) in contracts.iter().zip(identities).enumerate() {
         heartbeat.tick(index);
-        let identity = contract_visual_identity(report, contract);
         if anchored_names.contains(&identity) {
             if !emitted_anchored.insert(identity.clone()) {
                 continue;
             }
-            let mut members: Vec<&Value> = contracts
-                .iter()
-                .filter(|row| contract_visual_identity(report, row) == identity)
-                .collect();
+            let mut members = members_by_identity
+                .remove(&identity)
+                .unwrap_or_else(|| panic!("indexed universe identity disappeared: {identity}"));
             // Anchor first so post leads FOL and warrants drive the source walk.
             members.sort_by_key(|row| {
                 if row.get("kind").and_then(Value::as_str) == Some("function-contract") {
@@ -3883,6 +3911,20 @@ fn contract_visual_identity(report: &LiftSourceReport, contract: &Value) -> Stri
     let qualified = contract_qualified_owner(report, contract);
     let cid = contract_cid_of_ir_decl(contract).unwrap_or_else(|| "cid-unavailable".to_string());
     format!("{qualified} [{}]", short_cid(&cid))
+}
+
+fn qualified_contract_for<'a>(
+    report: &LiftSourceReport,
+    contract: &Value,
+    qualified_contracts: &'a [(String, String)],
+) -> &'a str {
+    report
+        .contracts
+        .iter()
+        .position(|candidate| std::ptr::eq(candidate, contract))
+        .and_then(|index| qualified_contracts.get(index))
+        .map(|(qualified, _)| qualified.as_str())
+        .unwrap_or("<module>")
 }
 
 fn contract_qualified_owner(report: &LiftSourceReport, contract: &Value) -> String {
@@ -3955,10 +3997,13 @@ fn short_cid(cid: &str) -> String {
     format!("blake3-512:{}\u{2026}", &body[..12])
 }
 
-fn render_contract_mementos_appendix(out: &mut String, report: &LiftSourceReport) {
+fn render_contract_mementos_appendix(
+    out: &mut String,
+    report: &LiftSourceReport,
+    qualified_contracts: &[(String, String)],
+) {
     let mut rows = BTreeSet::new();
-    for contract in &report.contracts {
-        let qualified = contract_qualified_owner(report, contract);
+    for (contract, (qualified, _)) in report.contracts.iter().zip(qualified_contracts) {
         if let Some(cid) = contract_cid_of_ir_decl(contract) {
             rows.insert(("contract", qualified.clone(), cid));
         }
@@ -3990,12 +4035,34 @@ fn render_universe_visual_report(
         return String::new();
     }
     let boundaries = visual_boundary_rows(&report.factory_walk, source_lookup);
+    let factory_predicates =
+        index_universe_factory_predicate_rows(&report.factory_walk, source_lookup);
+    let qualified_contracts = report
+        .contracts
+        .iter()
+        .map(|contract| {
+            (
+                contract_qualified_owner(report, contract),
+                contract_cid_of_ir_decl(contract).unwrap_or_else(|| "cid-unavailable".to_string()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let identities = qualified_contracts
+        .iter()
+        .map(|(qualified, cid)| format!("{qualified} [{}]", short_cid(cid)))
+        .collect::<Vec<_>>();
+    let asserted_facts = report
+        .contracts
+        .iter()
+        .filter_map(|contract| format_contract_asserted_fact(report, contract))
+        .collect::<Vec<_>>();
     let mut out = String::new();
+    let mut breakdown_cache = BTreeMap::<(String, u8), String>::new();
     out.push_str("universe visual:\n");
-    for group in group_contracts_for_universe_visual(report) {
+    for group in group_contracts_for_universe_visual_with_identities(report, identities) {
         let contract = group.anchor;
         let identity = &group.identity;
-        let qualified_name = contract_qualified_owner(report, contract);
+        let qualified_name = qualified_contract_for(report, contract, &qualified_contracts);
         let cid_prefix = contract_cid_of_ir_decl(contract)
             .map(|cid| short_cid(&cid))
             .unwrap_or_else(|| "cid-unavailable".to_string());
@@ -4049,7 +4116,7 @@ fn render_universe_visual_report(
                 format!("vendor assertion (module level) {identity}")
             } else {
                 let parent = assertion_parent_from_warrants(&warrants)
-                    .unwrap_or_else(|| contract_qualified_owner(report, contract));
+                    .unwrap_or_else(|| qualified_name.to_string());
                 format!("vendor assertion (in {parent}) [{cid_prefix}]")
             };
             out.push_str(&format!("  {assertion_label}\n"));
@@ -4060,6 +4127,7 @@ fn render_universe_visual_report(
                     source_lookup,
                     member,
                     identity,
+                    &qualified_contracts,
                 );
             }
             tracing::info!("universe render completed");
@@ -4086,32 +4154,56 @@ fn render_universe_visual_report(
                             source_lookup,
                             member,
                             identity,
+                            &qualified_contracts,
                         );
                     }
                 }
             }
         }
         if mode == UniverseVisualMode::BodyComplete {
-            render_visual_forensic_context(&mut out, report, contract);
+            render_visual_forensic_context(&mut out, report, contract, &asserted_facts);
         }
         if warrants.is_empty() {
             out.push_str("    <no source warrants emitted>\n");
             tracing::info!("universe render completed");
             continue;
         }
-        render_universe_warrant_breakdown(
-            &mut out,
-            source_lookup,
-            &boundaries,
-            &report.factory_walk,
-            &warrants,
-            &predicates,
-            mode,
-        );
+        let cache_key = context.as_ref().and_then(|context| {
+            factory_predicates
+                .rows
+                .contains_key(context)
+                .then(|| (context.clone(), universe_visual_mode_key(mode)))
+        });
+        if let Some(cached) = cache_key.as_ref().and_then(|key| breakdown_cache.get(key)) {
+            out.push_str(cached);
+        } else {
+            let mut breakdown = String::new();
+            render_universe_warrant_breakdown(
+                &mut breakdown,
+                source_lookup,
+                &boundaries,
+                &factory_predicates,
+                &warrants,
+                &predicates,
+                mode,
+            );
+            out.push_str(&breakdown);
+            if let Some(key) = cache_key {
+                breakdown_cache.insert(key, breakdown);
+            }
+        }
         tracing::info!("universe render completed");
     }
-    render_contract_mementos_appendix(&mut out, report);
+    render_contract_mementos_appendix(&mut out, report, &qualified_contracts);
     out
+}
+
+fn universe_visual_mode_key(mode: UniverseVisualMode) -> u8 {
+    match mode {
+        UniverseVisualMode::Fact => 0,
+        UniverseVisualMode::BodyComplete => 1,
+        UniverseVisualMode::BodyIncomplete => 2,
+    }
 }
 
 fn assertion_parent_from_warrants(warrants: &[&Value]) -> Option<String> {
@@ -4125,9 +4217,14 @@ fn assertion_parent_from_warrants(warrants: &[&Value]) -> Option<String> {
     })
 }
 
-fn render_visual_forensic_context(out: &mut String, report: &LiftSourceReport, contract: &Value) {
+fn render_visual_forensic_context(
+    out: &mut String,
+    report: &LiftSourceReport,
+    contract: &Value,
+    asserted_facts: &[ReportFactRow],
+) {
     let contracts = [contract];
-    let warranting_facts = warranting_fact_rows_for_contracts(report, &contracts);
+    let warranting_facts = warranting_fact_rows_from_index(asserted_facts, &contracts);
     let downstream_edges = downstream_call_edges_for_contracts(&report.call_edges, &contracts);
     if warranting_facts.is_empty() && downstream_edges.is_empty() {
         return;
@@ -4196,11 +4293,21 @@ fn fol_paint(text: &str, register: FolRegister, color: bool) -> String {
 
 fn indent_lines(rendered: &str, width: usize) -> String {
     let indent = " ".repeat(width);
-    rendered
-        .lines()
-        .map(|line| format!("{indent}{line}"))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let line_count = rendered
+        .as_bytes()
+        .iter()
+        .filter(|byte| **byte == b'\n')
+        .count()
+        + 1;
+    let mut out = String::with_capacity(rendered.len() + indent.len() * line_count);
+    for (index, line) in rendered.lines().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        out.push_str(&indent);
+        out.push_str(line);
+    }
+    out
 }
 
 fn pretty_visual_formula(formula: &Value, color: bool) -> String {
@@ -4405,6 +4512,7 @@ fn render_provenanced_fol_row(
     source_lookup: VisualSourceLookup<'_>,
     contract: &Value,
     _identity: &str,
+    qualified_contracts: &[(String, String)],
 ) {
     let lifted = normalize_report_fol(
         &contract_universe_reading(contract),
@@ -4448,7 +4556,7 @@ fn render_provenanced_fol_row(
         if symbol != "out" {
             out.push_str(&format!(
                 "      {symbol} -> {}\n",
-                resolve_report_symbol(report, contract, &symbol, kind, &formals)
+                resolve_report_symbol(contract, &symbol, kind, &formals, qualified_contracts)
             ));
         }
     }
@@ -4470,6 +4578,7 @@ fn render_provenanced_vendor_assertion_row(
     source_lookup: VisualSourceLookup<'_>,
     contract: &Value,
     _identity: &str,
+    qualified_contracts: &[(String, String)],
 ) {
     let formula = ["post", "inv", "pre"]
         .iter()
@@ -4516,7 +4625,7 @@ fn render_provenanced_vendor_assertion_row(
         let target = if symbol == "out" {
             "return".to_string()
         } else {
-            resolve_report_symbol(report, contract, &symbol, kind, &formals)
+            resolve_report_symbol(contract, &symbol, kind, &formals, qualified_contracts)
         };
         out.push_str(&format!("      {symbol} -> {target}\n"));
     }
@@ -4544,11 +4653,11 @@ enum ReportFormulaSymbolKind {
 }
 
 fn resolve_report_symbol(
-    report: &LiftSourceReport,
     current: &Value,
     symbol: &str,
     kind: ReportFormulaSymbolKind,
     formals: &BTreeSet<String>,
+    qualified_contracts: &[(String, String)],
 ) -> String {
     const BUILTINS: &[&str] = &[
         "abs", "bool", "bytes", "dict", "divmod", "float", "int", "len", "list", "max", "min",
@@ -4564,16 +4673,14 @@ fn resolve_report_symbol(
         return "formal".to_string();
     }
     let current_cid = contract_cid_of_ir_decl(current);
-    if let Some(target) = report.contracts.iter().find(|candidate| {
-        let qualified = contract_qualified_owner(report, candidate);
-        qualified == symbol || qualified.ends_with(&format!(".{symbol}"))
-    }) {
-        let qualified = contract_qualified_owner(report, target);
-        let cid = contract_cid_of_ir_decl(target).unwrap_or_else(|| "cid-unavailable".to_string());
+    if let Some((qualified, cid)) = qualified_contracts
+        .iter()
+        .find(|(qualified, _)| qualified == symbol || qualified.ends_with(&format!(".{symbol}")))
+    {
         if current_cid.as_deref() != Some(cid.as_str())
             || qualified.ends_with(&format!(".{symbol}"))
         {
-            return format!("{qualified} [{}]", short_cid(&cid));
+            return format!("{qualified} [{}]", short_cid(cid));
         }
     }
     if kind == ReportFormulaSymbolKind::Variable {
@@ -4689,8 +4796,8 @@ fn normalize_report_fol(rendered: &str, project_root: Option<&Path>) -> String {
 enum UniverseVisualItem<'a> {
     Boundary(&'a VisualBoundaryRow),
     Predicate {
-        source: String,
-        predicate: String,
+        source: Cow<'a, str>,
+        predicate: Cow<'a, str>,
         sort_key: (u64, u64, u64, u64),
     },
 }
@@ -4699,7 +4806,7 @@ fn render_universe_warrant_breakdown(
     out: &mut String,
     source_lookup: VisualSourceLookup<'_>,
     boundaries: &[VisualBoundaryRow],
-    factory_walk: &[Value],
+    factory_predicate_index: &UniverseFactoryPredicateIndex,
     warrants: &[&Value],
     predicates: &[String],
     mode: UniverseVisualMode,
@@ -4709,9 +4816,13 @@ fn render_universe_warrant_breakdown(
         .map(|warrant| source_memento_context_key(warrant))
         .unwrap_or_else(|| "<unknown>".to_string());
     let factory_predicates = if mode == UniverseVisualMode::BodyIncomplete {
-        Vec::new()
+        &[][..]
     } else {
-        universe_factory_predicate_rows(factory_walk, source_lookup, &context)
+        factory_predicate_index
+            .rows
+            .get(&context)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     };
     if let Some(source_walk) = universe_source_walk_lines(source_lookup, warrants) {
         render_universe_source_walk(
@@ -4722,7 +4833,8 @@ fn render_universe_warrant_breakdown(
             source_lookup,
             warrants,
             predicates,
-            &factory_predicates,
+            factory_predicates,
+            factory_predicate_index.predicates_by_line.get(&context),
             mode,
         );
         return;
@@ -4750,16 +4862,16 @@ fn render_universe_warrant_breakdown(
                 .map(source_span_sort_key)
                 .unwrap_or_default();
             items.push(UniverseVisualItem::Predicate {
-                source: resolve_source_memento_visual_source(source_lookup, warrant),
-                predicate,
+                source: Cow::Owned(resolve_source_memento_visual_source(source_lookup, warrant)),
+                predicate: Cow::Owned(predicate),
                 sort_key,
             });
         }
     } else {
         for predicate in factory_predicates {
             items.push(UniverseVisualItem::Predicate {
-                source: predicate.source,
-                predicate: predicate.predicate,
+                source: Cow::Borrowed(&predicate.source),
+                predicate: Cow::Borrowed(&predicate.predicate),
                 sort_key: predicate.sort_key,
             });
         }
@@ -4822,9 +4934,10 @@ fn render_universe_source_walk(
     warrants: &[&Value],
     predicates: &[String],
     factory_predicates: &[UniverseFactoryPredicateRow],
+    indexed_predicates_by_line: Option<&BTreeMap<u64, Vec<String>>>,
     mode: UniverseVisualMode,
 ) {
-    let mut predicate_by_line: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+    let mut fallback_predicates_by_line: BTreeMap<u64, Vec<String>> = BTreeMap::new();
     if mode == UniverseVisualMode::BodyIncomplete {
         // Incomplete body universes emit no predicates anywhere.
     } else if factory_predicates.is_empty() {
@@ -4841,20 +4954,17 @@ fn render_universe_source_walk(
                 .get(index)
                 .cloned()
                 .unwrap_or_else(|| "<predicate unavailable>".to_string());
-            predicate_by_line.entry(line).or_default().push(predicate);
-        }
-    } else {
-        for predicate in factory_predicates {
-            let line = predicate.sort_key.0;
-            if line == 0 {
-                continue;
-            }
-            predicate_by_line
+            fallback_predicates_by_line
                 .entry(line)
                 .or_default()
-                .push(predicate.predicate.clone());
+                .push(predicate);
         }
     }
+    let predicate_by_line = if factory_predicates.is_empty() {
+        &fallback_predicates_by_line
+    } else {
+        indexed_predicates_by_line.unwrap_or(&fallback_predicates_by_line)
+    };
 
     let mut boundary_by_line: BTreeMap<u64, Vec<&VisualBoundaryRow>> = BTreeMap::new();
     if mode == UniverseVisualMode::BodyIncomplete {
@@ -5090,36 +5200,59 @@ struct UniverseFactoryPredicateRow {
     sort_key: (u64, u64, u64, u64),
 }
 
-fn universe_factory_predicate_rows(
+struct UniverseFactoryPredicateIndex {
+    rows: BTreeMap<String, Vec<UniverseFactoryPredicateRow>>,
+    predicates_by_line: BTreeMap<String, BTreeMap<u64, Vec<String>>>,
+}
+
+fn index_universe_factory_predicate_rows(
     factory_walk: &[Value],
     source_lookup: VisualSourceLookup<'_>,
-    context: &str,
-) -> Vec<UniverseFactoryPredicateRow> {
-    factory_walk
-        .iter()
-        .filter_map(|row| {
-            let memento = row.get("sourceMemento")?;
-            if source_memento_context_key(memento) != context {
-                return None;
-            }
-            let status = normalized_source_status(row.get("status").and_then(Value::as_str));
-            if status != "warranted" && status != "support" {
-                return None;
-            }
-            let formula = row
-                .get("emittedFormula")
-                .or_else(|| row.get("emitted_formula"))
-                .or_else(|| row.get("formula"))?;
-            Some(UniverseFactoryPredicateRow {
+) -> UniverseFactoryPredicateIndex {
+    let mut by_context = BTreeMap::<String, Vec<UniverseFactoryPredicateRow>>::new();
+    let mut predicates_by_line = BTreeMap::<String, BTreeMap<u64, Vec<String>>>::new();
+    for row in factory_walk {
+        let Some(memento) = row.get("sourceMemento") else {
+            continue;
+        };
+        let status = normalized_source_status(row.get("status").and_then(Value::as_str));
+        if status != "warranted" && status != "support" {
+            continue;
+        }
+        let Some(formula) = row
+            .get("emittedFormula")
+            .or_else(|| row.get("emitted_formula"))
+            .or_else(|| row.get("formula"))
+        else {
+            continue;
+        };
+        let context = source_memento_context_key(memento);
+        let predicate = proofir_formula_to_fol_with_instances(formula);
+        let sort_key = memento
+            .get("span")
+            .map(source_span_sort_key)
+            .unwrap_or_default();
+        if sort_key.0 != 0 {
+            predicates_by_line
+                .entry(context.clone())
+                .or_default()
+                .entry(sort_key.0)
+                .or_default()
+                .push(predicate.clone());
+        }
+        by_context
+            .entry(context)
+            .or_default()
+            .push(UniverseFactoryPredicateRow {
                 source: resolve_source_memento_visual_source(source_lookup, memento),
-                predicate: proofir_formula_to_fol_with_instances(formula),
-                sort_key: memento
-                    .get("span")
-                    .map(source_span_sort_key)
-                    .unwrap_or_default(),
-            })
-        })
-        .collect()
+                predicate,
+                sort_key,
+            });
+    }
+    UniverseFactoryPredicateIndex {
+        rows: by_context,
+        predicates_by_line,
+    }
 }
 
 fn visual_boundary_rows(
@@ -6764,18 +6897,28 @@ fn warranting_fact_rows_for_contracts(
     report: &LiftSourceReport,
     contracts: &[&Value],
 ) -> Vec<ReportFactRow> {
+    let asserted_facts = report
+        .contracts
+        .iter()
+        .filter_map(|contract| format_contract_asserted_fact(report, contract))
+        .collect::<Vec<_>>();
+    warranting_fact_rows_from_index(&asserted_facts, contracts)
+}
+
+fn warranting_fact_rows_from_index(
+    asserted_facts: &[ReportFactRow],
+    contracts: &[&Value],
+) -> Vec<ReportFactRow> {
     let tokens = contract_dependency_tokens_for_contracts(contracts);
     if tokens.is_empty() {
         return Vec::new();
     }
     let mut seen = BTreeSet::new();
-    let facts = report
-        .contracts
+    let facts = asserted_facts
         .iter()
-        .filter(|contract| contract_inv_is_observed_fact(contract))
-        .filter_map(|contract| format_contract_asserted_fact(report, contract))
         .filter(|fact| fact_row_mentions_any_token(fact, &tokens))
         .filter(|fact| seen.insert(fact.row.clone()))
+        .cloned()
         .collect::<Vec<_>>();
     let source_backed = facts
         .iter()
@@ -13572,6 +13715,29 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
+    fn universe_grouping_computes_each_contract_identity_once() {
+        let mut report = minimal_source_report();
+        report.contracts = (0..128)
+            .map(|index| {
+                serde_json::json!({
+                    "kind": "function-contract",
+                    "name": format!("contract_{index}"),
+                    "post": {"kind": "true"}
+                })
+            })
+            .collect();
+        let calls = std::cell::Cell::new(0_usize);
+
+        let groups = group_contracts_for_universe_visual_with_identity(&report, |contract| {
+            calls.set(calls.get() + 1);
+            contract_value_name(contract).unwrap().to_string()
+        });
+
+        assert_eq!(groups.len(), 128);
+        assert_eq!(calls.get(), 128, "identity lookup must be O(contracts)");
+    }
+
+    #[test]
     fn universe_visual_calls_module_fact_a_vendor_assertion_and_renders_it_once() {
         let root = tempfile::tempdir().expect("tempdir");
         std::fs::write(root.path().join("vendor.py"), "assert 1 == 1\n").expect("fixture");
@@ -14284,63 +14450,74 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let mut report = minimal_source_report();
         report.contracts = vec![callee.clone(), caller.clone()];
         let formals = contract_formal_names(&caller);
+        let qualified_contracts = report
+            .contracts
+            .iter()
+            .map(|contract| {
+                (
+                    contract_qualified_owner(&report, contract),
+                    contract_cid_of_ir_decl(contract)
+                        .unwrap_or_else(|| "cid-unavailable".to_string()),
+                )
+            })
+            .collect::<Vec<_>>();
 
         let target = resolve_report_symbol(
-            &report,
             &caller,
             "_cmp",
             ReportFormulaSymbolKind::Constructor,
             &formals,
+            &qualified_contracts,
         );
         assert!(target.starts_with("<module>._cmp ["), "{target}");
         assert_ne!(target, contract_visual_identity(&report, &caller));
         assert_eq!(
             resolve_report_symbol(
-                &report,
                 &caller,
                 "tuple",
                 ReportFormulaSymbolKind::Constructor,
                 &formals,
+                &qualified_contracts,
             ),
             "python:builtin/tuple"
         );
         assert_eq!(
             resolve_report_symbol(
-                &report,
                 &caller,
                 "divmod",
                 ReportFormulaSymbolKind::Constructor,
                 &formals,
+                &qualified_contracts,
             ),
             "python:builtin/divmod"
         );
         assert_eq!(
             resolve_report_symbol(
-                &report,
                 &caller,
                 "self",
                 ReportFormulaSymbolKind::Variable,
                 &formals,
+                &qualified_contracts,
             ),
             "formal"
         );
         assert_eq!(
             resolve_report_symbol(
-                &report,
                 &caller,
                 "python:type:date",
                 ReportFormulaSymbolKind::Constructor,
                 &formals,
+                &qualified_contracts,
             ),
             "coordinate"
         );
         assert_eq!(
             resolve_report_symbol(
-                &report,
                 &caller,
                 "scratch",
                 ReportFormulaSymbolKind::Variable,
                 &formals,
+                &qualified_contracts,
             ),
             "local"
         );
@@ -14398,8 +14575,19 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "post": {"kind": "atomic", "name": "=", "args": []},
             "sourceWarrants": [{"sourceFunctionName": "date._cmp", "file": "datetime.py"}]
         })];
+        let qualified_contracts = report
+            .contracts
+            .iter()
+            .map(|contract| {
+                (
+                    contract_qualified_owner(&report, contract),
+                    contract_cid_of_ir_decl(contract)
+                        .unwrap_or_else(|| "cid-unavailable".to_string()),
+                )
+            })
+            .collect::<Vec<_>>();
         let mut appendix = String::new();
-        render_contract_mementos_appendix(&mut appendix, &report);
+        render_contract_mementos_appendix(&mut appendix, &report, &qualified_contracts);
         assert!(appendix.contains("mementos appendix:"), "{appendix}");
         assert!(appendix.contains("blake3-512:"), "{appendix}");
     }
