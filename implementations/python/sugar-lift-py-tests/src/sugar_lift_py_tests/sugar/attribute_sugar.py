@@ -159,6 +159,7 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
                 term=ctor(
                     f"call:{self.attr_name}",
                     [value.to_term(owner=str(self.site))],
+                    symbol_kind="method-coordinate",
                 ),
                 body=None,
                 site=self.site,

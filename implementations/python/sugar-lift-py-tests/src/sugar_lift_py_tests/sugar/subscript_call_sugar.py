@@ -108,7 +108,11 @@ class SubscriptCallSugar(Sugar, role=SugarRole.TERM):
                 target_name="__call__",
                 arg_values=positional,
                 parameters=tuple(name for name, _ in keywords),
-                term=ctor("call:__call__", term_args),
+                term=ctor(
+                    "call:__call__",
+                    term_args,
+                    symbol_kind="method-coordinate",
+                ),
                 body=None,
                 site=self.site,
             )

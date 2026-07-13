@@ -13,6 +13,7 @@ from sugar_lift_py_tests.ir import (
     Int,
     Term,
     atomic,
+    ctor,
     term_to_value,
 )
 from sugar_lift_py_tests.kit_rpc import LiftReportPayloadDto
@@ -86,6 +87,19 @@ def test_interned_terms_are_immutable(monkeypatch) -> None:
 
     with pytest.raises(FrozenInstanceError):
         term.name = "mutated"  # type: ignore[misc]
+
+
+def test_constructor_symbol_kind_is_emitted_on_the_wire() -> None:
+    value = term_to_value(
+        ctor("call:vendor_open_name", [], symbol_kind="method-coordinate")
+    )
+
+    assert value["symbolKind"] == "method-coordinate"
+
+
+def test_constructor_rejects_unknown_symbol_kind() -> None:
+    with pytest.raises(ValueError, match="unknown constructor symbol kind"):
+        ctor("call:anything", [], symbol_kind="guessed")
 
 
 def test_lift_construction_does_not_expand_the_term_dag_to_wire(monkeypatch) -> None:

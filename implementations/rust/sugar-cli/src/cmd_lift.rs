@@ -4953,6 +4953,87 @@ fn contract_formal_names(contract: &Value) -> BTreeSet<String> {
 enum ReportFormulaSymbolKind {
     Variable,
     Constructor,
+    Coordinate,
+    Builtin,
+    ContractTarget,
+    MethodCoordinate,
+}
+
+const REPORT_PYTHON_COORDINATE_CONSTRUCTORS: &[&str] = &[
+    "py.and",
+    "py.complex",
+    "py.comprehension",
+    "py.comprehension_clause",
+    "py.conditional",
+    "py.dictcomp",
+    "py.ellipsis",
+    "py.except",
+    "py.exception",
+    "py.format",
+    "py.formatted",
+    "py.fstring",
+    "py.generator",
+    "py.generators",
+    "py.genexp",
+    "py.iter_elem",
+    "py.listcomp",
+    "py.none",
+    "py.object.identity",
+    "py.or",
+    "py.setcomp",
+    "py.slice",
+    "py.star",
+    "py.subscript",
+];
+
+const REPORT_PYTHON_EFFECT_CONSTRUCTORS: &[&str] = &[
+    "py.assert",
+    "py.bitwise_invert",
+    "py.conditional_select",
+    "py.delitem",
+    "py.divide",
+    "py.exceptional_exit",
+    "py.floor_divide",
+    "py.format.arguments",
+    "py.format.dynamic_spec",
+    "py.generator_yield",
+    "py.getattr.dynamic_name",
+    "py.getattr.receiver",
+    "py.ifexp.select",
+    "py.less_than",
+    "py.modulo",
+    "py.os_exit",
+    "py.percent_format",
+    "py.sequence_repeat",
+    "py.sequential_terminal",
+    "py.setitem",
+    "py.try_handler_dispatch",
+];
+
+const REPORT_PYTHON_OPERATOR_CONSTRUCTORS: &[&str] = &[
+    "py.compare:Eq",
+    "py.compare:Gt",
+    "py.compare:GtE",
+    "py.compare:In",
+    "py.compare:Is",
+    "py.compare:IsNot",
+    "py.compare:Lt",
+    "py.compare:LtE",
+    "py.compare:NotEq",
+    "py.compare:NotIn",
+    "py.compare:chain",
+    "py.eq",
+    "py.implies",
+    "py.in",
+    "py.invert",
+    "py.lt",
+    "py.neg",
+    "py.not",
+    "py.truthy",
+];
+
+fn is_report_python_operator_constructor(symbol: &str) -> bool {
+    REPORT_PYTHON_OPERATOR_CONSTRUCTORS.contains(&symbol)
 }
 
 fn resolve_report_symbol(
@@ -4962,39 +5043,46 @@ fn resolve_report_symbol(
     formals: &BTreeSet<String>,
     qualified_contracts: &[(String, String)],
 ) -> String {
-    const BUILTINS: &[&str] = &[
-        "abs", "bool", "bytes", "dict", "divmod", "float", "int", "len", "list", "max", "min",
-        "range", "set", "str", "sum", "tuple", "type",
-    ];
-    const PYTHON_COORDINATES: &[&str] = &["py.invert", "py.neg", "py.subscript"];
-    if kind == ReportFormulaSymbolKind::Constructor && symbol.starts_with("python:type:") {
+    if kind == ReportFormulaSymbolKind::Coordinate {
         return "coordinate".to_string();
     }
-    if kind == ReportFormulaSymbolKind::Constructor && PYTHON_COORDINATES.contains(&symbol) {
-        return "coordinate".to_string();
+    if kind == ReportFormulaSymbolKind::MethodCoordinate {
+        return "method-coordinate".to_string();
     }
-    if kind == ReportFormulaSymbolKind::Constructor && BUILTINS.contains(&symbol) {
+    if kind == ReportFormulaSymbolKind::Builtin {
         return format!("python:builtin/{symbol}");
+    }
+    if kind == ReportFormulaSymbolKind::Constructor
+        && REPORT_PYTHON_COORDINATE_CONSTRUCTORS.contains(&symbol)
+    {
+        return "coordinate".to_string();
+    }
+    if kind == ReportFormulaSymbolKind::Constructor
+        && REPORT_PYTHON_EFFECT_CONSTRUCTORS.contains(&symbol)
+    {
+        return "effect".to_string();
     }
     if kind == ReportFormulaSymbolKind::Variable && formals.contains(symbol) {
         return "formal".to_string();
     }
     let current_cid = contract_cid_of_ir_decl(current);
-    if let Some((qualified, cid)) = qualified_contracts
-        .iter()
-        .find(|(qualified, _)| qualified == symbol || qualified.ends_with(&format!(".{symbol}")))
-    {
-        if current_cid.as_deref() != Some(cid.as_str())
-            || qualified.ends_with(&format!(".{symbol}"))
-        {
-            return format!("{qualified} [{}]", short_cid(cid));
+    if kind == ReportFormulaSymbolKind::ContractTarget {
+        if let Some((qualified, cid)) = qualified_contracts.iter().find(|(qualified, _)| {
+            qualified == symbol || qualified.ends_with(&format!(".{symbol}"))
+        }) {
+            if current_cid.as_deref() != Some(cid.as_str())
+                || qualified.ends_with(&format!(".{symbol}"))
+            {
+                return format!("{qualified} [{}]", short_cid(cid));
+            }
         }
+        return "contract-target".to_string();
     }
     if kind == ReportFormulaSymbolKind::Variable {
         return "local".to_string();
     }
     panic!(
-        "report symbol classification gap: constructor `{symbol}` is neither a coordinate, builtin, nor contract target"
+        "report symbol classification gap: constructor `{symbol}` arrived without emitter kind testimony"
     )
 }
 
@@ -5032,7 +5120,9 @@ fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaS
                                 .and_then(Value::as_array)
                                 .map(Vec::as_slice)
                                 .unwrap_or(&[]);
-                            if format_symbolic_ctor(name, args).is_some() {
+                            if format_symbolic_ctor(name, args).is_some()
+                                || is_report_python_operator_constructor(name)
+                            {
                                 for child in object.values() {
                                     visit(child, symbols);
                                 }
@@ -5042,11 +5132,22 @@ fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaS
                                 .strip_prefix("call:")
                                 .or_else(|| name.strip_prefix("method:"))
                                 .unwrap_or(name);
-                            insert_symbol(
-                                symbols,
-                                surface.to_string(),
-                                ReportFormulaSymbolKind::Constructor,
-                            );
+                            let symbol_kind = match object
+                                .get("symbolKind")
+                                .and_then(Value::as_str)
+                            {
+                                Some("coordinate") => ReportFormulaSymbolKind::Coordinate,
+                                Some("builtin") => ReportFormulaSymbolKind::Builtin,
+                                Some("contract-target") => ReportFormulaSymbolKind::ContractTarget,
+                                Some("method-coordinate") => {
+                                    ReportFormulaSymbolKind::MethodCoordinate
+                                }
+                                Some(other) => panic!(
+                                    "report symbol classification gap: constructor `{surface}` has unknown emitter kind testimony `{other}`"
+                                ),
+                                None => ReportFormulaSymbolKind::Constructor,
+                            };
+                            insert_symbol(symbols, surface.to_string(), symbol_kind);
                         }
                     }
                     _ => {}
@@ -14962,10 +15063,12 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                         {"kind": "var", "name": "table"},
                         {"kind": "var", "name": "key"}
                     ]},
-                    {"kind": "ctor", "name": "py.neg", "args": [
-                        {"kind": "ctor", "name": "py.invert", "args": [
-                            {"kind": "var", "name": "x"}
-                        ]}
+                    {"kind": "ctor", "name": "py.and", "args": [
+                        {"kind": "ctor", "name": ">>", "args": [
+                            {"kind": "var", "name": "x"},
+                            {"kind": "const", "value": 8}
+                        ]},
+                        {"kind": "var", "name": "x"}
                     ]}
                 ]}
             ]},
@@ -14987,8 +15090,113 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let visual = render_report_visual(&report, None);
 
         assert!(visual.contains("py.subscript -> coordinate"), "{visual}");
-        assert!(visual.contains("py.neg -> coordinate"), "{visual}");
-        assert!(visual.contains("py.invert -> coordinate"), "{visual}");
+        assert!(visual.contains("py.and -> coordinate"), "{visual}");
+        assert!(!visual.contains(">> ->"), "{visual}");
+    }
+
+    #[test]
+    fn report_symbol_classifier_covers_python_emitted_constructor_census() {
+        let current = serde_json::json!({"name": "owner", "kind": "function-contract"});
+        let formals = BTreeSet::new();
+        let contracts = Vec::new();
+
+        for symbol in REPORT_PYTHON_COORDINATE_CONSTRUCTORS {
+            assert_eq!(
+                resolve_report_symbol(
+                    &current,
+                    symbol,
+                    ReportFormulaSymbolKind::Constructor,
+                    &formals,
+                    &contracts,
+                ),
+                "coordinate",
+                "coordinate emitter missing from report classifier: {symbol}"
+            );
+        }
+        for symbol in REPORT_PYTHON_EFFECT_CONSTRUCTORS {
+            assert_eq!(
+                resolve_report_symbol(
+                    &current,
+                    symbol,
+                    ReportFormulaSymbolKind::Constructor,
+                    &formals,
+                    &contracts,
+                ),
+                "effect",
+                "effect emitter missing from report classifier: {symbol}"
+            );
+        }
+        for symbol in REPORT_PYTHON_OPERATOR_CONSTRUCTORS {
+            assert!(
+                is_report_python_operator_constructor(symbol),
+                "operator emitter missing from report classifier: {symbol}"
+            );
+        }
+    }
+
+    #[test]
+    fn visual_report_trusts_emitter_symbol_kind_for_open_vocabulary() {
+        let contract = serde_json::json!({
+            "name": "owner", "kind": "function-contract", "formals": [],
+            "post": {"kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"},
+                {"kind": "ctor", "name": "tuple", "symbolKind": "coordinate", "args": [
+                    {"kind": "ctor", "name": "call:vendor_open_name",
+                     "symbolKind": "method-coordinate", "args": []},
+                    {"kind": "ctor", "name": "call:another_open_name",
+                     "symbolKind": "coordinate", "args": []},
+                    {"kind": "ctor", "name": "call:external_open_name",
+                     "symbolKind": "builtin", "args": []},
+                    {"kind": "ctor", "name": "call:contract_open_name",
+                     "symbolKind": "contract-target", "args": []}
+                ]}
+            ]}
+        });
+        let mut report = minimal_source_report();
+        report.contracts = vec![contract];
+
+        let visual = render_report_visual(&report, None);
+
+        assert!(
+            visual.contains("vendor_open_name -> method-coordinate"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("another_open_name -> coordinate"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("external_open_name -> python:builtin/external_open_name"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("contract_open_name -> contract-target"),
+            "{visual}"
+        );
+    }
+
+    #[test]
+    fn report_classifier_contains_no_vendor_vocabulary() {
+        let source = include_str!("cmd_lift.rs");
+        let start = source
+            .find("const REPORT_PYTHON_COORDINATE_CONSTRUCTORS")
+            .unwrap();
+        let end = source[start..].find("fn contract_formula_symbols").unwrap() + start;
+        let classifier = &source[start..end];
+
+        let forbidden = [
+            ["wee", "k"].concat(),
+            ["wee", "k", "day"].concat(),
+            ["ye", "ar"].concat(),
+            ["u", "tc"].concat(),
+            ["_hash", "code"].concat(),
+        ];
+        for forbidden in forbidden {
+            assert!(
+                !classifier.contains(&format!("\"{forbidden}\"")),
+                "vendor name `{forbidden}` was memorized by the report classifier"
+            );
+        }
     }
 
     #[test]

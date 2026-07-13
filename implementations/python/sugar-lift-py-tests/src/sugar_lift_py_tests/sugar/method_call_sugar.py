@@ -159,6 +159,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                                 value.to_term(owner=str(self.site))
                                 for value in source_values
                             ],
+                            symbol_kind="method-coordinate",
                         ),
                         body=body,
                         site=self.site,
@@ -168,6 +169,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             source_term = ctor(
                 f"call:{self.method_name}",
                 [value.to_term(owner=str(self.site)) for value in accumulated],
+                symbol_kind="contract-target",
             )
             return bind_positional_defaults(fn, accumulated, ctx).and_then(
                 lambda binding: Complete(

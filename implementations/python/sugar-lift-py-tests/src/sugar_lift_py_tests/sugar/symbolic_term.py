@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import builtins
+
 from decimal import Decimal
 
 from sugar_lift_py_tests.ir import (
@@ -230,6 +232,7 @@ def symbolic_term(
                     external_bridge_sink=external_bridge_sink,
                 )
             ],
+            symbol_kind="method-coordinate",
         )
     if site.observed == "Subscript":
         return ctor(
@@ -475,7 +478,15 @@ def symbolic_term(
                         "argTerms": args,
                     }
                 )
-            return ctor(f"call:{target}", args)
+            if import_target is not None or hasattr(builtins, target):
+                symbol_kind = "builtin"
+            elif receiver is not None:
+                symbol_kind = "method-coordinate"
+            elif target in name_resolver:
+                symbol_kind = "contract-target"
+            else:
+                symbol_kind = "coordinate"
+            return ctor(f"call:{target}", args, symbol_kind=symbol_kind)
     raise TypeError(
         f"write more Sugar for {owner} `{site.observed}`: " "add a symbolic term shape"
     )

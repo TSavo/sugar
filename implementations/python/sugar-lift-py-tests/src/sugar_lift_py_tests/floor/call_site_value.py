@@ -105,7 +105,11 @@ class CallSiteValue(FloorValue):
                 target_name="len",
                 arg_values=(self,),
                 parameters=(),
-                term=ctor("call:len", [self.to_term(owner=str(site))]),
+                term=ctor(
+                    "call:len",
+                    [self.to_term(owner=str(site))],
+                    symbol_kind="builtin",
+                ),
                 body=None,
                 site=site,
             )
@@ -160,6 +164,7 @@ class CallSiteValue(FloorValue):
                     self.to_term(owner=str(site)),
                     *(arg.to_term(owner=str(site)) for arg in args),
                 ],
+                symbol_kind="method-coordinate",
             ),
             body=None,
             site=site,

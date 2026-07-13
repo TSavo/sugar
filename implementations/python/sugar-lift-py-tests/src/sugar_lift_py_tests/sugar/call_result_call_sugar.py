@@ -93,6 +93,7 @@ class CallResultCallSugar(Sugar, role=SugarRole.TERM):
                 term=ctor(
                     "call:__call__",
                     [value.to_term(owner=str(self.site)) for value in accumulated],
+                    symbol_kind="method-coordinate",
                 ),
                 body=None,
                 site=self.site,

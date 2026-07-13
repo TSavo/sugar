@@ -119,6 +119,7 @@ class _ConstReal:
 class _Ctor:
     name: str
     args: Tuple["Term", ...]
+    symbol_kind: Optional[str] = None
 
 
 Term = Union[_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor]
@@ -169,8 +170,30 @@ def bool_const(b: bool) -> Term:
     return _intern_term(_ConstBool(bool(b), Bool()))
 
 
-def ctor(name: str, args: List[Term]) -> Term:
-    return _intern_term(_Ctor(name, tuple(args)))
+_SYMBOL_KINDS = frozenset(
+    {"coordinate", "builtin", "contract-target", "method-coordinate"}
+)
+_EMITTER_OWNED_SYMBOL_KINDS = {
+    "None": "coordinate",
+    "array": "coordinate",
+    "kw": "coordinate",
+    "python:builtin": "coordinate",
+    "python:dict": "coordinate",
+    "python:dict_entry": "coordinate",
+    "python:function": "coordinate",
+    "python:type": "coordinate",
+    "tuple": "coordinate",
+}
+
+
+def ctor(
+    name: str, args: List[Term], *, symbol_kind: Optional[str] = None
+) -> Term:
+    if symbol_kind is None:
+        symbol_kind = _EMITTER_OWNED_SYMBOL_KINDS.get(name)
+    if symbol_kind is not None and symbol_kind not in _SYMBOL_KINDS:
+        raise ValueError(f"unknown constructor symbol kind: {symbol_kind}")
+    return _intern_term(_Ctor(name, tuple(args), symbol_kind))
 
 
 def bvand(left: Term, right: Term) -> Term:
@@ -478,13 +501,14 @@ def term_to_value(t: Term) -> Value:
             ]
         )
     if isinstance(t, _Ctor):
-        return vobj(
-            [
-                ("kind", vstr("ctor")),
-                ("name", vstr(t.name)),
-                ("args", varr([term_to_value(a) for a in t.args])),
-            ]
-        )
+        fields = [
+            ("kind", vstr("ctor")),
+            ("name", vstr(t.name)),
+            ("args", varr([term_to_value(a) for a in t.args])),
+        ]
+        if t.symbol_kind is not None:
+            fields.append(("symbolKind", vstr(t.symbol_kind)))
+        return vobj(fields)
     raise TypeError(f"unknown Term: {type(t)!r}")
 
 

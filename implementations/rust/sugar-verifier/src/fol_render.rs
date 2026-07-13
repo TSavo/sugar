@@ -374,13 +374,17 @@ pub fn format_symbolic_ctor(name: &str, args: &[Value]) -> Option<String> {
         "bv32.add" | "concept:add" | "+" => "+",
         "bv32.sub" | "concept:sub" | "-" => "-",
         "bv32.mul" | "concept:mul" | "*" => "*",
+        "**" => "**",
         "/" => "/",
+        "//" => "//",
         "%" => "%",
-        "bv32.and" => "&",
-        "bv32.or" => "|",
+        "bv32.and" | "&" => "&",
+        "bv32.or" | "|" => "|",
         "bv32.xor" => "⊕",
-        "bv32.shl" => "<<",
+        "^" => "^",
+        "bv32.shl" | "<<" => "<<",
         "bv32.lshr" => ">>>",
+        ">>" => ">>",
         "cf_eq" => "=",
         "cf_ne" => "≠",
         "cf_lt" => "<",
@@ -653,4 +657,29 @@ pub fn proofir_sort_to_fol(sort: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("?")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_symbolic_ctor;
+    use serde_json::json;
+
+    #[test]
+    fn renders_python_symbolic_binary_operator_constructors() {
+        let args = [json!({"kind": "var", "name": "left"}), json!(8)];
+        for (constructor, symbol) in [
+            ("**", "**"),
+            ("//", "//"),
+            ("&", "&"),
+            ("|", "|"),
+            ("^", "^"),
+            ("<<", "<<"),
+            (">>", ">>"),
+        ] {
+            let rendered = format_symbolic_ctor(constructor, &args).unwrap_or_else(|| {
+                panic!("unclassified Python operator constructor: {constructor}")
+            });
+            assert!(rendered.contains(symbol), "{constructor}: {rendered}");
+        }
+    }
 }
