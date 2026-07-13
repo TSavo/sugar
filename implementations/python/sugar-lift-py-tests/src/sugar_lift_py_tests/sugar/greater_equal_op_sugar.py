@@ -12,7 +12,8 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 @dataclass(frozen=True)
 class GreaterEqualOpSugar(Sugar, role=SugarRole.TERM):
     """The `>=` operator. It is `not (a < b)`: the ordering floor, and the resulting bool
-    literal negates itself. Its own sugar, its own type; the value owns the answer, no fork."""
+    literal negates itself. Its own sugar, its own type; the value owns the answer, no fork.
+    """
 
     left: SugarBody
     right: SugarBody

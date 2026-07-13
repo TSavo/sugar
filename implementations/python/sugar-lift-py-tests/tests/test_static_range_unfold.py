@@ -33,7 +33,9 @@ def test_symbolic_range_keeps_deferred_curry() -> None:
 
 def test_static_unfold_cap_panics_loudly() -> None:
     node = ast.parse("for i in range(65):\n    pass\n").body[0]
-    with pytest.raises(FactoryPanic, match="at most 64 concrete loop self-applications"):
+    with pytest.raises(
+        FactoryPanic, match="at most 64 concrete loop self-applications"
+    ):
         build_node(node, filename="large.py", role=SugarRole.STATEMENT)
 
 

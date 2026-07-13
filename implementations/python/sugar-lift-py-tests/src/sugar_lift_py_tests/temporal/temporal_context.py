@@ -37,13 +37,15 @@ class TemporalContext:
         for binding in reversed(self.bindings):
             if binding.name == name:
                 return Complete(binding.value)
-        factory_panic_gap(owner="TemporalContext",
-                blame="<temporal>",
-                observed=name,
-                requested="value",
-                fix=f"bind `{name}` before reducing NameSugar",
-                gap_kind=GapKind.FLOOR,
-                gap_locus=GapLocus.CONSTRUCTION,)
+        factory_panic_gap(
+            owner="TemporalContext",
+            blame="<temporal>",
+            observed=name,
+            requested="value",
+            fix=f"bind `{name}` before reducing NameSugar",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
 
     def receiver_for(self, name: str) -> FloorValue:
         return self.value_for(name)
@@ -98,7 +100,8 @@ class TemporalContext:
         fix: str,
     ) -> NoReturn:
         from sugar_lift_py_tests.factory import (
-            FactoryAuditRow, factory_panic,
+            FactoryAuditRow,
+            factory_panic,
             FactoryGapInfo,
             GapKind,
             GapLocus,

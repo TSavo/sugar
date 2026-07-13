@@ -67,7 +67,9 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
         # that scope, and the result is the universe.
         return self._reduce_defaults(self.defaults, ctx)
 
-    def _reduce_defaults(self, remaining: tuple[SugarBody, ...], ctx: object) -> Outcome:
+    def _reduce_defaults(
+        self, remaining: tuple[SugarBody, ...], ctx: object
+    ) -> Outcome:
         from sugar_lift_py_tests.floor import SymbolicValue, UniverseValue
         from sugar_lift_py_tests.ir import make_var
 

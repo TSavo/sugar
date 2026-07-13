@@ -8,7 +8,6 @@ from __future__ import annotations
 from sugar_lift_py_tests.audit_only import AuditOnlyGap
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 
-
 _SOURCE = """\
 def clean():
     return 1
@@ -36,16 +35,20 @@ def test_audit_frontier_enumerates_gap_and_keeps_clean_def() -> None:
     ]
     assert while_gaps, f"expected a Match gap, got {[g.info for g in gaps]}"
     gap = while_gaps[0]
-    assert gap.message.startswith("write more Sugar") or gap.info.get("gap_kind") == "Sugar"
+    assert (
+        gap.message.startswith("write more Sugar")
+        or gap.info.get("gap_kind") == "Sugar"
+    )
     assert gap.info.get("observed") == "Match"
     assert "match" in gap.info.get("fix", "").lower()
 
     # Clean def still produces a universe / function-contract row.
     ir_names = [
-        item.name if hasattr(item, "name") else item.get("name")
-        for item in payload.ir
+        item.name if hasattr(item, "name") else item.get("name") for item in payload.ir
     ]
-    assert any(name == "clean" for name in ir_names), f"expected clean universe, ir={ir_names}"
+    assert any(
+        name == "clean" for name in ir_names
+    ), f"expected clean universe, ir={ir_names}"
 
 
 def test_audit_frontier_demand_histogram_buckets_sugar() -> None:
@@ -112,9 +115,7 @@ def test_owned_ordinary_function_def_still_lifts() -> None:
     # Good-twin ratchet (salvaged from the superseded #4171): the #4168 loud-fix
     # must not regress ordinary owned defs -- they still select FunctionDefSugar
     # and emit IR, with no gaps.
-    payload, gaps = audit_lift_file(
-        "def ordinary(x):\n    return x\n", "ordinary.py"
-    )
+    payload, gaps = audit_lift_file("def ordinary(x):\n    return x\n", "ordinary.py")
 
     assert gaps == []
     assert payload.ir

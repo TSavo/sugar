@@ -29,7 +29,9 @@ def test_raise_desugars_directly_to_a_routeable_raise_exit():
     # body block first stmt is raise
     block = fn.function_body_block()
     raise_site = block.statements()[0]
-    sugar = RaiseSugar.new(raise_site, FactoryBuildContext(filename="t.py", catalog=default_catalog()))
+    sugar = RaiseSugar.new(
+        raise_site, FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    )
     outcome = sugar.desugar()
 
     assert isinstance(outcome, Complete)

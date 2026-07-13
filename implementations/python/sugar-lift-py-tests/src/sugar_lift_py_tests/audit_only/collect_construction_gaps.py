@@ -62,7 +62,6 @@ def gap_from_factory_panic(label: str, panic: FactoryPanic) -> AuditOnlyGap:
     )
 
 
-
 def _gap_from_loud_type_error(label: str, message: str) -> AuditOnlyGap | None:
     gap_kind = _loud_gap_kind(message)
     if gap_kind is None:

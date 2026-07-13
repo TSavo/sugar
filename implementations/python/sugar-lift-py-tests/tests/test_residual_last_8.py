@@ -35,7 +35,9 @@ def test_if_exp_sugar_owns_and_selects() -> None:
 
 
 def test_bare_return_and_attr_assign_owned() -> None:
-    bare = SourceFragment.from_node(ast.parse("def f():\n  return\n").body[0].body[0], "t.py")
+    bare = SourceFragment.from_node(
+        ast.parse("def f():\n  return\n").body[0].body[0], "t.py"
+    )
     assert BareReturnSugar.owns(bare)
     attr = SourceFragment.from_node(ast.parse("e.payload = None\n").body[0], "t.py")
     assert AttributeAssignSugar.owns(attr)

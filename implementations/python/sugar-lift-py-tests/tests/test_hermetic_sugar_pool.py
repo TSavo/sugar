@@ -31,18 +31,18 @@ def _write_poison_component(root: Path) -> Path:
     script.write_text(
         "#!/bin/sh\n"
         "while IFS= read -r line; do\n"
-        "  case \"$line\" in\n"
-        "    *'\"method\":\"initialize\"'*)\n"
+        '  case "$line" in\n'
+        '    *\'"method":"initialize"\'*)\n'
         "      printf '%s\\n' "
-        "'{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":"
-        "{\"name\":\"hermeticity-poison\",\"protocol_version\":\"sugar-component/1\","
-        "\"capabilities\":{}}}' ;;\n"
-        "    *'\"method\":\"sugar.component.plan\"'*)\n"
+        '\'{"jsonrpc":"2.0","id":1,"result":'
+        '{"name":"hermeticity-poison","protocol_version":"sugar-component/1",'
+        '"capabilities":{}}}\' ;;\n'
+        '    *\'"method":"sugar.component.plan"\'*)\n'
         "      printf '%s\\n' "
-        "'{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":"
-        "{\"code\":-32000,\"message\":\"ambient pool poison: non-hermetic discovery\"}}' ;;\n"
-        "    *'\"method\":\"shutdown\"'*)\n"
-        "      printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":null}'; exit 0 ;;\n"
+        '\'{"jsonrpc":"2.0","id":2,"error":'
+        '{"code":-32000,"message":"ambient pool poison: non-hermetic discovery"}}\' ;;\n'
+        '    *\'"method":"shutdown"\'*)\n'
+        '      printf \'%s\\n\' \'{"jsonrpc":"2.0","id":3,"result":null}\'; exit 0 ;;\n'
         "  esac\n"
         "done\n",
         encoding="utf-8",

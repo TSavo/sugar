@@ -12,9 +12,7 @@ def test_class_method_audit_root_preserves_predicate_claim_and_call_edge() -> No
         "        assert _is_prepared(request)\n"
         "        del request\n"
     )
-    payload, _gaps = audit_lift_file(
-        source, "requests/adapters.py", hold_panic=True
-    )
+    payload, _gaps = audit_lift_file(source, "requests/adapters.py", hold_panic=True)
     rpc = payload.to_rpc()
     assertion = next(
         row

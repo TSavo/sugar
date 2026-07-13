@@ -13,14 +13,14 @@
     "callee-subscript-refused": 30,
     "callee-unaryop-refused": 8,
     "decorator-refused": 8971,
-    "enum-pin-refused": 50,
+    "enum-pin-boundary": 50,
     "for-else-refused": 6,
     "generator-refused": 91,
     "global-nonlocal-refused": 37,
     "match-refused": 14,
     "multi-target-assign-refused": 73,
     "non-literal-default": 243,
-    "value-pin-refused": 499
+    "value-pin-boundary": 499
   },
   "package_versions": {
     "numpy": "2.5.1",

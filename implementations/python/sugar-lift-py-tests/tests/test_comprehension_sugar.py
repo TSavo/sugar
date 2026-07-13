@@ -116,9 +116,7 @@ def test_comprehension_cardinality_bad_twins_refute(tmp_path) -> None:
         contract = next(row for row in result.lift_doc["ir"] if row["name"] == "A")
         assert contract["post"]["args"][1]["value"] == 2
         assert "call:len" not in repr(contract["post"])
-        invocations = result.prove_doc["rows"][0]["verification"][
-            "solverInvocations"
-        ]
+        invocations = result.prove_doc["rows"][0]["verification"]["solverInvocations"]
         if invocations:
             assert invocations[0]["exit"] == {
                 "kind": "ok",

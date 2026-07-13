@@ -84,15 +84,11 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
     ) -> Outcome:
         if not remaining:
             return self.body.reduce(ctx).and_then(
-                lambda record: Complete(
-                    self._class_value(accumulated, record)
-                )
+                lambda record: Complete(self._class_value(accumulated, record))
             )
         head, *rest = remaining
         return head.reduce(ctx).and_then(
-            lambda base: self._collect_bases(
-                tuple(rest), (*accumulated, base), ctx
-            )
+            lambda base: self._collect_bases(tuple(rest), (*accumulated, base), ctx)
         )
 
     def _class_value(self, bases: tuple, record: object):

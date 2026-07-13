@@ -1307,7 +1307,7 @@ class _Emitter:
                     # flavor, not just IntEnum/StrEnum): `.value` always
                     # extracts the underlying literal by definition, so the
                     # dispatch ambiguity that forces plain-Enum members to
-            # the bare-member boundary does not apply here.
+                    # the bare-member boundary does not apply here.
                     return pin.term
             term = ctor("python:attribute", self.expr(node.value), str_const(node.attr))
             self.effects.add_panics()
@@ -2725,7 +2725,7 @@ def _decorator_kind(decorator: ast.expr) -> str | None:
         # (issue #3262): liftable with the cached-identity noted via this
         # "cached" decoratorKinds marker, distinct from decorators like
         # @contextlib.contextmanager or numpy.errstate that rebind the call
-            # into different runtime-computed behavior and stay incomplete.
+        # into different runtime-computed behavior and stay incomplete.
         return "cached"
     return None
 

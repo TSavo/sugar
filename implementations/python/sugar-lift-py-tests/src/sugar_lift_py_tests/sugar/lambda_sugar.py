@@ -46,12 +46,7 @@ class LambdaSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def witnesses(cls):
         # Lambda value rides in the body; pair discriminates on return face.
-        prefix = (
-            "def A(z):\n"
-            "    f = lambda x: x\n"
-            "    return 1\n"
-            "\n"
-        )
+        prefix = "def A(z):\n" "    f = lambda x: x\n" "    return 1\n" "\n"
         return _call_pair(
             name="lambda_return",
             owner_sugar="LambdaSugar",

@@ -15,9 +15,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value as Json};
 use tracing_subscriber::fmt::MakeWriter;
 
-use sugar_verifier::{
-    enumerate_callsites, BundleScopedCallsiteKey, MementoCid, MementoPool, StoredMember,
-};
+use sugar_verifier::{enumerate_callsites, BundleScopedCallsiteKey, MementoCid, MementoPool};
 
 const PANIC_EFFECT_KIND: &str = "panic-freedom";
 
@@ -30,18 +28,6 @@ fn memento_cid(label: &str) -> MementoCid {
 
 fn memento_cid_string(label: &str) -> String {
     memento_cid(label).to_string()
-}
-
-trait TestPoolInsert {
-    fn insert_unanchored_for_tests(&mut self, cid: MementoCid, envelope: Json);
-}
-
-impl TestPoolInsert for MementoPool {
-    fn insert_unanchored_for_tests(&mut self, cid: MementoCid, envelope: Json) {
-        let member =
-            StoredMember::from_envelope(cid.clone(), &envelope).expect("test member must parse");
-        self.mementos.insert(cid, member);
-    }
 }
 
 fn insert_test_bridge_by_symbol(

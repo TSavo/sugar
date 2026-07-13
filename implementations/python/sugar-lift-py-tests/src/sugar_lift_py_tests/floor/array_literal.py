@@ -101,7 +101,10 @@ class ArrayLiteral(FloorValue):
                     SequenceRepetitionRuntimeEffect(
                         "sequence repetition construction boundary: ArrayLiteral "
                         f"would materialize {repeated} literal floor items; "
-                        f"site={site}", witness=runtime_effect_witness("py.sequence_repeat", other, site)
+                        f"site={site}",
+                        witness=runtime_effect_witness(
+                            "py.sequence_repeat", other, site
+                        ),
                     )
                 )
             return Complete(ArrayLiteral(self.items * other.value))
@@ -112,7 +115,8 @@ class ArrayLiteral(FloorValue):
             return Incomplete(
                 SequenceRepetitionRuntimeEffect(
                     "sequence repetition by symbolic count: ArrayLiteral depends "
-                    f"on runtime __index__/length semantics; site={site}", witness=runtime_effect_witness("py.sequence_repeat", other, site)
+                    f"on runtime __index__/length semantics; site={site}",
+                    witness=runtime_effect_witness("py.sequence_repeat", other, site),
                 )
             )
         return super().multiply(other, site)

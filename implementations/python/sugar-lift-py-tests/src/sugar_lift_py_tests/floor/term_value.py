@@ -131,7 +131,9 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(
-                TermValue(self.value + (1 if type(other) is TrueBoolLiteralSugar else 0))
+                TermValue(
+                    self.value + (1 if type(other) is TrueBoolLiteralSugar else 0)
+                )
             )
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
@@ -242,9 +244,7 @@ class TermValue(FloorValue):
                     DivisionByZeroRuntimeEffect(
                         "floor division by zero runtime boundary: the divisor is "
                         f"concretely 0; owner=TermValue.floor_divide site={site}",
-                        witness=runtime_effect_witness(
-                            "py.floor_divide", other, site
-                        ),
+                        witness=runtime_effect_witness("py.floor_divide", other, site),
                     )
                 )
             return Complete(TermValue(self.value // other.value))

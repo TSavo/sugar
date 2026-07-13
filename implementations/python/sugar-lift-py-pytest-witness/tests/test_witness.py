@@ -517,7 +517,8 @@ def test_lsp_lift_stamps_witness_package_contract_with_proofir_provenance(tmp_pa
     contracts = [
         m
         for m in ir
-        if m.get("kind") == "contract" and m.get("name", "").startswith("witness-package:")
+        if m.get("kind") == "contract"
+        and m.get("name", "").startswith("witness-package:")
     ]
     assert contracts, f"no witness-package contract emitted: {ir}"
     contract = contracts[0]

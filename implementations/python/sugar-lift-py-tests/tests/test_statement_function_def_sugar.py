@@ -38,7 +38,9 @@ def test_nested_def_binds_named_callable_and_later_call_digs_body() -> None:
     callsite = universe.record.statements[-1].value
     assert isinstance(callsite, CallSiteValue)
     ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
-    dug = callsite.force_floor(ctx, owner="nested def regression", project_callsite=False)
+    dug = callsite.force_floor(
+        ctx, owner="nested def regression", project_callsite=False
+    )
     assert isinstance(dug, TermValue)
     assert dug.value == 6
     assert "inner" in repr(universe.record)
@@ -57,18 +59,24 @@ def test_nested_callable_captures_lexical_bindings_and_overlays_actuals() -> Non
     callsite = universe.record.statements[-1].value
     assert isinstance(callsite, CallSiteValue)
     ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
-    dug = callsite.force_floor(ctx, owner="nested closure regression", project_callsite=False)
+    dug = callsite.force_floor(
+        ctx, owner="nested closure regression", project_callsite=False
+    )
     assert dug == TermValue(9)
 
 
 def test_decorated_statement_def_stays_loud() -> None:
-    node = ast.parse(
-        "def outer(x):\n"
-        "    @decorate\n"
-        "    def inner(y):\n"
-        "        return y\n"
-        "    return inner(x)\n"
-    ).body[0].body[0]
+    node = (
+        ast.parse(
+            "def outer(x):\n"
+            "    @decorate\n"
+            "    def inner(y):\n"
+            "        return y\n"
+            "    return inner(x)\n"
+        )
+        .body[0]
+        .body[0]
+    )
     catalog = default_catalog()
     ctx = FactoryBuildContext(filename="decorated.py", catalog=catalog)
 

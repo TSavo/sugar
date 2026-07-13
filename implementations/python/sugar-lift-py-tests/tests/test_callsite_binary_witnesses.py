@@ -15,13 +15,7 @@ from sugar_lift_py_tests.sugar.add_op_sugar import AddOpSugar
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
-_DIG_PREFIX = (
-    "def g(x):\n"
-    "    return x\n"
-    "def A():\n"
-    "    return g(2) + 1\n"
-    "\n"
-)
+_DIG_PREFIX = "def g(x):\n" "    return x\n" "def A():\n" "    return g(2) + 1\n" "\n"
 
 _TRUTHFUL = _DIG_PREFIX + "def test_a():\n    assert A() == 3\n"
 _LYING = _DIG_PREFIX + "def test_a():\n    assert A() == 4\n"

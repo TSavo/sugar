@@ -22,14 +22,15 @@ def test_concrete_power_folds_exactly_like_python(source: str) -> None:
 
 
 def test_symbolic_power_uses_the_native_operator_coordinate() -> None:
-    value = reduce_value("base ** exponent", {
-        "base": SymbolicValue(make_var("base")),
-        "exponent": SymbolicValue(make_var("exponent")),
-    })
-
-    assert value == SymbolicValue(
-        ctor("**", [make_var("base"), make_var("exponent")])
+    value = reduce_value(
+        "base ** exponent",
+        {
+            "base": SymbolicValue(make_var("base")),
+            "exponent": SymbolicValue(make_var("exponent")),
+        },
     )
+
+    assert value == SymbolicValue(ctor("**", [make_var("base"), make_var("exponent")]))
 
 
 def test_concrete_base_with_symbolic_exponent_uses_the_same_coordinate() -> None:

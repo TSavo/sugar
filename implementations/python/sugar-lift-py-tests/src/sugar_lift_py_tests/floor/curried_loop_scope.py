@@ -34,7 +34,9 @@ class CurriedLoopScope(FloorValue):
             from sugar_lift_py_tests.floor import TermValue
 
             for index, name in enumerate(self.carried):
-                projection = self.callsite.subscript(TermValue(index), self.callsite.site)
+                projection = self.callsite.subscript(
+                    TermValue(index), self.callsite.site
+                )
                 temporal = temporal.bind_value(name, projection.value)
         return replace(ctx, temporal=temporal)
 

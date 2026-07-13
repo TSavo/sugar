@@ -77,15 +77,20 @@ def _configure_transport_logging() -> None:
 
     previous_hook = sys.excepthook
 
-    def log_unhandled(exc_type: type[BaseException], exc: BaseException, tb: Any) -> None:
+    def log_unhandled(
+        exc_type: type[BaseException], exc: BaseException, tb: Any
+    ) -> None:
         _TRANSPORT_LOG.critical(
-            "unhandled_exception", exc_info=(exc_type, exc, tb), extra={"stage": "process.exit"}
+            "unhandled_exception",
+            exc_info=(exc_type, exc, tb),
+            extra={"stage": "process.exit"},
         )
         for log_handler in _TRANSPORT_LOG.handlers:
             log_handler.flush()
         previous_hook(exc_type, exc, tb)
 
     sys.excepthook = log_unhandled
+
 
 # UTF-16 surrogate code points. Python's json.dumps emits them as \\udxxx;
 # serde_json rejects unpaired surrogates with "unexpected end of hex escape"
@@ -132,18 +137,37 @@ def _send(obj: Dict[str, Any]) -> None:
     frame = json.dumps(safe, separators=(",", ":")) + "\n"
     _TRANSPORT_LOG.info(
         "response_about_to_send",
-        extra={"direction": "kit_to_cli", "bytes": len(frame.encode()), "message_id": safe.get("id"), "method": None, "stage": "stdout.write"},
+        extra={
+            "direction": "kit_to_cli",
+            "bytes": len(frame.encode()),
+            "message_id": safe.get("id"),
+            "method": None,
+            "stage": "stdout.write",
+        },
     )
     sys.stdout.write(frame)
-    _TRANSPORT_LOG.info("flush_enter", extra={"direction": "kit_to_cli", "stage": "stdout.flush"})
+    _TRANSPORT_LOG.info(
+        "flush_enter", extra={"direction": "kit_to_cli", "stage": "stdout.flush"}
+    )
     sys.stdout.flush()
-    _TRANSPORT_LOG.info("flush_exit", extra={"direction": "kit_to_cli", "stage": "stdout.flush"})
+    _TRANSPORT_LOG.info(
+        "flush_exit", extra={"direction": "kit_to_cli", "stage": "stdout.flush"}
+    )
 
 
 def _recv() -> Optional[Dict[str, Any]] | object:
-    _TRANSPORT_LOG.info("read_enter", extra={"direction": "cli_to_kit", "stage": "stdin.readline"})
+    _TRANSPORT_LOG.info(
+        "read_enter", extra={"direction": "cli_to_kit", "stage": "stdin.readline"}
+    )
     line = sys.stdin.readline()
-    _TRANSPORT_LOG.info("read_exit", extra={"direction": "cli_to_kit", "bytes": len(line.encode()), "stage": "stdin.readline"})
+    _TRANSPORT_LOG.info(
+        "read_exit",
+        extra={
+            "direction": "cli_to_kit",
+            "bytes": len(line.encode()),
+            "stage": "stdin.readline",
+        },
+    )
     if not line:
         return None
     try:
@@ -151,7 +175,16 @@ def _recv() -> Optional[Dict[str, Any]] | object:
     except json.JSONDecodeError:
         return PARSE_ERROR
     if isinstance(value, dict):
-        _TRANSPORT_LOG.info("request_received", extra={"direction": "cli_to_kit", "bytes": len(line.encode()), "message_id": value.get("id"), "method": value.get("method"), "stage": "dispatch"})
+        _TRANSPORT_LOG.info(
+            "request_received",
+            extra={
+                "direction": "cli_to_kit",
+                "bytes": len(line.encode()),
+                "message_id": value.get("id"),
+                "method": value.get("method"),
+                "stage": "dispatch",
+            },
+        )
         return value
     return PARSE_ERROR
 
@@ -662,7 +695,10 @@ def _span_is_degenerate(span: Any) -> bool:
     """All-zero / missing span is a degenerate (file/name-only) locator."""
     if not isinstance(span, dict):
         return True
-    return all(span.get(key) in (0, None) for key in ("start_line", "start_col", "end_line", "end_col"))
+    return all(
+        span.get(key) in (0, None)
+        for key in ("start_line", "start_col", "end_line", "end_col")
+    )
 
 
 def _span_contains(outer: Any, inner: Any) -> bool:
@@ -773,7 +809,6 @@ def _lift_file_for_enumeration(
     return ir_items, call_edges
 
 
-
 def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     """The RPC door over the collapse. Build each def through the factory,
     slam it, and serve the value's payload_rows: a universe mints a
@@ -794,7 +829,6 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     with term_intern_scope():
         payload, _gaps = audit_lift_file(source, filename, hold_panic=False)
         return payload
-
 
 
 def _module_import_temporal(
@@ -852,6 +886,7 @@ def _module_import_temporal(
                 from sugar_lift_py_tests.sugar.install_source_dig import (
                     resolve_install_source_value,
                 )
+
                 import_ctx = FactoryBuildContext(
                     filename=stmt.filename,
                     catalog=catalog,
@@ -893,9 +928,7 @@ def _module_import_temporal(
                 name_resolver=module_function_resolver,
             )
             try:
-                callable_value = ctx.build_body(
-                    stmt, SugarRole.STATEMENT
-                ).reduce(ctx)
+                callable_value = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
             except FactoryPanic as panic:
                 if recovered_panics is not None:
                     recovered_panics.append(
@@ -959,7 +992,6 @@ def _module_import_temporal(
     return temporal
 
 
-
 def _iter_liftable_function_defs(module):
     """Yield FunctionDef fragments at module top-level and inside ClassDef bodies.
 
@@ -979,7 +1011,6 @@ def _iter_liftable_function_defs(module):
                 stack[0:0] = list(stmt.class_body())
             except Exception:
                 continue
-
 
 
 def _module_import_maps(module) -> "tuple[dict, dict]":
@@ -1138,7 +1169,9 @@ def audit_lift_file(
         # Empty/comment-only modules have no source site to construct. Their
         # honest audit result is the empty set, not an indexing crash and not a
         # fabricated support row.
-        from sugar_lift_py_tests.idd.lift_coverage_census import reconcile_body_owner_loci
+        from sugar_lift_py_tests.idd.lift_coverage_census import (
+            reconcile_body_owner_loci,
+        )
 
         object.__setattr__(
             payload,
@@ -1195,9 +1228,9 @@ def audit_lift_file(
                 nested = body_stmt.class_name()
                 for nested_stmt in body_stmt.class_body():
                     if nested_stmt.observed == "FunctionDef":
-                        name_resolver[
-                            f"{nested}.{nested_stmt.function_name()}"
-                        ] = nested_stmt.node
+                        name_resolver[f"{nested}.{nested_stmt.function_name()}"] = (
+                            nested_stmt.node
+                        )
     for stmt in _iter_liftable_function_defs(module):
         # Every discovered def reaches construction. An owned FunctionDef or
         # test_* testimony takes its Some arm; an unowned shape must reach the
@@ -1245,9 +1278,7 @@ def audit_lift_file(
             # use STATEMENT and bind a FunctionCallable.
             definition_candidates = catalog.candidates_for(SugarRole.DEFINITION, stmt)
             root_role = (
-                SugarRole.DEFINITION
-                if definition_candidates
-                else SugarRole.STATEMENT
+                SugarRole.DEFINITION if definition_candidates else SugarRole.STATEMENT
             )
             result = build_node(stmt, filename=filename, role=root_role, ctx=ctx)
             root = SugarBody(
@@ -1382,7 +1413,9 @@ def _definition_class_owner(module, definition) -> str | None:
     """Qualified lexical class owner for a discovered definition, if any."""
 
     def search(class_site, prefix: str) -> str | None:
-        qualified = f"{prefix}.{class_site.class_name()}" if prefix else class_site.class_name()
+        qualified = (
+            f"{prefix}.{class_site.class_name()}" if prefix else class_site.class_name()
+        )
         for item in class_site.class_body():
             if item.node is definition.node:
                 return qualified
@@ -1409,9 +1442,7 @@ def _qualify_factory_walk_owner(rows, start: int, qualified_name: str) -> None:
         row = rows[index]
         memento = row.source_memento
         if isinstance(memento, SourceMementoDto):
-            memento = dataclasses.replace(
-                memento, source_function_name=qualified_name
-            )
+            memento = dataclasses.replace(memento, source_function_name=qualified_name)
         elif isinstance(memento, dict):
             memento = {
                 **memento,
@@ -1563,9 +1594,7 @@ def _contract_bridge_identity(item: Dict[str, Any]) -> Optional[str]:
                 continue
             rest = raw_name[idx:]
             end = 0
-            while end < len(rest) and (
-                rest[end].isalnum() or rest[end] in (":", "_")
-            ):
+            while end < len(rest) and (rest[end].isalnum() or rest[end] in (":", "_")):
                 end += 1
             if end > len(prefix):
                 return rest[:end]
@@ -1631,9 +1660,7 @@ def _call_site_node_audit(
     return audit
 
 
-def _universe_node_from_item(
-    item: Dict[str, Any], file_rel: str
-) -> Dict[str, Any]:
+def _universe_node_from_item(item: Dict[str, Any], file_rel: str) -> Dict[str, Any]:
     """Build a `level=universe` wire node from a function-contract IR row.
 
     Stamps the batch `name` (e.g. `len::builtin-universe`) onto the memento's
@@ -1734,8 +1761,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             resolved_root = root.resolve()
             resolved_full = full_path.resolve()
             if not (
-                resolved_full == resolved_root
-                or resolved_root in resolved_full.parents
+                resolved_full == resolved_root or resolved_root in resolved_full.parents
             ):
                 _send_enumerate_result(
                     msg_id,
@@ -1781,10 +1807,16 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 nodes = []
 
                 def _fn_key(memento):
-                    fn_name = memento.get("source_function_name") or memento.get(
-                        "sourceFunctionName"
-                    ) or memento.get("function_name")
-                    span = memento.get("span") if isinstance(memento.get("span"), dict) else {}
+                    fn_name = (
+                        memento.get("source_function_name")
+                        or memento.get("sourceFunctionName")
+                        or memento.get("function_name")
+                    )
+                    span = (
+                        memento.get("span")
+                        if isinstance(memento.get("span"), dict)
+                        else {}
+                    )
                     if _span_is_degenerate(span):
                         return (fn_name, None)
                     return (
@@ -2094,9 +2126,7 @@ def _handle_initialize(msg_id: Any) -> None:
     )
 
 
-def _handle_lift(
-    msg_id: Any, params: Dict[str, Any]
-) -> None:
+def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
     workspace_root = str(params.get("workspace_root", "."))
     source_paths = list(params.get("source_paths", ["."]))
     contract_bindings = params.get("contract_bindings") or []
@@ -2106,14 +2136,16 @@ def _handle_lift(
     audit_frontier = options.get("auditFrontier") is True
     continue_on_gaps = options.get("continueOnConstructionGaps") is True
     if audit_frontier != continue_on_gaps:
-        _send({
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "error": {
-                "code": -32602,
-                "message": "construction-gap recovery requires both auditFrontier and continueOnConstructionGaps",
-            },
-        })
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {
+                    "code": -32602,
+                    "message": "construction-gap recovery requires both auditFrontier and continueOnConstructionGaps",
+                },
+            }
+        )
         return
     try:
         if audit_frontier:
@@ -2253,7 +2285,9 @@ def _build_lift_coverage(
         "callEdges": [to_rpc_value(edge) for edge in payload.call_edges],
         # Doctrine: factory instrument engagement must be visible to coverage
         # accounting so unimplemented becomes a loud gap, never silent (#4016).
-        "factoryAuditSummary": FactoryAuditSummaryDto(rows=payload.factory_walk).to_rpc(),
+        "factoryAuditSummary": FactoryAuditSummaryDto(
+            rows=payload.factory_walk
+        ).to_rpc(),
         "factoryAudits": [to_rpc_value(a) for a in payload.factory_audits],
     }
     coverage = account_lift_coverage(disk, interim)

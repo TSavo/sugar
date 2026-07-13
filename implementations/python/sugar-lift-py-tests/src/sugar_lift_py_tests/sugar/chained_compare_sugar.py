@@ -8,7 +8,6 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
-
 _CHAIN_OPS = frozenset(
     {
         "Eq",
@@ -92,7 +91,7 @@ def _guarded_op_atom(op: str, left, right, site):
 class ChainedCompareSugar(Sugar, role=SugarRole.TERM):
     """Chained comparisons: ``a < b < c`` → conjunction of pairwise atoms.
 
-    Single-op Compare stays with EqualityOpSugar / InOpSugar / …  
+    Single-op Compare stays with EqualityOpSugar / InOpSugar / …
     Two-or-more ops are owned here so they are not an unowned Compare gap.
     """
 
@@ -118,8 +117,7 @@ class ChainedCompareSugar(Sugar, role=SugarRole.TERM):
             left=ctx.build_body(site.compare_left(), SugarRole.TERM),
             ops=tuple(site.compare_ops()),
             comparators=tuple(
-                ctx.build_body(c, SugarRole.TERM)
-                for c in site.compare_comparators()
+                ctx.build_body(c, SugarRole.TERM) for c in site.compare_comparators()
             ),
             site=site,
         )
@@ -145,12 +143,12 @@ class ChainedCompareSugar(Sugar, role=SugarRole.TERM):
             lambda left_v: self._reduce_comparators(0, (left_v,), ctx)
         )
 
-    def _reduce_comparators(
-        self, i: int, values: tuple, ctx: object
-    ) -> Outcome:
+    def _reduce_comparators(self, i: int, values: tuple, ctx: object) -> Outcome:
         if i < len(self.comparators):
-            return self.comparators[i].reduce(ctx).and_then(
-                lambda v: self._reduce_comparators(i + 1, (*values, v), ctx)
+            return (
+                self.comparators[i]
+                .reduce(ctx)
+                .and_then(lambda v: self._reduce_comparators(i + 1, (*values, v), ctx))
             )
         return self._emit(values)
 

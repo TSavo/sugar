@@ -80,15 +80,10 @@ def test_handler_type_discriminates_the_except_coordinate() -> None:
 
 def test_owns_every_try_parent_shape() -> None:
     assert (
-        TrySugar.owns(
-            _site("try:\n    pass\nexcept ValueError:\n    pass\n")
-        )
-        is True
+        TrySugar.owns(_site("try:\n    pass\nexcept ValueError:\n    pass\n")) is True
     )
     assert (
-        TrySugar.owns(
-            _site("try:\n    pass\nexcept ValueError as e:\n    pass\n")
-        )
+        TrySugar.owns(_site("try:\n    pass\nexcept ValueError as e:\n    pass\n"))
         is True
     )
     assert TrySugar.owns(_site("try:\n    pass\nexcept:\n    pass\n")) is True
@@ -106,9 +101,7 @@ def test_owns_every_try_parent_shape() -> None:
     )
     assert (
         TrySugar.owns(
-            _site(
-                "try:\n    pass\nexcept ValueError:\n    pass\nfinally:\n    pass\n"
-            )
+            _site("try:\n    pass\nexcept ValueError:\n    pass\nfinally:\n    pass\n")
         )
         is True
     )
@@ -121,15 +114,13 @@ def test_owns_every_try_parent_shape() -> None:
         c.name == "TrySugar"
         for c in catalog.candidates_for(SugarRole.STATEMENT, simple)
     )
-    assert [
-        c.name for c in catalog.candidates_for(SugarRole.STATEMENT, bare)
-    ] == ["TrySugar"]
+    assert [c.name for c in catalog.candidates_for(SugarRole.STATEMENT, bare)] == [
+        "TrySugar"
+    ]
 
 
 def test_bare_except_uses_cited_catch_all_guard() -> None:
-    block = compose_block(
-        "    try:\n        return 1\n    except:\n        return 2\n"
-    )
+    block = compose_block("    try:\n        return 1\n    except:\n        return 2\n")
 
     from sugar_lift_py_tests.floor import GuardedReturn
     from sugar_lift_py_tests.ir import atomic
@@ -180,6 +171,4 @@ def test_runtime_selected_handler_type_is_a_named_effect() -> None:
     assert isinstance(outcome, BlockValue)
     assert len(outcome.statements) == 1
     assert isinstance(outcome.statements[0], Incomplete)
-    assert isinstance(
-        outcome.statements[0].effect, TryHandlerDispatchRuntimeEffect
-    )
+    assert isinstance(outcome.statements[0].effect, TryHandlerDispatchRuntimeEffect)

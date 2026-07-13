@@ -36,7 +36,6 @@ fn cid_string(label: &str) -> String {
 }
 
 trait TestPoolInsert {
-    fn insert_unanchored_for_tests(&mut self, cid: MementoCid, envelope: Json);
     fn try_insert_unanchored_for_tests(
         &mut self,
         cid: MementoCid,
@@ -45,11 +44,6 @@ trait TestPoolInsert {
 }
 
 impl TestPoolInsert for MementoPool {
-    fn insert_unanchored_for_tests(&mut self, cid: MementoCid, envelope: Json) {
-        self.try_insert_unanchored_for_tests(cid, envelope)
-            .expect("test member must parse");
-    }
-
     fn try_insert_unanchored_for_tests(
         &mut self,
         cid: MementoCid,

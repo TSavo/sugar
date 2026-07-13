@@ -26,10 +26,7 @@ class CallResultCallSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def owns(cls, site) -> bool:
-        return (
-            site.observed == "Call"
-            and site.call_func().observed == "Call"
-        )
+        return site.observed == "Call" and site.call_func().observed == "Call"
 
     @classmethod
     def new(cls, site, ctx) -> "CallResultCallSugar":
@@ -81,8 +78,11 @@ class CallResultCallSugar(Sugar, role=SugarRole.TERM):
         receiver, *arguments = accumulated
         if isinstance(receiver, ObjectValue):
             return receiver.call_method_value(
-                "__call__", tuple(arguments), owner=type(self).__name__,
-                blame=str(self.site), ctx=ctx,
+                "__call__",
+                tuple(arguments),
+                owner=type(self).__name__,
+                blame=str(self.site),
+                ctx=ctx,
             )
 
         return Complete(

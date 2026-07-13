@@ -7,7 +7,8 @@ from typing import Any, Callable, ClassVar, Iterable, Literal, Mapping, NoReturn
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow, factory_panic,
+    FactoryAuditRow,
+    factory_panic,
     FactoryGapInfo,
     GapKind,
     GapLocus,

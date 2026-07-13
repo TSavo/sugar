@@ -11,12 +11,12 @@ from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
 def test_vendor_assert_mints_assertion_row_not_a_universe() -> None:
     source = (
-        'def enc(x):\n'
+        "def enc(x):\n"
         '    if x == "ccc":\n'
         '        return "yyy"\n'
-        '    return x\n'
-        '\n'
-        'def test_enc():\n'
+        "    return x\n"
+        "\n"
+        "def test_enc():\n"
         '    assert enc("ccc") == "yyy"\n'
     )
     payload = lift_file_payload(source, "vendor.py")
@@ -47,23 +47,14 @@ def test_ground_tautology_assert_vanishes_into_support_known_gap() -> None:
 
 
 def test_test_function_mints_no_function_contract() -> None:
-    source = (
-        'def test_only():\n'
-        '    assert enc("a") == "b"\n'
-    )
+    source = "def test_only():\n" '    assert enc("a") == "b"\n'
     payload = lift_file_payload(source, "t.py")
     assert not any(row.kind == "function-contract" for row in payload.ir)
 
 
 def test_two_asserts_mint_two_assertion_rows() -> None:
-    source = (
-        'def test_pair():\n'
-        '    assert f(1) == 2\n'
-        '    assert g(3) == 4\n'
-    )
+    source = "def test_pair():\n" "    assert f(1) == 2\n" "    assert g(3) == 4\n"
     payload = lift_file_payload(source, "t.py")
-    assertion_rows = [
-        row for row in payload.ir if row.name == "test_pair::assertion"
-    ]
+    assertion_rows = [row for row in payload.ir if row.name == "test_pair::assertion"]
     assert len(assertion_rows) == 2
     assert all(row.kind == "contract" and row.inv is not None for row in assertion_rows)

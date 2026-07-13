@@ -63,4 +63,3 @@ def test_ground_none_ordering_is_the_typeerror_effect() -> None:
     outcome = sugar.desugar(ctx)
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
-

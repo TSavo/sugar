@@ -50,8 +50,14 @@ def test_number_multiply_matches_python(left: int | float, right: int | float) -
 @pytest.mark.parametrize(
     ("source", "expected"),
     (
-        ("[1, 2] * count", ctor("*", [ctor("array", [num(1), num(2)]), make_var("count")])),
-        ("'ab' * count", ctor("*", [StringValue("ab").to_term(owner="test"), make_var("count")])),
+        (
+            "[1, 2] * count",
+            ctor("*", [ctor("array", [num(1), num(2)]), make_var("count")]),
+        ),
+        (
+            "'ab' * count",
+            ctor("*", [StringValue("ab").to_term(owner="test"), make_var("count")]),
+        ),
         ("2 * count", ctor("*", [num(2), make_var("count")])),
     ),
 )

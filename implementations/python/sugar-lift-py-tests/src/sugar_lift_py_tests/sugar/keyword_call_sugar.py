@@ -10,7 +10,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class KeywordCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar", "MethodCallSugar")):
+class KeywordCallSugar(
+    Sugar, role=SugarRole.TERM, comes_before=("CallSugar", "MethodCallSugar")
+):
     """A call with keyword arguments: ``f(a=1)`` or ``recv.m(a=1)``.
 
     Deeper floors: CallSugar/MethodCallSugar leave keywords as loud gaps; many
@@ -58,9 +60,7 @@ class KeywordCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar", "M
         return cls(
             target_name=site.call_target_name(),
             receiver=receiver,
-            args=tuple(
-                ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()
-            ),
+            args=tuple(ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()),
             kwargs=kwargs,
             site=site,
         )
@@ -115,9 +115,7 @@ class KeywordCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar", "M
             from sugar_lift_py_tests.ir import ctor, str_const
 
             # term: call:name(pos..., kw:k=v, ...)
-            term_args = [
-                value.to_term(owner=str(self.site)) for value in pos_values
-            ]
+            term_args = [value.to_term(owner=str(self.site)) for value in pos_values]
             for name, value in kw_pairs:
                 term_args.append(
                     ctor("kw", [str_const(name), value.to_term(owner=str(self.site))])

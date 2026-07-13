@@ -6,7 +6,6 @@ from sugar_lift_py_tests.factory import FactoryPanic, factory_panic_gap
 from sugar_lift_py_tests.kit_rpc import RecoveredAuditDto
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 
-
 SOURCE = "from fixture_module import VALUE\n\ndef read():\n    return VALUE\n"
 
 
@@ -29,7 +28,9 @@ def test_recovery_holds_seeding_panic_as_counted_locus(monkeypatch) -> None:
 
     recovered = audit_lift_file(SOURCE, "seeded.py", recover_panics=True)
     assert isinstance(recovered, RecoveredAuditDto)
-    seed = next(row for row in recovered.panics if row.gap["owner"] == "seeding-fixture")
+    seed = next(
+        row for row in recovered.panics if row.gap["owner"] == "seeding-fixture"
+    )
     assert seed.locus == "seeded.py:1:0"
     assert seed.gap["observed"] == "VALUE"
 

@@ -65,8 +65,10 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
 
         recorder = getattr(ctx, "record_operation", None)
         if recorder is not None:
+
             class SubscriptOperation:
                 pass
+
             recorder(
                 owner="StringSubscriptSugar",
                 method_name="subscript_with",

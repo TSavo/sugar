@@ -205,7 +205,6 @@ class FloorValue:
             ),
         )
 
-
     def mint_contribution(self, name, formals):
         # Default: a record entry mints no row of its own.
         del name, formals
@@ -889,9 +888,7 @@ class FloorValue:
 
         return Complete(
             PredicateValue(
-                identity(
-                    self.to_term(owner=str(site)), other.to_term(owner=str(site))
-                ),
+                identity(self.to_term(owner=str(site)), other.to_term(owner=str(site))),
                 site,
                 operand_callsites=(*self.callsites(), *other.callsites()),
             )
@@ -1219,7 +1216,8 @@ class FloorValue:
 
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.factory import (
-            FactoryAuditRow, factory_panic,
+            FactoryAuditRow,
+            factory_panic,
             FactoryGapInfo,
             GapKind,
             GapLocus,
@@ -1250,7 +1248,8 @@ class FloorValue:
 
     def _operation_construction_gap(self, operation: Any, method_name: str) -> NoReturn:
         from sugar_lift_py_tests.factory import (
-            FactoryAuditRow, factory_panic,
+            FactoryAuditRow,
+            factory_panic,
             FactoryGapInfo,
             GapKind,
             GapLocus,
@@ -1280,6 +1279,7 @@ class FloorValue:
                 message=info.message,
             ),
         )
+
     def test_python_type(self, value, site):
         """Only a ``python:type`` coordinate may dispatch a vendor type test."""
         del value

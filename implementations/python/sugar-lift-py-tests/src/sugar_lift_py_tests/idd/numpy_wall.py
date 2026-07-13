@@ -197,7 +197,9 @@ def build_numpy_wall(
                 frontier={
                     "kind": frontier_json["kind"],
                     "independentPanicCount": len(frontier_json["panics"]),
-                    "suppressedDescendantCount": len(frontier_json["suppressedDescendants"]),
+                    "suppressedDescendantCount": len(
+                        frontier_json["suppressedDescendants"]
+                    ),
                     "effectCount": len(frontier_json["effects"]),
                 },
             )
@@ -363,7 +365,9 @@ def _resolve_sugar_bin(root: Path, profile: str, runner: RunCommand) -> Path:
     return sugar
 
 
-def _wall_env(root: Path, sugar_bin: Path, workspace: Path | None = None) -> dict[str, str]:
+def _wall_env(
+    root: Path, sugar_bin: Path, workspace: Path | None = None
+) -> dict[str, str]:
     # Hermetic pool: when a staged workspace is known, SUGAR_HOME is the one door
     # so ambient checkout/.sugar components cannot poison the wall lift.
     if workspace is not None:

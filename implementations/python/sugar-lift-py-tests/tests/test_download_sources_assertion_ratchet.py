@@ -26,10 +26,7 @@ from sugar_lift_py_tests.idd.lift_coverage_census import census_paths, census_so
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
 REPO = Path(__file__).resolve().parents[4]
-SCRIPT = (
-    REPO
-    / "implementations/rust/sugar-lsp/scripts/download_package_sources.py"
-)
+SCRIPT = REPO / "implementations/rust/sugar-lsp/scripts/download_package_sources.py"
 
 
 def _python() -> str:
@@ -55,18 +52,18 @@ def itsdangerous_sdist_root(tmp_path_factory) -> Path:
     return root
 
 
-def test_download_sources_stated_assert_count_ratchet(itsdangerous_sdist_root: Path) -> None:
+def test_download_sources_stated_assert_count_ratchet(
+    itsdangerous_sdist_root: Path,
+) -> None:
     """Item 1: claim surface appears after Download sources (0 on wheel → ≫0 on sdist)."""
     files = sorted(
-        p
-        for p in itsdangerous_sdist_root.rglob("*.py")
-        if "__pycache__" not in p.parts
+        p for p in itsdangerous_sdist_root.rglob("*.py") if "__pycache__" not in p.parts
     )
     disk = census_paths(files, root=itsdangerous_sdist_root)
     # Wheel-only itsdangerous had 0 asserts; sdist+tests must clear a real floor.
-    assert len(disk.asserts) >= 50, (
-        f"expected ≥50 on-disk asserts after sdist download; got {len(disk.asserts)}"
-    )
+    assert (
+        len(disk.asserts) >= 50
+    ), f"expected ≥50 on-disk asserts after sdist download; got {len(disk.asserts)}"
     assert len(disk.bodies) >= 80
 
 
@@ -89,9 +86,7 @@ def test_diggable_vendor_assert_lifts_not_silent() -> None:
     cov = account_lift_coverage(disk, rpc)
     ax = cov.to_json()["assertions"]
     assert ax["stated"] == 1
-    assert ax["lifted_cited"] >= 1, (
-        f"diggable itsdangerous assert must lift; got {ax}"
-    )
+    assert ax["lifted_cited"] >= 1, f"diggable itsdangerous assert must lift; got {ax}"
     assert ax["silently_unaccounted"] == 0
 
 
@@ -116,8 +111,10 @@ def test_download_tree_instrument_refuses_not_silent(
         refused += a["refused_loud"]
     assert stated >= 50
     assert silent + lifted + refused == stated
-    assert silent == 0, (
-        f"stated asserts must not be silent when instrument can engage; silent={silent}"
-    )
+    assert (
+        silent == 0
+    ), f"stated asserts must not be silent when instrument can engage; silent={silent}"
     # Most of the wall is still refuse-loud (floors not implemented) — correct.
-    assert refused >= 40, f"expected mostly refuse-loud unimplemented; refused={refused}"
+    assert (
+        refused >= 40
+    ), f"expected mostly refuse-loud unimplemented; refused={refused}"

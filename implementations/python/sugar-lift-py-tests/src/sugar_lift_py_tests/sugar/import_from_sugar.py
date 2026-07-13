@@ -61,9 +61,7 @@ class ImportFromSugar(Sugar, role=SugarRole.STATEMENT):
         return Complete(
             BlockValue(
                 tuple(
-                    ImportAliasValue(
-                        f"{self.module}{separator}{name}", alias or name
-                    )
+                    ImportAliasValue(f"{self.module}{separator}{name}", alias or name)
                     for name, alias in self.names
                 )
             )

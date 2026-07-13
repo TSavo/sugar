@@ -72,9 +72,7 @@ def test_assert_zero_is_the_named_halt() -> None:
 def test_symbolic_condition_emits_py_truthy_guard() -> None:
     from sugar_lift_py_tests.ir import py_truthy
 
-    universe = _universe(
-        "def A(z):\n    if z:\n        return 1\n    return 0\n"
-    )
+    universe = _universe("def A(z):\n    if z:\n        return 1\n    return 0\n")
     guard = py_truthy(make_var("z"))
     assert universe.post() == and_(
         [
@@ -88,14 +86,10 @@ def test_symbolic_condition_propagates_named_runtime_effect() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     ctx = replace(
         ctx,
-        temporal=ctx.temporal.bind_value(
-            "z", SymbolicValue(make_var("z"))
-        ),
+        temporal=ctx.temporal.bind_value("z", SymbolicValue(make_var("z"))),
     )
     node = ast.parse("if z:\n    assert 0\n").body[0]
-    result = build_node(
-        node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx
-    )
+    result = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
 
     outcome = result.sugar.desugar(ctx)
 

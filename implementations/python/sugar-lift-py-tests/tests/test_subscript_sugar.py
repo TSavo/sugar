@@ -12,7 +12,12 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.effect import IndexErrorRuntimeEffect, KeyErrorRuntimeEffect
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-from sugar_lift_py_tests.floor import CallSiteValue, StringValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    StringValue,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import ctor, make_var, num
 from sugar_lift_py_tests.outcome import Incomplete
 
@@ -63,14 +68,10 @@ def test_symbolic_receiver_is_py_subscript_coordinate() -> None:
 
 
 def test_callsite_index_rides_the_subscript_coordinate_without_forcing_a_body() -> None:
-    value = reduce_value(
-        "z[indexer()]", binds={"z": SymbolicValue(make_var("z"))}
-    )
+    value = reduce_value("z[indexer()]", binds={"z": SymbolicValue(make_var("z"))})
 
     assert type(value) is CallSiteValue
-    assert value.term == ctor(
-        "py.subscript", [make_var("z"), ctor("call:indexer", [])]
-    )
+    assert value.term == ctor("py.subscript", [make_var("z"), ctor("call:indexer", [])])
 
 
 def test_literal_slice_index_selects_the_narrow_slice_owner() -> None:

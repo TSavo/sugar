@@ -1002,9 +1002,11 @@ fn read_response_with_deadline(
     );
     let line = match reader.lines.recv_timeout(deadline) {
         Ok(Ok(line)) => line,
-        Ok(Err(error)) => return Err(LiftPluginKitError::Failed(format!(
+        Ok(Err(error)) => {
+            return Err(LiftPluginKitError::Failed(format!(
             "lift plugin transport read failed at stage=read_line.enter message_id={id}: {error}"
-        ))),
+        )))
+        }
         Err(RecvTimeoutError::Timeout) => {
             tracing::error!(
                 stage = "read_line.enter",

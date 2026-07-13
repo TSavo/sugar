@@ -21,7 +21,9 @@ class YieldSugar(Sugar, role=SugarRole.TERM):
     def new(cls, site, ctx) -> "YieldSugar":
         value = site.yield_value()
         return cls(
-            value=(ctx.build_body(value, SugarRole.TERM) if value is not None else None),
+            value=(
+                ctx.build_body(value, SugarRole.TERM) if value is not None else None
+            ),
             site=site,
         )
 

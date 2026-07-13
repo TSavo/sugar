@@ -212,9 +212,11 @@ class RequestEncodingMixin:
 
                     new_fields.append(
                         (
-                            field.decode("utf-8")
-                            if isinstance(field, bytes)
-                            else field,
+                            (
+                                field.decode("utf-8")
+                                if isinstance(field, bytes)
+                                else field
+                            ),
                             v.encode("utf-8") if isinstance(v, str) else v,
                         )
                     )
@@ -632,7 +634,7 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
 
             # Multi-part file uploads.
             if files:
-                (body, content_type) = self._encode_files(files, raw_data)
+                body, content_type = self._encode_files(files, raw_data)
             else:
                 if raw_data:
                     body = self._encode_params(raw_data)

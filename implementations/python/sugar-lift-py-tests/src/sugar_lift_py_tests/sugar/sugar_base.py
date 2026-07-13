@@ -191,4 +191,3 @@ class Sugar(ABC):
         # Default: a leaf. Sugars that hold SugarBody children override to
         # return them in source order -- the factory walk projects those.
         return ()
-

@@ -111,13 +111,17 @@ def _bind_and_filter(
 def _reduce_conditions(conditions, index, ctx, accumulated, finish):
     if index == len(conditions):
         return finish(accumulated)
-    return conditions[index].reduce(ctx).and_then(
-        lambda value: _reduce_conditions(
-            conditions,
-            index + 1,
-            ctx,
-            (*accumulated, value.to_term(owner="comprehension condition")),
-            finish,
+    return (
+        conditions[index]
+        .reduce(ctx)
+        .and_then(
+            lambda value: _reduce_conditions(
+                conditions,
+                index + 1,
+                ctx,
+                (*accumulated, value.to_term(owner="comprehension condition")),
+                finish,
+            )
         )
     )
 
@@ -141,7 +145,5 @@ def _target_bindings(target):
 
 def clause_children(clauses):
     return tuple(
-        child
-        for clause in clauses
-        for child in (clause.iterable, *clause.conditions)
+        child for clause in clauses for child in (clause.iterable, *clause.conditions)
     )

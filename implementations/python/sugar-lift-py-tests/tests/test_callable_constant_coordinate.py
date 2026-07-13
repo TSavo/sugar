@@ -26,12 +26,12 @@ def test_function_callable_projects_a_named_constant_not_a_variable() -> None:
 
 def test_import_alias_is_already_a_named_constant_coordinate() -> None:
     term = ImportAliasValue("datetime", "dt").to_term(owner="test")
-    assert term == ctor(
-        "python:import_alias", [str_const("dt"), str_const("datetime")]
-    )
+    assert term == ctor("python:import_alias", [str_const("dt"), str_const("datetime")])
 
 
 def test_actually_undeclared_variable_still_refuses_scope() -> None:
-    formula = formula_from_ir(eq(make_var("ghost"), num(1)), var_sorts={"ghost": IntSort()})
+    formula = formula_from_ir(
+        eq(make_var("ghost"), num(1)), var_sorts={"ghost": IntSort()}
+    )
     with pytest.raises(FactoryPanic, match="illegal free var.*ghost"):
         ScopedFormula(formula, allowed_vars={})

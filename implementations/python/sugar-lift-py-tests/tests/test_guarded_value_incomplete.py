@@ -6,7 +6,12 @@ from sugar_lift_py_tests.effect import (
     ConditionalExpressionRuntimeEffect,
     RuntimeEffectWitness,
 )
-from sugar_lift_py_tests.floor import FloorValue, GuardedValue, PredicateValue, StringValue
+from sugar_lift_py_tests.floor import (
+    FloorValue,
+    GuardedValue,
+    PredicateValue,
+    StringValue,
+)
 from sugar_lift_py_tests.ir import _Connective, atomic
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
