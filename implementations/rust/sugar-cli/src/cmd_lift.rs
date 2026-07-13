@@ -1249,6 +1249,9 @@ struct LiftSourceReport {
     factory_walk: Vec<Value>,
     assertion_surface_audits: Vec<Value>,
     diagnostics: Vec<Value>,
+    /// Typed runtime effects emitted by the Python kit. These are report
+    /// evidence, not diagnostics, and must survive the render membrane.
+    effects: Vec<Value>,
     source_mementos: Vec<Value>,
     plan_mementos: Vec<Value>,
     contracts: Vec<Value>,
@@ -1855,6 +1858,12 @@ fn source_report_from_lift_response(
         .cloned()
         .unwrap_or_default();
     trace_lift_collection_checkpoint("source_report.diagnostics", diagnostics.len());
+    let effects = response
+        .get("effects")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    trace_lift_collection_checkpoint("source_report.effects", effects.len());
     if let Some(condition) =
         no_vendor_test_corpus_condition(&ledger, &assertion_surface_audits, &contracts)
     {
@@ -1873,6 +1882,7 @@ fn source_report_from_lift_response(
         factory_walk,
         assertion_surface_audits,
         diagnostics,
+        effects,
         source_mementos,
         plan_mementos,
         contracts,
@@ -2058,6 +2068,7 @@ fn source_report_from_proof_pool(
         factory_walk,
         assertion_surface_audits,
         diagnostics: Vec::new(),
+        effects: Vec::new(),
         source_mementos,
         plan_mementos,
         contracts,
@@ -3240,6 +3251,7 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
         "factoryWalk": report.factory_walk,
         "assertionSurfaceAudits": report.assertion_surface_audits,
         "diagnostics": report.diagnostics,
+        "effects": report.effects,
         "sourceMementos": report.source_mementos,
         "planMementos": report.plan_mementos,
         "contracts": report.contracts,
@@ -3795,6 +3807,45 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
         for (index, edge) in report.call_edges.iter().enumerate() {
             heartbeat.tick(index);
             out.push_str(&format!("  - {}\n", format_call_edge(edge)));
+        }
+        tracing::info!(rendered_bytes = out.len(), "report section completed");
+    }
+    if !report.effects.is_empty() {
+        let span = tracing::info_span!("report_section", section = "effects");
+        let _guard = span.enter();
+        tracing::info!("report section started");
+        out.push_str("runtime effects:\n");
+        for effect in &report.effects {
+            let name = effect
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("<unnamed>");
+            let status = effect
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("<missing status>");
+            let reason = effect
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("<missing reason>");
+            let source = effect
+                .get("sourceMemento")
+                .filter(|memento| memento.is_object())
+                .map_or_else(
+                    || "<missing source memento>".to_string(),
+                    |memento| {
+                        let file = memento
+                            .get("file")
+                            .and_then(Value::as_str)
+                            .unwrap_or("<unknown file>");
+                        let line = memento
+                            .pointer("/span/start_line")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0);
+                        format!("{file}:{line}")
+                    },
+                );
+            out.push_str(&format!("  EFFECT {name} [{status}] {source}: {reason}\n"));
         }
         tracing::info!(rendered_bytes = out.len(), "report section completed");
     }
@@ -9223,6 +9274,7 @@ mod tests {
             factory_walk: vec![],
             assertion_surface_audits: vec![],
             diagnostics: vec![],
+            effects: vec![],
             source_mementos: vec![],
             plan_mementos: vec![],
             contracts: vec![],
@@ -14158,6 +14210,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             factory_walk: vec![],
             assertion_surface_audits: vec![],
             diagnostics: vec![],
+            effects: vec![],
             source_mementos: vec![],
             plan_mementos: vec![],
             contracts: vec![],
@@ -14930,5 +14983,104 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         render_contract_mementos_appendix(&mut appendix, &report, &qualified_contracts);
         assert!(appendix.contains("mementos appendix:"), "{appendix}");
         assert!(appendix.contains("blake3-512:"), "{appendix}");
+    }
+
+    #[test]
+    fn python_payload_boundary_renders_empty_optional_unicode_and_effect_lanes() {
+        // Envelope keys copied from LiftReportPayloadDto.to_rpc. This keeps
+        // the render fixture on the production Python-to-Rust membrane.
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [{
+                "kind": "contract", "name": "unicode::λ",
+                "inv": {"kind": "forall", "name": "δ", "sort": null},
+                "sourceWarrants": []
+            }],
+            "sourceLedger": {
+                "source_loci": 0, "source_warranted": 0,
+                "source_inactive": 0, "source_support": 0,
+                "source_boundary": 0, "source_unresolved": 0,
+                "unclassified_source": 0
+            },
+            "sourceAudits": [], "sourceMementos": [],
+            "assertionSurfaceAudits": [], "factoryAudits": [],
+            "factoryAuditSummary": {
+                "emittedRows": 0,
+                "statusCounts": {"warranted": 0, "incomplete": 0, "support": 0, "unresolved": 0},
+                "unresolvedSites": [], "factoryWalk": []
+            },
+            "planMementos": [], "implications": [], "callEdges": [],
+            "vendorConjoins": [], "diagnostics": [], "warnings": [],
+            "effects": [{
+                "kind": "effect", "name": "py.effect:Δ",
+                "status": "runtime-dependent", "reason": "opaque café λ",
+                "sourceMemento": null
+            }]
+        });
+
+        let report = source_report_from_lift_response(&response, None).expect("real DTO envelope");
+        let visual = render_report_visual(&report, None);
+        assert!(visual.contains("∀ δ:?. <missing body>"), "{visual}");
+        assert!(
+            visual.contains("EFFECT py.effect:Δ [runtime-dependent]"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("<missing source memento>: opaque café λ"),
+            "{visual}"
+        );
+        let json = source_report_json_value(&report);
+        assert_eq!(json["effects"], response["effects"]);
+    }
+
+    #[test]
+    fn render_panic_census_has_no_unclassified_production_escape() {
+        let source = include_str!("cmd_lift.rs");
+        let production = source
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap_or(source);
+        assert_eq!(
+            production
+                .lines()
+                .filter(|line| line.contains("panic!(") && !line.contains("=> panic!"))
+                .count(),
+            7,
+            "update the census"
+        );
+        assert_eq!(
+            production.matches(".expect(").count(),
+            0,
+            "update the census"
+        );
+        assert_eq!(
+            production.matches(".unwrap()").count(),
+            3,
+            "update the census"
+        );
+        assert_eq!(
+            production.matches("unreachable!(").count(),
+            1,
+            "update the census"
+        );
+        let census = include_str!("../../../../docs/render-path-census.md");
+        for classified in [
+            "factory-walk row missing `verdict`",
+            "red factory row without `reason`",
+            "report symbol classification gap",
+            "indexed universe identity removed",
+            "plain ANSI tone",
+            "guarded contract-filter unwraps",
+        ] {
+            assert!(
+                census.contains(classified),
+                "missing census class: {classified}"
+            );
+        }
+        let fol = include_str!("../../sugar-verifier/src/fol_render.rs");
+        assert!(!fol.contains("panic!("), "fol_render must stay total");
+        assert!(!fol.contains(".expect("), "fol_render must stay total");
+        assert!(!fol.contains(".unwrap()"), "fol_render must stay total");
+        assert!(!fol.contains("unreachable!("), "fol_render must stay total");
     }
 }
