@@ -60,6 +60,7 @@ class TestimonyValue(FloorValue):
                         ],
                         formals=list(row.formals),
                         kind="contract",
+                        proofir_provenance=row.provenance().to_rpc(),
                     )
                 )
         del def_memento  # no function-contract row to attach the def warrant to

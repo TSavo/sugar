@@ -104,6 +104,7 @@ fn true_formula() -> Json {
 }
 
 /// Optional IR fields that mint threads onto function-contract / claim members.
+#[derive(Clone)]
 struct ClaimExtras {
     formals: Vec<String>,
     /// When IR had an explicit `formals` field (even `[]`), emit empty formals.
@@ -115,6 +116,7 @@ struct ClaimExtras {
     /// without IR policy (PR #3897 High).
     body_discharge_eligible: bool,
     body_discharge_refusal_reason: Option<String>,
+    proofir_provenance: Option<Arc<CValue>>,
 }
 
 impl Default for ClaimExtras {
@@ -129,6 +131,7 @@ impl Default for ClaimExtras {
             body_discharge_refusal_reason: Some(
                 "feed_from_tree: body discharge not claimed (no IR policy)".into(),
             ),
+            proofir_provenance: None,
         }
     }
 }
@@ -217,7 +220,7 @@ fn push_claim_with_slots(
         panic_loci: Vec::new(),
         class_shapes: Vec::new(),
         source_warrants,
-        proofir_provenance: None,
+        proofir_provenance: extras.proofir_provenance,
         contract_name: contract_name.to_string(),
         pre,
         post,
@@ -428,6 +431,50 @@ fn out_binding_from_ir_row(ir: &Json) -> String {
         .to_string()
 }
 
+fn proofir_provenance_variants(ir: &Json) -> Result<Vec<Option<Arc<CValue>>>, FeedError> {
+    let Some(provenance) = ir
+        .get("proofirProvenance")
+        .or_else(|| ir.get("proofir_provenance"))
+    else {
+        return Ok(vec![None]);
+    };
+    let Some(object) = provenance.as_object() else {
+        return Ok(vec![Some(json_to_cvalue(provenance)?)]);
+    };
+    let Some(warrants) = object.get("warrants").and_then(Json::as_array) else {
+        return Ok(vec![Some(json_to_cvalue(provenance)?)]);
+    };
+    let mut kinds = Vec::new();
+    for warrant in warrants {
+        let Some(kind @ ("Stated" | "Derived")) = warrant.get("kind").and_then(Json::as_str) else {
+            continue;
+        };
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    if kinds.len() <= 1 {
+        return Ok(vec![Some(json_to_cvalue(provenance)?)]);
+    }
+    kinds
+        .into_iter()
+        .map(|kind| {
+            let mut narrowed = object.clone();
+            narrowed.insert(
+                "warrants".into(),
+                Json::Array(
+                    warrants
+                        .iter()
+                        .filter(|warrant| warrant.get("kind").and_then(Json::as_str) == Some(kind))
+                        .cloned()
+                        .collect(),
+                ),
+            );
+            Ok(Some(json_to_cvalue(&Json::Object(narrowed))?))
+        })
+        .collect()
+}
+
 /// Mint-aligned unique claim name: prefer IR `name` (already locus-unique on
 /// the batch path), else span-keyed function locus so duplicate `test_add`
 /// facts do not collide under one contractName at pool load.
@@ -564,12 +611,28 @@ pub fn graph_from_fact(fact: &Fact) -> Result<ProofGraph, FeedError> {
                 out_binding: out_binding_from_ir_row(ir),
                 body_discharge_eligible: eligible,
                 body_discharge_refusal_reason: reason,
+                proofir_provenance: None,
             }
         })
         .unwrap_or_default();
 
     let mut graph = ProofGraph::new();
-    push_claim_with_slots(&mut graph, &contract_name, slots, warrants, extras)?;
+    let provenance_variants = fact
+        .ir_row()
+        .map(proofir_provenance_variants)
+        .transpose()?
+        .unwrap_or_else(|| vec![None]);
+    for proofir_provenance in provenance_variants {
+        let mut variant_extras = extras.clone();
+        variant_extras.proofir_provenance = proofir_provenance;
+        push_claim_with_slots(
+            &mut graph,
+            &contract_name,
+            slots.clone(),
+            warrants.clone(),
+            variant_extras,
+        )?;
+    }
     // Co-member source-mementos (mint parity) — editor locus map keys.
     push_source_mementos_from_warrants(&mut graph, &warrant_jsons, &contract_name)?;
     Ok(graph)
@@ -647,6 +710,7 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
             out_binding: out_binding_from_ir_row(ir),
             body_discharge_eligible: eligible,
             body_discharge_refusal_reason: reason,
+            proofir_provenance: None,
         };
         push_claim_with_slots(&mut graph, &name, slots, warrants, extras)?;
         push_source_mementos_from_warrants(&mut graph, &warrant_jsons, &name)?;

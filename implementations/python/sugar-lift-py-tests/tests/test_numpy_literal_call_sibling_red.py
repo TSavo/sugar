@@ -385,6 +385,44 @@ def test_computed_sibling_is_structurally_derived() -> None:
     }
 
 
+def test_identical_stated_and_computed_equality_retains_both_warrants() -> None:
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.floor import InvValue
+    from sugar_lift_py_tests.ir import eq, num
+
+    site = SourceFragment.from_source("assert 2 == 2\n", "vendor.py").statements()[0]
+    formula = eq(num(2), num(2))
+    inv = InvValue(formula, site, derived_formulas=(formula,))
+
+    (mint,) = inv.mint_contribution("f", ())
+    declaration = mint.to_declaration()
+
+    assert declaration["inv"]["kind"] == "and"
+    assert [atom["name"] for atom in declaration["inv"]["operands"]] == ["=", "="]
+    assert [
+        warrant["kind"] for warrant in declaration["proofirProvenance"]["warrants"]
+    ] == ["Stated", "Derived"]
+
+
+def test_numpy_add_truthful_lift_carries_stated_and_derived_warrants() -> None:
+    from sugar_lift_py_tests.lift_rpc import audit_lift_file
+
+    payload, gaps = audit_lift_file(
+        "import numpy as np\n"
+        "\n"
+        "def test_alias_backed_call():\n"
+        "    assert np.add(2, 3) == 5\n",
+        "test_witness.py",
+    )
+    rows = [row for row in payload.to_rpc()["ir"] if row["kind"] == "contract"]
+
+    assert gaps == []
+    assert len(rows) == 1
+    assert [
+        warrant["kind"] for warrant in rows[0]["proofirProvenance"]["warrants"]
+    ] == ["Stated", "Derived"]
+
+
 @dataclass(frozen=True)
 class CaseResult:
     verdict: str

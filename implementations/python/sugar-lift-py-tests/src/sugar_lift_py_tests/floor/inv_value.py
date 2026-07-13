@@ -52,31 +52,43 @@ class InvValue(FloorValue):
             claim_formula,
             construction_site,
         )
-        from sugar_lift_py_tests.proofir.nodes import Provenance, Stated
+        from sugar_lift_py_tests.proofir.nodes import Derived, Provenance, Stated
         from sugar_lift_py_tests.proofir.nodes.universe_mint import UniverseMint
 
         locus = construction_site(self.site)
-        provenance = Provenance(
+        stated_warrant = Stated(locus=locus)
+        duplicate_derived = any(formula == self.formula for formula in self.derived_formulas)
+        stated_formula = self.formula
+        if duplicate_derived:
+            from sugar_lift_py_tests.ir import and_
+
+            stated_formula = and_([self.formula, self.formula])
+        stated_provenance = Provenance(
             node_class="UniverseMint",
             construction_site=locus,
-            warrant=Stated(locus=locus),
+            warrant=(
+                (stated_warrant, Derived(floor_chain=_derived_floor_chain(self.formula)))
+                if duplicate_derived
+                else stated_warrant
+            ),
         )
         stated = (
             UniverseMint(
                 name=name,
                 slot="inv",
                 formula=claim_formula(
-                    self.formula, formals=formals, provenance=provenance, role="inv"
+                    stated_formula,
+                    formals=formals,
+                    provenance=stated_provenance,
+                    role="inv",
                 ),
-                provenance=provenance,
+                provenance=stated_provenance,
                 source_warrants=(self.site.memento(),),
                 formals=formals,
             ),
         )
         if not self.derived_formulas:
             return stated
-
-        from sugar_lift_py_tests.proofir.nodes import Derived
 
         derived = tuple(
             UniverseMint(
@@ -101,6 +113,7 @@ class InvValue(FloorValue):
                 formals=formals,
             )
             for formula in self.derived_formulas
+            if formula != self.formula
         )
         return (*stated, *derived)
 
