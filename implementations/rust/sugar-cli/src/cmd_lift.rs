@@ -4444,11 +4444,11 @@ fn render_provenanced_fol_row(
     out.push_str("    symbols:\n");
     out.push_str("      out -> return\n");
     let formals = contract_formal_names(contract);
-    for symbol in contract_formula_symbols(contract) {
+    for (symbol, kind) in contract_formula_symbols(contract) {
         if symbol != "out" {
             out.push_str(&format!(
                 "      {symbol} -> {}\n",
-                resolve_report_symbol(report, contract, &symbol, &formals)
+                resolve_report_symbol(report, contract, &symbol, kind, &formals)
             ));
         }
     }
@@ -4512,11 +4512,11 @@ fn render_provenanced_vendor_assertion_row(
     }
     out.push_str("    symbols:\n");
     let formals = contract_formal_names(contract);
-    for symbol in contract_formula_symbols(contract) {
+    for (symbol, kind) in contract_formula_symbols(contract) {
         let target = if symbol == "out" {
             "return".to_string()
         } else {
-            resolve_report_symbol(report, contract, &symbol, &formals)
+            resolve_report_symbol(report, contract, &symbol, kind, &formals)
         };
         out.push_str(&format!("      {symbol} -> {target}\n"));
     }
@@ -4537,23 +4537,30 @@ fn contract_formal_names(contract: &Value) -> BTreeSet<String> {
         .collect()
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReportFormulaSymbolKind {
+    Variable,
+    Constructor,
+}
+
 fn resolve_report_symbol(
     report: &LiftSourceReport,
     current: &Value,
     symbol: &str,
+    kind: ReportFormulaSymbolKind,
     formals: &BTreeSet<String>,
 ) -> String {
     const BUILTINS: &[&str] = &[
         "abs", "bool", "bytes", "dict", "float", "int", "len", "list", "max", "min", "range",
         "set", "str", "sum", "tuple", "type",
     ];
-    if symbol.starts_with("python:type:") {
+    if kind == ReportFormulaSymbolKind::Constructor && symbol.starts_with("python:type:") {
         return "coordinate".to_string();
     }
-    if BUILTINS.contains(&symbol) {
+    if kind == ReportFormulaSymbolKind::Constructor && BUILTINS.contains(&symbol) {
         return format!("python:builtin/{symbol}");
     }
-    if formals.contains(symbol) {
+    if kind == ReportFormulaSymbolKind::Variable && formals.contains(symbol) {
         return "formal".to_string();
     }
     let current_cid = contract_cid_of_ir_decl(current);
@@ -4569,24 +4576,66 @@ fn resolve_report_symbol(
             return format!("{qualified} [{}]", short_cid(&cid));
         }
     }
-    "local".to_string()
+    if kind == ReportFormulaSymbolKind::Variable {
+        return "local".to_string();
+    }
+    panic!(
+        "report symbol classification gap: constructor `{symbol}` is neither a coordinate, builtin, nor contract target"
+    )
 }
 
-fn contract_formula_symbols(contract: &Value) -> BTreeSet<String> {
-    fn visit(value: &Value, symbols: &mut BTreeSet<String>) {
+fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaSymbolKind> {
+    fn insert_symbol(
+        symbols: &mut BTreeMap<String, ReportFormulaSymbolKind>,
+        name: String,
+        kind: ReportFormulaSymbolKind,
+    ) {
+        if let Some(previous) = symbols.insert(name.clone(), kind) {
+            assert_eq!(
+                previous, kind,
+                "report symbol classification gap: `{name}` appears as both a variable and constructor"
+            );
+        }
+    }
+
+    fn visit(value: &Value, symbols: &mut BTreeMap<String, ReportFormulaSymbolKind>) {
         match value {
             Value::Object(object) => {
-                if matches!(
-                    object.get("kind").and_then(Value::as_str),
-                    Some("var") | Some("ctor")
-                ) {
-                    if let Some(name) = object.get("name").and_then(Value::as_str) {
-                        let surface = name
-                            .strip_prefix("call:")
-                            .or_else(|| name.strip_prefix("method:"))
-                            .unwrap_or(name);
-                        symbols.insert(surface.to_string());
+                match object.get("kind").and_then(Value::as_str) {
+                    Some("var") => {
+                        if let Some(name) = object.get("name").and_then(Value::as_str) {
+                            insert_symbol(
+                                symbols,
+                                name.to_string(),
+                                ReportFormulaSymbolKind::Variable,
+                            );
+                        }
                     }
+                    Some("ctor") => {
+                        if let Some(name) = object.get("name").and_then(Value::as_str) {
+                            let args = object
+                                .get("args")
+                                .and_then(Value::as_array)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]);
+                            if format_symbolic_ctor(name, args).is_some() {
+                                for child in object.values() {
+                                    visit(child, symbols);
+                                }
+                                return;
+                            }
+                            let surface = name
+                                .strip_prefix("call:")
+                                .or_else(|| name.strip_prefix("method:"))
+                                .unwrap_or(name);
+                            insert_symbol(
+                                symbols,
+                                surface.to_string(),
+                                ReportFormulaSymbolKind::Constructor,
+                            );
+                        }
+                    }
+                    _ => {}
                 }
                 for child in object.values() {
                     visit(child, symbols);
@@ -4600,7 +4649,7 @@ fn contract_formula_symbols(contract: &Value) -> BTreeSet<String> {
             _ => {}
         }
     }
-    let mut symbols = BTreeSet::new();
+    let mut symbols = BTreeMap::new();
     for field in ["post", "inv", "pre"] {
         if let Some(formula) = contract.get(field) {
             visit(formula, &mut symbols);
@@ -14238,21 +14287,97 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         report.contracts = vec![callee.clone(), caller.clone()];
         let formals = contract_formal_names(&caller);
 
-        let target = resolve_report_symbol(&report, &caller, "_cmp", &formals);
+        let target = resolve_report_symbol(
+            &report,
+            &caller,
+            "_cmp",
+            ReportFormulaSymbolKind::Constructor,
+            &formals,
+        );
         assert!(target.starts_with("<module>._cmp ["), "{target}");
         assert_ne!(target, contract_visual_identity(&report, &caller));
         assert_eq!(
-            resolve_report_symbol(&report, &caller, "tuple", &formals),
+            resolve_report_symbol(
+                &report,
+                &caller,
+                "tuple",
+                ReportFormulaSymbolKind::Constructor,
+                &formals,
+            ),
             "python:builtin/tuple"
         );
         assert_eq!(
-            resolve_report_symbol(&report, &caller, "self", &formals),
+            resolve_report_symbol(
+                &report,
+                &caller,
+                "self",
+                ReportFormulaSymbolKind::Variable,
+                &formals,
+            ),
             "formal"
         );
         assert_eq!(
-            resolve_report_symbol(&report, &caller, "python:type:date", &formals),
+            resolve_report_symbol(
+                &report,
+                &caller,
+                "python:type:date",
+                ReportFormulaSymbolKind::Constructor,
+                &formals,
+            ),
             "coordinate"
         );
+        assert_eq!(
+            resolve_report_symbol(
+                &report,
+                &caller,
+                "scratch",
+                ReportFormulaSymbolKind::Variable,
+                &formals,
+            ),
+            "local"
+        );
+    }
+
+    #[test]
+    fn symbol_table_excludes_formula_operators() {
+        let contract = serde_json::json!({
+            "name": "arithmetic", "kind": "function-contract", "formals": ["value"],
+            "post": {"kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"},
+                {"kind": "ctor", "name": "+", "args": [
+                    {"kind": "var", "name": "value"},
+                    {"kind": "ctor", "name": "*", "args": [
+                        {"kind": "var", "name": "factor"},
+                        {"kind": "const", "value": 2}
+                    ]}
+                ]}
+            ]}
+        });
+
+        assert_eq!(
+            contract_formula_symbols(&contract),
+            BTreeMap::from([
+                ("factor".to_string(), ReportFormulaSymbolKind::Variable),
+                ("out".to_string(), ReportFormulaSymbolKind::Variable),
+                ("value".to_string(), ReportFormulaSymbolKind::Variable),
+            ])
+        );
+    }
+
+    #[test]
+    fn symbol_table_panics_on_unclassifiable_constructor() {
+        let contract = serde_json::json!({
+            "name": "unknown", "kind": "function-contract", "formals": [],
+            "post": {"kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"},
+                {"kind": "ctor", "name": "mystery-constructor", "args": []}
+            ]}
+        });
+        let mut report = minimal_source_report();
+        report.contracts = vec![contract];
+
+        let panic = std::panic::catch_unwind(|| render_report_visual(&report, None));
+        assert!(panic.is_err(), "unknown constructor must announce itself");
     }
 
     #[test]
