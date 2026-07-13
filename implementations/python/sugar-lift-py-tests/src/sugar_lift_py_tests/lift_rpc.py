@@ -1169,10 +1169,12 @@ def _audit_file_context(source: str, filename: str, file_cid: str) -> _AuditFile
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
     catalog = default_catalog()
-    roots = SourceFragment.from_source(source, filename).statements()
-    if not roots:
-        raise ValueError("empty source has no audit file context")
-    module = roots[0]
+    source_root = SourceFragment.from_source(source, filename)
+    roots = source_root.statements()
+    # A zero-statement Module is still the lawful source node for this file.
+    # Keep it as the context root so enumeration can answer with its honest
+    # empty child set instead of throwing outside the recovered-audit door.
+    module = roots[0] if roots else source_root
     seed_panics: list[tuple[str, FactoryPanic]] = []
     module_assertions: list[Any] = []
     module_temporal = _module_import_temporal(
@@ -2021,11 +2023,17 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 context_hit = file_cid in _AUDIT_FILE_CONTEXTS
                 context = _audit_file_context(source, file_rel, file_cid)
                 nodes = []
-                module_key = _degenerate_file_memento(file_rel, file_cid)
-                module_key["function_name"] = "<module>"
-                module_key["source_function_name"] = "<module>"
-                module_key["file_cid"] = file_cid
-                nodes.append({"memento": module_key, "audit": None, "payload": None})
+                # The module owner exists only when the source has a statement
+                # to own. Empty package markers are leaf files, so their
+                # function-child answer is the empty set.
+                if context.module.statements():
+                    module_key = _degenerate_file_memento(file_rel, file_cid)
+                    module_key["function_name"] = "<module>"
+                    module_key["source_function_name"] = "<module>"
+                    module_key["file_cid"] = file_cid
+                    nodes.append(
+                        {"memento": module_key, "audit": None, "payload": None}
+                    )
                 for definition in context.definitions:
                     key = to_rpc_value(definition.memento())
                     key["function_name"] = definition.function_name()

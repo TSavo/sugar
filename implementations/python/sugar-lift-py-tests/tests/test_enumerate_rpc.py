@@ -156,6 +156,42 @@ def third():
     assert len(owned) == 1, owned
 
 
+def test_empty_package_module_enumerates_and_folds_as_an_empty_child_set(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "empty_package"
+    package.mkdir()
+    (package / "__init__.py").write_bytes(b"")
+
+    file_nodes = _enumerate("source_files", tmp_path)["nodes"]
+    file_key = next(
+        node["memento"]
+        for node in file_nodes
+        if node["memento"]["file"] == "empty_package/__init__.py"
+    )
+    functions = _enumerate(
+        "functions", tmp_path, at=file_key, options={"auditFrontier": True}
+    )
+
+    assert functions == {"nodes": [], "gaps": []}
+
+    # The recovered consumer fold over a leaf file has no definition leaves to
+    # request. Its identity is the same clean, empty audit the monolithic door
+    # returns for the real zero-byte source.
+    actual = {
+        "kind": "recovered-construction-audit",
+        "recoveryOverride": True,
+        "status": "clean",
+        "panics": [],
+        "effects": [],
+        "suppressedDescendants": [],
+    }
+    expected = lift_rpc.audit_lift_file(
+        "", "empty_package/__init__.py", recover_panics=True
+    ).to_rpc()
+    assert actual == expected
+
+
 def test_audit_context_is_parsed_once_per_file_cid_and_mutation_misses(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
