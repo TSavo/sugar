@@ -4154,10 +4154,7 @@ fn render_visual_forensic_context(out: &mut String, report: &LiftSourceReport, c
     }
 }
 
-fn format_contract_visual_fol(contract: &Value) -> String {
-    format_contract_visual_fol_with_color(contract, std::env::var_os("NO_COLOR").is_none())
-}
-
+#[cfg(test)]
 fn format_contract_visual_fol_with_color(contract: &Value, color: bool) -> String {
     let name = contract_value_name(contract).unwrap_or("<unknown contract>");
     let formula = ["post", "inv", "pre"]
