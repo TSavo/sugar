@@ -4042,21 +4042,17 @@ fn render_universe_visual_report(
             UniverseVisualMode::BodyComplete
         };
         if fact_universe {
-            let assertion_scope = if warrants
+            let module_level = warrants
                 .iter()
-                .any(|warrant| is_module_level_warrant(warrant))
-            {
-                "module level".to_string()
+                .any(|warrant| is_module_level_warrant(warrant));
+            let assertion_label = if module_level {
+                format!("vendor assertion (module level) {identity}")
             } else {
-                format!(
-                    "in {}",
-                    assertion_parent_from_warrants(&warrants)
-                        .unwrap_or_else(|| contract_qualified_owner(report, contract))
-                )
+                let parent = assertion_parent_from_warrants(&warrants)
+                    .unwrap_or_else(|| contract_qualified_owner(report, contract));
+                format!("vendor assertion (in {parent}) [{cid_prefix}]")
             };
-            out.push_str(&format!(
-                "  vendor assertion ({assertion_scope}) {identity}\n"
-            ));
+            out.push_str(&format!("  {assertion_label}\n"));
             for member in &group.members {
                 render_provenanced_vendor_assertion_row(
                     &mut out,
@@ -4554,6 +4550,9 @@ fn resolve_report_symbol(
         "abs", "bool", "bytes", "dict", "float", "int", "len", "list", "max", "min", "range",
         "set", "str", "sum", "tuple", "type",
     ];
+    if symbol.starts_with("python:type:") {
+        return "coordinate".to_string();
+    }
     if BUILTINS.contains(&symbol) {
         return format!("python:builtin/{symbol}");
     }
@@ -13615,9 +13614,18 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "two-row real datetime envelope must render in bounded time"
         );
         assert!(visual.contains("universe date._cmp ["), "{visual}");
+        let assertion_label = visual
+            .lines()
+            .find(|line| line.contains("vendor assertion"))
+            .expect("vendor assertion label");
         assert!(
-            visual.contains("vendor assertion (in date._cmp)"),
-            "{visual}"
+            assertion_label.contains("vendor assertion (in date._cmp) ["),
+            "{assertion_label}"
+        );
+        assert_eq!(
+            assertion_label.matches("date._cmp").count(),
+            1,
+            "{assertion_label}"
         );
         assert!(
             visual.contains("assert isinstance(other, date)"),
@@ -14243,6 +14251,10 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         assert_eq!(
             resolve_report_symbol(&report, &caller, "self", &formals),
             "formal"
+        );
+        assert_eq!(
+            resolve_report_symbol(&report, &caller, "python:type:date", &formals),
+            "coordinate"
         );
     }
 
