@@ -77,15 +77,20 @@ def _configure_transport_logging() -> None:
 
     previous_hook = sys.excepthook
 
-    def log_unhandled(exc_type: type[BaseException], exc: BaseException, tb: Any) -> None:
+    def log_unhandled(
+        exc_type: type[BaseException], exc: BaseException, tb: Any
+    ) -> None:
         _TRANSPORT_LOG.critical(
-            "unhandled_exception", exc_info=(exc_type, exc, tb), extra={"stage": "process.exit"}
+            "unhandled_exception",
+            exc_info=(exc_type, exc, tb),
+            extra={"stage": "process.exit"},
         )
         for log_handler in _TRANSPORT_LOG.handlers:
             log_handler.flush()
         previous_hook(exc_type, exc, tb)
 
     sys.excepthook = log_unhandled
+
 
 # UTF-16 surrogate code points. Python's json.dumps emits them as \\udxxx;
 # serde_json rejects unpaired surrogates with "unexpected end of hex escape"
@@ -132,18 +137,37 @@ def _send(obj: Dict[str, Any]) -> None:
     frame = json.dumps(safe, separators=(",", ":")) + "\n"
     _TRANSPORT_LOG.info(
         "response_about_to_send",
-        extra={"direction": "kit_to_cli", "bytes": len(frame.encode()), "message_id": safe.get("id"), "method": None, "stage": "stdout.write"},
+        extra={
+            "direction": "kit_to_cli",
+            "bytes": len(frame.encode()),
+            "message_id": safe.get("id"),
+            "method": None,
+            "stage": "stdout.write",
+        },
     )
     sys.stdout.write(frame)
-    _TRANSPORT_LOG.info("flush_enter", extra={"direction": "kit_to_cli", "stage": "stdout.flush"})
+    _TRANSPORT_LOG.info(
+        "flush_enter", extra={"direction": "kit_to_cli", "stage": "stdout.flush"}
+    )
     sys.stdout.flush()
-    _TRANSPORT_LOG.info("flush_exit", extra={"direction": "kit_to_cli", "stage": "stdout.flush"})
+    _TRANSPORT_LOG.info(
+        "flush_exit", extra={"direction": "kit_to_cli", "stage": "stdout.flush"}
+    )
 
 
 def _recv() -> Optional[Dict[str, Any]] | object:
-    _TRANSPORT_LOG.info("read_enter", extra={"direction": "cli_to_kit", "stage": "stdin.readline"})
+    _TRANSPORT_LOG.info(
+        "read_enter", extra={"direction": "cli_to_kit", "stage": "stdin.readline"}
+    )
     line = sys.stdin.readline()
-    _TRANSPORT_LOG.info("read_exit", extra={"direction": "cli_to_kit", "bytes": len(line.encode()), "stage": "stdin.readline"})
+    _TRANSPORT_LOG.info(
+        "read_exit",
+        extra={
+            "direction": "cli_to_kit",
+            "bytes": len(line.encode()),
+            "stage": "stdin.readline",
+        },
+    )
     if not line:
         return None
     try:
@@ -151,7 +175,16 @@ def _recv() -> Optional[Dict[str, Any]] | object:
     except json.JSONDecodeError:
         return PARSE_ERROR
     if isinstance(value, dict):
-        _TRANSPORT_LOG.info("request_received", extra={"direction": "cli_to_kit", "bytes": len(line.encode()), "message_id": value.get("id"), "method": value.get("method"), "stage": "dispatch"})
+        _TRANSPORT_LOG.info(
+            "request_received",
+            extra={
+                "direction": "cli_to_kit",
+                "bytes": len(line.encode()),
+                "message_id": value.get("id"),
+                "method": value.get("method"),
+                "stage": "dispatch",
+            },
+        )
         return value
     return PARSE_ERROR
 
