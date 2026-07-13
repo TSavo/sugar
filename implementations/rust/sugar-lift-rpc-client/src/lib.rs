@@ -47,6 +47,7 @@ impl QuestionCache {
         wire: impl FnOnce() -> Result<Value, E>,
     ) -> Result<Value, E> {
         let identity = json!({
+            "workspace_root": question.get("workspace_root").cloned().unwrap_or(Value::Null),
             "level": question.get("level").cloned().unwrap_or(Value::Null),
             "at": question.get("at").cloned().unwrap_or(Value::Null),
             "seek": question.get("seek").cloned().unwrap_or(Value::Bool(false)),
@@ -515,5 +516,51 @@ mod tests {
 
         assert_eq!(wire_calls, 1);
         assert_eq!(cache.hits(), 1);
+    }
+
+    #[test]
+    fn canonical_question_identity_discriminates_workspace_root() {
+        let mut cache = QuestionCache::default();
+        let first_root = json!({
+            "workspace_root": "/workspace/first",
+            "level": "source_files",
+            "at": null,
+            "seek": false,
+            "options": {"auditFrontier": true}
+        });
+        let second_root = json!({
+            "workspace_root": "/workspace/second",
+            "level": "source_files",
+            "at": null,
+            "seek": false,
+            "options": {"auditFrontier": true}
+        });
+        let mut wire_calls = 0;
+
+        let first = cache
+            .ask(&first_root, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": ["first.py"]}))
+            })
+            .unwrap();
+        let second = cache
+            .ask(&second_root, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": ["second.py"]}))
+            })
+            .unwrap();
+        let first_again = cache
+            .ask(&first_root, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": ["wrong.py"]}))
+            })
+            .unwrap();
+
+        assert_eq!(first, json!({"nodes": ["first.py"]}));
+        assert_eq!(second, json!({"nodes": ["second.py"]}));
+        assert_eq!(first_again, first);
+        assert_eq!(wire_calls, 2);
+        assert_eq!(cache.hits(), 1);
+        assert_eq!(cache.misses(), 2);
     }
 }

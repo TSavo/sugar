@@ -118,8 +118,9 @@ conversation tokens, or invented positional keys.
 
 Demand is memoized for exactly one RPC-client consistency window. The cache
 key is the content address of the JCS-canonical question tuple
-`(level, at, seek, options)`, never the bare node memento. A repeated question
-is answered from the client-owned `MementoPool` without crossing the wire.
+`(workspace_root, level, at, seek, options)`, never the bare node memento. A
+repeated question is answered from the client-owned `MementoPool` without
+crossing the wire.
 There is no clear, eviction, dirty-bit, or entry-invalidation API. A CLI command
 owns one client for the run. An LSP analysis owns one client for that analysis
 and constructs a new client for the next potentially changed world. Dropping
