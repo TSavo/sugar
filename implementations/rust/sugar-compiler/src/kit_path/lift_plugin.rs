@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -95,6 +96,43 @@ pub struct LiftPluginKit {
     command: Vec<String>,
     working_dir: Option<PathBuf>,
     lift_method: String,
+}
+
+struct ResponseReader {
+    lines: Receiver<Result<String, String>>,
+}
+
+impl ResponseReader {
+    fn spawn(stdout: std::process::ChildStdout) -> Self {
+        let (sender, lines) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        if sender.send(Ok(line)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = sender.send(Err(error.to_string()));
+                        break;
+                    }
+                }
+            }
+        });
+        Self { lines }
+    }
+}
+
+fn response_deadline() -> Duration {
+    std::env::var("SUGAR_LIFT_RESPONSE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(120))
 }
 
 /// Source-shaped Lift Kit adapter over the existing lift-plugin transport.
@@ -332,16 +370,7 @@ impl LiftPluginKit {
     fn spawn_and_run_once(
         &self,
         lift_params: &Value,
-    ) -> Result<
-        (
-            Value,
-            Value,
-            Child,
-            ChildStdin,
-            BufReader<std::process::ChildStdout>,
-        ),
-        LiftPluginKitError,
-    > {
+    ) -> Result<(Value, Value, Child, ChildStdin, ResponseReader), LiftPluginKitError> {
         let mut cmd = Command::new(&self.command[0]);
         if self.command.len() > 1 {
             cmd.args(&self.command[1..]);
@@ -412,7 +441,7 @@ impl LiftPluginKit {
             .stdout
             .take()
             .ok_or_else(|| LiftPluginKitError::Failed("lift plugin stdout unavailable".into()))?;
-        let mut reader = BufReader::new(stdout);
+        let reader = ResponseReader::spawn(stdout);
 
         let init_req = json!({
             "jsonrpc": "2.0",
@@ -448,7 +477,7 @@ impl LiftPluginKit {
             stage = "stdin.flush.exit",
             "lift-plugin buffer flush"
         );
-        let initialize_response = read_response(&mut reader, 1)?;
+        let initialize_response = read_response(&reader, 1)?;
 
         let lift_req = json!({
             "jsonrpc": "2.0",
@@ -479,7 +508,7 @@ impl LiftPluginKit {
             stage = "stdin.flush.exit",
             "lift-plugin buffer flush"
         );
-        let response = read_response(&mut reader, 2)?;
+        let response = read_response(&reader, 2)?;
 
         Ok((initialize_response, response, child, stdin, reader))
     }
@@ -604,7 +633,7 @@ impl LiftPluginKit {
             stage = "stdin.flush.exit",
             "lift-plugin buffer flush"
         );
-        match read_response(&mut entry.reader, id) {
+        match read_response(&entry.reader, id) {
             Ok(response) => Ok((initialize_response, response)),
             Err(error) => {
                 // Resident died or desynced mid-protocol: evict it so the
@@ -623,16 +652,7 @@ impl LiftPluginKit {
     fn spawn_resident(
         &self,
         lift_params: &Value,
-    ) -> Result<
-        (
-            Value,
-            Child,
-            ChildStdin,
-            BufReader<std::process::ChildStdout>,
-            Value,
-        ),
-        LiftPluginKitError,
-    > {
+    ) -> Result<(Value, Child, ChildStdin, ResponseReader, Value), LiftPluginKitError> {
         let (initialize_response, first_response, child, stdin, reader) =
             self.spawn_and_run_once(lift_params)?;
         Ok((initialize_response, child, stdin, reader, first_response))
@@ -643,7 +663,7 @@ impl LiftPluginKit {
 struct ResidentLifter {
     child: Child,
     stdin: ChildStdin,
-    reader: BufReader<std::process::ChildStdout>,
+    reader: ResponseReader,
     next_id: i64,
     started_at: Instant,
     initialize_response: Value,
@@ -935,9 +955,16 @@ fn legacy_response_from_term(term: &Term) -> Result<&Value, LiftPluginKitError> 
     }
 }
 
-fn read_response(reader: &mut impl BufRead, id: i64) -> Result<Value, LiftPluginKitError> {
+fn read_response(reader: &ResponseReader, id: i64) -> Result<Value, LiftPluginKitError> {
+    read_response_with_deadline(reader, id, response_deadline())
+}
+
+fn read_response_with_deadline(
+    reader: &ResponseReader,
+    id: i64,
+    deadline: Duration,
+) -> Result<Value, LiftPluginKitError> {
     let _span = info_span!("lift_plugin_read_response", message_id = id).entered();
-    let mut line = String::new();
     trace_lift_transport_checkpoint("read_response.before_read_line", &Value::Null, 0);
     info!(
         direction = "kit_to_cli",
@@ -946,9 +973,22 @@ fn read_response(reader: &mut impl BufRead, id: i64) -> Result<Value, LiftPlugin
         stage = "read_line.enter",
         "lift-plugin blocking call"
     );
-    let n = reader
-        .read_line(&mut line)
-        .map_err(|error| LiftPluginKitError::Failed(format!("read lift response: {error}")))?;
+    let line = match reader.lines.recv_timeout(deadline) {
+        Ok(Ok(line)) => line,
+        Ok(Err(error)) => {
+            return Err(LiftPluginKitError::Failed(format!(
+                "lift plugin transport read failed at stage=read_line.enter message_id={id}: {error}"
+            )))
+        }
+        Err(RecvTimeoutError::Timeout) => {
+            return Err(LiftPluginKitError::Failed(format!(
+                "lift plugin transport stalled at stage=read_line.enter message_id={id} deadline_secs={}; no response frame arrived",
+                deadline.as_secs()
+            )))
+        }
+        Err(RecvTimeoutError::Disconnected) => String::new(),
+    };
+    let n = line.len();
     trace_lift_transport_checkpoint("read_response.after_read_line", &Value::Null, n);
     info!(
         direction = "kit_to_cli",
@@ -1085,5 +1125,24 @@ mod tests {
         );
         assert_eq!(lift_response_array_len(&response, &["scalar"]), 0);
         assert_eq!(lift_response_array_len(&response, &["missing"]), 0);
+    }
+
+    #[test]
+    fn stalled_response_is_loud_and_names_last_transport_stage() {
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 1"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn stalled plugin stub");
+        let reader = ResponseReader::spawn(child.stdout.take().expect("stub stdout"));
+
+        let error = read_response_with_deadline(&reader, 2, Duration::from_millis(20))
+            .expect_err("stalled plugin must return a bounded error");
+        let detail = error.to_string();
+        assert!(detail.contains("transport stalled"), "{detail}");
+        assert!(detail.contains("stage=read_line.enter"), "{detail}");
+        assert!(detail.contains("message_id=2"), "{detail}");
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
