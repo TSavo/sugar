@@ -7,6 +7,8 @@ from .floor_value import FloorValue
 
 @dataclass(frozen=True)
 class LoopControlValue(FloorValue):
+    non_fol_support = True
+
     action: str
     locus: str
 

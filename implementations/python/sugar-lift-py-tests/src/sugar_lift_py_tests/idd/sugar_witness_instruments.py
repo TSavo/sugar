@@ -211,17 +211,14 @@ class SugarWitnessFrontierReport:
 
 EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
     NonFolOptOut(
-        sugar_name="CommentSugar",
-        floor_name="SupportValue",
-        reason="comments are inert source support",
+        sugar_name="BreakSugar",
+        floor_name="LoopControlValue",
+        reason="break cites the enclosing loop exit instead of a function verdict",
     ),
     NonFolOptOut(
-        sugar_name="DictCompSugar",
-        floor_name="DictLiteralValue",
-        reason=(
-            "dict comprehensions reduce to structural dict support; "
-            "dict-constructor equality is not currently a standalone solver verdict"
-        ),
+        sugar_name="ContinueSugar",
+        floor_name="LoopControlValue",
+        reason="continue cites the enclosing loop skip instead of a function verdict",
     ),
     NonFolOptOut(
         sugar_name="ExprSugar",
@@ -229,33 +226,9 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         reason="expression statements evaluate for effects and leave no FOL claim",
     ),
     NonFolOptOut(
-        sugar_name="LocalDefSupportSugar",
-        floor_name="SupportValue",
-        reason=(
-            "nested FunctionDef/AsyncFunctionDef/ClassDef/Import/ImportFrom "
-            "are local definitions, not part of the body return universe"
-        ),
-    ),
-    NonFolOptOut(
         sugar_name="PassSugar",
         floor_name="SupportValue",
         reason="pass is inert control-flow support",
-    ),
-    NonFolOptOut(
-        sugar_name="SetCompSugar",
-        floor_name="SetLiteralValue",
-        reason=(
-            "set comprehensions reduce to structural set support; "
-            "set-constructor equality is not currently a standalone solver verdict"
-        ),
-    ),
-    NonFolOptOut(
-        sugar_name="SetSugar",
-        floor_name="SetLiteralValue",
-        reason=(
-            "set literals are structural term support; set-constructor equality "
-            "is not currently a standalone solver verdict"
-        ),
     ),
 )
 
@@ -590,9 +563,19 @@ def _observe_red_effect(witness: EffectWitnessSource) -> RedEffectObservation:
         role=SugarRole.STATEMENT,
         audit_row=result.audit_row,
     ).reduce(ctx)
+    nested_effect = next(
+        (
+            item
+            for item in getattr(getattr(outcome, "value", None), "statements", ())
+            if isinstance(item, Incomplete)
+        ),
+        None,
+    )
+    if nested_effect is not None:
+        outcome = nested_effect
     if isinstance(outcome, Incomplete):
         return RedEffectObservation(
-            effect_class=effect_kind(outcome.effect),
+            effect_class=type(outcome.effect).__name__,
             reason=effect_reason(outcome.effect),
             selected_sugars=_selected_sugars_from_audit(audit_sink),
         )
@@ -751,7 +734,7 @@ def _seed_coverage_owner_names(
 
 
 def _claim_module(claim) -> str:
-    return getattr(claim.build, "__module__", "<unknown>")
+    return getattr(claim.new, "__module__", "<unknown>")
 
 
 def _claim_witnesses(claim) -> object:

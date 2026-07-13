@@ -29,12 +29,16 @@ class YieldSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+        from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="GeneratorYieldRuntimeEffect",
-            reason="yield suspends a deferred generator at a runtime protocol boundary",
+        return typed_red_effect_witness(
+            name="yield_runtime_effect",
+            owner_sugar=cls.__name__,
+            source="def A(z):\n    yield z\n",
+            effect_class="GeneratorYieldRuntimeEffect",
+            reason_needle="generator suspension is runtime-dependent",
+            blame_needle="test_witness.py:2:4",
+            wrong_reason_needle="owner=AwaitSugar",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

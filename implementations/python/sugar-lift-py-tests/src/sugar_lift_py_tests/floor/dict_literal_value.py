@@ -28,8 +28,6 @@ class DictLiteralValue(FloorValue):
     still projecting to a term for enclosing claims.
     """
 
-    non_fol_support = True
-
     entries: tuple[tuple[Term, Term], ...]
 
     def contribution(self):
