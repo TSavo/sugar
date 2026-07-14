@@ -19,10 +19,10 @@ class TupleUnpackBindings(FloorValue):
         return ()
 
     def extend_scope(self, ctx):
-        temporal = ctx.temporal
+        scoped = ctx
         for binding in self.bindings:
-            temporal = temporal.bind_value(binding.name, binding)
-        return replace(ctx, temporal=temporal)
+            scoped = binding.extend_scope(scoped)
+        return replace(ctx, temporal=scoped.temporal)
 
 
 @dataclass(frozen=True)
@@ -54,11 +54,11 @@ class TupleNameStore:
 
 @dataclass(frozen=True)
 class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
-    """One tuple target whose leaves are all names.
+    """One tuple target whose leaves have static name-rooted addresses.
 
-    Each name aliases an indexed projection of the same factory-built rhs source.
-    Starred, attribute, subscript, chained, and statically mismatched targets
-    stay unowned so factory dispatch reaches its loud None arm.
+    Each leaf receives an indexed projection of the same factory-built rhs source.
+    Name leaves bind temporally and dotted attribute leaves reuse the ordinary
+    attribute-store owners. Starred and dynamically rooted leaves stay unowned.
     """
 
     stores: tuple[SugarBody, ...]
@@ -86,6 +86,9 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
             AttributeAssignSugar,
         )
         from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+        from sugar_lift_py_tests.sugar.nested_attribute_assign_sugar import (
+            NestedAttributeAssignSugar,
+        )
 
         for kind, first, second, path in leaves:
             projection = _projection(receiver, path, site)
@@ -93,13 +96,27 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
                 stores.append(
                     SugarBody(TupleNameStore(first, projection), SugarRole.STATEMENT)
                 )
+            elif len(first) >= 3:
+                stores.append(
+                    SugarBody(
+                        NestedAttributeAssignSugar(
+                            path=first,
+                            value=projection,
+                            site=site,
+                        ),
+                        SugarRole.STATEMENT,
+                    )
+                )
             else:
-                receiver_body = SugarBody(NameSugar(first, site), SugarRole.TERM)
+                receiver_name, field_name = first
+                receiver_body = SugarBody(
+                    NameSugar(receiver_name, site), SugarRole.TERM
+                )
                 stores.append(
                     SugarBody(
                         AttributeAssignSugar(
-                            receiver_name=first,
-                            field_name=second,
+                            receiver_name=receiver_name,
+                            field_name=field_name,
                             receiver=receiver_body,
                             value=projection,
                             site=site,
@@ -143,10 +160,10 @@ def _target_leaves(target, prefix=()):
     if target.observed == "Name":
         return (("name", target.name_id(), None, prefix),)
     if target.observed == "Attribute":
-        receiver = target.attr_receiver()
-        if receiver.observed != "Name":
+        path = _attribute_path(target)
+        if path is None:
             return None
-        return (("attribute", receiver.name_id(), target.attr_name(), prefix),)
+        return (("attribute", path, None, prefix),)
     if target.observed not in {"Tuple", "List"}:
         return None
     elements = target.tuple_elts() if target.observed == "Tuple" else target.list_elts()
@@ -159,6 +176,17 @@ def _target_leaves(target, prefix=()):
             return None
         bindings.extend(nested)
     return tuple(bindings)
+
+
+def _attribute_path(target):
+    parts = []
+    current = target
+    while current.observed == "Attribute":
+        parts.append(current.attr_name())
+        current = current.attr_receiver()
+    if current.observed != "Name":
+        return None
+    return (current.name_id(), *reversed(parts))
 
 
 def _projection(receiver, path, site):
