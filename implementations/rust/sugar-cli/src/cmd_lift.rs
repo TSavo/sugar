@@ -275,6 +275,12 @@ pub fn run(args: LiftArgs) -> u8 {
                     };
                 report.project_root = Some(project_root.clone());
                 report.source_oracle_routes = source_oracle_routes.clone();
+                if let Err(error) =
+                    attach_report_implications(&mut report, &project_root, [surface.clone()])
+                {
+                    eprintln!("{}: {error}", "error".red().bold());
+                    return EXIT_USER_ERROR;
+                }
                 trace_lift_source_report("after_source_report_from_lift_response", &report);
                 let prove_with = if args.prove {
                     trace_lift_report_checkpoint("before_prepare_lift_report_prove_inputs");
@@ -427,6 +433,40 @@ fn recovered_audit_tree(project_root: &Path, surface: &str) -> Result<Value, Str
     .map_err(|error| format!("lift.rendezvous: {error}"))?;
     sugar_compiler::tree::fold_recovered_audit(&kit, project_root)
         .map_err(|error| format!("lift.path: {error}"))
+}
+
+fn report_implication_tree(project_root: &Path, surface: &str) -> Result<Vec<Value>, String> {
+    let manifest = lift_plugin::find_manifest_for_surface(project_root, surface)
+        .map_err(|error| format!("lift-plugin.manifest: {error}"))?;
+    let kit = Kit::rendezvous(LiftManifest {
+        surface: surface.to_string(),
+        name: manifest.name.clone(),
+        dialect: lift_plugin::dialect_for_surface(surface),
+        command: manifest.command.clone(),
+        working_dir: lift_plugin::absolute_working_dir_for_manifest(project_root, &manifest),
+        method: manifest.method.clone(),
+    })
+    .map_err(|error| format!("lift.rendezvous: {error}"))?;
+    sugar_compiler::tree::fold_implication_tree(&kit, project_root)
+        .map_err(|error| format!("lift.implications: {error}"))
+}
+
+fn attach_report_implications(
+    report: &mut LiftSourceReport,
+    project_root: &Path,
+    surfaces: impl IntoIterator<Item = String>,
+) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    for surface in surfaces {
+        for implication in report_implication_tree(project_root, &surface)? {
+            let key = serde_json::to_string(&implication).unwrap_or_default();
+            if seen.insert(key) {
+                report.call_edges.push(implication);
+            }
+        }
+    }
+    report.implication_walk_ran = true;
+    Ok(())
 }
 
 fn lift_report_graph_plugins(
@@ -682,6 +722,14 @@ fn run_configured_lift_report_graph(
         report.project_root = Some(project_root.to_path_buf());
         report.source_oracle_routes =
             source_oracle_routes_from_plan_mementos(&report.plan_mementos);
+        if let Err(error) = attach_report_implications(
+            &mut report,
+            project_root,
+            plugins.iter().map(|plugin| plugin.surface.clone()),
+        ) {
+            eprintln!("{}: {error}", "error".red().bold());
+            return EXIT_USER_ERROR;
+        }
         // Rebase file paths in source mementos and contract sourceWarrants
         // using workspace_override from plan mementos.  In the proof path
         // (dispatch_multi) the lifter output is minted as-is; the
@@ -814,6 +862,14 @@ fn run_configured_lift_report_graph(
     };
     report.project_root = Some(project_root.to_path_buf());
     report.source_oracle_routes = source_oracle_routes_for_plugins(plugins);
+    if let Err(error) = attach_report_implications(
+        &mut report,
+        project_root,
+        plugins.iter().map(|plugin| plugin.surface.clone()),
+    ) {
+        eprintln!("{}: {error}", "error".red().bold());
+        return EXIT_USER_ERROR;
+    }
     trace_lift_source_report("after_source_report_from_lift_response", &report);
 
     let prove_with = if args.prove {
@@ -953,6 +1009,14 @@ fn run_configured_lift_report_response(
     };
     report.project_root = Some(project_root.to_path_buf());
     report.source_oracle_routes = source_oracle_routes_for_plugins(plugins);
+    if let Err(error) = attach_report_implications(
+        &mut report,
+        project_root,
+        plugins.iter().map(|plugin| plugin.surface.clone()),
+    ) {
+        eprintln!("{}: {error}", "error".red().bold());
+        return EXIT_USER_ERROR;
+    }
     trace_lift_source_report("after_source_report_from_lift_response", &report);
 
     let prove_with = if args.prove {
@@ -1260,6 +1324,7 @@ struct LiftSourceReport {
     symbol_kinds: BTreeMap<String, String>,
     term_table: Option<Arc<LiftTermTable>>,
     call_edges: Vec<Value>,
+    implication_walk_ran: bool,
     vendor_conjoins: Vec<VendorConjoinReport>,
     project_root: Option<PathBuf>,
     source_oracle_routes: Vec<SourceOracleRoute>,
@@ -1912,6 +1977,7 @@ fn source_report_from_lift_response(
         symbol_kinds,
         term_table,
         call_edges,
+        implication_walk_ran: false,
         vendor_conjoins,
         project_root: None,
         source_oracle_routes: Vec::new(),
@@ -2100,6 +2166,7 @@ fn source_report_from_proof_pool(
         symbol_kinds: BTreeMap::new(),
         term_table: None,
         call_edges,
+        implication_walk_ran: false,
         vendor_conjoins: Vec::new(),
         project_root: None,
         source_oracle_routes: Vec::new(),
@@ -3880,6 +3947,7 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
         let span = tracing::info_span!("report_section", section = "plan_roll_call");
         let _guard = span.enter();
         tracing::info!("report section started");
+        out.push_str(&render_report_prologue(report));
         out.push_str(&render_report_plan_roll_call(report));
         tracing::info!(rendered_bytes = out.len(), "report section completed");
     }
@@ -3926,6 +3994,58 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
             out.push_str(&format!("  - {}\n", format_call_edge(edge)));
         }
         tracing::info!(rendered_bytes = out.len(), "report section completed");
+    }
+    let implication_rows = report
+        .call_edges
+        .iter()
+        .filter(|edge| report_call_edge_kind(edge) == Some("implication"))
+        .collect::<Vec<_>>();
+    if report.implication_walk_ran || !implication_rows.is_empty() {
+        out.push_str("implication ledger:\n");
+        if implication_rows.is_empty() {
+            out.push_str("  <no call sites demanded>\n");
+        }
+        for implication in implication_rows {
+            let source = report_text_field(implication, &["sourceContract", "source_contract"])
+                .unwrap_or_else(|| "<unknown caller>".to_string());
+            let target = report_text_field(
+                implication,
+                &[
+                    "targetContract",
+                    "target_contract",
+                    "targetSymbol",
+                    "target_symbol",
+                ],
+            )
+            .unwrap_or_else(|| "<unknown callee>".to_string());
+            let status = implication
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unsatisfied");
+            let reason = implication
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("no reason supplied");
+            if status == "unjoined" {
+                out.push_str(&format!(
+                    "  - DEBT {source} owes {target}'s pre, unjoined because {reason}\n"
+                ));
+            } else {
+                let obligation = implication
+                    .get("obligation")
+                    .map(|formula| {
+                        pretty_visual_formula_with_terms(
+                            formula,
+                            std::env::var_os("NO_COLOR").is_none(),
+                            report.term_table.as_deref(),
+                        )
+                    })
+                    .unwrap_or_else(|| "<missing obligation>".to_string());
+                out.push_str(&format!(
+                    "  - {source} -> {target}: {obligation} [{status}] {reason}\n"
+                ));
+            }
+        }
     }
     if !report.effects.is_empty() {
         let span = tracing::info_span!("report_section", section = "effects");
@@ -4347,7 +4467,7 @@ fn render_universe_visual_report(
                 .iter()
                 .any(|warrant| is_module_level_warrant(warrant));
             let assertion_label = if module_level {
-                format!("vendor assertion (module level) {identity}")
+                "vendor assertion (module level)".to_string()
             } else {
                 let parent = assertion_parent_from_warrants(&warrants)
                     .unwrap_or_else(|| qualified_name.to_string());
@@ -5276,12 +5396,27 @@ fn render_provenanced_vendor_assertion_row(
             .and_then(Value::as_str)
             .unwrap_or("cid-unavailable");
         let stated = resolve_source_memento_visual_source(source_lookup, warrant);
+        out.push_str(&format!("      stated: {}\n", stated.trim()));
+        for chain in contract_rewrite_chains(contract) {
+            let construction = contract
+                .get("proofirProvenance")
+                .and_then(|provenance| provenance.get("constructionSite"))
+                .and_then(|site| {
+                    let path = site.get("path")?.as_str()?;
+                    let line = site.get("line").and_then(Value::as_u64).unwrap_or(0);
+                    Some(format!("{path}:{line}"))
+                })
+                .unwrap_or_else(|| format!("{file}:{line}"));
+            out.push_str(&format!(
+                "      via {} @ {construction}\n",
+                chain.join(" -> ")
+            ));
+        }
         render_pretty_fol_with_provenance(
             out,
             &lifted,
             &format!("@ {file}:{line} warrant={}", short_cid(source_cid)),
         );
-        out.push_str(&format!("      stated: {}\n", stated.trim()));
     }
     out.push_str("    symbols:\n");
     let formals = contract_formal_names(contract);
@@ -5305,6 +5440,19 @@ fn render_provenanced_vendor_assertion_row(
             report_symbol_display(&symbol)
         ));
     }
+}
+
+fn contract_rewrite_chains(contract: &Value) -> Vec<Vec<&str>> {
+    contract
+        .get("proofirProvenance")
+        .and_then(|provenance| provenance.get("warrants"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|warrant| warrant.get("floorChain").and_then(Value::as_array))
+        .map(|chain| chain.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .filter(|chain| !chain.is_empty())
+        .collect()
 }
 
 fn contract_formal_names(contract: &Value) -> BTreeSet<String> {
@@ -6710,6 +6858,86 @@ fn source_report_summary_has_hard_failures(summary: &LiftReportSummary) -> bool 
     source_unresolved_count(&summary.ledger) > 0 || summary.factory.unresolved > 0
 }
 
+#[derive(Debug)]
+struct ReportInvocation {
+    version: String,
+    binary_cid: String,
+    execution_directory: PathBuf,
+    command_line: Vec<String>,
+    workspace_root: PathBuf,
+    substrate_commit: String,
+    mint_timestamp: String,
+}
+
+fn current_report_invocation(report: &LiftSourceReport) -> ReportInvocation {
+    let binary_cid = std::env::current_exe()
+        .ok()
+        .and_then(|path| std::fs::read(path).ok())
+        .map(|bytes| sugar_canonicalizer::blake3_512_of(&bytes))
+        .unwrap_or_else(|| "cid-unavailable".to_string());
+    ReportInvocation {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        binary_cid,
+        execution_directory: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        command_line: std::env::args().collect(),
+        workspace_root: report
+            .project_root
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(".")),
+        substrate_commit: env!("SUGAR_BUILD_GIT_HEAD").to_string(),
+        mint_timestamp: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+    }
+}
+
+fn render_report_prologue(report: &LiftSourceReport) -> String {
+    render_report_prologue_with(report, &current_report_invocation(report))
+}
+
+fn render_report_prologue_with(report: &LiftSourceReport, invocation: &ReportInvocation) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "sugar v{} (bin {})\n",
+        invocation.version, invocation.binary_cid
+    ));
+    out.push_str(&format!(
+        "execution directory: {}\ncommand line: {}\nworkspace root: {}\nsubstrate commit: {}\nmint timestamp: {}\nLINK ran: {}\n",
+        invocation.execution_directory.display(),
+        invocation.command_line.join(" "),
+        invocation.workspace_root.display(),
+        invocation.substrate_commit,
+        invocation.mint_timestamp,
+        if report.implication_walk_ran { "yes" } else { "no" },
+    ));
+    out.push_str("lifted sources:\n");
+    let mut sources = BTreeMap::<&str, &str>::new();
+    for memento in &report.source_mementos {
+        let file = memento
+            .get("file")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown>");
+        let cid = memento
+            .get("sourceCid")
+            .or_else(|| memento.get("source_cid"))
+            .and_then(Value::as_str)
+            .unwrap_or("cid-unavailable");
+        sources.entry(file).or_insert(cid);
+    }
+    if sources.is_empty() {
+        out.push_str("  - <none>\n");
+    } else {
+        for (file, fallback_cid) in sources {
+            let cid = report
+                .project_root
+                .as_ref()
+                .and_then(|root| std::fs::read(root.join(file)).ok())
+                .map(|bytes| sugar_canonicalizer::blake3_512_of(&bytes))
+                .unwrap_or_else(|| fallback_cid.to_string());
+            out.push_str(&format!("  - {file} source {cid}\n"));
+        }
+    }
+    out
+}
+
 fn render_report_plan_roll_call(report: &LiftSourceReport) -> String {
     let Some(plan_body) = report.plan_mementos.iter().find_map(plan_body_from_memento) else {
         return String::new();
@@ -6726,8 +6954,26 @@ fn render_report_plan_roll_call(report: &LiftSourceReport) -> String {
     if plan_atoms.is_empty() {
         out.push_str("  - plan memento: pinned, but PlanAtom details are available only by resolving catalog atoms\n");
     } else {
+        let mut binary_seats = BTreeMap::<&str, &str>::new();
         for atom in plan_atoms {
-            out.push_str(&format!("  - {}\n", format_plan_atom_roll_call(atom)));
+            let name = atom
+                .get("pluginName")
+                .or_else(|| atom.get("manifestName"))
+                .or_else(|| atom.get("surface"))
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let binary_cid = atom.pointer("/binary/cid").and_then(Value::as_str);
+            let same_binary = binary_cid.and_then(|cid| binary_seats.get(cid).copied());
+            let suffix = same_binary
+                .map(|first| format!(" (same binary as {first})"))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "  - {}{suffix}\n",
+                format_plan_atom_roll_call(atom)
+            ));
+            if let Some(cid) = binary_cid {
+                binary_seats.entry(cid).or_insert(name);
+            }
         }
     }
     out.push_str(&format!(
@@ -6795,12 +7041,12 @@ struct ReportSectionCounts {
 }
 
 fn report_section_counts(report: &LiftSourceReport) -> ReportSectionCounts {
-    let call_edges_total = report
+    let observed_call_edges_total = report
         .call_edges
         .iter()
         .filter(|edge| report_call_edge_kind(edge) == Some("call-edge"))
         .count();
-    let call_edges_resolved = report
+    let observed_call_edges_resolved = report
         .call_edges
         .iter()
         .filter(|edge| {
@@ -6808,18 +7054,37 @@ fn report_section_counts(report: &LiftSourceReport) -> ReportSectionCounts {
                 && report_call_edge_target_cid(edge).is_some()
         })
         .count();
-    let implications = report
+    let implication_rows = report
         .call_edges
         .iter()
         .filter(|edge| report_call_edge_kind(edge) == Some("implication"))
+        .collect::<Vec<_>>();
+    let implications = implication_rows.len();
+    let demanded_resolved = implication_rows
+        .iter()
+        .filter(|edge| edge.get("status").and_then(Value::as_str) != Some("unjoined"))
         .count();
+    let demanded_dangling = implication_rows
+        .iter()
+        .filter(|edge| edge.get("status").and_then(Value::as_str) == Some("unjoined"))
+        .count();
+    let (call_edges_total, call_edges_resolved, call_edges_dangling) =
+        if report.implication_walk_ran {
+            (implications, demanded_resolved, demanded_dangling)
+        } else {
+            (
+                observed_call_edges_total,
+                observed_call_edges_resolved,
+                observed_call_edges_total.saturating_sub(observed_call_edges_resolved),
+            )
+        };
     ReportSectionCounts {
         unit_test_facts: report_unit_test_fact_count(report),
         body_universes: report.contracts.len(),
         factory_report: report.factory_audits.len() + report.factory_walk.len(),
         call_edges_total,
         call_edges_resolved,
-        call_edges_dangling: call_edges_total.saturating_sub(call_edges_resolved),
+        call_edges_dangling,
         implications,
         vendor_conjoins: report.vendor_conjoins.len(),
         source_mementos: report.source_mementos.len(),
@@ -9847,6 +10112,7 @@ mod tests {
             symbol_kinds: BTreeMap::new(),
             term_table: None,
             call_edges: vec![],
+            implication_walk_ran: false,
             vendor_conjoins: vec![],
             project_root: None,
             source_oracle_routes: Vec::new(),
@@ -14622,14 +14888,137 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             visual.contains("vendor assertion (module level)"),
             "{visual}"
         );
+        assert!(
+            !visual.contains("vendor assertion (module level) <module>"),
+            "{visual}"
+        );
         assert!(visual.contains("assert 1 == 1"), "{visual}");
         assert!(visual.contains("FOL: 1 = 1"), "{visual}");
-        assert!(visual.contains("warrant=cid-unavailable"), "{visual}");
+        assert!(
+            visual.contains("warrant=blake3-512:cid-unavaila"),
+            "{visual}"
+        );
         assert!(
             !visual.contains("universe vendor.py::<module>::assertion"),
             "{visual}"
         );
         assert_eq!(visual.matches("1 = 1").count(), 1, "{visual}");
+    }
+
+    #[test]
+    fn visual_report_prologue_identifies_invocation_sources_and_same_binary_seats() {
+        let mut report = minimal_source_report();
+        report.implication_walk_ran = true;
+        report.source_mementos = vec![serde_json::json!({
+            "file": "datetime.py", "sourceCid": "blake3-512:source"
+        })];
+        report.plan_mementos = vec![serde_json::json!({
+            "kind": "component-plan",
+            "planning": {"source": "fixture"},
+            "planAtoms": [
+                {"kind": "plan-atom", "role": "lift", "pluginName": "python-lift", "binary": {"cid": "blake3-512:same"}},
+                {"kind": "plan-atom", "role": "source-oracle", "pluginName": "source oracle", "binary": {"cid": "blake3-512:same"}}
+            ]
+        })];
+        let invocation = ReportInvocation {
+            version: "1.2.3".to_string(),
+            binary_cid: "blake3-512:bin".to_string(),
+            execution_directory: PathBuf::from("/execution"),
+            command_line: vec![
+                "sugar".to_string(),
+                "lift".to_string(),
+                "datetime".to_string(),
+            ],
+            workspace_root: PathBuf::from("/workspace"),
+            substrate_commit: "abc123".to_string(),
+            mint_timestamp: "2026-07-13T12:00:00.000Z".to_string(),
+        };
+
+        let rendered = format!(
+            "{}{}",
+            render_report_prologue_with(&report, &invocation),
+            render_report_plan_roll_call(&report)
+        );
+        for expected in [
+            "sugar v1.2.3 (bin blake3-512:bin)",
+            "execution directory: /execution",
+            "command line: sugar lift datetime",
+            "workspace root: /workspace",
+            "datetime.py source blake3-512:source",
+            "substrate commit: abc123",
+            "mint timestamp: 2026-07-13T12:00:00.000Z",
+            "LINK ran: yes",
+            "same binary as python-lift",
+        ] {
+            assert!(
+                rendered.contains(expected),
+                "missing {expected}:\n{rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn vendor_assertion_renders_derived_rewrite_chain_between_source_and_fol() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::write(root.path().join("datetime.py"), "assert _DI4Y == 1\n").expect("fixture");
+        let mut report = minimal_source_report();
+        report.project_root = Some(root.path().to_path_buf());
+        report.contracts = vec![serde_json::json!({
+            "kind": "contract", "name": "datetime::_DI4Y::assertion",
+            "inv": {"kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "_DI4Y"}, {"kind": "const", "value": 1, "sort": {"name": "Int"}}
+            ]},
+            "sourceWarrants": [{"kind": "source-memento", "file": "datetime.py", "span": {"start_line": 1}}],
+            "proofirProvenance": {
+                "constructionSite": {"path": "datetime.py", "line": 92},
+                "warrants": [{"kind": "Derived", "floorChain": ["_DI4Y = _days_before_year(5)", "calendar-fold"]}]
+            }
+        })];
+
+        let visual = render_universe_visual_report(
+            &report,
+            VisualSourceLookup {
+                project_root: report.project_root.as_deref(),
+            },
+        );
+        let fol = visual.find("FOL:").expect("FOL");
+        let stated = visual.find("stated:").expect("stated");
+        let via = visual
+            .find("via _DI4Y = _days_before_year(5) -> calendar-fold @ datetime.py:92")
+            .expect("rewrite chain");
+        assert!(stated < via && via < fol, "{visual}");
+    }
+
+    #[test]
+    fn visual_implication_ledger_counts_discharged_and_named_debt_rows() {
+        let mut report = minimal_source_report();
+        report.implication_walk_ran = true;
+        report.plan_mementos = vec![serde_json::json!({
+            "kind": "component-plan", "planning": {"source": "fixture"}, "planAtoms": []
+        })];
+        report.call_edges = vec![
+            serde_json::json!({"kind":"implication", "sourceContract":"caller", "targetContract":"callee", "status":"discharged", "reason":"proved", "obligation":{"kind":"true"}}),
+            serde_json::json!({"kind":"implication", "sourceContract":"caller", "targetSymbol":"missing", "status":"unjoined", "reason":"no qualified contract"}),
+        ];
+        let visual = render_visual_source_report(&report);
+        assert!(visual.contains("implication ledger:"), "{visual}");
+        assert!(visual.contains("caller -> callee"), "{visual}");
+        assert!(
+            visual.contains("DEBT caller owes missing's pre"),
+            "{visual}"
+        );
+        assert!(visual.contains("call edges resolved=1"), "{visual}");
+        assert!(visual.contains("call edges dangling=1"), "{visual}");
+        assert!(visual.contains("call edges total=2"), "{visual}");
+        assert!(visual.contains("implications=2"), "{visual}");
+        assert_eq!(
+            visual
+                .lines()
+                .filter(|line| line.starts_with("  - ")
+                    && (line.contains("caller -> callee") || line.contains("DEBT caller")))
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -14785,6 +15174,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             symbol_kinds: BTreeMap::new(),
             term_table: None,
             call_edges: vec![],
+            implication_walk_ran: false,
             vendor_conjoins: vec![VendorConjoinReport {
                 call: "call:enc(\"def\")".to_string(),
                 local_contract: "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion".to_string(),

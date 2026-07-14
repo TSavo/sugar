@@ -49,6 +49,14 @@ PYTHON_SOURCE_ORACLE_NAME = "python-source-oracle"
 COMPONENT_PLAN_INTENTS = {"lift", "prove", "verify"}
 PARSE_ERROR = object()
 _TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
+# Passive, process-lifetime context paid for by an enumeration demand. The
+# outer identity is the file content CID; the path seat is retained because
+# source mementos carry the workspace-relative filename even for identical
+# bytes at two seats. Descendant questions reuse this already-demanded file
+# result instead of reducing every definition again.
+_ENUMERATION_FILE_CONTEXTS: Dict[
+    str, Dict[str, tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]
+] = {}
 
 
 class _StructuredTransportFormatter(logging.Formatter):
@@ -76,6 +84,8 @@ class _StructuredTransportFormatter(logging.Formatter):
             "rows_added",
             "contracts",
             "symbol",
+            "at",
+            "seek",
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
@@ -903,13 +913,39 @@ def _lift_file_for_enumeration(
       method calls are `method:` on the edge even when FOL uses `call:`).
       Edges are join metadata, not a second site-record set.
     """
+    from sugar_lift_py_tests.canonicalizer import blake3_512_of
+
     full_path = (root / file_rel).resolve()
     source = full_path.read_text(encoding="utf-8")
+    file_cid = blake3_512_of(source.encode())
+    seats = _ENUMERATION_FILE_CONTEXTS.get(file_cid)
+    if seats is not None and file_rel in seats:
+        _TRANSPORT_LOG.info(
+            "enumeration_file_context_hit",
+            extra={
+                "stage": "enumerate.file_context",
+                "cid": file_cid,
+                "file": file_rel,
+                "cache": "hit",
+            },
+        )
+        return seats[file_rel]
     file_payload = lift_file_payload(source, file_rel)
     file_rpc = file_payload.to_rpc()
     ir_items = file_rpc["ir"]
     call_edges = file_rpc["callEdges"]
-    return ir_items, call_edges
+    result = (ir_items, call_edges)
+    _ENUMERATION_FILE_CONTEXTS.setdefault(file_cid, {})[file_rel] = result
+    _TRANSPORT_LOG.info(
+        "enumeration_file_context_miss",
+        extra={
+            "stage": "enumerate.file_context",
+            "cid": file_cid,
+            "file": file_rel,
+            "cache": "miss",
+        },
+    )
+    return result
 
 
 def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
@@ -1942,7 +1978,7 @@ def _edge_target_symbol_for_contract(
         if not isinstance(edge, dict):
             continue
         source = edge.get("sourceContract") or edge.get("source_contract")
-        if source != name:
+        if source != name and not name.startswith(f"{source}::"):
             continue
         target = edge.get("targetSymbol") or edge.get("target_symbol")
         if isinstance(target, str) and (
@@ -2030,6 +2066,100 @@ def _universe_node_from_item(
     }
 
 
+def _implication_node_for_callsite(
+    at: Dict[str, Any],
+    ir_items: List[Dict[str, Any]],
+    call_edges: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Answer one demanded call-site obligation, never a batch link pass."""
+    call_item = _find_item_by_memento(ir_items, at)
+    if call_item is None or call_item.get("kind") != "contract":
+        return {
+            "memento": at,
+            "audit": {
+                "kind": "implication",
+                "status": "unjoined",
+                "targetSymbol": "unknown",
+                "reason": "no call site for this memento",
+            },
+            "payload": None,
+        }
+
+    candidates: List[str] = []
+    edge_symbol = _edge_target_symbol_for_contract(call_item, call_edges)
+    if edge_symbol is not None:
+        candidates.append(edge_symbol)
+    fol_symbol = _contract_bridge_identity(call_item)
+    if fol_symbol is not None and fol_symbol not in candidates:
+        candidates.append(fol_symbol)
+    target_symbol = (candidates[0] if candidates else "unknown").split(":", 1)[-1]
+    matches: Dict[tuple[Any, Any], Dict[str, Any]] = {}
+    for bridge in candidates:
+        for item in ir_items:
+            if item.get("kind") != "function-contract":
+                continue
+            if not _universe_bridge_matches(item.get("bridgeSourceSymbol"), bridge):
+                continue
+            memento = _item_memento(item) or {}
+            identity = (
+                memento.get("source_cid") or memento.get("sourceCid"),
+                item.get("name") or item.get("bridgeSourceSymbol"),
+            )
+            matches.setdefault(identity, item)
+
+    if len(matches) != 1:
+        reason = (
+            f"ambiguous universe sugar for callee {target_symbol}"
+            if len(matches) > 1
+            else f"no universe sugar for callee {target_symbol}"
+        )
+        return {
+            "memento": at,
+            "audit": {
+                "kind": "implication",
+                "sourceContract": call_item.get("name", "<unknown caller>"),
+                "targetSymbol": target_symbol,
+                "status": "unjoined",
+                "reason": reason,
+            },
+            "payload": None,
+        }
+
+    target = next(iter(matches.values()))
+    caller_context = _item_fact_formula(call_item) or {
+        "kind": "atomic",
+        "name": "true",
+        "args": [],
+    }
+    callee_pre = target.get("pre") or {
+        "kind": "atomic",
+        "name": "true",
+        "args": [],
+    }
+    obligation = {
+        "kind": "implies",
+        "operands": [caller_context, callee_pre],
+    }
+    discharged = _is_true_formula(callee_pre) or caller_context == callee_pre
+    return {
+        "memento": at,
+        "audit": {
+            "kind": "implication",
+            "sourceContract": call_item.get("name", "<unknown caller>"),
+            "targetContract": target.get("name", target_symbol),
+            "targetSymbol": target_symbol,
+            "status": "discharged" if discharged else "unsatisfied",
+            "reason": (
+                "callee precondition is true or identical to caller context"
+                if discharged
+                else "caller context does not structurally discharge callee precondition"
+            ),
+            "obligation": obligation,
+        },
+        "payload": obligation,
+    }
+
+
 def _send_enumerate_result(
     msg_id: Any,
     nodes: List[Dict[str, Any]],
@@ -2060,6 +2190,15 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     options = params.get("options") if isinstance(params.get("options"), dict) else {}
     audit_walk = options.get("auditFrontier") is True
     root = Path(workspace_root).resolve()
+    _TRANSPORT_LOG.info(
+        "enumeration_request",
+        extra={
+            "stage": "enumerate.request",
+            "level_name": str(level),
+            "at": at,
+            "seek": seek,
+        },
+    )
 
     try:
         if level == "source_files":
@@ -2082,7 +2221,14 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             )
             return
 
-        if level in ("functions", "call_sites", "assertions", "facts", "universe"):
+        if level in (
+            "functions",
+            "call_sites",
+            "assertions",
+            "facts",
+            "universe",
+            "implications",
+        ):
             file_rel = _enumerate_file_of(at)
             if file_rel is None:
                 _send_enumerate_result(
@@ -2428,6 +2574,26 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 return
 
+            if level == "implications":
+                if at is None:
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [
+                            {
+                                "memento": at,
+                                "reason": "implications requires a call-site memento",
+                            }
+                        ],
+                    )
+                    return
+                _send_enumerate_result(
+                    msg_id,
+                    [_implication_node_for_callsite(at, ir_items, call_edges)],
+                    [],
+                )
+                return
+
             if level == "universe":
                 # Body/operator universes are `kind="function-contract"` rows
                 # (including `len::builtin-universe`). CallSite::universe seeks
@@ -2561,6 +2727,15 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             }
         )
     except Exception as exc:
+        _TRANSPORT_LOG.exception(
+            "enumeration_request_failed",
+            extra={
+                "stage": "enumerate.error",
+                "level_name": str(level),
+                "at": at,
+                "seek": seek,
+            },
+        )
         _send(
             {
                 "jsonrpc": "2.0",

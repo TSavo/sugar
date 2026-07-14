@@ -534,6 +534,10 @@ done
 provision_steps=()
 cargo_env=()
 path_prefix="$remote_target_dir/$profile"
+build_git_head="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
+if [[ -n "$build_git_head" ]]; then
+  cargo_env+=("SUGAR_BUILD_GIT_HEAD=$(quote_sh "$build_git_head")")
+fi
 if [[ "$provision_python_env" != "0" ]]; then
   provision_steps+=("BCARGO_PYTHON_VENV=$(quote_sh "$remote_python_venv") make --quiet bcargo-python-kit-env")
   cargo_env+=("PYTHON=$(quote_sh "$remote_python")")

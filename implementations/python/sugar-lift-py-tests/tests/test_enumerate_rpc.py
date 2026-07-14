@@ -534,6 +534,126 @@ def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
     assert result["gaps"] == []
 
 
+def test_implication_seek_returns_one_discharged_node_for_resolved_call(
+    project: Path,
+) -> None:
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    functions = {
+        n["memento"].get("function_name")
+        or n["memento"].get("source_function_name"): n["memento"]
+        for n in _enumerate("functions", project, at=file_memento)["nodes"]
+    }
+    call_site = _enumerate("call_sites", project, at=functions["test_add"])["nodes"][0][
+        "memento"
+    ]
+
+    result = _enumerate("implications", project, at=call_site, seek=True)
+
+    assert result["gaps"] == []
+    assert len(result["nodes"]) == 1
+    implication = result["nodes"][0]["audit"]
+    assert implication["kind"] == "implication"
+    assert implication["targetContract"] == "mathy.add"
+    assert implication["targetSymbol"] == "add"
+    assert implication["status"] == "discharged"
+    assert implication["obligation"]["kind"] == "implies"
+
+
+def test_implication_seek_returns_named_debt_instead_of_empty_success(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "debt.py").write_text(
+        "def test_debt(x):\n    assert missing(x) == 1\n", encoding="utf-8"
+    )
+    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    function = _enumerate("functions", tmp_path, at=file_memento)["nodes"][0]["memento"]
+    call_site = _enumerate("call_sites", tmp_path, at=function)["nodes"][0]["memento"]
+
+    result = _enumerate("implications", tmp_path, at=call_site, seek=True)
+
+    assert result["gaps"] == []
+    assert len(result["nodes"]) == 1
+    debt = result["nodes"][0]["audit"]
+    assert debt["kind"] == "implication"
+    assert debt["status"] == "unjoined"
+    assert debt["targetSymbol"] == "missing"
+    assert "no universe sugar for callee" in debt["reason"]
+
+
+def test_distinct_descendant_demands_reuse_file_cid_context(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lift_rpc._ENUMERATION_FILE_CONTEXTS.clear()
+    original = lift_rpc.lift_file_payload
+    crossings = 0
+
+    def counted(source: str, filename: str):
+        nonlocal crossings
+        crossings += 1
+        return original(source, filename)
+
+    monkeypatch.setattr(lift_rpc, "lift_file_payload", counted)
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    functions = _enumerate("functions", project, at=file_memento)["nodes"]
+    _enumerate("call_sites", project, at=functions[-1]["memento"])
+    assert crossings == 1
+
+    (project / "mathy.py").write_text(
+        FIXTURE_SOURCE + "\n# changed\n", encoding="utf-8"
+    )
+    changed_file = _enumerate("source_files", project)["nodes"][0]["memento"]
+    _enumerate("functions", project, at=changed_file)
+    assert crossings == 2
+
+
+def test_datetime_message_101_cmp_shape_reuses_context_and_always_answers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real datetime crash arrived asking for date._cmp call sites.
+
+    Pin the exact lines 1201-1205 shape and the process-lifetime pressure that
+    preceded message 101. Every demand must answer from one file reduction.
+    """
+    (tmp_path / "datetime.py").write_text(
+        """\
+def _cmp(left, right):
+    return 0
+
+class date:
+    def _cmp(self, other):
+        assert isinstance(other, date)
+        y, m, d = self._year, self._month, self._day
+        y2, m2, d2 = other._year, other._month, other._day
+        return _cmp((y, m, d), (y2, m2, d2))
+""",
+        encoding="utf-8",
+    )
+    lift_rpc._ENUMERATION_FILE_CONTEXTS.clear()
+    original = lift_rpc.lift_file_payload
+    crossings = 0
+
+    def counted(source: str, filename: str):
+        nonlocal crossings
+        crossings += 1
+        return original(source, filename)
+
+    monkeypatch.setattr(lift_rpc, "lift_file_payload", counted)
+    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    functions = {
+        node["memento"].get("function_name")
+        or node["memento"].get("source_function_name"): node["memento"]
+        for node in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
+    }
+
+    for _ in range(101):
+        result = _enumerate("call_sites", tmp_path, at=functions["datetime.date._cmp"])
+        assert result["gaps"] == []
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["audit"]["bridgeSourceSymbol"] == "call:_cmp"
+
+    assert crossings == 1
+
+
 def test_universe_seek_refuses_ambiguous_leaf_bridge(tmp_path: Path) -> None:
     source = """\
 class A:
