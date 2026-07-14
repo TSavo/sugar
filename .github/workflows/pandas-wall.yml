@@ -40,7 +40,16 @@ jobs:
       - name: Mint recovered pandas frontier
         id: wall
         shell: bash
+        env:
+          SUGAR_ENGINE_LOG: ${{ github.workspace }}/.sugar/pandas-wall-logs/engine.jsonl
+          SUGAR_ENGINE_HEARTBEAT_SECONDS: "5"
+          SUGAR_ENGINE_CYCLE_THRESHOLD: "8"
+          SUGAR_KIT_LOG: ${{ github.workspace }}/.sugar/pandas-wall-logs/transport.jsonl
+          SUGAR_KIT_LOG_LEVEL: INFO
         run: |
+          mkdir -p .sugar/pandas-wall-logs
+          : > "$SUGAR_ENGINE_LOG"
+          : > "$SUGAR_KIT_LOG"
           set +e
           make pandas-wall
           wall_exit=$?
@@ -67,5 +76,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pandas-wall
-          path: .sugar/pandas-wall/
+          path: |
+            .sugar/pandas-wall-logs/engine.jsonl
+            .sugar/pandas-wall-logs/transport.jsonl
+            .sugar/pandas-wall/
           if-no-files-found: error
