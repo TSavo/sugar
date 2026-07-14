@@ -4,6 +4,7 @@ from .array_literal import ArrayLiteral
 from .block_value import BlockValue
 from .bound_var import BoundVar
 from .module_bound_var import ModuleBoundVar
+from .named_expression_value import NamedExpressionValue
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
 from .call_site_value import CallSiteValue
@@ -59,6 +60,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ArrayLiteral,
     BlockValue,
     BoundVar,
+    NamedExpressionValue,
     BuilderState,
     Bv32Value,
     CallSiteValue,
@@ -112,6 +114,7 @@ __all__ = [
     "BlockValue",
     "BoundVar",
     "ModuleBoundVar",
+    "NamedExpressionValue",
     "BuilderState",
     "Bv32Value",
     "CallSiteValue",

@@ -530,6 +530,25 @@ class SourceFragment:
         self._require(ast.Lambda)
         return SourceFragment.from_node(self.node.body, self.filename, source=self.source)  # type: ignore[attr-defined]
 
+    def named_expr_target_name(self) -> str:
+        """Return the only target shape Python admits for a named expression."""
+        self._require(ast.NamedExpr)
+        target = self.node.target  # type: ignore[attr-defined]
+        if not isinstance(target, ast.Name):
+            raise TypeError(
+                "NamedExpr target must be an ast.Name; malformed AST cannot "
+                "enter NamedExprSugar"
+            )
+        return target.id
+
+    def named_expr_value(self) -> "SourceFragment":
+        self._require(ast.NamedExpr)
+        return SourceFragment.from_node(
+            self.node.value,  # type: ignore[attr-defined]
+            self.filename,
+            source=self.source,
+        )
+
     def lambda_params(self) -> "list[str]":
         """Return the argument names for a Lambda node."""
         self._require(ast.Lambda)
