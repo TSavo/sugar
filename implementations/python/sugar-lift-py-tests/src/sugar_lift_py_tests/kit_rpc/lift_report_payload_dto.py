@@ -21,6 +21,7 @@ from .open_lane_dto import (
 )
 from .rpc_value import to_rpc_value
 from .source_memento_dto import SourceMementoDto
+from .source_function_contract_dto import SourceFunctionContractDto
 from sugar_lift_py_tests.idd.lift_coverage_census import SourceFactoryConservation
 from sugar_lift_py_tests.ir import TermTableBuilder
 
@@ -31,7 +32,9 @@ _TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
 class LiftReportPayloadDto:
     # Closed lanes: a DTO already exists for every row, so no raw-dict side
     # door is left for callers to bypass construction law (#3661).
-    ir: list[BodyUniverseDto] = field(default_factory=list[BodyUniverseDto])
+    ir: list[BodyUniverseDto | SourceFunctionContractDto] = field(
+        default_factory=list[BodyUniverseDto | SourceFunctionContractDto]
+    )
     source_mementos: list[SourceMementoDto] = field(
         default_factory=list[SourceMementoDto]
     )
