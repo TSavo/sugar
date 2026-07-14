@@ -59,6 +59,28 @@ class BodyOwnerLocus:
         return f"{self.file}:{self.line}:{self.col}:{self.kind}"
 
 
+def body_owner_descendant_loci(
+    node: ast.AST, *, file: str
+) -> tuple[BodyOwnerLocus, ...]:
+    """Return source owners poisoned when construction of ``node`` fails.
+
+    The independent conservation census owns the closed body-owner taxonomy.
+    Recovery uses this same door so suppressed subtrees cannot silently lose a
+    control-flow, class, comprehension, or future owner kind while reporting
+    only nested function definitions.
+    """
+    return tuple(
+        BodyOwnerLocus(
+            file=file,
+            line=descendant.lineno,
+            col=descendant.col_offset,
+            kind=type(descendant).__name__,
+        )
+        for descendant in ast.walk(node)
+        if descendant is not node and isinstance(descendant, _BODY_OWNER_KINDS)
+    )
+
+
 @dataclass(frozen=True)
 class BodyOwnerClassification:
     locus: BodyOwnerLocus

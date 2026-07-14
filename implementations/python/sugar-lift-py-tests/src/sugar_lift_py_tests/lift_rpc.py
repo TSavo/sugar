@@ -1611,14 +1611,14 @@ def audit_lift_file(
                         gap=panic.info.to_json(),
                     )
                 )
-                for descendant in ast.walk(stmt.node):
-                    if descendant is stmt.node or not isinstance(
-                        descendant, (ast.FunctionDef, ast.AsyncFunctionDef)
-                    ):
-                        continue
+                from sugar_lift_py_tests.idd.lift_coverage_census import (
+                    body_owner_descendant_loci,
+                )
+
+                for descendant in body_owner_descendant_loci(stmt.node, file=filename):
                     suppressed_descendants.append(
                         SuppressedAuditLocusDto(
-                            locus=f"{filename}:{descendant.lineno}:{descendant.col_offset}"
+                            locus=f"{descendant.file}:{descendant.line}:{descendant.col}"
                         )
                     )
     # Conservation is a file-level accounting pass. A keyed leaf contributes
