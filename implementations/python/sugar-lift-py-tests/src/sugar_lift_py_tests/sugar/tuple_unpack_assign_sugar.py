@@ -57,8 +57,8 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
     """One tuple target whose leaves have static name-rooted addresses.
 
     Each leaf receives an indexed projection of the same factory-built rhs source.
-    Name leaves bind temporally and dotted attribute leaves reuse the ordinary
-    attribute-store owners. Starred and dynamically rooted leaves stay unowned.
+    Name leaves bind temporally; dotted attribute and subscript leaves reuse the
+    ordinary store owners. Starred leaves stay unowned.
     """
 
     stores: tuple[SugarBody, ...]
@@ -89,12 +89,37 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
         from sugar_lift_py_tests.sugar.nested_attribute_assign_sugar import (
             NestedAttributeAssignSugar,
         )
+        from sugar_lift_py_tests.sugar.subscript_assign_sugar import (
+            SubscriptAssignSugar,
+        )
 
         for kind, first, second, path in leaves:
             projection = _projection(receiver, path, site)
             if kind == "name":
                 stores.append(
                     SugarBody(TupleNameStore(first, projection), SugarRole.STATEMENT)
+                )
+            elif kind == "subscript":
+                target_receiver = first.subscript_receiver()
+                stores.append(
+                    SugarBody(
+                        SubscriptAssignSugar(
+                            receiver=ctx.build_body(
+                                target_receiver, SugarRole.TERM
+                            ),
+                            receiver_name=(
+                                target_receiver.name_id()
+                                if target_receiver.observed == "Name"
+                                else None
+                            ),
+                            index=ctx.build_body(
+                                first.subscript_index(), SugarRole.TERM
+                            ),
+                            value=projection,
+                            site=site,
+                        ),
+                        SugarRole.STATEMENT,
+                    )
                 )
             elif len(first) >= 3:
                 stores.append(
@@ -164,6 +189,8 @@ def _target_leaves(target, prefix=()):
         if path is None:
             return None
         return (("attribute", path, None, prefix),)
+    if target.observed == "Subscript":
+        return (("subscript", target, None, prefix),)
     if target.observed not in {"Tuple", "List"}:
         return None
     elements = target.tuple_elts() if target.observed == "Tuple" else target.list_elts()
