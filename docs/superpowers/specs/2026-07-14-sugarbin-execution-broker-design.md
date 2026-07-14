@@ -238,10 +238,10 @@ execution machinery:
 
 ```text
 bcargo ARGS
-  -> sugarbin cargo --host bx --env ambient -- ARGS
+  -> sugarbin cargo --host bx -- ARGS
 
 brun -- COMMAND
-  -> sugarbin run --host bx --env ambient -- COMMAND
+  -> sugarbin run --host bx -- COMMAND
 ```
 
 They may later accept an environment option that selects Docker, but they no
@@ -301,8 +301,8 @@ their adapter behavior plus direct tests of the shared bx backend.
    its current no-subcommand resolver interface.
 2. Extract the duplicated remote synchronization and execution behavior into
    the bx host backend.
-3. Reimplement `bcargo` and `brun` as ambient bx adapters with byte-compatible
-   command behavior.
+3. Reimplement `bcargo` and `brun` as bx host adapters with byte-compatible
+   command behavior. Environment selection remains Sugarbin policy.
 4. Introduce the checked-in capability and task contract.
 5. Build the minimum pinned Docker capability graph on battleaxe.
 6. Add stamped artifact injection and per-executable manifests.

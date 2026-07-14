@@ -4,7 +4,7 @@
 
 **Goal:** Make `bin/sugarbin` the single artifact and execution front door for local ambient commands, native battleaxe commands, and capability-pinned Docker commands on battleaxe, while keeping Rust binaries as the only cached execution result.
 
-**Architecture:** Preserve `sugarbin`'s current no-subcommand artifact resolver and add `run`, `cargo`, `build`, and `explain` subcommands. Move the duplicated remote synchronization machinery from `bcargo` and `brun` into a shared bx host backend, then reduce both wrappers to compatibility adapters. Managed bx execution selects immutable Docker capability closures from `sugar-build.toml`; stamped Rust executables remain separate shelf artifacts injected into every command that declares them.
+**Architecture:** Preserve `sugarbin`'s current no-subcommand artifact resolver and add `run`, `cargo`, `build`, and `explain` subcommands. Move the duplicated remote synchronization machinery from `bcargo` and `brun` into a shared bx host backend, then reduce both wrappers to host-targeted compatibility adapters that specify only `host=bx`. Managed bx execution selects immutable Docker capability closures from `sugar-build.toml`; stamped Rust executables remain separate shelf artifacts injected into every command that declares them.
 
 **Tech Stack:** Bash 3.2-compatible scripts, Python 3.12 `tomllib`, Docker/BuildKit on battleaxe, GitHub release assets, BLAKE3-512 source stamps, SHA-256 artifact verification, Rust integration tests, fake SSH/rsync/docker shell harnesses.
 
@@ -299,7 +299,7 @@ git commit -m "Move battleaxe execution behind sugarbin"
 
 **Interfaces:**
 - Consumes: `sugarbin cargo/run --host bx --env ambient`, bx forwarding options, and existing wrapper environment variables.
-- Produces: thin `bcargo` and `brun` adapters with the same user-visible options and child exit codes.
+- Produces: thin `bcargo` and `brun` adapters that select only `host=bx`, with the same user-visible options and child exit codes.
 
 - [ ] **Step 1: Write the wrapper translation harness**
 
@@ -307,10 +307,10 @@ Create a fake `bin/sugarbin` earlier on a copied fixture repo path. Make it reco
 
 ```text
 bcargo --sync-bin sugar test -p sugar-cli
-=> sugarbin cargo --host bx --env ambient --sync-bin sugar -- test -p sugar-cli
+=> sugarbin cargo --host bx --sync-bin sugar -- test -p sugar-cli
 
 brun --path-prefix /x --env TOKEN -- true
-=> sugarbin run --host bx --env ambient --path-prefix /x --env TOKEN -- true
+=> sugarbin run --host bx --path-prefix /x --env TOKEN -- true
 ```
 
 Plant exit codes `29` and `31` in the fake broker and assert each wrapper returns the same code.
@@ -324,7 +324,7 @@ Add `sugarbin_wrapper_compatibility_contract` to the Rust integration test and r
 Retain its usage text and option validation, then execute:
 
 ```bash
-exec "$script_dir/sugarbin" run --host bx --env ambient "$@"
+exec "$script_dir/sugarbin" run --host bx "$@"
 ```
 
 Do not reconstruct a shell command string. Forward the original argument array.
@@ -334,7 +334,7 @@ Do not reconstruct a shell command string. Forward the original argument array.
 Retain parsing for `--sync-bin` and `--sync-bins`, then execute:
 
 ```bash
-exec "$script_dir/sugarbin" cargo --host bx --env ambient \
+exec "$script_dir/sugarbin" cargo --host bx \
   "${forwarded_broker_options[@]}" -- "${cargo_args[@]}"
 ```
 
