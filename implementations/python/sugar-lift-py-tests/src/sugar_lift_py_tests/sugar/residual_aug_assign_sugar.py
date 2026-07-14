@@ -112,7 +112,7 @@ class ResidualSubscriptAugAssignSugar(Sugar, role=SugarRole.STATEMENT):
         return (
             site.observed == "AugAssign"
             and site.aug_assign_target().observed == "Subscript"
-            and site.aug_assign_op() not in {"Add", "BitOr"}
+            and site.aug_assign_op() != "Add"
         )
 
     @classmethod

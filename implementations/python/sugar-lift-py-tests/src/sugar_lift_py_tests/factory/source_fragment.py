@@ -1383,6 +1383,7 @@ class SourceFragment:
             op=self.node.op,  # type: ignore[attr-defined]
             right=self.node.value,  # type: ignore[attr-defined]
         )
+        binop._sugar_runtime_expression_context = True  # type: ignore[attr-defined]
         ast.copy_location(binop, self.node)
         ast.fix_missing_locations(binop)
         return SourceFragment.from_node(binop, self.filename, source=self.source)

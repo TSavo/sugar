@@ -26,10 +26,7 @@ class SubscriptAugAssignSugar(Sugar, role=SugarRole.STATEMENT):
         if site.observed != "AugAssign" or site.aug_assign_op() != "Add":
             return False
         target = site.aug_assign_target()
-        return (
-            target.observed == "Subscript"
-            and target.subscript_index().observed != "Slice"
-        )
+        return target.observed == "Subscript"
 
     @classmethod
     def new(cls, site, ctx) -> "SubscriptAugAssignSugar":
