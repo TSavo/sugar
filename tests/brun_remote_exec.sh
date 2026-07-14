@@ -4,7 +4,7 @@ set -euo pipefail
 # brun_remote_exec.sh — harness test for bin/brun using fake ssh/rsync,
 # mirroring tests/bcargo_remote_root_cleanup.sh. Asserts:
 #   1. the remote command runs from the caller's repo-relative cwd
-#   2. --path-prefix and the python venv land in PATH, --env forwards values
+#   2. --path-prefix lands in PATH and --env forwards values without provisioning
 #   3. repo-root paths in command args are rewritten to the remote root
 #   4. the remote exit code propagates
 #   5. --sync-back pulls the remote artifact into place
@@ -106,8 +106,7 @@ case "$inner" in
   *) fail "--path-prefix missing from remote PATH: $inner" ;;
 esac
 case "$inner" in
-  *"PYTHON="*"/python-kit-env/bin/python"*) ;;
-  *) fail "remote Python interpreter missing from environment: $inner" ;;
+  *"python-kit-env"*|*"PYTHON="*) fail "ambient execution silently provisioned Python: $inner" ;;
 esac
 case "$inner" in
   *"MY_TOKEN="*"tok-123"*) ;;

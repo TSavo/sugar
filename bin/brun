@@ -15,8 +15,6 @@ Options:
                        the remote command's environment (repeatable).
   --sync-back R:L      After success, rsync remote path R back to local path L
                        (both absolute; repeatable).
-  --no-python-env      Skip remote Python kit env provisioning
-                       (same as BCARGO_PYTHON_ENV=0).
 
 Environment (shared with bcargo so roots, caps and test harnesses apply):
   BCARGO_REMOTE_HOST   SSH host alias (default: battleaxe)
@@ -24,7 +22,6 @@ Environment (shared with bcargo so roots, caps and test harnesses apply):
   BCARGO_CLEAN_REMOTE_ROOT        never | success | always (default: never)
   BCARGO_CLEAN_REMOTE_ROOT_UNSAFE Set to 1 to allow cleanup outside
                                   /home/tsavo/remote/sugar-bcargo-*
-  BCARGO_PYTHON_ENV    Set to 0 to skip remote Python kit env provisioning
   BCARGO_SSH, BCARGO_RSYNC        Override the ssh/rsync binaries (test harness)
 EOF
 }

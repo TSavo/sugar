@@ -99,16 +99,8 @@ sugar_bx_run_ambient() {
       [[ -z "$inner" ]] && inner="$prefix" || inner="$inner:$prefix"
     done
   fi
-  if [[ "${SUGAR_BX_PYTHON_ENV:-1}" != 0 ]]; then
-    local pybin="$SUGAR_BX_ROOT/python-kit-env/bin"
-    sugar_bx_ssh "cd $(sugar_bx_quote "$SUGAR_BX_REPO") && BCARGO_PYTHON_VENV=$(sugar_bx_quote "$SUGAR_BX_ROOT/python-kit-env") make --quiet bcargo-python-kit-env" || return $?
-    [[ -z "$inner" ]] && inner="$pybin" || inner="$inner:$pybin"
-  fi
   local cmd="cd $(sugar_bx_quote "$remote_cwd") && "
   [[ -n "$inner" ]] && cmd+="PATH=$(sugar_bx_quote "$inner"):\$PATH "
-  if [[ "${SUGAR_BX_PYTHON_ENV:-1}" != 0 ]]; then
-    cmd+="PYTHON=$(sugar_bx_quote "$SUGAR_BX_ROOT/python-kit-env/bin/python") "
-  fi
   if ((${#SUGAR_BX_ENV_NAMES[@]} != 0)); then
     for name in "${SUGAR_BX_ENV_NAMES[@]}"; do [[ ${!name+x} == x ]] && cmd+="$name=$(sugar_bx_quote "${!name}") "; done
   fi

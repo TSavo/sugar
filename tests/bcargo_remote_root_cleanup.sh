@@ -33,15 +33,6 @@ if [[ "${BCARGO_FAKE_CARGO_FAIL:-0}" == "1" ]]; then
     esac
   done
 fi
-if [[ "${BCARGO_FAKE_PYTHON_PROVISION_FAIL:-0}" == "1" ]]; then
-  for arg in "$@"; do
-    case "$arg" in
-      *"bcargo-python-kit-env"*)
-        exit 19
-        ;;
-    esac
-  done
-fi
 if [[ "${BCARGO_FAKE_SUGARBIN_PULL_FAIL:-0}" == "1" ]]; then
   for arg in "$@"; do
     case "$arg" in
@@ -109,7 +100,6 @@ run_fake_bcargo() {
   BCARGO_FAKE_SSH_LOG="$ssh_log" \
   BCARGO_FAKE_RSYNC_LOG="$rsync_log" \
   BCARGO_FAKE_REPO_ROOT="$repo_root" \
-  BCARGO_PYTHON_ENV="${BCARGO_PYTHON_ENV:-0}" \
   PATH="$fake_bin:$PATH" \
     "$repo_root/bin/bcargo" "$@"
 }
@@ -198,52 +188,6 @@ if [[ "$status" -ne 17 ]]; then
 fi
 if grep -Fq "rm -rf '$success_failure_root'" "$ssh_log"; then
   echo "bcargo cleaned the remote root after failed cargo with cleanup=success" >&2
-  cat "$ssh_log" >&2
-  exit 1
-fi
-
-provision_always_root="/home/tsavo/remote/sugar-bcargo-clean-contract-provision-always"
-: >"$ssh_log"
-: >"$rsync_log"
-set +e
-BCARGO_REMOTE_ROOT="$provision_always_root" \
-BCARGO_CLEAN_REMOTE_ROOT=always \
-BCARGO_FAKE_PYTHON_PROVISION_FAIL=1 \
-BCARGO_PYTHON_ENV=1 \
-  run_fake_bcargo check --manifest-path implementations/rust/Cargo.toml
-status=$?
-set -e
-if [[ "$status" -ne 19 ]]; then
-  echo "bcargo did not preserve Python provisioning failure status under cleanup=always" >&2
-  echo "status=$status" >&2
-  cat "$ssh_log" >&2
-  exit 1
-fi
-if ! grep -Fq "rm -rf '$provision_always_root'" "$ssh_log"; then
-  echo "bcargo did not clean after Python provisioning failure with cleanup=always" >&2
-  cat "$ssh_log" >&2
-  exit 1
-fi
-
-provision_success_root="/home/tsavo/remote/sugar-bcargo-clean-contract-provision-success"
-: >"$ssh_log"
-: >"$rsync_log"
-set +e
-BCARGO_REMOTE_ROOT="$provision_success_root" \
-BCARGO_CLEAN_REMOTE_ROOT=success \
-BCARGO_FAKE_PYTHON_PROVISION_FAIL=1 \
-BCARGO_PYTHON_ENV=1 \
-  run_fake_bcargo check --manifest-path implementations/rust/Cargo.toml
-status=$?
-set -e
-if [[ "$status" -ne 19 ]]; then
-  echo "bcargo did not preserve Python provisioning failure status under cleanup=success" >&2
-  echo "status=$status" >&2
-  cat "$ssh_log" >&2
-  exit 1
-fi
-if grep -Fq "rm -rf '$provision_success_root'" "$ssh_log"; then
-  echo "bcargo cleaned after Python provisioning failure with cleanup=success" >&2
   cat "$ssh_log" >&2
   exit 1
 fi

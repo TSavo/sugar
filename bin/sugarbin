@@ -28,7 +28,6 @@ dispatch_execution_subcommand() {
   local -a command=()
   local -a path_prefixes=() env_names=() sync_backs=()
   local -a sync_bins=()
-  local python_env_flag=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -64,8 +63,6 @@ dispatch_execution_subcommand() {
         local bin
         for bin in "${parsed_sync_bins[@]}"; do [[ -z "$bin" ]] || sync_bins+=("$bin"); done
         shift 2 ;;
-      --no-python-env)
-        python_env_flag=0; shift ;;
       --platform)
         [[ $# -ge 2 ]] || { echo "sugarbin: --platform requires a value" >&2; return 2; }
         requested_platform="$2"
@@ -209,7 +206,6 @@ dispatch_execution_subcommand() {
   ((${#path_prefixes[@]} == 0)) || SUGAR_BX_PATH_PREFIXES=("${path_prefixes[@]}")
   ((${#env_names[@]} == 0)) || SUGAR_BX_ENV_NAMES=("${env_names[@]}")
   ((${#sync_backs[@]} == 0)) || SUGAR_BX_SYNC_BACKS=("${sync_backs[@]}")
-  SUGAR_BX_PYTHON_ENV="${python_env_flag:-${BCARGO_PYTHON_ENV:-1}}"
   local repo_root local_cwd status=0 pair
   repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
   [[ -n "$repo_root" ]] || { echo "sugarbin: must be run from inside a git checkout" >&2; return 2; }
@@ -322,16 +318,7 @@ sugarbin_bx_cargo() {
   local status=0 remote_cwd="$SUGAR_BX_REPO" inner path_prefix="$remote_target_dir/$profile"
   [[ -z "$SUGAR_BX_REL_CWD" ]] || remote_cwd="$SUGAR_BX_REPO/$SUGAR_BX_REL_CWD"
   if [[ "$skip_cargo" != 1 ]]; then
-    if [[ "${SUGAR_BX_PYTHON_ENV:-1}" != 0 ]]; then
-      set +e
-      sugar_bx_ssh "cd $(sugar_bx_quote "$SUGAR_BX_REPO") && BCARGO_PYTHON_VENV=$(sugar_bx_quote "$SUGAR_BX_ROOT/python-kit-env") make --quiet bcargo-python-kit-env"
-      status=$?
-      set -e
-      if [[ "$status" != 0 ]]; then sugar_bx_finish "$status"; return $?; fi
-      path_prefix+=":$SUGAR_BX_ROOT/python-kit-env/bin"
-    fi
     inner="cd $(sugar_bx_quote "$remote_cwd") && "
-    [[ "${SUGAR_BX_PYTHON_ENV:-1}" == 0 ]] || inner+="PYTHON=$(sugar_bx_quote "$SUGAR_BX_ROOT/python-kit-env/bin/python") "
     [[ -z "$stamp" ]] || inner+="SUGAR_BUILD_STAMP=$(sugar_bx_quote "$stamp") "
     inner+="PATH=$(sugar_bx_quote "$path_prefix"):\$PATH exec cargo"
     for arg in "${cargo_args[@]}"; do

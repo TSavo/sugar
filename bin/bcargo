@@ -21,7 +21,6 @@ Environment:
   BCARGO_CLEAN_REMOTE_ROOT_UNSAFE
                        Set to 1 to allow cleanup outside
                        /home/tsavo/remote/sugar-bcargo-*
-  BCARGO_PYTHON_ENV    Set to 0 to skip remote Python kit env provisioning
 EOF
 }
 

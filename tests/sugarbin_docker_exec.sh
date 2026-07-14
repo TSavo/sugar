@@ -54,7 +54,7 @@ run() {
   (cd "$repo/implementations/python" && PATH="$tmp/bin:$PATH" \
     BCARGO_SSH="$tmp/bin/ssh" BCARGO_RSYNC="$tmp/bin/rsync" \
     BCARGO_REMOTE_ROOT=/home/tsavo/remote/sugar-bcargo-example \
-    BCARGO_REAP_DAYS=0 SUGAR_BX_PYTHON_ENV=0 \
+    BCARGO_REAP_DAYS=0 \
     FAKE_SSH_LOG="$tmp/ssh.log" FAKE_RSYNC_LOG="$tmp/rsync.log" \
     FAKE_DOCKER_LOG="$tmp/docker.log" "$repo/bin/sugarbin" "$@")
 }
@@ -99,7 +99,7 @@ run run --host bx --env docker:core -- sh -c CHILD_EXIT_43 >/dev/null || status=
 
 : >"$tmp/docker.log"
 (cd "$repo" && PATH="$tmp/bin:$PATH" FAKE_DOCKER_LOG="$tmp/docker.log" "$repo/bin/sugarbin" run --host local --env ambient -- true)
-run run --host bx --env ambient --no-python-env -- true >/dev/null
+run run --host bx --env ambient -- true >/dev/null
 [[ ! -s "$tmp/docker.log" ]] || fail "ambient route invoked Docker"
 
 echo "PASS: sugarbin Docker execution contract"

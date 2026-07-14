@@ -27,19 +27,6 @@ PYTHON_KIT_BIN := $(PYTHON_KIT_VENV)/bin
 PYTHON_KIT := $(PYTHON_KIT_BIN)/python
 PYTHON_KIT_PIP := $(PYTHON_KIT) -m pip
 PYTHON_FORMAT_PATHS ?= implementations/python
-BCARGO_PYTHON_VENV ?= /tmp/sugar-bcargo-python-kit-env
-BCARGO_PYTHON_BIN := $(BCARGO_PYTHON_VENV)/bin
-BCARGO_PYTHON := $(BCARGO_PYTHON_BIN)/python
-BCARGO_PYTHON_ENV_STAMP := $(BCARGO_PYTHON_VENV)/.sugar-python-kits.stamp
-PYTHON_KIT_EDITABLES = \
-	-e implementations/python/libsugar-py \
-	-e implementations/python/sugar-emit-python-hypothesis \
-	-e implementations/python/sugar-emit-python-pytest \
-	-e implementations/python/sugar-emit-python-unittest \
-	-e implementations/python/sugar-build-witness \
-	-e implementations/python/sugar-lift-py-pytest-witness \
-	-e implementations/python/sugar-lift-py-tests \
-	-e implementations/python/sugar-lift-python-source
 ifeq ($(CI),)
 ifeq ($(USE_BCARGO),0)
 CARGO ?= $(CARGO_LOCAL)
@@ -133,18 +120,6 @@ build-python:
 		-e implementations/python/sugar-lift-py-tests \
 		-e implementations/python/sugar-lift-python-source \
 		-e implementations/python/sugar-lift-py-pytest-witness
-
-.PHONY: bcargo-python-kit-env
-bcargo-python-kit-env: $(BCARGO_PYTHON_ENV_STAMP)
-
-$(BCARGO_PYTHON_ENV_STAMP): Makefile $(wildcard implementations/python/*/pyproject.toml)
-	$(PYTHON) -m venv $(BCARGO_PYTHON_VENV)
-	$(BCARGO_PYTHON) -m pip install --quiet --upgrade pip
-	# pandas is required so the real-kit LSP gate (and witness pandas corpus)
-	# can RUN on battleaxe; a skip there is a red, not a green.
-	$(BCARGO_PYTHON) -m pip install --quiet --no-cache-dir pytest pandas pyright==1.1.411 itsdangerous==2.2.0 $(PYTHON_KIT_EDITABLES)
-	mkdir -p $(dir $(BCARGO_PYTHON_ENV_STAMP))
-	touch $(BCARGO_PYTHON_ENV_STAMP)
 
 # --- Mint targets ------------------------------------------------------------
 
@@ -490,7 +465,8 @@ coretests-invariants:
 	python3 scripts/check-coretests-invariants.py /tmp/coretests-hermetic.out implementations/rust/coretests-invariants.json
 
 # Real python/pandas kit through sugar-lsp --in-process (PyCon demo path).
-# Same battleaxe family as the witness corpus (bcargo/brun + remote kit env).
+# Same battleaxe family as the witness corpus. Its legacy ambient interpreter
+# is explicit; bcargo/brun do not provision one.
 # Implementation lives in scripts/test-real-python-kit-lsp.sh so skip=red and
 # the RAN receipt assertion stay shell-testable without Makefile quoting pain.
 # Standalone leg; the consolidated #3809 scoreboard also runs this path.

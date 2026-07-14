@@ -71,8 +71,9 @@ fi
 export SUGAR_REAL_KIT_LSP_REQUIRED=1
 echo "==== test-real-python-kit-lsp (SUGAR_REAL_KIT_LSP_REQUIRED=1) ===="
 
-# Ensure pandas is importable on the interpreter PATH will use.
-# brun/bcargo provision /tmp/sugar-bcargo-python-kit-env with pandas (Makefile).
+# This legacy gate explicitly owns its ambient interpreter. brun/bcargo do not
+# provision it; a caller may point PYTHON or BCARGO_PYTHON_VENV at a prepared
+# environment, otherwise this script checks the ambient python3 installation.
 if [[ -n "${BCARGO_PYTHON_VENV:-}" && -x "${BCARGO_PYTHON_VENV}/bin/python" ]]; then
   "${BCARGO_PYTHON_VENV}/bin/python" -c 'import pandas' 2>/dev/null \
     || "${BCARGO_PYTHON_VENV}/bin/python" -m pip install --quiet pandas

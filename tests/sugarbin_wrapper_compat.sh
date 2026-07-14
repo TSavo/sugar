@@ -6,7 +6,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 fixture="$tmp/repo"
 mkdir -p "$fixture/bin"
-cp "$repo_root/bin/bcargo" "$repo_root/bin/brun" "$fixture/bin/"
+cp "$repo_root/bin/bcargo" "$repo_root/bin/brun" "$repo_root/bin/bpytest" "$fixture/bin/"
 git -C "$fixture" init -q
 
 if grep -Fq "SUGAR_BUILD_GIT_HEAD" \
@@ -57,5 +57,12 @@ status=0
 [[ "$status" -eq 31 ]] || { echo "brun returned $status, expected 31" >&2; exit 1; }
 [[ "$(wc -c <"$SUGARBIN_WRAPPER_COUNT" | tr -d ' ')" -eq 1 ]] || { echo "brun invoked sugarbin more than once" >&2; exit 1; }
 assert_args run --host bx --path-prefix /x --env TOKEN -- true
+
+: >"$SUGARBIN_WRAPPER_COUNT"
+status=0
+(cd "$fixture" && SUGARBIN_WRAPPER_STATUS=37 bin/bpytest -q tests/unit) || status=$?
+[[ "$status" -eq 37 ]] || { echo "bpytest returned $status, expected 37" >&2; exit 1; }
+[[ "$(wc -c <"$SUGARBIN_WRAPPER_COUNT" | tr -d ' ')" -eq 1 ]] || { echo "bpytest invoked sugarbin more than once" >&2; exit 1; }
+assert_args run --host bx --task python-unit -- -q tests/unit
 
 echo "PASS: sugarbin wrapper compatibility contract"
