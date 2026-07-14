@@ -49,6 +49,14 @@ PYTHON_SOURCE_ORACLE_NAME = "python-source-oracle"
 COMPONENT_PLAN_INTENTS = {"lift", "prove", "verify"}
 PARSE_ERROR = object()
 _TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
+# Passive, process-lifetime context paid for by an enumeration demand. The
+# outer identity is the file content CID; the path seat is retained because
+# source mementos carry the workspace-relative filename even for identical
+# bytes at two seats. Descendant questions reuse this already-demanded file
+# result instead of reducing every definition again.
+_ENUMERATION_FILE_CONTEXTS: Dict[
+    str, Dict[str, tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]
+] = {}
 
 
 class _StructuredTransportFormatter(logging.Formatter):
@@ -903,13 +911,39 @@ def _lift_file_for_enumeration(
       method calls are `method:` on the edge even when FOL uses `call:`).
       Edges are join metadata, not a second site-record set.
     """
+    from sugar_lift_py_tests.canonicalizer import blake3_512_of
+
     full_path = (root / file_rel).resolve()
     source = full_path.read_text(encoding="utf-8")
+    file_cid = blake3_512_of(source.encode())
+    seats = _ENUMERATION_FILE_CONTEXTS.get(file_cid)
+    if seats is not None and file_rel in seats:
+        _TRANSPORT_LOG.info(
+            "enumeration_file_context_hit",
+            extra={
+                "stage": "enumerate.file_context",
+                "cid": file_cid,
+                "file": file_rel,
+                "cache": "hit",
+            },
+        )
+        return seats[file_rel]
     file_payload = lift_file_payload(source, file_rel)
     file_rpc = file_payload.to_rpc()
     ir_items = file_rpc["ir"]
     call_edges = file_rpc["callEdges"]
-    return ir_items, call_edges
+    result = (ir_items, call_edges)
+    _ENUMERATION_FILE_CONTEXTS.setdefault(file_cid, {})[file_rel] = result
+    _TRANSPORT_LOG.info(
+        "enumeration_file_context_miss",
+        extra={
+            "stage": "enumerate.file_context",
+            "cid": file_cid,
+            "file": file_rel,
+            "cache": "miss",
+        },
+    )
+    return result
 
 
 def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:

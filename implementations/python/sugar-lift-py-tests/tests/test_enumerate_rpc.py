@@ -580,6 +580,32 @@ def test_implication_seek_returns_named_debt_instead_of_empty_success(
     assert "no universe sugar for callee" in debt["reason"]
 
 
+def test_distinct_descendant_demands_reuse_file_cid_context(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lift_rpc._ENUMERATION_FILE_CONTEXTS.clear()
+    original = lift_rpc.lift_file_payload
+    crossings = 0
+
+    def counted(source: str, filename: str):
+        nonlocal crossings
+        crossings += 1
+        return original(source, filename)
+
+    monkeypatch.setattr(lift_rpc, "lift_file_payload", counted)
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    functions = _enumerate("functions", project, at=file_memento)["nodes"]
+    _enumerate("call_sites", project, at=functions[-1]["memento"])
+    assert crossings == 1
+
+    (project / "mathy.py").write_text(
+        FIXTURE_SOURCE + "\n# changed\n", encoding="utf-8"
+    )
+    changed_file = _enumerate("source_files", project)["nodes"][0]["memento"]
+    _enumerate("functions", project, at=changed_file)
+    assert crossings == 2
+
+
 def test_universe_seek_refuses_ambiguous_leaf_bridge(tmp_path: Path) -> None:
     source = """\
 class A:
