@@ -7041,7 +7041,7 @@ struct ReportSectionCounts {
 }
 
 fn report_section_counts(report: &LiftSourceReport) -> ReportSectionCounts {
-    let call_edges_total = report
+    let observed_call_edges_total = report
         .call_edges
         .iter()
         .filter(|edge| report_call_edge_kind(edge) == Some("call-edge"))
@@ -7068,14 +7068,16 @@ fn report_section_counts(report: &LiftSourceReport) -> ReportSectionCounts {
         .iter()
         .filter(|edge| edge.get("status").and_then(Value::as_str) == Some("unjoined"))
         .count();
-    let (call_edges_resolved, call_edges_dangling) = if report.implication_walk_ran {
-        (demanded_resolved, demanded_dangling)
-    } else {
-        (
-            observed_call_edges_resolved,
-            call_edges_total.saturating_sub(observed_call_edges_resolved),
-        )
-    };
+    let (call_edges_total, call_edges_resolved, call_edges_dangling) =
+        if report.implication_walk_ran {
+            (implications, demanded_resolved, demanded_dangling)
+        } else {
+            (
+                observed_call_edges_total,
+                observed_call_edges_resolved,
+                observed_call_edges_total.saturating_sub(observed_call_edges_resolved),
+            )
+        };
     ReportSectionCounts {
         unit_test_facts: report_unit_test_fact_count(report),
         body_universes: report.contracts.len(),
@@ -15007,6 +15009,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         );
         assert!(visual.contains("call edges resolved=1"), "{visual}");
         assert!(visual.contains("call edges dangling=1"), "{visual}");
+        assert!(visual.contains("call edges total=2"), "{visual}");
         assert!(visual.contains("implications=2"), "{visual}");
         assert_eq!(
             visual
