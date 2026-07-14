@@ -46,10 +46,10 @@ def test_attribute_annassign_with_value_uses_attribute_owner() -> None:
     assert len(sugar.walk_children()) == 3
 
 
-def test_bitor_attribute_annotation_stays_loud() -> None:
-    with pytest.raises(FactoryPanic) as raised:
-        _build("self.value: int | None = None")
-    assert raised.value.info.observed == "AnnAssign"
+def test_bitor_attribute_annotation_uses_attribute_owner() -> None:
+    assert type(_build("self.value: int | None = None")).__name__ == (
+        "AttributeAnnAssignSugar"
+    )
 
 
 def test_bitor_subscript_augassign_stays_loud() -> None:

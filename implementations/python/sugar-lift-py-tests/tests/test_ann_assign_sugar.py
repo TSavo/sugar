@@ -10,14 +10,11 @@ from __future__ import annotations
 
 import ast
 
-import pytest
-
 from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     BlockValue,
@@ -155,12 +152,11 @@ def test_annotation_only_ann_assign_is_support() -> None:
     assert sugar.annotation_kind == "Name"
 
 
-def test_attr_ann_assign_still_unowned() -> None:
-    """Attribute AnnAssign is not this drain -- Name targets only."""
+def test_attr_ann_assign_has_its_distinct_attribute_owner() -> None:
     src = "class C:\n    def m(self):\n        self.x: int = 1\n"
     mod = ast.parse(src)
     ann = next(n for n in ast.walk(mod) if isinstance(n, ast.AnnAssign))
     ctx = FactoryBuildContext(filename="f.py", catalog=default_catalog())
-    with pytest.raises(FactoryPanic) as raised:
-        build_node(ann, filename="f.py", role=SugarRole.STATEMENT, ctx=ctx)
-    assert raised.value.info.observed == "AnnAssign"
+    built = build_node(ann, filename="f.py", role=SugarRole.STATEMENT, ctx=ctx)
+
+    assert type(built.sugar).__name__ == "AttributeAnnAssignSugar"
