@@ -8,6 +8,7 @@ from .rpc_value import to_rpc_value
 from .source_memento_dto import SourceMementoDto
 
 if TYPE_CHECKING:
+    from sugar_lift_py_tests.ir import TermTableBuilder
     from sugar_lift_py_tests.proofir.scope import ClaimFormula
 
 
@@ -41,6 +42,12 @@ class BodyUniverseDto:
             _require_claim_formula_slot(slot, getattr(self, slot))
 
     def to_rpc(self) -> dict[str, Any]:
+        raise RuntimeError(
+            "BodyUniverseDto requires the payload term-table writer; "
+            "fix=serialize through LiftReportPayloadDto.to_rpc"
+        )
+
+    def to_rpc_with_term_table(self, term_table: TermTableBuilder) -> dict[str, Any]:
         out: dict[str, Any] = {
             "kind": self.kind,
             "name": self.name,
@@ -51,11 +58,11 @@ class BodyUniverseDto:
         if self.bridge_source_symbol is not None:
             out["bridgeSourceSymbol"] = self.bridge_source_symbol
         if self.pre is not None:
-            out["pre"] = to_rpc_value(self.pre)
+            out["pre"] = term_table.formula(self.pre.ir_formula)
         if self.post is not None:
-            out["post"] = to_rpc_value(self.post)
+            out["post"] = term_table.formula(self.post.ir_formula)
         if self.inv is not None:
-            out["inv"] = to_rpc_value(self.inv)
+            out["inv"] = term_table.formula(self.inv.ir_formula)
         if self.source_warrants:
             out["sourceWarrants"] = [
                 to_rpc_value(warrant) for warrant in self.source_warrants

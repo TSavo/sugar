@@ -12,6 +12,7 @@ from sugar_lift_py_tests.ir import (
     _Var,
     Int,
     Term,
+    TermTableBuilder,
     atomic,
     ctor,
     constructor_symbol_kinds,
@@ -182,3 +183,28 @@ def test_lift_construction_does_not_expand_the_term_dag_to_wire(monkeypatch) -> 
     payload = lift_file_payload("def f(value):\n    return value + 1\n", "term-dag.py")
 
     assert payload.ir
+    wire = payload.to_rpc()
+    assert wire["termTable"]
+    assert "term-ref" in str(wire["ir"])
+    assert '"kind": "ctor"' not in str(wire["ir"])
+
+
+def test_term_table_emits_one_node_per_cid_and_formula_uses_refs() -> None:
+    with term_intern_scope():
+        leaf = ctor("call:leaf", [_Var("x")], symbol_kind="method-coordinate")
+        rung = ctor("call:rung", [leaf, leaf], symbol_kind="method-coordinate")
+        formula = atomic("=", [rung, rung])
+
+        builder = TermTableBuilder()
+        wire_formula = builder.formula(formula)
+
+    assert wire_formula["args"][0]["kind"] == "term-ref"
+    assert wire_formula["args"][0] == wire_formula["args"][1]
+    assert len(builder.nodes) == 3
+    assert all(cid.startswith("blake3-512:") for cid in builder.nodes)
+    rung_node = builder.nodes[wire_formula["args"][0]["cid"]]
+    assert rung_node["args"][0] == rung_node["args"][1]
+    assert rung_node["args"][0]["kind"] == "term-ref"
+
+    old_canonical = encode_jcs(term_to_value(rung))
+    assert wire_formula["args"][0]["cid"] == blake3_512_of(old_canonical.encode())

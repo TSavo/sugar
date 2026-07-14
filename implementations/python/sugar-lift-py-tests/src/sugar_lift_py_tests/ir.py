@@ -18,9 +18,10 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+import json
 from typing import Any, Iterator, List, Optional, Tuple, Union
 
-from .canonicalizer import Value, varr, vbool, vint, vobj, vstr, vnull
+from .canonicalizer import Value, encode_jcs, jcs_hash, varr, vbool, vint, vobj, vstr, vnull
 
 # Sort ----------------------------------------------------------------------
 
@@ -546,6 +547,57 @@ def term_to_value(t: Term) -> Value:
             ]
         )
     raise TypeError(f"unknown Term: {type(t)!r}")
+
+
+class TermTableBuilder:
+    """One-way JSON-RPC lowering of immutable terms into a CID-keyed DAG."""
+
+    def __init__(self) -> None:
+        self.nodes: dict[str, dict[str, Any]] = {}
+        self._cids: dict[Term, str] = {}
+
+    def reference(self, term: Term) -> dict[str, str]:
+        cid = self._cid(term)
+        if cid not in self.nodes:
+            self.nodes[cid] = self._node(term)
+        return {"kind": "term-ref", "cid": cid}
+
+    def formula(self, formula: Formula) -> dict[str, Any]:
+        if isinstance(formula, _Atomic):
+            return {
+                "kind": "atomic",
+                "name": formula.name,
+                "args": [self.reference(term) for term in formula.args],
+            }
+        if isinstance(formula, _Connective):
+            return {
+                "kind": formula.kind,
+                "operands": [self.formula(operand) for operand in formula.operands],
+            }
+        if isinstance(formula, _Quantifier):
+            return {
+                "kind": formula.kind,
+                "name": formula.name,
+                "sort": json.loads(encode_jcs(sort_to_value(formula.sort))),
+                "body": self.formula(formula.body),
+            }
+        raise TypeError(f"unknown Formula: {type(formula)!r}")
+
+    def _cid(self, term: Term) -> str:
+        cid = self._cids.get(term)
+        if cid is None:
+            cid = jcs_hash(term_to_value(term))
+            self._cids[term] = cid
+        return cid
+
+    def _node(self, term: Term) -> dict[str, Any]:
+        if isinstance(term, _Ctor):
+            return {
+                "kind": "ctor",
+                "name": term.name,
+                "args": [self.reference(arg) for arg in term.args],
+            }
+        return json.loads(encode_jcs(term_to_value(term)))
 
 
 def formula_to_value(f: Formula) -> Value:
