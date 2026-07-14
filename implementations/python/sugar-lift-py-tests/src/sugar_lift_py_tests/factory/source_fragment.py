@@ -33,6 +33,39 @@ def _mark_annotation_subtree(node: ast.AST) -> ast.AST:
     return node
 
 
+def _mark_loop_body(nodes: list[ast.stmt]) -> list[ast.stmt]:
+    """Carry the loop gateway's lexical testimony to control descendants.
+
+    A nested function or class is a new control-flow scope, so an outer loop's
+    testimony never crosses that boundary. Nested loops in the same scope are
+    still loop bodies and may carry the same marker safely.
+    """
+
+    class MarkLoopControl(ast.NodeVisitor):
+        def visit_Break(self, node: ast.Break) -> None:
+            node._sugar_loop_context = True  # type: ignore[attr-defined]
+
+        def visit_Continue(self, node: ast.Continue) -> None:
+            node._sugar_loop_context = True  # type: ignore[attr-defined]
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            del node
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            del node
+
+        def visit_Lambda(self, node: ast.Lambda) -> None:
+            del node
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            del node
+
+    marker = MarkLoopControl()
+    for node in nodes:
+        marker.visit(node)
+    return nodes
+
+
 @dataclass(frozen=True)
 class SourceFragment:
     """A fragment of source -- the one object the factory uses to talk to the AST.
@@ -121,7 +154,9 @@ class SourceFragment:
         )
 
     def has_enclosing_loop(self) -> bool:
-        return self._has_source_ancestor((ast.For, ast.While, ast.AsyncFor))
+        return bool(getattr(self.node, "_sugar_loop_context", False)) or (
+            self._has_source_ancestor((ast.For, ast.While, ast.AsyncFor))
+        )
 
     def has_enclosing_function(self) -> bool:
         return self._has_source_ancestor(
@@ -1401,7 +1436,7 @@ class SourceFragment:
         from .block import Block
 
         self._require(ast.For, ast.AsyncFor)
-        body = self.node.body  # type: ignore[attr-defined]
+        body = _mark_loop_body(self.node.body)  # type: ignore[attr-defined]
         return SourceFragment.from_node(
             Block.of(body), self.filename, source=self.source
         )
@@ -1423,7 +1458,7 @@ class SourceFragment:
         from .block import Block
 
         self._require(ast.While)
-        body = self.node.body  # type: ignore[attr-defined]
+        body = _mark_loop_body(self.node.body)  # type: ignore[attr-defined]
         return SourceFragment.from_node(
             Block.of(body), self.filename, source=self.source
         )
