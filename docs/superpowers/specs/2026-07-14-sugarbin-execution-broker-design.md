@@ -232,7 +232,9 @@ behind the `bx` host backend owned by `sugarbin`.
 
 ## Compatibility Wrappers
 
-`bcargo` and `brun` remain as thin adapters during and after migration:
+`bcargo` and `brun` remain as thin host-targeted invocations during and after
+migration. Their only durable policy is `host=bx`; they do not own remote
+execution machinery:
 
 ```text
 bcargo ARGS
