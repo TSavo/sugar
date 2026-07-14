@@ -21,6 +21,9 @@ class LambdaCallable(FloorValue):
 
     parameters: tuple[str, ...]
     body: Any
+    default_values: tuple[Any, ...] = ()
+    keyword_only_parameters: tuple[str, ...] = ()
+    keyword_only_default_values: tuple[Any | None, ...] = ()
     vararg_parameter: str | None = None
     kwarg_parameter: str | None = None
 
@@ -41,9 +44,40 @@ class LambdaCallable(FloorValue):
         # Source IR uses python:lambda(params…). Factory projection of a
         # first-class callable value without a reduction ctx carries identity
         # only (parameter names) -- honest opaque coordinate, not body FOL.
-        encoded_parameters = [str_const(p) for p in self.parameters]
+        default_offset = len(self.parameters) - len(self.default_values)
+        encoded_parameters = []
+        for index, parameter in enumerate(self.parameters):
+            if index < default_offset:
+                encoded_parameters.append(str_const(parameter))
+                continue
+            default = self.default_values[index - default_offset]
+            encoded_parameters.append(
+                ctor(
+                    "python:lambda_default",
+                    [str_const(parameter), default.to_term(owner="LambdaCallable")],
+                )
+            )
         if self.vararg_parameter is not None:
             encoded_parameters.append(str_const(f"*{self.vararg_parameter}"))
+        for parameter, default in zip(
+            self.keyword_only_parameters,
+            self.keyword_only_default_values,
+            strict=True,
+        ):
+            if default is None:
+                encoded_parameters.append(
+                    ctor("python:lambda_kwonly", [str_const(parameter)])
+                )
+            else:
+                encoded_parameters.append(
+                    ctor(
+                        "python:lambda_kwonly_default",
+                        [
+                            str_const(parameter),
+                            default.to_term(owner="LambdaCallable"),
+                        ],
+                    )
+                )
         if self.kwarg_parameter is not None:
             encoded_parameters.append(str_const(f"**{self.kwarg_parameter}"))
         return ctor("python:lambda", encoded_parameters)
@@ -54,6 +88,7 @@ class LambdaCallable(FloorValue):
 
         if (
             len(self.parameters) != 1
+            or self.keyword_only_parameters
             or self.vararg_parameter is not None
             or self.kwarg_parameter is not None
         ):

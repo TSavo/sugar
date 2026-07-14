@@ -547,6 +547,40 @@ class SourceFragment:
         kwarg = self.node.args.kwarg  # type: ignore[attr-defined]
         return None if kwarg is None else kwarg.arg
 
+    def lambda_defaults(self) -> "tuple[SourceFragment, ...]":
+        """Return positional default expressions in their source order."""
+        self._require(ast.Lambda)
+        return tuple(
+            SourceFragment.from_node(default, self.filename, source=self.source)
+            for default in self.node.args.defaults  # type: ignore[attr-defined]
+        )
+
+    def lambda_kwonly_params(self) -> "tuple[str, ...]":
+        """Return keyword-only parameter names in their source order."""
+        self._require(ast.Lambda)
+        return tuple(arg.arg for arg in self.node.args.kwonlyargs)  # type: ignore[attr-defined]
+
+    def lambda_kwonly_defaults(
+        self,
+    ) -> "tuple[SourceFragment | None, ...]":
+        """Return keyword-only defaults; ``None`` marks a required parameter."""
+        self._require(ast.Lambda)
+        return tuple(
+            (
+                None
+                if default is None
+                else SourceFragment.from_node(
+                    default, self.filename, source=self.source
+                )
+            )
+            for default in self.node.args.kw_defaults  # type: ignore[attr-defined]
+        )
+
+    def lambda_has_constructible_signature(self) -> bool:
+        """Defaults and keyword-only names construct; positional-only stays loud."""
+        self._require(ast.Lambda)
+        return not self.node.args.posonlyargs  # type: ignore[attr-defined]
+
     def lambda_is_positional_or_variadic(self) -> bool:
         """True for required positional parameters plus optional collectors.
 
