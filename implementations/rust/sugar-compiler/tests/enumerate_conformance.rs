@@ -30,6 +30,7 @@ use std::process::Command;
 use libsugar::core::Dialect;
 use serde_json::{json, Value};
 use sugar_compiler::kit::{Kit, LiftManifest};
+use sugar_compiler::kit_path::LiftTermTable;
 use sugar_compiler::tree::Sourced;
 
 fn repo_root() -> PathBuf {
@@ -192,6 +193,7 @@ fn is_bridge_identity(sym: &str) -> bool {
 /// Fact set from batch `payload.ir` kind=contract inv/post + warrants.
 fn facts_from_blob(payload: &Value) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
+    let term_table = LiftTermTable::decode(payload).expect("batch term table");
     for item in ir_items(payload) {
         if item.get("kind").and_then(Value::as_str) != Some("contract") {
             continue;
@@ -209,7 +211,10 @@ fn facts_from_blob(payload: &Value) -> Vec<(String, String, String)> {
         let Some(memento) = warrants.first() else {
             continue;
         };
-        out.push(fact_key(memento, formula));
+        let resolved = term_table
+            .resolve_value(formula)
+            .expect("batch fact refs resolve at the IrFormula boundary");
+        out.push(fact_key(memento, &resolved));
     }
     out.sort();
     out
