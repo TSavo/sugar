@@ -118,9 +118,7 @@ def module_sibling_function_nodes(module_name: str) -> dict:
                 stmt.node.decorator_list = []  # type: ignore[attr-defined]
                 stmt.node._sugar_source = source  # type: ignore[attr-defined]
                 stmt.node._sugar_file = sourcefile  # type: ignore[attr-defined]
-                stmt.node._sugar_bridge_name = (
-                    f"{module_name}.{cname}.{mname}"
-                )  # type: ignore[attr-defined]
+                stmt.node._sugar_bridge_name = f"{module_name}.{cname}.{mname}"  # type: ignore[attr-defined]
                 nodes[f"{cname}.{mname}"] = stmt.node
                 nodes[f"{module_name}.{cname}.{mname}"] = stmt.node
     return nodes
@@ -159,32 +157,169 @@ def resolve_install_source_funcdef(import_target: str):
     return None
 
 
-def resolve_install_source_value(import_target: str, ctx):
+def _module_assignment_name(statement: ast.stmt) -> str | None:
+    if isinstance(statement, ast.Assign):
+        names = [
+            target.id for target in statement.targets if isinstance(target, ast.Name)
+        ]
+        return names[0] if len(names) == 1 else None
+    if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+        return statement.target.id if statement.value is not None else None
+    return None
+
+
+def _module_import_bindings(statement: ast.stmt) -> dict[str, tuple[str, str | None]]:
+    bindings: dict[str, tuple[str, str | None]] = {}
+    if isinstance(statement, ast.Import):
+        for alias in statement.names:
+            bound = alias.asname or alias.name.split(".", 1)[0]
+            module_name = alias.name if alias.asname else alias.name.split(".", 1)[0]
+            bindings[bound] = (module_name, None)
+    elif isinstance(statement, ast.ImportFrom):
+        module_name = statement.module or ""
+        for alias in statement.names:
+            if alias.name == "*":
+                continue
+            bindings[alias.asname or alias.name] = (module_name, alias.name)
+    return bindings
+
+
+def _loaded_names(node: ast.AST | None) -> set[str]:
+    if node is None:
+        return set()
+    return {
+        child.id
+        for child in ast.walk(node)
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
+    }
+
+
+def _ctx_with_required_module_values(
+    statements: list[ast.stmt],
+    target_index: int,
+    target_value: ast.AST,
+    *,
+    source: str,
+    sourcefile: str,
+    ctx: Any,
+    resolving: frozenset[str],
+):
+    """Construct the target assignment's lexical module values, need-first.
+
+    The imported value belongs to its defining module, not to the consumer's
+    temporal. Reverse selection finds only prerequisite declarations; forward
+    construction then sends each selected declaration through the ordinary
+    factory. This is the module-value analogue of install-source function-global
+    seeding and deliberately does not execute or fabricate Python constants.
+    """
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.floor import ImportAliasValue
+    from sugar_lift_py_tests.outcome import complete_value
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    # Imported values are constructed in the defining module's lexical frame.
+    # Consumer locals are not module globals and must never satisfy these Names.
+    needed = _loaded_names(target_value)
+
+    selected: list[ast.stmt] = []
+    for statement in reversed(statements[:target_index]):
+        assigned = _module_assignment_name(statement)
+        imports = _module_import_bindings(statement)
+        owned = ({assigned} if assigned is not None else set()) | set(imports)
+        wanted = owned & needed
+        if not wanted:
+            continue
+        selected.append(statement)
+        needed.difference_update(wanted)
+        if assigned in wanted:
+            value = (
+                statement.value
+                if isinstance(statement, (ast.Assign, ast.AnnAssign))
+                else None
+            )
+            needed.update(_loaded_names(value))
+    selected.reverse()
+
+    lexical = TemporalContext.empty()
+    module_ctx = replace(ctx, temporal=lexical, module_temporal=lexical)
+    for statement in selected:
+        imports = _module_import_bindings(statement)
+        if imports:
+            temporal = module_ctx.temporal
+            for bound, (module_name, imported_name) in imports.items():
+                import_target = (
+                    f"{module_name}.{imported_name}" if imported_name else module_name
+                )
+                resolved = (
+                    resolve_install_source_value(
+                        import_target, module_ctx, _resolving=resolving
+                    )
+                    if imported_name
+                    else None
+                )
+                temporal = temporal.bind_value(
+                    bound,
+                    ImportAliasValue(
+                        imported_name or module_name,
+                        bound,
+                        import_target=import_target,
+                        resolved_value=resolved,
+                    ),
+                )
+            module_ctx = replace(
+                module_ctx, temporal=temporal, module_temporal=temporal
+            )
+            continue
+
+        fragment = SourceFragment.from_node(statement, sourcefile, source=source)
+        outcome = module_ctx.build_body(fragment, SugarRole.STATEMENT).reduce(
+            module_ctx
+        )
+        complete_value(outcome, owner="install-source module prerequisite")
+        extended = outcome.extend_scope(module_ctx)
+        module_ctx = replace(extended, module_temporal=extended.temporal)
+    return module_ctx
+
+
+def resolve_install_source_value(
+    import_target: str, ctx, *, _resolving: frozenset[str] = frozenset()
+):
     """Construct a cited module-level imported name from its Python source.
 
-    A source-backed import is statically knowable. Find the defining statement
-    and send its value through the ordinary factory. Any missing Sugar or floor
-    arm propagates its FactoryPanic; this function never converts a dig gap into
-    a runtime effect.
+    A source-backed import is statically knowable. Find the defining statement,
+    construct the module globals its RHS needs, and send all values through the
+    ordinary factory. Any missing Sugar or floor arm propagates its FactoryPanic;
+    this function never converts a dig gap into a runtime effect.
     """
-    if "." not in import_target:
+    if "." not in import_target or import_target in _resolving:
         return None
+    resolving = _resolving | {import_target}
     module_name, attr = import_target.rsplit(".", 1)
     try:
-        module = importlib.import_module(module_name)
-        sourcefile = inspect.getsourcefile(module)
-        if sourcefile is None or not sourcefile.endswith((".py", ".pyi")):
+        spec = importlib.util.find_spec(module_name)
+        sourcefile = getattr(spec, "origin", None)
+        if not sourcefile or not sourcefile.endswith((".py", ".pyi")):
             return None
         source = Path(sourcefile).read_text(encoding="utf-8")
         parsed = ast.parse(source, filename=sourcefile)
-    except (ImportError, OSError, SyntaxError, TypeError):
+    except (
+        ImportError,
+        ModuleNotFoundError,
+        OSError,
+        SyntaxError,
+        TypeError,
+        ValueError,
+    ):
         return None
 
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.outcome import complete_value
 
-    for statement in parsed.body:
+    for target_index, statement in enumerate(parsed.body):
         value_node = None
         if isinstance(statement, (ast.Assign, ast.AnnAssign)):
             targets = (
@@ -208,12 +343,21 @@ def resolve_install_source_value(import_target: str, ctx):
                 body.reduce(ctx), owner="install-source imported function"
             )
         if value_node is not None:
-            body = ctx.build_body(
+            module_ctx = _ctx_with_required_module_values(
+                parsed.body,
+                target_index,
+                value_node,
+                source=source,
+                sourcefile=sourcefile,
+                ctx=ctx,
+                resolving=resolving,
+            )
+            body = module_ctx.build_body(
                 SourceFragment.from_node(value_node, sourcefile, source=source),
                 SugarRole.TERM,
             )
             return complete_value(
-                body.reduce(ctx), owner="install-source imported value"
+                body.reduce(module_ctx), owner="install-source imported value"
             )
     return None
 
@@ -257,9 +401,7 @@ def resolve_install_source_class_method(qualified_class: str, method_name: str):
             child.node.decorator_list = []  # type: ignore[attr-defined]
             child.node._sugar_source = source  # type: ignore[attr-defined]
             child.node._sugar_file = sourcefile  # type: ignore[attr-defined]
-            child.node._sugar_bridge_name = (
-                f"{qualified_class}.{method_name}"
-            )  # type: ignore[attr-defined]
+            child.node._sugar_bridge_name = f"{qualified_class}.{method_name}"  # type: ignore[attr-defined]
             return child
     return None
 
