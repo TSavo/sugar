@@ -30,7 +30,9 @@ class RuntimeBitwiseOpSugar(Sugar, role=SugarRole.TERM):
         if site.observed != "BinOp" or site.operator_kind() not in _RUNTIME_BITWISE_OPS:
             return False
         if site.operator_kind() == "BitOr":
-            return site.source is not None and not site.is_within_annotation()
+            return (
+                site.source is not None or site.is_within_runtime_expression()
+            ) and not site.is_within_annotation()
         return True
 
     @classmethod
