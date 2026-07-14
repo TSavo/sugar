@@ -179,4 +179,26 @@ class ForElseSugar(Sugar, role=SugarRole.STATEMENT):
 def _has_break(site) -> bool:
     import ast
 
-    return any(isinstance(node, ast.Break) for node in ast.walk(site.node))
+    class _LoopOwnedBreakFinder(ast.NodeVisitor):
+        """Find breaks owned by this loop without crossing nested owners."""
+
+        found = False
+
+        def visit_Break(self, node: ast.Break) -> None:
+            self.found = True
+
+        def _stop_at_nested_owner(self, node: ast.AST) -> None:
+            return None
+
+        visit_For = _stop_at_nested_owner
+        visit_AsyncFor = _stop_at_nested_owner
+        visit_While = _stop_at_nested_owner
+        visit_FunctionDef = _stop_at_nested_owner
+        visit_AsyncFunctionDef = _stop_at_nested_owner
+        visit_Lambda = _stop_at_nested_owner
+        visit_ClassDef = _stop_at_nested_owner
+
+    finder = _LoopOwnedBreakFinder()
+    for statement in site.node.body:
+        finder.visit(statement)
+    return finder.found
