@@ -82,11 +82,17 @@ resolution, or execution policy. `bpytest` additionally selects the managed
 image digests, and named tasks. `tools/sugar-build/contract.py` resolves and
 validates that declaration. Capabilities are compositional dependency claims;
 tasks declare a capability set, required Sugar executables, an argv prefix, and
-an explicit `network = "none"` or `network = "required"` policy. The caller's
-arguments are appended and the command still runs every time. Managed tasks run
-with Docker networking disabled unless the task contract says it is required.
+an explicit `network = "none"` or `network = "required"` policy, which
+`sugarbin explain` reports. The caller's arguments are appended and the command
+still runs every time. Managed tasks run with Docker networking disabled only
+when the named task contract claims a complete dependency closure. Ad-hoc
+Docker commands default to networking available because they have no declared
+dependency closure.
 `examples-gate` declares required networking because its acceptance examples
 exercise dependency and language ecosystems that are not an offline contract.
+`rust-unit` and `restored-suite-scoreboard` also require networking because
+their Cargo commands consume the locked dependency graph and the managed image
+does not vendor the Cargo registry.
 
 Current task names are `python-unit`, `python-lift`, `rust-unit`,
 `examples-gate`, `pandas-wall`, `numpy-wall`, and

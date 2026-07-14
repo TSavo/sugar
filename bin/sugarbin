@@ -96,7 +96,10 @@ dispatch_execution_subcommand() {
 
   [[ "$subcommand" != build || -n "$needs" ]] || needs="sugar"
 
-  local task_json="" task_capabilities="" task_needs="" task_network="none"
+  # Ad-hoc managed commands do not have a declared dependency closure. Keep
+  # networking available unless a named task explicitly proves it can run
+  # offline in sugar-build.toml.
+  local task_json="" task_capabilities="" task_needs="" task_network="required"
   local -a task_command=()
   if [[ -n "$task" ]]; then
     local contract_python

@@ -108,6 +108,7 @@ line="$(tail -1 "$tmp/docker.log")"
 [[ "$line" == *"PATH=/opt/sugar/bin:"* ]] || fail "artifact PATH is not first"
 [[ "$line" == *"/opt/java/bin"* ]] || fail "managed Java toolchain missing from Docker PATH"
 [[ "$line" != *docker.sock* ]] || fail "Docker socket leaked into task"
+[[ "$line" != *"--network' 'none"* ]] || fail "ad-hoc Docker command was forced offline"
 [[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 2 ]] || fail "managed build/task count wrong"
 
 run run --host bx --env docker:core -- sh -c 'echo miss' >/dev/null
@@ -138,6 +139,7 @@ run run --host bx --task rust-unit -- --help >/dev/null
 line="$(tail -1 "$tmp/docker.log")"
 [[ "$line" != *"SUGAR_BIN="* ]] || fail "zero-binary task received SUGAR_BIN"
 [[ "$line" != *"required-artifacts.json"* ]] || fail "zero-binary task received empty artifact manifest"
+[[ "$line" != *"--network' 'none"* ]] || fail "Cargo task was forced offline without a vendored registry"
 
 examples="$(run explain --host bx --task examples-gate)"
 [[ "$examples" == *"network=required"* ]] || fail "examples-gate network requirement not explicit"

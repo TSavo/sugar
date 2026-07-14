@@ -80,7 +80,7 @@ network = "none"
 capabilities = ["solver-z3"]
 binaries = []
 command = ["cargo", "test", "--manifest-path", "implementations/rust/Cargo.toml"]
-network = "none"
+network = "required"
 
 [tasks.examples-gate]
 capabilities = ["python-test", "python-scientific", "solver-z3", "solver-coq", "java", "node", "vampire"]
@@ -104,4 +104,4 @@ network = "none"
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
 command = ["bash", "scripts/test-3809-dod-scoreboard.sh"]
-network = "none"
+network = "required"
