@@ -63,10 +63,8 @@ def test_nested_tuple_unpack_recursively_projects_names() -> None:
     assert record == BlockValue((ReturnValue(TermValue(5)),))
 
 
-def test_global_declaration_returns_to_the_loud_factory_none_arm() -> None:
-    with pytest.raises(FactoryPanic) as raised:
-        _build("global shared")
-    assert raised.value.info.observed == "Global"
+def test_global_declaration_uses_the_module_temporal_owner_from_4281() -> None:
+    assert type(_build("global shared")).__name__ == "GlobalSugar"
 
 
 def test_assignment_residue_owners_are_structurally_disjoint() -> None:
@@ -84,4 +82,7 @@ def test_assignment_residue_owners_are_structurally_disjoint() -> None:
         ]
         assert names == [expected]
 
-    assert not list(catalog.candidates_for(SugarRole.STATEMENT, _site("global x")))
+    assert [
+        candidate.name
+        for candidate in catalog.candidates_for(SugarRole.STATEMENT, _site("global x"))
+    ] == ["GlobalSugar"]
