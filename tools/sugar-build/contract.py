@@ -55,7 +55,7 @@ def load_contract(path=DEFAULT_CONTRACT):
         if "overwrite" in message.lower():
             message = f"duplicate definition: {message}"
         raise ContractError(message) from exc
-    if set(data) - {"schema", "tools", "capabilities", "tasks", "images"}:
+    if set(data) - {"schema", "tools", "packages", "capabilities", "tasks", "images"}:
         raise ContractError("unknown top-level contract key")
     if data.get("schema") != 1:
         raise ContractError("unsupported contract schema")
@@ -69,6 +69,17 @@ def load_contract(path=DEFAULT_CONTRACT):
             raise ContractError(f"unknown tool version owner: {name}")
         if not isinstance(version, str) or pattern.fullmatch(version) is None:
             raise ContractError(f"non-exact tool version: {name}")
+    if "packages" in data and not isinstance(data["packages"], dict):
+        raise ContractError("invalid packages table")
+    declared_capabilities = set(data["capabilities"])
+    owner_capabilities = set(CAPABILITY_TOOL_OWNERS)
+    if not declared_capabilities <= owner_capabilities:
+        missing = sorted(declared_capabilities - owner_capabilities)[0]
+        raise ContractError(f"capability tool owner mismatch: {missing}")
+    owned_tools = {tool for owners in CAPABILITY_TOOL_OWNERS.values() for tool in owners}
+    if not set(tools) <= owned_tools:
+        missing = sorted(set(tools) - owned_tools)[0]
+        raise ContractError(f"tool capability owner mismatch: {missing}")
     return data
 
 

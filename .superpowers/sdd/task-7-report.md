@@ -118,3 +118,31 @@ The examples scripts still create private venvs and may reach PyPI. This image
 pins its owned environment, but converting those script-local installs into a
 fully offline managed mode remains a later migration; this report does not
 claim the examples suite is network-hermetic.
+
+## Direct capability closure (final review closure)
+
+Battleaxe built each minimal stage, executed its version smoke during the
+build, pushed it to GHCR, and returned these immutable RepoDigests:
+
+- Python scientific: `sha256:d8230b980eb505e45273c01d8226bb1e5552e9db27d6e489688aecefd2e0ec38`
+- Coq: `sha256:fe99753e98c05ebb18d5ef1ee8c3475b04ca6caaed176489dd7ad757545782fe`
+- Java/Maven: `sha256:3fc127b88e7175268bdfd125e502ffb17a4841f4e4932abc963a0f1a09fb2bb2`
+- Node/pnpm: `sha256:0cdfae5249ffbd4232f4675230b4e414bfe8de3541db936711e02ff35f2b143a`
+- Vampire: `sha256:d5a3076102ad9e57a0022f52de95f8047df448ba689b1d9afc96d519a35ebe86`
+
+The contract now owns the Debian package revisions, Java release suffix, and
+all three downloaded-archive checksums. Focused tests cross-check those values
+against every Docker build argument, cross-check the loaded capability/tool
+sets against `CAPABILITY_TOOL_OWNERS`, and parametrically prove all seven named
+tasks resolve the expected closure, binaries, command, and immutable digest.
+
+No Make/CI route was migrated in this closure. The only existing bespoke
+battleaxe Make routes are `test-showcases` (Makefile 395-408) and
+`coretests-source-audit` (Makefile 459-468); neither is one of the seven named
+task commands, and `.github` has no battleaxe route. Replacing either would
+change command semantics instead of migrating an equivalent call site.
+
+Final measured publication gap: direct closure images `R 5 -> 0`; all seven
+named task closures remain `R 0`. The real ratchet's missing mounted-source
+directory and examples' script-local network installs remain explicit product
+concerns, not broker publication gaps.

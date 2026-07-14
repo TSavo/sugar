@@ -58,13 +58,34 @@ def test_declared_tool_versions_have_exact_syntax_and_capability_mapping(tmp_pat
         contract.tool_versions(manifest(tmp_path, text))
 
 
-@pytest.mark.parametrize("name", [
-    "python-unit", "python-lift", "rust-unit", "examples-gate", "pandas-wall",
-    "numpy-wall", "restored-suite-scoreboard",
+@pytest.mark.parametrize(("name", "capabilities", "digest", "binaries", "command"), [
+    ("python-unit", ["core", "python-test"], "12ca8a6768630ae70afb37d63a48b5035da365c4c2fe4cd99117ae4327932674", ["sugar"], ["python", "-m", "pytest"]),
+    ("python-lift", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["python", "-m", "pytest"]),
+    ("rust-unit", ["core", "solver-z3"], "ea84add5822935318b6be07dba38980b81d947b077b077ca7e6f70febdf2d497", [], ["cargo", "test", "--manifest-path", "implementations/rust/Cargo.toml"]),
+    ("examples-gate", ["core", "java", "node", "python-scientific", "python-test", "solver-coq", "solver-z3", "vampire"], "f3474a1e1badba67f3daaf5c589f2844da28a7be6beda929ca5f7f2e5d95785e", ["sugar", "sugar-ir-smt-lib"], ["make", "examples-gate"]),
+    ("pandas-wall", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["python", "tools/pandas_wall.py"]),
+    ("numpy-wall", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["python", "tools/numpy_wall.py"]),
+    ("restored-suite-scoreboard", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["bash", "scripts/test-3809-dod-scoreboard.sh"]),
 ])
-def test_initial_named_tasks_always_have_commands(name):
+def test_named_tasks_have_published_closures(name, capabilities, digest, binaries, command):
     task = contract.resolve_task(name)
-    assert task["command"]
+    assert task == {"task": name, "capabilities": capabilities, "binaries": binaries, "command": command}
+    environment = contract.resolve_environment("docker:" + ",".join(task["capabilities"]))
+    assert environment["capabilities"] == capabilities
+    assert environment["image"] == f"ghcr.io/tsavo/sugar-env@sha256:{digest}"
+
+
+@pytest.mark.parametrize(("capability", "digest"), [
+    ("python-scientific", "d8230b980eb505e45273c01d8226bb1e5552e9db27d6e489688aecefd2e0ec38"),
+    ("solver-coq", "fe99753e98c05ebb18d5ef1ee8c3475b04ca6caaed176489dd7ad757545782fe"),
+    ("java", "3fc127b88e7175268bdfd125e502ffb17a4841f4e4932abc963a0f1a09fb2bb2"),
+    ("node", "0cdfae5249ffbd4232f4675230b4e414bfe8de3541db936711e02ff35f2b143a"),
+    ("vampire", "d5a3076102ad9e57a0022f52de95f8047df448ba689b1d9afc96d519a35ebe86"),
+])
+def test_direct_capabilities_have_published_images(capability, digest):
+    environment = contract.resolve_environment(f"docker:{capability}")
+    assert environment["capabilities"] == ["core", capability]
+    assert environment["image"] == f"ghcr.io/tsavo/sugar-env@sha256:{digest}"
 
 
 def test_python_unit_has_a_distinct_published_test_runtime():
@@ -115,9 +136,30 @@ def test_docker_capability_defaults_match_contract_versions():
     assert f'ARG Z3_DEBIAN_VERSION={tools["z3"]}-3.1' in dockerfile
 
 
+def test_docker_package_revisions_and_archives_are_contract_owned():
+    dockerfile = (ROOT / "tools/sugar-build/Dockerfile").read_text()
+    packages = contract.load_contract()["packages"]
+    for argument, package in {
+        "COQ_DEBIAN_VERSION": "coq_debian",
+        "MAVEN_DEBIAN_VERSION": "maven_debian",
+        "JAVA_RELEASE_SUFFIX": "java_release_suffix",
+        "JAVA_ARCHIVE_SHA256": "java_archive_sha256",
+        "NODE_ARCHIVE_SHA256": "node_archive_sha256",
+        "VAMPIRE_ARCHIVE_SHA256": "vampire_archive_sha256",
+    }.items():
+        assert re.search(rf"^ARG {argument}={re.escape(packages[package])}$", dockerfile, re.MULTILINE)
+
+
+def test_loaded_contract_exactly_matches_capability_tool_owners():
+    data = contract.load_contract()
+    owners = contract.capability_tool_owners()
+    assert set(data["capabilities"]) == set(owners)
+    assert set(data["tools"]) == {tool for tools in owners.values() for tool in tools}
+
+
 def test_named_task_closures_have_explicit_build_targets():
     dockerfile = (ROOT / "tools/sugar-build/Dockerfile").read_text()
-    for target in ("python-test", "solver-z3", "python-lift-closure", "examples-closure"):
+    for target in ("python-test", "solver-z3", "python-scientific", "solver-coq", "java", "node", "vampire", "python-lift-closure", "examples-closure"):
         assert f" AS {target}" in dockerfile
 
 
@@ -145,14 +187,14 @@ def test_duplicate_definitions_are_loud(tmp_path):
 
 
 def test_dependency_cycles_are_loud(tmp_path):
-    path = manifest(tmp_path, "schema=1\n[tools]\n[capabilities.a]\ndepends=['b']\n[capabilities.b]\ndepends=['a']\n[tasks]\n")
+    path = manifest(tmp_path, "schema=1\n[tools]\n[capabilities.core]\ndepends=['python-test']\n[capabilities.python-test]\ndepends=['core']\n[tasks]\n")
     with pytest.raises(ContractError, match="dependency cycle"):
-        contract.resolve_capabilities(["a"], path)
+        contract.resolve_capabilities(["core"], path)
 
 
 def test_missing_immutable_image_is_loud():
     with pytest.raises(ContractError, match="capability closure has no built image"):
-        contract.resolve_environment("docker:python-scientific")
+        contract.resolve_environment("docker:java,node")
 
 
 def test_mutable_image_reference_is_loud(tmp_path):

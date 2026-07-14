@@ -49,6 +49,59 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && z3 --version
 
+FROM core AS python-scientific
+ARG NUMPY_VERSION=2.5.1
+ARG PANDAS_VERSION=3.0.3
+RUN python -m pip install --no-cache-dir \
+      numpy=="${NUMPY_VERSION}" pandas=="${PANDAS_VERSION}" \
+      python-dateutil==2.9.0.post0 six==1.17.0 \
+ && python -c 'import numpy, pandas; assert numpy.__version__ == "2.5.1"; assert pandas.__version__ == "3.0.3"'
+
+FROM core AS solver-coq
+ARG COQ_DEBIAN_VERSION=8.16.1+dfsg-1+b2
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends coq="${COQ_DEBIAN_VERSION}" \
+ && rm -rf /var/lib/apt/lists/* \
+ && coqc --version
+
+FROM core AS java
+ARG MAVEN_DEBIAN_VERSION=3.8.7-1
+ARG JAVA_VERSION=21.0.9
+ARG JAVA_RELEASE_SUFFIX=10
+ARG JAVA_ARCHIVE_SHA256=810d3773df7e0d6c4394e4e244b264c8b30e0b05a0acf542d065fd78a6b65c2f
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends maven="${MAVEN_DEBIAN_VERSION}" \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL -o /tmp/jdk.tar.gz "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-${JAVA_VERSION}%2B${JAVA_RELEASE_SUFFIX}/OpenJDK21U-jdk_x64_linux_hotspot_${JAVA_VERSION}_${JAVA_RELEASE_SUFFIX}.tar.gz" \
+ && echo "${JAVA_ARCHIVE_SHA256}  /tmp/jdk.tar.gz" | sha256sum -c - \
+ && mkdir -p /opt/java \
+ && tar -xzf /tmp/jdk.tar.gz -C /opt/java --strip-components=1 \
+ && find /opt/java/bin -maxdepth 1 -type f -exec ln -sf {} /usr/local/bin/ \; \
+ && rm /tmp/jdk.tar.gz \
+ && sh -lc 'java --version && javac --version && mvn --version'
+ENV JAVA_HOME=/opt/java PATH=/opt/java/bin:${PATH}
+
+FROM core AS node
+ARG NODE_VERSION=22.17.1
+ARG NODE_ARCHIVE_SHA256=ff04bc7c3ed7699ceb708dbaaf3580d899ff8bf67f17114f979e83aa74fc5a49
+ARG PNPM_VERSION=10.13.1
+RUN curl -fsSL -o /tmp/node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+ && echo "${NODE_ARCHIVE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - \
+ && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+ && rm /tmp/node.tar.xz \
+ && npm install --global "pnpm@${PNPM_VERSION}" \
+ && node --version && pnpm --version
+
+FROM core AS vampire
+ARG VAMPIRE_VERSION=5.0.1
+ARG VAMPIRE_ARCHIVE_SHA256=6ff2f42ea7fb9753ee104efc3e623d5e39443190f7c82a63e1e1517bf9d2cde3
+RUN curl -fsSL -o /tmp/vampire.zip "https://github.com/vprover/vampire/releases/download/v${VAMPIRE_VERSION}/vampire-Linux-X64.zip" \
+ && echo "${VAMPIRE_ARCHIVE_SHA256}  /tmp/vampire.zip" | sha256sum -c - \
+ && python -m zipfile -e /tmp/vampire.zip /tmp/vampire \
+ && install -m 0755 /tmp/vampire/vampire /usr/local/bin/vampire \
+ && rm -rf /tmp/vampire /tmp/vampire.zip \
+ && vampire --version
+
 FROM python-test AS python-lift-closure
 ARG Z3_DEBIAN_VERSION=4.8.12-3.1
 ARG NUMPY_VERSION=2.5.1
@@ -69,6 +122,7 @@ FROM python-lift-closure AS examples-closure
 ARG COQ_DEBIAN_VERSION=8.16.1+dfsg-1+b2
 ARG MAVEN_DEBIAN_VERSION=3.8.7-1
 ARG JAVA_VERSION=21.0.9
+ARG JAVA_RELEASE_SUFFIX=10
 ARG JAVA_ARCHIVE_SHA256=810d3773df7e0d6c4394e4e244b264c8b30e0b05a0acf542d065fd78a6b65c2f
 ARG NODE_VERSION=22.17.1
 ARG NODE_ARCHIVE_SHA256=ff04bc7c3ed7699ceb708dbaaf3580d899ff8bf67f17114f979e83aa74fc5a49
@@ -78,7 +132,7 @@ ARG VAMPIRE_ARCHIVE_SHA256=6ff2f42ea7fb9753ee104efc3e623d5e39443190f7c82a63e1e15
 RUN apt-get update \
  && apt-get install -y --no-install-recommends coq="${COQ_DEBIAN_VERSION}" maven="${MAVEN_DEBIAN_VERSION}" unzip \
  && rm -rf /var/lib/apt/lists/* \
- && curl -fsSL -o /tmp/jdk.tar.gz "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-${JAVA_VERSION}%2B10/OpenJDK21U-jdk_x64_linux_hotspot_${JAVA_VERSION}_10.tar.gz" \
+ && curl -fsSL -o /tmp/jdk.tar.gz "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-${JAVA_VERSION}%2B${JAVA_RELEASE_SUFFIX}/OpenJDK21U-jdk_x64_linux_hotspot_${JAVA_VERSION}_${JAVA_RELEASE_SUFFIX}.tar.gz" \
  && echo "${JAVA_ARCHIVE_SHA256}  /tmp/jdk.tar.gz" | sha256sum -c - \
  && mkdir -p /opt/java \
  && tar -xzf /tmp/jdk.tar.gz -C /opt/java --strip-components=1 \
