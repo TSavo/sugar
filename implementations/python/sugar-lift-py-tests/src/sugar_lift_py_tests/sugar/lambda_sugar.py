@@ -19,12 +19,15 @@ class LambdaSugar(Sugar, role=SugarRole.TERM):
     the body under that scope (so free params stand), then builds a
     LambdaCallable carrying the params and the in-source body.
 
-    OWNED: observed == "Lambda" with plain positional names only (zero or more).
-    LOUD gaps: defaults, pos-only, kw-only, *args, **kwargs -- never silently
-    drop a parameter shape. FunctionDef is a different observed kind.
+    OWNED: observed == "Lambda" with required positional names and optional
+    ``*args`` / ``**kwargs`` collectors. LOUD gaps: defaults, pos-only, and
+    kw-only parameters -- never silently drop a parameter shape. FunctionDef
+    is a different observed kind.
     """
 
     formals: tuple[str, ...]
+    vararg_formal: str | None
+    kwarg_formal: str | None
     body: SugarBody
     site: object = dataclass_field(compare=False)
 
@@ -32,13 +35,15 @@ class LambdaSugar(Sugar, role=SugarRole.TERM):
     def owns(cls, site) -> bool:
         if site.observed != "Lambda":
             return False
-        return site.lambda_is_simple_positional()
+        return site.lambda_is_positional_or_variadic()
 
     @classmethod
     def new(cls, site, ctx) -> "LambdaSugar":
         # Param names + body expression (TERM). Never reduce here.
         return cls(
             formals=tuple(site.lambda_params()),
+            vararg_formal=site.lambda_vararg_param(),
+            kwarg_formal=site.lambda_kwarg_param(),
             body=ctx.build_body(site.lambda_body(), SugarRole.TERM),
             site=site,
         )
@@ -61,12 +66,21 @@ class LambdaSugar(Sugar, role=SugarRole.TERM):
         from sugar_lift_py_tests.ir import make_var
 
         temporal = ctx.temporal
-        for formal in self.formals:
+        for formal in (
+            *self.formals,
+            *(() if self.vararg_formal is None else (self.vararg_formal,)),
+            *(() if self.kwarg_formal is None else (self.kwarg_formal,)),
+        ):
             temporal = temporal.bind_value(formal, SymbolicValue(make_var(formal)))
         scoped = replace(ctx, temporal=temporal)
         return self.body.reduce(scoped).and_then(
             lambda _reduced: Complete(
-                LambdaCallable(parameters=self.formals, body=self.body)
+                LambdaCallable(
+                    parameters=self.formals,
+                    body=self.body,
+                    vararg_parameter=self.vararg_formal,
+                    kwarg_parameter=self.kwarg_formal,
+                )
             )
         )
 

@@ -475,6 +475,33 @@ class SourceFragment:
         self._require(ast.Lambda)
         return [a.arg for a in self.node.args.args]  # type: ignore[attr-defined]
 
+    def lambda_vararg_param(self) -> "str | None":
+        """Return the ``*args`` collector name, when present."""
+        self._require(ast.Lambda)
+        vararg = self.node.args.vararg  # type: ignore[attr-defined]
+        return None if vararg is None else vararg.arg
+
+    def lambda_kwarg_param(self) -> "str | None":
+        """Return the ``**kwargs`` collector name, when present."""
+        self._require(ast.Lambda)
+        kwarg = self.node.args.kwarg  # type: ignore[attr-defined]
+        return None if kwarg is None else kwarg.arg
+
+    def lambda_is_positional_or_variadic(self) -> bool:
+        """True for required positional parameters plus optional collectors.
+
+        Defaults, positional-only parameters, and keyword-only parameters stay
+        outside this owner until their value/binding semantics are constructed.
+        """
+        self._require(ast.Lambda)
+        args = self.node.args  # type: ignore[attr-defined]
+        return (
+            not args.posonlyargs
+            and not args.defaults
+            and not args.kwonlyargs
+            and not args.kw_defaults
+        )
+
     def lambda_is_simple_positional(self) -> bool:
         """True when a Lambda has only plain positional names -- no defaults,
         posonly, kwonly, *args, or **kwargs."""

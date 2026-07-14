@@ -1,11 +1,12 @@
-"""LambdaSugar: lambda params: body is a LambdaCallable with in-source body.
-
-Simple positional names only. Defaults / *args / **kwargs stay loud gaps.
-"""
+"""LambdaSugar: lambda params: body is a LambdaCallable with in-source body."""
 
 from __future__ import annotations
 
 import ast
+import os
+from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -79,13 +80,14 @@ def test_body_and_param_discriminate() -> None:
 
 
 def test_owns_simple_lambda_not_function_def_or_defaults() -> None:
-    """(3) owns simple-param Lambda; not FunctionDef; defaults/vararg loud."""
+    """(3) owns positional and variadic Lambda; defaults remain loud."""
     assert LambdaSugar.owns(_site("lambda x: x")) is True
     assert LambdaSugar.owns(_site("lambda x, y: x")) is True
     assert LambdaSugar.owns(_site("lambda: 1")) is True
     assert LambdaSugar.owns(_site("lambda x=1: x")) is False
-    assert LambdaSugar.owns(_site("lambda *a: a")) is False
-    assert LambdaSugar.owns(_site("lambda **k: k")) is False
+    assert LambdaSugar.owns(_site("lambda *a: a")) is True
+    assert LambdaSugar.owns(_site("lambda **k: k")) is True
+    assert LambdaSugar.owns(_site("lambda x, *a, **k: x")) is True
 
     # FunctionDef is a different observed kind.
     fn_site = SourceFragment.from_node(
@@ -108,12 +110,94 @@ def test_defaulted_param_is_a_loud_factory_gap() -> None:
     assert raised.value.info.observed == "Lambda"
 
 
-def test_vararg_is_a_loud_factory_gap() -> None:
+def test_variadic_parameters_are_carried_without_dropping_their_kinds() -> None:
+    value = reduce_value("lambda x, *args, **kwargs: x")
+    assert isinstance(value, LambdaCallable)
+    assert value.parameters == ("x",)
+    assert value.vararg_parameter == "args"
+    assert value.kwarg_parameter == "kwargs"
+    assert value.to_term(owner="t") == ctor(
+        "python:lambda",
+        [str_const("x"), str_const("*args"), str_const("**kwargs")],
+    )
+
+
+def test_variadic_body_binds_both_collector_names() -> None:
+    args_value = reduce_value("lambda *args: args")
+    kwargs_value = reduce_value("lambda **kwargs: kwargs")
+    assert isinstance(args_value, LambdaCallable)
+    assert isinstance(kwargs_value, LambdaCallable)
+
+    from dataclasses import replace
+    from sugar_lift_py_tests.temporal import TemporalContext
+
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
-    node = ast.parse("lambda *a: a", mode="eval").body
+    args_ctx = replace(
+        ctx,
+        temporal=TemporalContext.empty().bind_value(
+            "args", SymbolicValue(make_var("args"))
+        ),
+    )
+    kwargs_ctx = replace(
+        ctx,
+        temporal=TemporalContext.empty().bind_value(
+            "kwargs", SymbolicValue(make_var("kwargs"))
+        ),
+    )
+    assert complete_value(
+        args_value.body.reduce(args_ctx), owner="args-body"
+    ) == SymbolicValue(make_var("args"))
+    assert complete_value(
+        kwargs_value.body.reduce(kwargs_ctx), owner="kwargs-body"
+    ) == SymbolicValue(make_var("kwargs"))
+
+
+def test_defaulted_variadic_lambda_stays_a_loud_factory_gap() -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    node = ast.parse("lambda x=1, *args: args", mode="eval").body
     with pytest.raises(FactoryPanic) as raised:
         build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx)
     assert raised.value.info.observed == "Lambda"
+
+
+def test_keyword_only_lambda_stays_outside_the_variadic_owner() -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    node = ast.parse("lambda x, *, key: key", mode="eval").body
+    with pytest.raises(FactoryPanic) as raised:
+        build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx)
+    assert raised.value.info.observed == "Lambda"
+
+
+def test_variadic_lambda_discriminator_runs_both_process_arms() -> None:
+    tests_dir = Path(__file__).resolve().parent
+    src_dir = tests_dir.parent / "src"
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join((str(tests_dir), str(src_dir))),
+    }
+
+    def run(expected: str) -> subprocess.CompletedProcess[str]:
+        script = f"""\
+from factory_reduce import reduce_value
+from sugar_lift_py_tests.floor import LambdaCallable
+
+value = reduce_value("lambda x, *args, **kwargs: x")
+assert isinstance(value, LambdaCallable)
+assert value.vararg_parameter == {expected!r}
+assert value.kwarg_parameter == "kwargs"
+"""
+        return subprocess.run(
+            [sys.executable, "-c", script],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=env,
+        )
+
+    truthful = run("args")
+    lying = run("kwargs")
+    assert truthful.returncode == 0, truthful.stderr
+    assert lying.returncode == 1, lying.stderr
 
 
 def test_multi_param_simple_names_carry_all_formals() -> None:
