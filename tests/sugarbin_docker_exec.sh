@@ -6,6 +6,15 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"; : >"$tmp/ssh.log"; : >"$tmp/rsync.log"; : >"$tmp/docker.log"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+dockerfile="$(cat "$repo/tools/sugar-build/Dockerfile")"
+[[ "$dockerfile" == *'PYRIGHT_PYTHON_ENV_DIR=/opt/pyright/nodeenv'* ]] || fail "Pyright runtime location is not retained"
+[[ "$dockerfile" == *'PYRIGHT_PYTHON_GLOBAL_NODE=0'* ]] || fail "Pyright can escape to an ambient Node runtime"
+[[ "$dockerfile" == *'PYRIGHT_NODE_VERSION=26.5.0'* ]] || fail "Pyright Node bootstrap is not version-pinned"
+[[ "$dockerfile" == *'PYRIGHT_PYTHON_NODE_VERSION="${PYRIGHT_NODE_VERSION}" python -m pyright --version'* ]] || fail "Pyright runtime is not bootstrapped during the image build"
+[[ "$dockerfile" == *'/opt/pyright/node-version'* ]] || fail "Pyright Node identity is not recorded"
+entrypoint="$(cat "$repo/tools/sugar-build/entrypoint.sh")"
+[[ "$entrypoint" == *'/opt/pyright/node-version'* ]] || fail "entrypoint does not verify the embedded Pyright runtime"
+
 cat >"$tmp/bin/ssh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$FAKE_SSH_LOG"

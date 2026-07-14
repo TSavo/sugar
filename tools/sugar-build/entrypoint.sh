@@ -11,6 +11,9 @@ contract_mismatch() {
 [[ "$(python --version | awk '{print $2}')" == 3.12.13 ]] || contract_mismatch python
 [[ "$(black --version | awk 'NR == 1 {print $2}')" == 26.5.1 ]] || contract_mismatch black
 [[ "$(python -m pyright --version | awk '$1 == "pyright" {print $2}')" == 1.1.411 ]] || contract_mismatch pyright
+[[ -x /opt/pyright/nodeenv/bin/node ]] || contract_mismatch pyright-node
+[[ "$(python -c 'from pyright.node import version; print("node " + ".".join(map(str, version("node"))))')" == "$(cat /opt/pyright/node-version)" ]] \
+  || contract_mismatch pyright-node
 [[ "$(b3sum --version | awk '{print $2}')" == 1.8.1 ]] || contract_mismatch b3sum
 
 if [[ -f /opt/sugar/required-artifacts.json ]]; then
