@@ -177,6 +177,7 @@ impl std::fmt::Display for LiftPluginDiagnosticPayload {
 pub(crate) enum LiftPluginError {
     MissingBinary { binary: String },
     Refused(Box<CompositionBoundaryMemento>),
+    FatalFactoryPanic(sugar_compiler::kit_path::FactoryPanicRpcError),
     Diagnostic(LiftPluginDiagnosticPayload),
 }
 
@@ -197,6 +198,7 @@ impl From<LiftPluginKitError> for LiftPluginError {
     fn from(value: LiftPluginKitError) -> Self {
         match value {
             LiftPluginKitError::MissingBinary { binary } => Self::MissingBinary { binary },
+            LiftPluginKitError::FatalFactoryPanic(error) => Self::FatalFactoryPanic(error),
             LiftPluginKitError::Failed(message) => Self::diagnostic(
                 LiftPluginDiagnosticKind::Transport,
                 "lift-plugin.transport",
@@ -217,6 +219,7 @@ impl std::fmt::Display for LiftPluginError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MissingBinary { binary } => write!(f, "lifter binary `{binary}` not found"),
+            Self::FatalFactoryPanic(error) => error.fmt(f),
             Self::Refused(refusal) => write!(
                 f,
                 "composition refused: {}: {}",
@@ -448,6 +451,19 @@ fn resolved_absolute_working_dir(
 fn lift_error_from_path(error: PathExecutionError) -> LiftPluginError {
     match error {
         PathExecutionError::Refused(refusal) => LiftPluginError::Refused(refusal),
+        PathExecutionError::Kit(libsugar::core::KitError::Terminal { kind, detail })
+            if kind == "FactoryPanic" =>
+        {
+            match sugar_compiler::kit_path::FactoryPanicRpcError::from_terminal_detail(detail) {
+                Some(error) => LiftPluginError::FatalFactoryPanic(error),
+                None => LiftPluginError::diagnostic(
+                    LiftPluginDiagnosticKind::InvalidResponsePayload,
+                    "lift-plugin.error.data",
+                    "typed FactoryPanic terminal payload was malformed",
+                    "Preserve code, message, stage, and diagnostic while routing KitError::Terminal through path execution.",
+                ),
+            }
+        }
         PathExecutionError::Kit(error) => match error {
             libsugar::core::KitError::Transformation(message)
                 if message.starts_with("lift plugin transport:") =>

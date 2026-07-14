@@ -786,6 +786,10 @@ fn run_inspect(args: PackageInspectArgs) -> u8 {
             );
             EXIT_VERIFY_FAIL
         }
+        Err(LiftPluginError::FatalFactoryPanic(error)) => {
+            eprintln!("{}: {error}", "error".red().bold());
+            EXIT_VERIFY_FAIL
+        }
         Err(LiftPluginError::Diagnostic(error)) => {
             eprintln!("{}: {error}", "error".red().bold());
             EXIT_VERIFY_FAIL

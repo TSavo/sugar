@@ -196,6 +196,13 @@ pub enum KitError {
     /// Transforming input into a domain claim failed.
     #[error("kit transform failed: {0}")]
     Transformation(String),
+    /// A kit reached a typed terminal condition. Callers must preserve this
+    /// variant rather than treating it as a recoverable transformation error.
+    #[error("kit terminal {kind}: {detail}")]
+    Terminal {
+        kind: String,
+        detail: serde_json::Value,
+    },
     /// Serialization failed inside a stub or concrete kit.
     #[error("kit serialization failed: {0}")]
     Serialization(String),

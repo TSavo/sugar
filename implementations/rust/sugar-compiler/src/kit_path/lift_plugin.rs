@@ -7,6 +7,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sugar_ir_types::{IrFormula, IrTerm, Sort};
 // BOUNDARY IMPURITY (flagged in SEAM 3b review, not fixed here): this pulls
@@ -97,6 +98,7 @@ pub struct LiftPluginKit {
     lift_method: String,
     question_cache: std::sync::Arc<Mutex<sugar_lift_rpc_client::QuestionCache>>,
     resident: std::sync::Arc<ResidentSlot>,
+    terminal_factory_panic: std::sync::Arc<Mutex<Option<FactoryPanicRpcError>>>,
 }
 
 struct ResidentSlot(Mutex<Option<ResidentLifter>>);
@@ -180,6 +182,7 @@ impl LiftPluginKit {
                 sugar_lift_rpc_client::QuestionCache::default(),
             )),
             resident: std::sync::Arc::new(ResidentSlot(Mutex::new(None))),
+            terminal_factory_panic: std::sync::Arc::new(Mutex::new(None)),
         }
     }
 
@@ -337,6 +340,14 @@ impl LiftPluginKit {
     }
 
     fn dispatch(&self, lift_params: &Value) -> Result<(Value, Value), LiftPluginKitError> {
+        if let Some(error) = self
+            .terminal_factory_panic
+            .lock()
+            .map_err(|_| LiftPluginKitError::Failed("terminal RPC state poisoned".to_string()))?
+            .clone()
+        {
+            return Err(LiftPluginKitError::FatalFactoryPanic(error));
+        }
         if self.command.is_empty() {
             return Err(LiftPluginKitError::Failed(
                 "lift plugin command is empty".to_string(),
@@ -356,7 +367,10 @@ impl LiftPluginKit {
         if resident_enabled() {
             match self.dispatch_resident(lift_params) {
                 Ok(pair) => return Ok(pair),
-                Err(ResidentDispatchError::Fatal(e)) => return Err(e),
+                Err(ResidentDispatchError::Fatal(error)) => {
+                    self.remember_terminal_factory_panic(&error)?;
+                    return Err(error);
+                }
                 Err(ResidentDispatchError::Retry) => {
                     // Resident connection died mid-flight (broken pipe,
                     // process exited, etc). Fall through to a one-shot
@@ -368,7 +382,13 @@ impl LiftPluginKit {
         }
 
         let (initialize_response, response, mut child, mut stdin, _reader) =
-            self.spawn_and_run_once(lift_params)?;
+            match self.spawn_and_run_once(lift_params) {
+                Ok(session) => session,
+                Err(error) => {
+                    self.remember_terminal_factory_panic(&error)?;
+                    return Err(error);
+                }
+            };
         let shutdown_req = json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"});
         let shutdown_frame = format!("{shutdown_req}\n");
         trace_frame("cli_to_kit", &shutdown_frame, "write_stdin.enter");
@@ -397,6 +417,21 @@ impl LiftPluginKit {
             )));
         }
         Ok((initialize_response, response))
+    }
+
+    fn remember_terminal_factory_panic(
+        &self,
+        error: &LiftPluginKitError,
+    ) -> Result<(), LiftPluginKitError> {
+        let LiftPluginKitError::FatalFactoryPanic(error) = error else {
+            return Ok(());
+        };
+        *self
+            .terminal_factory_panic
+            .lock()
+            .map_err(|_| LiftPluginKitError::Failed("terminal RPC state poisoned".to_string()))? =
+            Some(error.clone());
+        Ok(())
     }
 
     /// Spawn a fresh child, run exactly one `initialize` + one lift call
@@ -596,6 +631,7 @@ impl LiftPluginKit {
                 next_id: 3,
                 initialize_response,
                 first_lift_response: Some(first_response),
+                shutdown_allowed: true,
             });
         }
 
@@ -649,10 +685,13 @@ impl LiftPluginKit {
         match read_response(&entry.reader, id) {
             Ok(response) => Ok((initialize_response, response)),
             Err(error) => {
-                slot.take();
                 if error.is_transport_stop_the_line() {
+                    if let Some(mut entry) = slot.take() {
+                        entry.abort_without_shutdown();
+                    }
                     Err(ResidentDispatchError::Fatal(error))
                 } else {
+                    slot.take();
                     Err(ResidentDispatchError::retry_after(error.to_string()))
                 }
             }
@@ -686,6 +725,8 @@ struct ResidentLifter {
     /// historical one-shot protocol); consumed by the first
     /// `dispatch_resident` call against a freshly (re)spawned entry.
     first_lift_response: Option<Value>,
+    /// Fatal protocol frames forbid shutdown-as-recovery; false means kill only.
+    shutdown_allowed: bool,
 }
 
 impl ResidentLifter {
@@ -693,8 +734,19 @@ impl ResidentLifter {
     /// replaced). Never blocks the caller on a hung process: errors here
     /// are swallowed, the entry is being dropped regardless.
     fn shutdown_best_effort(&mut self) {
+        if !self.shutdown_allowed {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            return;
+        }
         let shutdown_req = json!({"jsonrpc": "2.0", "id": 0, "method": "shutdown"});
         let _ = writeln!(self.stdin, "{shutdown_req}");
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
+    fn abort_without_shutdown(&mut self) {
+        self.shutdown_allowed = false;
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -780,6 +832,21 @@ impl LiftKit {
     }
 }
 
+fn lift_plugin_error_to_kit(error: LiftPluginKitError) -> KitError {
+    match error {
+        LiftPluginKitError::FatalFactoryPanic(fatal) => KitError::Terminal {
+            kind: "FactoryPanic".to_string(),
+            detail: json!({
+                "code": fatal.code,
+                "message": fatal.message,
+                "stage": fatal.stage,
+                "diagnostic": fatal.diagnostic,
+            }),
+        },
+        other => KitError::Transformation(format!("lift plugin transport: {other}")),
+    }
+}
+
 impl Kit for LiftKit {
     fn dialect(&self) -> Dialect {
         self.dialect.clone()
@@ -794,7 +861,7 @@ impl Kit for LiftKit {
             .transport
             .parse_session(&spec_input)
             .map(|session| session.claim)
-            .map_err(|error| KitError::Transformation(format!("lift plugin transport: {error}")))?;
+            .map_err(lift_plugin_error_to_kit)?;
         claim.from = vec![address(input)];
         Ok(claim)
     }
@@ -822,7 +889,7 @@ impl Kit for LiftPluginKit {
     fn transform(&self, input: &Input) -> Result<DomainClaim, KitError> {
         self.parse_session(input)
             .map(|session| session.claim)
-            .map_err(|error| KitError::Transformation(format!("lift plugin transport: {error}")))
+            .map_err(lift_plugin_error_to_kit)
     }
 
     fn prove(&self, claim: DomainClaim) -> Result<DomainClaim, KitError> {
@@ -876,6 +943,10 @@ pub enum LiftPluginKitError {
     /// The JSON-RPC session failed.
     #[error("{0}")]
     Failed(String),
+    /// The plugin reported its mandatory construction panic. This terminal
+    /// protocol state may not be retried or converted to a normal diagnostic.
+    #[error("{0}")]
+    FatalFactoryPanic(FactoryPanicRpcError),
     /// The response term was no longer the deprecated JSON escape-hatch shape.
     #[error("lift plugin term no longer carries a legacy response")]
     LegacyResponseUnavailable,
@@ -883,8 +954,69 @@ pub enum LiftPluginKitError {
 
 impl LiftPluginKitError {
     fn is_transport_stop_the_line(&self) -> bool {
-        matches!(self, Self::Failed(message) if message.contains("lift plugin transport stalled") || message.contains("lift plugin transport disconnected"))
+        matches!(self, Self::FatalFactoryPanic(_))
+            || matches!(self, Self::Failed(message) if message.contains("lift plugin transport stalled") || message.contains("lift plugin transport disconnected"))
     }
+}
+
+/// Typed terminal payload emitted when the Python lift boundary reaches a
+/// mandatory Factory construction gap.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FactoryPanicRpcError {
+    pub code: i64,
+    pub message: String,
+    pub stage: String,
+    pub diagnostic: Value,
+}
+
+impl FactoryPanicRpcError {
+    pub fn from_terminal_detail(detail: Value) -> Option<Self> {
+        Some(Self {
+            code: detail.get("code")?.as_i64()?,
+            message: detail.get("message")?.as_str()?.to_string(),
+            stage: detail.get("stage")?.as_str()?.to_string(),
+            diagnostic: detail.get("diagnostic")?.clone(),
+        })
+    }
+}
+
+impl std::fmt::Display for FactoryPanicRpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "fatal lift plugin FactoryPanic code={} stage={}: {} diagnostic={}",
+            self.code, self.stage, self.message, self.diagnostic
+        )
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct FactoryPanicRpcData {
+    exception_type: String,
+    stage: String,
+    diagnostic: Value,
+}
+
+fn decode_rpc_error(error: &Value) -> LiftPluginKitError {
+    let code = error.get("code").and_then(Value::as_i64);
+    let message = error.get("message").and_then(Value::as_str);
+    let data = error
+        .get("data")
+        .cloned()
+        .and_then(|data| serde_json::from_value::<FactoryPanicRpcData>(data).ok());
+
+    if let (Some(-32603), Some(message), Some(data)) = (code, message, data) {
+        if data.exception_type == "FactoryPanic" && data.stage == "dispatch" {
+            return LiftPluginKitError::FatalFactoryPanic(FactoryPanicRpcError {
+                code: -32603,
+                message: message.to_string(),
+                stage: data.stage,
+                diagnostic: data.diagnostic,
+            });
+        }
+    }
+
+    LiftPluginKitError::Failed(format!("lift plugin returned error: {error}"))
 }
 
 fn lift_request_from_input(input: &Input) -> Result<&Value, LiftPluginKitError> {
@@ -1032,9 +1164,7 @@ fn read_response_with_deadline(
         )));
     }
     if let Some(error) = value.get("error") {
-        return Err(LiftPluginKitError::Failed(format!(
-            "lift plugin returned error: {error}"
-        )));
+        return Err(decode_rpc_error(error));
     }
     let result = value
         .get("result")
@@ -1177,5 +1307,158 @@ mod tests {
             "{detail}"
         );
         let _ = child.wait();
+    }
+
+    fn protocol_stub(log_path: &std::path::Path) -> (tempfile::TempDir, Vec<String>) {
+        let temp = tempfile::tempdir().expect("tempdir for protocol stub");
+        let script = temp.path().join("lift_stub.py");
+        let source = r#"
+import json
+import os
+import sys
+
+log_path = sys.argv[1]
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request["method"]
+    mode = request.get("params", {}).get("mode", "none")
+    with open(log_path, "a", encoding="utf-8") as log:
+        log.write(f"{os.getpid()}:{method}:{mode}\n")
+    if method == "initialize":
+        response = {"jsonrpc": "2.0", "id": request["id"], "result": {"name": "stub"}}
+    elif method == "lift" and mode == "fatal":
+        response = {
+            "jsonrpc": "2.0",
+            "id": request["id"],
+            "error": {
+                "code": -32603,
+                "message": "FACTORY PANIC: write more Floor for this Construction",
+                "data": {
+                    "exception_type": "FactoryPanic",
+                    "stage": "dispatch",
+                    "diagnostic": {
+                        "owner": "rpc-fixture",
+                        "blame": "fixture.py:1:0",
+                        "observed": "missing",
+                        "requested": "value",
+                        "fix": "construct the missing Floor",
+                        "gap_kind": "Floor",
+                        "gap_locus": "Construction"
+                    }
+                }
+            }
+        }
+        print(json.dumps(response), flush=True)
+        raise SystemExit(1)
+    elif method == "lift":
+        response = {"jsonrpc": "2.0", "id": request["id"], "result": {"kind": "ir-document", "ir": []}}
+    elif method == "shutdown":
+        response = {"jsonrpc": "2.0", "id": request["id"], "result": None}
+        print(json.dumps(response), flush=True)
+        break
+    else:
+        raise AssertionError(method)
+    print(json.dumps(response), flush=True)
+"#;
+        std::fs::write(&script, source).expect("write protocol stub");
+        (
+            temp,
+            vec![
+                "python3".to_string(),
+                script.to_string_lossy().into_owned(),
+                log_path.to_string_lossy().into_owned(),
+            ],
+        )
+    }
+
+    fn protocol_log(path: &std::path::Path) -> Vec<String> {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn factory_panic_bad_twin_is_terminal_without_retry_shutdown_artifact_or_next_request() {
+        let temp = tempfile::tempdir().expect("test tempdir");
+        let log_path = temp.path().join("requests.log");
+        let (_stub, command) = protocol_stub(&log_path);
+        let kit = LiftPluginKit::new("python", command, None);
+
+        let control = kit
+            .parse_session(&Input::Spec(json!({
+                "workspace_root": ".",
+                "mode": "control"
+            })))
+            .expect("control request establishes a resident process");
+        assert_eq!(control.response()["kind"], "ir-document");
+        assert_eq!(control.claim.artifacts.len(), 1);
+
+        let error = kit
+            .parse_session(&Input::Spec(json!({
+                "workspace_root": ".",
+                "mode": "fatal"
+            })))
+            .expect_err("typed FactoryPanic frame must terminate without a claim/artifact");
+        let LiftPluginKitError::FatalFactoryPanic(fatal) = error else {
+            panic!("FactoryPanic must remain typed, got {error:?}");
+        };
+        assert_eq!(fatal.code, -32603);
+        assert_eq!(fatal.stage, "dispatch");
+        assert_eq!(fatal.diagnostic["owner"], "rpc-fixture");
+
+        let next = kit
+            .parse_session(&Input::Spec(json!({
+                "workspace_root": ".",
+                "mode": "after-fatal"
+            })))
+            .expect_err("terminal kit state must refuse every later request locally");
+        assert!(matches!(next, LiftPluginKitError::FatalFactoryPanic(_)));
+
+        let frames = protocol_log(&log_path);
+        assert_eq!(
+            frames.len(),
+            3,
+            "fatal frame may not trigger retry or fallback: {frames:?}"
+        );
+        let pid = frames[0].split(':').next().expect("pid");
+        assert_eq!(frames[0], format!("{pid}:initialize:none"));
+        assert_eq!(frames[1], format!("{pid}:lift:control"));
+        assert_eq!(frames[2], format!("{pid}:lift:fatal"));
+        assert!(
+            frames.iter().all(|frame| !frame.contains(":shutdown:")),
+            "fatal teardown must kill, not send shutdown as recovery: {frames:?}"
+        );
+    }
+
+    #[test]
+    fn successful_control_twin_reuses_resident_and_returns_artifacts_normally() {
+        let temp = tempfile::tempdir().expect("test tempdir");
+        let log_path = temp.path().join("requests.log");
+        let (_stub, command) = protocol_stub(&log_path);
+        let kit = LiftPluginKit::new("python", command, None);
+
+        for mode in ["control-one", "control-two"] {
+            let session = kit
+                .parse_session(&Input::Spec(json!({
+                    "workspace_root": ".",
+                    "mode": mode
+                })))
+                .expect("ordinary result remains reusable");
+            assert_eq!(session.response()["kind"], "ir-document");
+            assert_eq!(session.claim.artifacts.len(), 1);
+        }
+
+        let frames = protocol_log(&log_path);
+        assert_eq!(
+            frames.len(),
+            3,
+            "control requests should share one resident: {frames:?}"
+        );
+        let pid = frames[0].split(':').next().expect("pid");
+        assert_eq!(frames[0], format!("{pid}:initialize:none"));
+        assert_eq!(frames[1], format!("{pid}:lift:control-one"));
+        assert_eq!(frames[2], format!("{pid}:lift:control-two"));
     }
 }
