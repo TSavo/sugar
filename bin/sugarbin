@@ -1,6 +1,93 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=bin/lib/sugar-exec.sh
+source "$script_dir/lib/sugar-exec.sh"
+
+dispatch_execution_subcommand() {
+  local subcommand="$1"
+  shift
+
+  local host="local"
+  local execution_env="ambient"
+  local requested_platform=""
+  local needs=""
+  local saw_boundary=0
+  local -a command=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host)
+        [[ $# -ge 2 ]] || { echo "sugarbin: --host requires a value" >&2; return 2; }
+        host="$2"
+        shift 2
+        ;;
+      --env)
+        [[ $# -ge 2 ]] || { echo "sugarbin: --env requires a value" >&2; return 2; }
+        execution_env="$2"
+        shift 2
+        ;;
+      --platform)
+        [[ $# -ge 2 ]] || { echo "sugarbin: --platform requires a value" >&2; return 2; }
+        requested_platform="$2"
+        shift 2
+        ;;
+      --needs)
+        [[ $# -ge 2 ]] || { echo "sugarbin: --needs requires a value" >&2; return 2; }
+        needs="$2"
+        shift 2
+        ;;
+      --)
+        saw_boundary=1
+        shift
+        command=("$@")
+        break
+        ;;
+      *)
+        echo "sugarbin: unknown $subcommand argument: $1" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  if [[ "$subcommand" == build ]]; then
+    echo "sugarbin: build subcommand requires artifact-manifest implementation" >&2
+    return 2
+  fi
+
+  local observed_platform
+  observed_platform="$(sugar_exec_platform_key)"
+  sugar_exec_validate_route "$host" "$execution_env" "$requested_platform" "$observed_platform" || return $?
+
+  if [[ "$subcommand" == explain ]]; then
+    [[ "$saw_boundary" == 0 ]] || { echo "sugarbin: explain does not accept a command" >&2; return 2; }
+    printf 'host=%s\n' "$host"
+    printf 'env=%s\n' "$execution_env"
+    printf 'platform=%s\n' "$observed_platform"
+    printf 'needs=%s\n' "$needs"
+    return 0
+  fi
+
+  [[ "$saw_boundary" == 1 && ${#command[@]} -gt 0 ]] || {
+    printf 'sugarbin: %s requires -- followed by a command\n' "$subcommand" >&2
+    return 2
+  }
+  if [[ "$subcommand" == cargo ]]; then
+    command=(cargo "${command[@]}")
+  fi
+  sugar_exec_local_run "${command[@]}"
+}
+
+case "${1:-}" in
+  run|cargo|build|explain)
+    subcommand="$1"
+    shift
+    dispatch_execution_subcommand "$subcommand" "$@"
+    exit $?
+    ;;
+esac
+
 usage() {
   cat <<'EOF'
 usage: bin/sugarbin [--bin <name>] [--profile release|debug] [--platform <auto|key>] [--print-source-stamp]
@@ -95,7 +182,6 @@ package_for_bin() {
 
 package="$(package_for_bin "$bin_name")" || exit 2
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(git -C "$script_dir/.." rev-parse --show-toplevel 2>/dev/null || (cd "$script_dir/.." && pwd -P))"
 repo_root="$(cd "$repo_root" && pwd -P)"
 rust_workspace="$repo_root/implementations/rust"
