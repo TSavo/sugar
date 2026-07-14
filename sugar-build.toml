@@ -7,6 +7,15 @@ python = "3.12.13"
 black = "26.5.1"
 pyright = "1.1.411"
 b3sum = "1.8.1"
+z3 = "4.8.12"
+coq = "8.18.0"
+numpy = "2.5.1"
+pandas = "3.0.3"
+java = "21"
+maven = "3.8.7"
+node = "22.17.1"
+pnpm = "10.13.1"
+vampire = "5.0.1"
 
 [capabilities.core]
 depends = []
@@ -31,7 +40,32 @@ capabilities = ["core"]
 binaries = []
 command = ["python", "-m", "pytest"]
 
+[tasks.python-lift]
+capabilities = ["python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-m", "pytest"]
+
+[tasks.rust-unit]
+capabilities = ["solver-z3"]
+binaries = []
+command = ["cargo", "test", "--manifest-path", "implementations/rust/Cargo.toml"]
+
 [tasks.examples-gate]
 capabilities = ["python-scientific", "solver-z3", "solver-coq", "java", "node", "vampire"]
 binaries = ["sugar", "sugar-ir-smt-lib"]
 command = ["make", "examples-gate"]
+
+[tasks.pandas-wall]
+capabilities = ["python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "tools/pandas_wall.py"]
+
+[tasks.numpy-wall]
+capabilities = ["python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "tools/numpy_wall.py"]
+
+[tasks.restored-suite-scoreboard]
+capabilities = ["python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["bash", "scripts/test-3809-dod-scoreboard.sh"]

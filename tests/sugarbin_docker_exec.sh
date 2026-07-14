@@ -12,6 +12,13 @@ dockerfile="$(cat "$repo/tools/sugar-build/Dockerfile")"
 [[ "$dockerfile" == *'PYRIGHT_NODE_VERSION=26.5.0'* ]] || fail "Pyright Node bootstrap is not version-pinned"
 [[ "$dockerfile" == *'PYRIGHT_PYTHON_NODE_VERSION="${PYRIGHT_NODE_VERSION}" python -m pyright --version'* ]] || fail "Pyright runtime is not bootstrapped during the image build"
 [[ "$dockerfile" == *'/opt/pyright/node-version'* ]] || fail "Pyright Node identity is not recorded"
+for stage in solver-z3 solver-coq python-scientific java node vampire; do
+  [[ "$dockerfile" == *"AS $stage"* ]] || fail "missing additive $stage stage"
+done
+[[ "$dockerfile" == *'z3 --version'* ]] || fail "z3 stage has no smoke command"
+[[ "$dockerfile" == *'import numpy, pandas'* ]] || fail "scientific stage has no import smoke"
+[[ "$dockerfile" == *'node --version'* && "$dockerfile" == *'pnpm --version'* ]] || fail "node stage has no smoke commands"
+[[ "$dockerfile" == *'vampire --version'* ]] || fail "vampire stage has no smoke command"
 entrypoint="$(cat "$repo/tools/sugar-build/entrypoint.sh")"
 [[ "$entrypoint" == *'/opt/pyright/node-version'* ]] || fail "entrypoint does not verify the embedded Pyright runtime"
 
@@ -55,6 +62,12 @@ run() {
 core="$(python3 "$repo/tools/sugar-build/contract.py" resolve-environment docker:core)"
 core_ref="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["image"])' <<<"$core")"
 [[ "$core_ref" == *@sha256:* ]] || fail "core did not resolve immutably"
+
+run run --host bx --task python-unit -- -q >/dev/null
+line="$(tail -1 "$tmp/docker.log")"
+[[ "$line" == *"'$core_ref'"* ]] || fail "python-unit did not select managed core"
+[[ "$line" == *"'python' '-m' 'pytest' '-q'"* ]] || fail "python-unit command did not always execute"
+: >"$tmp/docker.log"
 # Task 7 publishes solver-z3. Exercise its distinct closure selection against a
 # fixture contract without making a false capability claim in the live contract.
 cp "$repo/sugar-build.toml" "$tmp/solver-contract.toml"

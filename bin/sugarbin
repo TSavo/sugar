@@ -118,6 +118,11 @@ dispatch_execution_subcommand() {
     else
       command=("${task_command[@]}")
     fi
+    # A named task on the managed remote owns its capability closure; wrappers
+    # do not recreate that environment policy.
+    if [[ "$host" == bx && "$execution_env" == ambient ]]; then
+      execution_env="docker:$task_capabilities"
+    fi
   fi
 
   local route_env="${execution_env%%:*}" docker_image=""
