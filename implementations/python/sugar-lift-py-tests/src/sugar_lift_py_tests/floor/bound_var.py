@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from .floor_value import FloorValue
+
+
+_UNSET_OUTCOME = object()
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,13 @@ class BoundVar(FloorValue):
     # the current scope, so a self-referential rebind (`x = x + 1`) reads the old x and
     # terminates instead of recomposing against itself forever.
     scope: object = None
+    # A definition-scoped alias has one semantic answer. Keep the source and scope
+    # intact for temporal rewrites, while retaining the exact Outcome produced by
+    # their first composition. Unscoped aliases remain context-dependent and are
+    # deliberately never cached.
+    _cached_outcome: object = field(
+        default=_UNSET_OUTCOME, init=False, compare=False, repr=False
+    )
 
     def contribution(self):
         # A let is support: present, threaded into scope, contributes nothing to the
@@ -38,8 +48,18 @@ class BoundVar(FloorValue):
         return replace(ctx, temporal=ctx.temporal.bind_value(self.name, self))
 
     def answer(self, ctx=None):
-        # A reference recomposes the source against the DEFINITION scope.
-        return self.source.reduce(self.scope if self.scope is not None else ctx)
+        # A context-dependent alias has no stable definition key, so recompute it
+        # against each caller rather than leaking one caller's answer into another.
+        if self.scope is None:
+            return self.source.reduce(ctx)
+
+        # A definition-scoped alias is semantically fixed. Reduce its recoverable
+        # source once against the captured old scope, then replay that same Outcome.
+        outcome = self._cached_outcome
+        if outcome is _UNSET_OUTCOME:
+            outcome = self.source.reduce(self.scope)
+            object.__setattr__(self, "_cached_outcome", outcome)
+        return outcome
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.outcome import complete_value
