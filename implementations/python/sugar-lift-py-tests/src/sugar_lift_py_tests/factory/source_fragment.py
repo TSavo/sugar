@@ -5,6 +5,16 @@ import re
 from dataclasses import dataclass
 from typing import List, cast
 
+# The one source-through-the-AST API: table-backed and idempotent behind the
+# scenes, so every segment/ancestor request here is an O(1) lookup after the
+# first. Nothing in this file touches ast.get_source_segment or re-parses.
+from sugar_lift_python_source.source_tables import (
+    parsed_parents as _parsed_tree_and_parents,
+)
+from sugar_lift_python_source.source_tables import (
+    source_segment as _cached_source_segment,
+)
+
 from .block import Block
 
 
@@ -52,7 +62,15 @@ def _annotation_roots(node: ast.AST) -> list[ast.AST]:
 
 
 def _mark_runtime_statement(node: ast.stmt) -> ast.stmt:
-    """Partition a statement's expressions into runtime and annotation faces."""
+    """Partition a statement's expressions into runtime and annotation faces.
+
+    Idempotent per node, so the partition is computed ONCE and stamped; every
+    later request for the same statement is a flag check, not two tree walks
+    (`statements()` is called per site, so re-walking was quadratic per module).
+    """
+    if getattr(node, "_sugar_runtime_marked", False):
+        return node
+    node._sugar_runtime_marked = True  # type: ignore[attr-defined]
     annotation_nodes = {
         descendant for root in _annotation_roots(node) for descendant in ast.walk(root)
     }
@@ -154,11 +172,11 @@ class SourceFragment:
                 segments = [
                     seg
                     for stmt in statements
-                    if (seg := ast.get_source_segment(self.source, stmt)) is not None
+                    if (seg := _cached_source_segment(self.source, stmt)) is not None
                 ]
                 segment = "\n".join(segments) if segments else None
             else:
-                segment = ast.get_source_segment(self.source, self.node)
+                segment = _cached_source_segment(self.source, self.node)
         if segment is None:
             from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
             from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
@@ -197,15 +215,10 @@ class SourceFragment:
     def _has_source_ancestor(self, wanted: tuple[type[ast.AST], ...]) -> bool:
         if self.source is None:
             return False
-        try:
-            tree = ast.parse(self.source)
-        except SyntaxError:
+        parsed = _parsed_tree_and_parents(self.source)
+        if parsed is None:
             return False
-        parents = {
-            child: parent
-            for parent in ast.walk(tree)
-            for child in ast.iter_child_nodes(parent)
-        }
+        tree, parents = parsed
         target = next(
             (
                 node
@@ -239,10 +252,10 @@ class SourceFragment:
             return True
         if self.source is None:
             return False
-        try:
-            tree = ast.parse(self.source)
-        except SyntaxError:
+        parsed = _parsed_tree_and_parents(self.source)
+        if parsed is None:
             return False
+        tree, _ = parsed
         target = next(
             (
                 node
@@ -268,7 +281,33 @@ class SourceFragment:
     def fragments(self) -> List["SourceFragment"]:
         """The immediate child fragments, in source order. A `list[stmt]` suite (a
         `body`/`orelse`) becomes ONE Block fragment (it composes its own statements);
-        every other AST child is its own fragment."""
+        every other AST child is its own fragment.
+
+        Idempotent per (node, filename, source), so the decomposition is a
+        node-stamped table: computed once, an O(1) lookup on every later request
+        (callers re-decompose the same fragments per site). Stamping also makes
+        suite Block identity STABLE -- the same `body` always yields the same
+        Block node instead of a fresh synthetic per call.
+        """
+        cached = getattr(self.node, "_sugar_fragments_cache", None)
+        if (
+            cached is not None
+            and cached[0] == self.filename
+            and cached[1] is self.source
+        ):
+            return list(cached[2])
+        children = self._compute_fragments()
+        try:
+            self.node._sugar_fragments_cache = (  # type: ignore[attr-defined]
+                self.filename,
+                self.source,
+                tuple(children),
+            )
+        except AttributeError:
+            pass
+        return children
+
+    def _compute_fragments(self) -> List["SourceFragment"]:
         node = self.node
         if isinstance(node, Block):
             return [
@@ -990,6 +1029,9 @@ class SourceFragment:
 
         Wraps ast.parse() internally; callers never need to import ast.
         """
+        # NOT routed through the parsed_tree table: fragment pipelines MUTATE
+        # their tree (annotation/loop-context marks), so the root parse must be
+        # a private copy. The idempotent read-only tables cover everything else.
         tree = ast.parse(source, filename=filename)
         return cls.from_node(tree, filename, source=source)
 
@@ -1016,17 +1058,35 @@ class SourceFragment:
 
         Wraps ast.get_source_segment() so callers never import ast.
         """
-        return ast.get_source_segment(source, self.node)
+        return _cached_source_segment(source, self.node)
 
     def walk(self) -> "list[SourceFragment]":
         """Return all descendant fragments in depth-first pre-order.
 
         Replaces ast.walk() for callers that must not import ast.
+
+        Rides the same node-stamped table as fragments(): the full pre-order is
+        derived once per (node, filename, source) and looked up thereafter.
         """
+        cached = getattr(self.node, "_sugar_walk_cache", None)
+        if (
+            cached is not None
+            and cached[0] == self.filename
+            and cached[1] is self.source
+        ):
+            return list(cached[2])
         result: list[SourceFragment] = []
         for child in self.fragments():
             result.append(child)
             result.extend(child.walk())
+        try:
+            self.node._sugar_walk_cache = (  # type: ignore[attr-defined]
+                self.filename,
+                self.source,
+                tuple(result),
+            )
+        except AttributeError:
+            pass
         return result
 
     def is_node_type(self, *kinds) -> bool:

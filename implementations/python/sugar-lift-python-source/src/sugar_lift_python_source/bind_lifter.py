@@ -10,6 +10,7 @@ from typing import Any, Iterable
 
 from .ast_template import function_body_template, function_param_names
 from .canonical import blake3_512_of, cid_of_json, template_cid_of_json
+from .source_tables import parsed_tree
 
 Json = Any
 CID_RE = re.compile(r"^blake3-512:[0-9a-f]{128}$")
@@ -432,7 +433,7 @@ def _public_reexport_map(workspace_root: Path) -> dict[str, tuple[str, str]] | N
             continue
         try:
             current_src = current_file.read_text(encoding="utf-8")
-            current_tree = ast.parse(current_src, filename=str(current_file))
+            current_tree = parsed_tree(current_src, filename=str(current_file))
         except (OSError, SyntaxError):
             continue
         for node in ast.walk(current_tree):

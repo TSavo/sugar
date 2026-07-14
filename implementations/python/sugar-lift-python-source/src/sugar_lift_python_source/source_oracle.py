@@ -32,6 +32,7 @@ from .ast_template import (
 )
 from .bind_lifter import _body_source_locator
 from .canonical import blake3_512_of, template_cid_of_json
+from .source_tables import parsed_tree, source_segment, source_splitlines
 
 
 class SourceOracleRefusal(Exception):
@@ -63,7 +64,7 @@ def resolve_source_memento(
     except OSError as exc:
         raise SourceOracleRefusal(f"cannot read source `{path}`: {exc}") from exc
     try:
-        tree = ast.parse(source, filename=str(path))
+        tree = parsed_tree(source, filename=str(path))
     except SyntaxError as exc:
         raise SourceOracleRefusal(f"cannot parse source `{path}`: {exc}") from exc
 
@@ -84,7 +85,7 @@ def resolve_source_memento(
             str(memento.get("source_kind")),
         )
     else:
-        recomputed = _body_source_locator(node, rel, source.splitlines(keepends=True))
+        recomputed = _body_source_locator(node, rel, list(source_splitlines(source)))
     # The Source Oracle's whole job is to RECONSTRUCT source + ast_template from
     # disk. Function mementos resolve to whole bodies; statement/expression
     # mementos resolve to the exact node that warranted the proof row.
@@ -130,7 +131,7 @@ def _node_source_locator(
             f"{source_kind} source node not found in `{rel_path}` near line "
             f"{span.get('start_line')}"
         )
-    body_text = ast.get_source_segment(source, node)
+    body_text = source_segment(source, node)
     if body_text is None:
         raise SourceOracleRefusal(
             f"{source_kind} source node in `{rel_path}` had no source segment"

@@ -35,6 +35,8 @@ import ast
 from dataclasses import dataclass
 from typing import Any
 
+from .source_tables import parsed_tree
+
 Json = dict[str, Any]
 
 # SMT result variable the verifier's body-discharge seam equates the call's
@@ -123,7 +125,7 @@ def collect_int_signatures(source: str, module_path: str = "") -> dict[str, _Sor
     lookup by bare leaf name would collide them."""
     out: dict[str, _Sorts] = {}
     try:
-        tree = ast.parse(source)
+        tree = parsed_tree(source)
     except SyntaxError:
         return out
 
