@@ -808,6 +808,57 @@ def test_evaluate_seed_witness_worker_failure_is_named_without_aborting_corpus(
     ] == [("bad", "BadSugar", "truthful", "pipeline", "boom from fake worker")]
 
 
+def test_verdict_construction_failure_is_reported_as_panic_vocabulary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SUGAR_WITNESS_WORKERS", "1")
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "ensure_sugar_bin",
+        lambda: Path("fake-sugar"),
+    )
+
+    def fake_run(project: Path, source: str) -> WitnessPipelineResult:
+        return WitnessPipelineResult(
+            lift_doc={
+                "factoryAuditSummary": {
+                    "factoryWalk": [{"selected": "BrokenSugar"}]
+                },
+                "ir": [{"kind": "fake"}],
+            },
+            prove_doc={},
+        )
+
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "run_source_through_real_solver",
+        fake_run,
+    )
+
+    report = evaluate_seed_witnesses(
+        (_synthetic_seed("broken", "BrokenSugar"),),
+        tmp_path,
+        catalog_count=1,
+    )
+
+    assert [
+        (failure.variant, failure.axis, failure.observed)
+        for failure in report.triple_failures
+    ] == [
+        (
+            "truthful",
+            "verdict",
+            "panic: sugar prove returned no rows: {}",
+        ),
+        (
+            "lying",
+            "verdict",
+            "panic: sugar prove returned no rows: {}",
+        ),
+    ]
+
+
 def test_duplicate_seed_names_use_independent_work_directories(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
