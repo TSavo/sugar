@@ -467,7 +467,7 @@ def _evaluate_one_seed(
                     variant=variant,
                     axis="verdict",
                     expected=witness.expected,
-                    observed=f"refused: {exc}",
+                    observed=f"panic: {exc}",
                 )
             )
             continue
