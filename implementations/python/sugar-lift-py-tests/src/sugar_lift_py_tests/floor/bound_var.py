@@ -4,7 +4,6 @@ from dataclasses import dataclass, field, replace
 
 from .floor_value import FloorValue
 
-
 _UNSET_OUTCOME = object()
 
 
