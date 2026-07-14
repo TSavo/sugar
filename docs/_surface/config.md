@@ -220,9 +220,9 @@ version = "0.4.0"
 
 ---
 
-## 8. Build Multiplexer: `bin/bcargo` Environment Variables
+## 8. Build Broker Adapters: `bin/sugarbin`, `bin/bcargo`, and `bin/brun`
 
-**What it is:** Bash wrapper that syncs Rust workspace to a remote build host (battleaxe) and runs Cargo there, with cross-checkout isolation.
+**What it is:** `bin/sugarbin` owns artifact resolution and local/battleaxe execution. `bcargo` and `brun` are thin compatibility adapters that select `--host bx`.
 
 **Where:** `/Users/tsavo/provekit/.worktrees/sugar-20260628/bin/bcargo`
 
@@ -238,9 +238,13 @@ version = "0.4.0"
 | `BCARGO_REMOTE_ROOT` | `/home/tsavo/remote/sugar-bcargo-<checkout-hash>` | Remote scratch root; per-checkout isolation via shasum of repo path |
 | `BCARGO_CLEAN_REMOTE_ROOT` | `never` | Cleanup after remote cargo: `never`, `success`, or `always` |
 | `BCARGO_CLEAN_REMOTE_ROOT_UNSAFE` | `0` | Set to 1 to allow cleanup outside `/home/tsavo/remote/sugar-bcargo-*` (safety guard) |
-| `BCARGO_PYTHON_ENV` | `1` | Set to 0 to skip Python kit venv provisioning on remote |
 | `BCARGO_SSH` | `ssh` | SSH binary to use |
 | `BCARGO_RSYNC` | `rsync` | rsync binary to use |
+
+Battleaxe ambient execution never provisions dependencies. The caller owns the
+ambient host. Select a declared immutable environment or named task for managed
+dependencies, for example `bin/sugarbin run --host bx --task python-unit -- -q`
+or `bin/sugarbin run --host bx --env docker:solver-z3 -- z3 --version`.
 
 **CLI options (bcargo-specific):**
 
@@ -248,9 +252,9 @@ version = "0.4.0"
 - `--sync-bins LIST`: Comma-separated form of `--sync-bin`
 - `--help`: Show usage
 
-**Usage:** `bcargo --sync-bin sugar cargo build --release` (builds remotely, syncs binary back)
+**Usage:** `bin/bcargo --sync-bin sugar build --release` (builds remotely, syncs the compatible binary back)
 
-**Existing docs:** Inline in `bin/bcargo` (lines 5-26); user profile memory references `reference_bcargo_cwd_and_real_exit.md`
+**Existing docs:** `docs/build-execution.md` and inline `--help` output.
 
 ---
 

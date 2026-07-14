@@ -22,6 +22,7 @@ jobs:
       # This job already runs inside the battleaxe runner container. It chooses
       # local ambient explicitly instead of trying to SSH back into its host.
       SUGAR_EXECUTION_ROUTE: local-ambient
+      SUGAR_AMBIENT_DEPENDENCY_OWNER: .github/workflows/restored-suite-scoreboard.yml
 
     steps:
       - name: Checkout
@@ -35,6 +36,25 @@ jobs:
         with:
           python-version: "3.12.13"
           cache: "pip"
+
+      - name: Install and verify ambient system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends z3 time
+          versions="$(python tools/sugar-build/contract.py tool-versions)"
+          expected_z3="$(python -c 'import json,sys; print(json.load(sys.stdin)["z3"])' <<<"$versions")"
+          expected_b3sum="$(python -c 'import json,sys; print(json.load(sys.stdin)["b3sum"])' <<<"$versions")"
+          z3 --version | tee /tmp/sugar-z3-version
+          grep -F "version $expected_z3" /tmp/sugar-z3-version
+          /usr/bin/time --version | head -1
+          if ! command -v b3sum >/dev/null 2>&1 \
+            || ! b3sum --version | grep -Fq "b3sum $expected_b3sum"; then
+            cargo install b3sum --version "$expected_b3sum" --locked
+          fi
+          b3sum --version | tee /tmp/sugar-b3sum-version
+          grep -Fx "b3sum $expected_b3sum" /tmp/sugar-b3sum-version
 
       - name: Install ambient restored-suite dependencies
         run: |
