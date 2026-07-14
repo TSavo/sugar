@@ -53,4 +53,11 @@ status=0
 [[ "$(cat "$TASK_COUNT")" == 2 ]]
 grep -Fq "run requires -- followed by a command" "$tmp/no-command.err"
 
+status=0
+"$fixture/bin/sugarbin" run --env docker -- "$tmp/record" forbidden \
+  >"$tmp/docker.out" 2>"$tmp/docker.err" || status=$?
+[[ "$status" == 2 ]]
+[[ "$(cat "$TASK_COUNT")" == 2 ]]
+grep -Fq "empty capability" "$tmp/docker.err"
+
 echo "PASS: sugarbin named task execution contract"

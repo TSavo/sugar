@@ -41,6 +41,11 @@ def test_unknown_capability_is_loud():
         contract.resolve_environment("docker:not-real")
 
 
+def test_bare_docker_environment_is_loud():
+    with pytest.raises(ContractError, match="empty capability"):
+        contract.resolve_environment("docker")
+
+
 def test_duplicate_definitions_are_loud(tmp_path):
     path = manifest(tmp_path, "schema=1\n[tools]\nrust='1'\nrust='2'\n")
     with pytest.raises(ContractError, match="duplicate"):

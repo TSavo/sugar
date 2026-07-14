@@ -39,7 +39,7 @@ dispatch_execution_subcommand() {
         ;;
       --env)
         [[ $# -ge 2 ]] || { echo "sugarbin: --env requires a value" >&2; return 2; }
-        if [[ "$2" == ambient || "$2" == docker:* ]]; then
+        if [[ "$2" == ambient || "$2" == docker || "$2" == docker:* ]]; then
           execution_env="$2"
         else
           local -a parsed_env=()

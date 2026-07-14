@@ -62,3 +62,25 @@ Focused review-fix receipts:
 - `bash tests/sugarbin_task_exec.sh "$PWD"`: PASS.
 - `bash -n bin/sugarbin tests/sugarbin_task_exec.sh`: PASS.
 - `git diff --check`: PASS.
+
+## Review fix: bare Docker environment cannot fall through to ambient
+
+The `--env` classifier initially recognized only `docker:*` as a managed
+environment. Bare `--env docker` was therefore mistaken for a forwarded
+environment-variable name, leaving the execution route ambient and allowing
+the command to run.
+
+Bare `docker` now enters the managed Docker route. The contract resolver names
+its missing capability selection loudly as `empty capability`, before route
+validation or command execution. An integration regression plants a recording
+command and proves its execution count remains zero. Other `--env NAME`
+forwarding and `docker:*` capability selection retain their existing paths.
+
+Focused review-fix receipts:
+
+- `python3 -m pytest tests/test_sugar_build_contract.py -q`: `11 passed`.
+- `bash tests/sugarbin_task_exec.sh "$PWD"`: PASS.
+- `bash tests/sugarbin_local_exec.sh "$PWD"`: PASS.
+- `bash tests/sugarbin_bx_exec.sh "$PWD"`: PASS.
+- `bash -n bin/sugarbin tests/sugarbin_task_exec.sh`: PASS.
+- `git diff --check`: PASS.

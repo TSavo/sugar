@@ -70,9 +70,12 @@ def resolve_capabilities(names, path=DEFAULT_CONTRACT):
 
 
 def resolve_environment(environment, path=DEFAULT_CONTRACT):
-    if not environment.startswith("docker:"):
+    if environment == "docker":
+        requested = []
+    elif environment.startswith("docker:"):
+        requested = environment.removeprefix("docker:").split(",")
+    else:
         raise ContractError(f"unsupported environment: {environment}")
-    requested = environment.removeprefix("docker:").split(",")
     if not requested or any(not name for name in requested):
         raise ContractError("empty capability")
     data = load_contract(path)
