@@ -1,0 +1,135 @@
+#!/usr/bin/env python3.12
+"""Strict resolver for the checked-in Sugar build contract."""
+
+import argparse
+import json
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_CONTRACT = ROOT / "sugar-build.toml"
+PUBLISHED_BINARIES = frozenset({"sugar", "sugar-ir-smt-lib"})
+IMMUTABLE_IMAGE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
+
+
+class ContractError(ValueError):
+    pass
+
+
+def load_contract(path=DEFAULT_CONTRACT):
+    try:
+        with Path(path).open("rb") as stream:
+            data = tomllib.load(stream)
+    except tomllib.TOMLDecodeError as exc:
+        message = str(exc)
+        if "overwrite" in message.lower():
+            message = f"duplicate definition: {message}"
+        raise ContractError(message) from exc
+    if set(data) - {"schema", "tools", "capabilities", "tasks", "images"}:
+        raise ContractError("unknown top-level contract key")
+    if data.get("schema") != 1:
+        raise ContractError("unsupported contract schema")
+    for section in ("tools", "capabilities", "tasks"):
+        if not isinstance(data.get(section), dict):
+            raise ContractError(f"missing {section} table")
+    return data
+
+
+def _closure(names, data):
+    capabilities = data["capabilities"]
+    visiting, visited = set(), set()
+
+    def visit(name):
+        if name not in capabilities:
+            raise ContractError(f"unknown capability: {name}")
+        if name in visiting:
+            raise ContractError(f"dependency cycle at capability: {name}")
+        if name in visited:
+            return
+        definition = capabilities[name]
+        if set(definition) != {"depends"} or not isinstance(definition["depends"], list):
+            raise ContractError(f"invalid capability definition: {name}")
+        visiting.add(name)
+        for dependency in definition["depends"]:
+            if not isinstance(dependency, str):
+                raise ContractError(f"invalid capability dependency: {name}")
+            visit(dependency)
+        visiting.remove(name)
+        visited.add(name)
+
+    for name in names:
+        visit(name)
+    return sorted(visited)
+
+
+def resolve_capabilities(names, path=DEFAULT_CONTRACT):
+    data = load_contract(path)
+    return _closure(names, data)
+
+
+def resolve_environment(environment, path=DEFAULT_CONTRACT):
+    if not environment.startswith("docker:"):
+        raise ContractError(f"unsupported environment: {environment}")
+    requested = environment.removeprefix("docker:").split(",")
+    if not requested or any(not name for name in requested):
+        raise ContractError("empty capability")
+    data = load_contract(path)
+    capabilities = _closure(requested, data)
+    image_key = ",".join(capabilities)
+    image = data.get("images", {}).get(image_key, {})
+    reference = image.get("reference") if isinstance(image, dict) else None
+    if not isinstance(reference, str) or not IMMUTABLE_IMAGE.fullmatch(reference):
+        raise ContractError(f"capability closure has no built image: {image_key}")
+    return {"capabilities": capabilities, "image": reference, "tools": dict(sorted(data["tools"].items()))}
+
+
+def resolve_task(name, path=DEFAULT_CONTRACT):
+    data = load_contract(path)
+    task = data["tasks"].get(name)
+    if task is None:
+        raise ContractError(f"unknown task: {name}")
+    if set(task) != {"capabilities", "binaries", "command"}:
+        raise ContractError(f"invalid task definition: {name}")
+    for key in ("capabilities", "binaries", "command"):
+        if not isinstance(task[key], list) or any(not isinstance(item, str) for item in task[key]):
+            raise ContractError(f"invalid task {key}: {name}")
+    if not task["command"]:
+        raise ContractError(f"empty command array for task: {name}")
+    unknown = sorted(set(task["binaries"]) - PUBLISHED_BINARIES)
+    if unknown:
+        raise ContractError(f"unknown task binary: {unknown[0]}")
+    return {"binaries": sorted(set(task["binaries"])), "capabilities": _closure(task["capabilities"], data), "command": task["command"], "task": name}
+
+
+def tool_versions(path=DEFAULT_CONTRACT):
+    return dict(sorted(load_contract(path)["tools"].items()))
+
+
+def canonical_json(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("tool-versions")
+    environment = subparsers.add_parser("resolve-environment")
+    environment.add_argument("environment")
+    task = subparsers.add_parser("resolve-task")
+    task.add_argument("task")
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "tool-versions": result = tool_versions()
+        elif args.command == "resolve-environment": result = resolve_environment(args.environment)
+        else: result = resolve_task(args.task)
+    except ContractError as exc:
+        print(f"sugar-build: {exc}", file=sys.stderr)
+        return 2
+    print(canonical_json(result))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -5,6 +5,16 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=bin/lib/sugar-exec.sh
 source "$script_dir/lib/sugar-exec.sh"
 
+sugarbin_contract_python() {
+  if command -v python3.12 >/dev/null 2>&1; then printf '%s\n' python3.12; return; fi
+  if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 12))'; then
+    printf '%s\n' python3
+    return
+  fi
+  echo "sugarbin: Python 3.12 or newer is required to resolve sugar-build.toml" >&2
+  return 2
+}
+
 dispatch_execution_subcommand() {
   local subcommand="$1"
   shift
@@ -13,6 +23,7 @@ dispatch_execution_subcommand() {
   local execution_env="ambient"
   local requested_platform=""
   local needs=""
+  local task=""
   local saw_boundary=0
   local -a command=()
   local -a path_prefixes=() env_names=() sync_backs=()
@@ -28,7 +39,7 @@ dispatch_execution_subcommand() {
         ;;
       --env)
         [[ $# -ge 2 ]] || { echo "sugarbin: --env requires a value" >&2; return 2; }
-        if [[ "$2" == ambient || "$2" == docker ]]; then
+        if [[ "$2" == ambient || "$2" == docker:* ]]; then
           execution_env="$2"
         else
           local -a parsed_env=()
@@ -65,6 +76,12 @@ dispatch_execution_subcommand() {
         needs="$2"
         shift 2
         ;;
+      --task)
+        [[ "$subcommand" == run || "$subcommand" == explain ]] || { echo "sugarbin: --task is only valid for run and explain" >&2; return 2; }
+        [[ $# -ge 2 ]] || { echo "sugarbin: --task requires a value" >&2; return 2; }
+        task="$2"
+        shift 2
+        ;;
       --)
         saw_boundary=1
         shift
@@ -80,12 +97,42 @@ dispatch_execution_subcommand() {
 
   [[ "$subcommand" != build || -n "$needs" ]] || needs="sugar"
 
+  local task_json="" task_capabilities="" task_needs=""
+  local -a task_command=()
+  if [[ -n "$task" ]]; then
+    local contract_python
+    contract_python="$(sugarbin_contract_python)" || return $?
+    task_json="$("$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-task "$task")" || return $?
+    task_capabilities="$("$contract_python" -c 'import json,sys; print(",".join(json.load(sys.stdin)["capabilities"]))' <<<"$task_json")"
+    task_needs="$("$contract_python" -c 'import json,sys; print(",".join(json.load(sys.stdin)["binaries"]))' <<<"$task_json")"
+    while IFS= read -r -d '' arg; do task_command+=("$arg"); done < <("$contract_python" -c 'import json,sys; [sys.stdout.write(x+"\0") for x in json.load(sys.stdin)["command"]]' <<<"$task_json")
+    if [[ -n "$needs" ]]; then
+      local normalized_needs
+      normalized_needs="$(tr ',' '\n' <<<"$needs" | LC_ALL=C sort -u | paste -sd, -)"
+      [[ "$normalized_needs" == "$task_needs" ]] || { echo "sugarbin: --task binaries contradict --needs" >&2; return 2; }
+    else
+      needs="$task_needs"
+    fi
+    if ((${#command[@]})); then
+      command=("${task_command[@]}" "${command[@]}")
+    else
+      command=("${task_command[@]}")
+    fi
+  fi
+
+  local route_env="${execution_env%%:*}"
+  if [[ "$route_env" == docker ]]; then
+    local contract_python
+    contract_python="$(sugarbin_contract_python)" || return $?
+    "$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-environment "$execution_env" >/dev/null || return $?
+  fi
+
   local observed_platform
   observed_platform="$(sugar_exec_platform_key)"
   if [[ "$host" == local ]]; then
-    sugar_exec_validate_route "$host" "$execution_env" "$requested_platform" "$observed_platform" || return $?
+    sugar_exec_validate_route "$host" "$route_env" "$requested_platform" "$observed_platform" || return $?
   elif [[ "$host" == bx ]]; then
-    [[ "$execution_env" == ambient ]] || { echo "unsupported execution route: host=$host env=$execution_env" >&2; return 2; }
+    [[ "$route_env" == ambient ]] || { echo "unsupported execution route: host=$host env=$execution_env" >&2; return 2; }
   else
     sugar_exec_validate_route "$host" "$execution_env" "$requested_platform" "$observed_platform" || return $?
   fi
@@ -95,6 +142,8 @@ dispatch_execution_subcommand() {
     printf 'host=%s\n' "$host"
     printf 'env=%s\n' "$execution_env"
     printf 'platform=%s\n' "$observed_platform"
+    printf 'capabilities=%s\n' "$task_capabilities"
+    printf 'task=%s\n' "$task"
     printf 'needs=%s\n' "$needs"
     return 0
   fi
