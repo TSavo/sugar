@@ -753,6 +753,11 @@ examples and receipts are in `examples/`; protocol and design material lives in
 
 ## Build, Test, and Development Commands
 
+Use `bin/sugarbin run --host bx --env docker:solver-z3` for managed remote
+execution. `bcargo`, `brun`, and `bpytest` are compatibility adapters. A binary
+cache hit may skip compilation, never command or test execution. See
+`docs/build-execution.md` for task, capability, artifact, and recovery details.
+
 - `make help`: list supported build and test targets.
 - `make build-rust`: build the Rust workspace in release mode.
 - `make test-rust`: run Rust workspace and Rust-driven RPC tests.

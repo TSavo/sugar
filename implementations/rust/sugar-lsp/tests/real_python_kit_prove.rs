@@ -50,8 +50,8 @@ fn z3_available() -> bool {
 }
 
 fn python3() -> Option<PathBuf> {
-    // Prefer the battleaxe / bcargo provisioned interpreter when present
-    // (`bin/brun` exports `PYTHON` to the remote kit venv).
+    // Prefer an explicitly selected ambient interpreter when present. The
+    // execution broker does not silently provision one.
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(py) = std::env::var("PYTHON") {
         if !py.is_empty() {

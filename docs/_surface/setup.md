@@ -123,27 +123,31 @@ cargo build --release
 |----------|---------|---------|
 | `BCARGO_REMOTE_HOST` | `battleaxe` | SSH alias for remote build machine |
 | `BCARGO_REMOTE_ROOT` | `/home/tsavo/remote/sugar-bcargo-<hash>` | Scratch dir on remote; per-worktree to avoid collisions |
-| `BCARGO_PYTHON_ENV` | `1` | Provision Python kit environment on remote (set `0` to skip) |
 | `BCARGO_CLEAN_REMOTE_ROOT` | `never` | `never`, `success`, or `always` cleanup remote dir after build |
 | `BCARGO_SSH` | `ssh` | SSH binary override (for testing) |
 | `BCARGO_RSYNC` | `rsync` | rsync binary override (for testing) |
 | `CI` | (unset) | When set to `1`, forces local cargo instead of bcargo (GitHub Actions sets this) |
 | `USE_BCARGO` | `1` | When `0`, use local cargo even outside CI |
 
-**Note:** Stale binaries are a known trap (build on Mac, it works; run in CI, it fails). Always use `bcargo --sync-bin` or CI=1 to ensure parity.
+**Note:** `bcargo` and `brun` select battleaxe but do not install dependencies.
+Use a `sugarbin` Docker task for a reproducible toolchain. A stamped binary may
+come from cache, but the requested command or test always executes.
 
 ---
 
 ## Environment Variables for Build and Runtime
 
-### Python Kit Provisioning
+### Python Kit Execution
 
 ```sh
 # Makefile variable to override Python venv location
 PYTHON_KIT_VENV=/custom/path make test-rust
 
-# Environment to provision Python env for bcargo (remote builds)
-BCARGO_PYTHON_ENV=1 bcargo test --release
+# Managed Python test closure on battleaxe
+bin/sugarbin run --host bx --task python-unit -- -q
+
+# Explicit ambient battleaxe execution (caller owns Python and dependencies)
+bin/brun -- python3 -m pytest -q
 ```
 
 ### Lift and Plugin Dispatch
@@ -252,7 +256,10 @@ $(PYTHON) -m venv /tmp/sugar-python-kit-env
 PATH=/tmp/sugar-python-kit-env/bin:$PATH sugar mint --project examples/numpy-vendor
 ```
 
-**Note:** The Makefile variables `PYTHON_KIT_VENV` and `BCARGO_PYTHON_VENV` control these paths; defaults are `/tmp/sugar-python-kit-env` and `/tmp/sugar-bcargo-python-kit-env`.
+**Note:** `PYTHON_KIT_VENV` controls the local Make-owned environment and
+defaults to `/tmp/sugar-python-kit-env`. Remote managed environments are
+immutable images declared in `sugar-build.toml`; there is no broker-owned
+remote Python venv.
 
 ---
 

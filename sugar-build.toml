@@ -1,0 +1,107 @@
+schema = 1
+
+[tools]
+rust = "1.96.0"
+cargo = "1.96.0"
+python = "3.12.13"
+black = "26.5.1"
+pyright = "1.1.411"
+b3sum = "1.8.1"
+pytest = "9.1.1"
+z3 = "4.8.12"
+coq = "8.16.1"
+numpy = "2.5.1"
+pandas = "3.0.3"
+java = "21.0.9"
+maven = "3.8.7"
+node = "22.17.1"
+pnpm = "10.13.1"
+vampire = "5.0.1"
+
+[packages]
+coq_debian = "8.16.1+dfsg-1+b2"
+maven_debian = "3.8.7-1"
+java_release_suffix = "10"
+java_archive_sha256 = "810d3773df7e0d6c4394e4e244b264c8b30e0b05a0acf542d065fd78a6b65c2f"
+node_archive_sha256 = "ff04bc7c3ed7699ceb708dbaaf3580d899ff8bf67f17114f979e83aa74fc5a49"
+vampire_archive_sha256 = "6ff2f42ea7fb9753ee104efc3e623d5e39443190f7c82a63e1e1517bf9d2cde3"
+
+[capabilities.core]
+depends = []
+[capabilities.python-test]
+depends = ["core"]
+[capabilities.solver-z3]
+depends = ["core"]
+[capabilities.solver-coq]
+depends = ["core"]
+[capabilities.python-scientific]
+depends = ["core"]
+[capabilities.java]
+depends = ["core"]
+[capabilities.node]
+depends = ["core"]
+[capabilities.vampire]
+depends = ["core"]
+
+[images.core]
+reference = "ghcr.io/tsavo/sugar-env@sha256:b8af4d5631bc34bea951a1ed5da391fbdc5efd4763941def40840f05292960a4"
+[images."core,python-test"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:12ca8a6768630ae70afb37d63a48b5035da365c4c2fe4cd99117ae4327932674"
+[images."core,solver-z3"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:ea84add5822935318b6be07dba38980b81d947b077b077ca7e6f70febdf2d497"
+[images."core,python-scientific"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:d8230b980eb505e45273c01d8226bb1e5552e9db27d6e489688aecefd2e0ec38"
+[images."core,solver-coq"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:fe99753e98c05ebb18d5ef1ee8c3475b04ca6caaed176489dd7ad757545782fe"
+[images."core,java"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:3fc127b88e7175268bdfd125e502ffb17a4841f4e4932abc963a0f1a09fb2bb2"
+[images."core,node"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:0cdfae5249ffbd4232f4675230b4e414bfe8de3541db936711e02ff35f2b143a"
+[images."core,vampire"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:d5a3076102ad9e57a0022f52de95f8047df448ba689b1d9afc96d519a35ebe86"
+[images."core,python-scientific,python-test,solver-z3"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3"
+[images."core,java,node,python-scientific,python-test,solver-coq,solver-z3,vampire"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:f3474a1e1badba67f3daaf5c589f2844da28a7be6beda929ca5f7f2e5d95785e"
+
+[tasks.python-unit]
+capabilities = ["python-test"]
+binaries = ["sugar"]
+command = ["python", "-m", "pytest"]
+network = "none"
+
+[tasks.python-lift]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-m", "pytest"]
+network = "none"
+
+[tasks.rust-unit]
+capabilities = ["solver-z3"]
+binaries = []
+command = ["cargo", "test", "--manifest-path", "implementations/rust/Cargo.toml"]
+network = "required"
+
+[tasks.examples-gate]
+capabilities = ["python-test", "python-scientific", "solver-z3", "solver-coq", "java", "node", "vampire"]
+binaries = ["sugar", "sugar-ir-smt-lib"]
+command = ["make", "examples-gate"]
+network = "required"
+
+[tasks.pandas-wall]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "tools/pandas_wall.py"]
+network = "none"
+
+[tasks.numpy-wall]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "tools/numpy_wall.py"]
+network = "none"
+
+[tasks.restored-suite-scoreboard]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
+binaries = ["sugar"]
+command = ["bash", "scripts/test-3809-dod-scoreboard.sh"]
+network = "required"

@@ -18,29 +18,58 @@ jobs:
     name: mint restored-suite telemetry
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 180
+    env:
+      # This job already runs inside the battleaxe runner container. It chooses
+      # local ambient explicitly instead of trying to SSH back into its host.
+      SUGAR_EXECUTION_ROUTE: local-ambient
+      SUGAR_AMBIENT_DEPENDENCY_OWNER: .github/workflows/restored-suite-scoreboard.yml
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Rust 1.96.0
+        uses: dtolnay/rust-toolchain@1.96.0
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.12.13
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.12.13"
           cache: "pip"
 
-      - name: Install system deps (z3, GNU time, b3sum)
+      - name: Install and verify ambient system dependencies
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends z3 time b3sum
+          sudo apt-get install -y --no-install-recommends z3 time
+          versions="$(python tools/sugar-build/contract.py tool-versions)"
+          expected_z3="$(python -c 'import json,sys; print(json.load(sys.stdin)["z3"])' <<<"$versions")"
+          expected_b3sum="$(python -c 'import json,sys; print(json.load(sys.stdin)["b3sum"])' <<<"$versions")"
+          z3 --version | tee /tmp/sugar-z3-version
+          grep -F "version $expected_z3" /tmp/sugar-z3-version
+          /usr/bin/time --version | head -1
+          if ! command -v b3sum >/dev/null 2>&1 \
+            || ! b3sum --version | grep -Fq "b3sum $expected_b3sum"; then
+            cargo install b3sum --version "$expected_b3sum" --locked
+          fi
+          b3sum --version | tee /tmp/sugar-b3sum-version
+          grep -Fx "b3sum $expected_b3sum" /tmp/sugar-b3sum-version
 
-      - name: Install restored-suite environment
+      - name: Install ambient restored-suite dependencies
         run: |
-          make bcargo-python-kit-env \
-            BCARGO_PYTHON_VENV="$RUNNER_TEMP/restored-suite-python"
+          python -m venv "$RUNNER_TEMP/restored-suite-python"
+          "$RUNNER_TEMP/restored-suite-python/bin/python" -m pip install --quiet --upgrade pip
+          "$RUNNER_TEMP/restored-suite-python/bin/python" -m pip install --quiet --no-cache-dir \
+            pandas \
+            -e implementations/python/libsugar-py \
+            -e implementations/python/sugar-emit-python-hypothesis \
+            -e implementations/python/sugar-emit-python-pytest \
+            -e implementations/python/sugar-emit-python-unittest \
+            -e implementations/python/sugar-build-witness \
+            -e implementations/python/sugar-lift-py-pytest-witness \
+            -e 'implementations/python/sugar-lift-py-tests[test]' \
+            -e implementations/python/sugar-lift-python-source
           bin/sugarbin --profile release >/dev/null
 
       - name: Run restored suite and retain red telemetry

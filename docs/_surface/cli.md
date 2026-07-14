@@ -521,7 +521,9 @@ cargo sugar-lift
 **Kind:** Build multiplexer  
 **Audience:** developer, CI/CD  
 
-**Summary:** Synchronizes Rust workspace to remote battleaxe host and runs Cargo there. Enables CI-parity testing and cross-platform building.
+**Summary:** Thin compatibility adapter for `bin/sugarbin cargo --host bx`.
+The broker owns synchronization, artifact reuse, and execution. Ambient bx
+dependencies are caller-owned; named Docker tasks provide managed closures.
 
 **Typical use:**
 ```bash
@@ -537,7 +539,6 @@ bcargo [--sync-bin NAME] [--sync-bins LIST] [--] [cargo args...]
 - `BCARGO_REMOTE_HOST` — SSH host (default: `battleaxe`)
 - `BCARGO_REMOTE_ROOT` — Remote scratch root (default: `/home/tsavo/remote/sugar-bcargo-<hash>`)
 - `BCARGO_CLEAN_REMOTE_ROOT` — Cleanup behavior (`success|always|never`)
-- `BCARGO_PYTHON_ENV` — Provision Python kit env (default: 1)
 - `BCARGO_SSH` — SSH binary (default: `ssh`)
 - `BCARGO_RSYNC` — rsync binary (default: `rsync`)
 
@@ -546,7 +547,20 @@ bcargo [--sync-bin NAME] [--sync-bins LIST] [--] [cargo args...]
 - 2 = user error (bad args, outside repo, etc.)
 - Other = cargo exit code
 
-**Documentation:** `reference_bcargo_cwd_and_real_exit.md` in user memory
+**Documentation:** `docs/build-execution.md`
+
+### sugarbin execution broker
+
+**Typical use:**
+```bash
+bin/sugarbin run --host bx --env docker:solver-z3 --needs sugar -- sugar --version
+bin/sugarbin run --host bx --task python-unit -- -q
+bin/sugarbin explain --host bx --task examples-gate
+```
+
+Managed task declarations and immutable image digests live in
+`sugar-build.toml`. A verified binary cache hit can skip compilation, never the
+child command or test execution.
 
 ---
 
@@ -667,4 +681,3 @@ See `implementations/java/` for JUnit lifting, JSR-380 annotation support.
 - **Examples:** `examples/` — rust-coretests-report, tokio-channel-implication-edge, signup-service (Java)
 - **Architecture:** `docs/papers/` — whitepapers and bluepapers explaining proof format and substrate philosophy
 - **Threat Model:** `docs/security/threat-model.md`
-
