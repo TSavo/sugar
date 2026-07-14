@@ -42,3 +42,23 @@ than 3.12, preserving the Python 3.12 `tomllib` floor on this development host.
   contract fail every Docker resolution for lack of a built image. The test
   exercises successful resolution using a temporary immutable digest fixture;
   the checked-in contract follows the explicit pre-image failure requirement.
+
+## Review fix: named task execution without a command boundary
+
+The initial implementation resolved a named task into a nonempty command but
+then applied the generic `run` guard, which still required an explicit `--`
+boundary. A real temporary task integration test reproduced the defect: the
+task's default recording command was never invoked and `sugarbin` returned
+`run requires -- followed by a command`.
+
+The guard now accepts a resolved, nonempty named-task command without a
+boundary. The integration receipt proves that the default command runs exactly
+once, arguments after `--` append to its defaults, and an ordinary non-task
+`run` without `--` remains rejected.
+
+Focused review-fix receipts:
+
+- `python3 -m pytest tests/test_sugar_build_contract.py -q`: `10 passed`.
+- `bash tests/sugarbin_task_exec.sh "$PWD"`: PASS.
+- `bash -n bin/sugarbin tests/sugarbin_task_exec.sh`: PASS.
+- `git diff --check`: PASS.

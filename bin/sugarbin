@@ -177,7 +177,7 @@ dispatch_execution_subcommand() {
     export PATH="$resolved_dir:$PATH"
   fi
 
-  [[ "$subcommand" == build || ( "$saw_boundary" == 1 && ${#command[@]} -gt 0 ) ]] || {
+  [[ "$subcommand" == build || ( ${#command[@]} -gt 0 && ( "$saw_boundary" == 1 || -n "$task" ) ) ]] || {
     printf 'sugarbin: %s requires -- followed by a command\n' "$subcommand" >&2
     return 2
   }
