@@ -46,7 +46,7 @@ class OpaqueOpCallsite(FloorValue):
 
         args = [self.arg.to_term(owner=owner)]
         args.extend(extra.to_term(owner=owner) for extra in self.extra_args)
-        return ctor(f"call:{self.callee}", args)
+        return ctor(f"call:{self.callee}", args, symbol_kind="method-coordinate")
 
     def callsites(self):
         return (self,)

@@ -101,7 +101,11 @@ class CallTerm(Term[S]):
         object.__setattr__(
             self,
             "ir_term",
-            ctor(f"call:{callee_name}", [arg.ir_term for arg in args]),
+            ctor(
+                f"call:{callee_name}",
+                [arg.ir_term for arg in args],
+                symbol_kind="coordinate",
+            ),
         )
         object.__setattr__(
             self,

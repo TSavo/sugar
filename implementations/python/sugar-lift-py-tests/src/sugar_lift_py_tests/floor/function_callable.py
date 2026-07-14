@@ -76,6 +76,7 @@ class FunctionCallable(FloorValue):
                 term=ctor(
                     f"call:{self.name}",
                     [value.to_term(owner=str(site)) for value in arg_values],
+                    symbol_kind="contract-target",
                 ),
                 body=self.body,
                 site=site,

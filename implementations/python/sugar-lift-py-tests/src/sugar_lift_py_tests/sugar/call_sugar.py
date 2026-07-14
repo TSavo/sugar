@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import builtins
+
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
@@ -126,6 +128,11 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                                 value.to_term(owner=str(self.site))
                                 for value in accumulated
                             ],
+                            symbol_kind=(
+                                "builtin"
+                                if hasattr(builtins, self.target_name)
+                                else "coordinate"
+                            ),
                         ),
                         body=body,
                         site=self.site,
@@ -135,6 +142,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             source_term = ctor(
                 f"call:{self.target_name}",
                 [value.to_term(owner=str(self.site)) for value in accumulated],
+                symbol_kind="contract-target",
             )
             return bind_positional_defaults(fn, accumulated, ctx).and_then(
                 lambda binding: Complete(

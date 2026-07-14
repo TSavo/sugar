@@ -69,6 +69,13 @@ class _StructuredTransportFormatter(logging.Formatter):
             "elapsed_ms",
             "file",
             "level_name",
+            "index",
+            "total",
+            "definitions",
+            "rows",
+            "rows_added",
+            "contracts",
+            "symbol",
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
@@ -172,8 +179,27 @@ def _send(obj: Dict[str, Any]) -> None:
     # stdout is the framed JSON-RPC channel only. Scrub before dumps so a lone
     # surrogate in an IR string constant cannot break the Rust parse of the
     # whole response line (#4155 / #4102 wall transport).
+    started = time.monotonic()
+    _TRANSPORT_LOG.info("response_scrub_enter", extra={"stage": "response.scrub"})
     safe = _scrub_lone_surrogates(obj)
+    _TRANSPORT_LOG.info(
+        "response_scrub_exit",
+        extra={
+            "stage": "response.scrub",
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+        },
+    )
+    started = time.monotonic()
+    _TRANSPORT_LOG.info("response_encode_enter", extra={"stage": "response.json.dumps"})
     frame = json.dumps(safe, separators=(",", ":")) + "\n"
+    _TRANSPORT_LOG.info(
+        "response_encode_exit",
+        extra={
+            "stage": "response.json.dumps",
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            "bytes": len(frame.encode()),
+        },
+    )
     _TRANSPORT_LOG.info(
         "response_about_to_send",
         extra={
@@ -896,11 +922,26 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     walk rows rather than crashing the LSP -- hold_panic=False remains for
     callers that demand the loud abort.
     """
-    from sugar_lift_py_tests.ir import term_intern_scope
+    from sugar_lift_py_tests.ir import constructor_symbol_kinds, term_intern_scope
 
     with term_intern_scope():
+        started = time.monotonic()
+        _TRANSPORT_LOG.info(
+            "lift_file_enter", extra={"stage": "lift_file.audit", "file": filename}
+        )
         payload, _gaps = audit_lift_file(source, filename, hold_panic=False)
-        return payload
+        symbol_kinds = constructor_symbol_kinds()
+        _TRANSPORT_LOG.info(
+            "lift_file_exit",
+            extra={
+                "stage": "lift_file.audit",
+                "file": filename,
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                "contracts": len(payload.ir),
+                "rows": len(symbol_kinds),
+            },
+        )
+        return replace(payload, symbol_kinds=symbol_kinds)
 
 
 def _module_import_temporal(
@@ -1428,11 +1469,22 @@ def audit_lift_file(
         target_cid = target_memento.get("source_cid") or target_memento.get("sourceCid")
         target_definition = audit_context.definitions_by_cid.get(str(target_cid))
         definitions = (target_definition,) if target_definition is not None else ()
-    for stmt in definitions:
+    definition_total = len(definitions)
+    for definition_index, stmt in enumerate(definitions):
         # Every discovered def reaches construction. An owned FunctionDef or
         # test_* testimony takes its Some arm; an unowned shape must reach the
         # None arm so this audit door can hold and paint the gap red.
         label = f"{filename}:{stmt.line}:{stmt.col}"
+        definition_started = time.monotonic()
+        _TRANSPORT_LOG.info(
+            "definition_enter",
+            extra={
+                "stage": "lift_file.definition",
+                "file": filename,
+                "index": definition_index,
+                "total": definition_total,
+            },
+        )
         try:
             lexical_temporal = module_temporal
             for class_stmt in module.statements():
@@ -1487,6 +1539,18 @@ def audit_lift_file(
             payload.factory_walk.extend(root.factory_walk_rows())
             payload.factory_audits.extend(root.factory_audit_rows())
             outcome = result.sugar.desugar(ctx)
+            _TRANSPORT_LOG.info(
+                "definition_desugar_exit",
+                extra={
+                    "stage": "lift_file.definition.desugar",
+                    "file": filename,
+                    "index": definition_index,
+                    "total": definition_total,
+                    "elapsed_ms": round(
+                        (time.monotonic() - definition_started) * 1000, 3
+                    ),
+                },
+            )
             if recover_panics:
                 from sugar_lift_py_tests.outcome import Incomplete
 
@@ -1537,10 +1601,38 @@ def audit_lift_file(
                 source_function_name=value.name,
                 role="function-contract",
             )
-            payload.ir.extend(value.payload_rows(def_memento))
+            rows_started = time.monotonic()
+            rows = value.payload_rows(def_memento)
+            payload.ir.extend(rows)
             payload.call_edges.extend(value.call_edges())
             payload.source_mementos.append(def_memento)
+            _TRANSPORT_LOG.info(
+                "definition_exit",
+                extra={
+                    "stage": "lift_file.definition.payload_rows",
+                    "file": filename,
+                    "index": definition_index,
+                    "total": definition_total,
+                    "rows_added": len(rows),
+                    "rows": len(payload.ir),
+                    "elapsed_ms": round(
+                        (time.monotonic() - rows_started) * 1000, 3
+                    ),
+                },
+            )
         except FactoryPanic as panic:
+            _TRANSPORT_LOG.info(
+                "definition_gap",
+                extra={
+                    "stage": "lift_file.definition.gap",
+                    "file": filename,
+                    "index": definition_index,
+                    "total": definition_total,
+                    "elapsed_ms": round(
+                        (time.monotonic() - definition_started) * 1000, 3
+                    ),
+                },
+            )
             if not hold_panic:
                 raise
             if not recover_panics:
@@ -1579,8 +1671,23 @@ def audit_lift_file(
 
     from sugar_lift_py_tests.idd.lift_coverage_census import reconcile_body_owner_loci
 
+    conservation_started = time.monotonic()
+    _TRANSPORT_LOG.info(
+        "conservation_enter",
+        extra={"stage": "lift_file.conservation", "file": filename},
+    )
     conservation = reconcile_body_owner_loci(
         source, file=filename, factory_rows=payload.factory_walk
+    )
+    _TRANSPORT_LOG.info(
+        "conservation_exit",
+        extra={
+            "stage": "lift_file.conservation",
+            "file": filename,
+            "elapsed_ms": round(
+                (time.monotonic() - conservation_started) * 1000, 3
+            ),
+        },
     )
     object.__setattr__(payload, "source_factory_conservation", conservation)
     if conservation.violations:
@@ -2523,13 +2630,24 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
             contracts, diagnostics = _source_lifter_function_contracts(workspace_root)
             payload.ir.extend(contracts)
             payload.diagnostics.extend(diagnostics)
-        for path in _iter_python_files(workspace_root, source_paths):
+        for file_index, path in enumerate(
+            _iter_python_files(workspace_root, source_paths)
+        ):
             full_path = Path(path)
             lifted_paths.append(full_path)
             try:
                 rel_path = full_path.resolve().relative_to(root).as_posix()
             except ValueError:
                 rel_path = full_path.name
+            file_started = time.monotonic()
+            _TRANSPORT_LOG.info(
+                "workspace_file_enter",
+                extra={
+                    "stage": "lift.workspace.file",
+                    "file": rel_path,
+                    "index": file_index,
+                },
+            )
             with open(path, "r", encoding="utf-8") as handle:
                 file_payload = lift_file_payload(handle.read(), rel_path)
             if bindings_backed_pass:
@@ -2537,19 +2655,67 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
                 # gap). callEdges ride on the source-lifted path below.
                 continue
             payload.ir.extend(file_payload.ir)
+            _merge_symbol_kinds(payload.symbol_kinds, file_payload.symbol_kinds)
             payload.call_edges.extend(file_payload.call_edges)
             payload.factory_walk.extend(file_payload.factory_walk)
             payload.factory_audits.extend(file_payload.factory_audits)
             payload.source_mementos.extend(file_payload.source_mementos)
+            _TRANSPORT_LOG.info(
+                "workspace_file_exit",
+                extra={
+                    "stage": "lift.workspace.file",
+                    "file": rel_path,
+                    "index": file_index,
+                    "contracts": len(payload.ir),
+                    "elapsed_ms": round(
+                        (time.monotonic() - file_started) * 1000, 3
+                    ),
+                },
+            )
         # #4013: dual-axis lift coverage as first-class --report line items.
         # Independent AST census (second computation) vs this payload's accounting.
         # LiftReportPayloadDto is frozen — rebuild with replace(), never assign.
         if not bindings_backed_pass and lifted_paths:
+            coverage_started = time.monotonic()
+            _TRANSPORT_LOG.info(
+                "lift_coverage_enter",
+                extra={
+                    "stage": "lift.workspace.coverage",
+                    "total": len(lifted_paths),
+                },
+            )
             coverage = _build_lift_coverage(
                 root=root, paths=lifted_paths, payload=payload
             )
             payload = replace(payload, lift_coverage=coverage)
-        _send({"jsonrpc": "2.0", "id": msg_id, "result": payload.to_rpc()})
+            _TRANSPORT_LOG.info(
+                "lift_coverage_exit",
+                extra={
+                    "stage": "lift.workspace.coverage",
+                    "total": len(lifted_paths),
+                    "elapsed_ms": round(
+                        (time.monotonic() - coverage_started) * 1000, 3
+                    ),
+                },
+            )
+        rpc_started = time.monotonic()
+        _TRANSPORT_LOG.info(
+            "payload_to_rpc_enter",
+            extra={
+                "stage": "lift.workspace.to_rpc",
+                "contracts": len(payload.ir),
+            },
+        )
+        rpc_payload = payload.to_rpc()
+        _TRANSPORT_LOG.info(
+            "payload_to_rpc_exit",
+            extra={
+                "stage": "lift.workspace.to_rpc",
+                "contracts": len(payload.ir),
+                "elapsed_ms": round((time.monotonic() - rpc_started) * 1000, 3),
+            },
+        )
+        _send({"jsonrpc": "2.0", "id": msg_id, "result": rpc_payload})
     except Exception as exc:
         _send(
             {
@@ -2574,6 +2740,15 @@ def _merge_source_ledger(
         current[key] = current.get(key, 0) + int(value)
 
 
+def _merge_symbol_kinds(
+    current: Dict[str, str], incoming: Dict[str, str]
+) -> None:
+    from sugar_lift_py_tests.ir import merge_constructor_symbol_kind
+
+    for symbol, kind in incoming.items():
+        merge_constructor_symbol_kind(current, symbol, kind)
+
+
 def _build_lift_coverage(
     *,
     root: Path,
@@ -2585,13 +2760,48 @@ def _build_lift_coverage(
     Assertions (default report body): silently_unaccounted is the RED gate.
     Minority (bodies): un_asserted is the VISIBLE scope remainder (not red).
     """
+    started = time.monotonic()
+    _TRANSPORT_LOG.info(
+        "coverage_census_enter",
+        extra={"stage": "lift.coverage.census_paths", "total": len(paths)},
+    )
     disk = census_paths(paths, root=root)
+    _TRANSPORT_LOG.info(
+        "coverage_census_exit",
+        extra={
+            "stage": "lift.coverage.census_paths",
+            "total": len(paths),
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+        },
+    )
     # Account against the same RPC shape the report serializes — built without
     # liftCoverage to avoid self-reference (coverage is the field being filled).
     from sugar_lift_py_tests.kit_rpc.factory_audit_summary_dto import (
         FactoryAuditSummaryDto,
     )
 
+    started = time.monotonic()
+    _TRANSPORT_LOG.info(
+        "coverage_projection_enter",
+        extra={
+            "stage": "lift.coverage.payload_projection",
+            "contracts": len(payload.ir),
+        },
+    )
+    projected_ir = []
+    for contract_index, item in enumerate(payload.ir):
+        row_started = time.monotonic()
+        projected_ir.append(to_rpc_value(item))
+        _TRANSPORT_LOG.info(
+            "coverage_projection_row",
+            extra={
+                "stage": "lift.coverage.payload_projection.ir",
+                "index": contract_index,
+                "total": len(payload.ir),
+                "symbol": getattr(item, "name", type(item).__name__),
+                "elapsed_ms": round((time.monotonic() - row_started) * 1000, 3),
+            },
+        )
     interim = {
         "sourceAudits": [to_rpc_value(a) for a in payload.source_audits],
         "sourceMementos": [to_rpc_value(m) for m in payload.source_mementos],
@@ -2601,7 +2811,7 @@ def _build_lift_coverage(
         "diagnostics": [to_rpc_value(d) for d in payload.diagnostics],
         "sourceLedger": to_rpc_value(payload.source_ledger or {}),
         # Minority projection joins function-contract rows to call_edges.
-        "ir": [to_rpc_value(item) for item in payload.ir],
+        "ir": projected_ir,
         "callEdges": [to_rpc_value(edge) for edge in payload.call_edges],
         # Doctrine: factory instrument engagement must be visible to coverage
         # accounting so unimplemented becomes a loud gap, never silent (#4016).
@@ -2610,11 +2820,35 @@ def _build_lift_coverage(
         ).to_rpc(),
         "factoryAudits": [to_rpc_value(a) for a in payload.factory_audits],
     }
+    _TRANSPORT_LOG.info(
+        "coverage_projection_exit",
+        extra={
+            "stage": "lift.coverage.payload_projection",
+            "contracts": len(payload.ir),
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+        },
+    )
+    started = time.monotonic()
+    _TRANSPORT_LOG.info(
+        "coverage_account_enter", extra={"stage": "lift.coverage.account"}
+    )
     coverage = account_lift_coverage(disk, interim)
     body = coverage.to_json()
+    _TRANSPORT_LOG.info(
+        "coverage_account_exit",
+        extra={
+            "stage": "lift.coverage.account",
+            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+        },
+    )
     # Per-file line paint for --visual consumers.
     paints: Dict[str, Any] = {}
-    for path in paths:
+    paint_started = time.monotonic()
+    _TRANSPORT_LOG.info(
+        "coverage_paint_enter",
+        extra={"stage": "lift.coverage.paint_lines", "total": len(paths)},
+    )
+    for path_index, path in enumerate(paths):
         path = path.resolve()
         try:
             rel = path.relative_to(root).as_posix()
@@ -2625,7 +2859,24 @@ def _build_lift_coverage(
         except OSError:
             continue
         paints[rel] = paint_lines(source, coverage, file=rel)
+        _TRANSPORT_LOG.info(
+            "coverage_paint_file",
+            extra={
+                "stage": "lift.coverage.paint_lines",
+                "file": rel,
+                "index": path_index,
+                "total": len(paths),
+            },
+        )
     body["line_paint"] = paints
+    _TRANSPORT_LOG.info(
+        "coverage_paint_exit",
+        extra={
+            "stage": "lift.coverage.paint_lines",
+            "total": len(paths),
+            "elapsed_ms": round((time.monotonic() - paint_started) * 1000, 3),
+        },
+    )
     return body
 
 

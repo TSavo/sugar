@@ -380,7 +380,11 @@ class ObjectValue(FloorValue):
                 target_name=target_name,
                 arg_values=arg_values,
                 parameters=method.parameters,
-                term=ctor(f"call:{target_name}", arg_terms),
+                term=ctor(
+                    f"call:{target_name}",
+                    arg_terms,
+                    symbol_kind="contract-target",
+                ),
                 body=method.body,
             )
             if not any(

@@ -70,6 +70,7 @@ class LenCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                         ctor(
                             f"call:{self.external_target}",
                             [value.to_term(owner=str(self.site))],
+                            symbol_kind="builtin",
                         )
                     )
                 )

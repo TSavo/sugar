@@ -1255,6 +1255,7 @@ struct LiftSourceReport {
     source_mementos: Vec<Value>,
     plan_mementos: Vec<Value>,
     contracts: Vec<Value>,
+    symbol_kinds: BTreeMap<String, String>,
     call_edges: Vec<Value>,
     vendor_conjoins: Vec<VendorConjoinReport>,
     project_root: Option<PathBuf>,
@@ -1874,6 +1875,21 @@ fn source_report_from_lift_response(
         .get("liftCoverage")
         .or_else(|| response.get("lift_coverage"))
         .cloned();
+    let symbol_kinds = response
+        .get("symbolKinds")
+        .and_then(Value::as_object)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|(symbol, kind)| {
+                    let kind = kind.as_str().unwrap_or_else(|| {
+                        panic!("report symbol kind testimony for `{symbol}` is not a string")
+                    });
+                    (symbol.clone(), kind.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     Ok(LiftSourceReport {
         ledger,
@@ -1886,6 +1902,7 @@ fn source_report_from_lift_response(
         source_mementos,
         plan_mementos,
         contracts,
+        symbol_kinds,
         call_edges,
         vendor_conjoins,
         project_root: None,
@@ -2072,6 +2089,7 @@ fn source_report_from_proof_pool(
         source_mementos,
         plan_mementos,
         contracts,
+        symbol_kinds: BTreeMap::new(),
         call_edges,
         vendor_conjoins: Vec::new(),
         project_root: None,
@@ -3255,6 +3273,7 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
         "sourceMementos": report.source_mementos,
         "planMementos": report.plan_mementos,
         "contracts": report.contracts,
+        "symbolKinds": report.symbol_kinds,
         "callEdges": report.call_edges,
         "vendorConjoins": vendor_conjoins_to_json(&report.vendor_conjoins),
         // Lift-side superposition: distinct candidate universes per method.
@@ -4108,6 +4127,12 @@ fn render_universe_visual_report(
     if report.contracts.is_empty() {
         return String::new();
     }
+    let setup_started = Instant::now();
+    tracing::info!(
+        stage = "universe_visual.setup.enter",
+        contracts = report.contracts.len(),
+        "universe visual progress"
+    );
     let boundaries = visual_boundary_rows(&report.factory_walk, source_lookup);
     let factory_predicates =
         index_universe_factory_predicate_rows(&report.factory_walk, source_lookup);
@@ -4130,10 +4155,27 @@ fn render_universe_visual_report(
         .iter()
         .filter_map(|contract| format_contract_asserted_fact(report, contract))
         .collect::<Vec<_>>();
+    tracing::info!(
+        stage = "universe_visual.setup.exit",
+        elapsed_ms = setup_started.elapsed().as_millis(),
+        boundaries = boundaries.len(),
+        asserted_facts = asserted_facts.len(),
+        "universe visual progress"
+    );
     let mut out = String::new();
     let mut breakdown_cache = BTreeMap::<(String, u8), String>::new();
     out.push_str("universe visual:\n");
-    for group in group_contracts_for_universe_visual_with_identities(report, identities) {
+    let grouping_started = Instant::now();
+    let groups = group_contracts_for_universe_visual_with_identities(report, identities);
+    tracing::info!(
+        stage = "universe_visual.grouping.exit",
+        elapsed_ms = grouping_started.elapsed().as_millis(),
+        groups = groups.len(),
+        "universe visual progress"
+    );
+    let total = groups.len();
+    for (index, group) in groups.into_iter().enumerate() {
+        let universe_started = Instant::now();
         let contract = group.anchor;
         let identity = &group.identity;
         let qualified_name = qualified_contract_for(report, contract, &qualified_contracts);
@@ -4146,16 +4188,26 @@ fn render_universe_visual_report(
             cid_prefix = %cid_prefix
         );
         let _universe_guard = universe_span.enter();
-        tracing::info!("universe render started");
+        tracing::info!(index, total, "universe render started");
         // Predicates for line citations: every member's formulas (assert invs
         // pair with their own warrants when factory walk is empty).
+        let predicates_started = Instant::now();
         let predicates: Vec<String> = group
             .members
             .iter()
             .flat_map(|member| contract_predicate_rows(member))
             .collect();
+        tracing::info!(
+            stage = "universe.predicates",
+            index,
+            total,
+            elapsed_ms = predicates_started.elapsed().as_millis(),
+            rows = predicates.len(),
+            "universe render progress"
+        );
         let fact_universe = contract_inv_is_observed_fact(contract);
         // Source walk / mode from the anchor; inv members contribute FOL only.
+        let warrants_started = Instant::now();
         let mut warrants = contract_visual_warrants(report, contract);
         for member in group.members.iter().skip(1) {
             for warrant in contract_visual_warrants(report, member) {
@@ -4167,6 +4219,14 @@ fn render_universe_visual_report(
                 }
             }
         }
+        tracing::info!(
+            stage = "universe.warrants",
+            index,
+            total,
+            elapsed_ms = warrants_started.elapsed().as_millis(),
+            rows = warrants.len(),
+            "universe render progress"
+        );
         let context = warrants
             .first()
             .map(|warrant| source_memento_context_key(warrant));
@@ -4204,7 +4264,12 @@ fn render_universe_visual_report(
                     &qualified_contracts,
                 );
             }
-            tracing::info!("universe render completed");
+            tracing::info!(
+                index,
+                total,
+                elapsed_ms = universe_started.elapsed().as_millis(),
+                "universe render completed"
+            );
             continue;
         }
         out.push_str(&format!("  universe {identity}\n"));
@@ -4217,6 +4282,7 @@ fn render_universe_visual_report(
             }
             UniverseVisualMode::Fact | UniverseVisualMode::BodyComplete => {
                 // One FOL line per member: post from the anchor, then each inv.
+                let fol_started = Instant::now();
                 for member in &group.members {
                     if member.get("post").is_some()
                         || member.get("inv").is_some()
@@ -4232,14 +4298,35 @@ fn render_universe_visual_report(
                         );
                     }
                 }
+                tracing::info!(
+                    stage = "universe.fol",
+                    index,
+                    total,
+                    elapsed_ms = fol_started.elapsed().as_millis(),
+                    rows = group.members.len(),
+                    "universe render progress"
+                );
             }
         }
         if mode == UniverseVisualMode::BodyComplete {
+            let forensic_started = Instant::now();
             render_visual_forensic_context(&mut out, report, contract, &asserted_facts);
+            tracing::info!(
+                stage = "universe.forensic_context",
+                index,
+                total,
+                elapsed_ms = forensic_started.elapsed().as_millis(),
+                "universe render progress"
+            );
         }
         if warrants.is_empty() {
             out.push_str("    <no source warrants emitted>\n");
-            tracing::info!("universe render completed");
+            tracing::info!(
+                index,
+                total,
+                elapsed_ms = universe_started.elapsed().as_millis(),
+                "universe render completed"
+            );
             continue;
         }
         let cache_key = context.as_ref().and_then(|context| {
@@ -4249,8 +4336,15 @@ fn render_universe_visual_report(
                 .then(|| (context.clone(), universe_visual_mode_key(mode)))
         });
         if let Some(cached) = cache_key.as_ref().and_then(|key| breakdown_cache.get(key)) {
+            tracing::info!(
+                stage = "universe.warrant_breakdown.cache_hit",
+                index,
+                total,
+                "universe render progress"
+            );
             out.push_str(cached);
         } else {
+            let breakdown_started = Instant::now();
             let mut breakdown = String::new();
             render_universe_warrant_breakdown(
                 &mut breakdown,
@@ -4265,8 +4359,20 @@ fn render_universe_visual_report(
             if let Some(key) = cache_key {
                 breakdown_cache.insert(key, breakdown);
             }
+            tracing::info!(
+                stage = "universe.warrant_breakdown",
+                index,
+                total,
+                elapsed_ms = breakdown_started.elapsed().as_millis(),
+                "universe render progress"
+            );
         }
-        tracing::info!("universe render completed");
+        tracing::info!(
+            index,
+            total,
+            elapsed_ms = universe_started.elapsed().as_millis(),
+            "universe render completed"
+        );
     }
     render_contract_mementos_appendix(&mut out, report, &qualified_contracts);
     out
@@ -4385,8 +4491,32 @@ fn indent_lines(rendered: &str, width: usize) -> String {
 }
 
 fn pretty_visual_formula(formula: &Value, color: bool) -> String {
+    let started = Instant::now();
     let mut renderer = VisualFormulaRenderer::new(formula, color);
-    renderer.formula(formula, 0)
+    let rendered = renderer.formula(formula, 0);
+    tracing::info!(
+        stage = "visual_formula.complete",
+        elapsed_ms = started.elapsed().as_millis(),
+        inventory_visits = renderer.inventory_visits,
+        unique_fingerprints = renderer.unique_fingerprints.len(),
+        revisit_count = renderer
+            .inventory_visits
+            .saturating_sub(renderer.unique_fingerprints.len()),
+        root_nodes = renderer.root_meta.nodes,
+        root_bytes = renderer.root_meta.bytes,
+        shareable_repeated_fingerprints = renderer
+            .repeats
+            .values()
+            .filter(|count| **count > 1)
+            .count(),
+        plan_calls = renderer.plan_calls,
+        cid_computations = renderer.cid_computations,
+        reference_returns = renderer.reference_returns,
+        elided_returns = renderer.elided_returns,
+        rendered_bytes = rendered.len(),
+        "visual formula traversal microscope"
+    );
+    rendered
 }
 
 const VISUAL_FORMULA_MAX_DEPTH: usize = 24;
@@ -4413,7 +4543,13 @@ struct VisualFormulaRenderer {
     meta: HashMap<usize, VisualSubtreeMeta>,
     repeats: HashMap<[u8; 32], usize>,
     seen: HashSet<[u8; 32]>,
-    sharing_suppressed: usize,
+    inventory_visits: usize,
+    unique_fingerprints: HashSet<[u8; 32]>,
+    root_meta: VisualSubtreeMeta,
+    plan_calls: usize,
+    cid_computations: usize,
+    reference_returns: usize,
+    elided_returns: usize,
 }
 
 impl VisualFormulaRenderer {
@@ -4423,13 +4559,24 @@ impl VisualFormulaRenderer {
             meta: HashMap::new(),
             repeats: HashMap::new(),
             seen: HashSet::new(),
-            sharing_suppressed: 0,
+            inventory_visits: 0,
+            unique_fingerprints: HashSet::new(),
+            root_meta: VisualSubtreeMeta {
+                fingerprint: [0; 32],
+                nodes: 0,
+                bytes: 0,
+            },
+            plan_calls: 0,
+            cid_computations: 0,
+            reference_returns: 0,
+            elided_returns: 0,
         };
-        renderer.inventory(root);
+        renderer.root_meta = renderer.inventory(root);
         renderer
     }
 
     fn inventory(&mut self, value: &Value) -> VisualSubtreeMeta {
+        self.inventory_visits += 1;
         let mut hasher = blake3::Hasher::new();
         let mut nodes = 1usize;
         let mut bytes = 0usize;
@@ -4484,6 +4631,7 @@ impl VisualFormulaRenderer {
             nodes,
             bytes,
         };
+        self.unique_fingerprints.insert(meta.fingerprint);
         self.meta.insert(value as *const Value as usize, meta);
         if is_visual_shareable_term(value) && nodes >= VISUAL_FORMULA_SHARED_MIN_NODES {
             *self.repeats.entry(meta.fingerprint).or_default() += 1;
@@ -4492,24 +4640,26 @@ impl VisualFormulaRenderer {
     }
 
     fn plan(&mut self, value: &Value, depth: usize) -> VisualRenderPlan {
+        self.plan_calls += 1;
         let meta = self.meta[&(value as *const Value as usize)];
-        let cid = || sugar_canonicalizer::jcs_cid_of_json(value);
         if depth >= VISUAL_FORMULA_MAX_DEPTH
             || ((depth > 0 || !is_visual_formula_shape(value))
                 && (meta.nodes > VISUAL_FORMULA_MAX_SUBTREE_NODES
                     || meta.bytes > VISUAL_FORMULA_MAX_SUBTREE_BYTES))
         {
+            self.cid_computations += 1;
+            self.elided_returns += 1;
             return VisualRenderPlan::Elided(format!(
                 "<subtree elided, cid={}, nodes={}, see mementos>",
-                cid(),
+                sugar_canonicalizer::jcs_cid_of_json(value),
                 meta.nodes
             ));
         }
-        if self.sharing_suppressed == 0
-            && self.repeats.get(&meta.fingerprint).copied().unwrap_or(0) > 1
-        {
-            let cid = cid();
+        if self.repeats.get(&meta.fingerprint).copied().unwrap_or(0) > 1 {
+            self.cid_computations += 1;
+            let cid = sugar_canonicalizer::jcs_cid_of_json(value);
             if !self.seen.insert(meta.fingerprint) {
+                self.reference_returns += 1;
                 return VisualRenderPlan::Reference(format!("<as above, cid={cid}>"));
             }
             return VisualRenderPlan::Full(Some(cid));
@@ -4524,13 +4674,7 @@ impl VisualFormulaRenderer {
             }
             VisualRenderPlan::Full(cid) => cid,
         };
-        if shared_cid.is_some() {
-            self.sharing_suppressed += 1;
-        }
         let rendered = self.formula_full(formula, depth);
-        if shared_cid.is_some() {
-            self.sharing_suppressed -= 1;
-        }
         match shared_cid {
             Some(cid) => format!("{rendered} [shared cid={cid}]"),
             None => rendered,
@@ -4676,13 +4820,7 @@ impl VisualFormulaRenderer {
             }
             VisualRenderPlan::Full(cid) => cid,
         };
-        if shared_cid.is_some() {
-            self.sharing_suppressed += 1;
-        }
         let rendered = self.term_full(term, depth);
-        if shared_cid.is_some() {
-            self.sharing_suppressed -= 1;
-        }
         match shared_cid {
             Some(cid) => format!("{rendered} [shared cid={cid}]"),
             None => rendered,
@@ -4855,10 +4993,11 @@ fn render_provenanced_fol_row(
     out.push_str("    symbols:\n");
     out.push_str("      out -> return\n");
     let formals = contract_formal_names(contract);
-    for (symbol, kind) in contract_formula_symbols(contract) {
+    for (symbol, kind) in contract_formula_symbols(contract, &report.symbol_kinds) {
         if symbol != "out" {
+            let display = report_symbol_display(&symbol);
             out.push_str(&format!(
-                "      {symbol} -> {}\n",
+                "      {display} -> {}\n",
                 resolve_report_symbol(contract, &symbol, kind, &formals, qualified_contracts)
             ));
         }
@@ -4924,13 +5063,16 @@ fn render_provenanced_vendor_assertion_row(
     }
     out.push_str("    symbols:\n");
     let formals = contract_formal_names(contract);
-    for (symbol, kind) in contract_formula_symbols(contract) {
+    for (symbol, kind) in contract_formula_symbols(contract, &report.symbol_kinds) {
         let target = if symbol == "out" {
             "return".to_string()
         } else {
             resolve_report_symbol(contract, &symbol, kind, &formals, qualified_contracts)
         };
-        out.push_str(&format!("      {symbol} -> {target}\n"));
+        out.push_str(&format!(
+            "      {} -> {target}\n",
+            report_symbol_display(&symbol)
+        ));
     }
 }
 
@@ -4953,6 +5095,87 @@ fn contract_formal_names(contract: &Value) -> BTreeSet<String> {
 enum ReportFormulaSymbolKind {
     Variable,
     Constructor,
+    Coordinate,
+    Builtin,
+    ContractTarget,
+    MethodCoordinate,
+}
+
+const REPORT_PYTHON_COORDINATE_CONSTRUCTORS: &[&str] = &[
+    "py.and",
+    "py.complex",
+    "py.comprehension",
+    "py.comprehension_clause",
+    "py.conditional",
+    "py.dictcomp",
+    "py.ellipsis",
+    "py.except",
+    "py.exception",
+    "py.format",
+    "py.formatted",
+    "py.fstring",
+    "py.generator",
+    "py.generators",
+    "py.genexp",
+    "py.iter_elem",
+    "py.listcomp",
+    "py.none",
+    "py.object.identity",
+    "py.or",
+    "py.setcomp",
+    "py.slice",
+    "py.star",
+    "py.subscript",
+];
+
+const REPORT_PYTHON_EFFECT_CONSTRUCTORS: &[&str] = &[
+    "py.assert",
+    "py.bitwise_invert",
+    "py.conditional_select",
+    "py.delitem",
+    "py.divide",
+    "py.exceptional_exit",
+    "py.floor_divide",
+    "py.format.arguments",
+    "py.format.dynamic_spec",
+    "py.generator_yield",
+    "py.getattr.dynamic_name",
+    "py.getattr.receiver",
+    "py.ifexp.select",
+    "py.less_than",
+    "py.modulo",
+    "py.os_exit",
+    "py.percent_format",
+    "py.sequence_repeat",
+    "py.sequential_terminal",
+    "py.setitem",
+    "py.try_handler_dispatch",
+];
+
+const REPORT_PYTHON_OPERATOR_CONSTRUCTORS: &[&str] = &[
+    "py.compare:Eq",
+    "py.compare:Gt",
+    "py.compare:GtE",
+    "py.compare:In",
+    "py.compare:Is",
+    "py.compare:IsNot",
+    "py.compare:Lt",
+    "py.compare:LtE",
+    "py.compare:NotEq",
+    "py.compare:NotIn",
+    "py.compare:chain",
+    "py.eq",
+    "py.implies",
+    "py.in",
+    "py.invert",
+    "py.lt",
+    "py.neg",
+    "py.not",
+    "py.truthy",
+];
+
+fn is_report_python_operator_constructor(symbol: &str) -> bool {
+    REPORT_PYTHON_OPERATOR_CONSTRUCTORS.contains(&symbol)
 }
 
 fn resolve_report_symbol(
@@ -4962,43 +5185,61 @@ fn resolve_report_symbol(
     formals: &BTreeSet<String>,
     qualified_contracts: &[(String, String)],
 ) -> String {
-    const BUILTINS: &[&str] = &[
-        "abs", "bool", "bytes", "dict", "divmod", "float", "int", "len", "list", "max", "min",
-        "range", "set", "str", "sum", "tuple", "type",
-    ];
-    const PYTHON_COORDINATES: &[&str] = &["py.invert", "py.neg", "py.subscript"];
-    if kind == ReportFormulaSymbolKind::Constructor && symbol.starts_with("python:type:") {
+    let surface = report_symbol_display(symbol);
+    if kind == ReportFormulaSymbolKind::Coordinate {
         return "coordinate".to_string();
     }
-    if kind == ReportFormulaSymbolKind::Constructor && PYTHON_COORDINATES.contains(&symbol) {
+    if kind == ReportFormulaSymbolKind::MethodCoordinate {
+        return "method-coordinate".to_string();
+    }
+    if kind == ReportFormulaSymbolKind::Builtin {
+        return format!("python:builtin/{surface}");
+    }
+    if kind == ReportFormulaSymbolKind::Constructor
+        && REPORT_PYTHON_COORDINATE_CONSTRUCTORS.contains(&surface)
+    {
         return "coordinate".to_string();
     }
-    if kind == ReportFormulaSymbolKind::Constructor && BUILTINS.contains(&symbol) {
-        return format!("python:builtin/{symbol}");
+    if kind == ReportFormulaSymbolKind::Constructor
+        && REPORT_PYTHON_EFFECT_CONSTRUCTORS.contains(&surface)
+    {
+        return "effect".to_string();
     }
-    if kind == ReportFormulaSymbolKind::Variable && formals.contains(symbol) {
+    if kind == ReportFormulaSymbolKind::Variable && formals.contains(surface) {
         return "formal".to_string();
     }
     let current_cid = contract_cid_of_ir_decl(current);
-    if let Some((qualified, cid)) = qualified_contracts
-        .iter()
-        .find(|(qualified, _)| qualified == symbol || qualified.ends_with(&format!(".{symbol}")))
-    {
-        if current_cid.as_deref() != Some(cid.as_str())
-            || qualified.ends_with(&format!(".{symbol}"))
-        {
-            return format!("{qualified} [{}]", short_cid(cid));
+    if kind == ReportFormulaSymbolKind::ContractTarget {
+        if let Some((qualified, cid)) = qualified_contracts.iter().find(|(qualified, _)| {
+            qualified == surface || qualified.ends_with(&format!(".{surface}"))
+        }) {
+            if current_cid.as_deref() != Some(cid.as_str())
+                || qualified.ends_with(&format!(".{surface}"))
+            {
+                return format!("{qualified} [{}]", short_cid(cid));
+            }
         }
+        return "contract-target".to_string();
     }
     if kind == ReportFormulaSymbolKind::Variable {
         return "local".to_string();
     }
     panic!(
-        "report symbol classification gap: constructor `{symbol}` is neither a coordinate, builtin, nor contract target"
+        "report symbol classification gap: constructor `{surface}` arrived without emitter kind testimony"
     )
 }
 
-fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaSymbolKind> {
+fn report_symbol_display(symbol: &str) -> &str {
+    symbol
+        .strip_prefix("call:")
+        .or_else(|| symbol.strip_prefix("method:"))
+        .unwrap_or(symbol)
+}
+
+fn contract_formula_symbols(
+    contract: &Value,
+    symbol_kinds: &BTreeMap<String, String>,
+) -> BTreeMap<String, ReportFormulaSymbolKind> {
     fn insert_symbol(
         symbols: &mut BTreeMap<String, ReportFormulaSymbolKind>,
         name: String,
@@ -5012,7 +5253,11 @@ fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaS
         }
     }
 
-    fn visit(value: &Value, symbols: &mut BTreeMap<String, ReportFormulaSymbolKind>) {
+    fn visit(
+        value: &Value,
+        symbols: &mut BTreeMap<String, ReportFormulaSymbolKind>,
+        symbol_kinds: &BTreeMap<String, String>,
+    ) {
         match value {
             Value::Object(object) => {
                 match object.get("kind").and_then(Value::as_str) {
@@ -5032,32 +5277,42 @@ fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaS
                                 .and_then(Value::as_array)
                                 .map(Vec::as_slice)
                                 .unwrap_or(&[]);
-                            if format_symbolic_ctor(name, args).is_some() {
+                            if format_symbolic_ctor(name, args).is_some()
+                                || is_report_python_operator_constructor(name)
+                            {
                                 for child in object.values() {
-                                    visit(child, symbols);
+                                    visit(child, symbols, symbol_kinds);
                                 }
                                 return;
                             }
-                            let surface = name
-                                .strip_prefix("call:")
-                                .or_else(|| name.strip_prefix("method:"))
-                                .unwrap_or(name);
-                            insert_symbol(
-                                symbols,
-                                surface.to_string(),
-                                ReportFormulaSymbolKind::Constructor,
-                            );
+                            let surface = report_symbol_display(name);
+                            let symbol_kind = match symbol_kinds.get(name).map(String::as_str) {
+                                Some("coordinate") => ReportFormulaSymbolKind::Coordinate,
+                                Some("builtin") => ReportFormulaSymbolKind::Builtin,
+                                Some("contract-target") => ReportFormulaSymbolKind::ContractTarget,
+                                Some("method-coordinate") => {
+                                    ReportFormulaSymbolKind::MethodCoordinate
+                                }
+                                Some(other) => panic!(
+                                    "report symbol classification gap: constructor `{surface}` has unknown emitter kind testimony `{other}`"
+                                ),
+                                None => ReportFormulaSymbolKind::Constructor,
+                            };
+                            // Preserve the emitter's exact constructor spelling as the
+                            // classification key. `tuple` and `call:tuple` lawfully have
+                            // different testimony even though they share a display name.
+                            insert_symbol(symbols, name.to_string(), symbol_kind);
                         }
                     }
                     _ => {}
                 }
                 for child in object.values() {
-                    visit(child, symbols);
+                    visit(child, symbols, symbol_kinds);
                 }
             }
             Value::Array(values) => {
                 for child in values {
-                    visit(child, symbols);
+                    visit(child, symbols, symbol_kinds);
                 }
             }
             _ => {}
@@ -5066,7 +5321,7 @@ fn contract_formula_symbols(contract: &Value) -> BTreeMap<String, ReportFormulaS
     let mut symbols = BTreeMap::new();
     for field in ["post", "inv", "pre"] {
         if let Some(formula) = contract.get(field) {
-            visit(formula, &mut symbols);
+            visit(formula, &mut symbols, symbol_kinds);
         }
     }
     symbols
@@ -9297,6 +9552,7 @@ mod tests {
             source_mementos: vec![],
             plan_mementos: vec![],
             contracts: vec![],
+            symbol_kinds: BTreeMap::new(),
             call_edges: vec![],
             vendor_conjoins: vec![],
             project_root: None,
@@ -14233,6 +14489,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             source_mementos: vec![],
             plan_mementos: vec![],
             contracts: vec![],
+            symbol_kinds: BTreeMap::new(),
             call_edges: vec![],
             vendor_conjoins: vec![VendorConjoinReport {
                 call: "call:enc(\"def\")".to_string(),
@@ -14573,6 +14830,46 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "{rendered}"
         );
         assert!(rendered.contains("shared cid=blake3-512:"), "{rendered}");
+    }
+
+    #[test]
+    fn visual_fol_nested_shared_subterms_stay_a_dag_inside_shared_parent() {
+        let rung = serde_json::json!({
+            "kind": "ctor", "name": "call:normalize", "args": [{
+                "kind": "ctor", "name": "call:source", "args": [{
+                    "kind": "ctor", "name": "call:transform", "args": [{
+                        "kind": "var", "name": "x"
+                    }]
+                }]
+            }]
+        });
+        let tower = serde_json::json!({
+            "kind": "ctor", "name": "call:combine", "args": [
+                rung.clone(), rung
+            ]
+        });
+        let formula = serde_json::json!({
+            "kind": "and", "operands": [
+                {"kind": "atomic", "name": "=", "args": [
+                    {"kind": "var", "name": "left"}, tower.clone()
+                ]},
+                {"kind": "atomic", "name": "=", "args": [
+                    {"kind": "var", "name": "right"}, tower
+                ]}
+            ]
+        });
+
+        let rendered = pretty_visual_formula(&formula, false);
+
+        assert_eq!(
+            rendered.matches("transform(x)").count(),
+            1,
+            "the inner rung must be defined once even inside a shared parent:\n{rendered}"
+        );
+        assert!(
+            rendered.matches("as above, cid=blake3-512:").count() >= 2,
+            "the nested rungs and their shared parent need references:\n{rendered}"
+        );
     }
 
     #[test]
@@ -14962,10 +15259,12 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                         {"kind": "var", "name": "table"},
                         {"kind": "var", "name": "key"}
                     ]},
-                    {"kind": "ctor", "name": "py.neg", "args": [
-                        {"kind": "ctor", "name": "py.invert", "args": [
-                            {"kind": "var", "name": "x"}
-                        ]}
+                    {"kind": "ctor", "name": "py.and", "args": [
+                        {"kind": "ctor", "name": ">>", "args": [
+                            {"kind": "var", "name": "x"},
+                            {"kind": "const", "value": 8}
+                        ]},
+                        {"kind": "var", "name": "x"}
                     ]}
                 ]}
             ]},
@@ -14987,8 +15286,133 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let visual = render_report_visual(&report, None);
 
         assert!(visual.contains("py.subscript -> coordinate"), "{visual}");
-        assert!(visual.contains("py.neg -> coordinate"), "{visual}");
-        assert!(visual.contains("py.invert -> coordinate"), "{visual}");
+        assert!(visual.contains("py.and -> coordinate"), "{visual}");
+        assert!(!visual.contains(">> ->"), "{visual}");
+    }
+
+    #[test]
+    fn report_symbol_classifier_covers_python_emitted_constructor_census() {
+        let current = serde_json::json!({"name": "owner", "kind": "function-contract"});
+        let formals = BTreeSet::new();
+        let contracts = Vec::new();
+
+        for symbol in REPORT_PYTHON_COORDINATE_CONSTRUCTORS {
+            assert_eq!(
+                resolve_report_symbol(
+                    &current,
+                    symbol,
+                    ReportFormulaSymbolKind::Constructor,
+                    &formals,
+                    &contracts,
+                ),
+                "coordinate",
+                "coordinate emitter missing from report classifier: {symbol}"
+            );
+        }
+        for symbol in REPORT_PYTHON_EFFECT_CONSTRUCTORS {
+            assert_eq!(
+                resolve_report_symbol(
+                    &current,
+                    symbol,
+                    ReportFormulaSymbolKind::Constructor,
+                    &formals,
+                    &contracts,
+                ),
+                "effect",
+                "effect emitter missing from report classifier: {symbol}"
+            );
+        }
+        for symbol in REPORT_PYTHON_OPERATOR_CONSTRUCTORS {
+            assert!(
+                is_report_python_operator_constructor(symbol),
+                "operator emitter missing from report classifier: {symbol}"
+            );
+        }
+    }
+
+    #[test]
+    fn visual_report_trusts_emitter_symbol_kind_for_open_vocabulary() {
+        let contract = serde_json::json!({
+            "name": "owner", "kind": "function-contract", "formals": [],
+            "post": {"kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"},
+                {"kind": "ctor", "name": "tuple", "args": [
+                    {"kind": "ctor", "name": "call:vendor_open_name",
+                     "args": []},
+                    {"kind": "ctor", "name": "call:another_open_name",
+                     "args": []},
+                    {"kind": "ctor", "name": "call:external_open_name",
+                     "args": []},
+                    {"kind": "ctor", "name": "call:contract_open_name",
+                     "args": []},
+                    {"kind": "ctor", "name": "call:tuple", "args": []}
+                ]}
+            ]}
+        });
+        let mut report = minimal_source_report();
+        report.contracts = vec![contract];
+        report.symbol_kinds = BTreeMap::from([
+            ("tuple".to_string(), "coordinate".to_string()),
+            (
+                "call:vendor_open_name".to_string(),
+                "method-coordinate".to_string(),
+            ),
+            (
+                "call:another_open_name".to_string(),
+                "coordinate".to_string(),
+            ),
+            ("call:external_open_name".to_string(), "builtin".to_string()),
+            ("call:tuple".to_string(), "builtin".to_string()),
+            (
+                "call:contract_open_name".to_string(),
+                "contract-target".to_string(),
+            ),
+        ]);
+
+        let visual = render_report_visual(&report, None);
+
+        assert!(
+            visual.contains("vendor_open_name -> method-coordinate"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("another_open_name -> coordinate"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("external_open_name -> python:builtin/external_open_name"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("contract_open_name -> contract-target"),
+            "{visual}"
+        );
+        assert!(visual.contains("tuple -> coordinate"), "{visual}");
+        assert!(visual.contains("tuple -> python:builtin/tuple"), "{visual}");
+    }
+
+    #[test]
+    fn report_classifier_contains_no_vendor_vocabulary() {
+        let source = include_str!("cmd_lift.rs");
+        let start = source
+            .find("const REPORT_PYTHON_COORDINATE_CONSTRUCTORS")
+            .unwrap();
+        let end = source[start..].find("fn contract_formula_symbols").unwrap() + start;
+        let classifier = &source[start..end];
+
+        let forbidden = [
+            ["wee", "k"].concat(),
+            ["wee", "k", "day"].concat(),
+            ["ye", "ar"].concat(),
+            ["u", "tc"].concat(),
+            ["_hash", "code"].concat(),
+        ];
+        for forbidden in forbidden {
+            assert!(
+                !classifier.contains(&format!("\"{forbidden}\"")),
+                "vendor name `{forbidden}` was memorized by the report classifier"
+            );
+        }
     }
 
     #[test]
@@ -15008,7 +15432,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         });
 
         assert_eq!(
-            contract_formula_symbols(&contract),
+            contract_formula_symbols(&contract, &BTreeMap::new()),
             BTreeMap::from([
                 ("factor".to_string(), ReportFormulaSymbolKind::Variable),
                 ("out".to_string(), ReportFormulaSymbolKind::Variable),

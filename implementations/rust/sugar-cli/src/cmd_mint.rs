@@ -35,6 +35,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 use base64::Engine;
 use clap::Parser;
@@ -410,6 +411,7 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     // (coverage is a workspace census, not a bindings pass). Carry the first
     // non-empty coverage we see -- never clobber a populated report with absence.
     let mut merged_lift_coverage: Option<Value> = None;
+    let mut merged_symbol_kinds: BTreeMap<String, String> = BTreeMap::new();
     // Content-shape dedup keys (NOT names). See `canonical_dedup_key`.
     let mut seen_content: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut seen_implications: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -452,6 +454,20 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
                 let dedup_key = canonical_dedup_key(item);
                 if seen_content.insert(dedup_key) {
                     merged_ir.push(item.clone());
+                }
+            }
+        }
+        if let Some(entries) = entry.response.get("symbolKinds").and_then(Value::as_object) {
+            for (symbol, kind) in entries {
+                let kind = kind
+                    .as_str()
+                    .ok_or_else(|| format!("symbolKinds entry for `{symbol}` must be a string"))?;
+                if let Some(prior) = merged_symbol_kinds.insert(symbol.clone(), kind.to_string()) {
+                    if prior != kind {
+                        return Err(format!(
+                            "conflicting symbolKinds testimony for `{symbol}`: `{prior}` and `{kind}`"
+                        ));
+                    }
                 }
             }
         }
@@ -644,6 +660,10 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     }
     if let Some(coverage) = merged_lift_coverage {
         merged["liftCoverage"] = coverage;
+    }
+    if !merged_symbol_kinds.is_empty() {
+        merged["symbolKinds"] = serde_json::to_value(merged_symbol_kinds)
+            .expect("symbolKinds map is JSON-serializable");
     }
     Ok(merged)
 }
@@ -1337,8 +1357,25 @@ fn finalize_toolchain_plan_memento(
 
     let tool_outputs: Vec<Value> = outputs
         .iter()
-        .map(|output| {
+        .enumerate()
+        .map(|(index, output)| {
+            let cid_started = std::time::Instant::now();
+            tracing::info!(
+                stage = "lift_report_graph.plan_memento.output_cid.enter",
+                index,
+                total = outputs.len(),
+                surface = %output.surface,
+                "lift-report graph progress"
+            );
             let output_cid = canonical_json_cid(&output.response);
+            tracing::info!(
+                stage = "lift_report_graph.plan_memento.output_cid.exit",
+                index,
+                total = outputs.len(),
+                surface = %output.surface,
+                elapsed_ms = cid_started.elapsed().as_millis(),
+                "lift-report graph progress"
+            );
             json!({
                 "surface": output.surface,
                 "actualOutputCid": output_cid,
@@ -2155,6 +2192,12 @@ pub fn lift_plugins_response_for_report(
     library_bindings: bool,
     report_summary: bool,
 ) -> Result<Value, String> {
+    let graph_started = std::time::Instant::now();
+    tracing::info!(
+        stage = "lift_report_graph.enter",
+        plugins = plugins.len(),
+        "lift-report graph progress"
+    );
     let mut producer_plugins = Vec::new();
     let mut consumer_plugins = Vec::new();
     for plugin in plugins {
@@ -2169,6 +2212,12 @@ pub fn lift_plugins_response_for_report(
     let mut per_plugin: Vec<PerPluginDispatch> = Vec::with_capacity(plugins.len());
     let mut producer_responses: Vec<PerPluginDispatch> = Vec::with_capacity(producer_plugins.len());
     for plugin in &producer_plugins {
+        let dispatch_started = std::time::Instant::now();
+        tracing::info!(
+            stage = "lift_report_graph.producer.enter",
+            surface = %plugin.surface,
+            "lift-report graph progress"
+        );
         let response = dispatch_report_lift_plugin(
             project_root,
             plugin,
@@ -2176,6 +2225,12 @@ pub fn lift_plugins_response_for_report(
             library_bindings,
             report_summary_for_lift,
         )?;
+        tracing::info!(
+            stage = "lift_report_graph.producer.exit",
+            surface = %plugin.surface,
+            elapsed_ms = dispatch_started.elapsed().as_millis(),
+            "lift-report graph progress"
+        );
         let dispatched = PerPluginDispatch {
             surface: plugin.surface.clone(),
             response,
@@ -2187,13 +2242,30 @@ pub fn lift_plugins_response_for_report(
     let implicit_report_consumer = consumer_plugins.is_empty()
         && producer_plugins.len() == 1
         && producer_responses_have_call_edges(&producer_responses);
+    let bindings_started = std::time::Instant::now();
+    tracing::info!(
+        stage = "lift_report_graph.contract_bindings.enter",
+        "lift-report graph progress"
+    );
     let contract_bindings = if consumer_plugins.is_empty() && !implicit_report_consumer {
         Vec::new()
     } else {
         consumer_contract_bindings_from_producers(&producer_responses, project_root, out_dir, true)?
     };
+    tracing::info!(
+        stage = "lift_report_graph.contract_bindings.exit",
+        elapsed_ms = bindings_started.elapsed().as_millis(),
+        bindings = contract_bindings.len(),
+        "lift-report graph progress"
+    );
     if implicit_report_consumer && !contract_bindings.is_empty() {
         let plugin = producer_plugins[0];
+        let dispatch_started = std::time::Instant::now();
+        tracing::info!(
+            stage = "lift_report_graph.implicit_consumer.enter",
+            surface = %plugin.surface,
+            "lift-report graph progress"
+        );
         let response = dispatch_report_lift_plugin(
             project_root,
             plugin,
@@ -2201,12 +2273,24 @@ pub fn lift_plugins_response_for_report(
             library_bindings,
             false,
         )?;
+        tracing::info!(
+            stage = "lift_report_graph.implicit_consumer.exit",
+            surface = %plugin.surface,
+            elapsed_ms = dispatch_started.elapsed().as_millis(),
+            "lift-report graph progress"
+        );
         per_plugin.push(PerPluginDispatch {
             surface: plugin.surface.clone(),
             response,
         });
     }
     for plugin in consumer_plugins {
+        let dispatch_started = std::time::Instant::now();
+        tracing::info!(
+            stage = "lift_report_graph.consumer.enter",
+            surface = %plugin.surface,
+            "lift-report graph progress"
+        );
         let response = dispatch_report_lift_plugin(
             project_root,
             plugin,
@@ -2214,22 +2298,55 @@ pub fn lift_plugins_response_for_report(
             library_bindings,
             false,
         )?;
+        tracing::info!(
+            stage = "lift_report_graph.consumer.exit",
+            surface = %plugin.surface,
+            elapsed_ms = dispatch_started.elapsed().as_millis(),
+            "lift-report graph progress"
+        );
         per_plugin.push(PerPluginDispatch {
             surface: plugin.surface.clone(),
             response,
         });
     }
 
+    let plan_started = std::time::Instant::now();
+    tracing::info!(
+        stage = "lift_report_graph.plan_memento.enter",
+        responses = per_plugin.len(),
+        "lift-report graph progress"
+    );
     let plan_memento = finalize_toolchain_plan_memento(
         toolchain_plan_seed(project_root, plugins, report_toolchain_plan_steps(plugins)),
         &per_plugin,
     )?;
+    tracing::info!(
+        stage = "lift_report_graph.plan_memento.exit",
+        elapsed_ms = plan_started.elapsed().as_millis(),
+        "lift-report graph progress"
+    );
+    let merge_started = std::time::Instant::now();
+    tracing::info!(
+        stage = "lift_report_graph.merge.enter",
+        responses = per_plugin.len(),
+        "lift-report graph progress"
+    );
     let mut response = match per_plugin.len() {
         0 => Err("lift report graph has no lift plugins".to_string()),
         1 => Ok(per_plugin.into_iter().next().unwrap().response),
         _ => merge_ir_document_responses(per_plugin),
     }?;
+    tracing::info!(
+        stage = "lift_report_graph.merge.exit",
+        elapsed_ms = merge_started.elapsed().as_millis(),
+        "lift-report graph progress"
+    );
     if response.get("kind").and_then(Value::as_str) == Some("ir-document") {
+        let witness_started = std::time::Instant::now();
+        tracing::info!(
+            stage = "lift_report_graph.witness.enter",
+            "lift-report graph progress"
+        );
         let mut plan_mementos = response
             .get("planMementos")
             .or_else(|| response.get("plan_mementos"))
@@ -2239,7 +2356,17 @@ pub fn lift_plugins_response_for_report(
         attach_toolchain_output_witness(&mut response, &plan_memento);
         plan_mementos.push(plan_memento);
         response["planMementos"] = Value::Array(plan_mementos);
+        tracing::info!(
+            stage = "lift_report_graph.witness.exit",
+            elapsed_ms = witness_started.elapsed().as_millis(),
+            "lift-report graph progress"
+        );
     }
+    tracing::info!(
+        stage = "lift_report_graph.exit",
+        elapsed_ms = graph_started.elapsed().as_millis(),
+        "lift-report graph progress"
+    );
     Ok(response)
 }
 
@@ -4070,6 +4197,16 @@ fn mint_ir_document_with_source_and_plan_mementos(
     };
     let ir = &ir_coalesced;
 
+    let contract_decl_total = ir
+        .iter()
+        .filter(|decl| {
+            matches!(
+                decl.get("kind").and_then(Value::as_str),
+                Some("contract" | "function-contract")
+            )
+        })
+        .count();
+    let mut contract_decl_index = 0usize;
     for decl in ir {
         let kind = decl.get("kind").and_then(|v| v.as_str()).unwrap_or("");
         if kind != "contract" && kind != "function-contract" {
@@ -4084,6 +4221,15 @@ fn mint_ir_document_with_source_and_plan_mementos(
             .and_then(|v| v.as_str())
             .unwrap_or("unnamed")
             .to_string();
+        contract_decl_index += 1;
+        let contract_started = Instant::now();
+        tracing::info!(
+            stage = "mint_ir_document.contract.enter",
+            contract_index = contract_decl_index,
+            contract_total = contract_decl_total,
+            contract_name = %name,
+            "contract mint microscope"
+        );
         let out_binding = decl
             .get("outBinding")
             .or_else(|| decl.get("out_binding"))
@@ -4268,6 +4414,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 .map(|s| s.to_string())
         });
 
+        let register_body_started = Instant::now();
         let contract_body = register_contract_body_graph(
             &mut proof_graph,
             pre.as_ref(),
@@ -4275,6 +4422,14 @@ fn mint_ir_document_with_source_and_plan_mementos(
             inv.as_ref(),
         )
         .map_err(|e| format!("contract `{name}`: {e}"))?;
+        tracing::info!(
+            stage = "mint_ir_document.contract.register_body.exit",
+            contract_index = contract_decl_index,
+            contract_total = contract_decl_total,
+            contract_name = %name,
+            elapsed_ms = register_body_started.elapsed().as_millis(),
+            "contract mint microscope"
+        );
         let body_cid = contract_body.cid().as_str().to_string();
         let proofir_provenance_variants = proofir_provenance_memento_variants(
             decl.get("proofirProvenance")
@@ -4315,17 +4470,36 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 proofir_provenance,
             };
 
+            let identity_started = Instant::now();
             let ccid = contract_cid(&args);
             let pre_hash = args.pre.as_ref().map(formula_hash);
             let post_hash = args.post.as_ref().map(formula_hash);
             let inv_hash = args.inv.as_ref().map(formula_hash);
+            tracing::info!(
+                stage = "mint_ir_document.contract.identity.exit",
+                contract_index = contract_decl_index,
+                contract_total = contract_decl_total,
+                contract_name = %name,
+                elapsed_ms = identity_started.elapsed().as_millis(),
+                "contract mint microscope"
+            );
             if !pushed_content_cid {
                 content_cids.push(ccid.clone());
                 pushed_content_cid = true;
             }
 
+            let envelope_started = Instant::now();
             let m = mint_contract_with_body_cid(&args, Some(&body_cid))
                 .map_err(|e| format!("mint contract: {e}"))?;
+            tracing::info!(
+                stage = "mint_ir_document.contract.envelope.exit",
+                contract_index = contract_decl_index,
+                contract_total = contract_decl_total,
+                contract_name = %name,
+                elapsed_ms = envelope_started.elapsed().as_millis(),
+                canonical_bytes = m.canonical_bytes.len(),
+                "contract mint microscope"
+            );
 
             // Production bridge-writer (#1436/#1440, PR-23): for a body-derived
             // function contract, AUTOMATICALLY mint the bridge that points a
@@ -4401,6 +4575,14 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 m.canonical_bytes
             );
         }
+        tracing::info!(
+            stage = "mint_ir_document.contract.exit",
+            contract_index = contract_decl_index,
+            contract_total = contract_decl_total,
+            contract_name = %name,
+            elapsed_ms = contract_started.elapsed().as_millis(),
+            "contract mint microscope"
+        );
     }
 
     let bridge_decl_with_local_minted_target =

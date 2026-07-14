@@ -142,8 +142,16 @@ identify-result-kind = "identity-document" / "package-inspection-document"
 ir-document = {
   kind: "ir-document",
   ir: [* json-value],
+  ? symbolKinds: { * constructor-spelling => symbol-kind },
   ? diagnostics: diagnostics
 }
+
+symbol-kind = "coordinate" / "builtin" / "contract-target" / "method-coordinate"
+
+`symbolKinds` is presentation testimony beside the IR. It is not a term field
+and MUST NOT enter a term's canonical bytes or CID preimage. A producer emits
+at most one entry per constructor spelling; consumers render from that entry
+and fail loudly when an open constructor spelling has no testimony.
 
 signed-mementos = {
   kind: "signed-mementos",

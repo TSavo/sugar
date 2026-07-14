@@ -99,6 +99,7 @@ class BuiltinDunderCallSugar(
                     ctor(
                         f"call:{self.external_target}",
                         [value.to_term(owner=str(self.site))],
+                        symbol_kind="builtin",
                     )
                 )
             )
@@ -139,7 +140,11 @@ class BuiltinDunderCallSugar(
                 self.name,
                 (value,),
                 (),
-                ctor(f"call:{self.name}", [value.to_term(owner=str(self.site))]),
+                ctor(
+                    f"call:{self.name}",
+                    [value.to_term(owner=str(self.site))],
+                    symbol_kind="builtin",
+                ),
                 None,
                 self.site,
             )

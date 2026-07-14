@@ -106,6 +106,7 @@ class DivmodDunderCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar
                         left.to_term(owner=str(self.site)),
                         right.to_term(owner=str(self.site)),
                     ],
+                    symbol_kind="builtin",
                 ),
                 body=None,
                 site=self.site,

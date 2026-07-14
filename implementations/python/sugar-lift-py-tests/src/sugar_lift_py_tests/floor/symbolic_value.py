@@ -70,7 +70,11 @@ class SymbolicValue(FloorValue):
                 target_name="len",
                 arg_values=(self,),
                 parameters=(),
-                term=ctor("call:len", [self.to_term(owner=str(site))]),
+                term=ctor(
+                    "call:len",
+                    [self.to_term(owner=str(site))],
+                    symbol_kind="builtin",
+                ),
                 body=None,
                 site=site,
             )
@@ -94,7 +98,11 @@ class SymbolicValue(FloorValue):
                 target_name="abs",
                 arg_values=(self,),
                 parameters=(),
-                term=ctor("call:abs", [self.to_term(owner=str(site))]),
+                term=ctor(
+                    "call:abs",
+                    [self.to_term(owner=str(site))],
+                    symbol_kind="builtin",
+                ),
                 body=None,
                 site=site,
             )

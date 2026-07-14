@@ -126,15 +126,20 @@ Term = Union[_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor]
 _TERM_INTERN_TABLE: ContextVar[dict[Term, Term] | None] = ContextVar(
     "sugar_term_intern_table", default=None
 )
+_CONSTRUCTOR_SYMBOL_KINDS: ContextVar[dict[str, str] | None] = ContextVar(
+    "sugar_constructor_symbol_kinds", default=None
+)
 
 
 @contextmanager
 def term_intern_scope() -> Iterator[None]:
-    token = _TERM_INTERN_TABLE.set({})
+    intern_token = _TERM_INTERN_TABLE.set({})
+    symbols_token = _CONSTRUCTOR_SYMBOL_KINDS.set({})
     try:
         yield
     finally:
-        _TERM_INTERN_TABLE.reset(token)
+        _CONSTRUCTOR_SYMBOL_KINDS.reset(symbols_token)
+        _TERM_INTERN_TABLE.reset(intern_token)
 
 
 def _intern_term(term: Term) -> Term:
@@ -169,8 +174,57 @@ def bool_const(b: bool) -> Term:
     return _intern_term(_ConstBool(bool(b), Bool()))
 
 
-def ctor(name: str, args: List[Term]) -> Term:
+_SYMBOL_KINDS = frozenset(
+    {"coordinate", "builtin", "contract-target", "method-coordinate"}
+)
+_EMITTER_OWNED_SYMBOL_KINDS = {
+    "None": "coordinate",
+    "array": "coordinate",
+    "kw": "coordinate",
+    "python:builtin": "coordinate",
+    "python:dict": "coordinate",
+    "python:dict_entry": "coordinate",
+    "python:function": "coordinate",
+    "python:type": "coordinate",
+    "tuple": "coordinate",
+}
+
+
+def ctor(
+    name: str, args: List[Term], *, symbol_kind: Optional[str] = None
+) -> Term:
+    if symbol_kind is None:
+        symbol_kind = _EMITTER_OWNED_SYMBOL_KINDS.get(name)
+    if symbol_kind is not None and symbol_kind not in _SYMBOL_KINDS:
+        raise ValueError(f"unknown constructor symbol kind: {symbol_kind}")
+    if symbol_kind is not None:
+        symbol_kinds = _CONSTRUCTOR_SYMBOL_KINDS.get()
+        if symbol_kinds is not None:
+            merge_constructor_symbol_kind(symbol_kinds, name, symbol_kind)
     return _intern_term(_Ctor(name, tuple(args)))
+
+
+def constructor_symbol_kinds() -> dict[str, str]:
+    return dict(_CONSTRUCTOR_SYMBOL_KINDS.get() or {})
+
+
+def merge_constructor_symbol_kind(
+    symbol_kinds: dict[str, str], symbol: str, kind: str
+) -> None:
+    prior = symbol_kinds.get(symbol)
+    if prior is None or prior == kind:
+        symbol_kinds[symbol] = kind
+        return
+    refinable = {"coordinate", "method-coordinate", "contract-target"}
+    if prior in refinable and kind in refinable:
+        if "contract-target" in {prior, kind}:
+            symbol_kinds[symbol] = "contract-target"
+        elif "method-coordinate" in {prior, kind}:
+            symbol_kinds[symbol] = "method-coordinate"
+        return
+    raise ValueError(
+        f"constructor {symbol!r} has conflicting symbol kinds: {prior!r} and {kind!r}"
+    )
 
 
 def bvand(left: Term, right: Term) -> Term:
@@ -330,17 +384,23 @@ def exists(name: str, sort: Sort, body: Formula) -> Formula:
 def formula_term(formula: Formula) -> Term:
     """Reify an existing formula as a coordinate for conditional terms."""
     if isinstance(formula, _Atomic):
-        return ctor(f"formula:{formula.name}", list(formula.args))
+        return ctor(
+            f"formula:{formula.name}",
+            list(formula.args),
+            symbol_kind="coordinate",
+        )
     if isinstance(formula, _Connective):
         return ctor(
             f"formula:{formula.kind}",
             [formula_term(operand) for operand in formula.operands],
+            symbol_kind="coordinate",
         )
     if isinstance(formula, _Quantifier):
         sort_name = getattr(formula.sort, "name", type(formula.sort).__name__)
         return ctor(
             f"formula:{formula.kind}",
             [str_const(formula.name), str_const(sort_name), formula_term(formula.body)],
+            symbol_kind="coordinate",
         )
     raise TypeError(f"unknown Formula construction: {type(formula).__name__}")
 

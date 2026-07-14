@@ -125,7 +125,15 @@ class KeywordCallSugar(
                     target_name=self.target_name,
                     arg_values=pos_values,
                     parameters=tuple(n for n, _ in kw_pairs),
-                    term=ctor(f"call:{self.target_name}", term_args),
+                    term=ctor(
+                        f"call:{self.target_name}",
+                        term_args,
+                        symbol_kind=(
+                            "method-coordinate"
+                            if self.receiver is not None
+                            else "coordinate"
+                        ),
+                    ),
                     body=None,
                     site=self.site,
                 )
