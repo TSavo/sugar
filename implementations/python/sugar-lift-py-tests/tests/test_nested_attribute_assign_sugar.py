@@ -8,12 +8,10 @@ from pathlib import Path
 import subprocess
 import sys
 
-import pytest
 from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import ReturnValue, SymbolicValue
 from sugar_lift_py_tests.ir import make_var
@@ -50,17 +48,17 @@ def test_deep_attribute_assignment_rebinds_full_dotted_path() -> None:
     assert isinstance(returned.value, FalseBoolLiteralSugar)
 
 
-def test_call_and_subscript_receiver_targets_stay_loud() -> None:
+def test_call_and_subscript_receiver_targets_have_selected_owner() -> None:
     for source in (
         "factory().field = 1",
         "items[0].field = 1",
     ):
-        with pytest.raises(FactoryPanic):
-            build_node(
-                ast.parse(source).body[0],
-                filename="vendor.py",
-                role=SugarRole.STATEMENT,
-            )
+        built = build_node(
+            ast.parse(source).body[0],
+            filename="vendor.py",
+            role=SugarRole.STATEMENT,
+        )
+        assert type(built.sugar).__name__ == "SelectedAttributeAssignSugar"
 
 
 def test_owner_is_name_rooted_dotted_attribute_target() -> None:

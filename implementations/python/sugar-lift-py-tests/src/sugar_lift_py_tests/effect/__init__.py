@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .assertion_failed_runtime_effect import AssertionFailedRuntimeEffect
+from .attribute_store_runtime_effect import AttributeStoreRuntimeEffect
 from .coverage_gap_effect import CoverageGapEffect
 from .conditional_expression_runtime_effect import ConditionalExpressionRuntimeEffect
 from .call_result_type_runtime_effect import CallResultTypeRuntimeEffect
@@ -25,6 +26,7 @@ from .try_handler_dispatch_runtime_effect import TryHandlerDispatchRuntimeEffect
 
 __all__ = [
     "AssertionFailedRuntimeEffect",
+    "AttributeStoreRuntimeEffect",
     "CoverageGapEffect",
     "ConditionalExpressionRuntimeEffect",
     "CallResultTypeRuntimeEffect",
