@@ -25,8 +25,8 @@ fn repo_root() -> PathBuf {
 #[test]
 fn bcargo_syncs_ir_compiler_manifests() {
     let root = repo_root();
-    let bcargo = fs::read_to_string(root.join("bin").join("bcargo")).expect("read bin/bcargo");
-    let rules = parse_sync_rules(&bcargo);
+    let backend = fs::read_to_string(root.join("bin/lib/sugar-bx.sh")).expect("read bx backend");
+    let rules = parse_sync_rules(&backend);
     let synced = |path: &str| {
         rules
             .iter()
@@ -227,9 +227,9 @@ fn reads_fixture() {
 }
 
 fn write_bcargo(root: &Path, body: &str) {
-    let bin = root.join("bin");
+    let bin = root.join("bin/lib");
     fs::create_dir_all(&bin).expect("mkdir bin");
-    fs::write(bin.join("bcargo"), body).expect("write bcargo");
+    fs::write(bin.join("sugar-bx.sh"), body).expect("write bx backend");
 }
 
 #[derive(Debug)]
@@ -244,7 +244,7 @@ impl SyncContractReport {
             .iter()
             .map(|missing| {
                 format!(
-                    "crime=bcargo-sync-missing-artifact-class owner=bin/bcargo \
+                    "crime=bcargo-sync-missing-artifact-class owner=bin/lib/sugar-bx.sh \
                      shape={} path={} replacement={}",
                     missing.artifact.class, missing.artifact.rel_path, missing.replacement
                 )
@@ -295,9 +295,9 @@ struct SyncRule {
 }
 
 fn bcargo_sync_contract_report(root: &Path) -> io::Result<SyncContractReport> {
-    let bcargo = fs::read_to_string(root.join("bin").join("bcargo"))?;
-    let sync_rules = parse_sync_rules(&bcargo);
-    let sync_excludes = parse_sync_excludes(&bcargo);
+    let backend = fs::read_to_string(root.join("bin/lib/sugar-bx.sh"))?;
+    let sync_rules = parse_sync_rules(&backend);
+    let sync_excludes = parse_sync_excludes(&backend);
     let artifacts = collect_artifacts(root, tracked_paths(root).as_ref())?;
     let missing = artifacts
         .iter()
@@ -540,14 +540,14 @@ fn path_contains_component_sequence(path: &str, needle: &str) -> bool {
 fn replacement_for(artifact: &Artifact) -> String {
     if artifact.rel_path.contains("/.sugar/runs") {
         return format!(
-            "add --include='/{}/***' ahead of the excludes in bin/bcargo",
+            "add --include='/{}/***' ahead of the excludes in bin/lib/sugar-bx.sh",
             artifact.rel_path
         );
     }
     if let Some(root) = broad_sync_root(&artifact.rel_path) {
-        return format!("add {root} to sync_paths in bin/bcargo");
+        return format!("add {root} to sync_paths in bin/lib/sugar-bx.sh");
     }
-    format!("add {} to sync_paths in bin/bcargo", artifact.rel_path)
+    format!("add {} to sync_paths in bin/lib/sugar-bx.sh", artifact.rel_path)
 }
 
 fn broad_sync_root(path: &str) -> Option<String> {

@@ -34,6 +34,11 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   exit 0
 fi
 
+# Compatibility wrapper: synchronization policy and execution now have one
+# owner, the bx backend reached through sugarbin.
+brun_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+exec "$brun_dir/sugarbin" run --host bx --env ambient "$@"
+
 path_prefixes=()
 env_names=()
 sync_backs=()

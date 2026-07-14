@@ -15,6 +15,8 @@ dispatch_execution_subcommand() {
   local needs=""
   local saw_boundary=0
   local -a command=()
+  local -a path_prefixes=() env_names=() sync_backs=()
+  local python_env_flag=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -25,9 +27,23 @@ dispatch_execution_subcommand() {
         ;;
       --env)
         [[ $# -ge 2 ]] || { echo "sugarbin: --env requires a value" >&2; return 2; }
-        execution_env="$2"
+        if [[ "$2" == ambient || "$2" == docker ]]; then
+          execution_env="$2"
+        else
+          local -a parsed_env=()
+          IFS=',' read -r -a parsed_env <<<"$2"
+          env_names+=("${parsed_env[@]}")
+        fi
         shift 2
         ;;
+      --path-prefix)
+        [[ $# -ge 2 ]] || { echo "sugarbin: --path-prefix requires a value" >&2; return 2; }
+        path_prefixes+=("$2"); shift 2 ;;
+      --sync-back)
+        [[ $# -ge 2 && "$2" == /*:/* ]] || { echo "sugarbin: --sync-back requires REMOTE:LOCAL" >&2; return 2; }
+        sync_backs+=("$2"); shift 2 ;;
+      --no-python-env)
+        python_env_flag=0; shift ;;
       --platform)
         [[ $# -ge 2 ]] || { echo "sugarbin: --platform requires a value" >&2; return 2; }
         requested_platform="$2"
@@ -58,7 +74,13 @@ dispatch_execution_subcommand() {
 
   local observed_platform
   observed_platform="$(sugar_exec_platform_key)"
-  sugar_exec_validate_route "$host" "$execution_env" "$requested_platform" "$observed_platform" || return $?
+  if [[ "$host" == local ]]; then
+    sugar_exec_validate_route "$host" "$execution_env" "$requested_platform" "$observed_platform" || return $?
+  elif [[ "$host" == bx ]]; then
+    [[ "$execution_env" == ambient ]] || { echo "unsupported execution route: host=$host env=$execution_env" >&2; return 2; }
+  else
+    sugar_exec_validate_route "$host" "$execution_env" "$requested_platform" "$observed_platform" || return $?
+  fi
 
   if [[ "$subcommand" == explain ]]; then
     [[ "$saw_boundary" == 0 ]] || { echo "sugarbin: explain does not accept a command" >&2; return 2; }
@@ -76,7 +98,33 @@ dispatch_execution_subcommand() {
   if [[ "$subcommand" == cargo ]]; then
     command=(cargo "${command[@]}")
   fi
-  sugar_exec_local_run "${command[@]}"
+  if [[ "$host" == local ]]; then
+    sugar_exec_local_run "${command[@]}"
+    return $?
+  fi
+
+  # shellcheck source=bin/lib/sugar-bx.sh
+  source "$script_dir/lib/sugar-bx.sh"
+  SUGAR_BX_PATH_PREFIXES=(${path_prefixes[@]+"${path_prefixes[@]}"})
+  SUGAR_BX_ENV_NAMES=(${env_names[@]+"${env_names[@]}"})
+  SUGAR_BX_SYNC_BACKS=(${sync_backs[@]+"${sync_backs[@]}"})
+  SUGAR_BX_PYTHON_ENV="${python_env_flag:-${BCARGO_PYTHON_ENV:-1}}"
+  local repo_root local_cwd status=0 pair
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$repo_root" ]] || { echo "sugarbin: must be run from inside a git checkout" >&2; return 2; }
+  local_cwd="$(pwd -P)"
+  sugar_bx_init "$repo_root" "$local_cwd" || return $?
+  sugar_bx_sync_workspace || return $?
+  set +e
+  sugar_bx_run_ambient "${command[@]}"
+  status=$?
+  set -e
+  if [[ "$status" == 0 ]]; then
+    for pair in ${SUGAR_BX_SYNC_BACKS[@]+"${SUGAR_BX_SYNC_BACKS[@]}"}; do
+      sugar_bx_sync_back "${pair%%:*}" "${pair#*:}" || { status=$?; break; }
+    done
+  fi
+  sugar_bx_finish "$status"
 }
 
 case "${1:-}" in

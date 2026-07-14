@@ -19,3 +19,14 @@ fn sugarbin_local_execution_contract() {
         .expect("run local execution contract");
     assert!(status.success(), "local execution contract failed: {status}");
 }
+
+#[test]
+fn sugarbin_bx_execution_contract() {
+    let root = repo_root();
+    let status = Command::new("bash")
+        .arg(root.join("tests/sugarbin_bx_exec.sh"))
+        .arg(&root)
+        .status()
+        .expect("run bx execution contract");
+    assert!(status.success(), "bx execution contract failed: {status}");
+}
