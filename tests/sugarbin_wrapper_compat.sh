@@ -9,6 +9,12 @@ mkdir -p "$fixture/bin"
 cp "$repo_root/bin/bcargo" "$repo_root/bin/brun" "$fixture/bin/"
 git -C "$fixture" init -q
 
+if grep -Fq "SUGAR_BUILD_GIT_HEAD" \
+  "$repo_root/bin/sugarbin" "$repo_root/bin/bcargo" "$repo_root/bin/brun"; then
+  echo "obsolete SUGAR_BUILD_GIT_HEAD remains in the execution broker or wrappers" >&2
+  exit 1
+fi
+
 cat >"$fixture/bin/sugarbin" <<'SH'
 #!/usr/bin/env bash
 printf x >>"$SUGARBIN_WRAPPER_COUNT"

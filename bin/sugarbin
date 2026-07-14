@@ -211,7 +211,11 @@ sugarbin_bx_cargo() {
   [[ -z "$SUGAR_BX_REL_CWD" ]] || remote_cwd="$SUGAR_BX_REPO/$SUGAR_BX_REL_CWD"
   if [[ "$skip_cargo" != 1 ]]; then
     if [[ "${SUGAR_BX_PYTHON_ENV:-1}" != 0 ]]; then
-      sugar_bx_ssh "cd $(sugar_bx_quote "$SUGAR_BX_REPO") && BCARGO_PYTHON_VENV=$(sugar_bx_quote "$SUGAR_BX_ROOT/python-kit-env") make --quiet bcargo-python-kit-env" || return $?
+      set +e
+      sugar_bx_ssh "cd $(sugar_bx_quote "$SUGAR_BX_REPO") && BCARGO_PYTHON_VENV=$(sugar_bx_quote "$SUGAR_BX_ROOT/python-kit-env") make --quiet bcargo-python-kit-env"
+      status=$?
+      set -e
+      if [[ "$status" != 0 ]]; then sugar_bx_finish "$status"; return $?; fi
       path_prefix+=":$SUGAR_BX_ROOT/python-kit-env/bin"
     fi
     inner="cd $(sugar_bx_quote "$remote_cwd") && "
@@ -468,11 +472,7 @@ source_stamp() {
   printf 'blake3-512:%s\n' "$digest"
 }
 
-git_head() {
-  if [[ "${SUGAR_BUILD_GIT_HEAD+x}" == "x" ]]; then
-    printf '%s\n' "$SUGAR_BUILD_GIT_HEAD"
-    return 0
-  fi
+attestation_git_head() {
   git -C "$repo_root" rev-parse HEAD 2>/dev/null || true
 }
 
@@ -589,7 +589,7 @@ verify_attestation_if_present() {
   local repo
   repo="$(github_repo)" || return 0
   local head
-  head="$(git_head)"
+  head="$(attestation_git_head)"
   [[ -n "$head" ]] || { log "attestation skipped for $(basename "$bin"): git head unavailable; stamp tooth remains decisive"; return 0; }
   gh attestation verify "$bin" --repo "$repo" --source-digest "$head" >/dev/null 2>&1 \
     && log "attestation verified for $(basename "$bin")" \
@@ -636,7 +636,7 @@ build_from_source() {
   if [[ "$profile" == "release" ]]; then
     args+=(--release)
   fi
-  SUGAR_BUILD_STAMP="$stamp" SUGAR_BUILD_GIT_HEAD="$(git_head)" "$cargo_bin" "${args[@]}"
+  SUGAR_BUILD_STAMP="$stamp" "$cargo_bin" "${args[@]}"
   # One marker per profile directory: the whole implementations/rust tree is
   # ONE stamp, so this build leaves every binary in this target dir valid at
   # this stamp, not just the one just requested.
