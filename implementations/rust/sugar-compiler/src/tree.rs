@@ -742,10 +742,10 @@ fn enumerate_rpc(
     Ok((nodes, gaps))
 }
 
-/// The resident transport returns the complete JSON-RPC envelope.  Keep the
-/// protocol boundary explicit here: enumeration consumes `result`, while an
-/// RPC error is a loud enumeration error.  Treating the envelope itself as
-/// the result makes every lawful `nodes` array look empty.
+/// `LiftPluginKit::request` has already checked and removed the JSON-RPC
+/// envelope. Keep this boundary explicit: enumeration consumes that result
+/// payload directly. A second `result` unwrap turns every lawful node set into
+/// `null`, making the complete tree look empty.
 fn enumerate_result_from_response(plugin: &str, response: Value) -> Result<Value, EnumerateError> {
     if let Some(error) = response.get("error") {
         return Err(EnumerateError::RpcError {
@@ -753,7 +753,7 @@ fn enumerate_result_from_response(plugin: &str, response: Value) -> Result<Value
             error: error.clone(),
         });
     }
-    Ok(response.get("result").cloned().unwrap_or(Value::Null))
+    Ok(response)
 }
 
 /// Consumer fold for recovered construction audit. Every work-producing step
@@ -1209,16 +1209,15 @@ mod tests {
     }
 
     #[test]
-    fn enumerate_transport_unwraps_json_rpc_result_envelope() {
+    fn enumerate_transport_consumes_the_already_unwrapped_result() {
         let result = enumerate_result_from_response(
             "fixture-kit",
             json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "result": {"nodes": [{"memento": {"file": "src/lib.rs"}}], "gaps": []}
+                "nodes": [{"memento": {"file": "src/lib.rs"}}],
+                "gaps": []
             }),
         )
-        .expect("lawful result envelope");
+        .expect("lawful result payload");
 
         assert_eq!(result["nodes"][0]["memento"]["file"], "src/lib.rs");
     }

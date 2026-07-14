@@ -373,7 +373,13 @@ def build_pandas_wall(
     _write_command_receipt(visual_path, visual_result)
     if visual_result.returncode != 0:
         failure_result = visual_result
-        summary = summarize_pandas_construction_gaps(_combined_output(failure_result))
+        failure_output = _combined_output(failure_result)
+        if _is_lift_producer_transport_failure(failure_output):
+            raise RuntimeError(
+                "pandas wall visual producer transport failed; no recovered "
+                f"frontier was minted; see {visual_path}"
+            )
+        summary = summarize_pandas_construction_gaps(failure_output)
         if summary.gaps_total == 0 and floors.mode == "complete":
             # Normal lift remains fail-fast and produces no report. The only lawful
             # continuation is the CLI's separately typed recovered-audit lane.
@@ -686,6 +692,11 @@ def _combined_output(result: CommandResult) -> str:
         + ("\n" if result.stdout and result.stderr else "")
         + result.stderr
     )
+
+
+def _is_lift_producer_transport_failure(output_text: str) -> bool:
+    """Recognize the typed producer-death diagnostic, never its aftermath."""
+    return "kind=transport" in output_text and "lift-plugin.transport" in output_text
 
 
 def _structured_gap_rows(output_text: str) -> tuple[Mapping[str, Any], ...]:

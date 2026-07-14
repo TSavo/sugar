@@ -644,6 +644,68 @@ def test_complete_mode_audit_retry_does_not_relabel_unexpected_failure(
         )
 
 
+def test_complete_mode_transport_death_mints_no_frontier_artifact(
+    tmp_path: Path,
+) -> None:
+    root = _fake_repo_root(tmp_path)
+    package = tmp_path / "pandas"
+    package.mkdir()
+    (package / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_runner(
+        command: list[str], cwd: Path, env: dict[str, str]
+    ) -> CommandResult:
+        commands.append(command)
+        if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
+            return CommandResult(0, str(tmp_path / "sugar") + "\n", "")
+        if "--audit-frontier" not in command:
+            return CommandResult(
+                2,
+                "",
+                "lift plugin diagnostic kind=transport "
+                "path=lift-plugin.transport: plugin process ended without responding",
+            )
+        frontier_path = Path(command[command.index("-o") + 1])
+        frontier_path.write_text(
+            json.dumps(
+                {
+                    "kind": "recovered-construction-audit",
+                    "recoveryOverride": True,
+                    "status": "clean",
+                    "panics": [],
+                    "effects": [],
+                    "suppressedDescendants": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return CommandResult(0, "", "")
+
+    output_dir = tmp_path / "wall"
+    with pytest.raises(RuntimeError, match="producer.*transport"):
+        build_pandas_wall(
+            root=root,
+            output_dir=output_dir,
+            floors=PandasWallFloors(
+                mode="complete",
+                gaps_total_ceiling=0,
+                gap_template_ceilings={},
+                green=0,
+                pre_bearing=0,
+                implications=0,
+                frontier_needle="",
+                frontier_owner="",
+                frontier_shape="",
+            ),
+            package_path_resolver=lambda _package: package,
+            run_command=fake_runner,
+        )
+
+    assert len(commands) == 2
+    assert not (output_dir / "frontier.json").exists()
+
+
 def _gap(
     kind: str,
     owner: str,
