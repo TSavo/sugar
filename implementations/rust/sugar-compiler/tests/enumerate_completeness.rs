@@ -625,11 +625,30 @@ fn enumerate_seek_from_call_site_memento_returns_exactly_one_universe() {
     let project = stage_fixture(dir.path());
     let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
 
+    let mut scanned_sites = 0usize;
     let mut matching_sites = 0usize;
+    let mut exact_seeks = 0usize;
+    let mut identities = BTreeSet::new();
     let mut universes = 0usize;
     for file in kit.source_files(&project).expect("source_files") {
         for function in file.functions().expect("functions") {
             for call_site in function.call_sites().expect("call_sites") {
+                scanned_sites += 1;
+                identities.insert(
+                    call_site
+                        .bridge_source_symbol()
+                        .unwrap_or("<missing-bridge>")
+                        .to_string(),
+                );
+                let sought = function
+                    .call_site(call_site.source_memento())
+                    .expect("exact call_site seek from observed memento");
+                assert_eq!(
+                    sought.source_memento().to_json(),
+                    call_site.source_memento().to_json(),
+                    "seek must preserve the observed callsite identity rather than substitute another leaf"
+                );
+                exact_seeks += 1;
                 if call_site.bridge_source_symbol() != Some("call:add") {
                     continue;
                 }
@@ -644,10 +663,30 @@ fn enumerate_seek_from_call_site_memento_returns_exactly_one_universe() {
         }
     }
 
+    assert_eq!(
+        scanned_sites, 3,
+        "broad scan must retain all call occurrences"
+    );
+    assert_eq!(
+        identities,
+        BTreeSet::from([
+            "call:add".to_string(),
+            "call:len".to_string(),
+            "call:count".to_string(),
+        ]),
+        "broad scan must preserve each fixture site's true bridge identity"
+    );
+    assert_eq!(
+        exact_seeks, scanned_sites,
+        "each observed callsite memento must seek to exactly itself"
+    );
     assert_eq!(matching_sites, 1, "fixture ground truth: one call:add site");
     assert_eq!(
         universes, 1,
         "call_site seek must return exactly one universe"
+    );
+    eprintln!(
+        "exact_callsite_receipt broad_sites={scanned_sites} identities={identities:?} exact_seeks={exact_seeks} call_add_sites={matching_sites} call_add_universes={universes}"
     );
 }
 

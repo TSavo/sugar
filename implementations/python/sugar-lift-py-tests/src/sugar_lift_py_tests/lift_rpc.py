@@ -1863,9 +1863,20 @@ def _find_item_by_memento(
     return None
 
 
-def _first_bridge_ctor_name(node: Any) -> Optional[str]:
-    """First `call:` / `method:` ctor head in a FOL term tree (depth-first)."""
+def _first_bridge_ctor_name(
+    node: Any,
+    term_table: Optional[Dict[str, Dict[str, Any]]] = None,
+    active: frozenset[str] = frozenset(),
+) -> Optional[str]:
+    """First `call:` / `method:` ctor head in a closed FOL term graph."""
     if not isinstance(node, dict):
+        return None
+    if node.get("kind") == "term-ref" and term_table is not None:
+        cid = node.get("cid")
+        if isinstance(cid, str) and cid not in active:
+            return _first_bridge_ctor_name(
+                term_table.get(cid), term_table, active | {cid}
+            )
         return None
     name = node.get("name")
     if (
@@ -1876,18 +1887,21 @@ def _first_bridge_ctor_name(node: Any) -> Optional[str]:
         return name
     for value in node.values():
         if isinstance(value, dict):
-            found = _first_bridge_ctor_name(value)
+            found = _first_bridge_ctor_name(value, term_table, active)
             if found is not None:
                 return found
         elif isinstance(value, list):
             for child in value:
-                found = _first_bridge_ctor_name(child)
+                found = _first_bridge_ctor_name(child, term_table, active)
                 if found is not None:
                     return found
     return None
 
 
-def _contract_bridge_identity(item: Dict[str, Any]) -> Optional[str]:
+def _contract_bridge_identity(
+    item: Dict[str, Any],
+    term_table: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Optional[str]:
     """Callee identity for a `kind=contract` assertion: FOL ctor head, else name.
 
     Used to join a call-site record to a `function-contract` universe via
@@ -1901,10 +1915,10 @@ def _contract_bridge_identity(item: Dict[str, Any]) -> Optional[str]:
         if formula.get("kind") == "atomic" and formula.get("name") == "=":
             args = formula.get("args")
             if isinstance(args, list) and args:
-                found = _first_bridge_ctor_name(args[0])
+                found = _first_bridge_ctor_name(args[0], term_table)
                 if found is not None:
                     return found
-        found = _first_bridge_ctor_name(formula)
+        found = _first_bridge_ctor_name(formula, term_table)
         if found is not None:
             return found
     raw_name = item.get("name")
@@ -1923,36 +1937,81 @@ def _contract_bridge_identity(item: Dict[str, Any]) -> Optional[str]:
 
 
 def _edge_target_symbol_for_contract(
-    item: Dict[str, Any], call_edges: Optional[List[Dict[str, Any]]]
+    item: Dict[str, Any],
+    call_edges: Optional[List[Dict[str, Any]]],
+    term_table: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Optional[str]:
-    """Batch `callEdges.targetSymbol` for this contract, if any.
+    """Batch call-edge target for this exact contract-row locus, if any.
 
-    Joined by `sourceContract == item.name`. This is the first-class
-    free-call vs method-call identity (`call:len` vs `method:count`);
-    FOL ctor heads alone can say `call:count` for a method site.
+    ``sourceContract`` is only the owner bucket: one caller can own many edges.
+    Exact call-site coordinates select inside that bucket. Older built-in edges
+    without a locus may still join by an exact carried/FOL bridge identity.
+    Ambiguous or absent evidence refuses substitution instead of choosing the
+    first edge owned by the caller.
     """
     if not call_edges:
         return None
     name = item.get("name")
     if not isinstance(name, str) or not name:
         return None
+
+    owner_edges: List[Dict[str, Any]] = []
     for edge in call_edges:
         if not isinstance(edge, dict):
             continue
         source = edge.get("sourceContract") or edge.get("source_contract")
-        if source != name and not name.startswith(f"{source}::"):
-            continue
-        target = edge.get("targetSymbol") or edge.get("target_symbol")
-        if isinstance(target, str) and (
-            target.startswith("call:") or target.startswith("method:")
-        ):
+        if source == name or name.startswith(f"{source}::"):
+            owner_edges.append(edge)
+
+    memento = _item_memento(item) or {}
+    span = memento.get("span") if isinstance(memento.get("span"), dict) else {}
+
+    def at_item_locus(edge: Dict[str, Any]) -> bool:
+        locus = edge.get("callSiteLocus") or edge.get("call_site_locus")
+        if not isinstance(locus, dict) or _span_is_degenerate(span):
+            return False
+        locus_file = locus.get("file")
+        if locus_file and locus_file != memento.get("file"):
+            return False
+        line = locus.get("line")
+        col = locus.get("col")
+        if col is None:
+            col = locus.get("column")
+        if not isinstance(line, int):
+            return False
+        start_line = int(span.get("start_line") or 0)
+        end_line = int(span.get("end_line") or 0)
+        if not start_line <= line <= end_line:
+            return False
+        if isinstance(col, int) and start_line == end_line == line:
+            return (
+                int(span.get("start_col") or 0) <= col <= int(span.get("end_col") or 0)
+            )
+        return True
+
+    locus_edges = [edge for edge in owner_edges if at_item_locus(edge)]
+    if len(locus_edges) == 1:
+        target = locus_edges[0].get("targetSymbol") or locus_edges[0].get(
+            "target_symbol"
+        )
+        if isinstance(target, str) and target.startswith(("call:", "method:")):
             return target
+
+    bridge = _contract_bridge_identity(item, term_table)
+    identity_edges = [
+        edge
+        for edge in (locus_edges or owner_edges)
+        if (edge.get("targetSymbol") or edge.get("target_symbol")) == bridge
+    ]
+    if len(identity_edges) == 1:
+        return bridge
     return None
 
 
 def _call_site_node_audit(
     item: Dict[str, Any],
     call_edges: Optional[List[Dict[str, Any]]] = None,
+    term_table: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Enumerate audit for `call_sites` / `assertions` nodes.
 
@@ -1966,7 +2025,7 @@ def _call_site_node_audit(
     The prefix is never normalized away. `name` rides along from the IR item.
     """
     audit = dict(item)
-    edge_sym = _edge_target_symbol_for_contract(item, call_edges)
+    edge_sym = _edge_target_symbol_for_contract(item, call_edges, term_table)
     if edge_sym is not None:
         audit["bridgeSourceSymbol"] = edge_sym
         return audit
@@ -1975,7 +2034,7 @@ def _call_site_node_audit(
         existing.startswith("call:") or existing.startswith("method:")
     ):
         return audit
-    bridge = _contract_bridge_identity(item)
+    bridge = _contract_bridge_identity(item, term_table)
     if bridge is not None:
         audit["bridgeSourceSymbol"] = bridge
     return audit
@@ -2032,6 +2091,7 @@ def _implication_node_for_callsite(
     at: Dict[str, Any],
     ir_items: List[Dict[str, Any]],
     call_edges: List[Dict[str, Any]],
+    term_table: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Describe one per-callsite linker question, never answer it in the kit."""
     call_item = _find_item_by_memento(ir_items, at)
@@ -2048,10 +2108,10 @@ def _implication_node_for_callsite(
         }
 
     bridge_candidates: List[str] = []
-    edge_symbol = _edge_target_symbol_for_contract(call_item, call_edges)
+    edge_symbol = _edge_target_symbol_for_contract(call_item, call_edges, term_table)
     if edge_symbol is not None:
         bridge_candidates.append(edge_symbol)
-    fol_symbol = _contract_bridge_identity(call_item)
+    fol_symbol = _contract_bridge_identity(call_item, term_table)
     if fol_symbol is not None and fol_symbol not in bridge_candidates:
         bridge_candidates.append(fol_symbol)
     target_symbol = bridge_candidates[0] if bridge_candidates else "unknown"
@@ -2607,11 +2667,23 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     built.append(
                         {
                             "memento": memento,
-                            "audit": _call_site_node_audit(item, call_edges),
+                            "audit": _call_site_node_audit(
+                                item, call_edges, term_table
+                            ),
                             "payload": None,
                         }
                     )
-                _send_enumerate_result(msg_id, built, [], term_tables=[term_table])
+                gaps = (
+                    [
+                        {
+                            "memento": at,
+                            "reason": "no call site for exact memento; refusing call-site substitution",
+                        }
+                    ]
+                    if seek and at is not None and not built
+                    else []
+                )
+                _send_enumerate_result(msg_id, built, gaps, term_tables=[term_table])
                 return
 
             if level == "assertions":
@@ -2632,7 +2704,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     [
                         {
                             "memento": _item_memento(item),
-                            "audit": _call_site_node_audit(item, call_edges),
+                            "audit": _call_site_node_audit(
+                                item, call_edges, term_table
+                            ),
                             "payload": None,
                         }
                     ],
@@ -2690,9 +2764,26 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         ],
                     )
                     return
+                call_item = _find_item_by_memento(ir_items, at)
+                if call_item is None or call_item.get("kind") != "contract":
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [
+                            {
+                                "memento": at,
+                                "reason": "no call site for exact memento; refusing implication substitution",
+                            }
+                        ],
+                    )
+                    return
                 _send_enumerate_result(
                     msg_id,
-                    [_implication_node_for_callsite(at, ir_items, call_edges)],
+                    [
+                        _implication_node_for_callsite(
+                            at, ir_items, call_edges, term_table
+                        )
+                    ],
                     [],
                     term_tables=[term_table],
                 )
@@ -2731,11 +2822,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     if call_item is not None:
                         candidates: List[str] = []
                         edge_sym = _edge_target_symbol_for_contract(
-                            call_item, call_edges
+                            call_item, call_edges, term_table
                         )
                         if edge_sym is not None:
                             candidates.append(edge_sym)
-                        fol_sym = _contract_bridge_identity(call_item)
+                        fol_sym = _contract_bridge_identity(call_item, term_table)
                         if fol_sym is not None and fol_sym not in candidates:
                             candidates.append(fol_sym)
                         matches: Dict[tuple[Any, Any], tuple[Dict[str, Any], str]] = {}
@@ -2810,7 +2901,19 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         node = _universe_node_from_item(universe_item, file_rel)
                         if _memento_matches(node["memento"], at):
                             nodes.append(node)
-                    _send_enumerate_result(msg_id, nodes, [], term_tables=[term_table])
+                    gaps = (
+                        []
+                        if nodes
+                        else [
+                            {
+                                "memento": at,
+                                "reason": "no call site for exact memento; refusing universe substitution",
+                            }
+                        ]
+                    )
+                    _send_enumerate_result(
+                        msg_id, nodes, gaps, term_tables=[term_table]
+                    )
                     return
 
                 # Scan: every function-contract universe in the file.

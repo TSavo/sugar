@@ -751,6 +751,141 @@ def test_callable_universe_identity_uses_content_and_qualified_spelling(
     assert module_b_once[1] == "module_b.add"
 
 
+def test_same_leaf_callsite_scan_is_broad_but_each_seek_is_exact(
+    tmp_path: Path,
+) -> None:
+    source = """\
+def add(value):
+    return value + 1
+
+def test_add():
+    assert add(1) == 2
+    assert add(2) == 3
+"""
+    (tmp_path / "repeated.py").write_text(source, encoding="utf-8")
+    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    functions = {
+        n["memento"].get("function_name")
+        or n["memento"].get("source_function_name"): n["memento"]
+        for n in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
+    }
+
+    scanned = _enumerate("call_sites", tmp_path, at=functions["test_add"])["nodes"]
+    assert len(scanned) == 2
+    assert [node["audit"]["bridgeSourceSymbol"] for node in scanned] == [
+        "call:add",
+        "call:add",
+    ]
+    assert len({json.dumps(node["memento"], sort_keys=True) for node in scanned}) == 2
+    assert len({node["memento"]["span"]["start_line"] for node in scanned}) == 2
+
+    for observed in scanned:
+        sought = _enumerate("call_sites", tmp_path, at=observed["memento"], seek=True)
+        assert sought["gaps"] == []
+        assert len(sought["nodes"]) == 1
+        assert sought["nodes"][0]["memento"] == observed["memento"]
+
+        universe = _enumerate("universe", tmp_path, at=observed["memento"], seek=True)
+        assert universe["gaps"] == []
+        assert len(universe["nodes"]) == 1
+        assert universe["nodes"][0]["memento"]["function_name"] == "repeated.add"
+
+
+def test_same_leaf_calls_in_qualified_nested_owners_keep_distinct_identity(
+    tmp_path: Path,
+) -> None:
+    source = """\
+def add(value):
+    return value + 1
+
+class A:
+    def check(self):
+        assert add(1) == 2
+
+class B:
+    def check(self):
+        assert add(2) == 3
+"""
+    (tmp_path / "nested.py").write_text(source, encoding="utf-8")
+    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    functions = {
+        n["memento"].get("function_name")
+        or n["memento"].get("source_function_name"): n["memento"]
+        for n in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
+    }
+
+    observed = []
+    for owner in ("nested.A.check", "nested.B.check"):
+        sites = _enumerate("call_sites", tmp_path, at=functions[owner])["nodes"]
+        assert len(sites) == 1
+        assert sites[0]["audit"]["bridgeSourceSymbol"] == "call:add"
+        sought = _enumerate("call_sites", tmp_path, at=sites[0]["memento"], seek=True)
+        assert len(sought["nodes"]) == 1
+        assert sought["nodes"][0]["memento"] == sites[0]["memento"]
+        observed.append(sites[0]["memento"])
+
+    assert observed[0] != observed[1]
+    assert observed[0]["source_function_name"] == "nested.A.check"
+    assert observed[1]["source_function_name"] == "nested.B.check"
+    assert observed[0]["span"] != observed[1]["span"]
+
+
+def test_callsite_bridge_lookup_uses_exact_locus_not_first_caller_edge(
+    tmp_path: Path,
+) -> None:
+    source = """\
+def add(value):
+    return value + 1
+
+def other(value):
+    return value + 2
+
+def test_calls():
+    assert add(1) == 2
+    assert other(1) == 3
+"""
+    (tmp_path / "distinct.py").write_text(source, encoding="utf-8")
+    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    functions = {
+        n["memento"].get("function_name")
+        or n["memento"].get("source_function_name"): n["memento"]
+        for n in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
+    }
+
+    sites = _enumerate("call_sites", tmp_path, at=functions["test_calls"])["nodes"]
+    assert [node["audit"]["bridgeSourceSymbol"] for node in sites] == [
+        "call:add",
+        "call:other",
+    ]
+    sought = _enumerate("universe", tmp_path, at=sites[1]["memento"], seek=True)
+    assert sought["gaps"] == []
+    assert len(sought["nodes"]) == 1
+    assert sought["nodes"][0]["memento"]["function_name"] == "distinct.other"
+
+
+def test_exact_seek_for_unknown_callsite_is_a_loud_gap_not_substitution(
+    project: Path,
+) -> None:
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    forged = dict(file_memento)
+    forged["function_name"] = "test_add"
+    forged["span"] = {
+        "start_line": 999,
+        "start_col": 0,
+        "end_line": 999,
+        "end_col": 1,
+    }
+    forged["source_cid"] = "blake3-512:not-an-observed-callsite"
+
+    for level in ("call_sites", "implications", "universe"):
+        result = _enumerate(level, project, at=forged, seek=True)
+
+        assert result["nodes"] == []
+        assert len(result["gaps"]) == 1
+        assert "no call site for exact memento" in result["gaps"][0]["reason"]
+        assert result["gaps"][0]["memento"] == forged
+
+
 def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
     """CallSite-style seek: call:add → qualified mathy.add universe."""
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
@@ -828,6 +963,49 @@ def test_implication_seek_returns_zero_candidate_demand_instead_of_false_empty(
     assert "status" not in question
 
 
+def test_term_ref_bridge_recovery_is_shared_by_callsite_universe_and_implication(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The response-owned term table is the one bridge-recovery boundary.
+
+    Remove callEdges so every level must follow the assertion's closed term-ref
+    graph. No level may depend on an inline constructor or invent a first edge.
+    """
+    original = lift_rpc._lift_file_for_enumeration
+    lift_rpc._ENUMERATION_FILE_CONTEXTS.clear()
+
+    def without_call_edges(workspace_root, root, file_rel):
+        items, _edges, term_table = original(workspace_root, root, file_rel)
+        return items, [], term_table
+
+    monkeypatch.setattr(lift_rpc, "_lift_file_for_enumeration", without_call_edges)
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    functions = {
+        n["memento"].get("function_name")
+        or n["memento"].get("source_function_name"): n["memento"]
+        for n in _enumerate("functions", project, at=file_memento)["nodes"]
+    }
+    callsite_result = _enumerate("call_sites", project, at=functions["test_add"])
+    call_site = callsite_result["nodes"][0]
+
+    assert call_site["audit"]["bridgeSourceSymbol"] == "call:add"
+    assert callsite_result["termTable"]
+
+    implication = _enumerate(
+        "implications", project, at=call_site["memento"], seek=True
+    )
+    assert implication["gaps"] == []
+    assert implication["nodes"][0]["audit"]["targetSymbol"] == "call:add"
+    assert implication["nodes"][0]["audit"]["candidateCount"] == 1
+    assert implication["termTable"]
+
+    universe = _enumerate("universe", project, at=call_site["memento"], seek=True)
+    assert universe["gaps"] == []
+    assert len(universe["nodes"]) == 1
+    assert universe["nodes"][0]["memento"]["function_name"] == "mathy.add"
+    assert universe["termTable"]
+
+
 def test_distinct_descendant_demands_reuse_file_cid_context(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -854,7 +1032,7 @@ def test_distinct_descendant_demands_reuse_file_cid_context(
     assert crossings == 2
 
 
-def test_datetime_message_101_cmp_shape_reuses_context_and_always_answers(
+def test_datetime_message_101_cmp_shape_reuses_context_without_edge_substitution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The real datetime crash arrived asking for date._cmp call sites.
@@ -897,7 +1075,7 @@ class date:
         result = _enumerate("call_sites", tmp_path, at=functions["datetime.date._cmp"])
         assert result["gaps"] == []
         assert len(result["nodes"]) == 1
-        assert result["nodes"][0]["audit"]["bridgeSourceSymbol"] == "call:_cmp"
+        assert "bridgeSourceSymbol" not in result["nodes"][0]["audit"]
 
     assert crossings == 1
 
