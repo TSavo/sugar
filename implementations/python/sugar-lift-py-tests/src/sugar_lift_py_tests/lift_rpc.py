@@ -599,7 +599,11 @@ def _source_contract_bridge_symbol(
 
 def _source_lifter_function_contracts(
     workspace_root: str,
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> tuple[List["SourceFunctionContractDto"], List[Dict[str, Any]]]:
+    from sugar_lift_py_tests.kit_rpc.source_function_contract_dto import (
+        SourceFunctionContractDto,
+    )
+
     lift_workspace = _python_source_verify_api()
     ir_items, diagnostics = lift_workspace(workspace_root, "bare")
     contracts = [
@@ -608,7 +612,9 @@ def _source_lifter_function_contracts(
         if isinstance(item, dict) and item.get("kind") == "function-contract"
     ]
     contracts.extend(_source_precondition_only_contracts(workspace_root, contracts))
-    return contracts, diagnostics
+    return [
+        SourceFunctionContractDto(dict(contract)) for contract in contracts
+    ], diagnostics
 
 
 def _source_memento_from_params(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:

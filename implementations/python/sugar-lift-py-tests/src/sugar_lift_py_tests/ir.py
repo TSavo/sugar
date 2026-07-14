@@ -619,6 +619,57 @@ class TermTableBuilder:
             }
         raise TypeError(f"unknown Formula: {type(formula)!r}")
 
+    def formula_rpc(self, formula: dict[str, Any]) -> dict[str, Any]:
+        """Lower an already-typed source-lifter formula through this table.
+
+        The source lifter owns a distinct typed IR package whose membrane is
+        its RPC value.  Importing one of its contracts into the combined lift
+        payload must still route every term through the payload's one DAG
+        writer instead of embedding the source-lifter tree.
+        """
+        kind = formula.get("kind")
+        if kind == "atomic":
+            return {
+                "kind": "atomic",
+                "name": formula["name"],
+                "args": [
+                    self.reference_rpc(term) for term in formula.get("args", [])
+                ],
+            }
+        if kind in {"and", "or", "not", "implies"}:
+            return {
+                "kind": kind,
+                "operands": [
+                    self.formula_rpc(operand)
+                    for operand in formula.get("operands", [])
+                ],
+            }
+        if kind in {"forall", "exists"}:
+            return {
+                "kind": kind,
+                "name": formula["name"],
+                "sort": formula["sort"],
+                "body": self.formula_rpc(formula["body"]),
+            }
+        raise TypeError(f"unknown source-lifter formula kind: {kind!r}")
+
+    def reference_rpc(self, term: dict[str, Any]) -> dict[str, str]:
+        """Intern one source-lifter RPC term under its canonical CID."""
+        cid = jcs_hash(_json_like_to_value(term))
+        if cid not in self.nodes:
+            kind = term.get("kind")
+            if kind == "ctor":
+                self.nodes[cid] = {
+                    "kind": "ctor",
+                    "name": term["name"],
+                    "args": [
+                        self.reference_rpc(arg) for arg in term.get("args", [])
+                    ],
+                }
+            else:
+                self.nodes[cid] = json.loads(encode_jcs(_json_like_to_value(term)))
+        return {"kind": "term-ref", "cid": cid}
+
     def _cid(self, term: Term) -> str:
         cid = self._cids.get(term)
         if cid is None:
