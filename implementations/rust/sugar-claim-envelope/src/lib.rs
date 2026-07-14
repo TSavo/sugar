@@ -838,7 +838,7 @@ fn canon_formula_value(v: &Arc<Value>) -> Arc<Value> {
 /// (from full mint args) and [`contract_cid_of_ir_decl`] (from a lifted IR
 /// decl) funnel through it, so anything that recomputes a contract's identity
 /// gets exactly the CID `mint` assigns — never a parallel identity scheme.
-fn contract_cid_from_parts(
+pub fn contract_cid_from_parts(
     contract_name: &str,
     out_binding: &str,
     pre: Option<&Arc<Value>>,

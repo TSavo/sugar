@@ -19,9 +19,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import json
+import logging
+import time
 from typing import Any, Iterator, List, Optional, Tuple, Union
 
 from .canonicalizer import Value, encode_jcs, jcs_hash, varr, vbool, vint, vobj, vstr, vnull
+
+_TERM_TABLE_LOG = logging.getLogger("sugar.kit.term_table")
 
 # Sort ----------------------------------------------------------------------
 
@@ -558,8 +562,40 @@ class TermTableBuilder:
 
     def reference(self, term: Term) -> dict[str, str]:
         cid = self._cid(term)
-        if cid not in self.nodes:
+        hit = cid in self.nodes
+        if not hit:
             self.nodes[cid] = self._node(term)
+            node_count = len(self.nodes)
+            if _TERM_TABLE_LOG.isEnabledFor(logging.DEBUG):
+                _TERM_TABLE_LOG.debug(
+                    "term_table_node",
+                    extra={
+                        "stage": "lift.workspace.to_rpc.term_table.node",
+                        "cid": cid,
+                        "node_count": node_count,
+                        "cache": "miss",
+                        "term_kind": type(term).__name__,
+                    },
+                )
+            if node_count % 1000 == 0:
+                _TERM_TABLE_LOG.info(
+                    "term_table_progress",
+                    extra={
+                        "stage": "lift.workspace.to_rpc.term_table.progress",
+                        "unique_nodes": node_count,
+                    },
+                )
+        elif _TERM_TABLE_LOG.isEnabledFor(logging.DEBUG):
+            _TERM_TABLE_LOG.debug(
+                "term_table_node",
+                extra={
+                    "stage": "lift.workspace.to_rpc.term_table.node",
+                    "cid": cid,
+                    "node_count": len(self.nodes),
+                    "cache": "hit",
+                    "term_kind": type(term).__name__,
+                },
+            )
         return {"kind": "term-ref", "cid": cid}
 
     def formula(self, formula: Formula) -> dict[str, Any]:
@@ -586,8 +622,20 @@ class TermTableBuilder:
     def _cid(self, term: Term) -> str:
         cid = self._cids.get(term)
         if cid is None:
+            started = time.monotonic()
             cid = jcs_hash(term_to_value(term))
             self._cids[term] = cid
+            if _TERM_TABLE_LOG.isEnabledFor(logging.DEBUG):
+                _TERM_TABLE_LOG.debug(
+                    "term_cid_minted",
+                    extra={
+                        "stage": "lift.workspace.to_rpc.term_table.cid",
+                        "cid": cid,
+                        "cid_count": len(self._cids),
+                        "term_kind": type(term).__name__,
+                        "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                    },
+                )
         return cid
 
     def _node(self, term: Term) -> dict[str, Any]:

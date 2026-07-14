@@ -33,4 +33,4 @@ pub mod term_table;
 
 pub use lift_plugin::{LiftKit, LiftPluginKit, LiftPluginKitError, LiftPluginKitSession};
 pub use path_executor::{execute_path, KitRegistry, PathExecutionChain, PathExecutionError};
-pub use term_table::{LiftTermNode, LiftTermTable};
+pub use term_table::{LiftTermKind, LiftTermNode, LiftTermTable};

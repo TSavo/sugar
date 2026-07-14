@@ -55,6 +55,7 @@ use sugar_claim_envelope::{
     BodyDischargePolicyWarning, BridgeCallsite, MintAuthorityArgs, MintBridgeArgs,
     MintContractArgs, MintImplicationArgs,
 };
+use sugar_compiler::kit_path::LiftTermTable;
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
     cid_from_proof_stem, ed25519_pubkey_string, proof_filename, AssertionSurfaceMemento,
@@ -412,6 +413,7 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     // non-empty coverage we see -- never clobber a populated report with absence.
     let mut merged_lift_coverage: Option<Value> = None;
     let mut merged_symbol_kinds: BTreeMap<String, String> = BTreeMap::new();
+    let mut merged_term_table = serde_json::Map::new();
     // Content-shape dedup keys (NOT names). See `canonical_dedup_key`.
     let mut seen_content: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut seen_implications: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -466,6 +468,17 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
                     if prior != kind {
                         return Err(format!(
                             "conflicting symbolKinds testimony for `{symbol}`: `{prior}` and `{kind}`"
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(entries) = entry.response.get("termTable").and_then(Value::as_object) {
+            for (cid, node) in entries {
+                if let Some(prior) = merged_term_table.insert(cid.clone(), node.clone()) {
+                    if prior != *node {
+                        return Err(format!(
+                            "conflicting termTable nodes for content address `{cid}`"
                         ));
                     }
                 }
@@ -664,6 +677,9 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     if !merged_symbol_kinds.is_empty() {
         merged["symbolKinds"] = serde_json::to_value(merged_symbol_kinds)
             .expect("symbolKinds map is JSON-serializable");
+    }
+    if !merged_term_table.is_empty() {
+        merged["termTable"] = Value::Object(merged_term_table);
     }
     Ok(merged)
 }
@@ -1433,8 +1449,17 @@ fn contract_bindings_from_producer_responses(
     let authorities = lift_response.get("authorities").and_then(|v| v.as_array());
     let implications = lift_response.get("implications").and_then(|v| v.as_array());
     let witnesses = lift_response.get("witnesses").and_then(|v| v.as_array());
-    Ok(mint_ir_document(
+    let term_table = lift_response
+        .get("termTable")
+        .map(|_| LiftTermTable::decode(&lift_response))
+        .transpose()?;
+    Ok(mint_ir_document_with_source_and_plan_mementos(
         ir,
+        term_table.as_ref(),
+        None,
+        None,
+        None,
+        None,
         authorities,
         implications,
         witnesses,
@@ -3107,6 +3132,10 @@ fn mint_lift_response(
             })
         }
         "ir-document" => {
+            let term_table = lift_resp
+                .get("termTable")
+                .map(|_| LiftTermTable::decode(&lift_resp))
+                .transpose()?;
             let ir = lift_resp
                 .get("ir")
                 .and_then(|v| v.as_array())
@@ -3149,6 +3178,7 @@ fn mint_lift_response(
             );
             let minted = mint_ir_document_with_source_and_plan_mementos(
                 &ir_entries,
+                term_table.as_ref(),
                 source_mementos,
                 plan_mementos,
                 factory_walk,
@@ -3556,6 +3586,7 @@ fn mint_from_ir_document(
     Ok((minted.bytes, minted.filename_cid, minted.contract_set_cid))
 }
 
+#[cfg(test)]
 fn mint_ir_document(
     ir: &[Value],
     authorities: Option<&Vec<Value>>,
@@ -3605,10 +3636,7 @@ fn merge_coalesced_contract_provenance(target: &mut Value, incoming: &Value) {
     let provenance = target_object
         .entry(key.to_string())
         .or_insert_with(|| json!({"warrants": []}));
-    let Some(target_warrants) = provenance
-        .get_mut("warrants")
-        .and_then(Value::as_array_mut)
-    else {
+    let Some(target_warrants) = provenance.get_mut("warrants").and_then(Value::as_array_mut) else {
         return;
     };
     append_unique_json(target_warrants, incoming_warrants);
@@ -3643,6 +3671,7 @@ fn append_unique_json(target: &mut Vec<Value>, incoming: &[Value]) {
     }
 }
 
+#[cfg(test)]
 fn mint_ir_document_with_source_mementos(
     ir: &[Value],
     source_mementos: Option<&Vec<Value>>,
@@ -3656,6 +3685,7 @@ fn mint_ir_document_with_source_mementos(
 ) -> Result<MintedIrDocument, String> {
     mint_ir_document_with_source_and_plan_mementos(
         ir,
+        None,
         source_mementos,
         None,
         factory_walk,
@@ -3671,6 +3701,7 @@ fn mint_ir_document_with_source_mementos(
 
 fn mint_ir_document_with_source_and_plan_mementos(
     ir: &[Value],
+    term_table: Option<&LiftTermTable>,
     source_mementos: Option<&Vec<Value>>,
     plan_mementos: Option<&Vec<Value>>,
     factory_walk: Option<&Vec<Value>>,
@@ -4115,7 +4146,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
             let inv = inv_val.expect("inv_val is_some checked above");
 
             // Compute a canonical key for this operand to dedup byte-identical invs.
-            let operand_key = encode_jcs(json_to_cvalue(inv).as_ref());
+            let operand_key = encode_jcs(json_to_cvalue_with_terms(inv, term_table)?.as_ref());
 
             if let Some(group) = inv_only_groups.get_mut(&name) {
                 // Add this operand only if it is not already present (dedup by canonical bytes).
@@ -4168,7 +4199,9 @@ fn mint_ir_document_with_source_and_plan_mementos(
                                     vec![op]
                                 };
                                 for child in children {
-                                    let key = encode_jcs(json_to_cvalue(&child).as_ref());
+                                    let key = encode_jcs(
+                                        json_to_cvalue_with_terms(&child, term_table)?.as_ref(),
+                                    );
                                     if !flat_keys.iter().any(|k| k == &key) {
                                         flat_keys.push(key);
                                         flat_operands.push(child);
@@ -4239,14 +4272,19 @@ fn mint_ir_document_with_source_and_plan_mementos(
         let pre_decl = decl.get("pre").or_else(|| decl.get("precondition"));
         let pre_body = pre_decl.cloned();
         let has_nontrivial_pre = pre_decl.is_some_and(has_nontrivial_pre_json);
-        let pre = pre_decl.map(json_to_cvalue);
+        let pre = pre_decl
+            .map(|value| json_to_cvalue_with_terms(value, term_table))
+            .transpose()?;
         let post_decl = decl.get("post").or_else(|| decl.get("postcondition"));
         let post_body = post_decl.cloned();
-        let post = post_decl.map(json_to_cvalue);
+        let post = post_decl
+            .map(|value| json_to_cvalue_with_terms(value, term_table))
+            .transpose()?;
         let inv = decl
             .get("inv")
             .or_else(|| decl.get("invariant"))
-            .map(json_to_cvalue);
+            .map(|value| json_to_cvalue_with_terms(value, term_table))
+            .transpose()?;
 
         if pre.is_none() && post.is_none() && inv.is_none() {
             continue;
@@ -4287,7 +4325,10 @@ fn mint_ir_document_with_source_and_plan_mementos(
         // Carried as opaque provenance: the CLI does not interpret the terms.
         let panic_loci_value = decl.get("panicLoci").or_else(|| decl.get("panic_loci"));
         let panic_loci: Vec<Arc<CValue>> = match panic_loci_value {
-            Some(Value::Array(arr)) => arr.iter().map(json_to_cvalue).collect(),
+            Some(Value::Array(arr)) => arr
+                .iter()
+                .map(|value| json_to_cvalue_with_terms(value, term_table))
+                .collect::<Result<Vec<_>, _>>()?,
             Some(value) => {
                 return Err(format!(
                     "contract `{name}`: panicLoci must be an array, got {}",
@@ -4298,7 +4339,10 @@ fn mint_ir_document_with_source_and_plan_mementos(
         };
         let class_shapes_value = decl.get("classShapes").or_else(|| decl.get("class_shapes"));
         let class_shapes: Vec<Arc<CValue>> = match class_shapes_value {
-            Some(Value::Array(arr)) => arr.iter().map(json_to_cvalue).collect(),
+            Some(Value::Array(arr)) => arr
+                .iter()
+                .map(|value| json_to_cvalue_with_terms(value, term_table))
+                .collect::<Result<Vec<_>, _>>()?,
             Some(value) => {
                 return Err(format!(
                     "contract `{name}`: classShapes must be an array, got {}",
@@ -4316,7 +4360,9 @@ fn mint_ir_document_with_source_and_plan_mementos(
                     let (cid, bytes) = mint_source_memento(source_memento, Some(&name))?;
                     push_graph_memento!(SourceMemento, push_source, cid.as_str(), bytes);
                 }
-                arr.iter().map(json_to_cvalue).collect()
+                arr.iter()
+                    .map(|value| json_to_cvalue_with_terms(value, term_table))
+                    .collect::<Result<Vec<_>, _>>()?
             }
             Some(value) => {
                 return Err(format!(
@@ -4436,6 +4482,10 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 .or_else(|| decl.get("proofir_provenance")),
             kind == "contract",
         );
+        let evidence_term = decl
+            .get("evidence")
+            .map(|value| json_to_cvalue_with_terms(value, term_table))
+            .transpose()?;
         let mut pushed_content_cid = false;
         for proofir_provenance in proofir_provenance_variants {
             let args = MintContractArgs {
@@ -4446,7 +4496,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 // Thread the lifted declaration's execution-witness EvidenceTerm (if
                 // any) into the minted contract memento so `prove` can discharge it
                 // by recompute. Omitted when absent -> non-witness contracts unchanged.
-                evidence_term: decl.get("evidence").map(json_to_cvalue),
+                evidence_term: evidence_term.clone(),
                 out_binding: out_binding.clone(),
                 produced_by: produced_by.clone(),
                 produced_at: produced_at.clone(),
@@ -5532,6 +5582,22 @@ fn json_to_cvalue(j: &Value) -> Arc<CValue> {
             CValue::object(entries)
         }
     }
+}
+
+fn json_to_cvalue_with_terms(
+    value: &Value,
+    term_table: Option<&LiftTermTable>,
+) -> Result<Arc<CValue>, String> {
+    if let Some(table) = term_table {
+        return table.canonical_value(value);
+    }
+    if value.get("kind").and_then(Value::as_str) == Some("term-ref") {
+        return Err(
+            "term-ref arrived without the required ir-document termTable; inline term compatibility is forbidden"
+                .to_string(),
+        );
+    }
+    Ok(json_to_cvalue(value))
 }
 
 // ---------------------------------------------------------------------------
@@ -6771,6 +6837,53 @@ mod tests {
     }
 
     #[test]
+    fn merge_ir_document_responses_unions_term_tables_by_cid() {
+        let merged = merge_ir_document_responses(vec![
+            PerPluginDispatch {
+                surface: "python-a".to_string(),
+                response: json!({
+                    "kind": "ir-document",
+                    "ir": [],
+                    "diagnostics": [],
+                    "termTable": {"cid-a": {"kind": "var", "name": "a"}}
+                }),
+            },
+            PerPluginDispatch {
+                surface: "python-b".to_string(),
+                response: json!({
+                    "kind": "ir-document",
+                    "ir": [],
+                    "diagnostics": [],
+                    "termTable": {"cid-b": {"kind": "var", "name": "b"}}
+                }),
+            },
+        ])
+        .expect("merge term tables");
+
+        assert_eq!(merged["termTable"].as_object().expect("termTable").len(), 2);
+    }
+
+    #[test]
+    fn mint_term_conversion_reuses_the_decoded_canonical_node() {
+        let expanded = json!({"kind": "var", "name": "x"});
+        let cid = sugar_canonicalizer::jcs_cid_of_json(&expanded);
+        let response = json!({
+            "termTable": {(cid.clone()): {"kind": "var", "name": "x"}}
+        });
+        let table = LiftTermTable::decode(&response).expect("valid term table");
+        let reference = json!({"kind": "term-ref", "cid": cid});
+
+        let first = json_to_cvalue_with_terms(&reference, Some(&table)).expect("first resolve");
+        let second = json_to_cvalue_with_terms(&reference, Some(&table)).expect("second resolve");
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(
+            encode_jcs(first.as_ref()),
+            encode_jcs(json_to_cvalue(&expanded).as_ref())
+        );
+    }
+
+    #[test]
     fn merge_ir_document_responses_carries_workspace_lift_coverage() {
         // Workspace lift computes liftCoverage; the bindings-backed re-lift
         // honestly omits it. Merge must keep the census from the first pass.
@@ -7681,6 +7794,7 @@ mod tests {
         let minted = mint_ir_document_with_source_and_plan_mementos(
             &ir,
             None,
+            None,
             Some(&plan_mementos),
             None,
             None,
@@ -7869,6 +7983,7 @@ mod tests {
 
         let minted = mint_ir_document_with_source_and_plan_mementos(
             &ir,
+            None,
             None,
             Some(&plan_mementos),
             None,

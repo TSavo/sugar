@@ -74,6 +74,7 @@ class LiftReportPayloadDto:
             len(self.source_mementos)
         )
         term_table = TermTableBuilder()
+        term_table_started = time.monotonic()
         ir = []
         for index, contract in enumerate(self.ir):
             started = time.monotonic()
@@ -88,6 +89,15 @@ class LiftReportPayloadDto:
                     "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
                 },
             )
+        _TRANSPORT_LOG.info(
+            "payload_term_table_complete",
+            extra={
+                "stage": "lift.workspace.to_rpc.term_table.complete",
+                "contracts": len(self.ir),
+                "unique_nodes": len(term_table.nodes),
+                "elapsed_ms": round((time.monotonic() - term_table_started) * 1000, 3),
+            },
+        )
         out: dict[str, Any] = {
             "kind": "ir-document",
             "ir": ir,
