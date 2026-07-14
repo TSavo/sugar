@@ -534,6 +534,52 @@ def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
     assert result["gaps"] == []
 
 
+def test_implication_seek_returns_one_discharged_node_for_resolved_call(
+    project: Path,
+) -> None:
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    functions = {
+        n["memento"].get("function_name")
+        or n["memento"].get("source_function_name"): n["memento"]
+        for n in _enumerate("functions", project, at=file_memento)["nodes"]
+    }
+    call_site = _enumerate("call_sites", project, at=functions["test_add"])["nodes"][0][
+        "memento"
+    ]
+
+    result = _enumerate("implications", project, at=call_site, seek=True)
+
+    assert result["gaps"] == []
+    assert len(result["nodes"]) == 1
+    implication = result["nodes"][0]["audit"]
+    assert implication["kind"] == "implication"
+    assert implication["targetContract"] == "mathy.add"
+    assert implication["targetSymbol"] == "add"
+    assert implication["status"] == "discharged"
+    assert implication["obligation"]["kind"] == "implies"
+
+
+def test_implication_seek_returns_named_debt_instead_of_empty_success(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "debt.py").write_text(
+        "def test_debt(x):\n    assert missing(x) == 1\n", encoding="utf-8"
+    )
+    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    function = _enumerate("functions", tmp_path, at=file_memento)["nodes"][0]["memento"]
+    call_site = _enumerate("call_sites", tmp_path, at=function)["nodes"][0]["memento"]
+
+    result = _enumerate("implications", tmp_path, at=call_site, seek=True)
+
+    assert result["gaps"] == []
+    assert len(result["nodes"]) == 1
+    debt = result["nodes"][0]["audit"]
+    assert debt["kind"] == "implication"
+    assert debt["status"] == "unjoined"
+    assert debt["targetSymbol"] == "missing"
+    assert "no universe sugar for callee" in debt["reason"]
+
+
 def test_universe_seek_refuses_ambiguous_leaf_bridge(tmp_path: Path) -> None:
     source = """\
 class A:

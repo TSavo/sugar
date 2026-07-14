@@ -14,7 +14,7 @@
 navigable tree (`Kit -> SourceFile -> Function -> CallSite -> {Assertion ->
 Fact}`). Every accessor in `sugar-compiler/src/tree.rs`
 (`Kit::source_files`, `SourceFile::functions`, `Function::call_sites`,
-`CallSite::assertions`, `Assertion::facts`, plus their singular seek
+`CallSite::assertions`, `CallSite::implication`, `Assertion::facts`, plus their singular seek
 counterparts) is exactly one `sugar.enumerate` request-response pair. There
 is no second enumeration transport and no per-level wire method: adding a
 level to the tree means adding a `level` value here, not a new RPC method.
@@ -34,7 +34,7 @@ perform the same work outside this verb.
   "id": <number>,
   "method": "sugar.enumerate",
   "params": {
-    "level": "source_files" | "functions" | "call_sites" | "assertions" | "facts" | "universe" | "exports",
+    "level": "source_files" | "functions" | "call_sites" | "assertions" | "facts" | "universe" | "exports" | "implications",
     "at": <SourceMemento-as-JSON> | null,
     "seek": <boolean>,
     "workspace_root": "<string, absolute or kit-relative project root>"
@@ -103,6 +103,7 @@ perform the same work outside this verb.
 | `functions` | a `source_files` memento | a function's own memento | `payload.ir` entries (`BodyUniverseDto`), `kind="function-contract"`, plus synthesized nodes for functions that merely enclose a `kind="contract"` assertion with no contract of their own (Section 4) |
 | `call_sites` | a `functions` memento | a call site's own memento | `payload.ir` entries, `kind="contract"`, scoped by `source_function_name`. Wire audit stamps first-class `bridgeSourceSymbol` (`call:` / `method:` form, prefix preserved) decoded client-side as `CallSite.bridge_source_symbol` |
 | `assertions` | -- (seek only) | a call site's own memento | same `kind="contract"` item (1:1 with its call site — **factory truth**, Section 4); same `bridgeSourceSymbol` stamp as `call_sites` |
+| `implications` | -- (seek only) | a call site's own memento | per-demand join of that call edge to its qualified target contract; returns one `kind="implication"` audit row with a discharged/unsatisfied obligation or a named `unjoined` debt |
 | `exports` | `null` for scan, or `{"symbol":"<abi-name>"}` for seek | an export's source/artifact memento | typed native export metadata in `audit` and the existing `LinkerContract` in `payload`; a seek miss is a named gap, never an empty success |
 | `facts` | -- (seek only) | an assertion's own memento | the item's `inv` (else `post`) field, as the FOL payload |
 | `universe` | a file memento (`seek=false`: every universe in the file) | a call site's own memento (`seek=true`: the universe linked to that callsite) or a universe node's own memento | `payload.ir` entries, `kind="function-contract"` (body universes + operator builtin universes such as `len::builtin-universe`). Seek from a call site joins via `bridgeSourceSymbol` / FOL `call:`·`method:` ctor identity; missing link is a gap (`no universe sugar for callee <name>`). Node mementos stamp the batch `name` onto `function_name` so member keys survive `SourceMemento` round-trip. |
@@ -194,13 +195,16 @@ Further facts, flagged rather than silently narrowed:
    same-named nested/shadowing functions in one file would collide; out
    of scope for this landing's fixture-sized corpus.
 
-## Section 5. Obligation side (out of scope this pass)
+## Section 5. Per-edge obligation demand
 
-`CallSite::contract()` and `CallSite::implication()` are LINK-time
-(`#3831`): no `sugar.enumerate` request is made for them. `contract()`
-always returns `EdgeTarget::Unbound`; `implication()` always returns
-`None`. Binding them is `ProofGraph::solve`'s job (SEAM 5), not this
-protocol's.
+`CallSite::implication()` makes exactly one `sugar.enumerate` request at
+`level="implications"`, keyed by that call site's memento. That demand alone
+drives the edge join and obligation work. A resolved edge returns its qualified
+target contract, caller-to-callee-pre obligation, and discharge status. A
+dangling edge returns a named `unjoined` debt node with its reason, never an
+empty success. No wall, report, or linker stage may pre-collect edges and batch
+link them outside enumeration. The CLI report's implication ledger is the
+transcript produced by demanding every call site; an LSP may demand only one.
 
 ## Section 5A. Content-addressed term DAG
 

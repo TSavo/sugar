@@ -101,6 +101,7 @@ pub enum Level {
     Assertions,
     Facts,
     Universe,
+    Implications,
     Exports,
 }
 
@@ -113,6 +114,7 @@ impl Level {
             Level::Assertions => "assertions",
             Level::Facts => "facts",
             Level::Universe => "universe",
+            Level::Implications => "implications",
             Level::Exports => "exports",
         }
     }
@@ -232,9 +234,27 @@ pub struct Contract {
     pub name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Implication {
-    pub pre: IrFormulaPlaceholder,
+    memento: SourceMemento,
+    audit: Value,
+    payload: Option<Value>,
+}
+
+impl Sourced for Implication {
+    fn source_memento(&self) -> &SourceMemento {
+        &self.memento
+    }
+}
+
+impl Implication {
+    pub fn audit_row(&self) -> &Value {
+        &self.audit
+    }
+
+    pub fn payload(&self) -> Option<&Value> {
+        self.payload.as_ref()
+    }
 }
 
 /// `Implication::pre` is minted at link time from the resolved callee
@@ -1119,10 +1139,59 @@ impl CallSite {
         EdgeTarget::Unbound
     }
 
-    /// LINK-time obligation side: never minted by this pass.
-    pub fn implication(&self) -> Option<Implication> {
-        None
+    /// Demand this call site's one obligation node. A dangling symbol is a
+    /// named `status=unjoined` node, never an empty success or seek miss.
+    pub fn implication(&self) -> Result<Implication, KitError> {
+        let (nodes, gaps) = enumerate_rpc(
+            &self.conn,
+            Level::Implications,
+            Some(self.memento.to_json()),
+            true,
+        )?;
+        let node = nodes.into_iter().next().ok_or_else(|| {
+            KitError::from(if gaps.is_empty() {
+                EnumerateError::SeekMiss {
+                    plugin: self.conn.surface.clone(),
+                    level: "implications",
+                }
+            } else {
+                EnumerateError::NotModeled {
+                    plugin: self.conn.surface.clone(),
+                    level: "implications",
+                    reason: gaps
+                        .into_iter()
+                        .map(|gap| gap.reason)
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                }
+            })
+        })?;
+        let audit = node.audit.ok_or_else(|| {
+            KitError::from(EnumerateError::Malformed {
+                plugin: self.conn.surface.clone(),
+                reason: "implication node missing audit testimony".to_string(),
+            })
+        })?;
+        Ok(Implication {
+            memento: node.memento,
+            audit,
+            payload: node.payload,
+        })
     }
+}
+
+/// CLI appetite: demand every call site's implication node and retain the
+/// transcript. Enumeration remains the only work driver at every edge.
+pub fn fold_implication_tree(kit: &Kit, workspace_root: &Path) -> Result<Vec<Value>, KitError> {
+    let mut implications = Vec::new();
+    for file in kit.source_files(workspace_root)? {
+        for function in file.functions()? {
+            for call_site in function.call_sites()? {
+                implications.push(call_site.implication()?.audit_row().clone());
+            }
+        }
+    }
+    Ok(implications)
 }
 
 impl Assertion {

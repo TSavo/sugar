@@ -645,7 +645,10 @@ fn enumerate_seek_from_call_site_memento_returns_exactly_one_universe() {
     }
 
     assert_eq!(matching_sites, 1, "fixture ground truth: one call:add site");
-    assert_eq!(universes, 1, "call_site seek must return exactly one universe");
+    assert_eq!(
+        universes, 1,
+        "call_site seek must return exactly one universe"
+    );
 }
 
 #[test]
