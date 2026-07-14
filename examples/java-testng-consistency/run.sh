@@ -39,7 +39,7 @@ KIT_JAVA="$(which java)"
 
 echo "SCOPE: Phase 4 Java-native lifter: TestNG assertEquals(actual, expected) — REVERSED from JUnit."
 echo "SCOPE: VocabDeriver reads param names from vendored TestNG Assert.java: param[0]='actual' → index=1."
-echo "SCOPE: GOOD: Assert.assertEquals(g(2),1) × 2 → consistent → discharged."
+echo "SCOPE: GOOD: duplicate opaque assertions coalesce to one claim → refused as vacuous (PR #2813)."
 echo "SCOPE: BAD:  Assert.assertEquals(g(2),1) + Assert.assertEquals(g(2),2) → unsatisfied."
 
 echo
@@ -90,13 +90,9 @@ run_suite() {
 ")"
   echo "   prove consistency statuses: $consistency_status"
 
-  if [ "$expect_consistency" = "DISCHARGE" ]; then
-    if echo "$consistency_status" | grep -q 'unsatisfied'; then
-      echo "FAIL[$suite]: expected consistency discharged, got: $consistency_status"
-      exit 1
-    fi
-    if [ "$consistency_status" = "MISSING" ]; then
-      echo "FAIL[$suite]: no consistency rows found"
+  if [ "$expect_consistency" = "VACUOUS" ]; then
+    if [ "$consistency_status" = "MISSING" ] || echo "$consistency_status" | grep -qv '^refused\(,refused\)*$'; then
+      echo "FAIL[$suite]: expected only vacuity refusals, got: $consistency_status"
       exit 1
     fi
   else
@@ -122,11 +118,11 @@ consistency = [
 ]
 if not consistency:
     raise SystemExit(f"FAIL[{suite}]: durable verify has no consistency rows")
-if expect_consistency == "DISCHARGE":
-    if any(s != "discharged" for s in consistency):
-        raise SystemExit(f"FAIL[{suite}]: expected all discharged, got {consistency}")
+if expect_consistency == "VACUOUS":
+    if any(s != "refused" for s in consistency):
+        raise SystemExit(f"FAIL[{suite}]: expected only vacuity refusals, got {consistency}")
     print(f"   durable consistency statuses: {','.join(consistency)}")
-    print(f"   durable: PASS (consistent)")
+    print(f"   durable: PASS (coalesced opaque claim refused per PR #2813)")
 else:
     if "unsatisfied" not in consistency:
         raise SystemExit(f"FAIL[{suite}]: expected unsatisfied in {consistency}")
@@ -135,7 +131,7 @@ else:
 PY
 }
 
-run_suite good DISCHARGE
+run_suite good VACUOUS
 run_suite bad  REFUSE
 
 echo

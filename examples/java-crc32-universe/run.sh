@@ -54,7 +54,7 @@ KIT_JAVA="$(which java)"
 echo "SCOPE: java-crc32-universe — keystone over OpenJDK CRC32C (jdk-21+35), GPLv2+CE."
 echo "SCOPE: Vendor-sworn value: TestCRC32C.java → testAll(new CRC32C(), 0xE3069283L)."
 echo "SCOPE: Canonical input \"123456789\"; sworn CRC-32C = 0xE3069283 (CRC-32 analogue 0xCBF43926)."
-echo "SCOPE: GOOD: sworn value on the real getValue() callsite → consistent point contract → discharged."
+echo "SCOPE: GOOD: sworn value remains a lone point claim → refused as vacuous (PR #2813)."
 echo "SCOPE: BAD:  same callsite, sworn value AND a wrong CRC → contradiction → unsatisfied."
 echo "SCOPE: CONSTRUCTION SITE WALKED (JLS §12.4): the keystone enters the CRC32C static{} block and"
 echo "SCOPE:       fully unrolls the table-gen recurrence into FOL that constant-folds to the real table"
@@ -237,12 +237,9 @@ PY
 ")"
   echo "   prove consistency statuses: $consistency_status"
 
-  if [ "$expect_consistency" = "DISCHARGE" ]; then
-    if echo "$consistency_status" | grep -q 'unsatisfied'; then
-      echo "FAIL[$suite]: expected consistency discharged, got: $consistency_status"; exit 1
-    fi
-    if [ "$consistency_status" = "MISSING" ]; then
-      echo "FAIL[$suite]: no consistency rows found"; exit 1
+  if [ "$expect_consistency" = "VACUOUS" ]; then
+    if [ "$consistency_status" = "MISSING" ] || echo "$consistency_status" | grep -qv '^refused\(,refused\)*$'; then
+      echo "FAIL[$suite]: expected only vacuity refusals, got: $consistency_status"; exit 1
     fi
   else
     if ! echo "$consistency_status" | grep -q 'unsatisfied'; then
@@ -262,11 +259,11 @@ rows = receipt.get("rows", [])
 consistency = [r.get("status") for r in rows if (r.get("property") or "").startswith("consistency:")]
 if not consistency:
     raise SystemExit(f"FAIL[{suite}]: durable verify has no consistency rows")
-if expect_consistency == "DISCHARGE":
-    if any(s != "discharged" for s in consistency):
-        raise SystemExit(f"FAIL[{suite}]: expected all discharged, got {consistency}")
+if expect_consistency == "VACUOUS":
+    if any(s != "refused" for s in consistency):
+        raise SystemExit(f"FAIL[{suite}]: expected only vacuity refusals, got {consistency}")
     print(f"   durable consistency statuses: {','.join(consistency)}")
-    print(f"   durable: PASS (JDK-sworn CRC-32C value 0xE3069283 consistent on the real callsite)")
+    print(f"   durable: PASS (lone point claim refused per PR #2813)")
     print(f"   LOGO: OpenJDK's own CRC-32C check value, lifted from the vendor's real")
     print(f"         Checksum API and federated — the checksum's contract, sworn by the JDK.")
 else:
@@ -278,7 +275,7 @@ else:
 PY
 }
 
-run_suite good DISCHARGE
+run_suite good VACUOUS
 run_suite bad  REFUSE
 
 echo
