@@ -225,7 +225,7 @@ class SourceFragment:
         return False
 
     def yield_value(self) -> "SourceFragment | None":
-        self._require(ast.Yield)
+        self._require(ast.Yield, ast.YieldFrom)
         value = self.node.value
         return (
             SourceFragment.from_node(value, self.filename, source=self.source)
