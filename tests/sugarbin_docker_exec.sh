@@ -72,21 +72,7 @@ line="$(tail -1 "$tmp/docker.log")"
 [[ "$line" == *"'$python_test_ref'"* ]] || fail "python-unit did not select managed test closure"
 [[ "$line" == *"'python' '-m' 'pytest' '-q'"* ]] || fail "python-unit command did not always execute"
 : >"$tmp/docker.log"
-# Exercise distinct closure selection against a fixture contract without making
-# a false capability claim in the live contract.
-cp "$repo/sugar-build.toml" "$tmp/solver-contract.toml"
-cat >>"$tmp/solver-contract.toml" <<'TOML'
-[images."core,solver-z3"]
-reference = "python@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b"
-TOML
-solver_ref="$(python3 - "$repo" "$tmp/solver-contract.toml" <<'PY'
-import importlib.util, pathlib, sys
-path = pathlib.Path(sys.argv[1]) / "tools/sugar-build/contract.py"
-spec = importlib.util.spec_from_file_location("sugar_build_contract", path)
-module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-print(module.resolve_environment("docker:solver-z3", sys.argv[2])["image"])
-PY
-)"
+solver_ref="$(python3 "$repo/tools/sugar-build/contract.py" resolve-environment docker:solver-z3 | python3 -c 'import json,sys; print(json.load(sys.stdin)["image"])')"
 [[ "$solver_ref" == *@sha256:* && "$solver_ref" != "$core_ref" ]] || fail "solver closure did not select its own fixture image"
 
 run run --host bx --env docker:core --needs sugar -- sh -c 'echo hit' >/dev/null

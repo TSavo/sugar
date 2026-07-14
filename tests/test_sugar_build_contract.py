@@ -79,10 +79,9 @@ def test_python_unit_has_a_distinct_published_test_runtime():
     assert environment["image"] == "ghcr.io/tsavo/sugar-env@sha256:12ca8a6768630ae70afb37d63a48b5035da365c4c2fe4cd99117ae4327932674"
 
 
-def test_bpytest_does_not_select_named_task_before_python_unit_closure_exists():
+def test_bpytest_selects_published_python_unit_task():
     wrapper = (ROOT / "bin/bpytest").read_text()
-    assert 'exec "$brun"' in wrapper
-    assert "--task python-unit" not in wrapper
+    assert 'exec "$sugarbin" run --host bx --task python-unit -- "$@"' in wrapper
 
 
 def test_pyright_private_node_is_not_the_node_capability():
@@ -153,7 +152,7 @@ def test_dependency_cycles_are_loud(tmp_path):
 
 def test_missing_immutable_image_is_loud():
     with pytest.raises(ContractError, match="capability closure has no built image"):
-        contract.resolve_environment("docker:solver-z3")
+        contract.resolve_environment("docker:python-scientific")
 
 
 def test_mutable_image_reference_is_loud(tmp_path):

@@ -78,3 +78,43 @@ supersedes the wrapper-migration and executable-closure claims above:
 Corrected remaining state: executable closure publication remains `R 6`, and
 the `bpytest` named-route migration remains `R 1`. Neither is zero until real
 images and the complete `python-unit` runtime have been built and exercised.
+
+## Real closure publication (post-rebase)
+
+Published and inspected immutable RepoDigests:
+
+- Python test: `ghcr.io/tsavo/sugar-env@sha256:12ca8a6768630ae70afb37d63a48b5035da365c4c2fe4cd99117ae4327932674`
+- Z3: `ghcr.io/tsavo/sugar-env@sha256:ea84add5822935318b6be07dba38980b81d947b077b077ca7e6f70febdf2d497`
+- Python scientific + test + Z3: `ghcr.io/tsavo/sugar-env@sha256:f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3`
+- Maximal examples closure: `ghcr.io/tsavo/sugar-env@sha256:f3474a1e1badba67f3daaf5c589f2844da28a7be6beda929ca5f7f2e5d95785e`
+
+The maximal image is recorded only for the maximal named-task closure; its key
+enumerates every capability actually present, including `python-test`. Direct
+Coq, Java/Maven, Node/pnpm, Vampire, and scientific-only requests remain loudly
+unresolved until minimal direct images are published. The maximal build
+verified the Node, Vampire, and Temurin archives by SHA-256 before extraction.
+
+Exact runtime smoke results on battleaxe:
+
+```text
+Z3 4.8.12
+Coq 8.16.1
+NumPy 2.5.1; pandas 3.0.3; scikit-learn 1.9.0
+Temurin Java and javac 21.0.9 (direct and sh -lc)
+Maven 3.8.7
+Node 22.17.1; pnpm 10.13.1
+Vampire 5.0.1
+```
+
+All seven named-task explains resolved an immutable digest. The real
+`python-unit` broker route built and injected a stamped Linux Sugar binary and
+ran `test_type_checker_ratchet.py`: 3 tests passed and 1 failed because current
+main still names the absent mounted-source directory
+`src/sugar_lift_py_tests/operations`. This is the current honest ratchet status,
+not an environment skip. `bin/bpytest` was migrated after the published
+closure executed and returned that current real product status.
+
+The examples scripts still create private venvs and may reach PyPI. This image
+pins its owned environment, but converting those script-local installs into a
+fully offline managed mode remains a later migration; this report does not
+claim the examples suite is network-hermetic.

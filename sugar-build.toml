@@ -39,6 +39,12 @@ depends = ["core"]
 reference = "ghcr.io/tsavo/sugar-env@sha256:b8af4d5631bc34bea951a1ed5da391fbdc5efd4763941def40840f05292960a4"
 [images."core,python-test"]
 reference = "ghcr.io/tsavo/sugar-env@sha256:12ca8a6768630ae70afb37d63a48b5035da365c4c2fe4cd99117ae4327932674"
+[images."core,solver-z3"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:ea84add5822935318b6be07dba38980b81d947b077b077ca7e6f70febdf2d497"
+[images."core,python-scientific,python-test,solver-z3"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3"
+[images."core,java,node,python-scientific,python-test,solver-coq,solver-z3,vampire"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:f3474a1e1badba67f3daaf5c589f2844da28a7be6beda929ca5f7f2e5d95785e"
 
 [tasks.python-unit]
 capabilities = ["python-test"]
@@ -56,21 +62,21 @@ binaries = []
 command = ["cargo", "test", "--manifest-path", "implementations/rust/Cargo.toml"]
 
 [tasks.examples-gate]
-capabilities = ["python-scientific", "solver-z3", "solver-coq", "java", "node", "vampire"]
+capabilities = ["python-test", "python-scientific", "solver-z3", "solver-coq", "java", "node", "vampire"]
 binaries = ["sugar", "sugar-ir-smt-lib"]
 command = ["make", "examples-gate"]
 
 [tasks.pandas-wall]
-capabilities = ["python-scientific", "solver-z3"]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
 command = ["python", "tools/pandas_wall.py"]
 
 [tasks.numpy-wall]
-capabilities = ["python-scientific", "solver-z3"]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
 command = ["python", "tools/numpy_wall.py"]
 
 [tasks.restored-suite-scoreboard]
-capabilities = ["python-scientific", "solver-z3"]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
 command = ["bash", "scripts/test-3809-dod-scoreboard.sh"]
