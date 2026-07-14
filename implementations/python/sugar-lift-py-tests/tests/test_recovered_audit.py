@@ -34,6 +34,16 @@ def test_recovered_audit_records_independent_panics_without_lift_payload() -> No
     assert all(item["status"] == "mandatory-panic" for item in wire["panics"])
 
 
+def test_recovered_audit_does_not_mark_unsupported_async_definition_clean() -> None:
+    source = "async def omitted():\n    nonlocal missing\n"
+
+    wire = audit_lift_file(source, "async_gap.py", recover_panics=True).to_rpc()
+
+    assert wire["status"] == "failed"
+    assert [item["locus"] for item in wire["panics"]] == ["async_gap.py:1:0"]
+    assert wire["panics"][0]["gap"]["observed"] == "AsyncFunctionDef"
+
+
 def test_panicked_parent_suppresses_descendants() -> None:
     source = (
         "def parent():\n"

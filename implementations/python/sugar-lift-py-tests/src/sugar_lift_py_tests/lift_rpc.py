@@ -1152,17 +1152,18 @@ def _module_import_temporal(
 
 
 def _iter_liftable_function_defs(module):
-    """Yield FunctionDef fragments at module top-level and inside ClassDef bodies.
+    """Yield every function-definition fragment owned by the audit frontier.
 
-    Deeper floors: pytest class-based tests put ``test_*`` methods on classes.
-    Without walking ClassDef bodies, those asserts never enter the factory
-    (owned=0) and stay loud construction gaps. Nested classes included recursively.
+    Both synchronous and asynchronous definitions are independent source loci:
+    unsupported async construction must reach the recovered panic boundary
+    instead of disappearing into a false-clean file. Class bodies are walked
+    recursively because pytest class-based tests put ``test_*`` methods there.
     """
     stack = list(module.statements())
     while stack:
         stmt = stack.pop(0)
         observed = stmt.observed
-        if observed == "FunctionDef":
+        if observed in {"FunctionDef", "AsyncFunctionDef"}:
             yield stmt
         elif observed == "ClassDef":
             # class body may contain methods and nested classes
