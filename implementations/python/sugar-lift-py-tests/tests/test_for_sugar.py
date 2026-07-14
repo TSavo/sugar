@@ -7,14 +7,11 @@ from __future__ import annotations
 
 import ast
 
-import pytest
-
 from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     BlockValue,
@@ -87,17 +84,15 @@ def test_owns_simple_name_for_not_tuple_while_or_expr() -> None:
     ] == ["TupleForSugar"]
 
 
-def test_three_name_tuple_target_for_is_a_loud_factory_gap() -> None:
+def test_three_name_tuple_target_uses_flat_tuple_owner_from_4288() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse("for a, b, c in y:\n    pass\n").body[0]
-    with pytest.raises(FactoryPanic) as raised:
-        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
-    assert raised.value.info.observed == "For"
+    built = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert type(built.sugar).__name__ == "TupleForSugar"
 
 
-def test_for_else_is_a_loud_factory_gap() -> None:
+def test_for_else_uses_break_projection_owner() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse("for x in y:\n    pass\nelse:\n    pass\n").body[0]
-    with pytest.raises(FactoryPanic) as raised:
-        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
-    assert raised.value.info.observed == "For"
+    built = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert type(built.sugar).__name__ == "ForElseSugar"

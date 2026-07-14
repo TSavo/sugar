@@ -35,19 +35,28 @@ def test_pair_target_binds_both_iter_element_projections() -> None:
     assert returned.value.term == ctor("py.subscript", [element, num(0)])
 
 
-def test_starred_and_for_else_targets_stay_loud() -> None:
-    for source in (
-        "for a, *rest in rows:\n    pass\n",
-        "for a, b in rows:\n    pass\nelse:\n    pass\n",
-    ):
-        ctx = FactoryBuildContext(filename="vendor.py", catalog=default_catalog())
-        with pytest.raises(FactoryPanic):
-            build_node(
-                ast.parse(source).body[0],
-                filename="vendor.py",
-                role=SugarRole.STATEMENT,
-                ctx=ctx,
-            )
+def test_starred_target_stays_loud() -> None:
+    source = "for a, *rest in rows:\n    pass\n"
+    ctx = FactoryBuildContext(filename="vendor.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic):
+        build_node(
+            ast.parse(source).body[0],
+            filename="vendor.py",
+            role=SugarRole.STATEMENT,
+            ctx=ctx,
+        )
+
+
+def test_tuple_for_else_uses_break_projection_owner() -> None:
+    source = "for a, b in rows:\n    pass\nelse:\n    pass\n"
+    ctx = FactoryBuildContext(filename="vendor.py", catalog=default_catalog())
+    built = build_node(
+        ast.parse(source).body[0],
+        filename="vendor.py",
+        role=SugarRole.STATEMENT,
+        ctx=ctx,
+    )
+    assert type(built.sugar).__name__ == "ForElseSugar"
 
 
 def test_pair_for_owner_is_exactly_flat_two_name_no_else_partition() -> None:
