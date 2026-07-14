@@ -902,8 +902,9 @@ def _lift_file_for_enumeration(
     full_path = (root / file_rel).resolve()
     source = full_path.read_text(encoding="utf-8")
     file_payload = lift_file_payload(source, file_rel)
-    ir_items = [to_rpc_value(item) for item in file_payload.ir]
-    call_edges = [to_rpc_value(edge) for edge in file_payload.call_edges]
+    file_rpc = file_payload.to_rpc()
+    ir_items = file_rpc["ir"]
+    call_edges = file_rpc["callEdges"]
     return ir_items, call_edges
 
 
@@ -2672,32 +2673,6 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
                     ),
                 },
             )
-        # #4013: dual-axis lift coverage as first-class --report line items.
-        # Independent AST census (second computation) vs this payload's accounting.
-        # LiftReportPayloadDto is frozen — rebuild with replace(), never assign.
-        if not bindings_backed_pass and lifted_paths:
-            coverage_started = time.monotonic()
-            _TRANSPORT_LOG.info(
-                "lift_coverage_enter",
-                extra={
-                    "stage": "lift.workspace.coverage",
-                    "total": len(lifted_paths),
-                },
-            )
-            coverage = _build_lift_coverage(
-                root=root, paths=lifted_paths, payload=payload
-            )
-            payload = replace(payload, lift_coverage=coverage)
-            _TRANSPORT_LOG.info(
-                "lift_coverage_exit",
-                extra={
-                    "stage": "lift.workspace.coverage",
-                    "total": len(lifted_paths),
-                    "elapsed_ms": round(
-                        (time.monotonic() - coverage_started) * 1000, 3
-                    ),
-                },
-            )
         rpc_started = time.monotonic()
         _TRANSPORT_LOG.info(
             "payload_to_rpc_enter",
@@ -2715,6 +2690,33 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
                 "elapsed_ms": round((time.monotonic() - rpc_started) * 1000, 3),
             },
         )
+        # #4013: dual-axis lift coverage as first-class --report line items.
+        # Independent AST census (second computation) vs this payload's accounting.
+        # Serialize once through the payload-owned term-table door, then attach
+        # the coverage computed from that exact wire projection.
+        if not bindings_backed_pass and lifted_paths:
+            coverage_started = time.monotonic()
+            _TRANSPORT_LOG.info(
+                "lift_coverage_enter",
+                extra={
+                    "stage": "lift.workspace.coverage",
+                    "total": len(lifted_paths),
+                },
+            )
+            coverage = _build_lift_coverage(
+                root=root, paths=lifted_paths, payload_rpc=rpc_payload
+            )
+            rpc_payload["liftCoverage"] = coverage
+            _TRANSPORT_LOG.info(
+                "lift_coverage_exit",
+                extra={
+                    "stage": "lift.workspace.coverage",
+                    "total": len(lifted_paths),
+                    "elapsed_ms": round(
+                        (time.monotonic() - coverage_started) * 1000, 3
+                    ),
+                },
+            )
         _send({"jsonrpc": "2.0", "id": msg_id, "result": rpc_payload})
     except Exception as exc:
         _send(
@@ -2753,7 +2755,7 @@ def _build_lift_coverage(
     *,
     root: Path,
     paths: List[Path],
-    payload: LiftReportPayloadDto,
+    payload_rpc: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Independent AST census + partition vs the just-built lift payload.
 
@@ -2776,55 +2778,33 @@ def _build_lift_coverage(
     )
     # Account against the same RPC shape the report serializes — built without
     # liftCoverage to avoid self-reference (coverage is the field being filled).
-    from sugar_lift_py_tests.kit_rpc.factory_audit_summary_dto import (
-        FactoryAuditSummaryDto,
-    )
-
     started = time.monotonic()
     _TRANSPORT_LOG.info(
         "coverage_projection_enter",
         extra={
             "stage": "lift.coverage.payload_projection",
-            "contracts": len(payload.ir),
+            "contracts": len(payload_rpc.get("ir", [])),
         },
     )
-    projected_ir = []
-    for contract_index, item in enumerate(payload.ir):
-        row_started = time.monotonic()
-        projected_ir.append(to_rpc_value(item))
-        _TRANSPORT_LOG.info(
-            "coverage_projection_row",
-            extra={
-                "stage": "lift.coverage.payload_projection.ir",
-                "index": contract_index,
-                "total": len(payload.ir),
-                "symbol": getattr(item, "name", type(item).__name__),
-                "elapsed_ms": round((time.monotonic() - row_started) * 1000, 3),
-            },
-        )
     interim = {
-        "sourceAudits": [to_rpc_value(a) for a in payload.source_audits],
-        "sourceMementos": [to_rpc_value(m) for m in payload.source_mementos],
-        "assertionSurfaceAudits": [
-            to_rpc_value(a) for a in payload.assertion_surface_audits
-        ],
-        "diagnostics": [to_rpc_value(d) for d in payload.diagnostics],
-        "sourceLedger": to_rpc_value(payload.source_ledger or {}),
+        "sourceAudits": payload_rpc.get("sourceAudits", []),
+        "sourceMementos": payload_rpc.get("sourceMementos", []),
+        "assertionSurfaceAudits": payload_rpc.get("assertionSurfaceAudits", []),
+        "diagnostics": payload_rpc.get("diagnostics", []),
+        "sourceLedger": payload_rpc.get("sourceLedger", {}),
         # Minority projection joins function-contract rows to call_edges.
-        "ir": projected_ir,
-        "callEdges": [to_rpc_value(edge) for edge in payload.call_edges],
+        "ir": payload_rpc.get("ir", []),
+        "callEdges": payload_rpc.get("callEdges", []),
         # Doctrine: factory instrument engagement must be visible to coverage
         # accounting so unimplemented becomes a loud gap, never silent (#4016).
-        "factoryAuditSummary": FactoryAuditSummaryDto(
-            rows=payload.factory_walk
-        ).to_rpc(),
-        "factoryAudits": [to_rpc_value(a) for a in payload.factory_audits],
+        "factoryAuditSummary": payload_rpc.get("factoryAuditSummary", {}),
+        "factoryAudits": payload_rpc.get("factoryAudits", []),
     }
     _TRANSPORT_LOG.info(
         "coverage_projection_exit",
         extra={
             "stage": "lift.coverage.payload_projection",
-            "contracts": len(payload.ir),
+            "contracts": len(payload_rpc.get("ir", [])),
             "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
         },
     )
