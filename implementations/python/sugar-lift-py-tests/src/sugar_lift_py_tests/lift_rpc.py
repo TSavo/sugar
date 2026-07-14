@@ -1083,12 +1083,14 @@ def _module_import_temporal(
             )
             try:
                 callable_value = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
-            except FactoryPanic as panic:
+            except FactoryPanic:
                 if recovered_panics is None:
                     raise
-                recovered_panics.append(
-                    (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
-                )
+                # A FunctionDef owns its body panic. Module seeding only needs
+                # to leave the failed callable unbound; the per-definition
+                # audit records the locus exactly once. Projecting it here as a
+                # module seed would duplicate the same independent panic when
+                # the function leaf is audited.
                 continue
             if isinstance(callable_value, Incomplete):
                 continue
