@@ -120,7 +120,7 @@ sugar_bx_docker_bind_source() {
 }
 
 sugar_bx_build_artifacts_docker() {
-  local image="$1" needs="$2"
+  local image="$1" needs="$2" profile="$3"
   local image_digest="${image##*@sha256:}"
   local managed_target="${BCARGO_REMOTE_MANAGED_TARGET:-/home/tsavo/.cache/sugar/managed-targets/$image_digest}"
   sugar_bx_ssh "rm -rf $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") && mkdir -p $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts") $(sugar_bx_quote "$SUGAR_BX_BINARY_CACHE") $(sugar_bx_quote "$managed_target")" || return $?
@@ -130,7 +130,7 @@ sugar_bx_build_artifacts_docker() {
   cache_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_BINARY_CACHE")" || return $?
   target_source="$(sugar_bx_docker_bind_source "$managed_target")" || return $?
   local build_script
-  build_script="set -euo pipefail; cd /workspace/sugar; printf '{\"artifacts\":[' >/out/required-artifacts.json; first=1; needs=$(sugar_bx_quote "$needs"); IFS=,; for b in \$needs; do [ -n \"\$b\" ] || continue; r=\$(env -u SUGAR_BIN -u SUGAR_BINARY_DIR SUGAR_BINARY_PUBLISH=0 bin/sugarbin --profile release --platform linux-x86_64 --bin \"\$b\"); cp \"\$r\" /out/\"\$b\"; cp \"\$r.sugarbin.json\" /out/\"\$b.sugarbin.json\"; sum=\$(sha256sum /out/\"\$b\" | cut -d' ' -f1); [ \$first = 1 ] || printf ',' >>/out/required-artifacts.json; first=0; printf '{\"name\":\"%s\",\"sha256\":\"%s\"}' \"\$b\" \"\$sum\" >>/out/required-artifacts.json; done; printf ']}' >>/out/required-artifacts.json"
+  build_script="set -euo pipefail; cd /workspace/sugar; printf '{\"artifacts\":[' >/out/required-artifacts.json; first=1; needs=$(sugar_bx_quote "$needs"); IFS=,; for b in \$needs; do [ -n \"\$b\" ] || continue; r=\$(env -u SUGAR_BIN -u SUGAR_BINARY_DIR SUGAR_BINARY_PUBLISH=0 bin/sugarbin --profile $(sugar_bx_quote "$profile") --platform linux-x86_64 --bin \"\$b\"); cp \"\$r\" /out/\"\$b\"; cp \"\$r.sugarbin.json\" /out/\"\$b.sugarbin.json\"; sum=\$(sha256sum /out/\"\$b\" | cut -d' ' -f1); [ \$first = 1 ] || printf ',' >>/out/required-artifacts.json; first=0; printf '{\"name\":\"%s\",\"sha256\":\"%s\"}' \"\$b\" \"\$sum\" >>/out/required-artifacts.json; done; printf ']}' >>/out/required-artifacts.json"
   local -a docker_args=(docker run --rm
     --workdir /workspace/sugar
     --env SUGAR_BINARY_PUBLISH=0

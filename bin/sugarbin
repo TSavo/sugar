@@ -23,6 +23,7 @@ dispatch_execution_subcommand() {
   local execution_env="ambient"
   local execution_env_explicit=0
   local requested_platform=""
+  local profile="release"
   local needs=""
   local task=""
   local saw_boundary=0
@@ -68,6 +69,12 @@ dispatch_execution_subcommand() {
       --platform)
         [[ $# -ge 2 ]] || { echo "sugarbin: --platform requires a value" >&2; return 2; }
         requested_platform="$2"
+        shift 2
+        ;;
+      --profile)
+        [[ $# -ge 2 ]] || { echo "sugarbin: --profile requires a value" >&2; return 2; }
+        profile="$2"
+        [[ "$profile" == release || "$profile" == debug ]] || { echo "sugarbin: --profile must be release or debug" >&2; return 2; }
         shift 2
         ;;
       --needs)
@@ -135,6 +142,15 @@ dispatch_execution_subcommand() {
     local environment_json
     environment_json="$("$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-environment "$execution_env")" || return $?
     docker_image="$("$contract_python" -c 'import json,sys; print(json.load(sys.stdin)["image"])' <<<"$environment_json")"
+    if [[ -n "$task" ]]; then
+      local missing_capabilities
+      missing_capabilities="$("$contract_python" -c 'import json,sys; task=json.loads(sys.argv[1]); env=json.load(sys.stdin); print(",".join(sorted(set(task["capabilities"])-set(env["capabilities"]))))' "$task_json" <<<"$environment_json")"
+      [[ -z "$missing_capabilities" ]] || {
+        printf 'sugarbin: environment %s does not satisfy task %s; missing capabilities: %s\n' \
+          "$execution_env" "$task" "$missing_capabilities" >&2
+        return 2
+      }
+    fi
     local core_environment_json
     core_environment_json="$("$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-environment docker:core)" || return $?
     core_image="$("$contract_python" -c 'import json,sys; print(json.load(sys.stdin)["image"])' <<<"$core_environment_json")"
@@ -164,6 +180,7 @@ dispatch_execution_subcommand() {
     printf 'host=%s\n' "$host"
     printf 'env=%s\n' "$execution_env"
     printf 'platform=%s\n' "$observed_platform"
+    printf 'profile=%s\n' "$profile"
     printf 'capabilities=%s\n' "$task_capabilities"
     printf 'task=%s\n' "$task"
     printf 'needs=%s\n' "$needs"
@@ -180,6 +197,7 @@ dispatch_execution_subcommand() {
     for requested_bin in "${resolved_bins[@]}"; do
       [[ -n "$requested_bin" ]] || continue
       local -a resolver_args=(--bin "$requested_bin")
+      resolver_args+=(--profile "$profile")
       [[ -z "$requested_platform" ]] || resolver_args+=(--platform "$requested_platform")
       resolved="$(env -u SUGAR_BIN "$script_dir/sugarbin" "${resolver_args[@]}")" || return $?
       resolved_paths+=("$resolved")
@@ -234,8 +252,12 @@ dispatch_execution_subcommand() {
   if [[ "$route_env" == docker ]]; then
     local remote_needs="$needs" has_artifacts=0
     if [[ -n "$remote_needs" ]]; then
-      sugar_bx_build_artifacts_docker "$core_image" "$remote_needs" || return $?
+      sugar_bx_build_artifacts_docker "$core_image" "$remote_needs" "$profile" || return $?
       has_artifacts=1
+    fi
+    if [[ "$subcommand" == build ]]; then
+      sugar_bx_finish 0
+      return $?
     fi
     set +e
     sugar_bx_run_docker "$docker_image" "$task_network" "$has_artifacts" "${command[@]}"
@@ -248,13 +270,13 @@ dispatch_execution_subcommand() {
     local remote_needs="${needs:-sugar}" remote_platform="${requested_platform:-linux-x86_64}"
     if [[ "$subcommand" == build ]]; then
       set +e
-      sugar_bx_ssh "cd $(sugar_bx_quote "$SUGAR_BX_REPO") && bin/sugarbin build --platform $(sugar_bx_quote "$remote_platform") --needs $(sugar_bx_quote "$remote_needs")"
+      sugar_bx_ssh "cd $(sugar_bx_quote "$SUGAR_BX_REPO") && bin/sugarbin build --profile $(sugar_bx_quote "$profile") --platform $(sugar_bx_quote "$remote_platform") --needs $(sugar_bx_quote "$remote_needs")"
       status=$?
       set -e
       sugar_bx_finish "$status"
       return $?
     fi
-    local remote_setup="first= sugar= parent= needs=$(sugar_bx_quote "$remote_needs"); IFS=,; for b in \$needs; do r=\$(env -u SUGAR_BIN bin/sugarbin --platform $(sugar_bx_quote "$remote_platform") --bin \"\$b\") || exit; [ -n \"\$first\" ] || { first=\"\$r\"; parent=\$(dirname \"\$(dirname \"\$r\")\"); }; [ \"\$b\" != sugar ] || sugar=\"\$r\"; done; mkdir -p \"\$parent/.runs\"; dir=\$(mktemp -d \"\$parent/.runs/run.XXXXXX\") || exit; IFS=,; for b in \$needs; do [ -e \"\$dir/\$b\" ] && continue; r=\$(env -u SUGAR_BIN bin/sugarbin --platform $(sugar_bx_quote "$remote_platform") --bin \"\$b\") || { rm -rf \"\$dir\"; exit; }; ln -s \"\$r\" \"\$dir/\$b\" || { rm -rf \"\$dir\"; exit; }; done; [ -n \"\$sugar\" ] || sugar=\"\$first\"; export SUGAR_BIN=\"\$dir/\$(basename \"\$sugar\")\" SUGAR_BINARY_DIR=\"\$dir\" PATH=\"\$dir:\$PATH\"; "
+    local remote_setup="first= sugar= parent= needs=$(sugar_bx_quote "$remote_needs"); IFS=,; for b in \$needs; do r=\$(env -u SUGAR_BIN bin/sugarbin --profile $(sugar_bx_quote "$profile") --platform $(sugar_bx_quote "$remote_platform") --bin \"\$b\") || exit; [ -n \"\$first\" ] || { first=\"\$r\"; parent=\$(dirname \"\$(dirname \"\$r\")\"); }; [ \"\$b\" != sugar ] || sugar=\"\$r\"; done; mkdir -p \"\$parent/.runs\"; dir=\$(mktemp -d \"\$parent/.runs/run.XXXXXX\") || exit; IFS=,; for b in \$needs; do [ -e \"\$dir/\$b\" ] && continue; r=\$(env -u SUGAR_BIN bin/sugarbin --profile $(sugar_bx_quote "$profile") --platform $(sugar_bx_quote "$remote_platform") --bin \"\$b\") || { rm -rf \"\$dir\"; exit; }; ln -s \"\$r\" \"\$dir/\$b\" || { rm -rf \"\$dir\"; exit; }; done; [ -n \"\$sugar\" ] || sugar=\"\$first\"; export SUGAR_BIN=\"\$dir/\$(basename \"\$sugar\")\" SUGAR_BINARY_DIR=\"\$dir\" PATH=\"\$dir:\$PATH\"; "
     command=(bash -lc "$remote_setup \"\$@\"; status=\$?; rm -rf \"\$dir\"; exit \$status" bash "${command[@]}")
   fi
   if [[ "$subcommand" == cargo ]]; then

@@ -68,6 +68,15 @@ python_test_ref="$(python3 "$repo/tools/sugar-build/contract.py" resolve-environ
 [[ "$explain" == *"docker_image=$python_test_ref"* ]] || fail "explain omitted resolved immutable Docker image"
 [[ "$explain" == *"platform=linux-x86_64"* ]] || fail "bx explain reported caller platform"
 [[ "$explain" == *"network=none"* ]] || fail "python-unit network policy missing from explain"
+[[ "$explain" == *"profile=release"* ]] || fail "default artifact profile missing from explain"
+
+status=0
+run explain --host bx --env docker:core --task python-unit >"$tmp/closure.out" 2>"$tmp/closure.err" || status=$?
+[[ "$status" == 2 ]] || fail "task accepted an insufficient explicit Docker closure"
+grep -Fq 'missing capabilities: python-test' "$tmp/closure.err" || fail "insufficient closure diagnostic missing"
+
+debug_explain="$(run explain --host bx --profile debug --task python-unit)"
+[[ "$debug_explain" == *"profile=debug"* ]] || fail "debug artifact profile was not retained"
 
 : >"$tmp/rsync.log"
 status=0
@@ -111,9 +120,15 @@ line="$(tail -1 "$tmp/docker.log")"
 [[ "$line" != *"--network' 'none"* ]] || fail "ad-hoc Docker command was forced offline"
 [[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 2 ]] || fail "managed build/task count wrong"
 
+: >"$tmp/docker.log"
+run build --host bx --env docker:core --profile debug --needs sugar >/dev/null
+build_line="$(head -1 "$tmp/docker.log")"
+[[ "$build_line" == *"--profile"* && "$build_line" == *"debug"* ]] || fail "managed artifact profile did not reach the core builder"
+: >"$tmp/docker.log"
+
 run run --host bx --env docker:core -- sh -c 'echo miss' >/dev/null
 [[ "$(tail -1 "$tmp/docker.log")" == *"'$core_ref'"* ]] || fail "wrong miss image"
-[[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 3 ]] || fail "zero-artifact child did not execute exactly once"
+[[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 1 ]] || fail "zero-artifact child did not execute exactly once"
 
 status=0
 run run --host bx --env docker:core -- sh -c CHILD_EXIT_43 >/dev/null || status=$?
