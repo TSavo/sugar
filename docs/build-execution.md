@@ -81,8 +81,12 @@ resolution, or execution policy. `bpytest` additionally selects the managed
 `sugar-build.toml` owns exact tool versions, capability dependencies, immutable
 image digests, and named tasks. `tools/sugar-build/contract.py` resolves and
 validates that declaration. Capabilities are compositional dependency claims;
-tasks declare a capability set, required Sugar executables, and an argv prefix.
-The caller's arguments are appended and the command still runs every time.
+tasks declare a capability set, required Sugar executables, an argv prefix, and
+an explicit `network = "none"` or `network = "required"` policy. The caller's
+arguments are appended and the command still runs every time. Managed tasks run
+with Docker networking disabled unless the task contract says it is required.
+`examples-gate` declares required networking because its acceptance examples
+exercise dependency and language ecosystems that are not an offline contract.
 
 Current task names are `python-unit`, `python-lift`, `rust-unit`,
 `examples-gate`, `pandas-wall`, `numpy-wall`, and
@@ -127,6 +131,17 @@ The local cache defaults to:
     <binary>
     <binary>.sugarbin.json
 ```
+
+Managed bx artifact builds mount the persistent verified cache at
+`/home/tsavo/.cache/sugar/binaries` into the core toolchain container. Override
+the host path with `BCARGO_REMOTE_BINARY_CACHE`. Cache identity includes the
+container's Rust/Cargo reports, so an ambient artifact cannot alias a managed
+toolchain artifact. The core image need not contain `gh` for warm reuse; a valid
+local cache cell is verified before the resolver considers a shelf download.
+Cargo intermediates live separately under
+`/home/tsavo/.cache/sugar/managed-targets/<core-image-digest>` and are mounted as
+`/managed-target`; neither Cargo nor the manifest writer touches an ambient bx
+workspace target. `BCARGO_REMOTE_MANAGED_TARGET` can override that location.
 
 The GitHub release named by `SUGAR_BINARY_SHELF_TAG` (default
 `sugar-binary-shelf`) is a dumb content-addressed shelf. A cache miss downloads

@@ -58,6 +58,24 @@ export SUGAR_BINARY_CACHE_DIR="$tmp/cache"
 export SUGAR_BINARY_SOURCE_STAMP="blake3-512:$(printf '1%.0s' {1..128})"
 export SUGAR_BINARY_NO_SHELF=1 SUGAR_BINARY_PUBLISH=0
 
+# SUGAR_BIN is a single-binary override. A differently requested executable
+# must resolve from SUGAR_BINARY_DIR rather than aliasing to sugar.
+mkdir -p "$tmp/injected"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/injected/sugar" \
+  && chmod +x "$tmp/injected/sugar"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp/injected/sugar-ir-smt-lib" \
+  && chmod +x "$tmp/injected/sugar-ir-smt-lib"
+resolved="$(SUGAR_BIN="$tmp/injected/sugar" SUGAR_BINARY_DIR="$tmp/injected" \
+  "$repo/bin/sugarbin" --bin sugar-ir-smt-lib)"
+[[ "$resolved" == "$tmp/injected/sugar-ir-smt-lib" ]] || {
+  echo "SUGAR_BIN shadowed a different requested executable: $resolved" >&2; exit 1;
+}
+cp "$tmp/injected/sugar" "$tmp/injected/custom-sugar-path"
+resolved="$(SUGAR_BIN="$tmp/injected/custom-sugar-path" "$repo/bin/sugarbin" --bin sugar)"
+[[ "$resolved" == "$tmp/injected/custom-sugar-path" ]] || {
+  echo "custom SUGAR_BIN override stopped applying to sugar: $resolved" >&2; exit 1;
+}
+
 # A stale sibling must not be blessed by building another executable.
 printf '#!/usr/bin/env bash\nexit 99\n' >"$tmp/target/release/sugar-ir-smt-lib"
 chmod +x "$tmp/target/release/sugar-ir-smt-lib"
@@ -114,6 +132,16 @@ for binary in ("sugar", "sugar-ir-smt-lib"):
     (target / binary).unlink()
     manifest.unlink()
 PY
+cat >"$tmp/bin/gh" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+chmod +x "$tmp/bin/gh"
+export SUGAR_BINARY_NO_SHELF=0
+: >"$tmp/cargo.log"; : >"$tmp/child.log"
+"$repo/bin/sugarbin" run --needs sugar,sugar-ir-smt-lib -- true
+[[ ! -s "$tmp/cargo.log" ]] || { echo 'valid local cache required working gh' >&2; exit 1; }
+
 cat >"$tmp/bin/gh" <<'SH'
 #!/usr/bin/env bash
 if [[ "${1:-} ${2:-}" == "repo view" ]]; then printf 'TSavo/sugar\n'; exit 0; fi

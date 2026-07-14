@@ -32,6 +32,7 @@ depends = []
 capabilities = ["core"]
 binaries = []
 command = ["$tmp/record", "default"]
+network = "none"
 EOF
 
 export TASK_COUNT="$tmp/count"

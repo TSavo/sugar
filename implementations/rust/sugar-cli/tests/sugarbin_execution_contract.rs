@@ -140,6 +140,23 @@ fn remote_execution_provisioning_has_one_owner() {
 }
 
 #[test]
+fn remote_execution_syncs_the_managed_build_contract() {
+    let root = repo_root();
+    let backend =
+        std::fs::read_to_string(root.join("bin/lib/sugar-bx.sh")).expect("read bx backend");
+    let sync_paths = backend
+        .split_once("sync_paths=(")
+        .and_then(|(_, tail)| tail.split_once('\n'))
+        .and_then(|(_, tail)| tail.split_once("\n)"))
+        .map(|(paths, _)| paths)
+        .expect("parse sync_paths");
+    assert!(
+        sync_paths.lines().any(|line| line.trim() == "sugar-build.toml"),
+        "managed bx tasks parse sugar-build.toml inside the synced workspace, so the contract must be an explicit sync resident"
+    );
+}
+
+#[test]
 fn planted_remote_reaper_owner_is_reported() {
     let temp = tempfile::tempdir().expect("tempdir");
     let rogue = temp.path().join("scripts/rogue-reaper.sh");

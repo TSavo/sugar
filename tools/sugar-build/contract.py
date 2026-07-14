@@ -139,17 +139,19 @@ def resolve_task(name, path=DEFAULT_CONTRACT):
     task = data["tasks"].get(name)
     if task is None:
         raise ContractError(f"unknown task: {name}")
-    if set(task) != {"capabilities", "binaries", "command"}:
+    if set(task) != {"capabilities", "binaries", "command", "network"}:
         raise ContractError(f"invalid task definition: {name}")
     for key in ("capabilities", "binaries", "command"):
         if not isinstance(task[key], list) or any(not isinstance(item, str) for item in task[key]):
             raise ContractError(f"invalid task {key}: {name}")
     if not task["command"]:
         raise ContractError(f"empty command array for task: {name}")
+    if task["network"] not in ("none", "required"):
+        raise ContractError(f"invalid task network policy: {name}")
     unknown = sorted(set(task["binaries"]) - PUBLISHED_BINARIES)
     if unknown:
         raise ContractError(f"unknown task binary: {unknown[0]}")
-    return {"binaries": sorted(set(task["binaries"])), "capabilities": _closure(task["capabilities"], data), "command": task["command"], "task": name}
+    return {"binaries": sorted(set(task["binaries"])), "capabilities": _closure(task["capabilities"], data), "command": task["command"], "network": task["network"], "task": name}
 
 
 def tool_versions(path=DEFAULT_CONTRACT):

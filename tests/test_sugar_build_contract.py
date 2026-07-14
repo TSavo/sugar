@@ -58,18 +58,18 @@ def test_declared_tool_versions_have_exact_syntax_and_capability_mapping(tmp_pat
         contract.tool_versions(manifest(tmp_path, text))
 
 
-@pytest.mark.parametrize(("name", "capabilities", "digest", "binaries", "command"), [
-    ("python-unit", ["core", "python-test"], "12ca8a6768630ae70afb37d63a48b5035da365c4c2fe4cd99117ae4327932674", ["sugar"], ["python", "-m", "pytest"]),
-    ("python-lift", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["python", "-m", "pytest"]),
-    ("rust-unit", ["core", "solver-z3"], "ea84add5822935318b6be07dba38980b81d947b077b077ca7e6f70febdf2d497", [], ["cargo", "test", "--manifest-path", "implementations/rust/Cargo.toml"]),
-    ("examples-gate", ["core", "java", "node", "python-scientific", "python-test", "solver-coq", "solver-z3", "vampire"], "f3474a1e1badba67f3daaf5c589f2844da28a7be6beda929ca5f7f2e5d95785e", ["sugar", "sugar-ir-smt-lib"], ["make", "examples-gate"]),
-    ("pandas-wall", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["python", "tools/pandas_wall.py"]),
-    ("numpy-wall", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["python", "tools/numpy_wall.py"]),
-    ("restored-suite-scoreboard", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["bash", "scripts/test-3809-dod-scoreboard.sh"]),
+@pytest.mark.parametrize(("name", "capabilities", "digest", "binaries", "command", "network"), [
+    ("python-unit", ["core", "python-test"], "12ca8a6768630ae70afb37d63a48b5035da365c4c2fe4cd99117ae4327932674", ["sugar"], ["python", "-m", "pytest"], "none"),
+    ("python-lift", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["python", "-m", "pytest"], "none"),
+    ("rust-unit", ["core", "solver-z3"], "ea84add5822935318b6be07dba38980b81d947b077b077ca7e6f70febdf2d497", [], ["cargo", "test", "--manifest-path", "implementations/rust/Cargo.toml"], "none"),
+    ("examples-gate", ["core", "java", "node", "python-scientific", "python-test", "solver-coq", "solver-z3", "vampire"], "f3474a1e1badba67f3daaf5c589f2844da28a7be6beda929ca5f7f2e5d95785e", ["sugar", "sugar-ir-smt-lib"], ["make", "examples-gate"], "required"),
+    ("pandas-wall", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["python", "tools/pandas_wall.py"], "none"),
+    ("numpy-wall", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["python", "tools/numpy_wall.py"], "none"),
+    ("restored-suite-scoreboard", ["core", "python-scientific", "python-test", "solver-z3"], "f96731de7b4eb9a5660a6f8a14fc37f23ead4a0a9221667e9073ee0853070db3", ["sugar"], ["bash", "scripts/test-3809-dod-scoreboard.sh"], "none"),
 ])
-def test_named_tasks_have_published_closures(name, capabilities, digest, binaries, command):
+def test_named_tasks_have_published_closures(name, capabilities, digest, binaries, command, network):
     task = contract.resolve_task(name)
-    assert task == {"task": name, "capabilities": capabilities, "binaries": binaries, "command": command}
+    assert task == {"task": name, "capabilities": capabilities, "binaries": binaries, "command": command, "network": network}
     environment = contract.resolve_environment("docker:" + ",".join(task["capabilities"]))
     assert environment["capabilities"] == capabilities
     assert environment["image"] == f"ghcr.io/tsavo/sugar-env@sha256:{digest}"
@@ -94,6 +94,7 @@ def test_python_unit_has_a_distinct_published_test_runtime():
         "binaries": ["sugar"],
         "capabilities": ["core", "python-test"],
         "command": ["python", "-m", "pytest"],
+        "network": "none",
         "task": "python-unit",
     }
     environment = contract.resolve_environment("docker:" + ",".join(task["capabilities"]))
@@ -229,13 +230,13 @@ def test_mutable_image_reference_is_loud(tmp_path):
 
 
 def test_unknown_task_binary_is_loud(tmp_path):
-    text = "schema=1\n[tools]\n[capabilities.core]\ndepends=[]\n[tasks.bad]\ncapabilities=['core']\nbinaries=['not-published']\ncommand=['true']\n"
+    text = "schema=1\n[tools]\n[capabilities.core]\ndepends=[]\n[tasks.bad]\ncapabilities=['core']\nbinaries=['not-published']\ncommand=['true']\nnetwork='none'\n"
     with pytest.raises(ContractError, match="unknown task binary"):
         contract.resolve_task("bad", manifest(tmp_path, text))
 
 
 def test_empty_task_command_is_loud(tmp_path):
-    text = "schema=1\n[tools]\n[capabilities.core]\ndepends=[]\n[tasks.bad]\ncapabilities=['core']\nbinaries=[]\ncommand=[]\n"
+    text = "schema=1\n[tools]\n[capabilities.core]\ndepends=[]\n[tasks.bad]\ncapabilities=['core']\nbinaries=[]\ncommand=[]\nnetwork='none'\n"
     with pytest.raises(ContractError, match="empty command"):
         contract.resolve_task("bad", manifest(tmp_path, text))
 

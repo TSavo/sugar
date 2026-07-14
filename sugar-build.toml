@@ -68,33 +68,40 @@ reference = "ghcr.io/tsavo/sugar-env@sha256:f3474a1e1badba67f3daaf5c589f2844da28
 capabilities = ["python-test"]
 binaries = ["sugar"]
 command = ["python", "-m", "pytest"]
+network = "none"
 
 [tasks.python-lift]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
 command = ["python", "-m", "pytest"]
+network = "none"
 
 [tasks.rust-unit]
 capabilities = ["solver-z3"]
 binaries = []
 command = ["cargo", "test", "--manifest-path", "implementations/rust/Cargo.toml"]
+network = "none"
 
 [tasks.examples-gate]
 capabilities = ["python-test", "python-scientific", "solver-z3", "solver-coq", "java", "node", "vampire"]
 binaries = ["sugar", "sugar-ir-smt-lib"]
 command = ["make", "examples-gate"]
+network = "required"
 
 [tasks.pandas-wall]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
 command = ["python", "tools/pandas_wall.py"]
+network = "none"
 
 [tasks.numpy-wall]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
 command = ["python", "tools/numpy_wall.py"]
+network = "none"
 
 [tasks.restored-suite-scoreboard]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
 command = ["bash", "scripts/test-3809-dod-scoreboard.sh"]
+network = "none"

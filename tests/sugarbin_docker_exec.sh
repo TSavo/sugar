@@ -66,9 +66,29 @@ core_ref="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["image"])' <
 explain="$(run explain --host bx --task python-unit)"
 python_test_ref="$(python3 "$repo/tools/sugar-build/contract.py" resolve-environment docker:python-test | python3 -c 'import json,sys; print(json.load(sys.stdin)["image"])')"
 [[ "$explain" == *"docker_image=$python_test_ref"* ]] || fail "explain omitted resolved immutable Docker image"
+[[ "$explain" == *"platform=linux-x86_64"* ]] || fail "bx explain reported caller platform"
+[[ "$explain" == *"network=none"* ]] || fail "python-unit network policy missing from explain"
+
+: >"$tmp/rsync.log"
+status=0
+run explain --host bx --platform darwin-x86_64 --task python-unit >"$tmp/platform.out" 2>"$tmp/platform.err" || status=$?
+[[ "$status" == 2 ]] || fail "bx accepted Darwin platform"
+grep -Fq 'available=linux-x86_64' "$tmp/platform.err" || fail "bx platform diagnostic missing"
+[[ ! -s "$tmp/rsync.log" ]] || fail "bx platform rejection happened after sync"
 
 run run --host bx --task python-unit -- -q >/dev/null
+[[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 2 ]] || fail "managed artifact build and task did not each run once"
+build_line="$(head -1 "$tmp/docker.log")"
 line="$(tail -1 "$tmp/docker.log")"
+[[ "$build_line" == *"'$core_ref'"* && "$build_line" == *"bin/sugarbin"* ]] || fail "artifact was not resolved inside managed core: $build_line"
+[[ "$build_line" == *"dst=/root/.cache/sugar/binaries"* ]] || fail "managed builder omitted persistent verified cache"
+[[ "$build_line" == *"CARGO_TARGET_DIR=/managed-target"* ]] || fail "managed builder reused ambient Cargo target"
+[[ "$build_line" == *"SUGAR_BINARY_TARGET_ROOT=/managed-target"* ]] || fail "managed manifest root diverges from Cargo target"
+[[ "$build_line" == *"dst=/managed-target"* ]] || fail "managed target cache was not mounted"
+[[ "$build_line" != *"SUGAR_BINARY_TARGET_ROOT=/workspace/sugar/implementations/rust/target"* ]] || fail "ambient target entered managed builder"
+if grep -F 'bin/sugarbin --platform' "$tmp/ssh.log" | grep -Fvq "'docker' 'run'"; then
+  fail "artifact identity was recomputed in ambient bx"
+fi
 [[ "$line" == *"'$python_test_ref'"* ]] || fail "python-unit did not select managed test closure"
 [[ "$line" == *"'python' '-m' 'pytest' '-q'"* ]] || fail "python-unit command did not always execute"
 : >"$tmp/docker.log"
@@ -83,15 +103,16 @@ line="$(tail -1 "$tmp/docker.log")"
 [[ "$line" == *"src=C:"* ]] || fail "WSL bind source was not translated"
 [[ "$line" == *"dst=/opt/sugar/bin,readonly"* ]] || fail "artifact mount not read-only"
 [[ "$line" == *"required-artifacts.json,readonly"* ]] || fail "stamp mount not read-only"
-[[ "$line" == *"SUGAR_BIN=/opt/sugar/bin/sugar"* ]] || fail "SUGAR_BIN not injected"
+[[ "$line" != *"--env' 'SUGAR_BIN="* ]] || fail "orchestrator forged SUGAR_BIN before manifest verification"
+[[ "$entrypoint" == *'export SUGAR_BIN=/opt/sugar/bin/sugar'* ]] || fail "entrypoint does not inject verified sugar"
 [[ "$line" == *"PATH=/opt/sugar/bin:"* ]] || fail "artifact PATH is not first"
 [[ "$line" == *"/opt/java/bin"* ]] || fail "managed Java toolchain missing from Docker PATH"
 [[ "$line" != *docker.sock* ]] || fail "Docker socket leaked into task"
-[[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 1 ]] || fail "hit child not executed exactly once"
+[[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 2 ]] || fail "managed build/task count wrong"
 
 run run --host bx --env docker:core -- sh -c 'echo miss' >/dev/null
 [[ "$(tail -1 "$tmp/docker.log")" == *"'$core_ref'"* ]] || fail "wrong miss image"
-[[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 2 ]] || fail "miss child not executed exactly once"
+[[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 3 ]] || fail "zero-artifact child did not execute exactly once"
 
 status=0
 run run --host bx --env docker:core -- sh -c CHILD_EXIT_43 >/dev/null || status=$?
@@ -101,5 +122,24 @@ run run --host bx --env docker:core -- sh -c CHILD_EXIT_43 >/dev/null || status=
 (cd "$repo" && PATH="$tmp/bin:$PATH" FAKE_DOCKER_LOG="$tmp/docker.log" "$repo/bin/sugarbin" run --host local --env ambient -- true)
 run run --host bx --env ambient -- true >/dev/null
 [[ ! -s "$tmp/docker.log" ]] || fail "ambient route invoked Docker"
+
+# An explicit ambient task stays ambient; omission alone opts a bx task into
+# its declared managed closure.
+: >"$tmp/docker.log"; : >"$tmp/ssh.log"
+run run --host bx --env ambient --task python-unit -- -q >/dev/null
+[[ ! -s "$tmp/docker.log" ]] || fail "explicit ambient task was forced into Docker"
+grep -Fq "pytest" "$tmp/ssh.log" || fail "ambient task command did not execute"
+
+# rust-unit declares no injected Sugar binaries. Its container must not receive
+# a false SUGAR_BIN or an empty artifact manifest.
+: >"$tmp/docker.log"
+run run --host bx --task rust-unit -- --help >/dev/null
+[[ "$(wc -l <"$tmp/docker.log" | tr -d ' ')" == 1 ]] || fail "zero-binary task ran artifact builder"
+line="$(tail -1 "$tmp/docker.log")"
+[[ "$line" != *"SUGAR_BIN="* ]] || fail "zero-binary task received SUGAR_BIN"
+[[ "$line" != *"required-artifacts.json"* ]] || fail "zero-binary task received empty artifact manifest"
+
+examples="$(run explain --host bx --task examples-gate)"
+[[ "$examples" == *"network=required"* ]] || fail "examples-gate network requirement not explicit"
 
 echo "PASS: sugarbin Docker execution contract"

@@ -21,6 +21,7 @@ dispatch_execution_subcommand() {
 
   local host="local"
   local execution_env="ambient"
+  local execution_env_explicit=0
   local requested_platform=""
   local needs=""
   local task=""
@@ -40,6 +41,7 @@ dispatch_execution_subcommand() {
         [[ $# -ge 2 ]] || { echo "sugarbin: --env requires a value" >&2; return 2; }
         if [[ "$2" == ambient || "$2" == docker || "$2" == docker:* ]]; then
           execution_env="$2"
+          execution_env_explicit=1
         else
           local -a parsed_env=()
           IFS=',' read -r -a parsed_env <<<"$2"
@@ -94,7 +96,7 @@ dispatch_execution_subcommand() {
 
   [[ "$subcommand" != build || -n "$needs" ]] || needs="sugar"
 
-  local task_json="" task_capabilities="" task_needs=""
+  local task_json="" task_capabilities="" task_needs="" task_network="none"
   local -a task_command=()
   if [[ -n "$task" ]]; then
     local contract_python
@@ -102,6 +104,7 @@ dispatch_execution_subcommand() {
     task_json="$("$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-task "$task")" || return $?
     task_capabilities="$("$contract_python" -c 'import json,sys; print(",".join(json.load(sys.stdin)["capabilities"]))' <<<"$task_json")"
     task_needs="$("$contract_python" -c 'import json,sys; print(",".join(json.load(sys.stdin)["binaries"]))' <<<"$task_json")"
+    task_network="$("$contract_python" -c 'import json,sys; print(json.load(sys.stdin)["network"])' <<<"$task_json")"
     while IFS= read -r -d '' arg; do task_command+=("$arg"); done < <("$contract_python" -c 'import json,sys; [sys.stdout.write(x+"\0") for x in json.load(sys.stdin)["command"]]' <<<"$task_json")
     if [[ -n "$needs" ]]; then
       local normalized_needs
@@ -117,26 +120,38 @@ dispatch_execution_subcommand() {
     fi
     # A named task on the managed remote owns its capability closure; wrappers
     # do not recreate that environment policy.
-    if [[ "$host" == bx && "$execution_env" == ambient ]]; then
+    if [[ "$host" == bx && "$execution_env_explicit" == 0 ]]; then
       execution_env="docker:$task_capabilities"
     fi
   fi
 
-  local route_env="${execution_env%%:*}" docker_image=""
+  local route_env="${execution_env%%:*}" docker_image="" core_image=""
   if [[ "$route_env" == docker ]]; then
     local contract_python
     contract_python="$(sugarbin_contract_python)" || return $?
     local environment_json
     environment_json="$("$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-environment "$execution_env")" || return $?
     docker_image="$("$contract_python" -c 'import json,sys; print(json.load(sys.stdin)["image"])' <<<"$environment_json")"
+    local core_environment_json
+    core_environment_json="$("$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-environment docker:core)" || return $?
+    core_image="$("$contract_python" -c 'import json,sys; print(json.load(sys.stdin)["image"])' <<<"$core_environment_json")"
   fi
 
   local observed_platform
-  observed_platform="$(sugar_exec_platform_key)"
+  if [[ "$host" == bx ]]; then
+    observed_platform="linux-x86_64"
+  else
+    observed_platform="$(sugar_exec_platform_key)"
+  fi
   if [[ "$host" == local ]]; then
     sugar_exec_validate_route "$host" "$route_env" "$requested_platform" "$observed_platform" || return $?
   elif [[ "$host" == bx ]]; then
     [[ "$route_env" == ambient || "$route_env" == docker ]] || { echo "unsupported execution route: host=$host env=$execution_env" >&2; return 2; }
+    [[ -z "$requested_platform" || "$requested_platform" == "$observed_platform" ]] || {
+      printf 'sugarbin: unsupported execution route: host=%s env=%s platform=%s available=%s\n' \
+        "$host" "$execution_env" "$requested_platform" "$observed_platform" >&2
+      return 2
+    }
   else
     sugar_exec_validate_route "$host" "$execution_env" "$requested_platform" "$observed_platform" || return $?
   fi
@@ -149,6 +164,7 @@ dispatch_execution_subcommand() {
     printf 'capabilities=%s\n' "$task_capabilities"
     printf 'task=%s\n' "$task"
     printf 'needs=%s\n' "$needs"
+    printf 'network=%s\n' "$task_network"
     printf 'docker_image=%s\n' "$docker_image"
     return 0
   fi
@@ -213,11 +229,13 @@ dispatch_execution_subcommand() {
   sugar_bx_init "$repo_root" "$local_cwd" || return $?
   sugar_bx_sync_workspace || return $?
   if [[ "$route_env" == docker ]]; then
-    local remote_needs="$needs" remote_platform="${requested_platform:-linux-x86_64}"
-    local setup="set -e; cd $(sugar_bx_quote "$SUGAR_BX_REPO"); rm -rf $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts"); mkdir -p $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts"); printf '{\"artifacts\":[' >$(sugar_bx_quote "$SUGAR_BX_ROOT/required-artifacts.json"); first=1; needs=$(sugar_bx_quote "$remote_needs"); IFS=,; for b in \$needs; do [ -n \"\$b\" ] || continue; r=\$(env -u SUGAR_BIN bin/sugarbin --platform $(sugar_bx_quote "$remote_platform") --bin \"\$b\"); cp \"\$r\" $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts")/\"\$b\"; sum=\$(sha256sum $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts")/\"\$b\" | cut -d' ' -f1); [ \$first = 1 ] || printf ',' >>$(sugar_bx_quote "$SUGAR_BX_ROOT/required-artifacts.json"); first=0; printf '{\"name\":\"%s\",\"sha256\":\"%s\"}' \"\$b\" \"\$sum\" >>$(sugar_bx_quote "$SUGAR_BX_ROOT/required-artifacts.json"); done; printf ']}' >>$(sugar_bx_quote "$SUGAR_BX_ROOT/required-artifacts.json")"
-    sugar_bx_ssh "bash -lc $(sugar_bx_quote "$setup")" || return $?
+    local remote_needs="$needs" has_artifacts=0
+    if [[ -n "$remote_needs" ]]; then
+      sugar_bx_build_artifacts_docker "$core_image" "$remote_needs" || return $?
+      has_artifacts=1
+    fi
     set +e
-    sugar_bx_run_docker "$docker_image" "${command[@]}"
+    sugar_bx_run_docker "$docker_image" "$task_network" "$has_artifacts" "${command[@]}"
     status=$?
     set -e
     sugar_bx_finish "$status"
@@ -739,10 +757,6 @@ verify_attestation_if_present() {
 
 pull_from_shelf() {
   local stamp="$1" identity="$2" name="$3"
-  [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
-  command -v gh >/dev/null 2>&1 || { log "gh not found; skipping shelf pull"; return 1; }
-  local repo
-  repo="$(github_repo)" || { log "gh repo identity unavailable; skipping shelf pull"; return 1; }
   local dir download_dir candidate candidate_dir manifest
   dir="$(cache_dir)"
   candidate_dir="$dir/$name"
@@ -753,6 +767,10 @@ pull_from_shelf() {
     printf '%s\n' "$candidate"
     return 0
   fi
+  [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
+  command -v gh >/dev/null 2>&1 || { log "gh not found; skipping shelf pull"; return 1; }
+  local repo
+  repo="$(github_repo)" || { log "gh repo identity unavailable; skipping shelf pull"; return 1; }
   download_dir="$dir/.downloads/$name"
   mkdir -p "$download_dir"
   if ! gh release download "$shelf_tag" --repo "$repo" --pattern "$name" --pattern "$name.sugarbin.json" --dir "$download_dir" >/dev/null 2>&1; then
@@ -792,7 +810,11 @@ main() {
     return 0
   fi
 
-  if [[ -n "${SUGAR_BIN:-}" ]]; then
+  if [[ -n "${SUGAR_BINARY_DIR:-}" && -x "${SUGAR_BINARY_DIR}/$bin_name" ]]; then
+    printf '%s\n' "${SUGAR_BINARY_DIR}/$bin_name"
+    return 0
+  fi
+  if [[ -n "${SUGAR_BIN:-}" && ( "$bin_name" == sugar || "$(basename "$SUGAR_BIN")" == "$bin_name" ) ]]; then
     printf '%s\n' "$SUGAR_BIN"
     return 0
   fi
@@ -805,6 +827,7 @@ main() {
 
   candidate="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
   if verify_artifact_manifest "$candidate" "$stamp" "$identity" "local target"; then
+    log "local target cache hit for $bin_name"
     publish_if_absent "$candidate" "$stamp" "$name"
     printf '%s\n' "$candidate"
     return 0

@@ -17,20 +17,27 @@ contract_mismatch() {
 [[ "$(b3sum --version | awk '{print $2}')" == 1.8.1 ]] || contract_mismatch b3sum
 
 if [[ -f /opt/sugar/required-artifacts.json ]]; then
-  python - /opt/sugar/required-artifacts.json <<'PY' || {
+  artifact_count="$(python - /opt/sugar/required-artifacts.json <<'PY' || {
 import hashlib, json, pathlib, sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
 for item in manifest["artifacts"]:
     path = pathlib.Path("/opt/sugar/bin") / item["name"]
     if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
         raise SystemExit(1)
+print(len(manifest["artifacts"]))
 PY
     echo "artifact checksum mismatch" >&2
     exit 70
-  }
-  export SUGAR_BIN=/opt/sugar/bin/sugar
-  export SUGAR_BINARY_DIR=/opt/sugar/bin
-  export PATH=/opt/sugar/bin:$PATH
+  })"
+  if [[ "$artifact_count" -gt 0 ]]; then
+    export SUGAR_BINARY_DIR=/opt/sugar/bin
+    if [[ -x /opt/sugar/bin/sugar ]]; then
+      export SUGAR_BIN=/opt/sugar/bin/sugar
+    else
+      unset SUGAR_BIN
+    fi
+    export PATH=/opt/sugar/bin:$PATH
+  fi
 fi
 
 exec "$@"
