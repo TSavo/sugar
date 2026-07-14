@@ -832,9 +832,7 @@ def test_duplicate_seed_names_use_independent_work_directories(
     )
     seed = _synthetic_seed("same", "SameSugar")
 
-    report = evaluate_seed_witnesses(
-        (seed, seed), tmp_path, catalog_count=1
-    )
+    report = evaluate_seed_witnesses((seed, seed), tmp_path, catalog_count=1)
 
     assert report.is_zero
     assert len(set(projects)) == 4
@@ -1181,9 +1179,7 @@ def test_call_truth_boolop_residue_emits_local_call_derived_fact(
 ) -> None:
     # #4398: retain the derived-call requirement while grounding is red.
     seed = next(
-        item
-        for item in DEFAULT_SUGAR_WITNESS_SEEDS
-        if item.name == "call_return"
+        item for item in DEFAULT_SUGAR_WITNESS_SEEDS if item.name == "call_return"
     )
     project = tmp_path / "call_return"
     _stage_cli_project(project, seed.lying.source)

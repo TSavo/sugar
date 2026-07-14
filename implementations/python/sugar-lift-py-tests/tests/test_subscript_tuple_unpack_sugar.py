@@ -39,7 +39,9 @@ def test_subscript_tuple_unpack_threads_each_projected_store() -> None:
         "    return left[0] + right[1]\n"
     )
 
-    returned = next(entry for entry in block.statements if isinstance(entry, ReturnValue))
+    returned = next(
+        entry for entry in block.statements if isinstance(entry, ReturnValue)
+    )
     assert returned.value == TermValue(5)
 
 

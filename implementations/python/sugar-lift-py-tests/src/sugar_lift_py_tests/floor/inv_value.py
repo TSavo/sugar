@@ -57,7 +57,9 @@ class InvValue(FloorValue):
 
         locus = construction_site(self.site)
         stated_warrant = Stated(locus=locus)
-        duplicate_derived = any(formula == self.formula for formula in self.derived_formulas)
+        duplicate_derived = any(
+            formula == self.formula for formula in self.derived_formulas
+        )
         stated_formula = self.formula
         if duplicate_derived:
             from sugar_lift_py_tests.ir import and_
@@ -67,7 +69,10 @@ class InvValue(FloorValue):
             node_class="UniverseMint",
             construction_site=locus,
             warrant=(
-                (stated_warrant, Derived(floor_chain=_derived_floor_chain(self.formula)))
+                (
+                    stated_warrant,
+                    Derived(floor_chain=_derived_floor_chain(self.formula)),
+                )
                 if duplicate_derived
                 else stated_warrant
             ),

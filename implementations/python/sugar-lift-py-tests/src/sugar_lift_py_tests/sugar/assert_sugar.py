@@ -41,12 +41,10 @@ class AssertSugar(Sugar, role=SugarRole.STATEMENT):
             name="assert_return",
             owner_sugar="AssertSugar",
             truthful=(
-                "def A(z):\n    return z\n\n"
-                "def test_a():\n    assert A(5) == 5\n"
+                "def A(z):\n    return z\n\n" "def test_a():\n    assert A(5) == 5\n"
             ),
             lying=(
-                "def A(z):\n    return z\n\n"
-                "def test_a():\n    assert A(5) == 6\n"
+                "def A(z):\n    return z\n\n" "def test_a():\n    assert A(5) == 6\n"
             ),
         )
 

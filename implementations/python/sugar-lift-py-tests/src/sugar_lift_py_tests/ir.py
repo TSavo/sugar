@@ -23,7 +23,17 @@ import logging
 import time
 from typing import Any, Iterator, List, Optional, Tuple, Union
 
-from .canonicalizer import Value, encode_jcs, jcs_hash, varr, vbool, vint, vobj, vstr, vnull
+from .canonicalizer import (
+    Value,
+    encode_jcs,
+    jcs_hash,
+    varr,
+    vbool,
+    vint,
+    vobj,
+    vstr,
+    vnull,
+)
 
 _TERM_TABLE_LOG = logging.getLogger("sugar.kit.term_table")
 
@@ -195,9 +205,7 @@ _EMITTER_OWNED_SYMBOL_KINDS = {
 }
 
 
-def ctor(
-    name: str, args: List[Term], *, symbol_kind: Optional[str] = None
-) -> Term:
+def ctor(name: str, args: List[Term], *, symbol_kind: Optional[str] = None) -> Term:
     if symbol_kind is None:
         symbol_kind = _EMITTER_OWNED_SYMBOL_KINDS.get(name)
     if symbol_kind is not None and symbol_kind not in _SYMBOL_KINDS:
@@ -640,16 +648,13 @@ class TermTableBuilder:
             return {
                 "kind": "atomic",
                 "name": formula["name"],
-                "args": [
-                    self.reference_rpc(term) for term in formula.get("args", [])
-                ],
+                "args": [self.reference_rpc(term) for term in formula.get("args", [])],
             }
         if kind in {"and", "or", "not", "implies"}:
             return {
                 "kind": kind,
                 "operands": [
-                    self.formula_rpc(operand)
-                    for operand in formula.get("operands", [])
+                    self.formula_rpc(operand) for operand in formula.get("operands", [])
                 ],
             }
         if kind in {"forall", "exists"}:
@@ -670,9 +675,7 @@ class TermTableBuilder:
                 self.nodes[cid] = {
                     "kind": "ctor",
                     "name": term["name"],
-                    "args": [
-                        self.reference_rpc(arg) for arg in term.get("args", [])
-                    ],
+                    "args": [self.reference_rpc(arg) for arg in term.get("args", [])],
                 }
             else:
                 self.nodes[cid] = json.loads(encode_jcs(_json_like_to_value(term)))

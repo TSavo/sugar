@@ -71,9 +71,7 @@ def test_owner_is_exactly_full_slice_integer_column_partition() -> None:
     assert narrow_claim.comes_before == ("SubscriptSugar",)
     assert [
         candidate.name
-        for candidate in catalog.candidates_for(
-            SugarRole.TERM, _site("values[:, 1:]")
-        )
+        for candidate in catalog.candidates_for(SugarRole.TERM, _site("values[:, 1:]"))
     ] == ["SubscriptSugar"]
 
 

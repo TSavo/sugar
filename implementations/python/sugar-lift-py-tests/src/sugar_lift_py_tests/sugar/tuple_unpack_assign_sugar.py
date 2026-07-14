@@ -104,9 +104,7 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
                 stores.append(
                     SugarBody(
                         SubscriptAssignSugar(
-                            receiver=ctx.build_body(
-                                target_receiver, SugarRole.TERM
-                            ),
+                            receiver=ctx.build_body(target_receiver, SugarRole.TERM),
                             receiver_name=(
                                 target_receiver.name_id()
                                 if target_receiver.observed == "Name"

@@ -193,9 +193,7 @@ assert value.term == ctor(
 
 def test_annotation_and_runtime_bit_or_have_disjoint_factory_owners() -> None:
     catalog = default_catalog()
-    annotation = _union_site(
-        "def accept(value: int | str) -> None:\n    pass\n"
-    )
+    annotation = _union_site("def accept(value: int | str) -> None:\n    pass\n")
     runtime = _runtime_site("x | y")
 
     assert [
@@ -203,8 +201,7 @@ def test_annotation_and_runtime_bit_or_have_disjoint_factory_owners() -> None:
         for candidate in catalog.candidates_for(SugarRole.TERM, annotation)
     ] == ["AnnotationUnionSugar"]
     assert [
-        candidate.name
-        for candidate in catalog.candidates_for(SugarRole.TERM, runtime)
+        candidate.name for candidate in catalog.candidates_for(SugarRole.TERM, runtime)
     ] == ["RuntimeBitwiseOpSugar"]
 
 
