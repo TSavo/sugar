@@ -822,9 +822,7 @@ def test_verdict_construction_failure_is_reported_as_panic_vocabulary(
     def fake_run(project: Path, source: str) -> WitnessPipelineResult:
         return WitnessPipelineResult(
             lift_doc={
-                "factoryAuditSummary": {
-                    "factoryWalk": [{"selected": "BrokenSugar"}]
-                },
+                "factoryAuditSummary": {"factoryWalk": [{"selected": "BrokenSugar"}]},
                 "ir": [{"kind": "fake"}],
             },
             prove_doc={},
