@@ -255,6 +255,18 @@ impl Implication {
     pub fn payload(&self) -> Option<&Value> {
         self.payload.as_ref()
     }
+
+    /// Report transcript row keyed by the call-site demand owner. The audit
+    /// alone is not a question identity: distinct call sites can ask the same
+    /// caller/callee implication and legitimately carry byte-identical audits.
+    pub fn report_row(&self) -> Value {
+        let mut row = self.audit.clone();
+        let object = row.as_object_mut().unwrap_or_else(|| {
+            panic!("implication audit testimony must be an object before report transport")
+        });
+        object.insert("callSiteMemento".to_string(), self.memento.to_json());
+        row
+    }
 }
 
 /// `Implication::pre` is minted at link time from the resolved callee
@@ -1187,7 +1199,7 @@ pub fn fold_implication_tree(kit: &Kit, workspace_root: &Path) -> Result<Vec<Val
     for file in kit.source_files(workspace_root)? {
         for function in file.functions()? {
             for call_site in function.call_sites()? {
-                implications.push(call_site.implication()?.audit_row().clone());
+                implications.push(call_site.implication()?.report_row());
             }
         }
     }

@@ -463,9 +463,11 @@ fn attach_report_implications(
     let mut seen = BTreeSet::new();
     for surface in surfaces {
         for implication in report_implication_tree(project_root, &surface)? {
-            let key = serde_json::to_string(&implication).unwrap_or_default();
+            let key = serde_json::to_string(&implication).map_err(|error| {
+                format!("lift.implications: serialize demanded question: {error}")
+            })?;
             if seen.insert(key) {
-                report.call_edges.push(implication);
+                report.demanded_questions.push(implication);
             }
         }
     }
@@ -1327,7 +1329,10 @@ struct LiftSourceReport {
     contracts: Vec<Value>,
     symbol_kinds: BTreeMap<String, String>,
     term_table: Option<Arc<LiftTermTable>>,
+    /// Locus-bearing syntactic edges: one row per observed source occurrence.
     call_edges: Vec<Value>,
+    /// Implication edges: one row per call-site demand question.
+    demanded_questions: Vec<Value>,
     implication_walk_ran: bool,
     vendor_conjoins: Vec<VendorConjoinReport>,
     project_root: Option<PathBuf>,
@@ -1910,13 +1915,11 @@ fn source_report_from_lift_response(
     );
     let contracts = matching_report_contracts(response, contract_filter, &filtered_audits);
     trace_lift_collection_checkpoint("source_report.contracts", contracts.len());
-    let mut call_edges = matching_report_call_edges(response, contract_filter, &filtered_audits);
-    call_edges.extend(matching_report_implication_edges(
-        response,
-        contract_filter,
-        &filtered_audits,
-    ));
+    let call_edges = matching_report_call_edges(response, contract_filter, &filtered_audits);
+    let demanded_questions =
+        matching_report_implication_edges(response, contract_filter, &filtered_audits);
     trace_lift_collection_checkpoint("source_report.call_edges", call_edges.len());
+    trace_lift_collection_checkpoint("source_report.demanded_questions", demanded_questions.len());
     let source_mementos =
         matching_report_source_mementos(response, contract_filter, &filtered_audits)?;
     trace_lift_collection_checkpoint("source_report.source_mementos", source_mementos.len());
@@ -1981,6 +1984,7 @@ fn source_report_from_lift_response(
         symbol_kinds,
         term_table,
         call_edges,
+        demanded_questions,
         implication_walk_ran: false,
         vendor_conjoins,
         project_root: None,
@@ -2095,9 +2099,13 @@ fn source_report_from_proof_pool(
         }
     }
 
-    let mut call_edges = proof_implication_call_edges(pool, &contract_names_by_cid);
-    call_edges.extend(proof_callsite_precondition_edges(pool));
-    let mut call_edges = call_edges
+    let mut demanded_questions = proof_implication_call_edges(pool, &contract_names_by_cid)
+        .into_iter()
+        .filter(|edge| {
+            contract_filter.is_none_or(|filter| call_edge_matches_filter(edge, filter, &[]))
+        })
+        .collect::<Vec<_>>();
+    let mut call_edges = proof_callsite_precondition_edges(pool)
         .into_iter()
         .filter(|edge| {
             contract_filter.is_none_or(|filter| call_edge_matches_filter(edge, filter, &[]))
@@ -2105,8 +2113,9 @@ fn source_report_from_proof_pool(
         .collect::<Vec<_>>();
     let implication_count = pool.member_count_by_kind(MemberKind::Implication);
     let witness_count = pool.member_count_by_kind(MemberKind::WitnessMemento);
-    if implication_count > 0 && call_edges.is_empty() {
-        call_edges.push(serde_json::json!({
+    if implication_count > 0 && demanded_questions.is_empty() {
+        demanded_questions.push(serde_json::json!({
+            "kind": "implication",
             "sourceContract": "proof-members",
             "targetSymbol": "implication",
             "targetContract": format!("{implication_count} implication memento(s) pinned in proof")
@@ -2170,6 +2179,7 @@ fn source_report_from_proof_pool(
         symbol_kinds: BTreeMap::new(),
         term_table: None,
         call_edges,
+        demanded_questions,
         implication_walk_ran: false,
         vendor_conjoins: Vec::new(),
         project_root: None,
@@ -3441,6 +3451,7 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
         "contracts": report.contracts,
         "symbolKinds": report.symbol_kinds,
         "callEdges": report.call_edges,
+        "demandedQuestions": report.demanded_questions,
         "vendorConjoins": vendor_conjoins_to_json(&report.vendor_conjoins),
         // Lift-side superposition: distinct candidate universes per method.
         // `universes` counts by canonical contract CID (content-addressed
@@ -3988,28 +3999,44 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
         tracing::info!(rendered_bytes = out.len(), "report section completed");
     }
     if !report.call_edges.is_empty() {
-        let span = tracing::info_span!("report_section", section = "call_edges");
+        let span = tracing::info_span!("report_section", section = "observed_occurrences");
         let _guard = span.enter();
         tracing::info!("report section started");
-        out.push_str("call edges observed:\n");
-        let mut heartbeat = RenderHeartbeat::new("call_edges.rows");
+        out.push_str(&format!(
+            "observed occurrences (total={}):\n",
+            report.call_edges.len()
+        ));
+        let mut heartbeat = RenderHeartbeat::new("observed_occurrences.rows");
         for (index, edge) in report.call_edges.iter().enumerate() {
             heartbeat.tick(index);
             out.push_str(&format!("  - {}\n", format_call_edge(edge)));
         }
         tracing::info!(rendered_bytes = out.len(), "report section completed");
     }
-    let implication_rows = report
-        .call_edges
+    let demanded_resolved = report
+        .demanded_questions
         .iter()
-        .filter(|edge| report_call_edge_kind(edge) == Some("implication"))
-        .collect::<Vec<_>>();
-    if report.implication_walk_ran || !implication_rows.is_empty() {
-        out.push_str("implication ledger:\n");
-        if implication_rows.is_empty() {
+        .filter(|edge| edge.get("status").and_then(Value::as_str) != Some("unjoined"))
+        .count();
+    let demanded_dangling = report
+        .demanded_questions
+        .len()
+        .saturating_sub(demanded_resolved);
+    if report.implication_walk_ran || !report.demanded_questions.is_empty() {
+        out.push_str(&format!(
+            "demanded questions (total={} resolved={} dangling={}):\n",
+            report.demanded_questions.len(),
+            demanded_resolved,
+            demanded_dangling
+        ));
+        for question in &report.demanded_questions {
+            out.push_str(&format!("  - {}\n", format_demanded_question(question)));
+        }
+        out.push_str("implication ledger (demanded questions):\n");
+        if report.demanded_questions.is_empty() {
             out.push_str("  <no call sites demanded>\n");
         }
-        for implication in implication_rows {
+        for implication in &report.demanded_questions {
             let source = report_text_field(implication, &["sourceContract", "source_contract"])
                 .unwrap_or_else(|| "<unknown caller>".to_string());
             let target = report_text_field(
@@ -4030,9 +4057,10 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
                 .get("reason")
                 .and_then(Value::as_str)
                 .unwrap_or("no reason supplied");
+            let discriminator = format_demand_discriminator(implication);
             if status == "unjoined" {
                 out.push_str(&format!(
-                    "  - DEBT {source} owes {target}'s pre, unjoined because {reason}\n"
+                    "  - DEBT {source} owes {target}'s pre, unjoined because {reason}{discriminator}\n"
                 ));
             } else {
                 let obligation = implication
@@ -4046,7 +4074,7 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
                     })
                     .unwrap_or_else(|| "<missing obligation>".to_string());
                 out.push_str(&format!(
-                    "  - {source} -> {target}: {obligation} [{status}] {reason}\n"
+                    "  - {source} -> {target}: {obligation} [{status}] {reason}{discriminator}\n"
                 ));
             }
         }
@@ -6981,14 +7009,14 @@ fn render_report_plan_roll_call(report: &LiftSourceReport) -> String {
         }
     }
     out.push_str(&format!(
-        "report sections: unit test facts={}, body universes={}, factory report={}, call edges total={}, call edges resolved={}, call edges dangling={}, implications={}, vendor conjoins={}, source mementos={}\n",
+        "report sections: unit test facts={}, body universes={}, factory report={}, observed occurrences total={}, demanded questions total={}, demanded questions resolved={}, demanded questions dangling={}, vendor conjoins={}, source mementos={}\n",
         sections.unit_test_facts,
         sections.body_universes,
         sections.factory_report,
-        sections.call_edges_total,
-        sections.call_edges_resolved,
-        sections.call_edges_dangling,
-        sections.implications,
+        sections.observed_occurrences_total,
+        sections.demanded_questions_total,
+        sections.demanded_questions_resolved,
+        sections.demanded_questions_dangling,
         sections.vendor_conjoins,
         sections.source_mementos,
     ));
@@ -7021,10 +7049,10 @@ fn assembly_plan_json_value(report: &LiftSourceReport) -> Option<Value> {
             "unitTestFacts": sections.unit_test_facts,
             "bodyUniverses": sections.body_universes,
             "factoryReport": sections.factory_report,
-            "callEdgesTotal": sections.call_edges_total,
-            "callEdgesResolved": sections.call_edges_resolved,
-            "callEdgesDangling": sections.call_edges_dangling,
-            "implications": sections.implications,
+            "observedOccurrencesTotal": sections.observed_occurrences_total,
+            "demandedQuestionsTotal": sections.demanded_questions_total,
+            "demandedQuestionsResolved": sections.demanded_questions_resolved,
+            "demandedQuestionsDangling": sections.demanded_questions_dangling,
             "vendorConjoins": sections.vendor_conjoins,
             "sourceMementos": sections.source_mementos,
         },
@@ -7036,74 +7064,36 @@ struct ReportSectionCounts {
     unit_test_facts: usize,
     body_universes: usize,
     factory_report: usize,
-    call_edges_total: usize,
-    call_edges_resolved: usize,
-    call_edges_dangling: usize,
-    implications: usize,
+    observed_occurrences_total: usize,
+    demanded_questions_total: usize,
+    demanded_questions_resolved: usize,
+    demanded_questions_dangling: usize,
     vendor_conjoins: usize,
     source_mementos: usize,
 }
 
 fn report_section_counts(report: &LiftSourceReport) -> ReportSectionCounts {
-    let observed_call_edges_total = report
-        .call_edges
-        .iter()
-        .filter(|edge| report_call_edge_kind(edge) == Some("call-edge"))
-        .count();
-    let observed_call_edges_resolved = report
-        .call_edges
-        .iter()
-        .filter(|edge| {
-            report_call_edge_kind(edge) == Some("call-edge")
-                && report_call_edge_target_cid(edge).is_some()
-        })
-        .count();
-    let implication_rows = report
-        .call_edges
-        .iter()
-        .filter(|edge| report_call_edge_kind(edge) == Some("implication"))
-        .collect::<Vec<_>>();
-    let implications = implication_rows.len();
-    let demanded_resolved = implication_rows
+    let demanded_resolved = report
+        .demanded_questions
         .iter()
         .filter(|edge| edge.get("status").and_then(Value::as_str) != Some("unjoined"))
         .count();
-    let demanded_dangling = implication_rows
+    let demanded_dangling = report
+        .demanded_questions
         .iter()
         .filter(|edge| edge.get("status").and_then(Value::as_str) == Some("unjoined"))
         .count();
-    let (call_edges_total, call_edges_resolved, call_edges_dangling) =
-        if report.implication_walk_ran {
-            (implications, demanded_resolved, demanded_dangling)
-        } else {
-            (
-                observed_call_edges_total,
-                observed_call_edges_resolved,
-                observed_call_edges_total.saturating_sub(observed_call_edges_resolved),
-            )
-        };
     ReportSectionCounts {
         unit_test_facts: report_unit_test_fact_count(report),
         body_universes: report.contracts.len(),
         factory_report: report.factory_audits.len() + report.factory_walk.len(),
-        call_edges_total,
-        call_edges_resolved,
-        call_edges_dangling,
-        implications,
+        observed_occurrences_total: report.call_edges.len(),
+        demanded_questions_total: report.demanded_questions.len(),
+        demanded_questions_resolved: demanded_resolved,
+        demanded_questions_dangling: demanded_dangling,
         vendor_conjoins: report.vendor_conjoins.len(),
         source_mementos: report.source_mementos.len(),
     }
-}
-
-fn report_call_edge_kind(edge: &Value) -> Option<&str> {
-    edge.get("kind").and_then(Value::as_str)
-}
-
-fn report_call_edge_target_cid(edge: &Value) -> Option<&str> {
-    edge.get("targetContractCid")
-        .or_else(|| edge.get("target_contract_cid"))
-        .and_then(Value::as_str)
-        .filter(|cid| !cid.is_empty())
 }
 
 fn plan_body_from_memento(value: &Value) -> Option<&Value> {
@@ -7556,9 +7546,28 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         }
     }
     if !report.call_edges.is_empty() {
-        out.push_str("call edges observed:\n");
+        out.push_str(&format!(
+            "observed occurrences (total={}):\n",
+            report.call_edges.len()
+        ));
         for edge in &report.call_edges {
             out.push_str(&format!("  - {}\n", format_call_edge(edge)));
+        }
+    }
+    if report.implication_walk_ran || !report.demanded_questions.is_empty() {
+        let resolved = report
+            .demanded_questions
+            .iter()
+            .filter(|edge| edge.get("status").and_then(Value::as_str) != Some("unjoined"))
+            .count();
+        out.push_str(&format!(
+            "demanded questions (total={} resolved={} dangling={}):\n",
+            report.demanded_questions.len(),
+            resolved,
+            report.demanded_questions.len().saturating_sub(resolved)
+        ));
+        for question in &report.demanded_questions {
+            out.push_str(&format!("  - {}\n", format_demanded_question(question)));
         }
     }
     if !report.vendor_conjoins.is_empty() {
@@ -8014,6 +8023,57 @@ fn format_call_edge(edge: &Value) -> String {
         .map(format_call_edge_locus)
         .unwrap_or_else(|| "<unknown locus>".to_string());
     format!("{source} -> {target_symbol} -> {target} cid={target_cid} @ {locus}")
+}
+
+fn format_demanded_question(question: &Value) -> String {
+    let source = report_text_field(question, &["sourceContract", "source_contract"])
+        .unwrap_or_else(|| "<unknown caller>".to_string());
+    let target = report_text_field(
+        question,
+        &[
+            "targetContract",
+            "target_contract",
+            "targetSymbol",
+            "target_symbol",
+        ],
+    )
+    .unwrap_or_else(|| "<unknown callee>".to_string());
+    format!(
+        "{source} -> {target}{}",
+        format_demand_discriminator(question)
+    )
+}
+
+fn format_demand_discriminator(question: &Value) -> String {
+    let Some(memento) = question
+        .get("callSiteMemento")
+        .or_else(|| question.get("call_site_memento"))
+    else {
+        return " @ <unknown demand identity>".to_string();
+    };
+    let file = memento
+        .get("file")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown file>");
+    let span = memento.get("span").unwrap_or(&Value::Null);
+    let line = span
+        .get("start_line")
+        .or_else(|| span.get("startLine"))
+        .and_then(Value::as_u64)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let column = span
+        .get("start_col")
+        .or_else(|| span.get("start_column"))
+        .or_else(|| span.get("startCol"))
+        .or_else(|| span.get("startColumn"))
+        .and_then(Value::as_u64)
+        .map(|value| format!(":{value}"))
+        .unwrap_or_default();
+    let serialized = serde_json::to_vec(memento)
+        .unwrap_or_else(|error| panic!("demand identity serialization failed: {error}"));
+    let cid = sugar_canonicalizer::blake3_512_of(&serialized);
+    format!(" @ {file}:{line}{column} [demand {}]", short_cid(&cid))
 }
 
 fn warranting_fact_rows_for_contracts(
@@ -10116,6 +10176,7 @@ mod tests {
             symbol_kinds: BTreeMap::new(),
             term_table: None,
             call_edges: vec![],
+            demanded_questions: vec![],
             implication_walk_ran: false,
             vendor_conjoins: vec![],
             project_root: None,
@@ -14994,34 +15055,93 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
-    fn visual_implication_ledger_counts_discharged_and_named_debt_rows() {
+    fn visual_report_separates_observed_occurrences_from_demanded_questions() {
         let mut report = minimal_source_report();
         report.implication_walk_ran = true;
         report.plan_mementos = vec![serde_json::json!({
             "kind": "component-plan", "planning": {"source": "fixture"}, "planAtoms": []
         })];
         report.call_edges = vec![
-            serde_json::json!({"kind":"implication", "sourceContract":"caller", "targetContract":"callee", "status":"discharged", "reason":"proved", "obligation":{"kind":"true"}}),
-            serde_json::json!({"kind":"implication", "sourceContract":"caller", "targetSymbol":"missing", "status":"unjoined", "reason":"no qualified contract"}),
+            serde_json::json!({"kind":"call-edge", "sourceContract":"caller", "targetSymbol":"call:callee", "callSiteLocus":{"file":"bad.py", "line":4, "slot":"inv"}}),
+            serde_json::json!({"kind":"call-edge", "sourceContract":"caller", "targetSymbol":"call:callee", "callSiteLocus":{"file":"bad.py", "line":9, "slot":"inv"}}),
+        ];
+        report.demanded_questions = vec![
+            serde_json::json!({"kind":"implication", "sourceContract":"caller", "targetContract":"callee", "status":"discharged", "reason":"proved", "obligation":{"kind":"true"}, "callSiteMemento":{"file":"bad.py", "span":{"start_line":4, "start_col":8}}}),
+            serde_json::json!({"kind":"implication", "sourceContract":"caller", "targetSymbol":"missing", "status":"unjoined", "reason":"no qualified contract", "callSiteMemento":{"file":"bad.py", "span":{"start_line":9, "start_col":8}}}),
         ];
         let visual = render_visual_source_report(&report);
-        assert!(visual.contains("implication ledger:"), "{visual}");
+        assert!(
+            visual.contains("observed occurrences (total=2):"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("demanded questions (total=2 resolved=1 dangling=1):"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("implication ledger (demanded questions):"),
+            "{visual}"
+        );
         assert!(visual.contains("caller -> callee"), "{visual}");
         assert!(
             visual.contains("DEBT caller owes missing's pre"),
             "{visual}"
         );
-        assert!(visual.contains("call edges resolved=1"), "{visual}");
-        assert!(visual.contains("call edges dangling=1"), "{visual}");
-        assert!(visual.contains("call edges total=2"), "{visual}");
-        assert!(visual.contains("implications=2"), "{visual}");
+        assert!(visual.contains("observed occurrences total=2"), "{visual}");
+        assert!(visual.contains("demanded questions total=2"), "{visual}");
+        assert!(visual.contains("demanded questions resolved=1"), "{visual}");
+        assert!(visual.contains("demanded questions dangling=1"), "{visual}");
         assert_eq!(
             visual
                 .lines()
                 .filter(|line| line.starts_with("  - ")
                     && (line.contains("caller -> callee") || line.contains("DEBT caller")))
                 .count(),
-            2
+            3
+        );
+        let observed = visual
+            .split("observed occurrences (total=2):\n")
+            .nth(1)
+            .expect("observed block")
+            .split("demanded questions")
+            .next()
+            .expect("observed block end")
+            .lines()
+            .filter(|line| line.starts_with("  - "))
+            .count();
+        let demanded = visual
+            .split("demanded questions (total=2 resolved=1 dangling=1):\n")
+            .nth(1)
+            .expect("demanded block")
+            .split("implication ledger")
+            .next()
+            .expect("demanded block end")
+            .lines()
+            .filter(|line| line.starts_with("  - "))
+            .count();
+        assert_eq!((observed, demanded), (2, 2), "{visual}");
+    }
+
+    #[test]
+    fn demanded_questions_render_stable_callsite_discriminators_without_row_loss() {
+        let mut report = minimal_source_report();
+        report.implication_walk_ran = true;
+        report.demanded_questions = vec![
+            serde_json::json!({"kind":"implication", "sourceContract":"caller", "targetContract":"callee", "status":"discharged", "reason":"proved", "obligation":{"kind":"true"}, "callSiteMemento":{"file":"control.py", "span":{"start_line":3, "start_col":4}}}),
+            serde_json::json!({"kind":"implication", "sourceContract":"caller", "targetContract":"callee", "status":"discharged", "reason":"proved", "obligation":{"kind":"true"}, "callSiteMemento":{"file":"control.py", "span":{"start_line":8, "start_col":4}}}),
+        ];
+
+        let visual = render_visual_source_report(&report);
+        assert!(
+            visual.contains("demanded questions (total=2 resolved=2 dangling=0):"),
+            "{visual}"
+        );
+        assert!(visual.contains("@ control.py:3:4"), "{visual}");
+        assert!(visual.contains("@ control.py:8:4"), "{visual}");
+        assert_eq!(
+            visual.matches("caller -> callee").count(),
+            4,
+            "two demand rows plus two ledger rows must survive:\n{visual}"
         );
     }
 
@@ -15178,6 +15298,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             symbol_kinds: BTreeMap::new(),
             term_table: None,
             call_edges: vec![],
+            demanded_questions: vec![],
             implication_walk_ran: false,
             vendor_conjoins: vec![VendorConjoinReport {
                 call: "call:enc(\"def\")".to_string(),
