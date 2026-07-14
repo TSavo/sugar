@@ -51,6 +51,27 @@ def test_recovered_audit_does_not_mark_unsupported_async_definition_clean() -> N
     assert wire["panics"][0]["gap"]["observed"] == "AsyncFunctionDef"
 
 
+def test_recovered_audit_preserves_conservation_producer_gaps() -> None:
+    # Function annotation expressions are source-owned but are not part of the
+    # current per-function construction walk.  The independent conservation
+    # producer therefore emits one ListComp gap; recovery must not discard it
+    # and report an impossible clean frontier.
+    source = "def annotated(value: [item for item in [1]]):\n    return value\n"
+
+    wire = audit_lift_file(source, "annotation_gap.py", recover_panics=True).to_rpc()
+
+    assert wire["status"] == "failed"
+    assert len(wire["panics"]) == 1
+    assert wire["panics"][0]["locus"] == "annotation_gap.py:1:21:ListComp"
+    assert wire["panics"][0]["gap"] == {
+        "gap_kind": "Conservation",
+        "gap_locus": "annotation_gap.py:1:21:ListComp",
+        "observed": "ListComp",
+        "requested": "source→factory classification",
+        "fix": "remove the pre-factory skip or classify an explicit boundary",
+    }
+
+
 def test_panicked_parent_suppresses_descendants() -> None:
     source = (
         "def parent():\n"
