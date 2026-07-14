@@ -84,6 +84,8 @@ class _StructuredTransportFormatter(logging.Formatter):
             "rows_added",
             "contracts",
             "symbol",
+            "at",
+            "seek",
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
@@ -2188,6 +2190,15 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     options = params.get("options") if isinstance(params.get("options"), dict) else {}
     audit_walk = options.get("auditFrontier") is True
     root = Path(workspace_root).resolve()
+    _TRANSPORT_LOG.info(
+        "enumeration_request",
+        extra={
+            "stage": "enumerate.request",
+            "level_name": str(level),
+            "at": at,
+            "seek": seek,
+        },
+    )
 
     try:
         if level == "source_files":
@@ -2716,6 +2727,15 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             }
         )
     except Exception as exc:
+        _TRANSPORT_LOG.exception(
+            "enumeration_request_failed",
+            extra={
+                "stage": "enumerate.error",
+                "level_name": str(level),
+                "at": at,
+                "seek": seek,
+            },
+        )
         _send(
             {
                 "jsonrpc": "2.0",

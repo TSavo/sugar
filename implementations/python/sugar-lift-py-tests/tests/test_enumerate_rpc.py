@@ -606,6 +606,54 @@ def test_distinct_descendant_demands_reuse_file_cid_context(
     assert crossings == 2
 
 
+def test_datetime_message_101_cmp_shape_reuses_context_and_always_answers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real datetime crash arrived asking for date._cmp call sites.
+
+    Pin the exact lines 1201-1205 shape and the process-lifetime pressure that
+    preceded message 101. Every demand must answer from one file reduction.
+    """
+    (tmp_path / "datetime.py").write_text(
+        """\
+def _cmp(left, right):
+    return 0
+
+class date:
+    def _cmp(self, other):
+        assert isinstance(other, date)
+        y, m, d = self._year, self._month, self._day
+        y2, m2, d2 = other._year, other._month, other._day
+        return _cmp((y, m, d), (y2, m2, d2))
+""",
+        encoding="utf-8",
+    )
+    lift_rpc._ENUMERATION_FILE_CONTEXTS.clear()
+    original = lift_rpc.lift_file_payload
+    crossings = 0
+
+    def counted(source: str, filename: str):
+        nonlocal crossings
+        crossings += 1
+        return original(source, filename)
+
+    monkeypatch.setattr(lift_rpc, "lift_file_payload", counted)
+    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    functions = {
+        node["memento"].get("function_name")
+        or node["memento"].get("source_function_name"): node["memento"]
+        for node in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
+    }
+
+    for _ in range(101):
+        result = _enumerate("call_sites", tmp_path, at=functions["datetime.date._cmp"])
+        assert result["gaps"] == []
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["audit"]["bridgeSourceSymbol"] == "call:_cmp"
+
+    assert crossings == 1
+
+
 def test_universe_seek_refuses_ambiguous_leaf_bridge(tmp_path: Path) -> None:
     source = """\
 class A:
