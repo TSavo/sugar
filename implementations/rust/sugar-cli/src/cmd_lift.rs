@@ -4033,7 +4033,13 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
             } else {
                 let obligation = implication
                     .get("obligation")
-                    .map(proofir_formula_to_fol_with_instances)
+                    .map(|formula| {
+                        pretty_visual_formula_with_terms(
+                            formula,
+                            std::env::var_os("NO_COLOR").is_none(),
+                            report.term_table.as_deref(),
+                        )
+                    })
                     .unwrap_or_else(|| "<missing obligation>".to_string());
                 out.push_str(&format!(
                     "  - {source} -> {target}: {obligation} [{status}] {reason}\n"
@@ -6903,7 +6909,7 @@ fn render_report_prologue_with(report: &LiftSourceReport, invocation: &ReportInv
         if report.implication_walk_ran { "yes" } else { "no" },
     ));
     out.push_str("lifted sources:\n");
-    let mut sources = BTreeSet::new();
+    let mut sources = BTreeMap::<&str, &str>::new();
     for memento in &report.source_mementos {
         let file = memento
             .get("file")
@@ -6914,12 +6920,18 @@ fn render_report_prologue_with(report: &LiftSourceReport, invocation: &ReportInv
             .or_else(|| memento.get("source_cid"))
             .and_then(Value::as_str)
             .unwrap_or("cid-unavailable");
-        sources.insert((file, cid));
+        sources.entry(file).or_insert(cid);
     }
     if sources.is_empty() {
         out.push_str("  - <none>\n");
     } else {
-        for (file, cid) in sources {
+        for (file, fallback_cid) in sources {
+            let cid = report
+                .project_root
+                .as_ref()
+                .and_then(|root| std::fs::read(root.join(file)).ok())
+                .map(|bytes| sugar_canonicalizer::blake3_512_of(&bytes))
+                .unwrap_or_else(|| fallback_cid.to_string());
             out.push_str(&format!("  - {file} source {cid}\n"));
         }
     }
