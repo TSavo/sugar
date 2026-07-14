@@ -158,6 +158,24 @@ def test_contract_testimony_refines_coordinate_for_one_spelling() -> None:
         }
 
 
+def test_builtin_and_method_testimony_meet_at_coordinate() -> None:
+    with term_intern_scope():
+        builtin = ctor("call:type", [], symbol_kind="builtin")
+        method = ctor("call:type", [], symbol_kind="method-coordinate")
+
+        assert builtin is method
+        assert constructor_symbol_kinds() == {"call:type": "coordinate"}
+
+
+def test_builtin_and_contract_testimony_meet_at_coordinate() -> None:
+    with term_intern_scope():
+        builtin = ctor("call:map", [], symbol_kind="builtin")
+        contract = ctor("call:map", [], symbol_kind="contract-target")
+
+        assert builtin is contract
+        assert constructor_symbol_kinds() == {"call:map": "coordinate"}
+
+
 def test_reified_formula_constructor_testifies_as_coordinate() -> None:
     with term_intern_scope():
         formula_term(not_(atomic("guard", [])))

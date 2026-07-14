@@ -227,6 +227,14 @@ def merge_constructor_symbol_kind(
         elif "method-coordinate" in {prior, kind}:
             symbol_kinds[symbol] = "method-coordinate"
         return
+    if "builtin" in {prior, kind} and {prior, kind} <= _SYMBOL_KINDS:
+        # A canonical ``call:name`` head can be reached both as a seeded
+        # builtin and as an attribute/method coordinate with the same spelling.
+        # The sidecar is presentation testimony only; their truthful common
+        # classification is the generic coordinate, while the term and CID
+        # remain unchanged.
+        symbol_kinds[symbol] = "coordinate"
+        return
     raise ValueError(
         f"constructor {symbol!r} has conflicting symbol kinds: {prior!r} and {kind!r}"
     )
