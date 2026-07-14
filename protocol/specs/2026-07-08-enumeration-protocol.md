@@ -202,6 +202,29 @@ always returns `EdgeTarget::Unbound`; `implication()` always returns
 `None`. Binding them is `ProofGraph::solve`'s job (SEAM 5), not this
 protocol's.
 
+## Section 5A. Content-addressed term DAG
+
+Any response that carries ProofIR terms carries one payload-level
+`termTable` object. Its keys are the existing semantic term CIDs. Each value
+contains one canonical term node: scalar fields plus immediate child
+`{"kind":"term-ref","cid":"..."}` references. Formula term positions carry
+the same reference shape. The symbol-kind testimony table remains a separate
+payload sidecar and does not enter term identity.
+
+The CID of a table row is computed from the same fully resolved canonical term
+bytes used before this wire shape. Therefore the wire representation changes
+without changing any term CID or downstream proof identity. A receiver decodes
+the table once, interns exactly one shared node per CID, and resolves every
+term position by lookup. Missing children, cycles, malformed references, and
+CID-to-content mismatches are transport decode failures. There is no inline
+term-tree compatibility arm at this wire door. Reader and writer use the DAG
+shape together.
+
+The table is a serialization of already constructed terms, not permission to
+construct descendants eagerly. Enumeration demand remains the only cause of
+work. The table contains only the unique terms reached by the response being
+answered.
+
 ## Section 6. Conformance obligations
 
 1. **Fold == whole-project lift.** Folding the enumeration tree

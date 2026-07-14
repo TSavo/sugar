@@ -22,6 +22,7 @@ from .open_lane_dto import (
 from .rpc_value import to_rpc_value
 from .source_memento_dto import SourceMementoDto
 from sugar_lift_py_tests.idd.lift_coverage_census import SourceFactoryConservation
+from sugar_lift_py_tests.ir import TermTableBuilder
 
 _TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
 
@@ -72,10 +73,12 @@ class LiftReportPayloadDto:
         source_ledger = self.source_ledger or _default_source_ledger(
             len(self.source_mementos)
         )
+        term_table = TermTableBuilder()
+        term_table_started = time.monotonic()
         ir = []
         for index, contract in enumerate(self.ir):
             started = time.monotonic()
-            ir.append(to_rpc_value(contract))
+            ir.append(contract.to_rpc_with_term_table(term_table))
             _TRANSPORT_LOG.info(
                 "payload_to_rpc_row",
                 extra={
@@ -86,9 +89,19 @@ class LiftReportPayloadDto:
                     "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
                 },
             )
+        _TRANSPORT_LOG.info(
+            "payload_term_table_complete",
+            extra={
+                "stage": "lift.workspace.to_rpc.term_table.complete",
+                "contracts": len(self.ir),
+                "unique_nodes": len(term_table.nodes),
+                "elapsed_ms": round((time.monotonic() - term_table_started) * 1000, 3),
+            },
+        )
         out: dict[str, Any] = {
             "kind": "ir-document",
             "ir": ir,
+            "termTable": term_table.nodes,
             "symbolKinds": to_rpc_value(self.symbol_kinds),
             "sourceLedger": to_rpc_value(source_ledger),
             "sourceAudits": [to_rpc_value(audit) for audit in self.source_audits],
