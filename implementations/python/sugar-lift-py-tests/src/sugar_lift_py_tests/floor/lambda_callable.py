@@ -21,6 +21,8 @@ class LambdaCallable(FloorValue):
 
     parameters: tuple[str, ...]
     body: Any
+    vararg_parameter: str | None = None
+    kwarg_parameter: str | None = None
 
     @property
     def parameter(self) -> str:
@@ -39,16 +41,27 @@ class LambdaCallable(FloorValue):
         # Source IR uses python:lambda(params…). Factory projection of a
         # first-class callable value without a reduction ctx carries identity
         # only (parameter names) -- honest opaque coordinate, not body FOL.
-        return ctor("python:lambda", [str_const(p) for p in self.parameters])
+        encoded_parameters = [str_const(p) for p in self.parameters]
+        if self.vararg_parameter is not None:
+            encoded_parameters.append(str_const(f"*{self.vararg_parameter}"))
+        if self.kwarg_parameter is not None:
+            encoded_parameters.append(str_const(f"**{self.kwarg_parameter}"))
+        return ctor("python:lambda", encoded_parameters)
 
     def apply(self, value: TermValue, ctx):
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
         from sugar_lift_py_tests.temporal import bind_temporal
 
-        if len(self.parameters) != 1:
+        if (
+            len(self.parameters) != 1
+            or self.vararg_parameter is not None
+            or self.kwarg_parameter is not None
+        ):
             raise TypeError(
                 "LambdaCallable.apply owns single-parameter apply only; "
-                f"got formals {self.parameters!r}"
+                f"got formals {self.parameters!r}, "
+                f"vararg={self.vararg_parameter!r}, "
+                f"kwarg={self.kwarg_parameter!r}"
             )
         next_ctx = bind_temporal(
             ctx,
