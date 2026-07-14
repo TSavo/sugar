@@ -212,6 +212,12 @@ def test_frontier_mode_mints_recovered_artifact_over_construction_gaps(
                         "kind": "recovered-construction-audit",
                         "recoveryOverride": True,
                         "status": "failed",
+                        "census": {
+                            "kind": "recovered-frontier-census",
+                            "sourceFilesEnumerated": 1,
+                            "sourceBodiesDemanded": 1,
+                            "auditLeavesCompleted": 1,
+                        },
                         "panics": [{"kind": "FactoryPanic"}],
                         "suppressedDescendants": [{"kind": "suppressed"}],
                         "effects": [{"kind": "RuntimeEffect"}],

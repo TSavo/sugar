@@ -548,7 +548,13 @@ def test_complete_mode_records_recovered_frontier_without_report_artifact(
                 {
                     "kind": "recovered-construction-audit",
                     "recoveryOverride": True,
-                    "status": "recovered-construction-audit",
+                    "status": "failed",
+                    "census": {
+                        "kind": "recovered-frontier-census",
+                        "sourceFilesEnumerated": 1,
+                        "sourceBodiesDemanded": 1,
+                        "auditLeavesCompleted": 1,
+                    },
                     "panics": [
                         {
                             "kind": "factory-panic",
