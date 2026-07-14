@@ -1084,10 +1084,11 @@ def _module_import_temporal(
             try:
                 callable_value = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
             except FactoryPanic as panic:
-                if recovered_panics is not None:
-                    recovered_panics.append(
-                        (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
-                    )
+                if recovered_panics is None:
+                    raise
+                recovered_panics.append(
+                    (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
+                )
                 continue
             if isinstance(callable_value, Incomplete):
                 continue
@@ -1103,10 +1104,11 @@ def _module_import_temporal(
                 try:
                     outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
                 except FactoryPanic as panic:
-                    if recovered_panics is not None:
-                        recovered_panics.append(
-                            (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
-                        )
+                    if recovered_panics is None:
+                        raise
+                    recovered_panics.append(
+                        (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
+                    )
                     continue
                 if isinstance(outcome, Incomplete):
                     continue
@@ -1133,10 +1135,11 @@ def _module_import_temporal(
             try:
                 outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
             except FactoryPanic as panic:
-                if recovered_panics is not None:
-                    recovered_panics.append(
-                        (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
-                    )
+                if recovered_panics is None:
+                    raise
+                recovered_panics.append(
+                    (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
+                )
                 continue
             except (TypeError, ValueError, AssertionError):
                 continue
@@ -1231,9 +1234,19 @@ class _AuditFileContext:
 _AUDIT_FILE_CONTEXTS: dict[str, _AuditFileContext] = {}
 
 
-def _audit_file_context(source: str, filename: str, file_cid: str) -> _AuditFileContext:
+def _audit_file_context(
+    source: str,
+    filename: str,
+    file_cid: str,
+    *,
+    hold_seed_panics: bool = True,
+) -> _AuditFileContext:
     started = time.monotonic()
-    cached = _AUDIT_FILE_CONTEXTS.get(file_cid)
+    # Contexts that intentionally hold seed failures are safe to memoize: the
+    # caller consumes those failures as audit data. Normal lifting must
+    # reconstruct the context without a recovery sink so the first seed
+    # FactoryPanic propagates and no completed payload can be emitted.
+    cached = _AUDIT_FILE_CONTEXTS.get(file_cid) if hold_seed_panics else None
     if cached is not None:
         _TRANSPORT_LOG.info(
             "enumeration_file_context",
@@ -1262,7 +1275,7 @@ def _audit_file_context(source: str, filename: str, file_cid: str) -> _AuditFile
     module_temporal = _module_import_temporal(
         module,
         catalog,
-        recovered_panics=seed_panics,
+        recovered_panics=seed_panics if hold_seed_panics else None,
         assertion_sink=module_assertions,
     )
     import_aliases, from_imports = _module_import_maps(module)
@@ -1305,7 +1318,8 @@ def _audit_file_context(source: str, filename: str, file_cid: str) -> _AuditFile
         definitions=definitions,
         definitions_by_cid=definitions_by_cid,
     )
-    _AUDIT_FILE_CONTEXTS[file_cid] = context
+    if hold_seed_panics:
+        _AUDIT_FILE_CONTEXTS[file_cid] = context
     _TRANSPORT_LOG.info(
         "enumeration_file_context",
         extra={
@@ -1446,7 +1460,10 @@ def audit_lift_file(
 
         try:
             audit_context = _audit_file_context(
-                source, filename, blake3_512_of(source.encode())
+                source,
+                filename,
+                blake3_512_of(source.encode()),
+                hold_seed_panics=hold_panic or recover_panics,
             )
         except ValueError:
             audit_context = None

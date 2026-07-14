@@ -43,3 +43,34 @@ def test_normal_lift_keeps_seeding_panic_fail_fast(monkeypatch) -> None:
 
     with pytest.raises(FactoryPanic, match="owner=seeding-fixture"):
         audit_lift_file(SOURCE, "seeded.py", hold_panic=False)
+
+
+@pytest.mark.parametrize(
+    ("observed", "source"),
+    [
+        ("FunctionDef", "def clean():\n    return 1\n"),
+        ("Assert", "assert True\n\ndef clean():\n    return 1\n"),
+        ("Assign", "VALUE = 1\n\ndef clean():\n    return VALUE\n"),
+    ],
+)
+def test_normal_lift_rethrows_every_module_seeding_panic(
+    monkeypatch, observed: str, source: str
+) -> None:
+    def panic_build_body(self, body, role):
+        del self, role
+        assert body.observed == observed
+        factory_panic_gap(
+            owner=f"seeding-{observed}",
+            blame=f"{observed}.py:1:0",
+            observed=observed,
+            requested="module seed construction",
+            fix="rethrow outside explicit recovered audit",
+        )
+
+    monkeypatch.setattr(
+        "sugar_lift_py_tests.context.factory_build_context.FactoryBuildContext.build_body",
+        panic_build_body,
+    )
+
+    with pytest.raises(FactoryPanic, match=f"owner=seeding-{observed}"):
+        audit_lift_file(source, f"{observed}.py", hold_panic=False)
