@@ -16,6 +16,13 @@ def test_normal_lift_stops_at_first_factory_panic() -> None:
     assert raised.value.info.blame == "bad_twins.py:2:4"
 
 
+def test_legacy_hold_panic_cannot_return_a_partial_lift_artifact() -> None:
+    source = "def clean():\n    return 1\n\ndef broken():\n    nonlocal x\n"
+
+    with pytest.raises(TypeError, match="recover_panics=True"):
+        audit_lift_file(source, "held.py", hold_panic=True)
+
+
 def test_recovered_audit_records_independent_panics_without_lift_payload() -> None:
     source = "def first():\n    nonlocal x\n\ndef second():\n    nonlocal y\n"
 
