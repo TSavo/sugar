@@ -3011,6 +3011,69 @@ def _handle_resolve_dependency_proofs(msg_id: Any, params: Dict[str, Any]) -> No
     _send({"jsonrpc": "2.0", "id": msg_id, "result": {"proofs": proofs}})
 
 
+def _dispatch_request(msg: Dict[str, Any]) -> bool:
+    """Dispatch one accepted request; return whether the session should continue."""
+    msg_id = msg.get("id")
+    method = msg.get("method")
+    params = msg.get("params", {})
+
+    if method == "initialize":
+        _handle_initialize(msg_id)
+    elif method == KIT_DECLARATION_RPC_METHOD:
+        _send({"jsonrpc": "2.0", "id": msg_id, "result": _kit_declaration_result()})
+    elif method == COMPONENT_PLAN_RPC_METHOD:
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": _component_plan_result(
+                    params if isinstance(params, dict) else {}
+                ),
+            }
+        )
+    elif method == RESOLVE_SOURCE_MEMENTO_RPC_METHOD:
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": _resolve_source_memento_result(
+                    params if isinstance(params, dict) else {}
+                ),
+            }
+        )
+    elif method == "lift":
+        _handle_lift(
+            msg_id,
+            params if isinstance(params, dict) else {},
+        )
+    elif method == "sugar.plugin.lift_implications":
+        _handle_lift(
+            msg_id,
+            params if isinstance(params, dict) else {},
+        )
+    elif method == "sugar.plugin.resolve_dependency_proofs":
+        _handle_resolve_dependency_proofs(
+            msg_id, params if isinstance(params, dict) else {}
+        )
+    elif method == ENUMERATE_RPC_METHOD:
+        _handle_enumerate(msg_id, params if isinstance(params, dict) else {})
+    elif method == "shutdown":
+        _send({"jsonrpc": "2.0", "id": msg_id, "result": {"ok": True}})
+        return False
+    else:
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {
+                    "code": -32601,
+                    "message": f"method '{method}' not found",
+                },
+            }
+        )
+    return True
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     _configure_transport_logging()
     argv = argv or []
@@ -3035,64 +3098,26 @@ def main(argv: Optional[List[str]] = None) -> None:
                 }
             )
             continue
-        msg_id = msg.get("id")
-        method = msg.get("method")
-        params = msg.get("params", {})
-
-        if method == "initialize":
-            _handle_initialize(msg_id)
-        elif method == KIT_DECLARATION_RPC_METHOD:
-            _send({"jsonrpc": "2.0", "id": msg_id, "result": _kit_declaration_result()})
-        elif method == COMPONENT_PLAN_RPC_METHOD:
+        try:
+            if not _dispatch_request(msg):
+                break
+        except FactoryPanic as panic:
             _send(
                 {
                     "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": _component_plan_result(
-                        params if isinstance(params, dict) else {}
-                    ),
-                }
-            )
-        elif method == RESOLVE_SOURCE_MEMENTO_RPC_METHOD:
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": _resolve_source_memento_result(
-                        params if isinstance(params, dict) else {}
-                    ),
-                }
-            )
-        elif method == "lift":
-            _handle_lift(
-                msg_id,
-                params if isinstance(params, dict) else {},
-            )
-        elif method == "sugar.plugin.lift_implications":
-            _handle_lift(
-                msg_id,
-                params if isinstance(params, dict) else {},
-            )
-        elif method == "sugar.plugin.resolve_dependency_proofs":
-            _handle_resolve_dependency_proofs(
-                msg_id, params if isinstance(params, dict) else {}
-            )
-        elif method == ENUMERATE_RPC_METHOD:
-            _handle_enumerate(msg_id, params if isinstance(params, dict) else {})
-        elif method == "shutdown":
-            _send({"jsonrpc": "2.0", "id": msg_id, "result": {"ok": True}})
-            break
-        else:
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
+                    "id": msg.get("id"),
                     "error": {
-                        "code": -32601,
-                        "message": f"method '{method}' not found",
+                        "code": -32603,
+                        "message": str(panic),
+                        "data": {
+                            "exception_type": type(panic).__name__,
+                            "stage": "dispatch",
+                            "diagnostic": panic.info.to_json(),
+                        },
                     },
                 }
             )
+            raise SystemExit(1) from panic
 
 
 if __name__ == "__main__":
