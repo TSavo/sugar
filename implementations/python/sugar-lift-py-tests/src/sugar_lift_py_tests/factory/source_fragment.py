@@ -1029,10 +1029,15 @@ class SourceFragment:
 
         Wraps ast.parse() internally; callers never need to import ast.
         """
-        # NOT routed through the parsed_tree table: fragment pipelines MUTATE
-        # their tree (annotation/loop-context marks), so the root parse must be
-        # a private copy. The idempotent read-only tables cover everything else.
-        tree = ast.parse(source, filename=filename)
+        # Rides the parsed_tree table: dig paths construct the module root once
+        # PER SITE, so a private parse here re-parsed and re-stamped the whole
+        # module per site. Sharing is sound because every pipeline mutation is
+        # an idempotent node stamp (_sugar_* marks and the fragment caches):
+        # the same node always receives the same marks, so sharing cannot
+        # diverge from a private copy.
+        from sugar_lift_python_source.source_tables import parsed_tree
+
+        tree = parsed_tree(source, filename=filename)
         return cls.from_node(tree, filename, source=source)
 
     def has_position(self) -> bool:
