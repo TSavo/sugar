@@ -1682,6 +1682,32 @@ def audit_lift_file(
             )
             gaps.append(gap)
             payload.factory_walk.append(_factory_walk_red_from_gap(gap))
+            if recover_panics:
+                # Conservation is an independent producer. Its typed gap must
+                # cross the recovered-audit boundary just like a FactoryPanic;
+                # otherwise the final DTO discards ``gaps`` and can claim a
+                # false-clean frontier for source that disappeared pre-factory.
+                # A root already present in another terminal bucket is not a
+                # producer gap: keep the buckets disjoint and do not count it
+                # twice merely because the factory red row names the inner
+                # observed shape rather than its poisoned definition owner.
+                locus_label = f"{locus.file}:{locus.line}:{locus.col}"
+                terminal_loci = {
+                    item.locus
+                    for item in (
+                        *recovered_panics,
+                        *recovered_effects,
+                        *suppressed_descendants,
+                    )
+                }
+                if locus_label not in terminal_loci:
+                    recovered_panics.append(
+                        RecoveredFactoryPanicDto(
+                            locus=locus.identity,
+                            reason=message,
+                            gap=gap.info,
+                        )
+                    )
     if recover_panics:
         return RecoveredAuditDto(
             panics=recovered_panics,
