@@ -33,6 +33,37 @@ def _mark_annotation_subtree(node: ast.AST) -> ast.AST:
     return node
 
 
+def _annotation_roots(node: ast.AST) -> list[ast.AST]:
+    roots: list[ast.AST] = []
+    for descendant in ast.walk(node):
+        if isinstance(descendant, ast.arg) and descendant.annotation is not None:
+            roots.append(descendant.annotation)
+        if (
+            isinstance(descendant, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and descendant.returns is not None
+        ):
+            roots.append(descendant.returns)
+        if isinstance(descendant, ast.AnnAssign):
+            roots.append(descendant.annotation)
+        type_alias = getattr(ast, "TypeAlias", ())
+        if type_alias and isinstance(descendant, type_alias):
+            roots.append(descendant.value)
+    return roots
+
+
+def _mark_runtime_statement(node: ast.stmt) -> ast.stmt:
+    """Partition a statement's expressions into runtime and annotation faces."""
+    annotation_nodes = {
+        descendant for root in _annotation_roots(node) for descendant in ast.walk(root)
+    }
+    for descendant in ast.walk(node):
+        if descendant in annotation_nodes:
+            descendant._sugar_annotation_context = True  # type: ignore[attr-defined]
+        elif isinstance(descendant, ast.expr):
+            descendant._sugar_runtime_expression_context = True  # type: ignore[attr-defined]
+    return node
+
+
 def _mark_loop_body(nodes: list[ast.stmt]) -> list[ast.stmt]:
     """Carry the loop gateway's lexical testimony to control descendants.
 
@@ -228,21 +259,11 @@ class SourceFragment:
         )
         if target is None:
             return False
-        roots = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.arg) and node.annotation is not None:
-                roots.append(node.annotation)
-            if (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.returns is not None
-            ):
-                roots.append(node.returns)
-            if isinstance(node, ast.AnnAssign):
-                roots.append(node.annotation)
-            type_alias = getattr(ast, "TypeAlias", ())
-            if type_alias and isinstance(node, type_alias):
-                roots.append(node.value)
-        return any(target in ast.walk(root) for root in roots)
+        return any(target in ast.walk(root) for root in _annotation_roots(tree))
+
+    def is_within_runtime_expression(self) -> bool:
+        """Whether a statement gateway classified this node as runtime syntax."""
+        return bool(getattr(self.node, "_sugar_runtime_expression_context", False))
 
     def fragments(self) -> List["SourceFragment"]:
         """The immediate child fragments, in source order. A `list[stmt]` suite (a
@@ -277,11 +298,15 @@ class SourceFragment:
     def statements(self) -> List["SourceFragment"]:
         """This fragment as a series of source statements -- the statement children
         (a body's lines). A statement composes at the STATEMENT role."""
-        return [
+        statements = [
             child
             for child in self.fragments()
             if isinstance(child.node, (ast.stmt, Block))
         ]
+        for statement in statements:
+            if isinstance(statement.node, ast.stmt):
+                _mark_runtime_statement(statement.node)
+        return statements
 
     def terms(self) -> List["SourceFragment"]:
         """This (statement or term) fragment as a series of terms -- its expression
