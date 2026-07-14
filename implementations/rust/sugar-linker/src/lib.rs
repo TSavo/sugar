@@ -606,6 +606,49 @@ pub struct LinkerInputs {
     pub call_edges: Vec<LinkerCallEdge>,
 }
 
+/// One candidate universe exposed by the kit for one demanded call edge.
+/// Candidate discovery remains language-owned; choosing zero/one/many and
+/// binding the edge is linker-owned and happens only when this demand runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImplicationTargetCandidate {
+    pub bridge_source_symbol: String,
+    pub contract: LinkerContract,
+}
+
+/// The complete per-callsite linker question carried by one enumeration node.
+/// It cannot represent a batch: exactly one source contract and one call edge
+/// enter this constructor, while candidate universes remain an explicit set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImplicationDemand {
+    pub source_contract: LinkerContract,
+    pub target_candidates: Vec<ImplicationTargetCandidate>,
+    pub call_edge: LinkerCallEdge,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImplicationDemandStatus {
+    Discharged,
+    Unsatisfied,
+    Unjoined,
+}
+
+/// Transcript row returned by the per-edge linker worker. The enumeration
+/// coordinator adds the call-site question identity; the linker owns only the
+/// join, obligation mint, and verdict for this one edge.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImplicationDemandAnswer {
+    pub source_contract: String,
+    pub target_contract: Option<String>,
+    pub target_symbol: String,
+    pub status: ImplicationDemandStatus,
+    pub reason: String,
+    pub obligation: Option<Json>,
+}
+
 /// A content-addressed link bundle — the four set-CIDs plus the canonical
 /// serialized bundle object, grouped as one typed value.
 ///
@@ -682,6 +725,104 @@ pub fn link(inputs: LinkerInputs) -> LinkerOutput {
         call_edges,
     } = inputs;
     derive_link_bundle_inner(contracts, call_edges, &empty_registry, &no_op_plan)
+}
+
+fn implication_symbol_matches(candidate: &str, edge: &Symbol) -> bool {
+    let edge_wire = edge.to_wire();
+    if candidate == edge_wire {
+        return true;
+    }
+    let candidate_leaf = candidate
+        .split_once(':')
+        .map_or(candidate, |(_, leaf)| leaf);
+    let edge_leaf = edge_wire
+        .split_once(':')
+        .map_or(edge_wire.as_str(), |(_, leaf)| leaf);
+    candidate_leaf == edge_leaf
+}
+
+/// Execute the pure linker algebra for exactly one demanded callsite question.
+/// The worker selects one candidate, binds one edge, mints one obligation, and
+/// classifies its result. It is deliberately not a collector and has no API for
+/// more than one edge.
+pub fn demand_implication(demand: ImplicationDemand) -> ImplicationDemandAnswer {
+    let ImplicationDemand {
+        source_contract,
+        target_candidates,
+        mut call_edge,
+    } = demand;
+    let source_name = source_contract.name.clone();
+    let target_symbol = call_edge.target_symbol.to_wire();
+    let mut matching = target_candidates
+        .into_iter()
+        .filter(|candidate| {
+            implication_symbol_matches(&candidate.bridge_source_symbol, &call_edge.target_symbol)
+        })
+        .collect::<Vec<_>>();
+
+    if matching.is_empty() {
+        return ImplicationDemandAnswer {
+            source_contract: source_name,
+            target_contract: None,
+            target_symbol: target_symbol.clone(),
+            status: ImplicationDemandStatus::Unjoined,
+            reason: format!("no target candidate answers demanded symbol {target_symbol}"),
+            obligation: None,
+        };
+    }
+    if matching.len() > 1 {
+        let names = matching
+            .iter()
+            .map(|candidate| candidate.contract.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return ImplicationDemandAnswer {
+            source_contract: source_name,
+            target_contract: None,
+            target_symbol: target_symbol.clone(),
+            status: ImplicationDemandStatus::Unjoined,
+            reason: format!(
+                "ambiguous target candidates for demanded symbol {target_symbol}: {names}"
+            ),
+            obligation: None,
+        };
+    }
+
+    let target = matching
+        .pop()
+        .expect("one matching implication candidate after cardinality checks")
+        .contract;
+    let target_name = target.name.clone();
+    let obligation =
+        obligation_evidence_term(source_contract.post_json.as_ref(), target.pre_json.as_ref());
+    call_edge.target_contract_cid = Some(target.contract_cid.clone());
+    let output = link(LinkerInputs {
+        contracts: vec![source_contract, target],
+        call_edges: vec![call_edge],
+    });
+    let (status, reason) = match output.linker_errors.first() {
+        None => (
+            ImplicationDemandStatus::Discharged,
+            "linker discharged caller post implies callee pre".to_string(),
+        ),
+        Some(error)
+            if matches!(
+                error.kind,
+                LinkerErrorKind::UnresolvedSymbol | LinkerErrorKind::SignatureMismatch
+            ) =>
+        {
+            (ImplicationDemandStatus::Unjoined, error.reason.clone())
+        }
+        Some(error) => (ImplicationDemandStatus::Unsatisfied, error.reason.clone()),
+    };
+    ImplicationDemandAnswer {
+        source_contract: source_name,
+        target_contract: Some(target_name),
+        target_symbol,
+        status,
+        reason,
+        obligation: Some(obligation),
+    }
 }
 
 /// Derive bridges and emit a `LinkBundle`, using the supplied solver

@@ -519,6 +519,43 @@ mod tests {
     }
 
     #[test]
+    fn implication_cache_dedupes_same_question_but_keeps_distinct_callsites() {
+        let mut cache = QuestionCache::default();
+        let question = |line| {
+            json!({
+                "workspace_root": "/workspace",
+                "level": "implications",
+                "at": {
+                    "source_cid": format!("blake3-512:callsite-{line}"),
+                    "file": "calls.py",
+                    "span": {"start_line": line, "start_col": 8}
+                },
+                "seek": true,
+                "options": {"auditFrontier": false}
+            })
+        };
+        let first = question(4);
+        let second = question(9);
+        let mut wire_calls = 0;
+
+        for demand in [&first, &first, &second, &second] {
+            cache
+                .ask(demand, || {
+                    wire_calls += 1;
+                    Ok::<_, ()>(json!({"nodes": []}))
+                })
+                .unwrap();
+        }
+
+        assert_eq!(
+            wire_calls, 2,
+            "one wire call per call-site question identity"
+        );
+        assert_eq!(cache.hits(), 2);
+        assert_eq!(cache.misses(), 2);
+    }
+
+    #[test]
     fn canonical_question_identity_discriminates_workspace_root() {
         let mut cache = QuestionCache::default();
         let first_root = json!({
