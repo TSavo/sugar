@@ -17,7 +17,9 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests import lift_rpc
+from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.factory import factory_panic_gap
+from sugar_lift_py_tests.ir import _json_like_to_value
 
 FIXTURE_SOURCE = """\
 def add(a, b):
@@ -346,29 +348,265 @@ def test_assertions_and_facts_carry_the_fol(project: Path) -> None:
     assert len(call_sites) == 1
     call_site_memento = call_sites[0]["memento"]
 
-    assertions = _enumerate("assertions", project, at=call_site_memento, seek=True)[
-        "nodes"
-    ]
+    assertion_result = _enumerate(
+        "assertions", project, at=call_site_memento, seek=True
+    )
+    assertions = assertion_result["nodes"]
     assert len(assertions) == 1
+    assert assertion_result["termTable"]
     assertion_memento = assertions[0]["memento"]
 
-    facts = _enumerate("facts", project, at=assertion_memento, seek=True)["nodes"]
+    fact_result = _enumerate("facts", project, at=assertion_memento, seek=True)
+    facts = fact_result["nodes"]
     assert len(facts) == 1
+    term_table = fact_result["termTable"]
+    assert term_table
     formula = facts[0]["payload"]
     assert formula["kind"] == "atomic"
     # The call return has no sort warrant at atom construction, so Python
     # equality remains stated; enumeration must not resurrect bare `=`.
     assert formula["name"] == "py.eq"
-    # `add(2, 3) == 5`: an EUF call-ctor compared to the literal 5.
-    call_ctor = formula["args"][0]
+    # `add(2, 3) == 5`: both positions are closed references into the result table.
+    call_ref, literal_ref = formula["args"]
+    assert call_ref["kind"] == "term-ref"
+    assert literal_ref["kind"] == "term-ref"
+    assert call_ref["cid"] in term_table
+    assert literal_ref["cid"] in term_table
+
+    call_ctor = term_table[call_ref["cid"]]
     assert call_ctor["kind"] == "ctor"
     assert call_ctor["name"] == "call:add"
-    literal = formula["args"][1]
+    assert all(arg["kind"] == "term-ref" for arg in call_ctor["args"])
+    literal = term_table[literal_ref["cid"]]
     assert literal == {
         "kind": "const",
         "value": 5,
         "sort": {"kind": "primitive", "name": "Int"},
     }
+
+    def resolve(cid: str, active: frozenset[str] = frozenset()):
+        assert cid not in active
+        node = term_table[cid]
+        if node["kind"] != "ctor":
+            return node
+        return {
+            "kind": "ctor",
+            "name": node["name"],
+            "args": [resolve(arg["cid"], active | {cid}) for arg in node["args"]],
+        }
+
+    for cid in term_table:
+        canonical = encode_jcs(_json_like_to_value(resolve(cid))).encode()
+        assert cid == blake3_512_of(canonical)
+
+
+def test_every_formula_bearing_enumerate_level_is_closed(project: Path) -> None:
+    def refs(value):
+        found = set()
+        if isinstance(value, dict):
+            if value.get("kind") == "term-ref":
+                found.add(value["cid"])
+            else:
+                for child in value.values():
+                    found.update(refs(child))
+        elif isinstance(value, list):
+            for child in value:
+                found.update(refs(child))
+        return found
+
+    def assert_closed(result):
+        roots = refs({"nodes": result["nodes"], "gaps": result["gaps"]})
+        if not roots:
+            assert "termTable" not in result
+            return
+        table = result["termTable"]
+        reachable = set()
+        frontier = list(roots)
+        while frontier:
+            cid = frontier.pop()
+            if cid in reachable:
+                continue
+            assert cid in table
+            reachable.add(cid)
+            frontier.extend(refs(table[cid]))
+        assert set(table) == reachable
+
+    file_result = _enumerate("source_files", project)
+    assert_closed(file_result)
+    file_memento = file_result["nodes"][0]["memento"]
+    function_result = _enumerate("functions", project, at=file_memento)
+    assert_closed(function_result)
+    function_memento = next(
+        node["memento"]
+        for node in function_result["nodes"]
+        if (node["memento"].get("function_name") or "").endswith("test_add")
+    )
+    callsite_result = _enumerate("call_sites", project, at=function_memento)
+    assert_closed(callsite_result)
+    callsite_memento = callsite_result["nodes"][0]["memento"]
+    for level in ("assertions", "implications", "universe"):
+        assert_closed(_enumerate(level, project, at=callsite_memento, seek=True))
+    assertion = _enumerate("assertions", project, at=callsite_memento, seek=True)[
+        "nodes"
+    ][0]["memento"]
+    assert_closed(_enumerate("facts", project, at=assertion, seek=True))
+
+
+def test_closed_enumerate_result_rejects_omitted_term_table() -> None:
+    nodes = [
+        {
+            "memento": {"file": "demo.py"},
+            "audit": None,
+            "payload": {"kind": "term-ref", "cid": "blake3-512:missing"},
+        }
+    ]
+
+    with pytest.raises(ValueError, match="missing required `termTable`"):
+        lift_rpc._closed_enumerate_result(nodes, [])
+
+
+def test_closed_enumerate_result_rejects_dangling_term_ref() -> None:
+    nodes = [
+        {
+            "memento": {"file": "demo.py"},
+            "audit": None,
+            "payload": {"kind": "term-ref", "cid": "blake3-512:missing"},
+        }
+    ]
+
+    with pytest.raises(ValueError, match="missing term-table CID"):
+        lift_rpc._closed_enumerate_result(nodes, [], term_tables=[{}])
+
+
+def test_closed_enumerate_result_rejects_cycle_and_cid_mismatch() -> None:
+    cycle = {
+        "blake3-512:a": {
+            "kind": "ctor",
+            "name": "a",
+            "args": [{"kind": "term-ref", "cid": "blake3-512:b"}],
+        },
+        "blake3-512:b": {
+            "kind": "ctor",
+            "name": "b",
+            "args": [{"kind": "term-ref", "cid": "blake3-512:a"}],
+        },
+    }
+    nodes = [
+        {
+            "memento": {"file": "demo.py"},
+            "audit": None,
+            "payload": {"kind": "term-ref", "cid": "blake3-512:a"},
+        }
+    ]
+    with pytest.raises(ValueError, match="cyclic term-table reference"):
+        lift_rpc._closed_enumerate_result(nodes, [], term_tables=[cycle])
+
+    mismatch = {
+        "blake3-512:not-the-content": {"kind": "var", "name": "x"},
+    }
+    nodes[0]["payload"]["cid"] = "blake3-512:not-the-content"
+    with pytest.raises(ValueError, match="term-table CID mismatch"):
+        lift_rpc._closed_enumerate_result(nodes, [], term_tables=[mismatch])
+
+
+def test_closed_enumerate_result_rejects_malformed_child_and_conflict() -> None:
+    malformed = {
+        "blake3-512:parent": {
+            "kind": "ctor",
+            "name": "call:bad",
+            "args": [{"kind": "var", "name": "inline-is-forbidden"}],
+        }
+    }
+    nodes = [
+        {
+            "memento": {"file": "demo.py"},
+            "audit": None,
+            "payload": {"kind": "term-ref", "cid": "blake3-512:parent"},
+        }
+    ]
+    with pytest.raises(ValueError, match="invalid child: expected kind `term-ref`"):
+        lift_rpc._closed_enumerate_result(nodes, [], term_tables=[malformed])
+
+    left = {"blake3-512:shared": {"kind": "var", "name": "left"}}
+    right = {"blake3-512:shared": {"kind": "var", "name": "right"}}
+    nodes[0]["payload"]["cid"] = "blake3-512:shared"
+    with pytest.raises(ValueError, match="conflicting producer rows"):
+        lift_rpc._closed_enumerate_result(nodes, [], term_tables=[left, right])
+
+
+def test_closed_enumerate_result_prunes_unreachable_rows_and_omits_empty_table() -> (
+    None
+):
+    leaf = {"kind": "var", "name": "reachable"}
+    leaf_cid = blake3_512_of(encode_jcs(_json_like_to_value(leaf)).encode())
+    unreachable = {"kind": "var", "name": "unreachable"}
+    unreachable_cid = blake3_512_of(
+        encode_jcs(_json_like_to_value(unreachable)).encode()
+    )
+    nodes = [
+        {
+            "memento": {"file": "demo.py"},
+            "audit": None,
+            "payload": {"kind": "term-ref", "cid": leaf_cid},
+        }
+    ]
+
+    result = lift_rpc._closed_enumerate_result(
+        nodes,
+        [],
+        term_tables=[{leaf_cid: leaf, unreachable_cid: unreachable}],
+    )
+    assert result["termTable"] == {leaf_cid: leaf}
+
+    no_refs = lift_rpc._closed_enumerate_result(
+        [{"memento": {"file": "demo.py"}, "audit": None, "payload": None}],
+        [],
+        term_tables=[{leaf_cid: leaf}],
+    )
+    assert "termTable" not in no_refs
+
+
+def test_closed_enumerate_result_deduplicates_shared_reachable_subterms() -> None:
+    leaf = {"kind": "var", "name": "x"}
+    leaf_cid = blake3_512_of(encode_jcs(_json_like_to_value(leaf)).encode())
+    parent_resolved = {
+        "kind": "ctor",
+        "name": "call:pair",
+        "args": [leaf, leaf],
+    }
+    parent_cid = blake3_512_of(
+        encode_jcs(_json_like_to_value(parent_resolved)).encode()
+    )
+    term_table = {
+        leaf_cid: leaf,
+        parent_cid: {
+            "kind": "ctor",
+            "name": "call:pair",
+            "args": [
+                {"kind": "term-ref", "cid": leaf_cid},
+                {"kind": "term-ref", "cid": leaf_cid},
+            ],
+        },
+    }
+    nodes = [
+        {
+            "memento": {"file": "demo.py"},
+            "audit": None,
+            "payload": {
+                "kind": "atomic",
+                "name": "same",
+                "args": [
+                    {"kind": "term-ref", "cid": parent_cid},
+                    {"kind": "term-ref", "cid": parent_cid},
+                ],
+            },
+        }
+    ]
+
+    result = lift_rpc._closed_enumerate_result(nodes, [], term_tables=[term_table])
+
+    assert result["termTable"] == term_table
+    assert len(result["termTable"]) == 2
 
 
 def test_facts_seek_is_idempotent(project: Path) -> None:
@@ -534,7 +772,7 @@ def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
     assert result["gaps"] == []
 
 
-def test_implication_seek_returns_one_discharged_node_for_resolved_call(
+def test_implication_seek_returns_one_linker_demand_for_resolved_call(
     project: Path,
 ) -> None:
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
@@ -551,15 +789,21 @@ def test_implication_seek_returns_one_discharged_node_for_resolved_call(
 
     assert result["gaps"] == []
     assert len(result["nodes"]) == 1
-    implication = result["nodes"][0]["audit"]
-    assert implication["kind"] == "implication"
-    assert implication["targetContract"] == "mathy.add"
-    assert implication["targetSymbol"] == "add"
-    assert implication["status"] == "discharged"
-    assert implication["obligation"]["kind"] == "implies"
+    node = result["nodes"][0]
+    question = node["audit"]
+    demand = node["payload"]
+    assert question["kind"] == "implication-question"
+    assert question["targetSymbol"] == "call:add"
+    assert question["candidateCount"] == 1
+    assert demand["sourceContract"]["name"] == "test_add::assertion"
+    assert demand["callEdge"]["target_symbol"] == "call:add"
+    assert [
+        candidate["contract"]["name"] for candidate in demand["targetCandidates"]
+    ] == ["mathy.add"]
+    assert all("status" not in row for row in (question, demand))
 
 
-def test_implication_seek_returns_named_debt_instead_of_empty_success(
+def test_implication_seek_returns_zero_candidate_demand_instead_of_false_empty(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "debt.py").write_text(
@@ -573,11 +817,15 @@ def test_implication_seek_returns_named_debt_instead_of_empty_success(
 
     assert result["gaps"] == []
     assert len(result["nodes"]) == 1
-    debt = result["nodes"][0]["audit"]
-    assert debt["kind"] == "implication"
-    assert debt["status"] == "unjoined"
-    assert debt["targetSymbol"] == "missing"
-    assert "no universe sugar for callee" in debt["reason"]
+    node = result["nodes"][0]
+    question = node["audit"]
+    demand = node["payload"]
+    assert question["kind"] == "implication-question"
+    assert question["candidateCount"] == 0
+    assert question["targetSymbol"] == "call:missing"
+    assert demand["targetCandidates"] == []
+    assert demand["callEdge"]["target_symbol"] == "call:missing"
+    assert "status" not in question
 
 
 def test_distinct_descendant_demands_reuse_file_cid_context(

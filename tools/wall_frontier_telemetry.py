@@ -14,6 +14,28 @@ def frontier_vector(path: Path) -> tuple[int, int, int]:
         raise TypeError("frontier must be a JSON object")
     if payload.get("kind") != "recovered-construction-audit":
         raise ValueError("frontier kind must be recovered-construction-audit")
+    if payload.get("recoveryOverride") is not True:
+        raise ValueError("frontier must carry the recovery override")
+    census = payload.get("census")
+    if (
+        not isinstance(census, dict)
+        or census.get("kind") != "recovered-frontier-census"
+    ):
+        raise ValueError("frontier must carry a recovered census receipt")
+    counts: dict[str, int] = {}
+    for field in (
+        "sourceFilesEnumerated",
+        "sourceBodiesDemanded",
+        "auditLeavesCompleted",
+    ):
+        value = census.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(
+                f"frontier census field {field} must be a non-negative integer"
+            )
+        counts[field] = value
+    if counts["sourceFilesEnumerated"] != counts["sourceBodiesDemanded"]:
+        raise ValueError("frontier source census does not conserve body demands")
     fields = ("panics", "suppressedDescendants", "effects")
     rows = []
     for field in fields:
@@ -21,6 +43,18 @@ def frontier_vector(path: Path) -> tuple[int, int, int]:
         if not isinstance(value, list):
             raise TypeError(f"frontier field {field} must be a JSON array")
         rows.append(len(value))
+    status = payload.get("status")
+    if status == "valid-empty":
+        if any(counts.values()) or rows[0] != 0:
+            raise ValueError("valid-empty frontier requires a zero census")
+    elif status == "complete":
+        if counts["sourceFilesEnumerated"] == 0 or rows[0] != 0:
+            raise ValueError("complete frontier requires a nonempty clean census")
+    elif status == "failed":
+        if rows[0] == 0:
+            raise ValueError("failed frontier requires typed panic telemetry")
+    else:
+        raise ValueError(f"frontier terminal status is not closed: {status!r}")
     return rows[0], rows[1], rows[2]
 
 

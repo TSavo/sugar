@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -434,8 +435,11 @@ def test_build_uses_sugarbin_cached_audit_workspace_and_structured_gap_mode(
         ],
     ]
     manifest = result.workspace_path / ".sugar/lift/python/manifest.toml"
-    assert '"--rpc"' in manifest.read_text(encoding="utf-8")
-    assert '"--audit-only"' in manifest.read_text(encoding="utf-8")
+    manifest_text = manifest.read_text(encoding="utf-8")
+    manifest_command = tomllib.loads(manifest_text)["command"]
+    assert Path(manifest_command[1]).name == "lift_rpc.py"
+    assert manifest_command[2:] == ["--rpc"]
+    assert "--audit-only" not in manifest_command
     assert '"mode": "construction-gaps"' in result.summary_path.read_text(
         encoding="utf-8"
     )
@@ -544,7 +548,13 @@ def test_complete_mode_records_recovered_frontier_without_report_artifact(
                 {
                     "kind": "recovered-construction-audit",
                     "recoveryOverride": True,
-                    "status": "recovered-construction-audit",
+                    "status": "failed",
+                    "census": {
+                        "kind": "recovered-frontier-census",
+                        "sourceFilesEnumerated": 1,
+                        "sourceBodiesDemanded": 1,
+                        "auditLeavesCompleted": 1,
+                    },
                     "panics": [
                         {
                             "kind": "factory-panic",

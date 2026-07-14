@@ -82,6 +82,20 @@ impl LiftTermNode {
             }),
         }
     }
+
+    fn resolved_value(&self) -> Value {
+        match &self.kind {
+            LiftTermKind::Var { name } => serde_json::json!({"kind": "var", "name": name}),
+            LiftTermKind::Const { value, sort } => {
+                serde_json::json!({"kind": "const", "value": value, "sort": sort})
+            }
+            LiftTermKind::Ctor { name, args } => serde_json::json!({
+                "kind": "ctor",
+                "name": name,
+                "args": args.iter().map(|arg| arg.resolved_value()).collect::<Vec<_>>()
+            }),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -172,6 +186,32 @@ impl LiftTermTable {
                     .map(|(key, value)| Ok((key.clone(), self.canonical_value(value)?)))
                     .collect::<Result<Vec<_>, String>>()?,
             )),
+        }
+    }
+
+    /// Resolve every term-ref in an arbitrary response-owned JSON value.
+    ///
+    /// Enumeration stays DAG-only on the wire; this projection exists solely
+    /// at the typed consumer boundary, where `IrFormula` expects recursive
+    /// term values. A missing ref remains a loud validator error.
+    pub fn resolve_value(&self, value: &Value) -> Result<Value, String> {
+        if value.get("kind").and_then(Value::as_str) == Some("term-ref") {
+            return Ok(self.resolve_reference(value)?.resolved_value());
+        }
+        match value {
+            Value::Array(values) => Ok(Value::Array(
+                values
+                    .iter()
+                    .map(|value| self.resolve_value(value))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            Value::Object(values) => Ok(Value::Object(
+                values
+                    .iter()
+                    .map(|(key, value)| Ok((key.clone(), self.resolve_value(value)?)))
+                    .collect::<Result<serde_json::Map<_, _>, String>>()?,
+            )),
+            scalar => Ok(scalar.clone()),
         }
     }
 }
@@ -275,4 +315,109 @@ fn required_string(value: &Value, field: &str, cid: &str) -> Result<String, Stri
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| format!("term-table CID `{cid}` missing `{field}`"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn cid(value: &Value) -> String {
+        sugar_canonicalizer::blake3_512_of(
+            sugar_canonicalizer::encode_jcs(json_to_canonical(value).as_ref()).as_bytes(),
+        )
+    }
+
+    #[test]
+    fn decode_refuses_omitted_dangling_cycle_malformed_and_cid_mismatch() {
+        assert!(LiftTermTable::decode(&json!({}))
+            .unwrap_err()
+            .contains("missing required `termTable`"));
+
+        let dangling = json!({
+            "termTable": {
+                "blake3-512:parent": {
+                    "kind": "ctor", "name": "call:bad",
+                    "args": [{"kind": "term-ref", "cid": "blake3-512:missing"}]
+                }
+            }
+        });
+        assert!(LiftTermTable::decode(&dangling)
+            .unwrap_err()
+            .contains("missing term-table CID"));
+
+        let cycle = json!({
+            "termTable": {
+                "blake3-512:a": {
+                    "kind": "ctor", "name": "a",
+                    "args": [{"kind": "term-ref", "cid": "blake3-512:b"}]
+                },
+                "blake3-512:b": {
+                    "kind": "ctor", "name": "b",
+                    "args": [{"kind": "term-ref", "cid": "blake3-512:a"}]
+                }
+            }
+        });
+        assert!(LiftTermTable::decode(&cycle)
+            .unwrap_err()
+            .contains("cyclic term-table reference"));
+
+        let malformed = json!({
+            "termTable": {
+                "blake3-512:parent": {
+                    "kind": "ctor", "name": "bad",
+                    "args": [{"kind": "var", "name": "inline"}]
+                }
+            }
+        });
+        assert!(LiftTermTable::decode(&malformed)
+            .unwrap_err()
+            .contains("invalid child"));
+
+        let mismatch = json!({
+            "termTable": {
+                "blake3-512:not-content": {"kind": "var", "name": "x"}
+            }
+        });
+        assert!(LiftTermTable::decode(&mismatch)
+            .unwrap_err()
+            .contains("term-table CID mismatch"));
+    }
+
+    #[test]
+    fn shared_subterms_decode_once_and_resolve_at_formula_boundary() {
+        let leaf = json!({"kind": "var", "name": "x"});
+        let leaf_cid = cid(&leaf);
+        let resolved_parent = json!({
+            "kind": "ctor", "name": "call:pair", "args": [leaf.clone(), leaf.clone()]
+        });
+        let parent_cid = cid(&resolved_parent);
+        let payload = json!({
+            "termTable": {
+                (leaf_cid.clone()): leaf,
+                (parent_cid.clone()): {
+                    "kind": "ctor", "name": "call:pair",
+                    "args": [
+                        {"kind": "term-ref", "cid": leaf_cid.clone()},
+                        {"kind": "term-ref", "cid": leaf_cid.clone()}
+                    ]
+                }
+            }
+        });
+        let table = LiftTermTable::decode(&payload).expect("valid shared DAG");
+        let parent = table.get(&parent_cid).expect("parent");
+        let args = parent.args().expect("ctor args");
+        assert!(Arc::ptr_eq(&args[0], &args[1]));
+
+        let formula = json!({
+            "kind": "atomic", "name": "same",
+            "args": [
+                {"kind": "term-ref", "cid": parent_cid.clone()},
+                {"kind": "term-ref", "cid": parent_cid}
+            ]
+        });
+        let resolved = table.resolve_value(&formula).expect("formula refs resolve");
+        assert_eq!(resolved["args"][0], resolved_parent);
+        assert_eq!(resolved["args"][0], resolved["args"][1]);
+    }
 }

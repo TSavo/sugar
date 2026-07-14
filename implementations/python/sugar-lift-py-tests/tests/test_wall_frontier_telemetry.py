@@ -21,6 +21,14 @@ def test_recovered_frontier_vector_carries_all_three_lanes(tmp_path) -> None:
         json.dumps(
             {
                 "kind": "recovered-construction-audit",
+                "recoveryOverride": True,
+                "status": "failed",
+                "census": {
+                    "kind": "recovered-frontier-census",
+                    "sourceFilesEnumerated": 2,
+                    "sourceBodiesDemanded": 2,
+                    "auditLeavesCompleted": 2,
+                },
                 "panics": [{}, {}],
                 "suppressedDescendants": [{}],
                 "effects": [{}, {}, {}],
@@ -41,4 +49,24 @@ def test_fail_fast_or_incomplete_output_is_not_accepted_as_frontier(tmp_path) ->
     path.write_text(json.dumps({"kind": "lift-report"}), encoding="utf-8")
 
     with pytest.raises(ValueError, match="recovered-construction-audit"):
+        frontier_vector(path)
+
+
+def test_zero_vector_without_completed_census_is_not_accepted(tmp_path) -> None:
+    path = tmp_path / "frontier.json"
+    path.write_text(
+        json.dumps(
+            {
+                "kind": "recovered-construction-audit",
+                "recoveryOverride": True,
+                "status": "complete",
+                "panics": [],
+                "suppressedDescendants": [],
+                "effects": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="census receipt"):
         frontier_vector(path)

@@ -44,6 +44,7 @@ use sugar_linker::LinkerContract;
 use sugar_walk::source_oracle::{SourceMemento, SrcSpan};
 
 use crate::kit::{Kit, KitError};
+use crate::kit_path::LiftTermTable;
 
 /// On-demand human-readable locus from a self-locating [`SourceMemento`].
 /// Not a primary key and not stored — file/function_name/span/CIDs already
@@ -237,6 +238,7 @@ pub struct Contract {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Implication {
     memento: SourceMemento,
+    surface: String,
     audit: Value,
     payload: Option<Value>,
 }
@@ -264,7 +266,17 @@ impl Implication {
         let object = row.as_object_mut().unwrap_or_else(|| {
             panic!("implication audit testimony must be an object before report transport")
         });
-        object.insert("callSiteMemento".to_string(), self.memento.to_json());
+        let call_site = self.memento.to_json();
+        object.insert("callSiteMemento".to_string(), call_site.clone());
+        object.insert(
+            "questionIdentity".to_string(),
+            json!({
+                "surface": self.surface,
+                "level": "implications",
+                "at": call_site,
+                "seek": true,
+            }),
+        );
         row
     }
 }
@@ -678,6 +690,19 @@ fn decode_node(value: &Value) -> Result<WireNode, String> {
     })
 }
 
+fn contains_term_ref(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().any(contains_term_ref),
+        Value::Object(values) => {
+            if values.get("kind").and_then(Value::as_str) == Some("term-ref") {
+                return true;
+            }
+            values.values().any(contains_term_ref)
+        }
+        _ => false,
+    }
+}
+
 fn decode_export_node(node: WireNode) -> Result<ExportedSymbol, String> {
     let audit = node
         .audit
@@ -757,10 +782,39 @@ fn enumerate_rpc(
             reason: error.to_string(),
         })?;
     let result = enumerate_result_from_response(&plugin, response)?;
-    let nodes = result
-        .get("nodes")
-        .and_then(Value::as_array)
-        .map(|arr| arr.iter().map(decode_node).collect::<Result<Vec<_>, _>>())
+    let raw_nodes = result.get("nodes").and_then(Value::as_array);
+    let response_has_term_refs = raw_nodes.is_some_and(|nodes| nodes.iter().any(contains_term_ref))
+        || result.get("gaps").is_some_and(contains_term_ref);
+    let term_table = if result.get("termTable").is_some() {
+        Some(
+            LiftTermTable::decode(&result).map_err(|reason| EnumerateError::Malformed {
+                plugin: plugin.clone(),
+                reason,
+            })?,
+        )
+    } else if response_has_term_refs {
+        return Err(EnumerateError::Malformed {
+            plugin: plugin.clone(),
+            reason:
+                "enumeration response contains term-ref but is missing required `termTable` object"
+                    .to_string(),
+        });
+    } else {
+        None
+    };
+    let nodes = raw_nodes
+        .map(|arr| {
+            arr.iter()
+                .map(|value| {
+                    let resolved = if let Some(table) = &term_table {
+                        table.resolve_value(value)?
+                    } else {
+                        value.clone()
+                    };
+                    decode_node(&resolved)
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
         .unwrap_or_else(|| Ok(Vec::new()))
         .map_err(|reason| EnumerateError::MalformedNode {
             plugin: plugin.clone(),
@@ -788,48 +842,160 @@ fn enumerate_result_from_response(plugin: &str, response: Value) -> Result<Value
     Ok(response)
 }
 
-/// Consumer fold for recovered construction audit. Every work-producing step
-/// is a `sugar.enumerate` request for exactly one keyed node. The consumer
-/// only follows child mementos returned by the preceding response.
+/// Consumer fold for recovered construction audit. A frontier is a closed
+/// result: every enumerated source file must have its body demanded and every
+/// discovered audit leaf must complete with a separately typed recovered
+/// payload. Any gap, seek miss, malformed leaf, or producer death returns Err;
+/// the CLI therefore has no value it could serialize as a frontier artifact.
 pub fn fold_recovered_audit(kit: &Kit, workspace_root: &Path) -> Result<Value, KitError> {
     let mut conn = kit.enumerate_conn(workspace_root);
     conn.audit_frontier = true;
-    let (files, _) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
+    let (files, source_gaps) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
+    if !source_gaps.is_empty() {
+        return Err(EnumerateError::Malformed {
+            plugin: conn.surface.clone(),
+            reason: format!("source census returned {} gaps", source_gaps.len()),
+        }
+        .into());
+    }
+    let source_files_enumerated = files.len();
+    let mut source_bodies_demanded = 0usize;
+    let mut audit_leaves_completed = 0usize;
     let mut panics = Vec::new();
     let mut effects = Vec::new();
     let mut suppressed = Vec::new();
     for file in files {
-        let (definitions, _) =
+        let (definitions, definition_gaps) =
             enumerate_rpc(&conn, Level::Functions, Some(file.memento.to_json()), false)?;
+        source_bodies_demanded += 1;
+        if !definition_gaps.is_empty() {
+            return Err(EnumerateError::Malformed {
+                plugin: conn.surface.clone(),
+                reason: format!(
+                    "function census for {} returned {} gaps",
+                    file.memento.file,
+                    definition_gaps.len()
+                ),
+            }
+            .into());
+        }
         for definition in definitions {
-            let (leaves, _) = enumerate_rpc(
+            let (leaves, leaf_gaps) = enumerate_rpc(
                 &conn,
                 Level::Facts,
                 Some(definition.memento.to_json()),
                 true,
             )?;
-            for leaf in leaves {
-                let Some(audit) = leaf.audit else { continue };
-                if let Some(items) = audit.get("panics").and_then(Value::as_array) {
-                    panics.extend(items.iter().cloned());
+            if !leaf_gaps.is_empty() || leaves.len() != 1 {
+                return Err(EnumerateError::Malformed {
+                    plugin: conn.surface.clone(),
+                    reason: format!(
+                        "audit leaf demand for {} completed nodes={} gaps={}",
+                        memento_locus_display(&definition.memento),
+                        leaves.len(),
+                        leaf_gaps.len()
+                    ),
                 }
-                if let Some(items) = audit.get("effects").and_then(Value::as_array) {
-                    effects.extend(items.iter().cloned());
-                }
-                if let Some(items) = audit.get("suppressedDescendants").and_then(Value::as_array) {
-                    suppressed.extend(items.iter().cloned());
-                }
+                .into());
             }
+            let leaf = leaves.into_iter().next().expect("length checked");
+            let audit = leaf.audit.ok_or_else(|| EnumerateError::Malformed {
+                plugin: conn.surface.clone(),
+                reason: format!(
+                    "audit leaf {} omitted recovered body",
+                    memento_locus_display(&definition.memento)
+                ),
+            })?;
+            merge_recovered_audit_leaf(
+                &conn.surface,
+                audit,
+                &mut panics,
+                &mut effects,
+                &mut suppressed,
+            )?;
+            audit_leaves_completed += 1;
         }
+    }
+    if source_bodies_demanded != source_files_enumerated {
+        return Err(EnumerateError::Malformed {
+            plugin: conn.surface.clone(),
+            reason: format!(
+                "source body census mismatch: enumerated={source_files_enumerated} demanded={source_bodies_demanded}"
+            ),
+        }
+        .into());
     }
     Ok(json!({
         "kind": "recovered-construction-audit",
         "recoveryOverride": true,
-        "status": if panics.is_empty() { "clean" } else { "failed" },
+        "status": if source_files_enumerated == 0 {
+            "valid-empty"
+        } else if panics.is_empty() {
+            "complete"
+        } else {
+            "failed"
+        },
+        "census": {
+            "kind": "recovered-frontier-census",
+            "sourceFilesEnumerated": source_files_enumerated,
+            "sourceBodiesDemanded": source_bodies_demanded,
+            "auditLeavesCompleted": audit_leaves_completed,
+        },
         "panics": panics,
         "effects": effects,
         "suppressedDescendants": suppressed,
     }))
+}
+
+fn merge_recovered_audit_leaf(
+    plugin: &str,
+    audit: Value,
+    panics: &mut Vec<Value>,
+    effects: &mut Vec<Value>,
+    suppressed: &mut Vec<Value>,
+) -> Result<(), KitError> {
+    let malformed = |reason: String| {
+        KitError::from(EnumerateError::Malformed {
+            plugin: plugin.to_string(),
+            reason,
+        })
+    };
+    if audit.get("kind").and_then(Value::as_str) != Some("recovered-construction-audit")
+        || audit.get("recoveryOverride").and_then(Value::as_bool) != Some(true)
+    {
+        return Err(malformed(
+            "audit leaf is not a recovery-override construction audit".to_string(),
+        ));
+    }
+    let leaf_panics = audit
+        .get("panics")
+        .and_then(Value::as_array)
+        .ok_or_else(|| malformed("audit leaf panics must be an array".to_string()))?;
+    let leaf_effects = audit
+        .get("effects")
+        .and_then(Value::as_array)
+        .ok_or_else(|| malformed("audit leaf effects must be an array".to_string()))?;
+    let leaf_suppressed = audit
+        .get("suppressedDescendants")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            malformed("audit leaf suppressedDescendants must be an array".to_string())
+        })?;
+    let expected_status = if leaf_panics.is_empty() {
+        "clean"
+    } else {
+        "failed"
+    };
+    if audit.get("status").and_then(Value::as_str) != Some(expected_status) {
+        return Err(malformed(format!(
+            "audit leaf status must be {expected_status} for panics={}",
+            leaf_panics.len()
+        )));
+    }
+    panics.extend(leaf_panics.iter().cloned());
+    effects.extend(leaf_effects.iter().cloned());
+    suppressed.extend(leaf_suppressed.iter().cloned());
+    Ok(())
 }
 
 impl Kit {
@@ -1151,8 +1317,9 @@ impl CallSite {
         EdgeTarget::Unbound
     }
 
-    /// Demand this call site's one obligation node. A dangling symbol is a
-    /// named `status=unjoined` node, never an empty success or seek miss.
+    /// Demand this exact call site's implication question. The producer returns
+    /// candidate input only; this coordinator invokes the pure one-edge linker
+    /// worker, which owns join, obligation mint, and status.
     pub fn implication(&self) -> Result<Implication, KitError> {
         let (nodes, gaps) = enumerate_rpc(
             &self.conn,
@@ -1178,16 +1345,48 @@ impl CallSite {
                 }
             })
         })?;
-        let audit = node.audit.ok_or_else(|| {
+        let question_audit = node.audit.ok_or_else(|| {
             KitError::from(EnumerateError::Malformed {
                 plugin: self.conn.surface.clone(),
-                reason: "implication node missing audit testimony".to_string(),
+                reason: "implication question missing audit testimony".to_string(),
             })
         })?;
+        let answer = match node.payload {
+            Some(payload) => {
+                let demand: sugar_linker::ImplicationDemand = serde_json::from_value(payload)
+                    .map_err(|error| {
+                        KitError::from(EnumerateError::Malformed {
+                            plugin: self.conn.surface.clone(),
+                            reason: format!("implication question payload is invalid: {error}"),
+                        })
+                    })?;
+                serde_json::to_value(sugar_linker::demand_implication(demand)).map_err(|error| {
+                    KitError::from(EnumerateError::Malformed {
+                        plugin: self.conn.surface.clone(),
+                        reason: format!("implication answer cannot serialize: {error}"),
+                    })
+                })?
+            }
+            None => json!({
+                "sourceContract": question_audit.get("sourceContract").cloned().unwrap_or_else(|| Value::String("<unknown caller>".into())),
+                "targetContract": Value::Null,
+                "targetSymbol": question_audit.get("targetSymbol").cloned().unwrap_or_else(|| Value::String("unknown".into())),
+                "status": "unjoined",
+                "reason": "demanded implication question carried no linker input",
+                "obligation": Value::Null,
+            }),
+        };
+        let payload = answer
+            .get("obligation")
+            .filter(|value| !value.is_null())
+            .cloned();
         Ok(Implication {
-            memento: node.memento,
-            audit,
-            payload: node.payload,
+            // The consumer-owned replay key is the question identity. Never let
+            // a producer substitute another callsite memento in the answer.
+            memento: self.memento.clone(),
+            surface: self.conn.surface.clone(),
+            audit: answer,
+            payload,
         })
     }
 }
