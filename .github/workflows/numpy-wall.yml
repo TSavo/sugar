@@ -40,7 +40,16 @@ jobs:
       - name: Mint recovered NumPy frontier
         id: wall
         shell: bash
+        env:
+          SUGAR_ENGINE_LOG: ${{ github.workspace }}/.sugar/numpy-wall-logs/engine.jsonl
+          SUGAR_ENGINE_HEARTBEAT_SECONDS: "5"
+          SUGAR_ENGINE_CYCLE_THRESHOLD: "8"
+          SUGAR_KIT_LOG: ${{ github.workspace }}/.sugar/numpy-wall-logs/transport.jsonl
+          SUGAR_KIT_LOG_LEVEL: INFO
         run: |
+          mkdir -p .sugar/numpy-wall-logs
+          : > "$SUGAR_ENGINE_LOG"
+          : > "$SUGAR_KIT_LOG"
           set +e
           make numpy-wall
           wall_exit=$?
@@ -67,5 +76,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: numpy-wall
-          path: .sugar/numpy-wall/
+          path: |
+            .sugar/numpy-wall-logs/engine.jsonl
+            .sugar/numpy-wall-logs/transport.jsonl
+            .sugar/numpy-wall/
           if-no-files-found: error
