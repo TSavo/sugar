@@ -9,7 +9,6 @@ from factory_reduce import compose_block
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
 
@@ -52,10 +51,8 @@ def test_bitor_attribute_annotation_uses_attribute_owner() -> None:
     )
 
 
-def test_bitor_subscript_augassign_stays_loud() -> None:
-    with pytest.raises(FactoryPanic) as raised:
-        _build("xs[0] |= 1")
-    assert raised.value.info.observed == "AugAssign"
+def test_bitor_subscript_augassign_uses_residual_store_owner() -> None:
+    assert type(_build("xs[0] |= 1")).__name__ == ("ResidualSubscriptAugAssignSugar")
 
 
 def test_nested_tuple_unpack_recursively_projects_names() -> None:
