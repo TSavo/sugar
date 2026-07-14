@@ -61,9 +61,7 @@ def resolve_equality_atom(
     stated = py_eq(left_term, right_term)
     if {left_sort, right_sort} == {"Int", "Real"}:
         int_term, real_term = (
-            (left_term, right_term)
-            if left_sort == "Int"
-            else (right_term, left_term)
+            (left_term, right_term) if left_sort == "Int" else (right_term, left_term)
         )
         # This is an explicit platform bridge carried beside the stated py.eq;
         # no term is silently cast and no mixed-sort bare equality is built.

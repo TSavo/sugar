@@ -855,9 +855,7 @@ def _memento_matches(candidate: Dict[str, Any], target: Dict[str, Any]) -> bool:
     return True
 
 
-def _call_site_seek_matches(
-    candidate: Dict[str, Any], target: Dict[str, Any]
-) -> bool:
+def _call_site_seek_matches(candidate: Dict[str, Any], target: Dict[str, Any]) -> bool:
     """Match a typed call-site cursor by its durable source locus.
 
     Rust ``SourceMemento`` stores one function spelling. Decoding a call-site
@@ -1622,9 +1620,7 @@ def audit_lift_file(
                     "total": definition_total,
                     "rows_added": len(rows),
                     "rows": len(payload.ir),
-                    "elapsed_ms": round(
-                        (time.monotonic() - rows_started) * 1000, 3
-                    ),
+                    "elapsed_ms": round((time.monotonic() - rows_started) * 1000, 3),
                 },
             )
         except FactoryPanic as panic:
@@ -1691,9 +1687,7 @@ def audit_lift_file(
         extra={
             "stage": "lift_file.conservation",
             "file": filename,
-            "elapsed_ms": round(
-                (time.monotonic() - conservation_started) * 1000, 3
-            ),
+            "elapsed_ms": round((time.monotonic() - conservation_started) * 1000, 3),
         },
     )
     object.__setattr__(payload, "source_factory_conservation", conservation)
@@ -2474,9 +2468,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         fol_sym = _contract_bridge_identity(call_item)
                         if fol_sym is not None and fol_sym not in candidates:
                             candidates.append(fol_sym)
-                        matches: Dict[
-                            tuple[Any, Any], tuple[Dict[str, Any], str]
-                        ] = {}
+                        matches: Dict[tuple[Any, Any], tuple[Dict[str, Any], str]] = {}
                         for bridge in candidates:
                             for universe_item in universe_items:
                                 if _universe_bridge_matches(
@@ -2489,7 +2481,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                                         universe_item.get("name")
                                         or universe_item.get("bridgeSourceSymbol"),
                                     )
-                                    matches.setdefault(identity, (universe_item, bridge))
+                                    matches.setdefault(
+                                        identity, (universe_item, bridge)
+                                    )
                         if len(matches) == 1:
                             matched, resolved_bridge = next(iter(matches.values()))
                             _send_enumerate_result(
@@ -2674,9 +2668,7 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
                     "file": rel_path,
                     "index": file_index,
                     "contracts": len(payload.ir),
-                    "elapsed_ms": round(
-                        (time.monotonic() - file_started) * 1000, 3
-                    ),
+                    "elapsed_ms": round((time.monotonic() - file_started) * 1000, 3),
                 },
             )
         rpc_started = time.monotonic()
@@ -2748,9 +2740,7 @@ def _merge_source_ledger(
         current[key] = current.get(key, 0) + int(value)
 
 
-def _merge_symbol_kinds(
-    current: Dict[str, str], incoming: Dict[str, str]
-) -> None:
+def _merge_symbol_kinds(current: Dict[str, str], incoming: Dict[str, str]) -> None:
     from sugar_lift_py_tests.ir import merge_constructor_symbol_kind
 
     for symbol, kind in incoming.items():

@@ -96,9 +96,7 @@ def test_interned_terms_are_immutable(monkeypatch) -> None:
 
 def test_constructor_symbol_kind_does_not_change_term_identity_or_wire() -> None:
     with term_intern_scope():
-        coordinate = ctor(
-            "call:vendor_open_name", [], symbol_kind="method-coordinate"
-        )
+        coordinate = ctor("call:vendor_open_name", [], symbol_kind="method-coordinate")
     with term_intern_scope():
         builtin = ctor("call:vendor_open_name", [], symbol_kind="builtin")
 
@@ -138,24 +136,16 @@ def test_lift_collects_constructor_testimony_once_per_spelling(monkeypatch) -> N
 
     payload = lift_file_payload("def f(): pass\n", "sidecar.py")
 
-    assert payload.symbol_kinds == {
-        "call:vendor_open_name": "method-coordinate"
-    }
+    assert payload.symbol_kinds == {"call:vendor_open_name": "method-coordinate"}
 
 
 def test_contract_testimony_refines_coordinate_for_one_spelling() -> None:
     with term_intern_scope():
-        coordinate = ctor(
-            "call:resolved_later", [], symbol_kind="method-coordinate"
-        )
-        contract = ctor(
-            "call:resolved_later", [], symbol_kind="contract-target"
-        )
+        coordinate = ctor("call:resolved_later", [], symbol_kind="method-coordinate")
+        contract = ctor("call:resolved_later", [], symbol_kind="contract-target")
 
         assert coordinate is contract
-        assert constructor_symbol_kinds() == {
-            "call:resolved_later": "contract-target"
-        }
+        assert constructor_symbol_kinds() == {"call:resolved_later": "contract-target"}
 
 
 def test_builtin_and_method_testimony_meet_at_coordinate() -> None:

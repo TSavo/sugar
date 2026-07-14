@@ -149,9 +149,7 @@ def third():
         panics.extend(leaf["panics"])
 
     owned = [
-        panic
-        for panic in panics
-        if panic["gap"]["owner"] == "enumeration-seed-fixture"
+        panic for panic in panics if panic["gap"]["owner"] == "enumeration-seed-fixture"
     ]
     assert len(owned) == 1, owned
 
@@ -556,9 +554,9 @@ def test_add():
         or n["memento"].get("source_function_name"): n["memento"]
         for n in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
     }
-    call_site_memento = _enumerate(
-        "call_sites", tmp_path, at=functions["test_add"]
-    )["nodes"][0]["memento"]
+    call_site_memento = _enumerate("call_sites", tmp_path, at=functions["test_add"])[
+        "nodes"
+    ][0]["memento"]
 
     result = _enumerate("universe", tmp_path, at=call_site_memento, seek=True)
 
