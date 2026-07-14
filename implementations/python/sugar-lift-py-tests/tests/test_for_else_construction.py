@@ -71,6 +71,37 @@ def test_for_else_projects_the_loop_curry_without_break_substitution() -> None:
     assert value.loop_scope.callsite.parameters[-1] == "__break__"
 
 
+def test_nested_loop_break_is_not_owned_by_outer_for_else() -> None:
+    direct_break = (
+        "for item in items:\n"
+        "    if item:\n"
+        "        break\n"
+        "else:\n"
+        "    return 1\n"
+    )
+    nested_break = (
+        "for item in items:\n"
+        "    for inner in item:\n"
+        "        break\n"
+        "else:\n"
+        "    return 1\n"
+    )
+
+    assert _build(direct_break).sugar.has_break is True
+    assert _build(nested_break).sugar.has_break is False
+
+
+def test_break_ownership_stops_at_function_and_class_boundaries() -> None:
+    nested_scopes = (
+        "    def helper():\n        while True:\n            break\n",
+        "    class Helper:\n        while True:\n            break\n",
+    )
+
+    for nested_scope in nested_scopes:
+        source = "for item in items:\n" + nested_scope + "else:\n    return 1\n"
+        assert _build(source).sugar.has_break is False
+
+
 def test_starred_for_else_target_remains_a_loud_factory_gap() -> None:
     source = "for head, *rest in items:\n    break\nelse:\n    return 1\n"
     with pytest.raises(FactoryPanic, match="observed=For requested=statement"):
