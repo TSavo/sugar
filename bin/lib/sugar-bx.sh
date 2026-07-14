@@ -137,7 +137,7 @@ sugar_bx_run_docker() {
     --workdir "$remote_cwd"
     --env SUGAR_BIN=/opt/sugar/bin/sugar
     --env SUGAR_BINARY_DIR=/opt/sugar/bin
-    --env PATH=/opt/sugar/bin:/root/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+    --env PATH=/opt/sugar/bin:/opt/java/bin:/root/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
     --mount "type=bind,src=$workspace_source,dst=/workspace/sugar"
     --mount "type=bind,src=$artifacts_source,dst=/opt/sugar/bin,readonly"
     --mount "type=bind,src=$manifest_source,dst=/opt/sugar/required-artifacts.json,readonly")

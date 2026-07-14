@@ -7,11 +7,12 @@ python = "3.12.13"
 black = "26.5.1"
 pyright = "1.1.411"
 b3sum = "1.8.1"
+pytest = "9.1.1"
 z3 = "4.8.12"
-coq = "8.18.0"
+coq = "8.16.1"
 numpy = "2.5.1"
 pandas = "3.0.3"
-java = "21"
+java = "21.0.9"
 maven = "3.8.7"
 node = "22.17.1"
 pnpm = "10.13.1"
@@ -19,6 +20,8 @@ vampire = "5.0.1"
 
 [capabilities.core]
 depends = []
+[capabilities.python-test]
+depends = ["core"]
 [capabilities.solver-z3]
 depends = ["core"]
 [capabilities.solver-coq]
@@ -34,14 +37,16 @@ depends = ["core"]
 
 [images.core]
 reference = "ghcr.io/tsavo/sugar-env@sha256:b8af4d5631bc34bea951a1ed5da391fbdc5efd4763941def40840f05292960a4"
+[images."core,python-test"]
+reference = "ghcr.io/tsavo/sugar-env@sha256:12ca8a6768630ae70afb37d63a48b5035da365c4c2fe4cd99117ae4327932674"
 
 [tasks.python-unit]
-capabilities = ["core"]
-binaries = []
+capabilities = ["python-test"]
+binaries = ["sugar"]
 command = ["python", "-m", "pytest"]
 
 [tasks.python-lift]
-capabilities = ["python-scientific", "solver-z3"]
+capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
 command = ["python", "-m", "pytest"]
 

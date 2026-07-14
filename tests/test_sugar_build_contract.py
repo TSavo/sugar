@@ -26,9 +26,10 @@ def test_core_versions_are_exact(tmp_path):
     assert result["tools"] == {
         "rust": "1.96.0", "cargo": "1.96.0", "python": "3.12.13",
         "black": "26.5.1", "pyright": "1.1.411", "b3sum": "1.8.1",
-        "z3": "4.8.12", "coq": "8.18.0", "numpy": "2.5.1",
-        "pandas": "3.0.3", "java": "21", "maven": "3.8.7",
+        "z3": "4.8.12", "coq": "8.16.1", "numpy": "2.5.1",
+        "pandas": "3.0.3", "java": "21.0.9", "maven": "3.8.7",
         "node": "22.17.1", "pnpm": "10.13.1", "vampire": "5.0.1",
+        "pytest": "9.1.1",
     }
 
 
@@ -47,6 +48,7 @@ def test_declared_tool_versions_have_exact_syntax_and_capability_mapping(tmp_pat
         "java": ("java", "maven"),
         "node": ("node", "pnpm"),
         "python-scientific": ("numpy", "pandas"),
+        "python-test": ("pytest",),
         "solver-coq": ("coq",),
         "solver-z3": ("z3",),
         "vampire": ("vampire",),
@@ -65,14 +67,16 @@ def test_initial_named_tasks_always_have_commands(name):
     assert task["command"]
 
 
-def test_python_unit_is_a_managed_core_task():
+def test_python_unit_has_a_distinct_published_test_runtime():
     task = contract.resolve_task("python-unit")
     assert task == {
-        "binaries": [],
-        "capabilities": ["core"],
+        "binaries": ["sugar"],
+        "capabilities": ["core", "python-test"],
         "command": ["python", "-m", "pytest"],
         "task": "python-unit",
     }
+    environment = contract.resolve_environment("docker:" + ",".join(task["capabilities"]))
+    assert environment["image"] == "ghcr.io/tsavo/sugar-env@sha256:12ca8a6768630ae70afb37d63a48b5035da365c4c2fe4cd99117ae4327932674"
 
 
 def test_bpytest_does_not_select_named_task_before_python_unit_closure_exists():
@@ -83,16 +87,18 @@ def test_bpytest_does_not_select_named_task_before_python_unit_closure_exists():
 
 def test_pyright_private_node_is_not_the_node_capability():
     dockerfile = (ROOT / "tools/sugar-build/Dockerfile").read_text()
-    assert "FROM core AS node" in dockerfile
-    node_stage = dockerfile.split("FROM core AS node", 1)[1]
+    node_stage = dockerfile.split("FROM python-lift-closure AS examples-closure", 1)[1]
     assert "ARG NODE_VERSION=" in node_stage
     assert "PYRIGHT_NODE_VERSION" not in node_stage
 
 
-def test_unbuilt_coq_and_java_capabilities_have_no_fake_docker_stages():
+def test_coq_and_java_capabilities_have_executable_docker_stages():
     dockerfile = (ROOT / "tools/sugar-build/Dockerfile").read_text()
-    assert " AS solver-coq" not in dockerfile
-    assert " AS java" not in dockerfile
+    assert " AS examples-closure" in dockerfile
+    assert 'coq="${COQ_DEBIAN_VERSION}"' in dockerfile
+    assert 'maven="${MAVEN_DEBIAN_VERSION}"' in dockerfile
+    assert "java --version" in dockerfile and "mvn --version" in dockerfile
+    assert "coqc --version" in dockerfile
 
 
 def test_docker_capability_defaults_match_contract_versions():
@@ -104,9 +110,16 @@ def test_docker_capability_defaults_match_contract_versions():
         "NODE_VERSION": "node",
         "PNPM_VERSION": "pnpm",
         "VAMPIRE_VERSION": "vampire",
+        "PYTEST_VERSION": "pytest",
     }.items():
         assert re.search(rf"^ARG {argument}={re.escape(tools[tool])}$", dockerfile, re.MULTILINE)
     assert f'ARG Z3_DEBIAN_VERSION={tools["z3"]}-3.1' in dockerfile
+
+
+def test_named_task_closures_have_explicit_build_targets():
+    dockerfile = (ROOT / "tools/sugar-build/Dockerfile").read_text()
+    for target in ("python-test", "solver-z3", "python-lift-closure", "examples-closure"):
+        assert f" AS {target}" in dockerfile
 
 
 def test_capability_order_does_not_change_digest_input(tmp_path):
