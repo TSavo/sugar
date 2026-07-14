@@ -74,27 +74,40 @@ class AttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _assign(self, receiver, value, key, ctx):
-        from sugar_lift_py_tests.floor import ObjectValue, StringValue
-
-        if isinstance(receiver, ObjectValue):
-            descriptor = receiver.class_field_value(self.field_name)
-            if isinstance(descriptor, ObjectValue) and descriptor.has_method("__set__"):
-                return descriptor.call_method_value(
-                    "__set__",
-                    (receiver, value),
-                    owner=type(self).__name__,
-                    blame=str(self.site),
-                    ctx=ctx,
-                )
-            if receiver.has_method("__setattr__"):
-                return receiver.call_method_value(
-                    "__setattr__",
-                    (StringValue(self.field_name), value),
-                    owner=type(self).__name__,
-                    blame=str(self.site),
-                    ctx=ctx,
-                )
-        return Complete(ScopeRebind(key, value))
+        return assign_attribute_value(
+            receiver=receiver,
+            field_name=self.field_name,
+            value=value,
+            key=key,
+            site=self.site,
+            ctx=ctx,
+            owner=type(self).__name__,
+        )
 
     def walk_children(self):
         return (self.receiver, self.value)
+
+
+def assign_attribute_value(*, receiver, field_name, value, key, site, ctx, owner):
+    """The one attribute-store door shared by plain and augmented assignment."""
+    from sugar_lift_py_tests.floor import ObjectValue, StringValue
+
+    if isinstance(receiver, ObjectValue):
+        descriptor = receiver.class_field_value(field_name)
+        if isinstance(descriptor, ObjectValue) and descriptor.has_method("__set__"):
+            return descriptor.call_method_value(
+                "__set__",
+                (receiver, value),
+                owner=owner,
+                blame=str(site),
+                ctx=ctx,
+            )
+        if receiver.has_method("__setattr__"):
+            return receiver.call_method_value(
+                "__setattr__",
+                (StringValue(field_name), value),
+                owner=owner,
+                blame=str(site),
+                ctx=ctx,
+            )
+    return Complete(ScopeRebind(key, value))
