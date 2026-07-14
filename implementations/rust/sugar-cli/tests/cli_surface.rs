@@ -985,7 +985,7 @@ done
 }
 
 #[test]
-fn lift_visual_report_header_names_call_edges_and_implications_by_kind() {
+fn lift_visual_report_header_names_observed_occurrences_and_demanded_questions() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let project = dir.path().join("project");
     let manifest_dir = project.join(".sugar/lift/python");
@@ -1044,23 +1044,17 @@ done
         "lift report JSON should succeed\nstdout:\n{json_stdout}\nstderr:\n{json_stderr}"
     );
     let report: serde_json::Value = serde_json::from_str(&json_stdout).expect("report JSON parses");
-    let call_edges = report["callEdges"].as_array().expect("callEdges array");
-    let regular_call_edges = call_edges
+    let observed_occurrences = report["callEdges"]
+        .as_array()
+        .expect("callEdges observed-occurrence array");
+    let demanded_questions = report["demandedQuestions"]
+        .as_array()
+        .expect("demandedQuestions array");
+    let demanded_resolved = demanded_questions
         .iter()
-        .filter(|edge| edge["kind"].as_str() == Some("call-edge"))
+        .filter(|question| question["status"].as_str() != Some("unjoined"))
         .count();
-    let resolved_call_edges = call_edges
-        .iter()
-        .filter(|edge| {
-            edge["kind"].as_str() == Some("call-edge")
-                && edge["targetContractCid"].as_str().is_some()
-        })
-        .count();
-    let dangling_call_edges = regular_call_edges - resolved_call_edges;
-    let implications = call_edges
-        .iter()
-        .filter(|edge| edge["kind"].as_str() == Some("implication"))
-        .count();
+    let demanded_dangling = demanded_questions.len() - demanded_resolved;
 
     let visual_output = output_retrying_etxtbsy(
         Command::new(sugar_bin())
@@ -1081,24 +1075,34 @@ done
         .unwrap_or_else(|| panic!("visual report must include report sections header: {visual}"));
 
     assert!(
-        header.contains(&format!("call edges total={regular_call_edges}")),
-        "header must name regular call-edge rows separately from implication rows; header={header}; report callEdges={call_edges:#?}"
+        header.contains(&format!(
+            "observed occurrences total={}",
+            observed_occurrences.len()
+        )),
+        "header observed-occurrence census must equal report.callEdges rows; header={header}; observedOccurrences={observed_occurrences:#?}"
     );
     assert!(
-        header.contains(&format!("call edges resolved={resolved_call_edges}")),
-        "header must name resolved regular call-edge rows; header={header}; report callEdges={call_edges:#?}"
+        header.contains(&format!(
+            "demanded questions total={}",
+            demanded_questions.len()
+        )),
+        "header demanded-question census must equal report.demandedQuestions rows; header={header}; demandedQuestions={demanded_questions:#?}"
     );
     assert!(
-        header.contains(&format!("call edges dangling={dangling_call_edges}")),
-        "header must name dangling regular call-edge rows; header={header}; report callEdges={call_edges:#?}"
+        header.contains(&format!(
+            "demanded questions resolved={demanded_resolved}"
+        )),
+        "header must name resolved demanded questions; header={header}; demandedQuestions={demanded_questions:#?}"
     );
     assert!(
-        header.contains(&format!("implications={implications}")),
-        "header implications must equal callEdges rows with kind=implication, not the total call-edge display bucket; header={header}; report callEdges={call_edges:#?}"
+        header.contains(&format!(
+            "demanded questions dangling={demanded_dangling}"
+        )),
+        "header must name dangling demanded questions; header={header}; demandedQuestions={demanded_questions:#?}"
     );
     assert!(
-        !header.contains(&format!("implications={}", call_edges.len())),
-        "header must not label total callEdges as implications; header={header}; report callEdges={call_edges:#?}"
+        !header.contains("call edges total=") && !header.contains("implications="),
+        "header must not alias observed occurrences and demanded questions under old units; header={header}"
     );
 }
 
