@@ -1049,6 +1049,17 @@ impl MintKit {
                         refusal.header.failure_kind, refusal.header.failure_detail
                     )))
                 }
+                Err(LiftPluginError::FatalFactoryPanic(error)) => {
+                    return Err(KitError::Terminal {
+                        kind: "FactoryPanic".to_string(),
+                        detail: json!({
+                            "code": error.code,
+                            "message": error.message,
+                            "stage": error.stage,
+                            "diagnostic": error.diagnostic,
+                        }),
+                    })
+                }
                 Err(LiftPluginError::Diagnostic(error)) => {
                     return Err(KitError::Transformation(error.to_string()))
                 }
@@ -1139,6 +1150,17 @@ impl MintKit {
                         refusal.header.failure_kind, refusal.header.failure_detail
                     )))
                 }
+                Err(LiftPluginError::FatalFactoryPanic(error)) => {
+                    return Err(KitError::Terminal {
+                        kind: "FactoryPanic".to_string(),
+                        detail: json!({
+                            "code": error.code,
+                            "message": error.message,
+                            "stage": error.stage,
+                            "diagnostic": error.diagnostic,
+                        }),
+                    })
+                }
                 Err(LiftPluginError::Diagnostic(error)) => {
                     return Err(KitError::Transformation(error.to_string()))
                 }
@@ -1206,6 +1228,17 @@ impl MintKit {
                         "{}: {}",
                         refusal.header.failure_kind, refusal.header.failure_detail
                     )))
+                }
+                Err(LiftPluginError::FatalFactoryPanic(error)) => {
+                    return Err(KitError::Terminal {
+                        kind: "FactoryPanic".to_string(),
+                        detail: json!({
+                            "code": error.code,
+                            "message": error.message,
+                            "stage": error.stage,
+                            "diagnostic": error.diagnostic,
+                        }),
+                    })
                 }
                 Err(LiftPluginError::Diagnostic(error)) => {
                     return Err(KitError::Transformation(error.to_string()))
@@ -2534,6 +2567,7 @@ fn dispatch_report_lift_plugin(
                 "{}: {}",
                 refusal.header.failure_kind, refusal.header.failure_detail
             ),
+            LiftPluginError::FatalFactoryPanic(error) => error.to_string(),
             LiftPluginError::Diagnostic(error) => error.to_string(),
         })?;
     let mut response = session
