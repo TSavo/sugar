@@ -194,17 +194,33 @@ def _loaded_names(node: ast.AST | None) -> set[str]:
     }
 
 
-def _ctx_with_required_module_values(
+def _function_definition_dependencies(
+    statement: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> set[str]:
+    """Names Python evaluates while constructing a function definition.
+
+    A function body is deferred, but decorators are evaluated in the defining
+    module when the ``def`` statement executes.  Keep that temporal boundary
+    explicit: body globals belong to later call/dig construction and must not
+    make an unrelated decorator seed eagerly construct them.
+    """
+    needed: set[str] = set()
+    for decorator in statement.decorator_list:
+        needed.update(_loaded_names(decorator))
+    return needed
+
+
+def _ctx_with_required_module_bindings(
     statements: list[ast.stmt],
     target_index: int,
-    target_value: ast.AST,
+    needed: set[str],
     *,
     source: str,
     sourcefile: str,
     ctx: Any,
     resolving: frozenset[str],
 ):
-    """Construct the target assignment's lexical module values, need-first.
+    """Construct a target node's lexical module bindings, need-first.
 
     The imported value belongs to its defining module, not to the consumer's
     temporal. Reverse selection finds only prerequisite declarations; forward
@@ -222,7 +238,7 @@ def _ctx_with_required_module_values(
 
     # Imported values are constructed in the defining module's lexical frame.
     # Consumer locals are not module globals and must never satisfy these Names.
-    needed = _loaded_names(target_value)
+    needed = set(needed)
 
     selected: list[ast.stmt] = []
     for statement in reversed(statements[:target_index]):
@@ -335,18 +351,27 @@ def resolve_install_source_value(
             isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
             and statement.name == attr
         ):
-            body = ctx.build_body(
+            module_ctx = _ctx_with_required_module_bindings(
+                parsed.body,
+                target_index,
+                _function_definition_dependencies(statement),
+                source=source,
+                sourcefile=sourcefile,
+                ctx=ctx,
+                resolving=resolving,
+            )
+            body = module_ctx.build_body(
                 SourceFragment.from_node(statement, sourcefile, source=source),
                 SugarRole.STATEMENT,
             )
             return complete_value(
-                body.reduce(ctx), owner="install-source imported function"
+                body.reduce(module_ctx), owner="install-source imported function"
             )
         if value_node is not None:
-            module_ctx = _ctx_with_required_module_values(
+            module_ctx = _ctx_with_required_module_bindings(
                 parsed.body,
                 target_index,
-                value_node,
+                _loaded_names(value_node),
                 source=source,
                 sourcefile=sourcefile,
                 ctx=ctx,
