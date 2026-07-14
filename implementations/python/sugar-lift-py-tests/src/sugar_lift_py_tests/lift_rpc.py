@@ -10,7 +10,7 @@ import time
 import traceback
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -955,13 +955,8 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     rows (no post, no contract). Enumeration is functions by design: module
     statements no FunctionDefSugar owns are not lifted here.
 
-    Report path (AGENTS.md match-trace doctrine): holds per-def FactoryPanic
-    via `audit_lift_file(hold_panic=True)` and projects each held gap as a
-    FactoryWalkRedRowDto so --report --visual paints the None arm red. The
-    panic itself stays sacred outside this door (desugar/reduce never catch
-    it). Enumeration reuses this door so a broken def yields partial IR + red
-    walk rows rather than crashing the LSP -- hold_panic=False remains for
-    callers that demand the loud abort.
+    Mandatory FactoryPanic is fail-fast here. Diagnostic continuation is a
+    separate `RecoveredAuditDto` lane and can never be returned from this door.
     """
     from sugar_lift_py_tests.ir import constructor_symbol_kinds, term_intern_scope
 
@@ -970,7 +965,7 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
         _TRANSPORT_LOG.info(
             "lift_file_enter", extra={"stage": "lift_file.audit", "file": filename}
         )
-        payload, _gaps = audit_lift_file(source, filename, hold_panic=False)
+        payload, _gaps = audit_lift_file(source, filename)
         symbol_kinds = constructor_symbol_kinds()
         _TRANSPORT_LOG.info(
             "lift_file_exit",
@@ -1336,114 +1331,20 @@ def _audit_file_context(
     return context
 
 
-def _retain_stated_call_prefix(stmt, ctx, payload: LiftReportPayloadDto) -> None:
-    """Project call-bearing claims reached before a later function-body gap.
-
-    The per-def audit remains red for the original gap. This replay only retains
-    statements the factory completed before that gap, so an assertion such as
-    ``assert predicate(x)`` keeps its stated call coordinate and call edge even
-    when an unrelated later statement makes the enclosing post unconstructable.
-    If construction or reduction has not reached the assertion, the replay
-    stops at the same loud None arm and emits nothing.
-    """
-    from sugar_lift_py_tests.claim import SugarRole
-    from sugar_lift_py_tests.floor import (
-        BlockValue,
-        InvValue,
-        SymbolicValue,
-        UniverseValue,
-    )
-    from sugar_lift_py_tests.ir import make_var
-
-    temporal = ctx.temporal
-    formals = tuple(stmt.function_params())
-    for formal in formals:
-        temporal = temporal.bind_value(formal, SymbolicValue(make_var(formal)))
-    replay_ctx = dataclasses.replace(ctx, temporal=temporal)
-    function_name = stmt.function_name()
-    retained_loci: set[tuple[int, int]] = set()
-
-    def reads_rebound_name(assert_site) -> bool:
-        read_names = assert_site.assert_test().loaded_names()
-        rebound: set[str] = set()
-        for fragment in stmt.function_body():
-            if fragment.line == assert_site.line and fragment.col == assert_site.col:
-                break
-            rebound.update(fragment.stored_or_deleted_names())
-        return not read_names.isdisjoint(rebound)
-
-    def retain(entry) -> None:
-        test = entry.site.assert_test()
-        call_result_shape = test.observed == "Call" or (
-            test.observed == "Compare"
-            and (
-                test.compare_left().observed == "Call"
-                or any(
-                    operand.observed == "Call" for operand in test.compare_comparators()
-                )
-            )
-        )
-        if not call_result_shape or reads_rebound_name(entry.site):
-            return
-        locus = (entry.site.line, entry.site.col)
-        if locus in retained_loci:
-            return
-        retained_loci.add(locus)
-        partial = UniverseValue(
-            name=function_name,
-            formals=formals,
-            record=BlockValue((entry,)),
-        )
-        payload.ir.extend(partial.inv_payload_rows())
-        payload.call_edges.extend(entry.edge_contribution(function_name))
-
-    for fragment in stmt.function_body():
-        try:
-            body = replay_ctx.build_body(fragment, SugarRole.STATEMENT)
-            outcome = body.reduce(replay_ctx)
-        except FactoryPanic:
-            break
-        for entry in outcome.contribution():
-            if not isinstance(entry, InvValue) or not entry.operand_callsites:
-                continue
-            retain(entry)
-        replay_ctx = outcome.extend_scope(replay_ctx)
-
-    # A stated assertion over formals needs no derived execution history. Try
-    # direct assertion surfaces that sequential replay could not reach; any
-    # local binding dependency remains unbound and therefore panics loudly.
-    formal_ctx = dataclasses.replace(ctx, temporal=temporal)
-    for fragment in stmt.function_body():
-        if fragment.observed != "Assert":
-            continue
-        try:
-            outcome = formal_ctx.build_body(fragment, SugarRole.STATEMENT).reduce(
-                formal_ctx
-            )
-        except FactoryPanic:
-            continue
-        for entry in outcome.contribution():
-            if isinstance(entry, InvValue) and entry.operand_callsites:
-                retain(entry)
-
-
 def audit_lift_file(
     source: str,
     filename: str,
     *,
-    hold_panic: bool = True,
+    hold_panic: Literal[False] = False,
     recover_panics: bool = False,
     target_memento: Optional[Dict[str, Any]] = None,
     audit_context: Optional[_AuditFileContext] = None,
 ) -> tuple[LiftReportPayloadDto, list[AuditOnlyGap]] | RecoveredAuditDto:
-    """Per-def factory walk -- the ONE door that may hold FactoryPanic.
+    """Lift normally, or enumerate panics as a disjoint recovered audit.
 
-    For each FunctionDef / test def: try build + desugar + payload_rows.
-    On FactoryPanic (and only when hold_panic), record a structured gap row,
-    project a FactoryWalkRedRowDto onto factory_walk (so the existing visual
-    red-render path fires), and CONTINUE to the next def. Clean defs still
-    contribute their universe rows. hold_panic=False re-raises so true
-    production semantics stay loud when a caller asks.
+    The legacy ``hold_panic`` lane returned partial ``LiftReportPayloadDto``
+    values and is deliberately rejected. Only ``recover_panics=True`` may
+    continue, and that branch returns ``RecoveredAuditDto`` with no IR lane.
     """
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
@@ -1451,13 +1352,17 @@ def audit_lift_file(
     from sugar_lift_py_tests.outcome import complete_value
     from sugar_lift_py_tests.sugar_body import SugarBody
 
+    if hold_panic:
+        raise TypeError(
+            "hold_panic partial lift artifacts are retired; use "
+            "recover_panics=True for a diagnostic-only RecoveredAuditDto"
+        )
+
     payload = LiftReportPayloadDto(source_ledger={})
     gaps: list[AuditOnlyGap] = []
     recovered_panics: list[RecoveredFactoryPanicDto] = []
     recovered_effects: list[RecoveredEffectDto] = []
     suppressed_descendants: list[SuppressedAuditLocusDto] = []
-    if recover_panics:
-        hold_panic = True
     if audit_context is None:
         from sugar_lift_py_tests.canonicalizer import blake3_512_of
 
@@ -1466,7 +1371,7 @@ def audit_lift_file(
                 source,
                 filename,
                 blake3_512_of(source.encode()),
-                hold_seed_panics=hold_panic or recover_panics,
+                hold_seed_panics=recover_panics,
             )
         except ValueError:
             audit_context = None
@@ -1692,11 +1597,9 @@ def audit_lift_file(
                     ),
                 },
             )
-            if not hold_panic:
-                raise
             if not recover_panics:
-                _retain_stated_call_prefix(stmt, ctx, payload)
-            # ONE door: hold the panic, name the gap, paint it red, keep walking.
+                raise
+            # Diagnostic recovery records the panic but never returns `payload`.
             gap = gap_from_factory_panic(label, panic)
             gaps.append(gap)
             payload.factory_walk.append(_factory_walk_red_from_gap(gap))
@@ -2366,7 +2269,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     recovered = audit_lift_file(
                         source,
                         file_rel,
-                        hold_panic=True,
                         recover_panics=True,
                         target_memento=at,
                         audit_context=context,
