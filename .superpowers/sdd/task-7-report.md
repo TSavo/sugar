@@ -55,3 +55,26 @@ routes that already execute on battleaxe and run the requested real
 - Remaining unpublished closure-image gap: `R 6` closure families (seven
   capabilities, with Java/Maven one family); predicted `Epsilon R = -6` for the
   publication slice.
+
+## Safety correction
+
+The first Task 7 slice overstated readiness at two boundaries. This correction
+supersedes the wrapper-migration and executable-closure claims above:
+
+- `bin/bpytest` is back on its pre-Task-7 `bin/brun` route. The managed core
+  does not yet contain pytest, the editable Python kits, or Sugar, so selecting
+  `python-unit` there would replace a working path with an incomplete closure.
+- The non-installing `solver-coq` and `java` Docker placeholder stages were
+  removed. Their capability and exact-version declarations remain planning
+  inputs, but no Docker stage or image claims either executable exists.
+- `sugarbin explain` now prints the resolved immutable `docker_image` for a
+  closure that is actually built.
+- Exact-version validation now rejects ranges and other non-exact syntax for
+  every currently declared tool pin, and the capability-to-tool owner mapping
+  is executable contract data.
+- The fake comment saying Task 7 published `solver-z3` was removed. Missing
+  closure images continue to fail loudly.
+
+Corrected remaining state: executable closure publication remains `R 6`, and
+the `bpytest` named-route migration remains `R 1`. Neither is zero until real
+images and the complete `python-unit` runtime have been built and exercised.

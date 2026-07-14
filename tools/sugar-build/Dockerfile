@@ -38,25 +38,12 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && z3 --version
 
-FROM core AS solver-coq
-ARG COQ_VERSION=8.18.0
-# Coq's existing portfolio owner is Ubuntu 24.04's exact 8.18.0 package. Keep
-# this stage explicit until its Debian-compatible immutable closure is built.
-RUN test "${COQ_VERSION}" = "8.18.0"
-
 FROM core AS python-scientific
 ARG NUMPY_VERSION=2.5.1
 ARG PANDAS_VERSION=3.0.3
 RUN python -m pip install --no-cache-dir \
       numpy=="${NUMPY_VERSION}" pandas=="${PANDAS_VERSION}" \
  && python -c 'import numpy, pandas; print(numpy.__version__, pandas.__version__)'
-
-FROM core AS java
-ARG JAVA_VERSION=21
-ARG MAVEN_VERSION=3.8.7
-# Versions are first-class even though this closure still needs its immutable
-# Debian package revision adjudicated before publication.
-RUN test "${JAVA_VERSION}" = 21 && test "${MAVEN_VERSION}" = 3.8.7
 
 FROM core AS node
 ARG NODE_VERSION=22.17.1

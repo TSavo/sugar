@@ -152,6 +152,7 @@ dispatch_execution_subcommand() {
     printf 'capabilities=%s\n' "$task_capabilities"
     printf 'task=%s\n' "$task"
     printf 'needs=%s\n' "$needs"
+    printf 'docker_image=%s\n' "$docker_image"
     return 0
   fi
 

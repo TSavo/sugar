@@ -41,6 +41,21 @@ def test_every_capability_has_an_exact_version_owner():
         assert isinstance(tools[name], str) and tools[name]
 
 
+def test_declared_tool_versions_have_exact_syntax_and_capability_mapping(tmp_path):
+    assert contract.capability_tool_owners() == {
+        "core": ("black", "b3sum", "cargo", "pyright", "python", "rust"),
+        "java": ("java", "maven"),
+        "node": ("node", "pnpm"),
+        "python-scientific": ("numpy", "pandas"),
+        "solver-coq": ("coq",),
+        "solver-z3": ("z3",),
+        "vampire": ("vampire",),
+    }
+    text = (ROOT / "sugar-build.toml").read_text().replace('z3 = "4.8.12"', 'z3 = ">=4.8"')
+    with pytest.raises(ContractError, match="non-exact tool version: z3"):
+        contract.tool_versions(manifest(tmp_path, text))
+
+
 @pytest.mark.parametrize("name", [
     "python-unit", "python-lift", "rust-unit", "examples-gate", "pandas-wall",
     "numpy-wall", "restored-suite-scoreboard",
@@ -60,6 +75,12 @@ def test_python_unit_is_a_managed_core_task():
     }
 
 
+def test_bpytest_does_not_select_named_task_before_python_unit_closure_exists():
+    wrapper = (ROOT / "bin/bpytest").read_text()
+    assert 'exec "$brun"' in wrapper
+    assert "--task python-unit" not in wrapper
+
+
 def test_pyright_private_node_is_not_the_node_capability():
     dockerfile = (ROOT / "tools/sugar-build/Dockerfile").read_text()
     assert "FROM core AS node" in dockerfile
@@ -68,15 +89,18 @@ def test_pyright_private_node_is_not_the_node_capability():
     assert "PYRIGHT_NODE_VERSION" not in node_stage
 
 
+def test_unbuilt_coq_and_java_capabilities_have_no_fake_docker_stages():
+    dockerfile = (ROOT / "tools/sugar-build/Dockerfile").read_text()
+    assert " AS solver-coq" not in dockerfile
+    assert " AS java" not in dockerfile
+
+
 def test_docker_capability_defaults_match_contract_versions():
     dockerfile = (ROOT / "tools/sugar-build/Dockerfile").read_text()
     tools = contract.tool_versions()
     for argument, tool in {
-        "COQ_VERSION": "coq",
         "NUMPY_VERSION": "numpy",
         "PANDAS_VERSION": "pandas",
-        "JAVA_VERSION": "java",
-        "MAVEN_VERSION": "maven",
         "NODE_VERSION": "node",
         "PNPM_VERSION": "pnpm",
         "VAMPIRE_VERSION": "vampire",

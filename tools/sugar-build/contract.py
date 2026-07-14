@@ -12,6 +12,32 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONTRACT = ROOT / "sugar-build.toml"
 PUBLISHED_BINARIES = frozenset({"sugar", "sugar-ir-smt-lib"})
 IMMUTABLE_IMAGE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
+EXACT_TOOL_VERSION = {
+    "rust": re.compile(r"\d+\.\d+\.\d+"),
+    "cargo": re.compile(r"\d+\.\d+\.\d+"),
+    "python": re.compile(r"\d+\.\d+\.\d+"),
+    "black": re.compile(r"\d+\.\d+\.\d+"),
+    "pyright": re.compile(r"\d+\.\d+\.\d+"),
+    "b3sum": re.compile(r"\d+\.\d+\.\d+"),
+    "z3": re.compile(r"\d+\.\d+\.\d+"),
+    "coq": re.compile(r"\d+\.\d+\.\d+"),
+    "numpy": re.compile(r"\d+\.\d+\.\d+"),
+    "pandas": re.compile(r"\d+\.\d+\.\d+"),
+    "java": re.compile(r"\d+"),
+    "maven": re.compile(r"\d+\.\d+\.\d+"),
+    "node": re.compile(r"\d+\.\d+\.\d+"),
+    "pnpm": re.compile(r"\d+\.\d+\.\d+"),
+    "vampire": re.compile(r"\d+\.\d+\.\d+"),
+}
+CAPABILITY_TOOL_OWNERS = {
+    "core": ("black", "b3sum", "cargo", "pyright", "python", "rust"),
+    "java": ("java", "maven"),
+    "node": ("node", "pnpm"),
+    "python-scientific": ("numpy", "pandas"),
+    "solver-coq": ("coq",),
+    "solver-z3": ("z3",),
+    "vampire": ("vampire",),
+}
 
 
 class ContractError(ValueError):
@@ -34,6 +60,13 @@ def load_contract(path=DEFAULT_CONTRACT):
     for section in ("tools", "capabilities", "tasks"):
         if not isinstance(data.get(section), dict):
             raise ContractError(f"missing {section} table")
+    tools = data["tools"]
+    for name, version in tools.items():
+        pattern = EXACT_TOOL_VERSION.get(name)
+        if pattern is None:
+            raise ContractError(f"unknown tool version owner: {name}")
+        if not isinstance(version, str) or pattern.fullmatch(version) is None:
+            raise ContractError(f"non-exact tool version: {name}")
     return data
 
 
@@ -108,6 +141,10 @@ def resolve_task(name, path=DEFAULT_CONTRACT):
 
 def tool_versions(path=DEFAULT_CONTRACT):
     return dict(sorted(load_contract(path)["tools"].items()))
+
+
+def capability_tool_owners():
+    return dict(CAPABILITY_TOOL_OWNERS)
 
 
 def canonical_json(value):

@@ -5,9 +5,12 @@ usage() {
   cat <<'EOF'
 usage: bin/bpytest [pytest args...]
 
-Run pytest in the managed python-unit task on battleaxe. The wrapper remains a
-host-side compatibility surface; the named task owns the executable prefix and
-managed environment.
+Run pytest on battleaxe from the current repo-relative directory, via
+bin/brun. The remote Python kit env (pytest + editable installs of every
+implementations/python kit) is provisioned by `make bcargo-python-kit-env`
+on the remote side; the Rust `sugar` binary resolves there through
+bin/sugarbin, so a shelf/cell hit costs no compile and a miss builds on
+battleaxe — never on this machine.
 
 Examples (from implementations/python/sugar-lift-py-tests):
   ../../../bin/bpytest
@@ -24,9 +27,9 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-sugarbin="$script_dir/sugarbin"
-if [[ ! -x "$sugarbin" ]]; then
-  echo "bpytest: missing engine script: $sugarbin" >&2
+brun="$script_dir/brun"
+if [[ ! -x "$brun" ]]; then
+  echo "bpytest: missing engine script: $brun" >&2
   exit 2
 fi
 
@@ -37,4 +40,15 @@ if [[ -z "$repo_root" ]]; then
 fi
 repo_root="$(cd "$repo_root" && pwd -P)"
 
-exec "$sugarbin" run --host bx --task python-unit -- "$@"
+# Mirror brun's remote layout so the PATH prefix points at the remote Rust
+# target dirs (freshly built sugar binaries are callable by the suite).
+# These must stay in lockstep with bin/brun.
+_bpytest_root_tag="$(printf '%s' "$repo_root" | shasum 2>/dev/null | cut -c1-12)"
+_bpytest_root_tag="${_bpytest_root_tag:-default}"
+remote_root="${BCARGO_REMOTE_ROOT:-/home/tsavo/remote/sugar-bcargo-${_bpytest_root_tag}}"
+remote_repo="$remote_root/sugar"
+
+exec "$brun" \
+  --path-prefix "$remote_repo/implementations/rust/target/release" \
+  --path-prefix "$remote_repo/implementations/rust/target/debug" \
+  -- pytest "$@"
