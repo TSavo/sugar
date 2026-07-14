@@ -55,7 +55,15 @@ _TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
 # bytes at two seats. Descendant questions reuse this already-demanded file
 # result instead of reducing every definition again.
 _ENUMERATION_FILE_CONTEXTS: Dict[
-    str, Dict[str, tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]
+    str,
+    Dict[
+        str,
+        tuple[
+            List[Dict[str, Any]],
+            List[Dict[str, Any]],
+            Dict[str, Dict[str, Any]],
+        ],
+    ],
 ] = {}
 
 
@@ -894,15 +902,19 @@ def _universe_bridge_matches(candidate: Any, call_site_bridge: str) -> bool:
     )
 
 
-def _lift_file_for_enumeration(
-    workspace_root: str, root: Path, file_rel: str
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def _lift_file_for_enumeration(workspace_root: str, root: Path, file_rel: str) -> tuple[
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    Dict[str, Dict[str, Any]],
+]:
     """Lift ONE file server-side (Part 6 Phase 3: "it is ACCEPTABLE ... for
     the first cut to lift the WHOLE file ... and slice/serve the requested
     level from that one parse" -- file-granular laziness, not per-node wire
     laziness).
 
-    Returns `(ir_items, call_edges)` already through `to_rpc_value`:
+    Returns `(ir_items, call_edges, term_table)` from the same payload-owned
+    wire projection. Keeping the table beside the rows is construction law:
+    no enumeration slice may retain a term-ref after dropping its resolver.
     - `ir`: `kind="function-contract"` = function/universe rows;
       `kind="contract"` = claim rows that already bundle locus + formula
       (call-site ≡ assertion is **factory truth**, not a protocol fold —
@@ -934,7 +946,8 @@ def _lift_file_for_enumeration(
     file_rpc = file_payload.to_rpc()
     ir_items = file_rpc["ir"]
     call_edges = file_rpc["callEdges"]
-    result = (ir_items, call_edges)
+    term_table = file_rpc["termTable"]
+    result = (ir_items, call_edges, term_table)
     _ENUMERATION_FILE_CONTEXTS.setdefault(file_cid, {})[file_rel] = result
     _TRANSPORT_LOG.info(
         "enumeration_file_context_miss",
@@ -2109,16 +2122,145 @@ def _implication_node_for_callsite(
     }
 
 
+def _term_ref_cids(value: Any):
+    """Yield every term reference in a response-owned value.
+
+    A term-ref is a leaf in the wire graph. Malformed reference objects are
+    refused here, before a JSON-RPC response can be constructed.
+    """
+    if isinstance(value, dict):
+        if value.get("kind") == "term-ref":
+            cid = value.get("cid")
+            if not isinstance(cid, str) or not cid:
+                raise ValueError(
+                    "term position must be a `{kind: term-ref, cid}` object"
+                )
+            yield cid
+            return
+        for child in value.values():
+            yield from _term_ref_cids(child)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            yield from _term_ref_cids(child)
+
+
+def _closed_enumerate_result(
+    nodes: List[Dict[str, Any]],
+    gaps: List[Dict[str, Any]],
+    *,
+    term_tables: Optional[List[Dict[str, Dict[str, Any]]]] = None,
+) -> Dict[str, Any]:
+    """Construct one closed enumeration result or refuse it.
+
+    The response is the ownership boundary for its term DAG. Every reachable
+    term-ref brings exactly one canonical row with it; omitted/dangling tables,
+    cycles, conflicting rows, malformed children, and CID/content mismatch are
+    impossible to serialize through this constructor.
+    """
+    result: Dict[str, Any] = {"nodes": nodes, "gaps": gaps}
+    roots = tuple(dict.fromkeys(_term_ref_cids(result)))
+    if not roots:
+        return result
+    if term_tables is None:
+        raise ValueError(
+            "sugar.enumerate response contains term-ref but is missing required `termTable`"
+        )
+
+    merged: Dict[str, Dict[str, Any]] = {}
+    for table in term_tables:
+        if not isinstance(table, dict):
+            raise ValueError("sugar.enumerate `termTable` must be an object")
+        for cid, node in table.items():
+            if cid in merged and merged[cid] != node:
+                raise ValueError(
+                    f"term-table CID `{cid}` has conflicting producer rows"
+                )
+            merged[cid] = node
+
+    from sugar_lift_py_tests.canonicalizer import jcs_hash
+    from sugar_lift_py_tests.ir import _json_like_to_value
+
+    reachable: Dict[str, Dict[str, Any]] = {}
+    resolved: Dict[str, Dict[str, Any]] = {}
+    active: set[str] = set()
+
+    def resolve(cid: str) -> Dict[str, Any]:
+        cached = resolved.get(cid)
+        if cached is not None:
+            return cached
+        if cid in active:
+            raise ValueError(f"cyclic term-table reference at CID `{cid}`")
+        node = merged.get(cid)
+        if not isinstance(node, dict):
+            raise ValueError(f"missing term-table CID `{cid}`")
+        active.add(cid)
+        kind = node.get("kind")
+        if kind == "var":
+            if not isinstance(node.get("name"), str):
+                raise ValueError(f"term-table CID `{cid}` missing `name`")
+            canonical = {"kind": "var", "name": node["name"]}
+        elif kind == "const":
+            if "value" not in node or "sort" not in node:
+                raise ValueError(f"term-table CID `{cid}` missing const value or sort")
+            canonical = {
+                "kind": "const",
+                "value": node["value"],
+                "sort": node["sort"],
+            }
+        elif kind == "ctor":
+            if not isinstance(node.get("name"), str):
+                raise ValueError(f"term-table CID `{cid}` missing `name`")
+            args = node.get("args")
+            if not isinstance(args, list):
+                raise ValueError(f"term-table CID `{cid}` missing ctor args")
+            resolved_args = []
+            for reference in args:
+                if (
+                    not isinstance(reference, dict)
+                    or reference.get("kind") != "term-ref"
+                ):
+                    raise ValueError(
+                        f"term-table CID `{cid}` has invalid child: expected kind `term-ref`"
+                    )
+                child_cid = reference.get("cid")
+                if not isinstance(child_cid, str) or not child_cid:
+                    raise ValueError(f"term-table CID `{cid}` has invalid term-ref")
+                resolved_args.append(resolve(child_cid))
+            canonical = {
+                "kind": "ctor",
+                "name": node["name"],
+                "args": resolved_args,
+            }
+        else:
+            raise ValueError(f"term-table CID `{cid}` has unknown kind `{kind}`")
+        active.remove(cid)
+        actual = jcs_hash(_json_like_to_value(canonical))
+        if actual != cid:
+            raise ValueError(
+                f"term-table CID mismatch: key `{cid}` resolves to `{actual}`"
+            )
+        resolved[cid] = canonical
+        reachable[cid] = node
+        return canonical
+
+    for root in roots:
+        resolve(root)
+    result["termTable"] = reachable
+    return result
+
+
 def _send_enumerate_result(
     msg_id: Any,
     nodes: List[Dict[str, Any]],
     gaps: List[Dict[str, Any]],
+    *,
+    term_tables: Optional[List[Dict[str, Dict[str, Any]]]] = None,
 ) -> None:
     _send(
         {
             "jsonrpc": "2.0",
             "id": msg_id,
-            "result": {"nodes": nodes, "gaps": gaps},
+            "result": _closed_enumerate_result(nodes, gaps, term_tables=term_tables),
         }
     )
 
@@ -2313,7 +2455,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     started=demand_started,
                 )
                 return
-            ir_items, call_edges = _lift_file_for_enumeration(
+            ir_items, call_edges, term_table = _lift_file_for_enumeration(
                 workspace_root, root, file_rel
             )
 
@@ -2458,7 +2600,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             "payload": None,
                         }
                     )
-                _send_enumerate_result(msg_id, built, [])
+                _send_enumerate_result(msg_id, built, [], term_tables=[term_table])
                 return
 
             if level == "assertions":
@@ -2484,6 +2626,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         }
                     ],
                     [],
+                    term_tables=[term_table],
                 )
                 return
 
@@ -2519,6 +2662,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         }
                     ],
                     [],
+                    term_tables=[term_table],
                 )
                 return
 
@@ -2539,6 +2683,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     msg_id,
                     [_implication_node_for_callsite(at, ir_items, call_edges)],
                     [],
+                    term_tables=[term_table],
                 )
                 return
 
@@ -2610,6 +2755,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                                     )
                                 ],
                                 [],
+                                term_tables=[term_table],
                             )
                             return
                         callee = candidates[0] if candidates else "unknown"
@@ -2653,7 +2799,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         node = _universe_node_from_item(universe_item, file_rel)
                         if _memento_matches(node["memento"], at):
                             nodes.append(node)
-                    _send_enumerate_result(msg_id, nodes, [])
+                    _send_enumerate_result(msg_id, nodes, [], term_tables=[term_table])
                     return
 
                 # Scan: every function-contract universe in the file.
@@ -2661,7 +2807,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     _universe_node_from_item(universe_item, file_rel)
                     for universe_item in universe_items
                 ]
-                _send_enumerate_result(msg_id, nodes, [])
+                _send_enumerate_result(msg_id, nodes, [], term_tables=[term_table])
                 return
 
         _send(

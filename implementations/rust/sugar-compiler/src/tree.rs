@@ -44,6 +44,7 @@ use sugar_linker::LinkerContract;
 use sugar_walk::source_oracle::{SourceMemento, SrcSpan};
 
 use crate::kit::{Kit, KitError};
+use crate::kit_path::LiftTermTable;
 
 /// On-demand human-readable locus from a self-locating [`SourceMemento`].
 /// Not a primary key and not stored — file/function_name/span/CIDs already
@@ -678,6 +679,19 @@ fn decode_node(value: &Value) -> Result<WireNode, String> {
     })
 }
 
+fn contains_term_ref(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().any(contains_term_ref),
+        Value::Object(values) => {
+            if values.get("kind").and_then(Value::as_str) == Some("term-ref") {
+                return true;
+            }
+            values.values().any(contains_term_ref)
+        }
+        _ => false,
+    }
+}
+
 fn decode_export_node(node: WireNode) -> Result<ExportedSymbol, String> {
     let audit = node
         .audit
@@ -757,10 +771,39 @@ fn enumerate_rpc(
             reason: error.to_string(),
         })?;
     let result = enumerate_result_from_response(&plugin, response)?;
-    let nodes = result
-        .get("nodes")
-        .and_then(Value::as_array)
-        .map(|arr| arr.iter().map(decode_node).collect::<Result<Vec<_>, _>>())
+    let raw_nodes = result.get("nodes").and_then(Value::as_array);
+    let response_has_term_refs = raw_nodes.is_some_and(|nodes| nodes.iter().any(contains_term_ref))
+        || result.get("gaps").is_some_and(contains_term_ref);
+    let term_table = if result.get("termTable").is_some() {
+        Some(
+            LiftTermTable::decode(&result).map_err(|reason| EnumerateError::Malformed {
+                plugin: plugin.clone(),
+                reason,
+            })?,
+        )
+    } else if response_has_term_refs {
+        return Err(EnumerateError::Malformed {
+            plugin: plugin.clone(),
+            reason:
+                "enumeration response contains term-ref but is missing required `termTable` object"
+                    .to_string(),
+        });
+    } else {
+        None
+    };
+    let nodes = raw_nodes
+        .map(|arr| {
+            arr.iter()
+                .map(|value| {
+                    let resolved = if let Some(table) = &term_table {
+                        table.resolve_value(value)?
+                    } else {
+                        value.clone()
+                    };
+                    decode_node(&resolved)
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
         .unwrap_or_else(|| Ok(Vec::new()))
         .map_err(|reason| EnumerateError::MalformedNode {
             plugin: plugin.clone(),
