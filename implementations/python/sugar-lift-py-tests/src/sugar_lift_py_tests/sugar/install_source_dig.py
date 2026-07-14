@@ -96,7 +96,7 @@ def module_sibling_function_nodes(module_name: str) -> dict:
         except (ImportError, OSError, TypeError, UnicodeError):
             return {}
     try:
-        parsed = SourceFragment.from_source(source, sourcefile)
+        parsed = SourceFragment.from_source_private(source, sourcefile)
     except SyntaxError:
         return {}
     nodes: dict = {}
@@ -144,7 +144,7 @@ def resolve_install_source_funcdef(import_target: str):
     except TypeError:
         sourcefile = f"<{module_name}>"
     try:
-        parsed = SourceFragment.from_source(source, sourcefile)
+        parsed = SourceFragment.from_source_private(source, sourcefile)
     except SyntaxError:
         return None
     for child in parsed.walk():
@@ -418,7 +418,7 @@ def resolve_install_source_class_method(qualified_class: str, method_name: str):
     except (ImportError, AttributeError, OSError, TypeError):
         return None
     try:
-        parsed = SourceFragment.from_source(source, sourcefile)
+        parsed = SourceFragment.from_source_private(source, sourcefile)
     except SyntaxError:
         return None
     for child in parsed.walk():

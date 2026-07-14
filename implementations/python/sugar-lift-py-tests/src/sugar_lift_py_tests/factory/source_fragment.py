@@ -1031,13 +1031,25 @@ class SourceFragment:
         """
         # Rides the parsed_tree table: dig paths construct the module root once
         # PER SITE, so a private parse here re-parsed and re-stamped the whole
-        # module per site. Sharing is sound because every pipeline mutation is
-        # an idempotent node stamp (_sugar_* marks and the fragment caches):
-        # the same node always receives the same marks, so sharing cannot
-        # diverge from a private copy.
+        # module per site. Sharing is sound for every consumer whose mutations
+        # are idempotent node stamps (_sugar_* marks and the fragment caches);
+        # the one consumer that structurally mutates its tree must use
+        # from_source_private instead.
         from sugar_lift_python_source.source_tables import parsed_tree
 
         tree = parsed_tree(source, filename=filename)
+        return cls.from_node(tree, filename, source=source)
+
+    @classmethod
+    def from_source_private(cls, source: str, filename: str) -> "SourceFragment":
+        """Parse Python source into a PRIVATE tree the caller may mutate.
+
+        The one door for consumers that structurally mutate their tree (the
+        install-source bridge clears decorator_list in place). A private parse
+        keeps that mutation off the shared parsed_tree table; every read-only
+        consumer must use from_source and ride the cache instead.
+        """
+        tree = ast.parse(source, filename=filename)
         return cls.from_node(tree, filename, source=source)
 
     def has_position(self) -> bool:
