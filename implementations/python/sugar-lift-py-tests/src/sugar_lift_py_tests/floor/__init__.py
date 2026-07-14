@@ -32,6 +32,7 @@ from .import_alias_value import ImportAliasValue
 from .lambda_callable import LambdaCallable
 from .list_value import ListValue
 from .loop_control_value import LoopControlValue
+from .loop_else_value import LoopElseValue
 from .inv_value import InvValue
 from .none_value import NoneValue
 from .object_field import ObjectField
@@ -80,6 +81,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     LambdaCallable,
     ListValue,
     LoopControlValue,
+    LoopElseValue,
     InvValue,
     NoneValue,
     ObjectMethodValue,
@@ -139,6 +141,7 @@ __all__ = [
     "LambdaCallable",
     "ListValue",
     "LoopControlValue",
+    "LoopElseValue",
     "InvValue",
     "NoneValue",
     "ObjectField",

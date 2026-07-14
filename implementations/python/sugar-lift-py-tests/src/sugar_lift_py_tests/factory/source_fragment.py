@@ -1525,6 +1525,17 @@ class SourceFragment:
         self._require(ast.For, ast.AsyncFor)
         return len(self.node.orelse)  # type: ignore[attr-defined]
 
+    def for_orelse_block(self) -> "SourceFragment":
+        """Return the loop ``else`` suite as one ordinary Block fragment."""
+        from .block import Block
+
+        self._require(ast.For, ast.AsyncFor)
+        return SourceFragment.from_node(
+            Block.of(self.node.orelse),  # type: ignore[attr-defined]
+            self.filename,
+            source=self.source,
+        )
+
     # --- while loops ------------------------------------------------------
 
     def while_test(self) -> "SourceFragment":
