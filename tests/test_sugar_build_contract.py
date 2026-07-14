@@ -121,33 +121,54 @@ def test_coq_and_java_capabilities_have_executable_docker_stages():
     assert "coqc --version" in dockerfile
 
 
+def assert_all_docker_args(dockerfile, expected):
+    for argument, value in expected.items():
+        occurrences = re.findall(rf"^ARG {re.escape(argument)}=([^\s]+)$", dockerfile, re.MULTILINE)
+        assert occurrences, f"missing Docker ARG {argument}"
+        assert occurrences == [value] * len(occurrences), (
+            f"Docker ARG {argument} drifted: {occurrences} != {value}"
+        )
+
+
 def test_docker_capability_defaults_match_contract_versions():
-    dockerfile = (ROOT / "tools/sugar-build/Dockerfile").read_text()
     tools = contract.tool_versions()
-    for argument, tool in {
-        "NUMPY_VERSION": "numpy",
-        "PANDAS_VERSION": "pandas",
-        "NODE_VERSION": "node",
-        "PNPM_VERSION": "pnpm",
-        "VAMPIRE_VERSION": "vampire",
-        "PYTEST_VERSION": "pytest",
-    }.items():
-        assert re.search(rf"^ARG {argument}={re.escape(tools[tool])}$", dockerfile, re.MULTILINE)
-    assert f'ARG Z3_DEBIAN_VERSION={tools["z3"]}-3.1' in dockerfile
+    expected = {
+        "RUST_VERSION": tools["rust"],
+        "PYTEST_VERSION": tools["pytest"],
+        "Z3_DEBIAN_VERSION": tools["z3"] + "-3.1",
+        "NUMPY_VERSION": tools["numpy"],
+        "PANDAS_VERSION": tools["pandas"],
+        "JAVA_VERSION": tools["java"],
+        "NODE_VERSION": tools["node"],
+        "PNPM_VERSION": tools["pnpm"],
+        "VAMPIRE_VERSION": tools["vampire"],
+    }
+    assert_all_docker_args((ROOT / "tools/sugar-build/Dockerfile").read_text(), expected)
 
 
 def test_docker_package_revisions_and_archives_are_contract_owned():
-    dockerfile = (ROOT / "tools/sugar-build/Dockerfile").read_text()
     packages = contract.load_contract()["packages"]
-    for argument, package in {
+    expected = {
         "COQ_DEBIAN_VERSION": "coq_debian",
         "MAVEN_DEBIAN_VERSION": "maven_debian",
         "JAVA_RELEASE_SUFFIX": "java_release_suffix",
         "JAVA_ARCHIVE_SHA256": "java_archive_sha256",
         "NODE_ARCHIVE_SHA256": "node_archive_sha256",
         "VAMPIRE_ARCHIVE_SHA256": "vampire_archive_sha256",
-    }.items():
-        assert re.search(rf"^ARG {argument}={re.escape(packages[package])}$", dockerfile, re.MULTILINE)
+    }
+    assert_all_docker_args(
+        (ROOT / "tools/sugar-build/Dockerfile").read_text(),
+        {argument: packages[package] for argument, package in expected.items()},
+    )
+
+
+def test_second_docker_arg_occurrence_cannot_drift():
+    dockerfile = (ROOT / "tools/sugar-build/Dockerfile").read_text()
+    declaration = "ARG NODE_VERSION=22.17.1"
+    assert dockerfile.count(declaration) == 2
+    drifted = "ARG NODE_VERSION=99.0.0".join(dockerfile.rsplit(declaration, 1))
+    with pytest.raises(AssertionError, match="NODE_VERSION drifted"):
+        assert_all_docker_args(drifted, {"NODE_VERSION": contract.tool_versions()["node"]})
 
 
 def test_loaded_contract_exactly_matches_capability_tool_owners():
