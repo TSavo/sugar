@@ -4073,6 +4073,16 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
                 ));
             }
         }
+        out.push_str(&format!(
+            "observed occurrences total={}\n\
+             demanded questions total={}\n\
+             demanded questions resolved={}\n\
+             demanded questions dangling={}\n",
+            report.call_edges.len(),
+            report.demanded_questions.len(),
+            demanded_resolved,
+            demanded_dangling
+        ));
     }
     if !report.effects.is_empty() {
         let span = tracing::info_span!("report_section", section = "effects");
@@ -15159,6 +15169,64 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             .filter(|line| line.starts_with("  - "))
             .count();
         assert_eq!((observed, demanded), (2, 2), "{visual}");
+    }
+
+    #[test]
+    fn datetime_visual_implication_census_conserves_exactly_21_as_5_plus_16() {
+        let mut report = minimal_source_report();
+        report.implication_walk_ran = true;
+        report.source_mementos = vec![serde_json::json!({
+            "file": "datetime.py", "sourceCid": "blake3-512:datetime"
+        })];
+        report.call_edges = (1..=21)
+            .map(|line| {
+                serde_json::json!({
+                    "kind": "call-edge", "sourceContract": "datetime._cmp",
+                    "targetSymbol": format!("call:target_{line}"),
+                    "callSiteLocus": {"file": "datetime.py", "line": line, "slot": "inv"}
+                })
+            })
+            .collect();
+        report.demanded_questions = (1..=21)
+            .map(|line| {
+                let resolved = line <= 5;
+                serde_json::json!({
+                    "kind": "implication",
+                    "sourceContract": "datetime._cmp",
+                    "targetContract": resolved.then(|| format!("datetime.target_{line}")),
+                    "targetSymbol": format!("call:target_{line}"),
+                    "status": if resolved { "discharged" } else { "unjoined" },
+                    "reason": if resolved { "proved" } else { "no qualified contract" },
+                    "callSiteMemento": {"file": "datetime.py", "span": {"start_line": line, "start_col": 8}}
+                })
+            })
+            .collect();
+
+        let visual = render_visual_source_report(&report);
+        assert!(
+            visual.contains("observed occurrences (total=21):"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("demanded questions (total=21 resolved=5 dangling=16):"),
+            "{visual}"
+        );
+        assert!(visual.contains("observed occurrences total=21"), "{visual}");
+        assert!(visual.contains("demanded questions total=21"), "{visual}");
+        assert!(visual.contains("demanded questions resolved=5"), "{visual}");
+        assert!(
+            visual.contains("demanded questions dangling=16"),
+            "{visual}"
+        );
+    }
+
+    #[test]
+    fn visual_report_does_not_print_false_zero_when_implication_walk_did_not_run() {
+        let report = minimal_source_report();
+        assert!(!report.implication_walk_ran);
+        let visual = render_visual_source_report(&report);
+        assert!(!visual.contains("demanded questions (total=0"), "{visual}");
+        assert!(!visual.contains("demanded questions total=0"), "{visual}");
     }
 
     #[test]

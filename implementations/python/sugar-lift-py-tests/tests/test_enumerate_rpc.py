@@ -772,7 +772,7 @@ def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
     assert result["gaps"] == []
 
 
-def test_implication_seek_returns_one_discharged_node_for_resolved_call(
+def test_implication_seek_returns_one_linker_demand_for_resolved_call(
     project: Path,
 ) -> None:
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
@@ -789,15 +789,21 @@ def test_implication_seek_returns_one_discharged_node_for_resolved_call(
 
     assert result["gaps"] == []
     assert len(result["nodes"]) == 1
-    implication = result["nodes"][0]["audit"]
-    assert implication["kind"] == "implication"
-    assert implication["targetContract"] == "mathy.add"
-    assert implication["targetSymbol"] == "add"
-    assert implication["status"] == "discharged"
-    assert implication["obligation"]["kind"] == "implies"
+    node = result["nodes"][0]
+    question = node["audit"]
+    demand = node["payload"]
+    assert question["kind"] == "implication-question"
+    assert question["targetSymbol"] == "call:add"
+    assert question["candidateCount"] == 1
+    assert demand["sourceContract"]["name"] == "test_add::assertion"
+    assert demand["callEdge"]["target_symbol"] == "call:add"
+    assert [
+        candidate["contract"]["name"] for candidate in demand["targetCandidates"]
+    ] == ["mathy.add"]
+    assert all("status" not in row for row in (question, demand))
 
 
-def test_implication_seek_returns_named_debt_instead_of_empty_success(
+def test_implication_seek_returns_zero_candidate_demand_instead_of_false_empty(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "debt.py").write_text(
@@ -811,11 +817,15 @@ def test_implication_seek_returns_named_debt_instead_of_empty_success(
 
     assert result["gaps"] == []
     assert len(result["nodes"]) == 1
-    debt = result["nodes"][0]["audit"]
-    assert debt["kind"] == "implication"
-    assert debt["status"] == "unjoined"
-    assert debt["targetSymbol"] == "missing"
-    assert "no universe sugar for callee" in debt["reason"]
+    node = result["nodes"][0]
+    question = node["audit"]
+    demand = node["payload"]
+    assert question["kind"] == "implication-question"
+    assert question["candidateCount"] == 0
+    assert question["targetSymbol"] == "call:missing"
+    assert demand["targetCandidates"] == []
+    assert demand["callEdge"]["target_symbol"] == "call:missing"
+    assert "status" not in question
 
 
 def test_distinct_descendant_demands_reuse_file_cid_context(

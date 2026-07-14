@@ -641,6 +641,7 @@ pub enum ImplicationDemandStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImplicationDemandAnswer {
+    pub kind: String,
     pub source_contract: String,
     pub target_contract: Option<String>,
     pub target_symbol: String,
@@ -762,6 +763,7 @@ pub fn demand_implication(demand: ImplicationDemand) -> ImplicationDemandAnswer 
 
     if matching.is_empty() {
         return ImplicationDemandAnswer {
+            kind: "implication".to_string(),
             source_contract: source_name,
             target_contract: None,
             target_symbol: target_symbol.clone(),
@@ -777,6 +779,7 @@ pub fn demand_implication(demand: ImplicationDemand) -> ImplicationDemandAnswer 
             .collect::<Vec<_>>()
             .join(", ");
         return ImplicationDemandAnswer {
+            kind: "implication".to_string(),
             source_contract: source_name,
             target_contract: None,
             target_symbol: target_symbol.clone(),
@@ -816,6 +819,7 @@ pub fn demand_implication(demand: ImplicationDemand) -> ImplicationDemandAnswer 
         Some(error) => (ImplicationDemandStatus::Unsatisfied, error.reason.clone()),
     };
     ImplicationDemandAnswer {
+        kind: "implication".to_string(),
         source_contract: source_name,
         target_contract: Some(target_name),
         target_symbol,
