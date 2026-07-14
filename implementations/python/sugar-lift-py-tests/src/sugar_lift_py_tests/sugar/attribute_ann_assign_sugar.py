@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import ScopeRebind
+from sugar_lift_py_tests.floor import ScopeRebind, SupportValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
@@ -16,7 +16,7 @@ class AttributeAnnAssignSugar(Sugar, role=SugarRole.STATEMENT):
     field_name: str
     receiver: SugarBody
     annotation: SugarBody
-    value: SugarBody
+    value: SugarBody | None
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -25,21 +25,19 @@ class AttributeAnnAssignSugar(Sugar, role=SugarRole.STATEMENT):
             return False
         target = site.annassign_target()
         return (
-            target.observed == "Attribute"
-            and target.attr_receiver().observed == "Name"
-            and site.annassign_value() is not None
-            and site.annassign_annotation().observed != "BinOp"
+            target.observed == "Attribute" and target.attr_receiver().observed == "Name"
         )
 
     @classmethod
     def new(cls, site, ctx) -> "AttributeAnnAssignSugar":
         target = site.annassign_target()
+        value = site.annassign_value()
         return cls(
             receiver_name=target.attr_receiver().name_id(),
             field_name=target.attr_name(),
             receiver=ctx.build_body(target.attr_receiver(), SugarRole.TERM),
             annotation=ctx.build_body(site.annassign_annotation(), SugarRole.TERM),
-            value=ctx.build_body(site.annassign_value(), SugarRole.TERM),
+            value=(None if value is None else ctx.build_body(value, SugarRole.TERM)),
             site=site,
         )
 
@@ -61,6 +59,8 @@ class AttributeAnnAssignSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        if self.value is None:
+            return Complete(SupportValue())
         key = f"{self.receiver_name}.{self.field_name}"
         return self.receiver.reduce(ctx).and_then(
             lambda _receiver: self.value.reduce(ctx).and_then(
@@ -69,4 +69,6 @@ class AttributeAnnAssignSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def walk_children(self):
+        if self.value is None:
+            return (self.receiver, self.annotation)
         return (self.receiver, self.annotation, self.value)
