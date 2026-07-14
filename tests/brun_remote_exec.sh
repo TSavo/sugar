@@ -105,6 +105,10 @@ case "$inner" in
   *) fail "--path-prefix missing from remote PATH: $inner" ;;
 esac
 case "$inner" in
+  *"PYTHON="*"/python-kit-env/bin/python"*) ;;
+  *) fail "remote Python interpreter missing from environment: $inner" ;;
+esac
+case "$inner" in
   *"MY_TOKEN="*"tok-123"*) ;;
   *) fail "--env did not forward MY_TOKEN: $inner" ;;
 esac

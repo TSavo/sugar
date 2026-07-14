@@ -105,9 +105,12 @@ dispatch_execution_subcommand() {
 
   # shellcheck source=bin/lib/sugar-bx.sh
   source "$script_dir/lib/sugar-bx.sh"
-  SUGAR_BX_PATH_PREFIXES=(${path_prefixes[@]+"${path_prefixes[@]}"})
-  SUGAR_BX_ENV_NAMES=(${env_names[@]+"${env_names[@]}"})
-  SUGAR_BX_SYNC_BACKS=(${sync_backs[@]+"${sync_backs[@]}"})
+  SUGAR_BX_PATH_PREFIXES=()
+  SUGAR_BX_ENV_NAMES=()
+  SUGAR_BX_SYNC_BACKS=()
+  ((${#path_prefixes[@]} == 0)) || SUGAR_BX_PATH_PREFIXES=("${path_prefixes[@]}")
+  ((${#env_names[@]} == 0)) || SUGAR_BX_ENV_NAMES=("${env_names[@]}")
+  ((${#sync_backs[@]} == 0)) || SUGAR_BX_SYNC_BACKS=("${sync_backs[@]}")
   SUGAR_BX_PYTHON_ENV="${python_env_flag:-${BCARGO_PYTHON_ENV:-1}}"
   local repo_root local_cwd status=0 pair
   repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -120,9 +123,11 @@ dispatch_execution_subcommand() {
   status=$?
   set -e
   if [[ "$status" == 0 ]]; then
-    for pair in ${SUGAR_BX_SYNC_BACKS[@]+"${SUGAR_BX_SYNC_BACKS[@]}"}; do
-      sugar_bx_sync_back "${pair%%:*}" "${pair#*:}" || { status=$?; break; }
-    done
+    if ((${#SUGAR_BX_SYNC_BACKS[@]} != 0)); then
+      for pair in "${SUGAR_BX_SYNC_BACKS[@]}"; do
+        sugar_bx_sync_back "${pair%%:*}" "${pair#*:}" || { status=$?; break; }
+      done
+    fi
   fi
   sugar_bx_finish "$status"
 }

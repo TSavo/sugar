@@ -56,6 +56,16 @@ inner="$(grep -F 'exec ' "$ssh_log" || true)"
 [[ ! -s "$tmp/docker.log" ]] || fail "Docker was invoked"
 grep -Fq '.bcargo-tracked-manifest' "$rsync_log" || fail "tracked manifest not synchronized"
 
+# Forwarding controls preserve values containing spaces as single arguments.
+: >"$ssh_log"; : >"$rsync_log"
+space_dest="$tmp/out with spaces/report.json"
+run_bx --path-prefix "/remote/tools with spaces/bin" \
+  --sync-back "/remote/out with spaces/report.json:$space_dest" -- true >/dev/null
+space_inner="$(grep -F 'exec ' "$ssh_log" || true)"
+[[ "$space_inner" == *"/remote/tools with spaces/bin"* ]] || fail "spaced path prefix was split: $space_inner"
+grep -Fq '/remote/out with spaces/report.json' "$rsync_log" || fail "spaced sync-back source was split"
+[[ -f "$space_dest" ]] || fail "spaced sync-back destination was split"
+
 # cleanup policy: safe roots only; success does not clean failure; always does.
 : >"$ssh_log"
 status=0

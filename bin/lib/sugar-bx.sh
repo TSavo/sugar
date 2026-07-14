@@ -94,9 +94,11 @@ sugar_bx_sync_workspace() {
 sugar_bx_run_ambient() {
   local remote_cwd="$SUGAR_BX_REPO" arg inner="" prefix="" name
   [[ -n "$SUGAR_BX_REL_CWD" ]] && remote_cwd="$SUGAR_BX_REPO/$SUGAR_BX_REL_CWD"
-  for prefix in ${SUGAR_BX_PATH_PREFIXES[@]+"${SUGAR_BX_PATH_PREFIXES[@]}"}; do
-    [[ -z "$inner" ]] && inner="$prefix" || inner="$inner:$prefix"
-  done
+  if ((${#SUGAR_BX_PATH_PREFIXES[@]} != 0)); then
+    for prefix in "${SUGAR_BX_PATH_PREFIXES[@]}"; do
+      [[ -z "$inner" ]] && inner="$prefix" || inner="$inner:$prefix"
+    done
+  fi
   if [[ "${SUGAR_BX_PYTHON_ENV:-1}" != 0 ]]; then
     local pybin="$SUGAR_BX_ROOT/python-kit-env/bin"
     sugar_bx_ssh "cd $(sugar_bx_quote "$SUGAR_BX_REPO") && BCARGO_PYTHON_VENV=$(sugar_bx_quote "$SUGAR_BX_ROOT/python-kit-env") make --quiet bcargo-python-kit-env" || return $?
@@ -104,7 +106,12 @@ sugar_bx_run_ambient() {
   fi
   local cmd="cd $(sugar_bx_quote "$remote_cwd") && "
   [[ -n "$inner" ]] && cmd+="PATH=$(sugar_bx_quote "$inner"):\$PATH "
-  for name in ${SUGAR_BX_ENV_NAMES[@]+"${SUGAR_BX_ENV_NAMES[@]}"}; do [[ ${!name+x} == x ]] && cmd+="$name=$(sugar_bx_quote "${!name}") "; done
+  if [[ "${SUGAR_BX_PYTHON_ENV:-1}" != 0 ]]; then
+    cmd+="PYTHON=$(sugar_bx_quote "$SUGAR_BX_ROOT/python-kit-env/bin/python") "
+  fi
+  if ((${#SUGAR_BX_ENV_NAMES[@]} != 0)); then
+    for name in "${SUGAR_BX_ENV_NAMES[@]}"; do [[ ${!name+x} == x ]] && cmd+="$name=$(sugar_bx_quote "${!name}") "; done
+  fi
   cmd+="exec"
   for arg in "$@"; do
     if [[ "$arg" == "$SUGAR_BX_REPO_ROOT" ]]; then arg="$SUGAR_BX_REPO"; elif [[ "$arg" == "$SUGAR_BX_REPO_ROOT"/* ]]; then arg="$SUGAR_BX_REPO/${arg#"$SUGAR_BX_REPO_ROOT"/}"; fi
