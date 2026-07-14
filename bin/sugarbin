@@ -16,6 +16,7 @@ dispatch_execution_subcommand() {
   local saw_boundary=0
   local -a command=()
   local -a path_prefixes=() env_names=() sync_backs=()
+  local -a sync_bins=()
   local python_env_flag=""
 
   while [[ $# -gt 0 ]]; do
@@ -42,6 +43,16 @@ dispatch_execution_subcommand() {
       --sync-back)
         [[ $# -ge 2 && "$2" == /*:/* ]] || { echo "sugarbin: --sync-back requires REMOTE:LOCAL" >&2; return 2; }
         sync_backs+=("$2"); shift 2 ;;
+      --sync-bin)
+        [[ "$subcommand" == cargo && $# -ge 2 ]] || { echo "sugarbin: --sync-bin requires a binary name" >&2; return 2; }
+        sync_bins+=("$2"); shift 2 ;;
+      --sync-bins)
+        [[ "$subcommand" == cargo && $# -ge 2 ]] || { echo "sugarbin: --sync-bins requires a comma-separated list" >&2; return 2; }
+        local -a parsed_sync_bins=()
+        IFS=',' read -r -a parsed_sync_bins <<<"$2"
+        local bin
+        for bin in "${parsed_sync_bins[@]}"; do [[ -z "$bin" ]] || sync_bins+=("$bin"); done
+        shift 2 ;;
       --no-python-env)
         python_env_flag=0; shift ;;
       --platform)
@@ -95,9 +106,8 @@ dispatch_execution_subcommand() {
     printf 'sugarbin: %s requires -- followed by a command\n' "$subcommand" >&2
     return 2
   }
-  if [[ "$subcommand" == cargo ]]; then
-    command=(cargo "${command[@]}")
-  fi
+  local -a cargo_args=()
+  if [[ "$subcommand" == cargo ]]; then cargo_args=("${command[@]}"); command=(cargo "${command[@]}"); fi
   if [[ "$host" == local ]]; then
     sugar_exec_local_run "${command[@]}"
     return $?
@@ -118,6 +128,10 @@ dispatch_execution_subcommand() {
   local_cwd="$(pwd -P)"
   sugar_bx_init "$repo_root" "$local_cwd" || return $?
   sugar_bx_sync_workspace || return $?
+  if [[ "$subcommand" == cargo ]]; then
+    sugarbin_bx_cargo "$repo_root"
+    return $?
+  fi
   set +e
   sugar_bx_run_ambient "${command[@]}"
   status=$?
@@ -129,6 +143,96 @@ dispatch_execution_subcommand() {
       done
     fi
   fi
+  sugar_bx_finish "$status"
+}
+
+sugarbin_bx_cargo() {
+  local repo_root="$1"
+  local profile=debug manifest_path="" target_dir_arg="" arg
+  local i
+  for ((i=0; i<${#cargo_args[@]}; i++)); do
+    arg="${cargo_args[$i]}"
+    case "$arg" in
+      --release) profile=release ;;
+      --manifest-path) ((i+1<${#cargo_args[@]})) && manifest_path="${cargo_args[$((i+1))]}" ;;
+      --manifest-path=*) manifest_path="${arg#--manifest-path=}" ;;
+      --target-dir) ((i+1<${#cargo_args[@]})) && target_dir_arg="${cargo_args[$((i+1))]}" ;;
+      --target-dir=*) target_dir_arg="${arg#--target-dir=}" ;;
+    esac
+  done
+
+  local local_cwd="$(pwd -P)" local_target_dir remote_target_dir path
+  if [[ -n "$target_dir_arg" ]]; then
+    [[ "$target_dir_arg" == /* ]] && local_target_dir="$target_dir_arg" || local_target_dir="$local_cwd/$target_dir_arg"
+  elif [[ -n "$manifest_path" ]]; then
+    [[ "$manifest_path" == /* ]] && path="$manifest_path" || path="$local_cwd/$manifest_path"
+    local_target_dir="$(dirname "$path")/target"
+  else
+    local_target_dir="$local_cwd/target"
+  fi
+  case "$local_target_dir" in
+    "$repo_root") remote_target_dir="$SUGAR_BX_REPO" ;;
+    "$repo_root"/*) remote_target_dir="$SUGAR_BX_REPO/${local_target_dir#"$repo_root"/}" ;;
+    *) remote_target_dir="$local_target_dir" ;;
+  esac
+
+  local wants_sugar=0 bin
+  for bin in ${sync_bins[@]+"${sync_bins[@]}"}; do [[ "$bin" == sugar ]] && wants_sugar=1; done
+  local stamp="" repo="" remote_platform="${BCARGO_REMOTE_BINARY_PLATFORM:-linux-x86_64}"
+  if [[ "$wants_sugar" == 1 ]]; then
+    stamp="${SUGAR_BINARY_SOURCE_STAMP:-}"
+    [[ -n "$stamp" ]] || stamp="$("$script_dir/sugarbin" --print-source-stamp)" || return $?
+    repo="${SUGAR_BINARY_REPO:-}"
+    if [[ -z "$repo" ]] && command -v gh >/dev/null 2>&1; then repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"; fi
+  fi
+
+  local assignments="" remote_bin="$remote_target_dir/$profile/sugar" shelf_ready=0 skip_cargo=0 cmd
+  if [[ -n "$stamp" ]]; then
+    assignments="SUGAR_BINARY_SOURCE_STAMP=$(sugar_bx_quote "$stamp") SUGAR_BINARY_TARGET_ROOT=$(sugar_bx_quote "$remote_target_dir") "
+    [[ -z "$repo" ]] || assignments+="SUGAR_BINARY_REPO=$(sugar_bx_quote "$repo") "
+    cmd="cd $(sugar_bx_quote "$SUGAR_BX_REPO") && resolved=\"\$(${assignments}SUGAR_BINARY_ALLOW_BUILD='0' bin/sugarbin --profile $(sugar_bx_quote "$profile") --platform $(sugar_bx_quote "$remote_platform"))\" && mkdir -p $(sugar_bx_quote "$(dirname "$remote_bin")") && if [ \"\$resolved\" != $(sugar_bx_quote "$remote_bin"); then cp \"\$resolved\" $(sugar_bx_quote "$remote_bin"); fi && chmod +x $(sugar_bx_quote "$remote_bin")"
+    if sugar_bx_ssh "bash -lc $(sugar_bx_quote "$cmd")"; then shelf_ready=1; fi
+    if [[ "$shelf_ready" == 1 && "${cargo_args[0]:-}" == build && ${#sync_bins[@]} -eq 1 ]]; then
+      local package_ok=0 binary_ok=0 other=0 value
+      for ((i=0; i<${#cargo_args[@]}; i++)); do
+        arg="${cargo_args[$i]}"
+        case "$arg" in
+          -p|--package) ((i++)); value="${cargo_args[$i]:-}"; [[ "$value" == sugar-cli ]] && package_ok=1 || other=1 ;;
+          -p=*|--package=*) value="${arg#*=}"; [[ "$value" == sugar-cli ]] && package_ok=1 || other=1 ;;
+          --bin) ((i++)); value="${cargo_args[$i]:-}"; [[ "$value" == sugar ]] && binary_ok=1 || other=1 ;;
+          --bin=*) value="${arg#*=}"; [[ "$value" == sugar ]] && binary_ok=1 || other=1 ;;
+        esac
+      done
+      [[ "$package_ok" == 1 && "$binary_ok" == 1 && "$other" == 0 ]] && skip_cargo=1
+    fi
+  fi
+
+  local status=0 remote_cwd="$SUGAR_BX_REPO" inner path_prefix="$remote_target_dir/$profile"
+  [[ -z "$SUGAR_BX_REL_CWD" ]] || remote_cwd="$SUGAR_BX_REPO/$SUGAR_BX_REL_CWD"
+  if [[ "$skip_cargo" != 1 ]]; then
+    if [[ "${SUGAR_BX_PYTHON_ENV:-1}" != 0 ]]; then
+      sugar_bx_ssh "cd $(sugar_bx_quote "$SUGAR_BX_REPO") && BCARGO_PYTHON_VENV=$(sugar_bx_quote "$SUGAR_BX_ROOT/python-kit-env") make --quiet bcargo-python-kit-env" || return $?
+      path_prefix+=":$SUGAR_BX_ROOT/python-kit-env/bin"
+    fi
+    inner="cd $(sugar_bx_quote "$remote_cwd") && "
+    [[ "${SUGAR_BX_PYTHON_ENV:-1}" == 0 ]] || inner+="PYTHON=$(sugar_bx_quote "$SUGAR_BX_ROOT/python-kit-env/bin/python") "
+    [[ -z "$stamp" ]] || inner+="SUGAR_BUILD_STAMP=$(sugar_bx_quote "$stamp") "
+    inner+="PATH=$(sugar_bx_quote "$path_prefix"):\$PATH exec cargo"
+    for arg in "${cargo_args[@]}"; do
+      if [[ "$arg" == "$repo_root" ]]; then arg="$SUGAR_BX_REPO"; elif [[ "$arg" == "$repo_root"/* ]]; then arg="$SUGAR_BX_REPO/${arg#"$repo_root"/}"; fi
+      inner+=" $(sugar_bx_quote "$arg")"
+    done
+    set +e; sugar_bx_ssh "bash -lc $(sugar_bx_quote "$inner")"; status=$?; set -e
+  fi
+  if [[ "$status" != 0 ]]; then sugar_bx_finish "$status"; return $?; fi
+
+  if [[ -n "$stamp" && "$shelf_ready" != 1 ]]; then
+    cmd="cd $(sugar_bx_quote "$SUGAR_BX_REPO") && ${assignments}SUGAR_BINARY_ALLOW_BUILD='0' bin/sugarbin --profile $(sugar_bx_quote "$profile") --platform $(sugar_bx_quote "$remote_platform") >/dev/null"
+    sugar_bx_ssh "bash -lc $(sugar_bx_quote "$cmd")" || echo "sugarbin: remote sugarbin publish did not complete for stamp $stamp" >&2
+  fi
+  for bin in ${sync_bins[@]+"${sync_bins[@]}"}; do
+    sugar_bx_sync_back "$remote_target_dir/$profile/$bin" "$local_target_dir/$profile/$bin" || { status=$?; break; }
+  done
   sugar_bx_finish "$status"
 }
 

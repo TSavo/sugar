@@ -37,4 +37,4 @@ fi
 # Compatibility wrapper: synchronization policy and execution now have one
 # owner, the bx backend reached through sugarbin.
 brun_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-exec "$brun_dir/sugarbin" run --host bx --env ambient "$@"
+exec "$brun_dir/sugarbin" run --host bx "$@"

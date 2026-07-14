@@ -93,6 +93,7 @@ SH
 
 chmod +x "$fake_bin/ssh" "$fake_bin/rsync" "$fake_bin/file" "$fake_bin/git" "$fake_bin/uname"
 
+# Exercise the compatibility adapter; all remote policy is owned by sugarbin.
 run_fake_bcargo() {
   BCARGO_SSH="$fake_bin/ssh" \
   BCARGO_RSYNC="$fake_bin/rsync" \

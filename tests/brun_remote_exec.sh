@@ -76,6 +76,7 @@ fail() {
   exit 1
 }
 
+# Exercise the compatibility adapter; all remote policy is owned by sugarbin.
 run_brun() {
   (
     cd "$repo_root/implementations/rust"

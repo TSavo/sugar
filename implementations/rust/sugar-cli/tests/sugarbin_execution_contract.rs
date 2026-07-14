@@ -30,3 +30,14 @@ fn sugarbin_bx_execution_contract() {
         .expect("run bx execution contract");
     assert!(status.success(), "bx execution contract failed: {status}");
 }
+
+#[test]
+fn sugarbin_wrapper_compatibility_contract() {
+    let root = repo_root();
+    let status = Command::new("bash")
+        .arg(root.join("tests/sugarbin_wrapper_compat.sh"))
+        .arg(&root)
+        .status()
+        .expect("run wrapper compatibility contract");
+    assert!(status.success(), "wrapper compatibility contract failed: {status}");
+}
