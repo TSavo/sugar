@@ -120,6 +120,36 @@ sugar_bx_run_ambient() {
   sugar_bx_ssh "bash -lc $(sugar_bx_quote "$cmd")"
 }
 
+sugar_bx_docker_bind_source() {
+  local source="$1"
+  sugar_bx_ssh "if command -v wslpath >/dev/null 2>&1; then wslpath -w $(sugar_bx_quote "$source"); else printf '%s\\n' $(sugar_bx_quote "$source"); fi" | tr -d '\r'
+}
+
+sugar_bx_run_docker() {
+  local image="$1"; shift
+  local remote_cwd="/workspace/sugar"
+  [[ -n "$SUGAR_BX_REL_CWD" ]] && remote_cwd="$remote_cwd/$SUGAR_BX_REL_CWD"
+  local workspace_source artifacts_source manifest_source
+  workspace_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_REPO")" || return $?
+  artifacts_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_ROOT/artifacts")" || return $?
+  manifest_source="$(sugar_bx_docker_bind_source "$SUGAR_BX_ROOT/required-artifacts.json")" || return $?
+  local -a docker_args=(docker run --rm
+    --workdir "$remote_cwd"
+    --env SUGAR_BIN=/opt/sugar/bin/sugar
+    --env SUGAR_BINARY_DIR=/opt/sugar/bin
+    --env PATH=/opt/sugar/bin:/root/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+    --mount "type=bind,src=$workspace_source,dst=/workspace/sugar"
+    --mount "type=bind,src=$artifacts_source,dst=/opt/sugar/bin,readonly"
+    --mount "type=bind,src=$manifest_source,dst=/opt/sugar/required-artifacts.json,readonly")
+  local name arg command=""
+  for name in ${SUGAR_BX_ENV_NAMES[@]+"${SUGAR_BX_ENV_NAMES[@]}"}; do
+    [[ ${!name+x} == x ]] && docker_args+=(--env "$name=${!name}")
+  done
+  docker_args+=("$image" "$@")
+  for arg in "${docker_args[@]}"; do command+=" $(sugar_bx_quote "$arg")"; done
+  sugar_bx_ssh "exec${command}"
+}
+
 sugar_bx_is_foreign() { [[ "$(uname -s 2>/dev/null)" != Linux ]] && [[ "$(file -b "$1" 2>/dev/null || true)" == *ELF* ]]; }
 sugar_bx_sync_back() {
   local remote="$1" local_path="$2" tmp

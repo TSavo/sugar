@@ -23,6 +23,9 @@ depends = ["core"]
 [capabilities.vampire]
 depends = ["core"]
 
+[images.core]
+reference = "ghcr.io/tsavo/sugar-env@sha256:5f1ef9a93256450d323f89f60eab38e8c883c1855eb54525504e4983117a85a8"
+
 [tasks.python-unit]
 capabilities = ["core"]
 binaries = []

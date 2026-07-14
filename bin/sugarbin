@@ -120,11 +120,13 @@ dispatch_execution_subcommand() {
     fi
   fi
 
-  local route_env="${execution_env%%:*}"
+  local route_env="${execution_env%%:*}" docker_image=""
   if [[ "$route_env" == docker ]]; then
     local contract_python
     contract_python="$(sugarbin_contract_python)" || return $?
-    "$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-environment "$execution_env" >/dev/null || return $?
+    local environment_json
+    environment_json="$("$contract_python" "$script_dir/../tools/sugar-build/contract.py" resolve-environment "$execution_env")" || return $?
+    docker_image="$("$contract_python" -c 'import json,sys; print(json.load(sys.stdin)["image"])' <<<"$environment_json")"
   fi
 
   local observed_platform
@@ -132,7 +134,7 @@ dispatch_execution_subcommand() {
   if [[ "$host" == local ]]; then
     sugar_exec_validate_route "$host" "$route_env" "$requested_platform" "$observed_platform" || return $?
   elif [[ "$host" == bx ]]; then
-    [[ "$route_env" == ambient ]] || { echo "unsupported execution route: host=$host env=$execution_env" >&2; return 2; }
+    [[ "$route_env" == ambient || "$route_env" == docker ]] || { echo "unsupported execution route: host=$host env=$execution_env" >&2; return 2; }
   else
     sugar_exec_validate_route "$host" "$execution_env" "$requested_platform" "$observed_platform" || return $?
   fi
@@ -208,6 +210,17 @@ dispatch_execution_subcommand() {
   local_cwd="$(pwd -P)"
   sugar_bx_init "$repo_root" "$local_cwd" || return $?
   sugar_bx_sync_workspace || return $?
+  if [[ "$route_env" == docker ]]; then
+    local remote_needs="$needs" remote_platform="${requested_platform:-linux-x86_64}"
+    local setup="set -e; cd $(sugar_bx_quote "$SUGAR_BX_REPO"); rm -rf $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts"); mkdir -p $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts"); printf '{\"artifacts\":[' >$(sugar_bx_quote "$SUGAR_BX_ROOT/required-artifacts.json"); first=1; needs=$(sugar_bx_quote "$remote_needs"); IFS=,; for b in \$needs; do [ -n \"\$b\" ] || continue; r=\$(env -u SUGAR_BIN bin/sugarbin --platform $(sugar_bx_quote "$remote_platform") --bin \"\$b\"); cp \"\$r\" $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts")/\"\$b\"; sum=\$(sha256sum $(sugar_bx_quote "$SUGAR_BX_ROOT/artifacts")/\"\$b\" | cut -d' ' -f1); [ \$first = 1 ] || printf ',' >>$(sugar_bx_quote "$SUGAR_BX_ROOT/required-artifacts.json"); first=0; printf '{\"name\":\"%s\",\"sha256\":\"%s\"}' \"\$b\" \"\$sum\" >>$(sugar_bx_quote "$SUGAR_BX_ROOT/required-artifacts.json"); done; printf ']}' >>$(sugar_bx_quote "$SUGAR_BX_ROOT/required-artifacts.json")"
+    sugar_bx_ssh "bash -lc $(sugar_bx_quote "$setup")" || return $?
+    set +e
+    sugar_bx_run_docker "$docker_image" "${command[@]}"
+    status=$?
+    set -e
+    sugar_bx_finish "$status"
+    return $?
+  fi
   if [[ -n "$needs" || "$subcommand" == build ]]; then
     local remote_needs="${needs:-sugar}" remote_platform="${requested_platform:-linux-x86_64}"
     if [[ "$subcommand" == build ]]; then

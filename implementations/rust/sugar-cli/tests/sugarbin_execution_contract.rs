@@ -32,6 +32,17 @@ fn sugarbin_bx_execution_contract() {
 }
 
 #[test]
+fn sugarbin_docker_execution_contract() {
+    let root = repo_root();
+    let status = Command::new("bash")
+        .arg(root.join("tests/sugarbin_docker_exec.sh"))
+        .arg(&root)
+        .status()
+        .expect("run Docker execution contract");
+    assert!(status.success(), "Docker execution contract failed: {status}");
+}
+
+#[test]
 fn sugarbin_wrapper_compatibility_contract() {
     let root = repo_root();
     let status = Command::new("bash")
