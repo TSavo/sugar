@@ -99,8 +99,9 @@ dispatch_execution_subcommand() {
     return 0
   fi
 
-  local resolved_first="" resolved_dir="" requested_bin resolved
+  local resolved_first="" resolved_sugar="" resolved_dir="" injection_dir="" requested_bin resolved
   local -a resolved_bins=()
+  local -a resolved_paths=()
   if [[ "$host" == local && ( -n "$needs" || "$subcommand" == build ) ]]; then
     IFS=',' read -r -a resolved_bins <<<"${needs:-sugar}"
     for requested_bin in "${resolved_bins[@]}"; do
@@ -108,10 +109,22 @@ dispatch_execution_subcommand() {
       local -a resolver_args=(--bin "$requested_bin")
       [[ -z "$requested_platform" ]] || resolver_args+=(--platform "$requested_platform")
       resolved="$(env -u SUGAR_BIN "$script_dir/sugarbin" "${resolver_args[@]}")" || return $?
-      [[ -n "$resolved_first" ]] || { resolved_first="$resolved"; resolved_dir="$(dirname "$resolved")"; }
+      resolved_paths+=("$resolved")
+      [[ -n "$resolved_first" ]] || resolved_first="$resolved"
+      [[ "$requested_bin" != sugar ]] || resolved_sugar="$resolved"
     done
     if [[ "$subcommand" == build ]]; then return 0; fi
-    export SUGAR_BIN="$resolved_first" SUGAR_BINARY_DIR="$resolved_dir"
+    local run_root="${SUGAR_BINARY_CACHE_DIR:-${HOME}/.cache/sugar/binaries}/.runs"
+    mkdir -p "$run_root"
+    injection_dir="$(mktemp -d "$run_root/run.XXXXXX")"
+    local resolved_path
+    for resolved_path in "${resolved_paths[@]}"; do
+      [[ -e "$injection_dir/$(basename "$resolved_path")" ]] \
+        || ln -s "$resolved_path" "$injection_dir/$(basename "$resolved_path")"
+    done
+    resolved_dir="$injection_dir"
+    resolved_sugar="${resolved_sugar:-$resolved_first}"
+    export SUGAR_BIN="$resolved_dir/$(basename "$resolved_sugar")" SUGAR_BINARY_DIR="$resolved_dir"
     export PATH="$resolved_dir:$PATH"
   fi
 
@@ -122,8 +135,13 @@ dispatch_execution_subcommand() {
   local -a cargo_args=()
   if [[ "$subcommand" == cargo ]]; then cargo_args=("${command[@]}"); command=(cargo "${command[@]}"); fi
   if [[ "$host" == local ]]; then
+    local local_status=0
+    set +e
     sugar_exec_local_run "${command[@]}"
-    return $?
+    local_status=$?
+    set -e
+    [[ -z "$injection_dir" ]] || rm -rf "$injection_dir"
+    return "$local_status"
   fi
 
   # shellcheck source=bin/lib/sugar-bx.sh
@@ -151,8 +169,8 @@ dispatch_execution_subcommand() {
       sugar_bx_finish "$status"
       return $?
     fi
-    local remote_setup="first= dir= needs=$(sugar_bx_quote "$remote_needs"); IFS=,; for b in \$needs; do r=\$(env -u SUGAR_BIN bin/sugarbin --platform $(sugar_bx_quote "$remote_platform") --bin \"\$b\") || exit; [ -n \"\$first\" ] || { first=\"\$r\"; dir=\$(dirname \"\$r\"); }; done; export SUGAR_BIN=\"\$first\" SUGAR_BINARY_DIR=\"\$dir\" PATH=\"\$dir:\$PATH\"; "
-    command=(bash -lc "$remote_setup exec \"\$@\"" bash "${command[@]}")
+    local remote_setup="first= sugar= parent= needs=$(sugar_bx_quote "$remote_needs"); IFS=,; for b in \$needs; do r=\$(env -u SUGAR_BIN bin/sugarbin --platform $(sugar_bx_quote "$remote_platform") --bin \"\$b\") || exit; [ -n \"\$first\" ] || { first=\"\$r\"; parent=\$(dirname \"\$(dirname \"\$r\")\"); }; [ \"\$b\" != sugar ] || sugar=\"\$r\"; done; mkdir -p \"\$parent/.runs\"; dir=\$(mktemp -d \"\$parent/.runs/run.XXXXXX\") || exit; IFS=,; for b in \$needs; do [ -e \"\$dir/\$b\" ] && continue; r=\$(env -u SUGAR_BIN bin/sugarbin --platform $(sugar_bx_quote "$remote_platform") --bin \"\$b\") || { rm -rf \"\$dir\"; exit; }; ln -s \"\$r\" \"\$dir/\$b\" || { rm -rf \"\$dir\"; exit; }; done; [ -n \"\$sugar\" ] || sugar=\"\$first\"; export SUGAR_BIN=\"\$dir/\$(basename \"\$sugar\")\" SUGAR_BINARY_DIR=\"\$dir\" PATH=\"\$dir:\$PATH\"; "
+    command=(bash -lc "$remote_setup \"\$@\"; status=\$?; rm -rf \"\$dir\"; exit \$status" bash "${command[@]}")
   fi
   if [[ "$subcommand" == cargo ]]; then
     sugarbin_bx_cargo "$repo_root"
@@ -513,7 +531,7 @@ artifact_name() {
 
 tool_versions() {
   rustc_verbose="$(rustc -vV)" || return 1
-  cargo_verbose="$("${SUGAR_BINARY_CARGO:-cargo}" -V)" || return 1
+  cargo_verbose="$("${SUGAR_BINARY_CARGO:-cargo}" -vV)" || return 1
   target_triple="$(printf '%s\n' "$rustc_verbose" | sed -n 's/^host: //p' | head -1)"
   [[ -n "$target_triple" ]] || { log "rustc -vV did not report a host target"; return 1; }
 }
