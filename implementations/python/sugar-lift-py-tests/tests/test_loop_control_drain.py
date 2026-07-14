@@ -44,14 +44,15 @@ def _statement(source: str, kind: type[ast.stmt]):
         ("for item in items:\n    continue\n", ast.Continue, "continue"),
     ],
 )
-def test_loop_control_constructs_a_cited_exit(source, kind, action) -> None:
+def test_loop_control_constructs_non_fol_support_from_4303(
+    source, kind, action
+) -> None:
     value = _statement(source, kind)
 
     assert isinstance(value, LoopControlValue)
     assert value.action == action
-    assert f"py.loop_{'exit' if action == 'break' else 'skip'}" in repr(
-        value.post_contribution()
-    )
+    assert value.non_fol_support is True
+    assert value.post_contribution() == ()
 
 
 def test_guarded_loop_control_keeps_its_guard_and_action() -> None:
@@ -63,13 +64,17 @@ def test_guarded_loop_control_keeps_its_guard_and_action() -> None:
     assert guarded.guards == ("guard",)
 
 
-def test_loop_control_outside_a_loop_stays_loud() -> None:
+def test_bare_break_ast_uses_the_owner_added_by_4309() -> None:
     source = "break\n"
     node = ast.parse(source).body[0]
     site = SourceFragment.from_node(node, "t.py", source=source)
 
-    with pytest.raises(FactoryPanic, match="observed=Break requested=statement"):
-        build_node(site, filename="t.py", role=SugarRole.STATEMENT)
+    result = build_node(site, filename="t.py", role=SugarRole.STATEMENT)
+    value = complete_value(result.sugar.desugar(), owner="test")
+
+    assert type(result.sugar).__name__ == "BreakSugar"
+    assert isinstance(value, LoopControlValue)
+    assert value.action == "break"
 
 
 @pytest.mark.parametrize(
