@@ -5,6 +5,7 @@ from .coverage_gap_effect import CoverageGapEffect
 from .conditional_expression_runtime_effect import ConditionalExpressionRuntimeEffect
 from .call_result_type_runtime_effect import CallResultTypeRuntimeEffect
 from .division_by_zero_runtime_effect import DivisionByZeroRuntimeEffect
+from .dict_unpack_runtime_effect import DictUnpackRuntimeEffect
 from .dynamic_format_runtime_effect import DynamicFormatRuntimeEffect
 from .getattr_runtime_effect import GetattrRuntimeEffect
 from .generator_yield_runtime_effect import GeneratorYieldRuntimeEffect
@@ -28,6 +29,7 @@ __all__ = [
     "ConditionalExpressionRuntimeEffect",
     "CallResultTypeRuntimeEffect",
     "DivisionByZeroRuntimeEffect",
+    "DictUnpackRuntimeEffect",
     "DynamicFormatRuntimeEffect",
     "GetattrRuntimeEffect",
     "GeneratorYieldRuntimeEffect",

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import DictValue
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -13,18 +13,16 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 @dataclass(frozen=True)
 class DictLiteralSugar(Sugar, role=SugarRole.TERM):
     """A dict literal. It reduces each key and value, and the result is a dict of
-    those pairs. Incomplete pairs propagate -- no partial dict. Owns only dicts
-    where every key is present; ``**`` expansion (None key) stays a factory gap."""
+    those pairs. ``**`` segments merge concrete DictValues in source order. A
+    mapping whose contents exist only at runtime yields a named witnessed effect.
+    Incomplete entries propagate -- no partial dict."""
 
-    entries: tuple[tuple[SugarBody, SugarBody], ...]
+    entries: tuple[tuple[SugarBody | None, SugarBody], ...]
     site: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
-        # Syntactic: Dict with every key present. None keys are ``**`` expansion.
-        if site.observed != "Dict":
-            return False
-        return all(key is not None for key, _value in site.dict_entries())
+        return site.observed == "Dict"
 
     @classmethod
     def new(cls, site, ctx) -> "DictLiteralSugar":
@@ -32,7 +30,7 @@ class DictLiteralSugar(Sugar, role=SugarRole.TERM):
         return cls(
             entries=tuple(
                 (
-                    ctx.build_body(key, SugarRole.TERM),
+                    ctx.build_body(key, SugarRole.TERM) if key is not None else None,
                     ctx.build_body(value, SugarRole.TERM),
                 )
                 for key, value in site.dict_entries()
@@ -60,13 +58,54 @@ class DictLiteralSugar(Sugar, role=SugarRole.TERM):
         if not remaining:
             return Complete(DictValue(accumulated))
         (key_body, value_body), *rest = remaining
+        if key_body is None:
+            return value_body.reduce(ctx).and_then(
+                lambda expansion: self._merge_expansion(
+                    expansion, tuple(rest), accumulated, ctx
+                )
+            )
         return key_body.reduce(ctx).and_then(
             lambda key_value: value_body.reduce(ctx).and_then(
                 lambda val_value: self._collect(
-                    tuple(rest), (*accumulated, (key_value, val_value)), ctx
+                    tuple(rest),
+                    _set_entry(accumulated, key_value, val_value),
+                    ctx,
                 )
             )
         )
 
+    def _merge_expansion(self, expansion, rest, accumulated, ctx) -> Outcome:
+        if isinstance(expansion, DictValue):
+            merged = accumulated
+            for key, value in expansion.entries:
+                merged = _set_entry(merged, key, value)
+            return self._collect(rest, merged, ctx)
+
+        from sugar_lift_py_tests.effect import (
+            DictUnpackRuntimeEffect,
+            runtime_effect_witness,
+        )
+
+        return Incomplete(
+            DictUnpackRuntimeEffect(
+                "dict display keys and values depend on a runtime mapping; "
+                f"site={self.site}",
+                witness=runtime_effect_witness("py.dict_unpack", expansion, self.site),
+            )
+        )
+
     def walk_children(self):
-        return tuple(body for pair in self.entries for body in pair)
+        return tuple(body for pair in self.entries for body in pair if body is not None)
+
+
+def _set_entry(entries, key, value):
+    updated = list(entries)
+    for index, (prior_key, _prior_value) in enumerate(updated):
+        if type(prior_key) is type(key) and getattr(
+            prior_key, "value", object()
+        ) == getattr(key, "value", object()):
+            updated[index] = (key, value)
+            break
+    else:
+        updated.append((key, value))
+    return tuple(updated)
