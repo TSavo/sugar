@@ -97,6 +97,25 @@ def test_panicked_parent_suppresses_descendants() -> None:
     ]
 
 
+def test_panicked_parent_accounts_for_suppressed_control_flow_owner() -> None:
+    source = (
+        "def parent(flag):\n"
+        "    nonlocal missing\n"
+        "    if flag:\n"
+        "        return 1\n"
+    )
+
+    wire = audit_lift_file(source, "poison_if.py", recover_panics=True).to_rpc()
+
+    assert [item["locus"] for item in wire["panics"]] == ["poison_if.py:1:0"]
+    assert wire["suppressedDescendants"] == [
+        {
+            "locus": "poison_if.py:3:4",
+            "reason": "ancestor FactoryPanic poisoned this source locus",
+        }
+    ]
+
+
 def test_recovered_audit_keeps_typed_effects_out_of_construction_gaps() -> None:
     source = (
         "import pytest\n"
