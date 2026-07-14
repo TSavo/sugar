@@ -47,7 +47,7 @@ KIT_JAVA="$(which java)"
 echo "SCOPE: FLOOR — MT reference-vector point contracts (bin-1, deterministic theorem)."
 echo "SCOPE: Vendor: Apache Commons RNG rel/commons-rng-1.7 MersenneTwister."
 echo "SCOPE: Reference values from Matsumoto http://www.math.sci.hiroshima-u.ac.jp/~m-mat/MT/MT2002/CODES/mt19937ar.out"
-echo "SCOPE: GOOD: 8 sworn draws, each SSA-bound; consistent point contracts → discharged."
+echo "SCOPE: GOOD: 8 independent lone point claims → refused as vacuous (PR #2813)."
 echo "SCOPE: BAD:  same draw[0], two contradictory assertEquals in one test → unsatisfied."
 echo "SCOPE: NOT this showcase: derivation from algorithm (rung 2/3, tempering universe)."
 
@@ -114,13 +114,9 @@ PY
 ")"
   echo "   prove consistency statuses: $consistency_status"
 
-  if [ "$expect_consistency" = "DISCHARGE" ]; then
-    if echo "$consistency_status" | grep -q 'unsatisfied'; then
-      echo "FAIL[$suite]: expected consistency discharged, got: $consistency_status"
-      exit 1
-    fi
-    if [ "$consistency_status" = "MISSING" ]; then
-      echo "FAIL[$suite]: no consistency rows found"
+  if [ "$expect_consistency" = "VACUOUS" ]; then
+    if [ "$consistency_status" = "MISSING" ] || echo "$consistency_status" | grep -qv '^refused\(,refused\)*$'; then
+      echo "FAIL[$suite]: expected only vacuity refusals, got: $consistency_status"
       exit 1
     fi
   else
@@ -146,11 +142,11 @@ consistency = [
 ]
 if not consistency:
     raise SystemExit(f"FAIL[{suite}]: durable verify has no consistency rows")
-if expect_consistency == "DISCHARGE":
-    if any(s != "discharged" for s in consistency):
-        raise SystemExit(f"FAIL[{suite}]: expected all discharged, got {consistency}")
+if expect_consistency == "VACUOUS":
+    if any(s != "refused" for s in consistency):
+        raise SystemExit(f"FAIL[{suite}]: expected only vacuity refusals, got {consistency}")
     print(f"   durable consistency statuses: {','.join(consistency)}")
-    print(f"   durable: PASS (vendor-sworn reference vectors consistent)")
+    print(f"   durable: PASS (lone point claims refused per PR #2813)")
     print(f"   LOGO: Commons RNG's own MT reference vectors lifted and federated.")
     print(f"         Per-draw contract sworn by the vendor: bin-1, deterministic theorem.")
 else:
@@ -162,7 +158,7 @@ else:
 PY
 }
 
-run_suite good DISCHARGE
+run_suite good VACUOUS
 run_suite bad  REFUSE
 
 echo

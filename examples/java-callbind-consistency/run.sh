@@ -44,7 +44,7 @@ echo "SCOPE: P5c call-binding lift — the dominant real-vendor test shape."
 echo "SCOPE: 'Codec codec = new Codec(); int r = codec.encode(42); assertEquals(42, r)'"
 echo "SCOPE: SSA alias r → substituted to encode(codec,42) → location-keyed ::assertion."
 echo "SCOPE: Instance-method calls on local receivers are NOT #euf#-federated (receiver-dependent)."
-echo "SCOPE: GOOD: consistent instance-method assertions per test → discharged."
+echo "SCOPE: GOOD: lone opaque instance-method assertions → refused as vacuous (PR #2813)."
 echo "SCOPE: BAD:  two contradictory assertions about same call in one test → unsatisfied."
 
 echo
@@ -94,13 +94,9 @@ run_suite() {
 ")"
   echo "   prove consistency statuses: $consistency_status"
 
-  if [ "$expect_consistency" = "DISCHARGE" ]; then
-    if echo "$consistency_status" | grep -q 'unsatisfied'; then
-      echo "FAIL[$suite]: expected consistency discharged, got: $consistency_status"
-      exit 1
-    fi
-    if [ "$consistency_status" = "MISSING" ]; then
-      echo "FAIL[$suite]: no consistency rows found"
+  if [ "$expect_consistency" = "VACUOUS" ]; then
+    if [ "$consistency_status" = "MISSING" ] || echo "$consistency_status" | grep -qv '^refused\(,refused\)*$'; then
+      echo "FAIL[$suite]: expected only vacuity refusals, got: $consistency_status"
       exit 1
     fi
   else
@@ -126,11 +122,11 @@ consistency = [
 ]
 if not consistency:
     raise SystemExit(f"FAIL[{suite}]: durable verify has no consistency rows")
-if expect_consistency == "DISCHARGE":
-    if any(s != "discharged" for s in consistency):
-        raise SystemExit(f"FAIL[{suite}]: expected all discharged, got {consistency}")
+if expect_consistency == "VACUOUS":
+    if any(s != "refused" for s in consistency):
+        raise SystemExit(f"FAIL[{suite}]: expected only vacuity refusals, got {consistency}")
     print(f"   durable consistency statuses: {','.join(consistency)}")
-    print(f"   durable: PASS (consistent)")
+    print(f"   durable: PASS (lone opaque claims refused per PR #2813)")
 else:
     if "unsatisfied" not in consistency:
         raise SystemExit(f"FAIL[{suite}]: expected unsatisfied in {consistency}")
@@ -139,7 +135,7 @@ else:
 PY
 }
 
-run_suite good DISCHARGE
+run_suite good VACUOUS
 run_suite bad  REFUSE
 
 echo
