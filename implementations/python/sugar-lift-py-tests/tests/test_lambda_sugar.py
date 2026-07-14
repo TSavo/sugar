@@ -8,14 +8,11 @@ from pathlib import Path
 import subprocess
 import sys
 
-import pytest
-
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import LambdaCallable, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
@@ -79,12 +76,12 @@ def test_body_and_param_discriminate() -> None:
     assert id_val != plus_val
 
 
-def test_owns_simple_lambda_not_function_def_or_defaults() -> None:
-    """(3) owns positional and variadic Lambda; defaults remain loud."""
+def test_owns_constructible_lambda_signatures_not_function_def() -> None:
     assert LambdaSugar.owns(_site("lambda x: x")) is True
     assert LambdaSugar.owns(_site("lambda x, y: x")) is True
     assert LambdaSugar.owns(_site("lambda: 1")) is True
-    assert LambdaSugar.owns(_site("lambda x=1: x")) is False
+    assert LambdaSugar.owns(_site("lambda x=1: x")) is True
+    assert LambdaSugar.owns(_site("lambda x, *, key: key")) is True
     assert LambdaSugar.owns(_site("lambda *a: a")) is True
     assert LambdaSugar.owns(_site("lambda **k: k")) is True
     assert LambdaSugar.owns(_site("lambda x, *a, **k: x")) is True
@@ -102,12 +99,12 @@ def test_owns_simple_lambda_not_function_def_or_defaults() -> None:
     assert "LambdaSugar" in names
 
 
-def test_defaulted_param_is_a_loud_factory_gap() -> None:
+def test_defaulted_param_uses_lambda_owner() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse("lambda x=1: x", mode="eval").body
-    with pytest.raises(FactoryPanic) as raised:
-        build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx)
-    assert raised.value.info.observed == "Lambda"
+    built = build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx)
+
+    assert isinstance(built.sugar, LambdaSugar)
 
 
 def test_variadic_parameters_are_carried_without_dropping_their_kinds() -> None:
@@ -152,20 +149,20 @@ def test_variadic_body_binds_both_collector_names() -> None:
     ) == SymbolicValue(make_var("kwargs"))
 
 
-def test_defaulted_variadic_lambda_stays_a_loud_factory_gap() -> None:
+def test_defaulted_variadic_lambda_uses_lambda_owner() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse("lambda x=1, *args: args", mode="eval").body
-    with pytest.raises(FactoryPanic) as raised:
-        build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx)
-    assert raised.value.info.observed == "Lambda"
+    built = build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx)
+
+    assert isinstance(built.sugar, LambdaSugar)
 
 
-def test_keyword_only_lambda_stays_outside_the_variadic_owner() -> None:
+def test_keyword_only_lambda_uses_lambda_owner() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse("lambda x, *, key: key", mode="eval").body
-    with pytest.raises(FactoryPanic) as raised:
-        build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx)
-    assert raised.value.info.observed == "Lambda"
+    built = build_node(node, filename="t.py", role=SugarRole.TERM, ctx=ctx)
+
+    assert isinstance(built.sugar, LambdaSugar)
 
 
 def test_variadic_lambda_discriminator_runs_both_process_arms() -> None:
