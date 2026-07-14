@@ -238,6 +238,7 @@ pub struct Contract {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Implication {
     memento: SourceMemento,
+    surface: String,
     audit: Value,
     payload: Option<Value>,
 }
@@ -265,7 +266,17 @@ impl Implication {
         let object = row.as_object_mut().unwrap_or_else(|| {
             panic!("implication audit testimony must be an object before report transport")
         });
-        object.insert("callSiteMemento".to_string(), self.memento.to_json());
+        let call_site = self.memento.to_json();
+        object.insert("callSiteMemento".to_string(), call_site.clone());
+        object.insert(
+            "questionIdentity".to_string(),
+            json!({
+                "surface": self.surface,
+                "level": "implications",
+                "at": call_site,
+                "seek": true,
+            }),
+        );
         row
     }
 }
@@ -1306,8 +1317,9 @@ impl CallSite {
         EdgeTarget::Unbound
     }
 
-    /// Demand this call site's one obligation node. A dangling symbol is a
-    /// named `status=unjoined` node, never an empty success or seek miss.
+    /// Demand this exact call site's implication question. The producer returns
+    /// candidate input only; this coordinator invokes the pure one-edge linker
+    /// worker, which owns join, obligation mint, and status.
     pub fn implication(&self) -> Result<Implication, KitError> {
         let (nodes, gaps) = enumerate_rpc(
             &self.conn,
@@ -1333,16 +1345,48 @@ impl CallSite {
                 }
             })
         })?;
-        let audit = node.audit.ok_or_else(|| {
+        let question_audit = node.audit.ok_or_else(|| {
             KitError::from(EnumerateError::Malformed {
                 plugin: self.conn.surface.clone(),
-                reason: "implication node missing audit testimony".to_string(),
+                reason: "implication question missing audit testimony".to_string(),
             })
         })?;
+        let answer = match node.payload {
+            Some(payload) => {
+                let demand: sugar_linker::ImplicationDemand = serde_json::from_value(payload)
+                    .map_err(|error| {
+                        KitError::from(EnumerateError::Malformed {
+                            plugin: self.conn.surface.clone(),
+                            reason: format!("implication question payload is invalid: {error}"),
+                        })
+                    })?;
+                serde_json::to_value(sugar_linker::demand_implication(demand)).map_err(|error| {
+                    KitError::from(EnumerateError::Malformed {
+                        plugin: self.conn.surface.clone(),
+                        reason: format!("implication answer cannot serialize: {error}"),
+                    })
+                })?
+            }
+            None => json!({
+                "sourceContract": question_audit.get("sourceContract").cloned().unwrap_or_else(|| Value::String("<unknown caller>".into())),
+                "targetContract": Value::Null,
+                "targetSymbol": question_audit.get("targetSymbol").cloned().unwrap_or_else(|| Value::String("unknown".into())),
+                "status": "unjoined",
+                "reason": "demanded implication question carried no linker input",
+                "obligation": Value::Null,
+            }),
+        };
+        let payload = answer
+            .get("obligation")
+            .filter(|value| !value.is_null())
+            .cloned();
         Ok(Implication {
-            memento: node.memento,
-            audit,
-            payload: node.payload,
+            // The consumer-owned replay key is the question identity. Never let
+            // a producer substitute another callsite memento in the answer.
+            memento: self.memento.clone(),
+            surface: self.conn.surface.clone(),
+            audit: answer,
+            payload,
         })
     }
 }

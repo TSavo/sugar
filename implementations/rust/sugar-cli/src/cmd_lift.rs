@@ -1981,8 +1981,11 @@ fn source_report_from_lift_response(
     let contracts = matching_report_contracts(response, contract_filter, &filtered_audits);
     trace_lift_collection_checkpoint("source_report.contracts", contracts.len());
     let call_edges = matching_report_call_edges(response, contract_filter, &filtered_audits);
-    let demanded_questions =
-        matching_report_implication_edges(response, contract_filter, &filtered_audits);
+    // Demand transcripts are populated only by `attach_report_implications`,
+    // whose compiler tree walk asks the per-callsite linker worker. Batch
+    // `response.implications` rows are producer testimony, not demanded
+    // question identities, and must never enter this ledger.
+    let demanded_questions = Vec::new();
     trace_lift_collection_checkpoint("source_report.call_edges", call_edges.len());
     trace_lift_collection_checkpoint("source_report.demanded_questions", demanded_questions.len());
     let source_mementos =
@@ -2854,79 +2857,6 @@ fn matching_report_call_edges(
         |edge| call_edge_matches_filter(edge, filter, &audit_bases),
         |row| row,
     )
-}
-
-fn matching_report_implication_edges(
-    response: &Value,
-    contract_filter: Option<&str>,
-    audits: &[Value],
-) -> Vec<Value> {
-    let Some(implications) = response.get("implications").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    let audit_bases = audits
-        .iter()
-        .filter_map(contract_name)
-        .map(contract_group_key)
-        .collect::<Vec<_>>();
-    clone_matching_report_values(
-        "matching_report_implication_edges",
-        implications,
-        |implication| {
-            let edge = implication_edge_from_row(implication);
-            contract_filter
-                .is_none_or(|filter| call_edge_matches_filter(&edge, filter, &audit_bases))
-        },
-        |row| implication_edge_from_row(&row),
-    )
-}
-
-fn implication_edge_from_row(row: &Value) -> Value {
-    let source = report_text_field(row, &["antecedent", "sourceContract", "source_contract"])
-        .unwrap_or_else(|| "<unknown antecedent>".to_string());
-    let source_slot = report_text_field(
-        row,
-        &[
-            "antecedentSlot",
-            "antecedent_slot",
-            "sourceSlot",
-            "source_slot",
-        ],
-    )
-    .unwrap_or_else(|| "post".to_string());
-    let target = report_text_field(row, &["consequent", "targetContract", "target_contract"])
-        .unwrap_or_else(|| "<unknown consequent>".to_string());
-    let target_slot = report_text_field(
-        row,
-        &[
-            "consequentSlot",
-            "consequent_slot",
-            "targetSlot",
-            "target_slot",
-        ],
-    )
-    .unwrap_or_else(|| "pre".to_string());
-    let target_symbol = report_text_field(row, &["targetSymbol", "target_symbol"])
-        .unwrap_or_else(|| target.clone());
-    let mut edge = serde_json::json!({
-        "kind": "implication",
-        "sourceContract": source,
-        "sourceSlot": source_slot,
-        "targetSymbol": target_symbol,
-        "targetContract": target,
-        "targetSlot": target_slot,
-    });
-    for (from, to) in [
-        ("name", "name"),
-        ("prover", "prover"),
-        ("proofWitness", "proofWitness"),
-        ("proof_witness", "proofWitness"),
-    ] {
-        if let Some(value) = row.get(from).cloned() {
-            edge[to] = value;
-        }
-    }
-    edge
 }
 
 fn call_edge_matches_filter(edge: &Value, filter: &str, audit_bases: &[String]) -> bool {
@@ -4143,6 +4073,16 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
                 ));
             }
         }
+        out.push_str(&format!(
+            "observed occurrences total={}\n\
+             demanded questions total={}\n\
+             demanded questions resolved={}\n\
+             demanded questions dangling={}\n",
+            report.call_edges.len(),
+            report.demanded_questions.len(),
+            demanded_resolved,
+            demanded_dangling
+        ));
     }
     if !report.effects.is_empty() {
         let span = tracing::info_span!("report_section", section = "effects");
@@ -15229,6 +15169,64 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             .filter(|line| line.starts_with("  - "))
             .count();
         assert_eq!((observed, demanded), (2, 2), "{visual}");
+    }
+
+    #[test]
+    fn datetime_visual_implication_census_conserves_exactly_21_as_5_plus_16() {
+        let mut report = minimal_source_report();
+        report.implication_walk_ran = true;
+        report.source_mementos = vec![serde_json::json!({
+            "file": "datetime.py", "sourceCid": "blake3-512:datetime"
+        })];
+        report.call_edges = (1..=21)
+            .map(|line| {
+                serde_json::json!({
+                    "kind": "call-edge", "sourceContract": "datetime._cmp",
+                    "targetSymbol": format!("call:target_{line}"),
+                    "callSiteLocus": {"file": "datetime.py", "line": line, "slot": "inv"}
+                })
+            })
+            .collect();
+        report.demanded_questions = (1..=21)
+            .map(|line| {
+                let resolved = line <= 5;
+                serde_json::json!({
+                    "kind": "implication",
+                    "sourceContract": "datetime._cmp",
+                    "targetContract": resolved.then(|| format!("datetime.target_{line}")),
+                    "targetSymbol": format!("call:target_{line}"),
+                    "status": if resolved { "discharged" } else { "unjoined" },
+                    "reason": if resolved { "proved" } else { "no qualified contract" },
+                    "callSiteMemento": {"file": "datetime.py", "span": {"start_line": line, "start_col": 8}}
+                })
+            })
+            .collect();
+
+        let visual = render_visual_source_report(&report);
+        assert!(
+            visual.contains("observed occurrences (total=21):"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("demanded questions (total=21 resolved=5 dangling=16):"),
+            "{visual}"
+        );
+        assert!(visual.contains("observed occurrences total=21"), "{visual}");
+        assert!(visual.contains("demanded questions total=21"), "{visual}");
+        assert!(visual.contains("demanded questions resolved=5"), "{visual}");
+        assert!(
+            visual.contains("demanded questions dangling=16"),
+            "{visual}"
+        );
+    }
+
+    #[test]
+    fn visual_report_does_not_print_false_zero_when_implication_walk_did_not_run() {
+        let report = minimal_source_report();
+        assert!(!report.implication_walk_ran);
+        let visual = render_visual_source_report(&report);
+        assert!(!visual.contains("demanded questions (total=0"), "{visual}");
+        assert!(!visual.contains("demanded questions total=0"), "{visual}");
     }
 
     #[test]

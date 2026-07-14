@@ -1006,11 +1006,25 @@ emit = "ir-document"
         &plugin,
         r#"#!/usr/bin/env bash
 set -euo pipefail
+count_log="$(dirname "$0")/implication-requests.log"
 while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"python","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true},{"name":"sugar.enumerate","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+  elif [[ "$line" == *'"method":"sugar.enumerate"'* && "$line" == *'"level":"source_files"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"nodes":[{"memento":{"file":"app.py","source_cid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"audit":null,"payload":null}],"gaps":[]}}'
+  elif [[ "$line" == *'"method":"sugar.enumerate"'* && "$line" == *'"level":"functions"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"nodes":[{"memento":{"file":"app.py","function_name":"caller","source_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","span":{"start_line":1,"start_col":0,"end_line":4,"end_col":0}},"audit":null,"payload":null}],"gaps":[]}}'
+  elif [[ "$line" == *'"method":"sugar.enumerate"'* && "$line" == *'"level":"call_sites"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"nodes":[{"memento":{"file":"app.py","function_name":"caller","source_cid":"blake3-512:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","span":{"start_line":2,"start_col":11,"end_line":2,"end_col":19}},"audit":{"bridgeSourceSymbol":"call:callee"},"payload":null},{"memento":{"file":"app.py","function_name":"caller","source_cid":"blake3-512:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","span":{"start_line":2,"start_col":11,"end_line":2,"end_col":19}},"audit":{"bridgeSourceSymbol":"call:callee"},"payload":null},{"memento":{"file":"app.py","function_name":"caller","source_cid":"blake3-512:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","span":{"start_line":3,"start_col":11,"end_line":3,"end_col":20}},"audit":{"bridgeSourceSymbol":"call:missing"},"payload":null}],"gaps":[]}}'
+  elif [[ "$line" == *'"method":"sugar.enumerate"'* && "$line" == *'"level":"implications"'* ]]; then
+    printf '%s %s\n' "$PPID" "$line" >> "$count_log"
+    if [[ "$line" == *'"start_line":2'* ]]; then
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"nodes":[{"memento":{"file":"producer-substitute.py","source_cid":"blake3-512:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","span":{"start_line":99,"start_col":0,"end_line":99,"end_col":1}},"audit":{"kind":"implication-question","sourceContract":"caller","targetSymbol":"call:callee","candidateCount":1},"payload":{"sourceContract":{"name":"caller","kit":"python-source","contract_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","post_json":{"kind":"atomic","name":"true","args":[]}},"targetCandidates":[{"bridgeSourceSymbol":"call:callee","contract":{"name":"callee","kit":"python-source","contract_cid":"blake3-512:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","pre_json":{"kind":"atomic","name":"true","args":[]}}}],"callEdge":{"source_contract_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","target_contract_cid":null,"target_symbol":"call:callee","call_site_locus":{"file":"app.py","line":2,"column":11}}}}],"gaps":[]}}'
+    else
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"nodes":[{"memento":{"file":"producer-substitute.py","source_cid":"blake3-512:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","span":{"start_line":99,"start_col":0,"end_line":99,"end_col":1}},"audit":{"kind":"implication-question","sourceContract":"caller","targetSymbol":"call:missing","candidateCount":0},"payload":{"sourceContract":{"name":"caller","kit":"python-source","contract_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","post_json":{"kind":"atomic","name":"true","args":[]}},"targetCandidates":[],"callEdge":{"source_contract_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","target_contract_cid":null,"target_symbol":"call:missing","call_site_locus":{"file":"app.py","line":3,"column":11}}}}],"gaps":[]}}'
+    fi
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     if [[ "$line" == *'"contract_bindings"'* ]]; then
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[],"sourceLedger":{"source_loci":0,"source_warranted":0,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"implications":[{"name":"caller-post-implies-callee-pre","antecedent":"caller","antecedentSlot":"post","consequent":"callee","consequentSlot":"pre","prover":"single-plugin-implications"}]}}'
@@ -1050,11 +1064,60 @@ done
     let demanded_questions = report["demandedQuestions"]
         .as_array()
         .expect("demandedQuestions array");
-    let demanded_resolved = demanded_questions
+    assert_eq!(
+        demanded_questions.len(),
+        2,
+        "known-nonempty call-site census must never report a false zero: {report:#}"
+    );
+    let discharged = demanded_questions
         .iter()
-        .filter(|question| question["status"].as_str() != Some("unjoined"))
+        .filter(|question| question["status"].as_str() == Some("discharged"))
         .count();
-    let demanded_dangling = demanded_questions.len() - demanded_resolved;
+    let unsatisfied = demanded_questions
+        .iter()
+        .filter(|question| question["status"].as_str() == Some("unsatisfied"))
+        .count();
+    let unjoined = demanded_questions
+        .iter()
+        .filter(|question| question["status"].as_str() == Some("unjoined"))
+        .count();
+    assert_eq!(
+        (demanded_questions.len(), discharged, unsatisfied, unjoined),
+        (2, 1, 0, 1),
+        "ledger must conserve demanded = discharged + unsatisfied + unjoined: {demanded_questions:#?}"
+    );
+    let callsite_lines = demanded_questions
+        .iter()
+        .map(|question| question["callSiteMemento"]["span"]["start_line"].as_u64())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        callsite_lines,
+        vec![Some(2), Some(3)],
+        "distinct callsites with shared caller spelling remain distinct, and producer-returned mementos cannot replace the consumer question identity"
+    );
+    assert!(demanded_questions.iter().all(|question| {
+        question["questionIdentity"]["level"].as_str() == Some("implications")
+            && question["questionIdentity"]["seek"].as_bool() == Some(true)
+    }));
+    let implication_log = fs::read_to_string(dir.path().join("implication-requests.log"))
+        .expect("implication request log");
+    let logged_lines = implication_log
+        .lines()
+        .map(|logged| {
+            let (_, request) = logged.split_once(' ').expect("pid-prefixed request");
+            let request: serde_json::Value = serde_json::from_str(request).expect("request JSON");
+            request["params"]["at"]["span"]["start_line"]
+                .as_u64()
+                .expect("callsite line")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        logged_lines,
+        vec![2, 2, 3],
+        "mint and report each own one cache window: the duplicated line-2 node must cross once per window, while the distinct line-3 question still crosses in the report window; without the report cache this would be [2, 2, 2, 3]: {implication_log}"
+    );
+    let demanded_resolved = discharged + unsatisfied;
+    let demanded_dangling = unjoined;
 
     let visual_output = output_retrying_etxtbsy(
         Command::new(sugar_bin())

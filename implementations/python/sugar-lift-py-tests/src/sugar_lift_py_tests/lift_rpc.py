@@ -2033,30 +2033,31 @@ def _implication_node_for_callsite(
     ir_items: List[Dict[str, Any]],
     call_edges: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Answer one demanded call-site obligation, never a batch link pass."""
+    """Describe one per-callsite linker question, never answer it in the kit."""
     call_item = _find_item_by_memento(ir_items, at)
     if call_item is None or call_item.get("kind") != "contract":
         return {
             "memento": at,
             "audit": {
-                "kind": "implication",
-                "status": "unjoined",
+                "kind": "implication-question",
+                "sourceContract": "<unknown caller>",
                 "targetSymbol": "unknown",
-                "reason": "no call site for this memento",
+                "candidateCount": 0,
             },
             "payload": None,
         }
 
-    candidates: List[str] = []
+    bridge_candidates: List[str] = []
     edge_symbol = _edge_target_symbol_for_contract(call_item, call_edges)
     if edge_symbol is not None:
-        candidates.append(edge_symbol)
+        bridge_candidates.append(edge_symbol)
     fol_symbol = _contract_bridge_identity(call_item)
-    if fol_symbol is not None and fol_symbol not in candidates:
-        candidates.append(fol_symbol)
-    target_symbol = (candidates[0] if candidates else "unknown").split(":", 1)[-1]
-    matches: Dict[tuple[Any, Any], Dict[str, Any]] = {}
-    for bridge in candidates:
+    if fol_symbol is not None and fol_symbol not in bridge_candidates:
+        bridge_candidates.append(fol_symbol)
+    target_symbol = bridge_candidates[0] if bridge_candidates else "unknown"
+
+    matches: Dict[tuple[Any, Any], tuple[Dict[str, Any], str]] = {}
+    for bridge in bridge_candidates:
         for item in ir_items:
             if item.get("kind") != "function-contract":
                 continue
@@ -2067,58 +2068,68 @@ def _implication_node_for_callsite(
                 memento.get("source_cid") or memento.get("sourceCid"),
                 item.get("name") or item.get("bridgeSourceSymbol"),
             )
-            matches.setdefault(identity, item)
+            matches.setdefault(identity, (item, bridge))
 
-    if len(matches) != 1:
-        reason = (
-            f"ambiguous universe sugar for callee {target_symbol}"
-            if len(matches) > 1
-            else f"no universe sugar for callee {target_symbol}"
+    source_memento = _item_memento(call_item) or at
+    source_cid = str(
+        source_memento.get("source_cid")
+        or source_memento.get("sourceCid")
+        or "blake3-512:missing-source"
+    )
+    caller_context = _item_fact_formula(call_item)
+    target_candidates: List[Dict[str, Any]] = []
+    for target, bridge in matches.values():
+        target_memento = _item_memento(target) or {}
+        target_cid = str(
+            target_memento.get("source_cid")
+            or target_memento.get("sourceCid")
+            or "blake3-512:missing-target"
         )
-        return {
-            "memento": at,
-            "audit": {
-                "kind": "implication",
-                "sourceContract": call_item.get("name", "<unknown caller>"),
-                "targetSymbol": target_symbol,
-                "status": "unjoined",
-                "reason": reason,
+        callee_pre = target.get("pre")
+        target_candidates.append(
+            {
+                "bridgeSourceSymbol": bridge,
+                "contract": {
+                    "name": str(target.get("name") or target_symbol.split(":", 1)[-1]),
+                    "kit": "python-source",
+                    "contract_cid": target_cid,
+                    "pre_json": callee_pre,
+                    "post_json": target.get("post"),
+                },
+            }
+        )
+    span = source_memento.get("span")
+    span = span if isinstance(span, dict) else {}
+    demand = {
+        "sourceContract": {
+            "name": str(call_item.get("name") or "<unknown caller>"),
+            "kit": "python-source",
+            "contract_cid": source_cid,
+            "pre_json": None,
+            "post_json": caller_context,
+        },
+        "targetCandidates": target_candidates,
+        "callEdge": {
+            "source_contract_cid": source_cid,
+            "target_contract_cid": None,
+            "target_symbol": target_symbol,
+            "call_site_locus": {
+                "file": str(source_memento.get("file") or ""),
+                "line": span.get("start_line"),
+                "column": span.get("start_col"),
             },
-            "payload": None,
-        }
-
-    target = next(iter(matches.values()))
-    caller_context = _item_fact_formula(call_item) or {
-        "kind": "atomic",
-        "name": "true",
-        "args": [],
+        },
     }
-    callee_pre = target.get("pre") or {
-        "kind": "atomic",
-        "name": "true",
-        "args": [],
-    }
-    obligation = {
-        "kind": "implies",
-        "operands": [caller_context, callee_pre],
-    }
-    discharged = _is_true_formula(callee_pre) or caller_context == callee_pre
     return {
         "memento": at,
         "audit": {
-            "kind": "implication",
+            "kind": "implication-question",
             "sourceContract": call_item.get("name", "<unknown caller>"),
-            "targetContract": target.get("name", target_symbol),
             "targetSymbol": target_symbol,
-            "status": "discharged" if discharged else "unsatisfied",
-            "reason": (
-                "callee precondition is true or identical to caller context"
-                if discharged
-                else "caller context does not structurally discharge callee precondition"
-            ),
-            "obligation": obligation,
+            "candidateCount": len(target_candidates),
+            "callSiteMemento": at,
         },
-        "payload": obligation,
+        "payload": demand,
     }
 
 
