@@ -78,10 +78,7 @@ dispatch_execution_subcommand() {
     esac
   done
 
-  if [[ "$subcommand" == build ]]; then
-    echo "sugarbin: build subcommand requires artifact-manifest implementation" >&2
-    return 2
-  fi
+  [[ "$subcommand" != build || -n "$needs" ]] || needs="sugar"
 
   local observed_platform
   observed_platform="$(sugar_exec_platform_key)"
@@ -102,7 +99,23 @@ dispatch_execution_subcommand() {
     return 0
   fi
 
-  [[ "$saw_boundary" == 1 && ${#command[@]} -gt 0 ]] || {
+  local resolved_first="" resolved_dir="" requested_bin resolved
+  local -a resolved_bins=()
+  if [[ "$host" == local && ( -n "$needs" || "$subcommand" == build ) ]]; then
+    IFS=',' read -r -a resolved_bins <<<"${needs:-sugar}"
+    for requested_bin in "${resolved_bins[@]}"; do
+      [[ -n "$requested_bin" ]] || continue
+      local -a resolver_args=(--bin "$requested_bin")
+      [[ -z "$requested_platform" ]] || resolver_args+=(--platform "$requested_platform")
+      resolved="$(env -u SUGAR_BIN "$script_dir/sugarbin" "${resolver_args[@]}")" || return $?
+      [[ -n "$resolved_first" ]] || { resolved_first="$resolved"; resolved_dir="$(dirname "$resolved")"; }
+    done
+    if [[ "$subcommand" == build ]]; then return 0; fi
+    export SUGAR_BIN="$resolved_first" SUGAR_BINARY_DIR="$resolved_dir"
+    export PATH="$resolved_dir:$PATH"
+  fi
+
+  [[ "$subcommand" == build || ( "$saw_boundary" == 1 && ${#command[@]} -gt 0 ) ]] || {
     printf 'sugarbin: %s requires -- followed by a command\n' "$subcommand" >&2
     return 2
   }
@@ -128,6 +141,19 @@ dispatch_execution_subcommand() {
   local_cwd="$(pwd -P)"
   sugar_bx_init "$repo_root" "$local_cwd" || return $?
   sugar_bx_sync_workspace || return $?
+  if [[ -n "$needs" || "$subcommand" == build ]]; then
+    local remote_needs="${needs:-sugar}" remote_platform="${requested_platform:-linux-x86_64}"
+    if [[ "$subcommand" == build ]]; then
+      set +e
+      sugar_bx_ssh "cd $(sugar_bx_quote "$SUGAR_BX_REPO") && bin/sugarbin build --platform $(sugar_bx_quote "$remote_platform") --needs $(sugar_bx_quote "$remote_needs")"
+      status=$?
+      set -e
+      sugar_bx_finish "$status"
+      return $?
+    fi
+    local remote_setup="first= dir= needs=$(sugar_bx_quote "$remote_needs"); IFS=,; for b in \$needs; do r=\$(env -u SUGAR_BIN bin/sugarbin --platform $(sugar_bx_quote "$remote_platform") --bin \"\$b\") || exit; [ -n \"\$first\" ] || { first=\"\$r\"; dir=\$(dirname \"\$r\"); }; done; export SUGAR_BIN=\"\$first\" SUGAR_BINARY_DIR=\"\$dir\" PATH=\"\$dir:\$PATH\"; "
+    command=(bash -lc "$remote_setup exec \"\$@\"" bash "${command[@]}")
+  fi
   if [[ "$subcommand" == cargo ]]; then
     sugarbin_bx_cargo "$repo_root"
     return $?
@@ -481,37 +507,76 @@ stamp_for_filename() {
 }
 
 artifact_name() {
+  local identity="$1"
+  printf '%s-%s-%s-%s\n' "$bin_name" "$(platform_key)" "$profile" "$(stamp_for_filename "$identity")"
+}
+
+tool_versions() {
+  rustc_verbose="$(rustc -vV)" || return 1
+  cargo_verbose="$("${SUGAR_BINARY_CARGO:-cargo}" -V)" || return 1
+  target_triple="$(printf '%s\n' "$rustc_verbose" | sed -n 's/^host: //p' | head -1)"
+  [[ -n "$target_triple" ]] || { log "rustc -vV did not report a host target"; return 1; }
+}
+
+build_identity() {
   local stamp="$1"
-  printf '%s-%s-%s-%s\n' "$bin_name" "$(platform_key)" "$profile" "$(stamp_for_filename "$stamp")"
+  require_b3sum || return 1
+  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$package" "$bin_name" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
+import sys
+def emit(label, value):
+    label = label.encode(); value = value.encode()
+    sys.stdout.buffer.write(str(len(label)).encode() + b":" + label)
+    sys.stdout.buffer.write(str(len(value)).encode() + b":" + value)
+for label, value in zip(("sourceStamp", "rustcVersionVerbose", "cargoVersionVerbose",
+                         "platform", "targetTriple", "profile", "sortedFeatures",
+                         "package", "binary"), sys.argv[1:]):
+    emit(label, value)
+PY
 }
 
-# Every binary in the published set is built from the same one-stamp closure
-# (the whole implementations/rust tree), so a single marker file per profile
-# directory records the stamp the local target dir was last built at. This
-# replaces execing "$bin version --json", which only sugar-cli implements;
-# RPC/compiler binaries have no version subcommand to interrogate. ONE
-# verification mechanism, shared by every binary sugarbin publishes.
-local_stamp_marker() {
-  printf '%s/.sugarbin-source-stamp\n' "${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile"
+artifact_manifest_path() { printf '%s.sugarbin.json\n' "$1"; }
+
+write_artifact_manifest() {
+  local binary_path="$1" stamp="$2" identity="$3" manifest sha
+  manifest="$(artifact_manifest_path "$binary_path")"
+  sha="$(sha256_file "$binary_path")"
+  python3 - "$manifest" "$bin_name" "$package" "$stamp" "$identity" "$(platform_key)" "$target_triple" "$profile" "$rustc_verbose" "$cargo_verbose" "$sha" <<'PY'
+import json, os, sys, tempfile
+path, binary, package, stamp, identity, platform, target, profile, rustc, cargo, sha = sys.argv[1:]
+data = {"schema": 1, "binary": binary, "package": package, "sourceStamp": stamp,
+        "buildIdentity": identity, "platform": platform, "targetTriple": target,
+        "profile": profile, "features": [], "rustc": rustc, "cargo": cargo,
+        "sha256": sha, "built": True, "executed": False}
+os.makedirs(os.path.dirname(path), exist_ok=True)
+fd, tmp = tempfile.mkstemp(prefix=".sugarbin-manifest-", dir=os.path.dirname(path))
+with os.fdopen(fd, "w") as out: json.dump(data, out, indent=2, sort_keys=True); out.write("\n")
+os.replace(tmp, path)
+PY
 }
 
-write_local_stamp_marker() {
-  local stamp="$1"
-  printf '%s\n' "$stamp" >"$(local_stamp_marker)"
-}
-
-local_target_matches_stamp() {
-  local bin="$1" expected="$2" label="$3"
-  [[ -x "$bin" ]] || return 1
-  local marker observed
-  marker="$(local_stamp_marker)"
-  [[ -f "$marker" ]] || { log "$label skipped: no source-stamp marker at $marker"; return 1; }
-  observed="$(cat "$marker")"
-  if [[ "$observed" != "$expected" ]]; then
-    log "$label skipped: stale target dir has stamp $observed, need $expected"
-    return 1
-  fi
-  return 0
+verify_artifact_manifest() {
+  local binary_path="$1" stamp="$2" identity="$3" label="$4" manifest
+  manifest="$(artifact_manifest_path "$binary_path")"
+  [[ -f "$binary_path" && -x "$binary_path" ]] || return 1
+  [[ -f "$manifest" ]] || { log "$label skipped: no executable manifest at $manifest"; return 1; }
+  python3 - "$manifest" "$binary_path" "$bin_name" "$package" "$stamp" "$identity" "$(platform_key)" "$target_triple" "$profile" "$rustc_verbose" "$cargo_verbose" <<'PY'
+import hashlib, json, sys
+manifest, path, binary, package, stamp, identity, platform, target, profile, rustc, cargo = sys.argv[1:]
+try:
+    with open(manifest, encoding="utf-8") as f: data = json.load(f)
+except Exception as e:
+    print(f"sugarbin: invalid artifact manifest: {e}", file=sys.stderr); raise SystemExit(1)
+expected = {"schema": 1, "binary": binary, "package": package, "sourceStamp": stamp,
+            "buildIdentity": identity, "platform": platform, "targetTriple": target,
+            "profile": profile, "features": [], "rustc": rustc, "cargo": cargo,
+            "built": True, "executed": False}
+for key, value in expected.items():
+    if data.get(key) != value:
+        print(f"sugarbin: artifact identity mismatch: {key}", file=sys.stderr); raise SystemExit(1)
+with open(path, "rb") as f: actual = hashlib.sha256(f.read()).hexdigest()
+if data.get("sha256") != actual:
+    print("sugarbin: artifact checksum mismatch", file=sys.stderr); raise SystemExit(1)
+PY
 }
 
 github_repo() {
@@ -527,7 +592,8 @@ cache_dir() {
 }
 
 publish_if_absent() {
-  local bin="$1" stamp="$2" name="$3"
+  local bin="$1" stamp="$2" name="$3" manifest
+  manifest="$(artifact_manifest_path "$bin")"
   [[ "${SUGAR_BINARY_PUBLISH:-1}" != "0" ]] || { log "publish disabled by SUGAR_BINARY_PUBLISH=0"; return 0; }
   command -v gh >/dev/null 2>&1 || { log "gh not found; not publishing $name"; return 0; }
   local repo
@@ -538,8 +604,9 @@ publish_if_absent() {
       --title "Sugar binary shelf" \
       --notes "Dumb shelf for stamp-addressed Sugar test binaries." >/dev/null 2>&1 \
     || { log "could not create shelf release; not publishing $name"; return 0; }
-  if gh release view "$shelf_tag" --repo "$repo" --json assets --jq '.assets[].name' \
-    | grep -Fxq "$name"; then
+  local shelf_assets
+  shelf_assets="$(gh release view "$shelf_tag" --repo "$repo" --json assets --jq '.assets[].name')"
+  if grep -Fxq "$name" <<<"$shelf_assets" && grep -Fxq "$name.sugarbin.json" <<<"$shelf_assets"; then
     log "shelf already has $name"
     return 0
   fi
@@ -576,7 +643,8 @@ with open(path, "w", encoding="utf-8") as out:
     )
     out.write("\n")
 PY
-  gh release upload "$shelf_tag" "$asset" "$meta" \
+  cp "$manifest" "$tmp/$name.sugarbin.json"
+  gh release upload "$shelf_tag" "$asset" "$meta" "$tmp/$name.sugarbin.json" --clobber \
     --repo "$repo" >/dev/null 2>&1 \
     && log "published $name as $actor" \
     || log "publish failed or raced for $name; continuing"
@@ -597,39 +665,41 @@ verify_attestation_if_present() {
 }
 
 pull_from_shelf() {
-  local stamp="$1" name="$2"
+  local stamp="$1" identity="$2" name="$3"
   [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
   command -v gh >/dev/null 2>&1 || { log "gh not found; skipping shelf pull"; return 1; }
   local repo
   repo="$(github_repo)" || { log "gh repo identity unavailable; skipping shelf pull"; return 1; }
-  local dir download_dir candidate
+  local dir download_dir candidate candidate_dir manifest
   dir="$(cache_dir)"
-  candidate="$dir/$name"
-  # $name already encodes bin_name + platform + profile + stamp, so a hit at
-  # this exact path is stamp-correct by construction; no re-verification.
-  if [[ -x "$candidate" ]]; then
+  candidate_dir="$dir/$name"
+  candidate="$candidate_dir/$bin_name"
+  manifest="$(artifact_manifest_path "$candidate")"
+  if verify_artifact_manifest "$candidate" "$stamp" "$identity" "prebuilt cache"; then
     log "prebuilt cache hit for $name"
     printf '%s\n' "$candidate"
     return 0
   fi
   download_dir="$dir/.downloads/$name"
   mkdir -p "$download_dir"
-  if ! gh release download "$shelf_tag" --repo "$repo" --pattern "$name" --dir "$download_dir" >/dev/null 2>&1; then
+  if ! gh release download "$shelf_tag" --repo "$repo" --pattern "$name" --pattern "$name.sugarbin.json" --dir "$download_dir" >/dev/null 2>&1; then
     log "shelf miss for $name"
     return 1
   fi
-  local downloaded="$download_dir/$name"
-  [[ -f "$downloaded" ]] || { log "shelf downloaded no $name asset"; return 1; }
+  local downloaded="$download_dir/$name" downloaded_manifest="$download_dir/$name.sugarbin.json"
+  [[ -f "$downloaded" && -f "$downloaded_manifest" ]] || { log "shelf assets lack a verifiable executable manifest for $name"; return 1; }
   chmod +x "$downloaded"
-  verify_attestation_if_present "$downloaded" "$stamp"
-  mkdir -p "$dir"
+  mkdir -p "$candidate_dir"
   cp "$downloaded" "$candidate"
+  cp "$downloaded_manifest" "$manifest"
   chmod +x "$candidate"
+  verify_artifact_manifest "$candidate" "$stamp" "$identity" "downloaded shelf artifact" || return 1
+  verify_attestation_if_present "$candidate" "$stamp"
   printf '%s\n' "$candidate"
 }
 
 build_from_source() {
-  local stamp="$1"
+  local stamp="$1" identity="$2"
   log "building $bin_name once for this session (set SUGAR_BIN to skip)"
   local cargo_bin="${SUGAR_BINARY_CARGO:-cargo}"
   local args=(build --locked --manifest-path "$rust_workspace/Cargo.toml" -p "$package" --bin "$bin_name")
@@ -637,10 +707,10 @@ build_from_source() {
     args+=(--release)
   fi
   SUGAR_BUILD_STAMP="$stamp" "$cargo_bin" "${args[@]}"
-  # One marker per profile directory: the whole implementations/rust tree is
-  # ONE stamp, so this build leaves every binary in this target dir valid at
-  # this stamp, not just the one just requested.
-  write_local_stamp_marker "$stamp"
+  local built="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
+  [[ -x "$built" ]] || { log "Cargo did not produce requested executable $built"; return 1; }
+  write_artifact_manifest "$built" "$stamp" "$identity"
+  rm -f "${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/.sugarbin-source-stamp"
 }
 
 main() {
@@ -654,18 +724,20 @@ main() {
     return 0
   fi
 
-  local stamp name candidate built
+  local stamp identity name candidate built
   stamp="$(source_stamp)"
-  name="$(artifact_name "$stamp")"
+  tool_versions || return $?
+  identity="$(build_identity "$stamp")"
+  name="$(artifact_name "$identity")"
 
   candidate="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
-  if local_target_matches_stamp "$candidate" "$stamp" "local target"; then
+  if verify_artifact_manifest "$candidate" "$stamp" "$identity" "local target"; then
     publish_if_absent "$candidate" "$stamp" "$name"
     printf '%s\n' "$candidate"
     return 0
   fi
 
-  if candidate="$(pull_from_shelf "$stamp" "$name")"; then
+  if candidate="$(pull_from_shelf "$stamp" "$identity" "$name")"; then
     printf '%s\n' "$candidate"
     return 0
   fi
@@ -674,9 +746,9 @@ main() {
     log "no matching $bin_name binary for stamp $stamp and build fallback disabled"
     return 1
   fi
-  build_from_source "$stamp"
+  build_from_source "$stamp" "$identity"
   built="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
-  if ! local_target_matches_stamp "$built" "$stamp" "built binary"; then
+  if ! verify_artifact_manifest "$built" "$stamp" "$identity" "built binary"; then
     log "built binary did not match requested stamp $stamp"
     return 1
   fi

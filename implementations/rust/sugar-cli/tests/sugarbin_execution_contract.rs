@@ -41,3 +41,14 @@ fn sugarbin_wrapper_compatibility_contract() {
         .expect("run wrapper compatibility contract");
     assert!(status.success(), "wrapper compatibility contract failed: {status}");
 }
+
+#[test]
+fn sugarbin_artifact_manifest_contract() {
+    let root = repo_root();
+    let status = Command::new("bash")
+        .arg(root.join("tests/sugarbin_artifact_manifest.sh"))
+        .arg(&root)
+        .status()
+        .expect("run artifact manifest contract");
+    assert!(status.success(), "artifact manifest contract failed: {status}");
+}
