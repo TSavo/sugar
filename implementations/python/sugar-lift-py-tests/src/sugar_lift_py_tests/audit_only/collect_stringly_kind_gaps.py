@@ -111,6 +111,11 @@ def _stable_digest(path: str, text: str) -> str:
     return hashlib.sha256(f"{path}\0{text}".encode("utf-8")).hexdigest()[:16]
 
 
+def _canonical_identity_path(path: Path | str) -> str:
+    """Return a repository path whose identity is independent of the host OS."""
+    return str(path).replace("\\", "/")
+
+
 def _offenders_in_tree(
     tree: ast.AST, source: str
 ) -> list[tuple[int, str, str, tuple[str, ...]]]:
@@ -152,7 +157,7 @@ def collect() -> list[Occurrence]:
             tree = ast.parse(source)
         except SyntaxError:
             continue
-        display = str(file_path.relative_to(REPO_DISPLAY_ROOT))
+        display = _canonical_identity_path(file_path.relative_to(REPO_DISPLAY_ROOT))
         for line, text, subject, literals in _offenders_in_tree(tree, source):
             raw.append((display, line, text, subject, literals))
 
