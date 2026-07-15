@@ -623,6 +623,7 @@ fn keys_to_json(keys: Vec<FrontierKey>) -> Vec<serde_json::Value> {
 }
 
 #[test]
+#[ignore = "explicit recursive frontier instrument: run make assertion-lift-frontier"]
 fn assertion_lift_frontier_matches_expected_multiset() {
     let report = report();
     assert!(
@@ -646,6 +647,7 @@ fn assertion_lift_frontier_matches_expected_multiset() {
 }
 
 #[test]
+#[ignore = "report-only recursive frontier instrument: run make assertion-lift-frontier"]
 fn assertion_lift_frontier_is_red_report_only() {
     let report = report();
     eprintln!("{}", report.to_json());

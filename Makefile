@@ -62,6 +62,7 @@ help:
 	@echo "  make test-rust  test-python   (the proven provers)"
 	@echo "  make numpy-wall                build and ratchet-check the NumPy lift wall"
 	@echo "  make pandas-wall               build and ratchet-check the pandas lift wall"
+	@echo "  make assertion-lift-frontier   run the explicit recursive assertion_lift frontier ratchet"
 	@echo "  make test-python-format       Black check for implementations/python"
 	@echo "  make test-<lang>              csharp / php / c"
 	@echo "  make test-compiler-warning-de compiler-warning delta-epsilon instrument"
@@ -150,6 +151,19 @@ numpy-wall:
 .PHONY: pandas-wall
 pandas-wall:
 	python3 tools/pandas_wall.py
+
+# This frontier intentionally launches the known-red assertion_lift target in a
+# nested cargo process. Keep it explicit: ordinary test-rust/make ci must not pay
+# for the serial recursive census. Select the multiset ratchet exactly so the
+# report-only duplicate and stable-zero target remain separate instruments.
+.PHONY: assertion-lift-frontier
+assertion-lift-frontier: build-python
+	PATH="$(PYTHON_KIT_BIN):$$PATH" $(CARGO) test --release \
+		--manifest-path implementations/rust/Cargo.toml \
+		-p sugar-lift-rust-tests \
+		--test assertion_lift_frontier \
+		assertion_lift_frontier_matches_expected_multiset -- \
+		--ignored --exact --nocapture
 
 .PHONY: setup-git-hooks
 setup-git-hooks:
