@@ -8,6 +8,7 @@ from .effect_dto import EffectDto
 from .factory_audit_summary_dto import FactoryAuditSummaryDto
 from .factory_walk_row_dto import (
     FactoryWalkCompleteRowDto,
+    FactoryWalkStatus,
     FactoryWalkRedRowDto,
     FactoryWalkRowDto,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "FactoryAuditDto",
     "FactoryAuditSummaryDto",
     "FactoryWalkCompleteRowDto",
+    "FactoryWalkStatus",
     "FactoryWalkRedRowDto",
     "FactoryWalkRowDto",
     "ImplicationDto",

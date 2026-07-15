@@ -11,6 +11,7 @@ import pytest
 from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import (
     FactoryWalkCompleteRowDto,
     FactoryWalkRedRowDto,
+    FactoryWalkStatus,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,18 +23,10 @@ def _with_src_on_pythonpath() -> str:
     return src if not existing else os.pathsep.join([src, existing])
 
 
-def test_unknown_status_panics_instead_of_defaulting():
-    with pytest.raises(TypeError, match="brand-new-status"):
-        FactoryWalkCompleteRowDto(  # type: ignore[arg-type]
-            file="f.py",
-            line=1,
-            requested_role="TERM",
-            ast_kind="Call",
-            selected=None,
-            status="brand-new-status",
-            output=None,
-            source_memento={},
-        )
+def test_unknown_status_is_unrepresentable():
+    """An illegal status cannot even be constructed: the enum IS the guard."""
+    with pytest.raises(ValueError):
+        FactoryWalkStatus("bogus")
 
 
 def test_red_row_without_grounds_is_unconstructible() -> None:
@@ -44,7 +37,7 @@ def test_red_row_without_grounds_is_unconstructible() -> None:
             requested_role="term",
             ast_kind="Call",
             selected="CallSugar",
-            status="factory-gap",
+            status=FactoryWalkStatus.COVERAGE_GAP,
             output={},
             source_memento={"kind": "source-memento"},
             reason="",
@@ -56,7 +49,10 @@ def test_red_row_without_grounds_is_a_pyright_error(tmp_path: Path) -> None:
     planted.write_text(
         "\n".join(
             (
-                "from sugar_lift_py_tests.kit_rpc import FactoryWalkRedRowDto",
+                "from sugar_lift_py_tests.kit_rpc import (",
+                "    FactoryWalkRedRowDto,",
+                "    FactoryWalkStatus,",
+                ")",
                 "",
                 "FactoryWalkRedRowDto(",
                 "    file='wall.py',",
@@ -64,7 +60,7 @@ def test_red_row_without_grounds_is_a_pyright_error(tmp_path: Path) -> None:
                 "    requested_role='term',",
                 "    ast_kind='Call',",
                 "    selected='CallSugar',",
-                "    status='factory-gap',",
+                "    status=FactoryWalkStatus.COVERAGE_GAP,",
                 "    output={},",
                 "    source_memento={'kind': 'source-memento'},",
                 ")",
@@ -107,7 +103,7 @@ def test_red_row_with_grounds_constructs() -> None:
         requested_role="term",
         ast_kind="Call",
         selected="CallSugar",
-        status="factory-gap",
+        status=FactoryWalkStatus.COVERAGE_GAP,
         output={},
         source_memento={"kind": "source-memento"},
         reason="via unresolved call `op` at wall.py:3",
@@ -122,8 +118,8 @@ def test_green_row_needs_no_grounds() -> None:
         requested_role="term",
         ast_kind="Call",
         selected="CallSugar",
-        status="warranted",
+        status=FactoryWalkStatus.WARRANTED,
         output={},
         source_memento={"kind": "source-memento"},
     )
-    assert row.status == "warranted"
+    assert row.status is FactoryWalkStatus.WARRANTED
