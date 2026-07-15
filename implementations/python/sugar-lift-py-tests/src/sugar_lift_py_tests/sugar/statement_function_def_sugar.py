@@ -16,6 +16,7 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
     name: str
     signature: tuple[tuple[str, str], ...]
     decorators: tuple[SugarBody, ...]
+    positional_defaults: tuple[SugarBody, ...]
     body: SugarBody
     site: object = dataclass_field(compare=False)
 
@@ -31,6 +32,10 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
             decorators=tuple(
                 ctx.build_body(decorator, SugarRole.TERM)
                 for decorator in site.function_decorators()
+            ),
+            positional_defaults=tuple(
+                ctx.build_body(default, SugarRole.TERM)
+                for default in site.function_defaults()
             ),
             body=ctx.build_body(site.function_body_block(), SugarRole.STATEMENT),
             site=site,
@@ -55,6 +60,18 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
         return self._reduce_decorators(self.decorators, (), ctx)
 
     def _reduce_decorators(self, remaining, accumulated, ctx) -> Outcome:
+        if remaining:
+            head, *rest = remaining
+            return head.reduce(ctx).and_then(
+                lambda value: self._reduce_decorators(
+                    tuple(rest), (*accumulated, value), ctx
+                )
+            )
+        return self._reduce_defaults(
+            self.positional_defaults, (), accumulated, ctx
+        )
+
+    def _reduce_defaults(self, remaining, accumulated, decorators, ctx) -> Outcome:
         from sugar_lift_py_tests.floor import FunctionCallable
         from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
         from sugar_lift_py_tests.sugar.install_source_dig import (
@@ -65,8 +82,8 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
         if remaining:
             head, *rest = remaining
             return head.reduce(ctx).and_then(
-                lambda value: self._reduce_decorators(
-                    tuple(rest), (*accumulated, value), ctx
+                lambda value: self._reduce_defaults(
+                    tuple(rest), (*accumulated, value), decorators, ctx
                 )
             )
         callable_body = self.body
@@ -83,10 +100,11 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 name=self.name,
                 parameters=tuple(name for name, _kind in self.signature),
                 parameter_kinds=tuple(kind for _name, kind in self.signature),
-                decorators=accumulated,
+                positional_defaults=accumulated,
+                decorators=decorators,
                 body=callable_body,
             )
         )
 
     def walk_children(self):
-        return (*self.decorators, self.body)
+        return (*self.decorators, *self.positional_defaults, self.body)

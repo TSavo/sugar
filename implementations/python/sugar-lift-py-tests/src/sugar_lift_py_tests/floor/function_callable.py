@@ -14,6 +14,7 @@ class FunctionCallable(FloorValue):
     return_name: str | None = None
     parameters: tuple[str, ...] = ()
     parameter_kinds: tuple[str, ...] = ()
+    positional_defaults: tuple[FloorValue, ...] = ()
     decorators: tuple[Any, ...] = ()
     body: Any = dataclass_field(default=None, compare=False)
 
@@ -58,7 +59,12 @@ class FunctionCallable(FloorValue):
         simple = all(
             kind in {"positional", "positional-only"} for kind in self.parameter_kinds
         )
-        if not simple or keyword_names or len(arg_values) != len(self.parameters):
+        required_count = len(self.parameters) - len(self.positional_defaults)
+        supplied_count = len(arg_values)
+        valid_positional_arity = required_count <= supplied_count <= len(
+            self.parameters
+        )
+        if not simple or keyword_names or not valid_positional_arity:
             factory_panic_gap(
                 owner="FunctionCallable",
                 blame=str(site),
@@ -68,10 +74,15 @@ class FunctionCallable(FloorValue):
                 gap_kind=GapKind.FLOOR,
                 gap_locus=GapLocus.CONSTRUCTION,
             )
+        missing_count = len(self.parameters) - supplied_count
+        bound_values = (
+            *arg_values,
+            *self.positional_defaults[len(self.positional_defaults) - missing_count :],
+        )
         return Complete(
             CallSiteValue(
                 target_name=self.name,
-                arg_values=arg_values,
+                arg_values=bound_values,
                 parameters=self.parameters,
                 term=ctor(
                     f"call:{self.name}",
