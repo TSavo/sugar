@@ -1188,3 +1188,49 @@ def test_add():
     assert "ambiguous universe sugar for callee call:add" in reason
     assert "ambiguous.A.add" in reason
     assert "ambiguous.B.add" in reason
+
+
+def test_assert_and_assign_seed_panics_mint_typed_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for the wall's recovery door (#4536 follow-up).
+
+    #4536 moved the seed-panic consumer to `_SeedPanicEvidence` attribute
+    access but left the Assert and Assign recovery sites appending bare
+    tuples, so the first recovered module-level Assert/Assign panic crashed
+    the allowlisted audit lane instead of minting a frontier row.
+    """
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+
+    original_build_body = FactoryBuildContext.build_body
+
+    def exploding_build_body(self, stmt, role):
+        if getattr(stmt, "observed", None) in {"Assert", "Assign"}:
+            factory_panic_gap(
+                owner="seed-evidence-fixture",
+                blame="seeded.py:1:0",
+                observed="rhs",
+                requested="value",
+                fix="record typed seed evidence",
+            )
+        return original_build_body(self, stmt, role)
+
+    monkeypatch.setattr(FactoryBuildContext, "build_body", exploding_build_body)
+    lift_rpc._AUDIT_FILE_CONTEXTS.clear()
+    source = "assert True\nx = 1\n"
+    context = lift_rpc._audit_file_context(
+        source,
+        "seeded.py",
+        blake3_512_of(source.encode()),
+        hold_seed_panics=True,
+    )
+    assert context is not None
+    assert len(context.seed_panics) == 2
+    for evidence in context.seed_panics:
+        assert isinstance(evidence, lift_rpc._SeedPanicEvidence)
+        assert evidence.locus.startswith("seeded.py:")
+        assert evidence.info.blame == "seeded.py:1:0"
+    assert {evidence.demanded_source.split(":")[0] for evidence in context.seed_panics} == {
+        "assert",
+        "binding",
+    }

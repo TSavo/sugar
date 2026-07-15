@@ -1027,6 +1027,14 @@ class _SeedPanicEvidence:
     info: FactoryGapInfo
 
 
+def _detached_factory_panic(panic: FactoryPanic) -> FactoryPanic:
+    """Keep panic evidence without retaining its recovery stack and context."""
+    panic.__traceback__ = None
+    panic.__context__ = None
+    panic.__cause__ = None
+    return panic
+
+
 def _module_import_temporal(
     module, catalog, *, recovered_panics=None, assertion_sink=None
 ) -> "object":
@@ -1155,10 +1163,10 @@ def _module_import_temporal(
                     if recovered_panics is None:
                         raise
                     recovered_panics.append(
-                        (
-                            f"{stmt.filename}:{stmt.line}:{stmt.col}",
-                            f"assert:{stmt.line}:{stmt.col}",
-                            _detached_factory_panic(panic),
+                        _SeedPanicEvidence(
+                            locus=f"{stmt.filename}:{stmt.line}:{stmt.col}",
+                            demanded_source=f"assert:{stmt.line}:{stmt.col}",
+                            info=_detached_factory_panic(panic).info,
                         )
                     )
                     continue
@@ -1190,10 +1198,10 @@ def _module_import_temporal(
                 if recovered_panics is None:
                     raise
                 recovered_panics.append(
-                    (
-                        f"{stmt.filename}:{stmt.line}:{stmt.col}",
-                        f"binding:{name}",
-                        _detached_factory_panic(panic),
+                    _SeedPanicEvidence(
+                        locus=f"{stmt.filename}:{stmt.line}:{stmt.col}",
+                        demanded_source=f"binding:{name}",
+                        info=_detached_factory_panic(panic).info,
                     )
                 )
                 continue
