@@ -28,7 +28,7 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def new(cls, site, ctx) -> "StatementFunctionDefSugar":
         return cls(
-            name=site.function_name(),
+            name=getattr(site.node, "_sugar_bridge_name", site.function_name()),
             signature=site.function_binding_signature(),
             decorators=tuple(
                 ctx.build_body(decorator, SugarRole.TERM)

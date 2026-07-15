@@ -264,6 +264,52 @@ def _module_sibling_function_nodes(module_name: str) -> dict:
     return nodes
 
 
+def _literal_string_sequence(node: ast.AST) -> tuple[str, ...] | None:
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return None
+    values: list[str] = []
+    for element in node.elts:
+        if not isinstance(element, ast.Constant) or not isinstance(element.value, str):
+            return None
+        values.append(element.value)
+    return tuple(values)
+
+
+def _static_module_exports(module_name: str) -> frozenset[str] | None:
+    """Read one literal ``__all__`` manifest without importing its module."""
+    installed = _installed_source(module_name)
+    if installed is None:
+        return None
+    source, sourcefile = installed
+    try:
+        parsed = ast.parse(source, filename=sourcefile)
+    except SyntaxError:
+        return None
+    manifests: list[tuple[str, ...]] = []
+    for statement in parsed.body:
+        value = None
+        if isinstance(statement, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "__all__"
+            for target in statement.targets
+        ):
+            value = statement.value
+        elif (
+            isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id == "__all__"
+        ):
+            value = statement.value
+        if value is None:
+            continue
+        manifest = _literal_string_sequence(value)
+        if manifest is None:
+            return None
+        manifests.append(manifest)
+    if len(manifests) != 1:
+        return None
+    return frozenset(manifests[0])
+
+
 @functools.lru_cache(maxsize=None)
 def resolve_install_source_funcdef(import_target: str):
     """Resolve an exact qualified direct/re-exported FunctionDef without import."""
@@ -319,14 +365,20 @@ def _resolve_qualified_function_fragment(
     for statement in parsed.body:
         if not isinstance(statement, ast.ImportFrom):
             continue
+        target_module = _absolute_import_from_module(
+            module_name, statement.module, statement.level
+        )
+        if not target_module:
+            continue
         for alias in statement.names:
-            if (alias.asname or alias.name) != attr or alias.name == "*":
+            if alias.name == "*":
+                exports = _static_module_exports(target_module)
+                if exports is not None and attr in exports:
+                    reexports.append(f"{target_module}.{attr}")
                 continue
-            target_module = _absolute_import_from_module(
-                module_name, statement.module, statement.level
-            )
-            if target_module:
-                reexports.append(f"{target_module}.{alias.name}")
+            if (alias.asname or alias.name) != attr:
+                continue
+            reexports.append(f"{target_module}.{alias.name}")
     if len(reexports) > 1:
         from sugar_lift_py_tests.factory import factory_panic_gap
         from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
@@ -335,7 +387,10 @@ def _resolve_qualified_function_fragment(
             owner="install_source_dig",
             blame=sourcefile,
             observed=import_target,
-            requested="resolve one exact qualified re-export route",
+            requested=(
+                "resolve one exact qualified re-export route or one exact "
+                "manifest-witnessed star re-export route"
+            ),
             fix="cite a unique source-qualified re-export instead of alternatives",
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
