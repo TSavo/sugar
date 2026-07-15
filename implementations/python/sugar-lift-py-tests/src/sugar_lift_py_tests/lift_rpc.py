@@ -19,6 +19,7 @@ if __package__ in (None, ""):
 from sugar_lift_py_tests.audit_only import AuditOnlyGap, gap_from_factory_panic
 from sugar_lift_py_tests.effect import SourceOracleEffect, effect_reason, effect_status
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.factory.factory_gap_info import FactoryGapInfo
 from sugar_lift_py_tests.filename import cid_from_proof_stem
 from sugar_lift_py_tests.idd.lift_coverage_accounting import (
     account_lift_coverage,
@@ -1016,12 +1017,13 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
         return replace(payload, symbol_kinds=symbol_kinds)
 
 
-def _detached_factory_panic(panic: FactoryPanic) -> FactoryPanic:
-    """Keep panic evidence without retaining its recovery stack and context."""
-    panic.__traceback__ = None
-    panic.__context__ = None
-    panic.__cause__ = None
-    return panic
+@dataclasses.dataclass(frozen=True)
+class _SeedPanicEvidence:
+    """Immutable audit data copied out of a transient FactoryPanic."""
+
+    locus: str
+    demanded_source: str
+    info: FactoryGapInfo
 
 
 def _module_import_temporal(
@@ -1094,10 +1096,10 @@ def _module_import_temporal(
                     if recovered_panics is None:
                         raise
                     recovered_panics.append(
-                        (
-                            f"{stmt.filename}:{stmt.line}:{stmt.col}",
-                            import_target,
-                            _detached_factory_panic(panic),
+                        _SeedPanicEvidence(
+                            locus=f"{stmt.filename}:{stmt.line}:{stmt.col}",
+                            demanded_source=import_target,
+                            info=panic.info,
                         )
                     )
                     resolved_value = None
@@ -1272,7 +1274,7 @@ class _AuditFileContext:
     catalog: Any
     module: Any
     module_temporal: Any
-    seed_panics: tuple[tuple[str, str, FactoryPanic], ...]
+    seed_panics: tuple[_SeedPanicEvidence, ...]
     module_assertions: tuple[Any, ...]
     import_aliases: dict[str, str]
     from_imports: dict[str, tuple[str, str]]
@@ -1281,10 +1283,9 @@ class _AuditFileContext:
     definitions_by_cid: dict[str, Any]
 
 
-# Passive process-lifetime context for the resident kit. File content CID is
-# the sole key. There is deliberately no invalidation or eviction API: a new
-# file version has a new CID, while dropping the RPC layer drops the kit and
-# this map with it.
+# Bounded process-lifetime context for the resident kit. File content CID is
+# the sole key; _remember_file_context applies the same explicit capacity as
+# enumeration contexts so evicted source/AST ownership is collectible.
 _AUDIT_FILE_CONTEXTS: collections.OrderedDict[str, _AuditFileContext] = (
     collections.OrderedDict()
 )
@@ -1327,7 +1328,7 @@ def _audit_file_context(
     # Keep it as the context root so enumeration can answer with its honest
     # empty child set instead of throwing outside the recovered-audit door.
     module = roots[0] if roots else source_root
-    seed_panics: list[tuple[str, str, FactoryPanic]] = []
+    seed_panics: list[_SeedPanicEvidence] = []
     module_assertions: list[Any] = []
     module_temporal = _module_import_temporal(
         module,
@@ -1463,16 +1464,16 @@ def audit_lift_file(
         else None
     )
     target_is_module = target_owner == "<module>"
-    for label, demanded_source, panic in (
+    for evidence in (
         (seed_panics or ()) if target_memento is None or target_is_module else ()
     ):
         recovered_panics.append(
             RecoveredFactoryPanicDto(
-                locus=label,
-                demanded_source=demanded_source,
-                terminal_gap_locus=panic.info.blame,
-                reason=panic.info.message,
-                gap=panic.info.to_json(),
+                locus=evidence.locus,
+                demanded_source=evidence.demanded_source,
+                terminal_gap_locus=evidence.info.blame,
+                reason=evidence.info.message,
+                gap=evidence.info.to_json(),
             )
         )
     import_aliases = audit_context.import_aliases

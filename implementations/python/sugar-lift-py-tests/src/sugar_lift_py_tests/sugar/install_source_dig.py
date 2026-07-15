@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import importlib
 import importlib.machinery
-import importlib.util
 import ast
 import functools
 import inspect
@@ -27,6 +26,78 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
+
+INSTALLED_SOURCE_INDEX_CAPACITY = 64
+
+
+@dataclass(frozen=True)
+class _InstalledDefinition:
+    key: str
+    name: str
+    lineno: int
+    col_offset: int
+    bridge_name: str
+
+
+@dataclass(frozen=True)
+class _InstalledSourceIndex:
+    """Immutable source plus compact definition coordinates for one module."""
+
+    module_name: str
+    source: str
+    sourcefile: str
+    definitions: tuple[_InstalledDefinition, ...]
+
+
+def _definition_locator(
+    key: str,
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    bridge_name: str,
+) -> _InstalledDefinition:
+    return _InstalledDefinition(
+        key=key,
+        name=node.name,
+        lineno=node.lineno,
+        col_offset=node.col_offset,
+        bridge_name=bridge_name,
+    )
+
+
+@functools.lru_cache(maxsize=INSTALLED_SOURCE_INDEX_CAPACITY)
+def _installed_source_index(module_name: str) -> _InstalledSourceIndex | None:
+    installed = _installed_source(module_name)
+    if installed is None:
+        installed = _imported_module_source(module_name)
+    if installed is None:
+        return None
+    source, sourcefile = installed
+    try:
+        parsed = ast.parse(source, filename=sourcefile)
+    except SyntaxError:
+        return None
+
+    definitions: dict[str, _InstalledDefinition] = {}
+    for child in ast.walk(parsed):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            bridge_name = f"{module_name}.{child.name}"
+            for key in (child.name, bridge_name):
+                definitions[key] = _definition_locator(key, child, bridge_name)
+        elif isinstance(child, ast.ClassDef):
+            for statement in child.body:
+                if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                bridge_name = f"{module_name}.{child.name}.{statement.name}"
+                for key in (
+                    f"{child.name}.{statement.name}",
+                    bridge_name,
+                ):
+                    definitions[key] = _definition_locator(key, statement, bridge_name)
+    return _InstalledSourceIndex(
+        module_name=module_name,
+        source=source,
+        sourcefile=sourcefile,
+        definitions=tuple(definitions.values()),
+    )
 
 
 def _installed_source(module_name: str) -> tuple[str, str] | None:
@@ -155,113 +226,84 @@ def _resolve_qualified_native_callable(
     return _resolve_qualified_native_callable(reexports[0], resolving=resolving)
 
 
-def module_sibling_function_nodes(module_name: str) -> dict:
-    """Copy-on-read facade over the memoized bridge table (callers may pop)."""
-    return dict(_module_sibling_function_nodes(module_name))
-
-
-@functools.lru_cache(maxsize=None)
-def _module_sibling_function_nodes(module_name: str) -> dict:
-    """AST FunctionDef nodes for every def in ``module_name``, bare + qualified keys.
-
-    Also indexes ``Class.method`` / ``module.Class.method`` for method body dig.
-    """
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-
-    sourcefile = None
-    source = None
+def _imported_module_source(module_name: str) -> tuple[str, str] | None:
+    """Compatibility source fallback for modules without a passive file spec."""
     try:
-        # Source presence is the construction boundary. Reading a module must
-        # not execute its import-time optional-dependency guards merely to dig
-        # definitions whose Python source is already installed.
-        spec = importlib.util.find_spec(module_name)
-        origin = getattr(spec, "origin", None)
-        if origin and origin.endswith((".py", ".pyi")):
-            sourcefile = origin
-            source = Path(origin).read_text(encoding="utf-8")
-    except (
-        ImportError,
-        ModuleNotFoundError,
-        OSError,
-        TypeError,
-        UnicodeError,
-        ValueError,
-    ):
-        pass
+        from _pytest.outcomes import Skipped
+    except ImportError:
 
-    if source is None:
-        try:
-            from _pytest.outcomes import Skipped
-        except ImportError:
+        class Skipped(BaseException):  # type: ignore[no-redef]
+            pass
 
-            class Skipped(BaseException):  # type: ignore[no-redef]
-                pass
+    try:
+        module = importlib.import_module(module_name)
+        sourcefile = inspect.getsourcefile(module)
+        if not sourcefile:
+            return None
+        return Path(sourcefile).read_text(encoding="utf-8"), sourcefile
+    except Skipped as skipped:
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
 
-        try:
-            module = importlib.import_module(module_name)
-            sourcefile = inspect.getsourcefile(module)
-            if not sourcefile:
-                return {}
-            source = Path(sourcefile).read_text(encoding="utf-8")
-        except Skipped as skipped:
-            from sugar_lift_py_tests.factory import (
-                FactoryAuditRow,
-                FactoryGapInfo,
-                GapKind,
-                GapLocus,
-                factory_panic,
-            )
-
-            info = FactoryGapInfo(
-                owner="install_source_dig.module_sibling_function_nodes",
-                blame=module_name,
+        info = FactoryGapInfo(
+            owner="install_source_dig.module_sibling_function_nodes",
+            blame=module_name,
+            observed=type(skipped).__name__,
+            requested="installed Python source for optional-dependency module",
+            fix="install the module's Python source before install-source body dig",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="install-source import",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=type(skipped).__name__,
-                requested="installed Python source for optional-dependency module",
-                fix="install the module's Python source before install-source body dig",
-                gap_kind=GapKind.FLOOR,
-                gap_locus=GapLocus.CONSTRUCTION,
-            )
-            factory_panic(
-                info,
-                FactoryAuditRow(
-                    role="install-source import",
-                    status=FactoryAuditStatus.FLOOR_GAP,
-                    observed=type(skipped).__name__,
-                    blame=module_name,
-                    selected=None,
-                    candidates=[],
-                    message=f"install-source import raised pytest Skipped: {skipped}; {info.message}",
-                ),
-            )
-        except (ImportError, OSError, TypeError, UnicodeError):
-            return {}
-    try:
-        parsed = SourceFragment.from_source_private(source, sourcefile)
-    except SyntaxError:
+                blame=module_name,
+                selected=None,
+                candidates=[],
+                message=f"install-source import raised pytest Skipped: {skipped}; {info.message}",
+            ),
+        )
+    except (ImportError, OSError, TypeError, UnicodeError):
+        return None
+
+
+def _materialize_index_definitions(index: _InstalledSourceIndex) -> dict[str, ast.AST]:
+    """Reparse an index into caller-owned nodes; cached state stays immutable."""
+    parsed = ast.parse(index.source, filename=index.sourcefile)
+    nodes_by_locus = {
+        (node.name, node.lineno, node.col_offset): node
+        for node in ast.walk(parsed)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    materialized: dict[str, ast.AST] = {}
+    for definition in index.definitions:
+        node = nodes_by_locus.get(
+            (definition.name, definition.lineno, definition.col_offset)
+        )
+        if node is None:
+            continue
+        node.decorator_list = []
+        node._sugar_source = index.source  # type: ignore[attr-defined]
+        node._sugar_file = index.sourcefile  # type: ignore[attr-defined]
+        node._sugar_bridge_name = definition.bridge_name  # type: ignore[attr-defined]
+        materialized[definition.key] = node
+    return materialized
+
+
+def module_sibling_function_nodes(module_name: str) -> dict:
+    """Return fresh AST nodes materialized from the bounded immutable index."""
+    index = _installed_source_index(module_name)
+    if index is None:
         return {}
-    nodes: dict = {}
-    for child in parsed.walk():
-        if child.observed == "FunctionDef":
-            name = child.function_name()
-            child.node.decorator_list = []  # type: ignore[attr-defined]
-            child.node._sugar_source = source  # type: ignore[attr-defined]
-            child.node._sugar_file = sourcefile  # type: ignore[attr-defined]
-            child.node._sugar_bridge_name = f"{module_name}.{name}"  # type: ignore[attr-defined]
-            nodes[name] = child.node
-            nodes[f"{module_name}.{name}"] = child.node
-        elif child.observed == "ClassDef":
-            cname = child.class_name()
-            for stmt in child.class_body():
-                if stmt.observed != "FunctionDef":
-                    continue
-                mname = stmt.function_name()
-                stmt.node.decorator_list = []  # type: ignore[attr-defined]
-                stmt.node._sugar_source = source  # type: ignore[attr-defined]
-                stmt.node._sugar_file = sourcefile  # type: ignore[attr-defined]
-                stmt.node._sugar_bridge_name = f"{module_name}.{cname}.{mname}"  # type: ignore[attr-defined]
-                nodes[f"{cname}.{mname}"] = stmt.node
-                nodes[f"{module_name}.{cname}.{mname}"] = stmt.node
-    return nodes
+    return _materialize_index_definitions(index)
 
 
 def _literal_string_sequence(node: ast.AST) -> tuple[str, ...] | None:
@@ -310,7 +352,6 @@ def _static_module_exports(module_name: str) -> frozenset[str] | None:
     return frozenset(manifests[0])
 
 
-@functools.lru_cache(maxsize=None)
 def resolve_install_source_funcdef(import_target: str):
     """Resolve an exact qualified direct/re-exported FunctionDef without import."""
     return _resolve_qualified_function_fragment(import_target)
@@ -340,10 +381,11 @@ def _resolve_qualified_function_fragment(
         return None
     resolving = resolving | {import_target}
     module_name, attr = import_target.rsplit(".", 1)
-    installed = _installed_source(module_name)
-    if installed is None:
+    index = _installed_source_index(module_name)
+    if index is None:
         return None
-    source, sourcefile = installed
+    source = index.source
+    sourcefile = index.sourcefile
     try:
         parsed = ast.parse(source, filename=sourcefile)
     except SyntaxError:
@@ -671,7 +713,6 @@ def resolve_install_source_value(
     return None
 
 
-@functools.lru_cache(maxsize=None)
 def resolve_install_source_class_method(qualified_class: str, method_name: str):
     """Resolve ``module.Class.method`` to a FunctionDef SourceFragment, or None."""
     if not qualified_class or not method_name or "." not in qualified_class:
