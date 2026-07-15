@@ -1328,8 +1328,8 @@
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/temporal/builtin_name_bindings.py:b3b3be6839a423c7:1",
       "line": 23,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/temporal/builtin_name_bindings.py",
-      "reason": "canonical Python builtin exception identity, not a Sugar result",
-      "replacement": "preserve the vendor-owned symbol exactly; classify it at the lexical census boundary",
+      "reason": "AST-declared identity resolves to an exception class in Python's builtin namespace",
+      "replacement": "preserve the substrate-owned symbol exactly",
       "speaker": "vendor-language-identifier",
       "text": "\"ConnectionRefusedError\",",
       "wire_marker": "not-lift-output"

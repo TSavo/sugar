@@ -10,7 +10,10 @@ for the #3632 migration and makes new sites loud.
 from __future__ import annotations
 
 import argparse
+import ast
+import builtins
 import collections
+import functools
 import hashlib
 import json
 import re
@@ -140,7 +143,48 @@ def git_files() -> list[str]:
     return sorted(line for line in output.splitlines() if line)
 
 
-def classify(path: str, text: str) -> Classified:
+@functools.cache
+def declared_builtin_exceptions(path: str) -> frozenset[tuple[int, str]]:
+    """Find structurally declared Python builtin exception identities.
+
+    Ownership requires both syntax (a string member of the kit's explicit
+    BUILTIN_EXCEPTION_NAMES declaration) and the running Python substrate
+    (the named builtin is an exception class).  A filename alone proves
+    neither.
+    """
+
+    try:
+        tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, SyntaxError):
+        return frozenset()
+
+    declarations: set[tuple[int, str]] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not any(
+            isinstance(target, ast.Name)
+            and target.id == "BUILTIN_EXCEPTION_NAMES"
+            for target in node.targets
+        ):
+            continue
+        for member in ast.walk(node.value):
+            if (
+                isinstance(member, ast.Constant)
+                and isinstance(member.value, str)
+            ):
+                vendor = getattr(builtins, member.value, None)
+                if isinstance(vendor, type) and issubclass(vendor, BaseException):
+                    declarations.add((member.lineno, member.value))
+    return frozenset(declarations)
+
+
+def declared_builtin_exception(path: str, line: int, text: str) -> bool:
+    return any(
+        declared_line == line and name in text
+        for declared_line, name in declared_builtin_exceptions(path)
+    )
+
+
+def classify(path: str, text: str, line: int = 0) -> Classified:
     """Classify the speaker for an occurrence.
 
     The check is intentionally conservative: source/report/proof vocabulary
@@ -148,12 +192,12 @@ def classify(path: str, text: str) -> Classified:
     to quote the prove-side `refused` verdict.
     """
 
-    if path.endswith("/temporal/builtin_name_bindings.py"):
+    if declared_builtin_exception(path, line, text):
         return Classified(
             "vendor-language-identifier",
             "not-lift-output",
-            "canonical Python builtin exception identity, not a Sugar result",
-            "preserve the vendor-owned symbol exactly; classify it at the lexical census boundary",
+            "AST-declared identity resolves to an exception class in Python's builtin namespace",
+            "preserve the substrate-owned symbol exactly",
         )
 
     if path.startswith("implementations/python/sugar-build-witness/src/"):
@@ -275,7 +319,7 @@ def collect() -> list[Occurrence]:
             if not REFUS_PATTERN.search(line):
                 continue
             text = normalize_text(line)
-            raw.append((path, line_no, text, classify(path, text)))
+            raw.append((path, line_no, text, classify(path, text, line_no)))
 
     ordinals: collections.Counter[str] = collections.Counter()
     occurrences: list[Occurrence] = []
@@ -436,14 +480,36 @@ def compare(expected: list[Occurrence], observed: list[Occurrence]) -> int:
 
 
 def self_test() -> int:
-    vendor = classify(
+    vendor_path = (
         "implementations/python/sugar-lift-py-tests/src/"
-        "sugar_lift_py_tests/temporal/builtin_name_bindings.py",
+        "sugar_lift_py_tests/temporal/builtin_name_bindings.py"
+    )
+    vendor_line = next(
+        line_no
+        for line_no, line in enumerate(
+            (ROOT / vendor_path).read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if '"ConnectionRefusedError"' in line
+    )
+    vendor = classify(
+        vendor_path,
         '"ConnectionRefusedError",',
+        vendor_line,
     )
     if vendor.speaker != "vendor-language-identifier":
         print(
             "FAIL: canonical ConnectionRefusedError was classified as Sugar output",
+            file=sys.stderr,
+        )
+        return 1
+    same_file_plant = classify(
+        vendor_path,
+        'reason = "lifter refused this shape"',
+        vendor_line,
+    )
+    if same_file_plant.speaker != LIFT_OUTPUT_SPEAKER:
+        print(
+            "FAIL: non-vendor refusal in builtin declaration file escaped backlog",
             file=sys.stderr,
         )
         return 1
