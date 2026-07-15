@@ -109,10 +109,14 @@ class SymbolicValue(FloorValue):
         )
 
     def multiply(self, other, site):
-        # Symbolic multiplication: emit ``*(self, other)`` -- same BinOp Mult
-        # spelling as symbolic_term (operator map Mult -> "*"). Needed so list
-        # comprehension elts like ``x * 2`` reduce under a bound element
-        # coordinate instead of panicking on the multiplication floor.
+        # Symbolic numeric multiplication keeps the native coordinate. A symbolic
+        # value used as a sequence repetition count has not proved Python's
+        # __index__ contract, so it must remain a named construction gap.
+        from sugar_lift_py_tests.floor.list_value import ListValue
+
+        if type(other) is ListValue:
+            return super().multiply(other, site)
+
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
