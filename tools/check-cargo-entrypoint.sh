@@ -122,6 +122,8 @@ def exemption(path: str, line: str, reason: str) -> str | None:
         return "CI attestation names the release artifact subject, not a consumer acquisition"
     if path == "tests/bcargo_remote_root_cleanup.sh" and 'target/debug/sugar' in line:
         return "cleanup test asserts stale remote target removal, not binary acquisition"
+    if path == "tests/sugarbin_artifact_manifest.sh" and "$tmp/target/release/sugar" in line:
+        return "sugarbin's own conformance test drives a sandboxed fixture artifact, not a consumer acquisition"
     if path.startswith("implementations/rust/sugar-cli/tests/") and "CARGO_BIN_EXE_sugar" in line:
         return "Cargo integration tests exercise the test-built sugar subject binary"
     if path == "implementations/rust/sugar-cli/tests/perf_rss_floor.rs" and "dhat-heap" in line:
