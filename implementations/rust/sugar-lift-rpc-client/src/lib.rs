@@ -24,24 +24,93 @@
 // proof/crypto stack their own comments warn against.
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{json, Value};
 use sugar_proof_envelope::{compute_formula_cid, MementoCid};
 
-/// Process-window cache for RPC questions. There is deliberately no clear or
-/// eviction method. Dropping the owning RPC client is the only invalidation
-/// operation, so a consistency window can never be half-invalidated.
-#[derive(Debug, Default, Clone)]
+/// Bounded in-memory window for canonical RPC answers, backed by an exact
+/// per-client spill store. RAM rollover is whole-window, while the spill keeps
+/// first-answer consistency without retaining full JSON payloads in memory.
+#[derive(Debug)]
 pub struct QuestionCache {
     answers: BTreeMap<MementoCid, Value>,
     hits: usize,
     misses: usize,
+    max_entries: usize,
+    spill_dir: Option<PathBuf>,
+}
+
+static QUESTION_CACHE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+impl Default for QuestionCache {
+    fn default() -> Self {
+        Self::bounded(256)
+    }
 }
 
 impl QuestionCache {
+    pub fn bounded(max_entries: usize) -> Self {
+        let sequence = QUESTION_CACHE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let spill_dir = std::env::temp_dir().join(format!(
+            "sugar-rpc-question-cache-{}-{sequence}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&spill_dir);
+        let spill_dir = fs::create_dir_all(&spill_dir).ok().map(|()| spill_dir);
+        Self {
+            answers: BTreeMap::new(),
+            hits: 0,
+            misses: 0,
+            max_entries: max_entries.max(1),
+            spill_dir,
+        }
+    }
+
+    fn spill_path(&self, question_cid: &MementoCid) -> Option<PathBuf> {
+        let filename = question_cid.to_string().replace(':', "_").replace('/', "_");
+        self.spill_dir.as_ref().map(|dir| dir.join(filename))
+    }
+
+    fn load_spilled(&self, question_cid: &MementoCid) -> Option<Value> {
+        let path = self.spill_path(question_cid)?;
+        let bytes = fs::read(path).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    fn spill(&self, question_cid: &MementoCid, answer: &Value) {
+        let Some(path) = self.spill_path(question_cid) else {
+            return;
+        };
+        let Ok(bytes) = serde_json::to_vec(answer) else {
+            return;
+        };
+        let temporary = path.with_extension("tmp");
+        if fs::write(&temporary, bytes).is_ok() {
+            let _ = fs::rename(temporary, path);
+        }
+    }
+
+    fn remember(&mut self, question_cid: MementoCid, answer: Value) {
+        if self.answers.len() >= self.max_entries {
+            let retired_entries = self.answers.len();
+            self.answers.clear();
+            tracing::info!(
+                target: "sugar::rpc_cache",
+                event = "rpc_question_cache_window_rollover",
+                retired_entries,
+                max_entries = self.max_entries,
+                hits = self.hits,
+                misses = self.misses,
+            );
+        }
+        self.answers.insert(question_cid, answer);
+    }
+
     pub fn ask<E>(
         &mut self,
         question: &Value,
@@ -61,11 +130,25 @@ impl QuestionCache {
             tracing::info!(
                 target: "sugar::rpc_cache",
                 event = "rpc_question_cache_hit",
+                tier = "memory",
                 question_cid = %question_cid,
                 hits = self.hits,
                 misses = self.misses,
             );
             return Ok(answer.clone());
+        }
+        if let Some(answer) = self.load_spilled(&question_cid) {
+            self.hits += 1;
+            tracing::info!(
+                target: "sugar::rpc_cache",
+                event = "rpc_question_cache_hit",
+                tier = "spill",
+                question_cid = %question_cid,
+                hits = self.hits,
+                misses = self.misses,
+            );
+            self.remember(question_cid, answer.clone());
+            return Ok(answer);
         }
         self.misses += 1;
         tracing::info!(
@@ -76,8 +159,17 @@ impl QuestionCache {
             misses = self.misses,
         );
         let answer = wire()?;
-        self.answers.entry(question_cid).or_insert(answer.clone());
+        self.spill(&question_cid, &answer);
+        self.remember(question_cid, answer.clone());
         Ok(answer)
+    }
+
+    pub fn len(&self) -> usize {
+        self.answers.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.answers.is_empty()
     }
 
     pub fn hits(&self) -> usize {
@@ -86,6 +178,14 @@ impl QuestionCache {
 
     pub fn misses(&self) -> usize {
         self.misses
+    }
+}
+
+impl Drop for QuestionCache {
+    fn drop(&mut self) {
+        if let Some(spill_dir) = self.spill_dir.take() {
+            let _ = fs::remove_dir_all(spill_dir);
+        }
     }
 }
 
@@ -448,6 +548,51 @@ fn read_response<R: BufRead>(reader: &mut R, expect_id: i64) -> Result<Value, Rp
 mod tests {
     use super::QuestionCache;
     use serde_json::json;
+
+    #[test]
+    fn bounded_question_cache_spills_exact_answers_without_rewiring() {
+        let mut cache = QuestionCache::bounded(2);
+        let first = json!({"level": "facts", "at": {"file": "first.py"}});
+        let second = json!({"level": "facts", "at": {"file": "second.py"}});
+        let third = json!({"level": "facts", "at": {"file": "third.py"}});
+        let mut wire_calls = 0;
+
+        for question in [&first, &second, &second] {
+            cache
+                .ask(question, || {
+                    wire_calls += 1;
+                    Ok::<_, ()>(json!({"nodes": []}))
+                })
+                .unwrap();
+        }
+        assert_eq!(wire_calls, 2);
+        assert_eq!(cache.len(), 2);
+
+        cache
+            .ask(&third, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": []}))
+            })
+            .unwrap();
+        assert_eq!(wire_calls, 3);
+        assert_eq!(cache.len(), 1, "rollover drops the whole old window");
+
+        cache
+            .ask(&second, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": []}))
+            })
+            .unwrap();
+        assert_eq!(wire_calls, 3, "retired-window answer comes from spill");
+        assert_eq!(cache.len(), 2);
+        let spill_dir = cache
+            .spill_dir
+            .clone()
+            .expect("test spill directory exists");
+        assert!(spill_dir.exists());
+        drop(cache);
+        assert!(!spill_dir.exists(), "dropping the cache retires its spill");
+    }
 
     #[test]
     fn canonical_question_cache_crosses_wire_once_per_distinct_question() {
