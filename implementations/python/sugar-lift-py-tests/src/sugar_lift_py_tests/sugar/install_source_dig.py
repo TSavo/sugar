@@ -17,6 +17,7 @@ Bridge/dig doctrine:
 from __future__ import annotations
 
 import importlib
+import importlib.machinery
 import importlib.util
 import ast
 import functools
@@ -25,6 +26,46 @@ import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+
+def _installed_source(module_name: str) -> tuple[str, str] | None:
+    """Read dotted-module source without importing a package component."""
+    if not module_name:
+        return None
+    parts = module_name.split(".")
+    search_path = None
+    spec = None
+    try:
+        for index in range(1, len(parts) + 1):
+            qualified = ".".join(parts[:index])
+            spec = importlib.machinery.PathFinder.find_spec(qualified, search_path)
+            if spec is None:
+                return None
+            if index < len(parts):
+                search_path = spec.submodule_search_locations
+                if search_path is None:
+                    return None
+        origin = getattr(spec, "origin", None)
+        if not origin or not origin.endswith((".py", ".pyi")):
+            return None
+        return Path(origin).read_text(encoding="utf-8"), origin
+    except (ImportError, ModuleNotFoundError, OSError, TypeError, UnicodeError, ValueError):
+        return None
+
+
+def _absolute_import_from_module(
+    defining_module: str, imported_module: str | None, level: int
+) -> str | None:
+    if level == 0:
+        return imported_module or None
+    package = defining_module.split(".")[:-1]
+    ascend = level - 1
+    if ascend > len(package):
+        return None
+    base = package[: len(package) - ascend] if ascend else package
+    if imported_module:
+        base.extend(imported_module.split("."))
+    return ".".join(base) or None
 
 
 def module_sibling_function_nodes(module_name: str) -> dict:
@@ -133,35 +174,82 @@ def _module_sibling_function_nodes(module_name: str) -> dict:
 
 @functools.lru_cache(maxsize=None)
 def resolve_install_source_funcdef(import_target: str):
-    """Resolve ``module.attr`` to an installed FunctionDef SourceFragment, or None."""
-    if "." not in import_target:
-        return None
-    module_name, attr = import_target.rsplit(".", 1)
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    """Resolve an exact qualified direct/re-exported FunctionDef without import."""
+    return _resolve_qualified_function_fragment(import_target)
 
-    try:
-        module = importlib.import_module(module_name)
-        obj = getattr(module, attr)
-        if not callable(obj) or inspect.isclass(obj):
-            return None
-        source = textwrap.dedent(inspect.getsource(obj))
-    except (ImportError, AttributeError, OSError, TypeError):
+
+def _resolve_qualified_function_fragment(
+    import_target: str, *, resolving: frozenset[str] = frozenset()
+):
+    if "." not in import_target or import_target in resolving:
         return None
+    resolving = resolving | {import_target}
+    module_name, attr = import_target.rsplit(".", 1)
+    installed = _installed_source(module_name)
+    if installed is None:
+        return None
+    source, sourcefile = installed
     try:
-        sourcefile = inspect.getsourcefile(obj) or f"<{module_name}>"
-    except TypeError:
-        sourcefile = f"<{module_name}>"
-    try:
-        parsed = SourceFragment.from_source_private(source, sourcefile)
+        parsed = ast.parse(source, filename=sourcefile)
     except SyntaxError:
         return None
-    for child in parsed.walk():
-        if child.observed == "FunctionDef" and child.function_name() == attr:
-            child.node.decorator_list = []  # type: ignore[attr-defined]
-            child.node._sugar_source = source  # type: ignore[attr-defined]
-            child.node._sugar_file = sourcefile  # type: ignore[attr-defined]
-            child.node._sugar_bridge_name = import_target  # type: ignore[attr-defined]
-            return child
+
+    definitions = [
+        statement
+        for statement in parsed.body
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and statement.name == attr
+    ]
+    if len(definitions) > 1:
+        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
+        factory_panic_gap(
+            owner="install_source_dig",
+            blame=sourcefile,
+            observed=import_target,
+            requested="resolve a unique top-level FunctionDef from exact installed source",
+            fix="remove duplicate qualified definitions or cite one exact source memento",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+    if len(definitions) == 1:
+        from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+        node = definitions[0]
+        node.decorator_list = []
+        node._sugar_source = source  # type: ignore[attr-defined]
+        node._sugar_file = sourcefile  # type: ignore[attr-defined]
+        node._sugar_bridge_name = import_target  # type: ignore[attr-defined]
+        return SourceFragment.from_node(node, sourcefile, source=source)
+
+    reexports: list[str] = []
+    for statement in parsed.body:
+        if not isinstance(statement, ast.ImportFrom):
+            continue
+        for alias in statement.names:
+            if (alias.asname or alias.name) != attr or alias.name == "*":
+                continue
+            target_module = _absolute_import_from_module(
+                module_name, statement.module, statement.level
+            )
+            if target_module:
+                reexports.append(f"{target_module}.{alias.name}")
+    if len(reexports) > 1:
+        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
+        factory_panic_gap(
+            owner="install_source_dig",
+            blame=sourcefile,
+            observed=import_target,
+            requested="resolve one exact qualified re-export route",
+            fix="cite a unique source-qualified re-export instead of alternatives",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+    if len(reexports) == 1:
+        return _resolve_qualified_function_fragment(reexports[0], resolving=resolving)
     return None
 
 
@@ -322,26 +410,53 @@ def resolve_install_source_value(
         return None
     resolving = _resolving | {import_target}
     module_name, attr = import_target.rsplit(".", 1)
+    installed = _installed_source(module_name)
+    if installed is None:
+        return None
+    source, sourcefile = installed
     try:
-        spec = importlib.util.find_spec(module_name)
-        sourcefile = getattr(spec, "origin", None)
-        if not sourcefile or not sourcefile.endswith((".py", ".pyi")):
-            return None
-        source = Path(sourcefile).read_text(encoding="utf-8")
         parsed = ast.parse(source, filename=sourcefile)
-    except (
-        ImportError,
-        ModuleNotFoundError,
-        OSError,
-        SyntaxError,
-        TypeError,
-        ValueError,
-    ):
+    except SyntaxError:
         return None
 
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.outcome import complete_value
+
+    function = _resolve_qualified_function_fragment(
+        import_target, resolving=_resolving
+    )
+    if function is not None:
+        defining_source = function.node._sugar_source  # type: ignore[attr-defined]
+        defining_file = function.node._sugar_file  # type: ignore[attr-defined]
+        defining_tree = ast.parse(defining_source, filename=defining_file)
+        target_index = next(
+            index
+            for index, statement in enumerate(defining_tree.body)
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and statement.lineno == function.node.lineno
+            and statement.name == function.function_name()
+        )
+        definition = defining_tree.body[target_index]
+        definition._sugar_source = defining_source  # type: ignore[attr-defined]
+        definition._sugar_file = defining_file  # type: ignore[attr-defined]
+        definition._sugar_bridge_name = function.node._sugar_bridge_name  # type: ignore[attr-defined]
+        function = SourceFragment.from_node(
+            definition, defining_file, source=defining_source
+        )
+        module_ctx = _ctx_with_required_module_bindings(
+            defining_tree.body,
+            target_index,
+            _function_definition_dependencies(definition),
+            source=defining_source,
+            sourcefile=defining_file,
+            ctx=ctx,
+            resolving=resolving,
+        )
+        body = module_ctx.build_body(function, SugarRole.STATEMENT)
+        return complete_value(
+            body.reduce(module_ctx), owner="install-source imported function"
+        )
 
     for target_index, statement in enumerate(parsed.body):
         value_node = None
@@ -355,26 +470,6 @@ def resolve_install_source_value(
                 isinstance(target, ast.Name) and target.id == attr for target in targets
             ):
                 value_node = statement.value
-        elif (
-            isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and statement.name == attr
-        ):
-            module_ctx = _ctx_with_required_module_bindings(
-                parsed.body,
-                target_index,
-                _function_definition_dependencies(statement),
-                source=source,
-                sourcefile=sourcefile,
-                ctx=ctx,
-                resolving=resolving,
-            )
-            body = module_ctx.build_body(
-                SourceFragment.from_node(statement, sourcefile, source=source),
-                SugarRole.STATEMENT,
-            )
-            return complete_value(
-                body.reduce(module_ctx), owner="install-source imported function"
-            )
         if value_node is not None:
             module_ctx = _ctx_with_required_module_bindings(
                 parsed.body,

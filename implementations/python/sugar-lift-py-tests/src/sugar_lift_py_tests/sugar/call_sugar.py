@@ -149,6 +149,27 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             )
 
             bound = ctx.temporal.value_if_bound(self.target_name)
+            from sugar_lift_py_tests.floor import ImportAliasValue
+
+            if isinstance(bound, ImportAliasValue):
+                if isinstance(bound.resolved_value, FunctionCallable):
+                    bound = bound.resolved_value
+                else:
+                    from sugar_lift_py_tests.factory import factory_panic_gap
+                    from sugar_lift_py_tests.factory.factory_gap_info import (
+                        GapKind,
+                        GapLocus,
+                    )
+
+                    factory_panic_gap(
+                        owner="CallSugar",
+                        blame=str(self.site),
+                        observed=bound.import_target or bound.name,
+                        requested="resolve an exact installed-source FunctionDef for a called import alias",
+                        fix="install one source-qualified function definition or keep the call opaque outside CallSugar",
+                        gap_kind=GapKind.FLOOR,
+                        gap_locus=GapLocus.CONSTRUCTION,
+                    )
             if isinstance(bound, FunctionCallable):
                 return bound.callsite(
                     _expand_function_positional_args(accumulated, site=self.site),
