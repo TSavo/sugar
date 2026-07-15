@@ -15,6 +15,10 @@
       "message_needle": "",
       "owner": "",
       "shape": ""
+    },
+    "frontier_ceilings": {
+      "independent_panics": 11417,
+      "suppressed_descendants": 12938
     }
   }
 }

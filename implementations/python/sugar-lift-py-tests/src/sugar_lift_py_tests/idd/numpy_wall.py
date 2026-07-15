@@ -43,15 +43,32 @@ class NumpyWallFloors:
     pre_bearing: int
     implications: int
 
+    # Recovered-frontier ratchet ceilings (#4489 re-baseline): while the wall
+    # is red, independent panic and suppressed-descendant counts may only fall
+    # from the pinned baseline. None means the ceiling is unpinned.
+    frontier_independent_panics: Optional[int] = None
+    frontier_suppressed_descendants: Optional[int] = None
+
     @classmethod
     def from_json_dict(cls, data: Mapping[str, Any]) -> "NumpyWallFloors":
         floors = data.get("floors", data)
         if not isinstance(floors, Mapping):
             raise TypeError("numpy wall floors must be a mapping")
+        ceilings = floors.get("frontier_ceilings")
+        if ceilings is not None and not isinstance(ceilings, Mapping):
+            raise TypeError("numpy wall frontier_ceilings must be a mapping")
         return cls(
             green=_int_field(floors, "green"),
             pre_bearing=_int_field(floors, "pre_bearing"),
             implications=_int_field(floors, "implications"),
+            frontier_independent_panics=(
+                None if ceilings is None else _int_field(ceilings, "independent_panics")
+            ),
+            frontier_suppressed_descendants=(
+                None
+                if ceilings is None
+                else _int_field(ceilings, "suppressed_descendants")
+            ),
         )
 
     def to_json_dict(self) -> dict[str, int]:
@@ -137,6 +154,34 @@ def check_wall_floors(summary: NumpyWallSummary, floors: NumpyWallFloors) -> lis
     return breaches
 
 
+def check_frontier_ceilings(
+    summary: NumpyWallSummary, floors: NumpyWallFloors
+) -> list[str]:
+    """Ratchet the recovered frontier: counts may only fall from the pin."""
+    breaches: list[str] = []
+    for label, key, ceiling in (
+        (
+            "independent_panics",
+            "independentPanicCount",
+            floors.frontier_independent_panics,
+        ),
+        (
+            "suppressed_descendants",
+            "suppressedDescendantCount",
+            floors.frontier_suppressed_descendants,
+        ),
+    ):
+        if ceiling is None:
+            continue
+        observed = summary.frontier.get(key, 0)
+        if isinstance(observed, int) and observed > ceiling:
+            breaches.append(
+                f"frontier {label} ceiling breached: observed={observed} "
+                f"ceiling={ceiling} delta={observed - ceiling}"
+            )
+    return breaches
+
+
 def build_numpy_wall(
     *,
     root: Path,
@@ -210,7 +255,10 @@ def build_numpy_wall(
             )
             return NumpyWallResult(
                 summary=summary,
-                breaches=("recovered construction audit is red",),
+                breaches=(
+                    "recovered construction audit is red",
+                    *check_frontier_ceilings(summary, floors),
+                ),
                 report_path=None,
                 summary_path=summary_path,
                 frontier_path=output_dir / "frontier.json",
@@ -300,7 +348,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"report: {result.report_path}", file=sys.stderr)
         if result.frontier_path is not None:
             print(f"frontier: {result.frontier_path}", file=sys.stderr)
-        return 0 if result.summary.mode == "frontier" else 1
+        if result.summary.mode != "frontier":
+            return 1
+        # A red recovered frontier is diagnostic (exit 0) unless the frontier
+        # ratchet ceilings are breached: counts may only fall from the pin.
+        return (
+            1 if any("ceiling breached" in breach for breach in result.breaches) else 0
+        )
     print(f"numpy wall ratchet PASS: {result.summary_path}", file=sys.stderr)
     return 0
 

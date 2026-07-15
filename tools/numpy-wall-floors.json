@@ -3,6 +3,10 @@
   "floors": {
     "green": 1309,
     "implications": 11,
-    "pre_bearing": 25
+    "pre_bearing": 25,
+    "frontier_ceilings": {
+      "independent_panics": 5569,
+      "suppressed_descendants": 7315
+    }
   }
 }

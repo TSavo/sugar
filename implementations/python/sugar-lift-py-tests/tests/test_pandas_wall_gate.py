@@ -769,3 +769,73 @@ def _fake_repo_root(tmp_path: Path) -> Path:
     (root / "implementations/python/sugar-lift-py-tests/src").mkdir(parents=True)
     (root / "implementations/python/sugar-lift-python-source/src").mkdir(parents=True)
     return root
+
+
+def _pandas_frontier_summary(independent: int, suppressed: int) -> PandasWallSummary:
+    return PandasWallSummary(
+        mode="frontier",
+        gaps_total=0,
+        gaps_by_bucket={},
+        gap_templates={},
+        frontier={
+            "kind": "recovered-construction-audit",
+            "status": "failed",
+            "independentPanicCount": independent,
+            "effectCount": 0,
+            "suppressedDescendantCount": suppressed,
+        },
+        green=0,
+        red_reasoned=0,
+        red_bare=0,
+        contracts=0,
+        pre_bearing=0,
+        call_edges_resolved=0,
+        implications=0,
+    )
+
+
+def _pandas_frontier_floors() -> PandasWallFloors:
+    return PandasWallFloors(
+        mode="frontier",
+        gaps_total_ceiling=0,
+        gap_template_ceilings={},
+        green=0,
+        pre_bearing=0,
+        implications=0,
+        frontier_needle="",
+        frontier_owner="",
+        frontier_shape="",
+        frontier_independent_panics=11417,
+        frontier_suppressed_descendants=12938,
+    )
+
+
+def test_pandas_frontier_ceilings_load_from_pinned_floors_json() -> None:
+    root = Path(__file__).resolve().parents[4]
+    floors = PandasWallFloors.from_json_dict(
+        json.loads((root / "tools" / "pandas-wall-floors.json").read_text())
+    )
+    # #4489 re-baseline: honest instrument reach, pinned on the record.
+    assert floors.frontier_independent_panics == 11417
+    assert floors.frontier_suppressed_descendants == 12938
+
+
+def test_pandas_frontier_ceiling_reds_on_planted_higher_count() -> None:
+    breaches = check_pandas_wall_floors(
+        _pandas_frontier_summary(11418, 12939), _pandas_frontier_floors()
+    )
+    assert (
+        "frontier independent_panics ceiling breached: "
+        "observed=11418 ceiling=11417 delta=1"
+    ) in breaches
+    assert (
+        "frontier suppressed_descendants ceiling breached: "
+        "observed=12939 ceiling=12938 delta=1"
+    ) in breaches
+
+
+def test_pandas_frontier_ceiling_passes_at_or_below_the_pin() -> None:
+    breaches = check_pandas_wall_floors(
+        _pandas_frontier_summary(11417, 12938), _pandas_frontier_floors()
+    )
+    assert not any("ceiling breached" in breach for breach in breaches)
