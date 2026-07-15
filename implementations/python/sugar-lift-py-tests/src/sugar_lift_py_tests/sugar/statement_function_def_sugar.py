@@ -17,6 +17,7 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
     signature: tuple[tuple[str, str], ...]
     decorators: tuple[SugarBody, ...]
     positional_defaults: tuple[SugarBody, ...]
+    keyword_only_defaults: tuple[SugarBody | None, ...]
     body: SugarBody
     site: object = dataclass_field(compare=False)
 
@@ -36,6 +37,10 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
             positional_defaults=tuple(
                 ctx.build_body(default, SugarRole.TERM)
                 for default in site.function_defaults()
+            ),
+            keyword_only_defaults=tuple(
+                None if default is None else ctx.build_body(default, SugarRole.TERM)
+                for default in site.function_keyword_only_defaults()
             ),
             body=ctx.build_body(site.function_body_block(), SugarRole.STATEMENT),
             site=site,
@@ -67,18 +72,9 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                     tuple(rest), (*accumulated, value), ctx
                 )
             )
-        return self._reduce_defaults(
-            self.positional_defaults, (), accumulated, ctx
-        )
+        return self._reduce_defaults(self.positional_defaults, (), accumulated, ctx)
 
     def _reduce_defaults(self, remaining, accumulated, decorators, ctx) -> Outcome:
-        from sugar_lift_py_tests.floor import FunctionCallable
-        from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
-        from sugar_lift_py_tests.sugar.install_source_dig import (
-            SequentialDigBody,
-            _contextualized_dig_body,
-        )
-
         if remaining:
             head, *rest = remaining
             return head.reduce(ctx).and_then(
@@ -86,6 +82,46 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                     tuple(rest), (*accumulated, value), decorators, ctx
                 )
             )
+        return self._reduce_keyword_only_defaults(
+            self.keyword_only_defaults, (), accumulated, decorators, ctx
+        )
+
+    def _reduce_keyword_only_defaults(
+        self, remaining, accumulated, positional_defaults, decorators, ctx
+    ) -> Outcome:
+        if remaining:
+            head, *rest = remaining
+            if head is None:
+                return self._reduce_keyword_only_defaults(
+                    tuple(rest),
+                    (*accumulated, None),
+                    positional_defaults,
+                    decorators,
+                    ctx,
+                )
+            return head.reduce(ctx).and_then(
+                lambda value: self._reduce_keyword_only_defaults(
+                    tuple(rest),
+                    (*accumulated, value),
+                    positional_defaults,
+                    decorators,
+                    ctx,
+                )
+            )
+        return self._construct_callable(
+            positional_defaults, accumulated, decorators, ctx
+        )
+
+    def _construct_callable(
+        self, positional_defaults, keyword_only_defaults, decorators, ctx
+    ) -> Outcome:
+        from sugar_lift_py_tests.floor import FunctionCallable
+        from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
+        from sugar_lift_py_tests.sugar.install_source_dig import (
+            SequentialDigBody,
+            _contextualized_dig_body,
+        )
+
         callable_body = self.body
         if isinstance(self.body.sugar, BlockSugar):
             callable_body = _contextualized_dig_body(
@@ -100,11 +136,17 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 name=self.name,
                 parameters=tuple(name for name, _kind in self.signature),
                 parameter_kinds=tuple(kind for _name, kind in self.signature),
-                positional_defaults=accumulated,
+                positional_defaults=positional_defaults,
+                keyword_only_defaults=keyword_only_defaults,
                 decorators=decorators,
                 body=callable_body,
             )
         )
 
     def walk_children(self):
-        return (*self.decorators, *self.positional_defaults, self.body)
+        return (
+            *self.decorators,
+            *self.positional_defaults,
+            *(default for default in self.keyword_only_defaults if default is not None),
+            self.body,
+        )

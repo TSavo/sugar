@@ -15,6 +15,7 @@ class FunctionCallable(FloorValue):
     parameters: tuple[str, ...] = ()
     parameter_kinds: tuple[str, ...] = ()
     positional_defaults: tuple[FloorValue, ...] = ()
+    keyword_only_defaults: tuple[FloorValue | None, ...] = ()
     decorators: tuple[Any, ...] = ()
     body: Any = dataclass_field(default=None, compare=False)
 
@@ -56,79 +57,72 @@ class FunctionCallable(FloorValue):
                 gap_kind=GapKind.FLOOR,
                 gap_locus=GapLocus.CONSTRUCTION,
             )
-        simple = all(
+        supplied_count = len(arg_values)
+        fixed_positional_count = sum(
             kind in {"positional", "positional-only"} for kind in self.parameter_kinds
         )
-        supplied_count = len(arg_values)
-        if simple:
-            required_count = len(self.parameters) - len(self.positional_defaults)
-            valid_positional_arity = required_count <= supplied_count <= len(
-                self.parameters
-            )
-            if not keyword_names and valid_positional_arity:
-                missing_count = len(self.parameters) - supplied_count
-                bound_values = (
-                    *arg_values,
-                    *self.positional_defaults[
-                        len(self.positional_defaults) - missing_count :
-                    ],
-                )
-            else:
-                bound_values = None
-        else:
-            fixed_positional_count = sum(
-                kind in {"positional", "positional-only"}
-                for kind in self.parameter_kinds
-            )
-            supported_variadic_signature = (
-                any(
-                    kind in {"var-positional", "var-keyword"}
-                    for kind in self.parameter_kinds
-                )
-                and all(
-                    kind
-                    in {
-                        "positional",
-                        "positional-only",
-                        "var-positional",
-                        "var-keyword",
-                    }
-                    for kind in self.parameter_kinds
-                )
-            )
-            has_var_positional = "var-positional" in self.parameter_kinds
-            required_count = fixed_positional_count - len(self.positional_defaults)
-            valid_positional_arity = required_count <= supplied_count and (
-                has_var_positional or supplied_count <= fixed_positional_count
-            )
-            if (
-                supported_variadic_signature
-                and not keyword_names
-                and valid_positional_arity
-            ):
-                from .dict_value import DictValue
-                from .tuple_value import TupleValue
+        keyword_only_count = self.parameter_kinds.count("keyword-only")
+        supported_signature = all(
+            kind
+            in {
+                "positional",
+                "positional-only",
+                "var-positional",
+                "keyword-only",
+                "var-keyword",
+            }
+            for kind in self.parameter_kinds
+        )
+        has_var_positional = "var-positional" in self.parameter_kinds
+        required_count = fixed_positional_count - len(self.positional_defaults)
+        valid_positional_arity = required_count <= supplied_count and (
+            has_var_positional or supplied_count <= fixed_positional_count
+        )
+        keyword_only_values = tuple(
+            default for default in self.keyword_only_defaults if default is not None
+        )
+        aligned_keyword_only_defaults = (
+            len(self.keyword_only_defaults) == keyword_only_count
+            and len(keyword_only_values) == keyword_only_count
+        )
+        if (
+            supported_signature
+            and not keyword_names
+            and valid_positional_arity
+            and aligned_keyword_only_defaults
+        ):
+            from .dict_value import DictValue
+            from .tuple_value import TupleValue
 
-                supplied_fixed_count = min(supplied_count, fixed_positional_count)
-                missing_fixed_count = fixed_positional_count - supplied_fixed_count
-                fixed_values = (
-                    *arg_values[:supplied_fixed_count],
-                    *self.positional_defaults[
-                        len(self.positional_defaults) - missing_fixed_count :
-                    ],
-                )
-                positional = iter(fixed_values)
-                surplus = arg_values[fixed_positional_count:]
-                bound_values = tuple(
+            supplied_fixed_count = min(supplied_count, fixed_positional_count)
+            missing_fixed_count = fixed_positional_count - supplied_fixed_count
+            fixed_values = (
+                *arg_values[:supplied_fixed_count],
+                *self.positional_defaults[
+                    len(self.positional_defaults) - missing_fixed_count :
+                ],
+            )
+            positional = iter(fixed_values)
+            keyword_only = iter(keyword_only_values)
+            surplus = arg_values[fixed_positional_count:]
+            bound_values = tuple(
+                (
                     next(positional)
                     if kind in {"positional", "positional-only"}
-                    else TupleValue(surplus)
-                    if kind == "var-positional"
-                    else DictValue(())
-                    for kind in self.parameter_kinds
+                    else (
+                        TupleValue(surplus)
+                        if kind == "var-positional"
+                        else (
+                            next(keyword_only)
+                            if kind == "keyword-only"
+                            else DictValue(())
+                        )
+                    )
                 )
-            else:
-                bound_values = None
+                for kind in self.parameter_kinds
+            )
+        else:
+            bound_values = None
         if bound_values is None:
             factory_panic_gap(
                 owner="FunctionCallable",
