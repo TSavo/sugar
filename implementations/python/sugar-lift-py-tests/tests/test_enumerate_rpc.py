@@ -267,6 +267,23 @@ def test_enumeration_file_context_cache_is_bounded(
     assert list(cache) == ["second", "third"]
 
 
+def test_resident_factory_panic_evidence_drops_recovery_frames() -> None:
+    with pytest.raises(lift_rpc.FactoryPanic) as caught:
+        factory_panic_gap(
+            owner="traceback-cycle-fixture",
+            blame="fixture.py:1:0",
+            observed="missing",
+            requested="value",
+            fix="detach recovery frames before caching evidence",
+        )
+
+    assert caught.value.__traceback__ is not None
+    detached = lift_rpc._detached_factory_panic(caught.value)
+    assert detached.__traceback__ is None
+    assert detached.__context__ is None
+    assert detached.__cause__ is None
+
+
 def test_partial_audit_demand_does_not_compute_sibling_definitions(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

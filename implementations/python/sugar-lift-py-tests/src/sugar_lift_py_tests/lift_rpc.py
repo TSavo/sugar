@@ -1016,6 +1016,14 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
         return replace(payload, symbol_kinds=symbol_kinds)
 
 
+def _detached_factory_panic(panic: FactoryPanic) -> FactoryPanic:
+    """Keep panic evidence without retaining its recovery stack and context."""
+    panic.__traceback__ = None
+    panic.__context__ = None
+    panic.__cause__ = None
+    return panic
+
+
 def _module_import_temporal(
     module, catalog, *, recovered_panics=None, assertion_sink=None
 ) -> "object":
@@ -1089,7 +1097,7 @@ def _module_import_temporal(
                         (
                             f"{stmt.filename}:{stmt.line}:{stmt.col}",
                             import_target,
-                            panic,
+                            _detached_factory_panic(panic),
                         )
                     )
                     resolved_value = None
@@ -1147,7 +1155,7 @@ def _module_import_temporal(
                         (
                             f"{stmt.filename}:{stmt.line}:{stmt.col}",
                             f"assert:{stmt.line}:{stmt.col}",
-                            panic,
+                            _detached_factory_panic(panic),
                         )
                     )
                     continue
@@ -1182,7 +1190,7 @@ def _module_import_temporal(
                     (
                         f"{stmt.filename}:{stmt.line}:{stmt.col}",
                         f"binding:{name}",
-                        panic,
+                        _detached_factory_panic(panic),
                     )
                 )
                 continue
