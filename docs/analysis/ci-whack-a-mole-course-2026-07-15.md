@@ -202,8 +202,16 @@ moved is not orientation.
 `maxsize=SOURCE_TABLE_CAPACITY` (64) on the four tables in `source_tables.py`.
 Eviction recomputes; semantics preserved. Measured by census + focused tests.
 
-Local `A1=0` means the *declared* install contracts work on this host. Hosted CI
-`ModuleNotFoundError: sugar_lift_python_source` is therefore either a runner-only
-sticky/path divergence (preflight will name it on that host) or an **A2**
-verdict/path problem past import. Next Lane A work: run preflight on the CI
-runner, then measure showcase verdict residue (`A2`), not another silent eject.
+### Instrument 3 + A2 (landed)
+
+| Instrument | Command | Measured (2026-07-15) |
+|------------|---------|------------------------|
+| B2 wall progress | `make wall-progress` / `tools/wall_progress_scoreboard.py` | Post-#4543 artifact: **3871** completed responses, **62** generation peaks, last file `core/indexes/multi.py`, message_id **32**, no frontier |
+| A2 showcase verdict | `SHOWCASE_LOG=… make showcase-verdict-scoreboard` | CI run `29447485517`: **A2=34**, A1=2 (kit missing on runner), top shape `expected-discharge-got-refused` (19) |
+
+Wall workflow always writes `progress.json` (even when frontier is missing). Partial
+wall death is now a comparable receipt. A2 classifies CI / showcase logs into
+named residue shapes — repair under A2, not eject.
+
+Local `A1=0` (preflight) vs CI `A1≥1` (ModuleNotFoundError in log) is the
+runner sticky/path gap; preflight on the CI host is the next A1 confirmation.
