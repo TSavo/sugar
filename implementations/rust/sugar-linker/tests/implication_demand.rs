@@ -2,10 +2,18 @@
 
 use serde_json::json;
 use sugar_ir_types::IrFormula;
+use sugar_linker::solver_api::{SolverPlan, SolverSeat};
 use sugar_linker::{
     demand_implication, CallSiteLocus, ImplicationDemand, ImplicationDemandStatus,
-    ImplicationTargetCandidate, LinkerCallEdge, LinkerContract,
+    ImplicationTargetCandidate, LinkerCallEdge, LinkerContract, Registry,
 };
+
+/// Demand always names its registry + plan now; these fixtures are
+/// JCS-equal (`true ⊃ true`), so structural equality discharges them
+/// without consulting any solver seat.
+fn registry_and_plan() -> (Registry, SolverPlan) {
+    (Registry::new(), SolverPlan::Single(SolverSeat::Z3))
+}
 
 fn formula(value: serde_json::Value) -> IrFormula {
     serde_json::from_value(value).expect("valid test formula")
@@ -46,14 +54,19 @@ fn edge(line: usize) -> LinkerCallEdge {
 
 #[test]
 fn one_resolvable_call_demand_mints_one_discharged_obligation() {
-    let answer = demand_implication(ImplicationDemand {
-        source_contract: source_contract(),
-        target_candidates: vec![ImplicationTargetCandidate {
-            bridge_source_symbol: "call:callee".into(),
-            contract: target_contract(),
-        }],
-        call_edge: edge(4),
-    });
+    let (registry, plan) = registry_and_plan();
+    let answer = demand_implication(
+        ImplicationDemand {
+            source_contract: source_contract(),
+            target_candidates: vec![ImplicationTargetCandidate {
+                bridge_source_symbol: "call:callee".into(),
+                contract: target_contract(),
+            }],
+            call_edge: edge(4),
+        },
+        &registry,
+        &plan,
+    );
 
     assert_eq!(answer.status, ImplicationDemandStatus::Discharged);
     assert_eq!(answer.target_contract.as_deref(), Some("module.callee"));
@@ -69,11 +82,16 @@ fn one_resolvable_call_demand_mints_one_discharged_obligation() {
 
 #[test]
 fn dangling_edge_demand_is_named_unjoined_debt_with_reason() {
-    let answer = demand_implication(ImplicationDemand {
-        source_contract: source_contract(),
-        target_candidates: vec![],
-        call_edge: edge(9),
-    });
+    let (registry, plan) = registry_and_plan();
+    let answer = demand_implication(
+        ImplicationDemand {
+            source_contract: source_contract(),
+            target_candidates: vec![],
+            call_edge: edge(9),
+        },
+        &registry,
+        &plan,
+    );
 
     assert_eq!(answer.status, ImplicationDemandStatus::Unjoined);
     assert_eq!(answer.target_symbol, "call:callee");

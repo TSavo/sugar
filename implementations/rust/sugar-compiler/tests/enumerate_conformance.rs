@@ -442,8 +442,12 @@ fn scan_seek_coherence_at_every_level() {
                 );
                 assert_eq!(seeked_cs.audit_row(), call_site.audit_row());
 
+                let registry = sugar_linker::Registry::new();
+                let plan = sugar_linker::solver_api::SolverPlan::Single(
+                    sugar_linker::solver_api::SolverSeat::Z3,
+                );
                 let implication = call_site
-                    .implication()
+                    .implication(&registry, &plan)
                     .expect("implication demand must answer one node");
                 assert_eq!(
                     implication.audit_row().get("kind").and_then(Value::as_str),
@@ -455,7 +459,7 @@ fn scan_seek_coherence_at_every_level() {
                             .audit_row()
                             .get("status")
                             .and_then(Value::as_str),
-                        Some("discharged" | "unsatisfied" | "unjoined")
+                        Some("discharged" | "failed" | "unjoined")
                     ),
                     "implication demand must return a named disposition"
                 );

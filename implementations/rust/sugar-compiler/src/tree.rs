@@ -1437,8 +1437,14 @@ impl CallSite {
 
     /// Demand this exact call site's implication question. The producer returns
     /// candidate input only; this coordinator invokes the pure one-edge linker
-    /// worker, which owns join, obligation mint, and status.
-    pub fn implication(&self) -> Result<Implication, KitError> {
+    /// worker, which owns join, obligation mint, and status. The supplied
+    /// `registry` + `plan` are the SAME solver seats the discharge path
+    /// consults, so the demanded answer IS the discharged verdict.
+    pub fn implication(
+        &self,
+        registry: &sugar_linker::Registry,
+        plan: &sugar_linker::solver_api::SolverPlan,
+    ) -> Result<Implication, KitError> {
         let (nodes, gaps) = enumerate_rpc(
             &self.conn,
             Level::Implications,
@@ -1478,12 +1484,13 @@ impl CallSite {
                             reason: format!("implication question payload is invalid: {error}"),
                         })
                     })?;
-                serde_json::to_value(sugar_linker::demand_implication(demand)).map_err(|error| {
-                    KitError::from(EnumerateError::Malformed {
-                        plugin: self.conn.surface.clone(),
-                        reason: format!("implication answer cannot serialize: {error}"),
-                    })
-                })?
+                serde_json::to_value(sugar_linker::demand_implication(demand, registry, plan))
+                    .map_err(|error| {
+                        KitError::from(EnumerateError::Malformed {
+                            plugin: self.conn.surface.clone(),
+                            reason: format!("implication answer cannot serialize: {error}"),
+                        })
+                    })?
             }
             None => json!({
                 "sourceContract": question_audit.get("sourceContract").cloned().unwrap_or_else(|| Value::String("<unknown caller>".into())),
@@ -1510,13 +1517,20 @@ impl CallSite {
 }
 
 /// CLI appetite: demand every call site's implication node and retain the
-/// transcript. Enumeration remains the only work driver at every edge.
-pub fn fold_implication_tree(kit: &Kit, workspace_root: &Path) -> Result<Vec<Value>, KitError> {
+/// transcript. Enumeration remains the only work driver at every edge. The
+/// caller supplies the workspace solver `registry` + `plan` so every demanded
+/// verdict is the real discharge verdict, never a solverless shadow.
+pub fn fold_implication_tree(
+    kit: &Kit,
+    workspace_root: &Path,
+    registry: &sugar_linker::Registry,
+    plan: &sugar_linker::solver_api::SolverPlan,
+) -> Result<Vec<Value>, KitError> {
     let mut implications = Vec::new();
     for file in kit.source_files(workspace_root)? {
         for function in file.functions()? {
             for call_site in function.call_sites()? {
-                implications.push(call_site.implication()?.report_row());
+                implications.push(call_site.implication(registry, plan)?.report_row());
             }
         }
     }
