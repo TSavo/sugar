@@ -161,11 +161,12 @@ set +e
   echo ""
   echo "------------------------------------------------------------"
   echo "=== (E) golden NDJSON conversation — byte-identical replay ==="
-  echo "    cargo test -p sugar-lsp --test real_python_kit_conversation_golden"
+  echo "    cargo test -p sugar-lsp --test real_python_kit_conversation_golden --ignored --exact"
   echo "------------------------------------------------------------"
   cargo test --manifest-path implementations/rust/Cargo.toml \
     -p sugar-lsp --test real_python_kit_conversation_golden \
-    -- --nocapture --test-threads=1
+    real_python_kit_conversation_is_byte_identical_to_golden_ndjson \
+    -- --ignored --exact --nocapture --test-threads=1
   status_golden=$?
 
   echo ""

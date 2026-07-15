@@ -493,14 +493,14 @@ test-real-python-kit-lsp:
 #   real-kit LSP RAN / lie→UNSAT / truth→clear (#3934/#3936)
 #   golden NDJSON conversation byte-identical (#3938)
 # Extends existing targets; does not reimplement their assertions.
-# Wired into `make ci` in place of the narrower test-real-python-kit-lsp alone
-# so the full acceptance story is one recomputable gate (LSP still covered).
+# Explicit battleaxe instrument: run this target when recomputing the full
+# acceptance story; ordinary `make ci` must not pay for real-Pandas LSP twice.
 .PHONY: test-3809-dod-scoreboard
 test-3809-dod-scoreboard:
 	@bash scripts/test-3809-dod-scoreboard.sh
 
 .PHONY: ci
-ci: check-lift-refusal-vocabulary test-python-format test-all test-showcases test-3809-dod-scoreboard self-attest coretests-source-audit coretests-invariants
+ci: check-lift-refusal-vocabulary test-python-format test-all test-showcases self-attest coretests-source-audit coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
 
