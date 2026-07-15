@@ -7,7 +7,7 @@ kind = "lift"
 # so imports used by source scanning and helper resolution see pandas.
 command = [
     "/usr/bin/env",
-    "PYTHONPATH=../../implementations/python/sugar-lift-py-tests/src",
+    "PYTHONPATH=../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src",
     "/tmp/pandas-witness-venv/bin/python",
     "-m",
     "sugar_lift_py_tests.lift_rpc",

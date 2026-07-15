@@ -213,5 +213,11 @@ Wall workflow always writes `progress.json` (even when frontier is missing). Par
 wall death is now a comparable receipt. A2 classifies CI / showcase logs into
 named residue shapes — repair under A2, not eject.
 
-Local `A1=0` (preflight) vs CI `A1≥1` (ModuleNotFoundError in log) is the
-runner sticky/path gap; preflight on the CI host is the next A1 confirmation.
+Local `A1=0` (preflight) vs CI `A1≥1` (ModuleNotFoundError in log) was the
+**manifest PYTHONPATH class**: pandas/sklearn lift manifests launched
+`sugar_lift_py_tests.lift_rpc` with only `sugar-lift-py-tests/src` on
+PYTHONPATH after `source_fragment` began importing `sugar_lift_python_source`.
+Numpy showcases additionally rewrote `bind_rpc` without `--rpc` (handshake saw
+usage text). Fixed under census `tools/check_lift_manifest_pythonpath.py`
+(R: offenders → 0). Remaining A2 (rust provenance / discharge) is a separate
+product class — not this A1 path gap.
