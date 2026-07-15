@@ -61,13 +61,25 @@ struct RecoveredEffect {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct RecoveredFactoryPanic {
     kind: String,
     status: String,
     reason: String,
     locus: String,
     gap: Value,
+    demanded_source: String,
+    terminal_gap_locus: String,
+    demanded_body: Value,
+    owner_identity: RecoveredPanicOwnerIdentity,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct RecoveredPanicOwnerIdentity {
+    demanded_body: Value,
+    demanded_source: String,
+    terminal_gap_locus: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -89,6 +101,19 @@ fn validate_recovered_audit(audit: &RecoveredAudit) -> Result<(), String> {
             "source body census mismatch: enumerated={} demanded={}",
             audit.census.source_files_enumerated, audit.census.source_bodies_demanded
         ));
+    }
+    for panic in &audit.panics {
+        let expected = RecoveredPanicOwnerIdentity {
+            demanded_body: panic.demanded_body.clone(),
+            demanded_source: panic.demanded_source.clone(),
+            terminal_gap_locus: panic.terminal_gap_locus.clone(),
+        };
+        if panic.owner_identity != expected {
+            return Err(format!(
+                "recovered panic ownerIdentity does not match demanded ownership at {}",
+                panic.locus
+            ));
+        }
     }
     match audit.status.as_str() {
         "valid-empty"
@@ -10121,6 +10146,48 @@ mod tests {
         assert_eq!(effect.category, "runtime");
         assert_eq!(effect.status, "boundary");
         assert_eq!(effect.reason, "attribute access crosses a runtime boundary");
+        assert_eq!(serde_json::to_value(audit).expect("round trip"), fixture);
+    }
+
+    #[test]
+    fn recovered_audit_panic_ownership_round_trips_without_loss() {
+        let demanded_body = serde_json::json!({
+            "file": "numpy/core.py",
+            "qualname": "array",
+            "source_cid": "blake3-512:abc"
+        });
+        let fixture = serde_json::json!({
+            "kind": "recovered-construction-audit",
+            "recoveryOverride": true,
+            "status": "failed",
+            "census": {
+                "kind": "recovered-frontier-census",
+                "sourceFilesEnumerated": 1,
+                "sourceBodiesDemanded": 1,
+                "auditLeavesCompleted": 1
+            },
+            "panics": [{
+                "kind": "FactoryPanic",
+                "status": "mandatory-panic",
+                "reason": "missing floor",
+                "locus": "numpy/core.py:7:4",
+                "gap": {"blame": "typing.py:9:2"},
+                "demandedSource": "definition:array",
+                "terminalGapLocus": "typing.py:9:2",
+                "demandedBody": demanded_body,
+                "ownerIdentity": {
+                    "demandedBody": demanded_body,
+                    "demandedSource": "definition:array",
+                    "terminalGapLocus": "typing.py:9:2"
+                }
+            }],
+            "effects": [],
+            "suppressedDescendants": []
+        });
+
+        let audit: RecoveredAudit =
+            serde_json::from_value(fixture.clone()).expect("typed recovered audit");
+        validate_recovered_audit(&audit).expect("matching panic ownership");
         assert_eq!(serde_json::to_value(audit).expect("round trip"), fixture);
     }
 
