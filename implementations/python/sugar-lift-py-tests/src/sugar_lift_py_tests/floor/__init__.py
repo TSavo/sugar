@@ -7,6 +7,7 @@ from .module_bound_var import ModuleBoundVar
 from .named_expression_value import NamedExpressionValue
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
+from .builtin_exception_class_value import BuiltinExceptionClassValue
 from .call_site_value import CallSiteValue
 from .curried_loop_scope import CurriedLoopBody, CurriedLoopScope
 from .class_value import ClassValue
@@ -15,6 +16,7 @@ from .dict_literal_value import DictLiteralValue
 
 from .dict_value import DictValue
 from .encoded_string_value import EncodedStringValue
+from .exception_value import ExceptionValue
 from .floor_dispatch_surface import (
     BinaryOperatorFloor,
     FLOOR_OPERATION_METHOD_NAMES,
@@ -64,12 +66,14 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     NamedExpressionValue,
     BuilderState,
     Bv32Value,
+    BuiltinExceptionClassValue,
     CallSiteValue,
     ClassValue,
     ComprehensionValue,
     DictLiteralValue,
     DictValue,
     EncodedStringValue,
+    ExceptionValue,
     FunctionCallable,
     GuardedRaise,
     GuardedLoopControl,
@@ -119,6 +123,7 @@ __all__ = [
     "NamedExpressionValue",
     "BuilderState",
     "Bv32Value",
+    "BuiltinExceptionClassValue",
     "CallSiteValue",
     "CurriedLoopBody",
     "CurriedLoopScope",
@@ -127,6 +132,7 @@ __all__ = [
     "DictLiteralValue",
     "DictValue",
     "EncodedStringValue",
+    "ExceptionValue",
     "FLOOR_OPERATION_METHOD_NAMES",
     "FloorDispatchSurface",
     "FloorValue",
