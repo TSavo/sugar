@@ -316,6 +316,23 @@ def resolve_install_source_funcdef(import_target: str):
     return _resolve_qualified_function_fragment(import_target)
 
 
+def _is_overload_declaration(
+    definition: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    """Whether a definition is a typing overload declaration, not a body."""
+    for decorator in definition.decorator_list:
+        if isinstance(decorator, ast.Name) and decorator.id == "overload":
+            return True
+        if (
+            isinstance(decorator, ast.Attribute)
+            and decorator.attr == "overload"
+            and isinstance(decorator.value, ast.Name)
+            and decorator.value.id == "typing"
+        ):
+            return True
+    return False
+
+
 def _resolve_qualified_function_fragment(
     import_target: str, *, resolving: frozenset[str] = frozenset()
 ):
@@ -332,11 +349,16 @@ def _resolve_qualified_function_fragment(
     except SyntaxError:
         return None
 
-    definitions = [
+    declarations = [
         statement
         for statement in parsed.body
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
         and statement.name == attr
+    ]
+    definitions = [
+        statement
+        for statement in declarations
+        if not _is_overload_declaration(statement)
     ]
     if len(definitions) > 1:
         from sugar_lift_py_tests.factory import factory_panic_gap
