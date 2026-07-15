@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import traceback
 from dataclasses import replace
@@ -3395,14 +3396,23 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
     return True
 
 
-def main(argv: Optional[List[str]] = None) -> None:
-    _configure_transport_logging()
-    argv = argv or []
-    if "--audit-only" in argv:
-        raise SystemExit(
-            "--audit-only no longer enables construction-gap recovery; "
-            "use sugar lift --audit-frontier --allowed-broken-components python"
-        )
+# The membrane law: NO input may terminate the plugin process mid-RPC. A
+# dead transport is a silent swallow at the wire level — the CLI only sees
+# "plugin process ended without responding". Deep sources (pandas ships
+# expressions whose ASTs nest past the default recursion budget) drive
+# recursion through ast walkers and the sugar engine; when that recursion
+# alternates Python and C frames it can exhaust the OS thread stack and
+# segfault BEFORE Python's recursion limit trips. The cure is structural:
+# serve requests on a worker thread with a large explicit C stack, so depth
+# is bounded by the EXPLICIT recursion limit below — Python then raises a
+# catchable RecursionError (converted to a typed JSON-RPC error frame)
+# instead of dying with SIGSEGV.
+_SERVE_THREAD_STACK_BYTES = 512 * 1024 * 1024
+_SERVE_RECURSION_LIMIT = 100_000
+
+
+def _serve() -> None:
+    sys.setrecursionlimit(_SERVE_RECURSION_LIMIT)
     while True:
         msg = _recv()
         if msg is None:
@@ -3422,6 +3432,28 @@ def main(argv: Optional[List[str]] = None) -> None:
         try:
             if not _dispatch_request(msg):
                 break
+        except RecursionError:
+            # Loud and typed: the request is refused with a frame, the
+            # transport stays alive for the next request.
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg.get("id"),
+                    "error": {
+                        "code": -32603,
+                        "message": (
+                            "recursion limit exceeded while serving request "
+                            f"(limit={_SERVE_RECURSION_LIMIT}): input nests "
+                            "deeper than the lifter's bounded recursion depth"
+                        ),
+                        "data": {
+                            "exception_type": "RecursionError",
+                            "stage": "dispatch",
+                        },
+                    },
+                }
+            )
+            continue
         except FactoryPanic as panic:
             _send(
                 {
@@ -3439,6 +3471,36 @@ def main(argv: Optional[List[str]] = None) -> None:
                 }
             )
             raise SystemExit(1) from panic
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    _configure_transport_logging()
+    argv = argv or []
+    if "--audit-only" in argv:
+        raise SystemExit(
+            "--audit-only no longer enables construction-gap recovery; "
+            "use sugar lift --audit-frontier --allowed-broken-components python"
+        )
+    # Serve on a worker thread with an explicit large stack (see _serve).
+    # threading.stack_size is process-global; restore afterwards so nothing
+    # else inherits the oversized allocation.
+    outcome: List[BaseException] = []
+
+    def _run() -> None:
+        try:
+            _serve()
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the main thread
+            outcome.append(exc)
+
+    previous_stack_size = threading.stack_size(_SERVE_THREAD_STACK_BYTES)
+    try:
+        worker = threading.Thread(target=_run, name="lift-rpc-serve")
+        worker.start()
+    finally:
+        threading.stack_size(previous_stack_size)
+    worker.join()
+    if outcome:
+        raise outcome[0]
 
 
 if __name__ == "__main__":
