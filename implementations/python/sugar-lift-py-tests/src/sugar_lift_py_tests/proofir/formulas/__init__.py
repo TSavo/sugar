@@ -128,17 +128,29 @@ def _merge_var_sorts(*maps: Mapping[str, Sort]) -> dict[str, Sort]:
     return merged
 
 
-def _free_vars_in_ir_formula(ir_formula: IrFormula) -> frozenset[str]:
+def _free_vars_in_ir_formula(
+    ir_formula: IrFormula, memo: "dict[int, frozenset[str]] | None" = None
+) -> frozenset[str]:
+    # Terms form a shared DAG (term-refs alias one canonical row from many
+    # parents), so the traversal memoizes per node identity: without it every
+    # shared subterm is revisited once per PATH, which is exponential on deep
+    # DAGs. The memo is per top-level call; the formula being traversed pins
+    # every node alive, so id() keys cannot be reused within the call.
+    if memo is None:
+        memo = {}
     if isinstance(ir_formula, _Atomic):
         return frozenset().union(
-            *(_free_vars_in_ir_term(term) for term in ir_formula.args)
+            *(_free_vars_in_ir_term(term, memo) for term in ir_formula.args)
         )
     if isinstance(ir_formula, _Connective):
         return frozenset().union(
-            *(_free_vars_in_ir_formula(operand) for operand in ir_formula.operands)
+            *(
+                _free_vars_in_ir_formula(operand, memo)
+                for operand in ir_formula.operands
+            )
         )
     if isinstance(ir_formula, _Quantifier):
-        return _free_vars_in_ir_formula(ir_formula.body) - {ir_formula.name}
+        return _free_vars_in_ir_formula(ir_formula.body, memo) - {ir_formula.name}
     proofir_construction_gap(
         owner="proofir.formulas.formula_from_ir",
         observed=type(ir_formula).__name__,
@@ -147,12 +159,24 @@ def _free_vars_in_ir_formula(ir_formula: IrFormula) -> frozenset[str]:
     )
 
 
-def _free_vars_in_ir_term(ir_term: IrTerm) -> frozenset[str]:
+def _free_vars_in_ir_term(
+    ir_term: IrTerm, memo: "dict[int, frozenset[str]] | None" = None
+) -> frozenset[str]:
+    if memo is None:
+        memo = {}
+    cached = memo.get(id(ir_term))
+    if cached is not None:
+        return cached
     if isinstance(ir_term, _Var):
-        return frozenset({ir_term.name})
-    if isinstance(ir_term, _Ctor):
-        return frozenset().union(*(_free_vars_in_ir_term(arg) for arg in ir_term.args))
-    return frozenset()
+        result = frozenset({ir_term.name})
+    elif isinstance(ir_term, _Ctor):
+        result = frozenset().union(
+            *(_free_vars_in_ir_term(arg, memo) for arg in ir_term.args)
+        )
+    else:
+        result = frozenset()
+    memo[id(ir_term)] = result
+    return result
 
 
 __all__ = ["And", "Eq", "Formula", "formula_from_ir", "formula_to_rpc"]
