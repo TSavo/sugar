@@ -110,6 +110,22 @@ def test_reuses_one_worker_thread() -> None:
     assert sum(1 for n in after if n == "ast-parse-big-stack") <= 1
 
 
+def test_worker_survives_exceptions_and_keeps_replying() -> None:
+    # A request must ALWAYS get a reply, and a failing parse must never kill
+    # the worker: interleave failures and successes and require the same
+    # single worker to serve them all (no caller ever deadlocks waiting).
+    parse_on_big_stack("ok = 1\n")
+    workers = [t for t in threading.enumerate() if t.name == "ast-parse-big-stack"]
+    for _ in range(5):
+        with pytest.raises(SyntaxError):
+            parse_on_big_stack("def broken(:\n", "oops.py")
+        assert isinstance(parse_on_big_stack("still = 'alive'\n"), ast.Module)
+    assert workers == [
+        t for t in threading.enumerate() if t.name == "ast-parse-big-stack"
+    ]
+    assert all(t.is_alive() for t in workers)
+
+
 def test_harvest_source_uses_guarded_parse() -> None:
     from sugar_lift_python_source.leaf_assertions import harvest_source
 

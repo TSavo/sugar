@@ -36,9 +36,15 @@ def _worker_loop() -> None:
     while True:
         source, filename, reply = _requests.get()
         try:
-            reply.put((True, ast.parse(source, filename=filename)))
+            result = (True, ast.parse(source, filename=filename))
         except BaseException as exc:  # propagate everything, unchanged
-            reply.put((False, exc))
+            result = (False, exc)
+        try:
+            reply.put(result)
+        except BaseException:
+            # Never let a reply failure kill the worker; the caller's
+            # liveness recheck handles a lost reply.
+            pass
 
 
 def _ensure_worker() -> threading.Thread | None:
@@ -49,7 +55,7 @@ def _ensure_worker() -> threading.Thread | None:
         try:
             old = threading.stack_size(_STACK_BYTES)
         except (ValueError, RuntimeError, OverflowError):
-            # Platform refuses this stack size: fall back to inline parse.
+            # Platform cannot set this stack size: fall back to inline parse.
             return None
         try:
             worker = threading.Thread(
@@ -70,11 +76,21 @@ def parse_on_big_stack(source: str, filename: str = "<unknown>") -> ast.Module:
     platform does not support setting a thread stack size, parses inline.
     Never called re-entrantly from the worker itself (the worker only parses).
     """
-    if _ensure_worker() is None or threading.current_thread() is _worker:
+    worker = _ensure_worker()
+    if worker is None or threading.current_thread() is worker:
         return ast.parse(source, filename=filename)
     reply: "queue.SimpleQueue" = queue.SimpleQueue()
     _requests.put((source, filename, reply))
-    ok, payload = reply.get()
+    while True:
+        try:
+            ok, payload = reply.get(timeout=1.0)
+            break
+        except queue.Empty:
+            if not worker.is_alive():
+                # Belt-and-suspenders: the worker died without replying
+                # (should be impossible given the loop above); parse inline
+                # rather than block forever.
+                return ast.parse(source, filename=filename)
     if ok:
         return payload
     raise payload
