@@ -312,6 +312,39 @@ def test_ambiguous_same_qualified_definition_stays_named_loud(
     assert not any(name.startswith("fixture_ambiguous") for name in sys.modules)
 
 
+def test_overload_declarations_do_not_compete_with_the_runtime_definition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_module(
+        tmp_path,
+        "fixture_overloaded.api",
+        'raise RuntimeError("api must not execute")\n'
+        "from typing import overload\n"
+        "@overload\n"
+        "def chosen(value: int) -> int: ...\n"
+        "@overload\n"
+        "def chosen(value: str) -> str: ...\n"
+        "def chosen(value):\n"
+        "    return value\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    callsite, _ = _consumer_call(
+        "from fixture_overloaded.api import chosen\n", "chosen(7)"
+    )
+
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.target_name == "fixture_overloaded.api.chosen"
+    assert callsite.parameters == ("value",)
+    assert callsite.body is not None
+    assert callsite.force_floor(
+        FactoryBuildContext(filename="consumer.py", catalog=default_catalog()),
+        owner="overload fixture",
+        project_callsite=False,
+    ) == TermValue(7)
+    assert not any(name.startswith("fixture_overloaded") for name in sys.modules)
+
+
 def test_ambiguous_reexport_route_stays_named_loud(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
