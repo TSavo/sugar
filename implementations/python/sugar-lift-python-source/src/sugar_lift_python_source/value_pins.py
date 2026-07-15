@@ -287,19 +287,38 @@ def _class_attr_writes(tree: ast.Module) -> dict:
     the module (assignment, augmented assignment, deletion), keyed
     'Name.attr' -> first line. Covers ClassName.MEMBER = ... and
     cls.MEMBER = ... punctures."""
-    writes: dict = {}
-    for node in ast.walk(tree):
-        targets = []
-        if isinstance(node, ast.Assign):
-            targets = node.targets
-        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
-            targets = [node.target]
-        elif isinstance(node, ast.Delete):
-            targets = node.targets
-        for t in targets:
-            if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name):
-                writes.setdefault(f"{t.value.id}.{t.attr}", node.lineno)
-    return writes
+    class WriteVisitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.writes: dict[str, int] = {}
+
+        def record(self, node: ast.stmt, targets: list[ast.expr]) -> None:
+            for target in targets:
+                if isinstance(target, ast.Attribute) and isinstance(
+                    target.value, ast.Name
+                ):
+                    self.writes.setdefault(
+                        f"{target.value.id}.{target.attr}", node.lineno
+                    )
+
+        def visit_Assign(self, node: ast.Assign) -> None:
+            self.record(node, node.targets)
+            self.generic_visit(node)
+
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+            self.record(node, [node.target])
+            self.generic_visit(node)
+
+        def visit_AugAssign(self, node: ast.AugAssign) -> None:
+            self.record(node, [node.target])
+            self.generic_visit(node)
+
+        def visit_Delete(self, node: ast.Delete) -> None:
+            self.record(node, node.targets)
+            self.generic_visit(node)
+
+    visitor = WriteVisitor()
+    visitor.visit(tree)
+    return visitor.writes
 
 
 def _pin_boundary(
