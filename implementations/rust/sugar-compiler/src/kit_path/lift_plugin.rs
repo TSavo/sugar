@@ -769,11 +769,15 @@ fn resident_enabled() -> bool {
 }
 
 fn resident_max_requests() -> usize {
-    std::env::var("SUGAR_LIFT_RESIDENT_MAX_REQUESTS")
-        .ok()
+    let configured = std::env::var("SUGAR_LIFT_RESIDENT_MAX_REQUESTS").ok();
+    resident_max_requests_from(configured.as_deref())
+}
+
+fn resident_max_requests_from(configured: Option<&str>) -> usize {
+    configured
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(256)
+        .unwrap_or(64)
 }
 
 /// Outcome of a resident-path dispatch attempt.
@@ -1449,6 +1453,14 @@ for line in sys.stdin:
         assert_eq!(frames[0], format!("{pid}:initialize:none"));
         assert_eq!(frames[1], format!("{pid}:lift:control-one"));
         assert_eq!(frames[2], format!("{pid}:lift:control-two"));
+    }
+
+    #[test]
+    fn resident_generation_budget_defaults_to_hosted_safe_bound() {
+        assert_eq!(resident_max_requests_from(None), 64);
+        assert_eq!(resident_max_requests_from(Some("2")), 2);
+        assert_eq!(resident_max_requests_from(Some("0")), 64);
+        assert_eq!(resident_max_requests_from(Some("not-a-number")), 64);
     }
 
     #[test]
