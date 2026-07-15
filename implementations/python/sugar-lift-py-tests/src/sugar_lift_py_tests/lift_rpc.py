@@ -3433,7 +3433,7 @@ def _serve() -> None:
             if not _dispatch_request(msg):
                 break
         except RecursionError:
-            # Loud and typed: the request is refused with a frame, the
+            # Loud and typed: the request is rejected with an error frame; the
             # transport stays alive for the next request.
             _send(
                 {
