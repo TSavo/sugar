@@ -206,7 +206,13 @@ def _ctx_with_formal_binds(site: SourceFragment, ctx):
     from sugar_lift_py_tests.temporal import TemporalContext, bind_temporal
 
     module_temporal = getattr(ctx, "module_temporal", None)
-    body_ctx = ctx.with_temporal(module_temporal or TemporalContext.empty())
+    # Function construction starts from its defining module, never the caller's
+    # live temporal and never the process-wide builtin seed. A module traversal
+    # may provide an explicit lexical frame; install-source functions reconstruct
+    # their source-owned prerequisites below.
+    body_ctx = ctx.with_temporal(
+        module_temporal if module_temporal is not None else TemporalContext()
+    )
     body_ctx = _ctx_with_module_global_binds(site, body_ctx)
     for param_name in site.function_params():
         body_ctx = bind_temporal(
@@ -220,29 +226,30 @@ def _ctx_with_formal_binds(site: SourceFragment, ctx):
 
 
 def _module_source_for_site(site: SourceFragment, ctx) -> tuple[str, str] | None:
-    """Return ``(source_text, filename)`` for install-source / tagged digs.
+    """Return the preserved defining source for a qualified install-source def.
 
-    Prefer the on-disk module at ``_sugar_file`` so function-only
-    ``_sugar_source`` (from ``inspect.getsource`` of a single def) still sees
-    module-level Assign constants. Fall back to ``_sugar_source`` when the file
-    is unavailable (sibling-install path already stores the full module text).
+    Module bindings belong only to FunctionDefs carrying the complete provenance
+    installed-source discovery stamps. Reading another file by leaf name would
+    permit two distinct modules to cross-bind; importing it would execute source.
+    The preserved source text is therefore the sole construction input.
     """
+    del ctx
+    if site.observed != "FunctionDef":
+        return None
     sugar_file = getattr(site.node, "_sugar_file", None)
     sugar_source = getattr(site.node, "_sugar_source", None)
-    if sugar_file is None and sugar_source is None:
+    bridge_name = getattr(site.node, "_sugar_bridge_name", None)
+    if not (
+        isinstance(sugar_file, str)
+        and sugar_file
+        and isinstance(sugar_source, str)
+        and sugar_source
+        and isinstance(bridge_name, str)
+        and "." in bridge_name
+        and bridge_name.rsplit(".", 1)[-1] == site.function_name()
+    ):
         return None
-    if sugar_file:
-        from pathlib import Path
-
-        path = Path(sugar_file)
-        if path.is_file():
-            try:
-                return path.read_text(encoding="utf-8"), sugar_file
-            except OSError:
-                pass
-    if sugar_source:
-        return sugar_source, sugar_file or getattr(ctx, "filename", "<module>")
-    return None
+    return sugar_source, sugar_file
 
 
 def _names_in_fragment(site: SourceFragment) -> list[str]:
@@ -269,49 +276,86 @@ def _names_in_fragment(site: SourceFragment) -> list[str]:
     return names
 
 
-def _module_level_assigns_before(
+def _module_level_declarations_before(
     root: SourceFragment, fn: SourceFragment
 ) -> list[SourceFragment]:
-    """Top-level ``Name = ...`` Assigns textually before ``fn`` in the module.
-
-    Install-source FunctionDefs often carry line numbers from a function-only
-    ``inspect.getsource`` slice (line 1), while the on-disk module uses real
-    lines. Prefer an exact line match when both are set and equal; otherwise
-    accept the first same-named FunctionDef (stdlib modules do not redefine).
-    """
-    assigns: list[SourceFragment] = []
+    """Supported top-level declarations at the function's module coordinate."""
+    declarations: list[SourceFragment] = []
     fn_name = fn.function_name()
-    same_name: list[tuple[list[SourceFragment], SourceFragment]] = []
-    for fragment in root.fragments():
-        for stmt in fragment.statements():
-            if stmt.observed == "FunctionDef" and stmt.function_name() == fn_name:
-                if fn.line and stmt.line and fn.line == stmt.line:
-                    return assigns
-                same_name.append((list(assigns), stmt))
-            if stmt.observed == "Assign" and stmt.assign_target_name() is not None:
-                assigns.append(stmt)
-            if stmt.observed == "AnnAssign":
-                try:
-                    stmt.annassign_target_id()
-                except TypeError:
-                    continue
-                # Annotation-only forms bind nothing; only valued AnnAssign seeds.
-                if stmt.annassign_value() is not None:
-                    assigns.append(stmt)
-    if same_name:
-        return same_name[0][0]
-    return assigns
+    top_level = [
+        statement
+        for fragment in root.fragments()
+        for statement in fragment.statements()
+    ]
+    for statement in top_level:
+        candidates = (
+            [statement]
+            if statement.observed == "FunctionDef"
+            else [
+                nested
+                for nested in statement.walk()
+                if nested.observed == "FunctionDef"
+            ]
+        )
+        if any(
+            candidate.function_name() == fn_name
+            and (
+                (fn.line and candidate.line == fn.line)
+                or (not fn.line and candidate.col == fn.col)
+            )
+            for candidate in candidates
+        ):
+            return declarations
+        if statement.observed == "Assign" and statement.assign_target_name() is not None:
+            declarations.append(statement)
+        elif statement.observed == "AnnAssign":
+            try:
+                statement.annassign_target_id()
+            except TypeError:
+                continue
+            if statement.annassign_value() is not None:
+                declarations.append(statement)
+        elif statement.observed in ("Import", "ImportFrom"):
+            declarations.append(statement)
+    # Never attach declarations when the preserved tree does not contain this
+    # exact function coordinate: that is stale or mismatched provenance.
+    return []
+
+
+def _module_declaration_bound_names(statement: SourceFragment) -> set[str]:
+    """Names a static module declaration adds to its lexical frame."""
+    if statement.observed == "Assign":
+        name = statement.assign_target_name()
+        return set() if name is None else {name}
+    if statement.observed == "AnnAssign":
+        try:
+            return {statement.annassign_target_id()}
+        except TypeError:
+            return set()
+    if statement.observed == "Import":
+        return {
+            alias or imported.split(".", 1)[0]
+            for imported, alias in statement.import_names()
+        }
+    if statement.observed == "ImportFrom":
+        return {
+            alias or imported
+            for imported, alias in statement.importfrom_names()
+            if imported != "*"
+        }
+    return set()
 
 
 def _ctx_with_module_global_binds(site: SourceFragment, ctx):
-    """Seed temporal with module-level ``Name = ...`` Assigns needed by body dig.
+    """Construct only needed globals from a qualified def's preserved module AST.
 
-    Only runs for FunctionDefs tagged with install-source provenance
-    (``_sugar_file`` / ``_sugar_source``). Failed Assign folds are skipped so a
-    single unliftable module constant does not poison formal-only digs.
+    Supported simple assignments and import aliases are selected backwards from
+    the function's module coordinate, then constructed forwards. Unsupported
+    declarations are not fabricated: their names remain absent so ordinary
+    TemporalContext lookup stays loud when the body demands them.
     """
+    from sugar_lift_py_tests.floor import ImportAliasValue
     from sugar_lift_py_tests.outcome import Incomplete, complete_value
-    from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
 
     loaded = _module_source_for_site(site, ctx)
     if loaded is None:
@@ -322,8 +366,8 @@ def _ctx_with_module_global_binds(site: SourceFragment, ctx):
     except SyntaxError:
         return ctx
 
-    module_assigns = _module_level_assigns_before(root, site)
-    if not module_assigns:
+    declarations = _module_level_declarations_before(root, site)
+    if not declarations:
         return ctx
 
     needed: set[str] = set()
@@ -335,23 +379,62 @@ def _ctx_with_module_global_binds(site: SourceFragment, ctx):
 
     selected: list[SourceFragment] = []
     needed_work = set(needed)
-    for prior in reversed(module_assigns):
-        name = prior.assign_target_name()
-        if name is None or name not in needed_work:
+    for prior in reversed(declarations):
+        owned = _module_declaration_bound_names(prior)
+        wanted = owned & needed_work
+        if not wanted:
             continue
         selected.append(prior)
-        needed_work.update(_names_in_fragment(prior.assign_value()))
-        needed_work.discard(name)
+        needed_work.difference_update(wanted)
+        if prior.observed == "Assign":
+            needed_work.update(_names_in_fragment(prior.assign_value()))
+        elif prior.observed == "AnnAssign":
+            value = prior.annassign_value()
+            if value is not None:
+                needed_work.update(_names_in_fragment(value))
     selected.reverse()
-    if not selected:
-        return ctx
 
-    # Modern BlockSugar: reduce Assign as BoundVar and thread scope forward.
     folded_ctx = ctx
     for prior in selected:
+        if prior.observed == "Import":
+            temporal = folded_ctx.temporal
+            for imported, alias in prior.import_names():
+                bound = alias or imported.split(".", 1)[0]
+                target = imported if alias else imported.split(".", 1)[0]
+                temporal = temporal.bind_value(
+                    bound,
+                    ImportAliasValue(
+                        imported,
+                        bound,
+                        import_target=target,
+                    ),
+                )
+            folded_ctx = folded_ctx.with_temporal(temporal)
+            continue
+        if prior.observed == "ImportFrom":
+            module = prior.importfrom_module()
+            if prior.importfrom_level() or not module:
+                continue
+            temporal = folded_ctx.temporal
+            for imported, alias in prior.importfrom_names():
+                if imported == "*":
+                    continue
+                bound = alias or imported
+                target = f"{module}.{imported}"
+                temporal = temporal.bind_value(
+                    bound,
+                    ImportAliasValue(
+                        target,
+                        bound,
+                        import_target=target,
+                    ),
+                )
+            folded_ctx = folded_ctx.with_temporal(temporal)
+            continue
         try:
-            body = folded_ctx.build_body(prior, SugarRole.STATEMENT)
-            outcome = body.reduce(folded_ctx)
+            outcome = folded_ctx.build_body(prior, SugarRole.STATEMENT).reduce(
+                folded_ctx
+            )
         except (TypeError, ValueError, AssertionError):
             continue
         if isinstance(outcome, Incomplete):
@@ -360,7 +443,6 @@ def _ctx_with_module_global_binds(site: SourceFragment, ctx):
             complete_value(outcome, owner="sugar_constructors.module_global_binds")
         except Exception:
             continue
-        # BoundVar / ScopeRebind extend_scope so GLOBAL is visible to formals.
         folded_ctx = outcome.extend_scope(folded_ctx)
     return folded_ctx
 
