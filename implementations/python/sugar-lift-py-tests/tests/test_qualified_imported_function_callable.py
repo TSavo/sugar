@@ -107,6 +107,96 @@ def test_reexported_extension_symbol_keeps_ultimate_native_coordinate_without_ex
     assert not any(name.startswith("fixture_native_reexport") for name in sys.modules)
 
 
+def test_literal_all_star_reexport_reaches_exact_function_without_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_module(
+        tmp_path,
+        "fixture_star.impl",
+        'raise RuntimeError("impl must not execute")\n'
+        '__all__ = ["exact"]\n'
+        "def exact(value=7):\n"
+        "    return value\n",
+    )
+    _write_module(
+        tmp_path,
+        "fixture_star.api",
+        'raise RuntimeError("api must not execute")\n' "from .impl import *\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    callsite, temporal = _consumer_call(
+        "from fixture_star.api import exact as chosen\n", "chosen()"
+    )
+
+    alias = temporal.value_for("chosen")
+    assert isinstance(alias, ImportAliasValue)
+    assert alias.import_target == "fixture_star.api.exact"
+    assert alias.resolved_value is not None
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.target_name == "fixture_star.impl.exact"
+    assert callsite.parameters == ("value",)
+    assert callsite.arg_values == (TermValue(7),)
+    assert callsite.body is not None
+    assert not any(name.startswith("fixture_star") for name in sys.modules)
+
+
+def test_dynamic_all_star_reexport_stays_named_loud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_module(
+        tmp_path,
+        "fixture_dynamic_star.impl",
+        "def exported_names():\n"
+        '    return ["exact"]\n'
+        "__all__ = exported_names()\n"
+        "def exact():\n"
+        "    return 7\n",
+    )
+    _write_module(
+        tmp_path,
+        "fixture_dynamic_star.api",
+        'raise RuntimeError("api must not execute")\n' "from .impl import *\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(FactoryPanic) as raised:
+        _consumer_call("from fixture_dynamic_star.api import exact\n", "exact()")
+
+    assert raised.value.info.owner == "CallSugar"
+    assert raised.value.info.observed == "fixture_dynamic_star.api.exact"
+    assert not any(name.startswith("fixture_dynamic_star") for name in sys.modules)
+
+
+def test_two_literal_all_star_routes_stay_named_loud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for module, value in (("left", 1), ("right", 2)):
+        _write_module(
+            tmp_path,
+            f"fixture_ambiguous_star.{module}",
+            '__all__ = ["exact"]\n' f"def exact():\n    return {value}\n",
+        )
+    _write_module(
+        tmp_path,
+        "fixture_ambiguous_star.api",
+        'raise RuntimeError("api must not execute")\n'
+        "from .left import *\n"
+        "from .right import *\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(FactoryPanic) as raised:
+        _consumer_call("from fixture_ambiguous_star.api import exact\n", "exact()")
+
+    assert raised.value.info.owner == "install_source_dig"
+    assert raised.value.info.observed == "fixture_ambiguous_star.api.exact"
+    assert "one exact manifest-witnessed star re-export route" in (
+        raised.value.info.requested
+    )
+    assert not any(name.startswith("fixture_ambiguous_star") for name in sys.modules)
+
+
 def test_reexported_qualified_function_reaches_function_callable_binder_without_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -134,6 +224,7 @@ def test_reexported_qualified_function_reaches_function_callable_binder_without_
     assert alias.import_target == "fixture_alpha.api.exported"
     assert alias.resolved_value is not None
     assert isinstance(callsite, CallSiteValue)
+    assert callsite.target_name == "fixture_alpha.impl.exact"
     assert callsite.parameters == ("value",)
     assert callsite.arg_values == (TermValue(7),)
     assert callsite.body is not None
