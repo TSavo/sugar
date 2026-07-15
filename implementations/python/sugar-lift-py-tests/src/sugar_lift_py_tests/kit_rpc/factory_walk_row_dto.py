@@ -2,26 +2,43 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Literal, TypeAlias, get_args
 
 from .rpc_value import to_rpc_value
 from .source_memento_dto import SourceMementoDto
 from .source_span_dto import SourceSpanDto
 
-FactoryWalkCompleteStatus = Literal["warranted", "support"]
-FactoryWalkRedStatus = Literal[
-    "unclassified",
-    "raise-effect",
-    "runtime-effect",
-    "coverage-gap",
-    "absent",
-    "drifted",
-]
-FactoryWalkStatus = FactoryWalkCompleteStatus | FactoryWalkRedStatus
 
-_ALLOWED_STATUSES = frozenset(get_args(FactoryWalkCompleteStatus)) | frozenset(
-    get_args(FactoryWalkRedStatus)
-)
+class FactoryWalkStatus(StrEnum):
+    """A lift factory-walk status. An enum, not a string: an illegal status
+    is unrepresentable by construction, so FactoryWalkRowDto needs no runtime
+    membership guard. StrEnum keeps the wire bytes identical -- each member
+    renders as its literal status string in RPC/JSON."""
+
+    WARRANTED = "warranted"
+    SUPPORT = "support"
+    UNCLASSIFIED = "unclassified"
+    RAISE_EFFECT = "raise-effect"
+    RUNTIME_EFFECT = "runtime-effect"
+    COVERAGE_GAP = "coverage-gap"
+    ABSENT = "absent"
+    DRIFTED = "drifted"
+
+
+FactoryWalkCompleteStatus = Literal[
+    FactoryWalkStatus.WARRANTED,
+    FactoryWalkStatus.SUPPORT,
+]
+FactoryWalkRedStatus = Literal[
+    FactoryWalkStatus.UNCLASSIFIED,
+    FactoryWalkStatus.RAISE_EFFECT,
+    FactoryWalkStatus.RUNTIME_EFFECT,
+    FactoryWalkStatus.COVERAGE_GAP,
+    FactoryWalkStatus.ABSENT,
+    FactoryWalkStatus.DRIFTED,
+]
+
 _RED_STATUSES = frozenset(get_args(FactoryWalkRedStatus))
 
 SourceMementoLike: TypeAlias = SourceMementoDto | dict[str, Any]
@@ -44,9 +61,6 @@ class FactoryWalkCompleteRowDto:
     emitted_formula: Mapping[str, Any] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        _validate_status(self.status)
-
     def to_rpc(self) -> dict[str, Any]:
         return _row_to_rpc(self, self.status, self.reason)
 
@@ -68,7 +82,6 @@ class FactoryWalkRedRowDto:
     extra: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        _validate_status(self.status)
         _validate_red_reason(
             status=self.status,
             reason=self.reason,
@@ -83,19 +96,8 @@ class FactoryWalkRedRowDto:
 FactoryWalkRowDto: TypeAlias = FactoryWalkCompleteRowDto | FactoryWalkRedRowDto
 
 
-def _validate_status(status: str) -> None:
-    if status not in _ALLOWED_STATUSES:
-        allowed = ", ".join(sorted(_ALLOWED_STATUSES))
-        raise TypeError(
-            "FactoryWalkRowDto.status must be a lift factory-walk status: "
-            f"owner=FactoryWalkRowDto illegal={status!r} "
-            f"replacement=typed Effect status or warranted/support; "
-            f"allowed={allowed}"
-        )
-
-
 def _validate_red_reason(
-    *, status: str, reason: str | None, file: str, line: int
+    *, status: FactoryWalkStatus, reason: str | None, file: str, line: int
 ) -> None:
     if status in _RED_STATUSES and not (reason or "").strip():
         raise TypeError(
@@ -121,14 +123,15 @@ def _row_to_rpc(
             "factory walk rows must carry SourceMemento pins only; "
             f"forbidden inline field(s): {joined}"
         )
-    _validate_status(status)
     _validate_red_reason(
         status=status,
         reason=reason,
         file=row.file,
         line=row.line,
     )
-    rpc_status = "unresolved" if status == "unclassified" else status
+    rpc_status = (
+        "unresolved" if status is FactoryWalkStatus.UNCLASSIFIED else status.value
+    )
     # factory-gap / dig-boundary DELETED: the None arm panics upstream.
     # absent/drifted are source-oracle gaps (not soft incomplete).
     verdict_by_status = {

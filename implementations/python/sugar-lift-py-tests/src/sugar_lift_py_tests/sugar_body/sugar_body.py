@@ -103,6 +103,7 @@ class SugarBody(Generic[ReductionT_co]):
         from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import (
             FactoryWalkCompleteRowDto,
             FactoryWalkRedRowDto,
+            FactoryWalkStatus,
         )
         from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
         from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
@@ -160,7 +161,7 @@ class SugarBody(Generic[ReductionT_co]):
                         requested_role=audit.role,
                         ast_kind=audit.observed,
                         selected=audit.selected,
-                        status="warranted",
+                        status=FactoryWalkStatus.WARRANTED,
                         output=audit.selected or "selected",
                         source_memento=memento,
                         reason=audit.message,
@@ -178,7 +179,7 @@ class SugarBody(Generic[ReductionT_co]):
                         requested_role=audit.role,
                         ast_kind=audit.observed,
                         selected=audit.selected,
-                        status="unclassified",
+                        status=FactoryWalkStatus.UNCLASSIFIED,
                         output=audit.status,
                         source_memento=memento,
                         reason=audit.message or audit.status,

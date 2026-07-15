@@ -1799,7 +1799,10 @@ def _factory_walk_red_from_gap(gap: AuditOnlyGap):
     visual_factory_walk_rows takes the existing RED-with-grounds arm.
     """
     from sugar_lift_py_tests.canonicalizer import blake3_512_of
-    from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkRedRowDto
+    from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import (
+        FactoryWalkRedRowDto,
+        FactoryWalkStatus,
+    )
     from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
     from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
 
@@ -1826,7 +1829,7 @@ def _factory_walk_red_from_gap(gap: AuditOnlyGap):
         requested_role=str(audit.role or gap.info.get("requested") or "statement"),
         ast_kind=str(audit.observed or gap.info.get("observed") or "unknown"),
         selected=audit.selected,
-        status="unclassified",
+        status=FactoryWalkStatus.UNCLASSIFIED,
         output=str(audit.status or FactoryAuditStatus.SUGAR_GAP),
         source_memento=memento,
         reason=reason,

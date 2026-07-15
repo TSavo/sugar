@@ -8,6 +8,7 @@ import pytest
 
 from factory_reduce import reduce_value
 
+from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkStatus
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
@@ -64,7 +65,9 @@ def test_ground_abs_comparison_folds_true_in_full_assert() -> None:
     payload = lift_file_payload(source, "t.py")
 
     assert any(
-        row.line == 2 and row.selected == "AssertSugar" and row.status == "warranted"
+        row.line == 2
+        and row.selected == "AssertSugar"
+        and row.status is FactoryWalkStatus.WARRANTED
         for row in payload.factory_walk
     )
     assert all(contract.inv is None for contract in payload.ir)

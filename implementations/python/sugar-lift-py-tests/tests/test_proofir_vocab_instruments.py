@@ -13,7 +13,11 @@ from sugar_lift_py_tests.idd.proofir_vocab_instruments import (
 from sugar_lift_py_tests.factory.proofir_provenance_diagnostic import (
     proofir_formula_provenance_diagnostic,
 )
-from sugar_lift_py_tests.kit_rpc import BodyUniverseDto, FactoryWalkCompleteRowDto
+from sugar_lift_py_tests.kit_rpc import (
+    BodyUniverseDto,
+    FactoryWalkCompleteRowDto,
+    FactoryWalkStatus,
+)
 from sugar_lift_py_tests.proofir import (
     ClaimFormula,
     ConstructionSite,
@@ -118,7 +122,7 @@ def test_proofir_vocab_provenance_counter_is_payload_diagnostic_shape() -> None:
                 requested_role="AssertionSurface",
                 ast_kind="Assert",
                 selected="CallSugar",
-                status="warranted",
+                status=FactoryWalkStatus.WARRANTED,
                 output="predicate",
                 source_memento={"kind": "source-memento", "file": "t.py"},
                 emitted_formula={"kind": "atomic", "name": "=", "args": []},
