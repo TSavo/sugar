@@ -287,6 +287,7 @@ def _class_attr_writes(tree: ast.Module) -> dict:
     the module (assignment, augmented assignment, deletion), keyed
     'Name.attr' -> first line. Covers ClassName.MEMBER = ... and
     cls.MEMBER = ... punctures."""
+
     class WriteVisitor(ast.NodeVisitor):
         def __init__(self) -> None:
             self.writes: dict[str, int] = {}
