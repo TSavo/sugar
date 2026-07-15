@@ -1084,21 +1084,21 @@ fn merge_recovered_audit_leaf(
             demanded_body: demanded_body.clone(),
             owner_identity,
         };
-        panics.push(
-            serde_json::to_value(row).expect("closed recovered panic row must serialize"),
-        );
+        panics.push(serde_json::to_value(row).expect("closed recovered panic row must serialize"));
     }
     for effect in leaf.effects {
-        let mut effect = effect.as_object().cloned().ok_or_else(|| {
-            malformed("recovered effect row must be an object".to_string())
-        })?;
+        let mut effect = effect
+            .as_object()
+            .cloned()
+            .ok_or_else(|| malformed("recovered effect row must be an object".to_string()))?;
         effect.insert("demandedBody".to_string(), demanded_body.clone());
         effects.push(Value::Object(effect));
     }
     for locus in leaf.suppressed_descendants {
-        let mut locus = locus.as_object().cloned().ok_or_else(|| {
-            malformed("suppressed descendant row must be an object".to_string())
-        })?;
+        let mut locus = locus
+            .as_object()
+            .cloned()
+            .ok_or_else(|| malformed("suppressed descendant row must be an object".to_string()))?;
         locus.insert("demandedBody".to_string(), demanded_body.clone());
         suppressed.push(Value::Object(locus));
     }
@@ -1677,7 +1677,9 @@ mod tests {
         )
         .expect_err("same demanded owner may emit one terminal row only");
 
-        assert!(error.to_string().contains("duplicate recovered panic owner identity"));
+        assert!(error
+            .to_string()
+            .contains("duplicate recovered panic owner identity"));
     }
 
     #[test]
@@ -1699,7 +1701,9 @@ mod tests {
         )
         .expect_err("terminalGapLocus must identify the exact typed gap coordinate");
 
-        assert!(error.to_string().contains("terminalGapLocus must match typed gap locus"));
+        assert!(error
+            .to_string()
+            .contains("terminalGapLocus must match typed gap locus"));
     }
 
     #[test]
