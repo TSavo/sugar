@@ -32,7 +32,7 @@ def test_builtin_callable_names_construct_as_decorators_and_values() -> None:
         "    return staticmethod\n"
     )
 
-    _payload, gaps = audit_lift_file(source, "builtins.py", hold_panic=True)
+    _payload, gaps = audit_lift_file(source, "builtins.py")
 
     for name in ("property", "classmethod", "staticmethod"):
         assert not any(
@@ -53,7 +53,7 @@ def test_builtin_exception_names_construct_in_raise_and_isinstance() -> None:
         "    return 1\n"
     )
 
-    payload, gaps = audit_lift_file(source, "builtins.py", hold_panic=True)
+    payload, gaps = audit_lift_file(source, "builtins.py")
     assertions = account_lift_coverage(
         census_source(source, file="builtins.py"), payload.to_rpc()
     ).to_json()["assertions"]
@@ -72,7 +72,7 @@ def test_genuinely_undefined_name_still_panics_loudly() -> None:
         FactoryPanic,
         match="observed=definitely_not_a_builtin requested=value",
     ):
-        audit_lift_file(source, "undefined.py", hold_panic=False)
+        audit_lift_file(source, "undefined.py")
 
 
 def test_builtin_callable_binding_set_is_derived_from_python() -> None:
@@ -97,7 +97,7 @@ def test_builtin_calls_keep_their_dedicated_sugar_owners() -> None:
         "    return len([abs(-1), int('2')])\n"
     )
 
-    _payload, gaps = audit_lift_file(source, "calls.py", hold_panic=True)
+    _payload, gaps = audit_lift_file(source, "calls.py")
 
     assert not any(
         "observed=len requested=value" in gap.message
