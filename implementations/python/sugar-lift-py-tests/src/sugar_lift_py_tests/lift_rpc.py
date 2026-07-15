@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import collections
 import dataclasses
 import json
 import logging
@@ -55,7 +56,7 @@ _TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
 # source mementos carry the workspace-relative filename even for identical
 # bytes at two seats. Descendant questions reuse this already-demanded file
 # result instead of reducing every definition again.
-_ENUMERATION_FILE_CONTEXTS: Dict[
+_ENUMERATION_FILE_CONTEXTS: collections.OrderedDict[
     str,
     Dict[
         str,
@@ -65,7 +66,25 @@ _ENUMERATION_FILE_CONTEXTS: Dict[
             Dict[str, Dict[str, Any]],
         ],
     ],
-] = {}
+] = collections.OrderedDict()
+
+
+def _enumeration_cache_limit() -> int:
+    raw = os.environ.get("SUGAR_ENUMERATION_FILE_CACHE_LIMIT", "2")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 2
+
+
+def _remember_file_context(
+    cache: collections.OrderedDict, key: str, value: Any
+) -> None:
+    """Keep only the hottest file contexts in the resident enumeration kit."""
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > _enumeration_cache_limit():
+        cache.popitem(last=False)
 
 
 class _StructuredTransportFormatter(logging.Formatter):
@@ -933,6 +952,7 @@ def _lift_file_for_enumeration(workspace_root: str, root: Path, file_rel: str) -
     file_cid = blake3_512_of(source.encode())
     seats = _ENUMERATION_FILE_CONTEXTS.get(file_cid)
     if seats is not None and file_rel in seats:
+        _ENUMERATION_FILE_CONTEXTS.move_to_end(file_cid)
         _TRANSPORT_LOG.info(
             "enumeration_file_context_hit",
             extra={
@@ -949,7 +969,9 @@ def _lift_file_for_enumeration(workspace_root: str, root: Path, file_rel: str) -
     call_edges = file_rpc["callEdges"]
     term_table = file_rpc["termTable"]
     result = (ir_items, call_edges, term_table)
-    _ENUMERATION_FILE_CONTEXTS.setdefault(file_cid, {})[file_rel] = result
+    seats = _ENUMERATION_FILE_CONTEXTS.setdefault(file_cid, {})
+    seats[file_rel] = result
+    _remember_file_context(_ENUMERATION_FILE_CONTEXTS, file_cid, seats)
     _TRANSPORT_LOG.info(
         "enumeration_file_context_miss",
         extra={
@@ -1255,7 +1277,9 @@ class _AuditFileContext:
 # the sole key. There is deliberately no invalidation or eviction API: a new
 # file version has a new CID, while dropping the RPC layer drops the kit and
 # this map with it.
-_AUDIT_FILE_CONTEXTS: dict[str, _AuditFileContext] = {}
+_AUDIT_FILE_CONTEXTS: collections.OrderedDict[str, _AuditFileContext] = (
+    collections.OrderedDict()
+)
 
 
 def _audit_file_context(
@@ -1272,6 +1296,7 @@ def _audit_file_context(
     # FactoryPanic propagates and no completed payload can be emitted.
     cached = _AUDIT_FILE_CONTEXTS.get(file_cid) if hold_seed_panics else None
     if cached is not None:
+        _AUDIT_FILE_CONTEXTS.move_to_end(file_cid)
         _TRANSPORT_LOG.info(
             "enumeration_file_context",
             extra={
@@ -1343,7 +1368,7 @@ def _audit_file_context(
         definitions_by_cid=definitions_by_cid,
     )
     if hold_seed_panics:
-        _AUDIT_FILE_CONTEXTS[file_cid] = context
+        _remember_file_context(_AUDIT_FILE_CONTEXTS, file_cid, context)
     _TRANSPORT_LOG.info(
         "enumeration_file_context",
         extra={

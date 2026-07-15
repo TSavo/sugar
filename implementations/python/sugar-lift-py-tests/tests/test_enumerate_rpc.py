@@ -254,6 +254,19 @@ def test_audit_context_is_parsed_once_per_file_cid_and_mutation_misses(
     assert parsed.count("sibling.py") == 1, "untouched sibling CID must stay warm"
 
 
+def test_enumeration_file_context_cache_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SUGAR_ENUMERATION_FILE_CACHE_LIMIT", "2")
+    cache = lift_rpc.collections.OrderedDict()
+
+    lift_rpc._remember_file_context(cache, "first", object())
+    lift_rpc._remember_file_context(cache, "second", object())
+    lift_rpc._remember_file_context(cache, "third", object())
+
+    assert list(cache) == ["second", "third"]
+
+
 def test_partial_audit_demand_does_not_compute_sibling_definitions(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
