@@ -196,17 +196,23 @@ class OpaqueOpCallsite(FloorValue):
         the floor can invent ``__setattr__`` for call:copy(…).
         """
         del ctx
-        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.effect import (
+            AttributeStoreRuntimeEffect,
+            runtime_effect_witness,
+        )
         from sugar_lift_py_tests.outcome import Incomplete
 
         return Incomplete(
-            RuntimeEffect(
+            AttributeStoreRuntimeEffect(
                 "attribute assignment runtime boundary: opaque coordinate "
                 f"`call:{self.callee}(...)` cannot be mutated as source object "
                 "state. Python attribute assignment can invoke descriptors and "
                 "__setattr__ at runtime; keep as typed red until a narrower "
                 "attribute mutation floor owns this shape. "
-                f"blame={operation.blame}"
+                f"blame={operation.blame}",
+                witness=runtime_effect_witness(
+                    "py.setattr", f"call:{self.callee}", operation.blame
+                ),
             )
         )
 

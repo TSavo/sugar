@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.effect import (
+    SetMethodRuntimeEffect,
+    runtime_effect_witness,
+)
 from sugar_lift_py_tests.ir import Term, ctor
 
 from .floor_value import FloorValue
@@ -48,11 +51,12 @@ def _call_method_effect(
     from sugar_lift_py_tests.outcome import Incomplete
 
     return Incomplete(
-        RuntimeEffect(
+        SetMethodRuntimeEffect(
             "set builtin method runtime boundary: "
             f"{observed} has no reduced floor semantics in this tranche. "
             "Python set method results can expose runtime mutation and "
             "iteration-order semantics; keep as typed red until a narrower "
-            f"vendor-cited reduction owns the shape. blame={blame}"
+            f"vendor-cited reduction owns the shape. blame={blame}",
+            witness=runtime_effect_witness("py.call_method", observed, blame),
         )
     )

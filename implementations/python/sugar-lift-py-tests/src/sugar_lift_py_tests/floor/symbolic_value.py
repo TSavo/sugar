@@ -449,15 +449,19 @@ class SymbolicValue(FloorValue):
 
     def map_with(self, operation, ctx):
         del ctx
-        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.effect import (
+            MapReceiverRuntimeEffect,
+            runtime_effect_witness,
+        )
         from sugar_lift_py_tests.outcome import Incomplete
 
         return Incomplete(
-            RuntimeEffect(
+            MapReceiverRuntimeEffect(
                 "map receiver runtime boundary: SymbolicValue.map depends on "
                 "the receiver's runtime collection semantics and pandas mapping "
                 "rules; keep as typed red until a narrower symbolic map floor "
-                f"owns this shape. blame={operation.blame}"
+                f"owns this shape. blame={operation.blame}",
+                witness=runtime_effect_witness("py.map", self.term, operation.blame),
             )
         )
 
@@ -476,76 +480,104 @@ class SymbolicValue(FloorValue):
     def async_iter_with(self, operation, ctx):
         """async for over a free/symbolic iterable — typed red, not floor panic."""
         del ctx
-        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.effect import (
+            AsyncIterationRuntimeEffect,
+            runtime_effect_witness,
+        )
         from sugar_lift_py_tests.outcome import Incomplete
 
         return Incomplete(
-            RuntimeEffect(
+            AsyncIterationRuntimeEffect(
                 "async for runtime boundary: symbolic iterable cannot be "
                 "async-iterated without a concrete async-iterator floor; "
                 f"owner={operation.owner}; keep as typed red until a narrower "
-                f"async-iter floor owns this shape. blame={operation.blame}"
+                f"async-iter floor owns this shape. blame={operation.blame}",
+                witness=runtime_effect_witness(
+                    "py.async_iter", self.term, operation.blame
+                ),
             )
         )
 
     def await_with(self, operation, ctx):
         """await on a free/symbolic awaitable — typed red, not floor panic."""
         del ctx
-        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.effect import (
+            AwaitRuntimeEffect,
+            runtime_effect_witness,
+        )
         from sugar_lift_py_tests.outcome import Incomplete
 
         return Incomplete(
-            RuntimeEffect(
+            AwaitRuntimeEffect(
                 "await runtime boundary: symbolic awaitable cannot be forced "
                 "without a concrete awaitable floor; "
                 f"owner={operation.owner}; keep as typed red until a narrower "
-                f"await floor owns this shape. blame={operation.blame}"
+                f"await floor owns this shape. blame={operation.blame}",
+                witness=runtime_effect_witness("py.await", self.term, operation.blame),
             )
         )
 
     def async_context_manager_with(self, operation, ctx):
         """async with over a free/symbolic manager — typed red, not floor panic."""
         del ctx
-        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.effect import (
+            AsyncContextManagerRuntimeEffect,
+            runtime_effect_witness,
+        )
         from sugar_lift_py_tests.outcome import Incomplete
 
         return Incomplete(
-            RuntimeEffect(
+            AsyncContextManagerRuntimeEffect(
                 "async with runtime boundary: symbolic manager cannot enter "
                 "an async context without a concrete async-CM floor; "
                 f"owner={operation.owner}; keep as typed red until a narrower "
-                f"async-with floor owns this shape. blame={operation.blame}"
+                f"async-with floor owns this shape. blame={operation.blame}",
+                witness=runtime_effect_witness(
+                    "py.async_with", self.term, operation.blame
+                ),
             )
         )
 
     def attribute_assign_with(self, operation, ctx):
         del ctx
-        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.effect import (
+            AttributeStoreRuntimeEffect,
+            runtime_effect_witness,
+        )
         from sugar_lift_py_tests.outcome import Incomplete
 
         return Incomplete(
-            RuntimeEffect(
+            AttributeStoreRuntimeEffect(
                 "attribute assignment runtime boundary: symbolic receiver "
                 f"`{self.term}` cannot be mutated as source object state. "
                 "Python attribute assignment can invoke descriptors and "
                 "__setattr__ at runtime; keep as typed red until a narrower "
                 "attribute mutation floor owns this shape. "
-                f"blame={operation.blame}"
+                f"blame={operation.blame}",
+                witness=runtime_effect_witness(
+                    "py.setattr", self.term, operation.blame
+                ),
             )
         )
 
     def setitem_with(self, operation, ctx):
         del ctx
-        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.effect import (
+            SubscriptStoreRuntimeEffect,
+            runtime_effect_witness,
+        )
         from sugar_lift_py_tests.outcome import Incomplete
 
         return Incomplete(
-            RuntimeEffect(
+            SubscriptStoreRuntimeEffect(
                 "subscript assignment runtime boundary: symbolic receiver "
                 f"`{self.term}` cannot be mutated as source object state. "
                 "Python subscript assignment can invoke __setitem__ and mutate "
                 "runtime state; keep as typed red until a narrower mutation "
-                f"floor owns this shape. blame={operation.blame}"
+                f"floor owns this shape. blame={operation.blame}",
+                witness=runtime_effect_witness(
+                    "py.setitem", self.term, operation.blame
+                ),
             )
         )
 

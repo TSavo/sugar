@@ -5,11 +5,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.effect import (
+    CallResultTypeRuntimeEffect,
     Effect,
-    RuntimeEffect,
     effect_kind,
     effect_reason,
     require_effect,
+    runtime_effect_witness,
 )
 from sugar_lift_py_tests.ir import _json_like_to_value, eq, make_var, num
 from sugar_lift_py_tests.outcome import Incomplete
@@ -163,7 +164,14 @@ def _effectful_refusal_source() -> str:
 
 
 def _runtime_effect_incomplete(reason: str) -> Incomplete:
-    return Incomplete(RuntimeEffect(reason))
+    return Incomplete(
+        CallResultTypeRuntimeEffect(
+            reason,
+            witness=runtime_effect_witness(
+                "py.call", "print", "<boundary-record-witness-case>"
+            ),
+        )
+    )
 
 
 def _fact_and_refusal_refuses(cls: type[BoundaryRecord]) -> BoundaryRecord:

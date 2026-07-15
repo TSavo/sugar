@@ -427,15 +427,21 @@ class TermValue(FloorValue):
 
             return Complete(StringValue(repr(self.value)))
         if operation.name == "__bytes__" and not operation.arguments:
-            from sugar_lift_py_tests.effect import RuntimeEffect
+            from sugar_lift_py_tests.effect import (
+                BytesConversionRuntimeEffect,
+                runtime_effect_witness,
+            )
             from sugar_lift_py_tests.outcome import Incomplete
 
             # int/float have no __bytes__; keep typed red (don't fabricate).
             return Incomplete(
-                RuntimeEffect(
+                BytesConversionRuntimeEffect(
                     "numeric bytes conversion runtime boundary: "
                     f"TermValue.__bytes__ is not defined for {type(self.value).__name__}; "
-                    f"blame={operation.blame}"
+                    f"blame={operation.blame}",
+                    witness=runtime_effect_witness(
+                        "py.bytes", type(self.value).__name__, operation.blame
+                    ),
                 )
             )
         _call_method_gap(
