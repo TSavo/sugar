@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import ast
+import functools
 import inspect
 import textwrap
 from dataclasses import dataclass
@@ -27,6 +28,12 @@ from typing import Any
 
 
 def module_sibling_function_nodes(module_name: str) -> dict:
+    """Copy-on-read facade over the memoized bridge table (callers may pop)."""
+    return dict(_module_sibling_function_nodes(module_name))
+
+
+@functools.lru_cache(maxsize=None)
+def _module_sibling_function_nodes(module_name: str) -> dict:
     """AST FunctionDef nodes for every def in ``module_name``, bare + qualified keys.
 
     Also indexes ``Class.method`` / ``module.Class.method`` for method body dig.
@@ -124,6 +131,7 @@ def module_sibling_function_nodes(module_name: str) -> dict:
     return nodes
 
 
+@functools.lru_cache(maxsize=None)
 def resolve_install_source_funcdef(import_target: str):
     """Resolve ``module.attr`` to an installed FunctionDef SourceFragment, or None."""
     if "." not in import_target:
@@ -387,6 +395,7 @@ def resolve_install_source_value(
     return None
 
 
+@functools.lru_cache(maxsize=None)
 def resolve_install_source_class_method(qualified_class: str, method_name: str):
     """Resolve ``module.Class.method`` to a FunctionDef SourceFragment, or None."""
     if not qualified_class or not method_name or "." not in qualified_class:
