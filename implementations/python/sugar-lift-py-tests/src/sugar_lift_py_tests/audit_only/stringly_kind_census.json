@@ -1,0 +1,4250 @@
+{
+  "R": 382,
+  "campaign": "NodeKind promotion",
+  "identity": "path + normalized text digest + duplicate ordinal; line is display only",
+  "law": "node kinds are NodeKind/OperatorKind members, not string literals; R = stringly comparisons against .observed / operator_kind()",
+  "occurrences": [
+    {
+      "key": "src/sugar_lift_py_tests/constraint_flow/callee_name.py:2b47905efb34aca6:1",
+      "line": 7,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/constraint_flow/callee_name.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "fragment.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/constraint_flow/callee_name.py:76f046701d52bd2a:1",
+      "line": 9,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/constraint_flow/callee_name.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "fragment.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/constraint_flow/dig_constraint_universe.py:353b0567df44b593:1",
+      "line": 26,
+      "literals": [
+        "AnnAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/constraint_flow/dig_constraint_universe.py",
+      "replacement": "NodeKind.ANN_ASSIGN",
+      "subject": "observed",
+      "text": "fragment.observed != \"AnnAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/constraint_flow/field_keyword_predicate.py:dc73846be2901de2:1",
+      "line": 27,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/constraint_flow/field_keyword_predicate.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "val_frag.observed != \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/constraint_flow/field_keyword_predicate.py:dd12e2b09c0d4d9d:1",
+      "line": 17,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/constraint_flow/field_keyword_predicate.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "call.observed != \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/constraint_flow/recognize_callsite_fact.py:08029ebd076cfa19:1",
+      "line": 33,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/constraint_flow/recognize_callsite_fact.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "left_frag.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/constraint_flow/recognize_callsite_fact.py:0ce22181cd16f600:1",
+      "line": 35,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/constraint_flow/recognize_callsite_fact.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "left_frag.attr_receiver().call_func().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/constraint_flow/recognize_callsite_fact.py:3ed00e0304501e68:1",
+      "line": 36,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/constraint_flow/recognize_callsite_fact.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "right_frag.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/constraint_flow/recognize_callsite_fact.py:7aebd80e391c4779:1",
+      "line": 23,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/constraint_flow/recognize_callsite_fact.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "compare_frag.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/constraint_flow/recognize_callsite_fact.py:a12e275535f0a558:1",
+      "line": 34,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/constraint_flow/recognize_callsite_fact.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "left_frag.attr_receiver().observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/constraint_flow/recognize_callsite_fact.py:b42bed40b7cddc66:1",
+      "line": 17,
+      "literals": [
+        "Assert"
+      ],
+      "path": "src/sugar_lift_py_tests/constraint_flow/recognize_callsite_fact.py",
+      "replacement": "NodeKind.ASSERT",
+      "subject": "observed",
+      "text": "fragment.observed != \"Assert\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/contract_expression.py:1ff00fc17dcf06d5:1",
+      "line": 112,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/contract_expression.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "operand.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/contract_expression.py:9cc5d9afbec57da0:1",
+      "line": 28,
+      "literals": [
+        "Expr"
+      ],
+      "path": "src/sugar_lift_py_tests/contract_expression.py",
+      "replacement": "NodeKind.EXPR",
+      "subject": "observed",
+      "text": "fragment.observed == \"Expr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/contract_expression.py:d8d1b4de0278e1d7:1",
+      "line": 60,
+      "literals": [
+        "Not"
+      ],
+      "path": "src/sugar_lift_py_tests/contract_expression.py",
+      "replacement": "OperatorKind.NOT",
+      "subject": "operator_kind",
+      "text": "fragment.operator_kind() == \"Not\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/contract_expression.py:de8f6d300b570336:1",
+      "line": 75,
+      "literals": [
+        "Add"
+      ],
+      "path": "src/sugar_lift_py_tests/contract_expression.py",
+      "replacement": "OperatorKind.ADD",
+      "subject": "operator_kind",
+      "text": "fragment.operator_kind() == \"Add\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/contract_expression.py:f21b2d22dbef980d:1",
+      "line": 110,
+      "literals": [
+        "USub"
+      ],
+      "path": "src/sugar_lift_py_tests/contract_expression.py",
+      "replacement": "OperatorKind.U_SUB",
+      "subject": "operator_kind",
+      "text": "fragment.operator_kind() == \"USub\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/package_source_accounting.py:39c510ccfc73932c:1",
+      "line": 195,
+      "literals": [
+        "Pass"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/package_source_accounting.py",
+      "replacement": "NodeKind.PASS",
+      "subject": "observed",
+      "text": "fragment.observed == \"Pass\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/package_source_accounting.py:8684a34aa4a0aeda:1",
+      "line": 82,
+      "literals": [
+        "Import"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/package_source_accounting.py",
+      "replacement": "NodeKind.IMPORT",
+      "subject": "observed",
+      "text": "fragment.observed == \"Import\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/package_source_accounting.py:952965154ca12a78:1",
+      "line": 87,
+      "literals": [
+        "ImportFrom"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/package_source_accounting.py",
+      "replacement": "NodeKind.IMPORT_FROM",
+      "subject": "observed",
+      "text": "fragment.observed == \"ImportFrom\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/package_source_accounting.py:a6dfd8822042fa47:1",
+      "line": 200,
+      "literals": [
+        "Expr"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/package_source_accounting.py",
+      "replacement": "NodeKind.EXPR",
+      "subject": "observed",
+      "text": "fragment.observed == \"Expr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/package_source_accounting.py:aa41bc813c062132:1",
+      "line": 175,
+      "literals": [
+        "Import",
+        "ImportFrom",
+        "alias"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/package_source_accounting.py",
+      "replacement": "NodeKind.IMPORT, NodeKind.IMPORT_FROM, NodeKind.ALIAS",
+      "subject": "observed",
+      "text": "fragment.observed in {\"Import\", \"ImportFrom\", \"alias\"}"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/package_source_accounting.py:ce0f6a05a7d37829:1",
+      "line": 185,
+      "literals": [
+        "ClassDef"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/package_source_accounting.py",
+      "replacement": "NodeKind.CLASS_DEF",
+      "subject": "observed",
+      "text": "fragment.observed == \"ClassDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/package_source_accounting.py:e46dca0c1f1c0d89:1",
+      "line": 190,
+      "literals": [
+        "arg"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/package_source_accounting.py",
+      "replacement": "NodeKind.ARG",
+      "subject": "observed",
+      "text": "fragment.observed == \"arg\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/package_source_accounting.py:f101b3b54c3175c9:1",
+      "line": 202,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/package_source_accounting.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "value.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/package_source_accounting.py:fe94c1a7fc392ae1:1",
+      "line": 180,
+      "literals": [
+        "FunctionDef",
+        "AsyncFunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/package_source_accounting.py",
+      "replacement": "NodeKind.FUNCTION_DEF, NodeKind.ASYNC_FUNCTION_DEF",
+      "subject": "observed",
+      "text": "fragment.observed in {\"FunctionDef\", \"AsyncFunctionDef\"}"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/source_fragment.py:5fbcf8a9d27cc52e:1",
+      "line": 392,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/source_fragment.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "self.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:2abbfe152ae2f523:1",
+      "line": 309,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "statement.observed == \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:2abbfe152ae2f523:2",
+      "line": 327,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "statement.observed == \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:2ebf1448fea6b55e:1",
+      "line": 311,
+      "literals": [
+        "AnnAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.ANN_ASSIGN",
+      "subject": "observed",
+      "text": "statement.observed == \"AnnAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:2ebf1448fea6b55e:2",
+      "line": 330,
+      "literals": [
+        "AnnAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.ANN_ASSIGN",
+      "subject": "observed",
+      "text": "statement.observed == \"AnnAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:4709dd6d034ae306:1",
+      "line": 259,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:66269552ee7e5842:1",
+      "line": 21,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "frag.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:6ac36126d70b0b26:1",
+      "line": 389,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "prior.observed == \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:6cdbc59991a3c16c:1",
+      "line": 269,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "site.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:7ef5a2bba15feb95:1",
+      "line": 36,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "frag.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:7f059aae2612a27a:1",
+      "line": 271,
+      "literals": [
+        "keyword"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.KEYWORD",
+      "subject": "observed",
+      "text": "site.observed == \"keyword\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:9d8bc366ea70ae74:1",
+      "line": 78,
+      "literals": [
+        "If"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.IF",
+      "subject": "observed",
+      "text": "stmt.observed == \"If\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:a2c3ff2827d01dd5:1",
+      "line": 104,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "site.observed != \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:a2c3ff2827d01dd5:2",
+      "line": 237,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "site.observed != \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:b83ca3c5823929b9:1",
+      "line": 414,
+      "literals": [
+        "ImportFrom"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.IMPORT_FROM",
+      "subject": "observed",
+      "text": "prior.observed == \"ImportFrom\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:ba7e944f45595ed5:1",
+      "line": 391,
+      "literals": [
+        "AnnAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.ANN_ASSIGN",
+      "subject": "observed",
+      "text": "prior.observed == \"AnnAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:bc8d52fa16aade9f:1",
+      "line": 454,
+      "literals": [
+        "Return"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.RETURN",
+      "subject": "observed",
+      "text": "body_frag.observed == \"Return\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:c1e8956ec2fcd93c:1",
+      "line": 257,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:c4f8f9a140662a6f:1",
+      "line": 72,
+      "literals": [
+        "Return"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.RETURN",
+      "subject": "observed",
+      "text": "stmt.observed == \"Return\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:cc3d9d38bbd619f3:1",
+      "line": 19,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "frag.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:de094744ae3c8107:1",
+      "line": 335,
+      "literals": [
+        "Import"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.IMPORT",
+      "subject": "observed",
+      "text": "statement.observed == \"Import\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:df85a6cb02a39627:1",
+      "line": 318,
+      "literals": [
+        "Import",
+        "ImportFrom"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.IMPORT, NodeKind.IMPORT_FROM",
+      "subject": "observed",
+      "text": "statement.observed in (\"Import\", \"ImportFrom\")"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:e24ab5d30695f9c1:1",
+      "line": 297,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "nested.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:ed36450e61ad1b24:1",
+      "line": 293,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "statement.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:f892a8836759d34b:1",
+      "line": 399,
+      "literals": [
+        "Import"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.IMPORT",
+      "subject": "observed",
+      "text": "prior.observed == \"Import\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/factory/sugar_constructors.py:fd07c536e1682e66:1",
+      "line": 340,
+      "literals": [
+        "ImportFrom"
+      ],
+      "path": "src/sugar_lift_py_tests/factory/sugar_constructors.py",
+      "replacement": "NodeKind.IMPORT_FROM",
+      "subject": "observed",
+      "text": "statement.observed == \"ImportFrom\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:138ddf83ab8f30bd:1",
+      "line": 127,
+      "literals": [
+        "JoinedStr"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.JOINED_STR",
+      "subject": "observed",
+      "text": "v.observed == \"JoinedStr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:36ab017da1653545:1",
+      "line": 31,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "s.expr_value().observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:41187c8667ea921a:1",
+      "line": 88,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "v.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:5ff3239fba13444a:1",
+      "line": 84,
+      "literals": [
+        "Return"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.RETURN",
+      "subject": "observed",
+      "text": "last.observed != \"Return\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:77787a4d4eb03b25:1",
+      "line": 131,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "v.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:7a08b4486c8534e5:1",
+      "line": 108,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "v.call_func().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:7bd0f5146811a18f:1",
+      "line": 113,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "v.observed == \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:8ca4971931d11ac5:1",
+      "line": 73,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "n.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:8d9c819f8082afc8:1",
+      "line": 125,
+      "literals": [
+        "IfExp"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.IF_EXP",
+      "subject": "observed",
+      "text": "v.observed == \"IfExp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:8efeee4531ca24fc:1",
+      "line": 30,
+      "literals": [
+        "Expr"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.EXPR",
+      "subject": "observed",
+      "text": "s.observed == \"Expr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:a46c26321cdec7d2:1",
+      "line": 122,
+      "literals": [
+        "Not"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "OperatorKind.NOT",
+      "subject": "operator_kind",
+      "text": "v.operator_kind() == \"Not\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:a530d77976033b43:1",
+      "line": 115,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "v.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:a6dfc5aac01b22c8:1",
+      "line": 113,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "v.subscript_receiver().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:acb1372417d732dc:1",
+      "line": 65,
+      "literals": [
+        "For",
+        "AsyncFor"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.FOR, NodeKind.ASYNC_FOR",
+      "subject": "observed",
+      "text": "s.observed in (\"For\", \"AsyncFor\")"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:afb8b0ed7940c1c7:1",
+      "line": 121,
+      "literals": [
+        "Compare",
+        "BoolOp"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.COMPARE, NodeKind.BOOL_OP",
+      "subject": "observed",
+      "text": "v.observed in (\"Compare\", \"BoolOp\")"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:b9c906744ae168df:1",
+      "line": 38,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "node.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:cc48c9fe5c58ce13:1",
+      "line": 52,
+      "literals": [
+        "If"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.IF",
+      "subject": "observed",
+      "text": "s.observed == \"If\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:cc4b236b6bb0edb9:1",
+      "line": 67,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "n.subscript_receiver().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:dc07693634e238e5:1",
+      "line": 54,
+      "literals": [
+        "Raise"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.RAISE",
+      "subject": "observed",
+      "text": "s.if_body()[0].observed == \"Raise\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:e7f27c54d5ac5d0e:1",
+      "line": 67,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "n.observed == \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:e8b16281d81c23be:1",
+      "line": 119,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "v.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:ed1c82e33ff3197c:1",
+      "line": 122,
+      "literals": [
+        "UnaryOp"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.UNARY_OP",
+      "subject": "observed",
+      "text": "v.observed == \"UnaryOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:f1ead2cf879a6818:1",
+      "line": 71,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "n.observed == \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:f31ea648237b411a:1",
+      "line": 117,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "v.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/grammar_census.py:f3a742c1ef7529fa:1",
+      "line": 129,
+      "literals": [
+        "Tuple",
+        "List",
+        "Dict",
+        "Set"
+      ],
+      "path": "src/sugar_lift_py_tests/grammar_census.py",
+      "replacement": "NodeKind.TUPLE, NodeKind.LIST, NodeKind.DICT, NodeKind.SET",
+      "subject": "observed",
+      "text": "v.observed in (\"Tuple\", \"List\", \"Dict\", \"Set\")"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:18cd77ba5e89df24:1",
+      "line": 148,
+      "literals": [
+        "Return"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.RETURN",
+      "subject": "observed",
+      "text": "statement.observed != \"Return\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:43b607a4e6fb887f:1",
+      "line": 111,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "fragment.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:43b607a4e6fb887f:2",
+      "line": 130,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "fragment.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:43b607a4e6fb887f:3",
+      "line": 142,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "fragment.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:43b607a4e6fb887f:4",
+      "line": 151,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "fragment.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:655a0683247331e1:1",
+      "line": 180,
+      "literals": [
+        "Continue"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.CONTINUE",
+      "subject": "observed",
+      "text": "stmt.observed == \"Continue\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:67af971dc5c5c71f:1",
+      "line": 178,
+      "literals": [
+        "Return"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.RETURN",
+      "subject": "observed",
+      "text": "stmt.observed == \"Return\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:69d2a1afbe41e482:1",
+      "line": 164,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "fragment.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:69d2a1afbe41e482:2",
+      "line": 171,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "fragment.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:af45febb7f57c740:1",
+      "line": 182,
+      "literals": [
+        "Pass"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.PASS",
+      "subject": "observed",
+      "text": "stmt.observed == \"Pass\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:b21e829913dde011:1",
+      "line": 44,
+      "literals": [
+        "Try",
+        "TryStar"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.TRY, NodeKind.TRY_STAR",
+      "subject": "observed",
+      "text": "fragment.observed not in {\"Try\", \"TryStar\"}"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:c702627d14df180c:1",
+      "line": 118,
+      "literals": [
+        "Raise"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.RAISE",
+      "subject": "observed",
+      "text": "stmt.observed == \"Raise\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:fa2c5bb4d0ced578:1",
+      "line": 119,
+      "literals": [
+        "Return",
+        "Continue",
+        "Break",
+        "Pass"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
+      "replacement": "NodeKind.RETURN, NodeKind.CONTINUE, NodeKind.BREAK, NodeKind.PASS",
+      "subject": "observed",
+      "text": "stmt.observed not in {\"Return\", \"Continue\", \"Break\", \"Pass\"}"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_getattr_default_context_frontier.py:31a1870b3f34b0ef:1",
+      "line": 50,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_getattr_default_context_frontier.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "receiver.observed != \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_getattr_default_context_frontier.py:5143340ddf31b55f:1",
+      "line": 109,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_getattr_default_context_frontier.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "fragment.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_getattr_default_context_frontier.py:b806c7d1be940ebc:1",
+      "line": 98,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_getattr_default_context_frontier.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "fragment.observed != \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_getattr_default_context_frontier.py:ea4717b08ea9630a:1",
+      "line": 102,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_getattr_default_context_frontier.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "func.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py:6b006cc365e6a903:1",
+      "line": 93,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "func.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py:6b006cc365e6a903:2",
+      "line": 114,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "func.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py:8797bb334c74730c:1",
+      "line": 85,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "func.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py:8797bb334c74730c:2",
+      "line": 112,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "func.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py:9171aed9a5713b5d:1",
+      "line": 104,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "fragment.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py:98d749a15eacb946:1",
+      "line": 82,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "fragment.observed != \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py:98d749a15eacb946:2",
+      "line": 89,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "fragment.observed != \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py:98d749a15eacb946:3",
+      "line": 109,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/collect_temporal_dispatch_frontier.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "fragment.observed != \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/idd/sugar_witness_instruments.py:5a4062fbc0ec937f:1",
+      "line": 537,
+      "literals": [
+        "FunctionDef",
+        "AsyncFunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/idd/sugar_witness_instruments.py",
+      "replacement": "NodeKind.FUNCTION_DEF, NodeKind.ASYNC_FUNCTION_DEF",
+      "subject": "observed",
+      "text": "fragment.observed in {\"FunctionDef\", \"AsyncFunctionDef\"}"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/lift_rpc.py:1821151e62e20b0c:1",
+      "line": 1320,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/lift_rpc.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "body_stmt.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/lift_rpc.py:22d78f42ba82cf26:1",
+      "line": 1484,
+      "literals": [
+        "ClassDef"
+      ],
+      "path": "src/sugar_lift_py_tests/lift_rpc.py",
+      "replacement": "NodeKind.CLASS_DEF",
+      "subject": "observed",
+      "text": "class_stmt.observed != \"ClassDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/lift_rpc.py:251bb07fe5189f00:1",
+      "line": 1325,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/lift_rpc.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "nested_stmt.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/lift_rpc.py:575d345327d69cb0:1",
+      "line": 1021,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/lift_rpc.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "stmt.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/lift_rpc.py:575d345327d69cb0:2",
+      "line": 1313,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/lift_rpc.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "stmt.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/lift_rpc.py:79d3c1bf66eb0d88:1",
+      "line": 1761,
+      "literals": [
+        "ClassDef"
+      ],
+      "path": "src/sugar_lift_py_tests/lift_rpc.py",
+      "replacement": "NodeKind.CLASS_DEF",
+      "subject": "observed",
+      "text": "item.observed == \"ClassDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/lift_rpc.py:8e486329b395cb4f:1",
+      "line": 1768,
+      "literals": [
+        "ClassDef"
+      ],
+      "path": "src/sugar_lift_py_tests/lift_rpc.py",
+      "replacement": "NodeKind.CLASS_DEF",
+      "subject": "observed",
+      "text": "statement.observed != \"ClassDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/lift_rpc.py:bb19ffa0db0dfe47:1",
+      "line": 1316,
+      "literals": [
+        "ClassDef"
+      ],
+      "path": "src/sugar_lift_py_tests/lift_rpc.py",
+      "replacement": "NodeKind.CLASS_DEF",
+      "subject": "observed",
+      "text": "stmt.observed != \"ClassDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/lift_rpc.py:f25e2865360f1b1d:1",
+      "line": 1322,
+      "literals": [
+        "ClassDef"
+      ],
+      "path": "src/sugar_lift_py_tests/lift_rpc.py",
+      "replacement": "NodeKind.CLASS_DEF",
+      "subject": "observed",
+      "text": "body_stmt.observed == \"ClassDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/lift_rpc.py:fe754061197b0117:1",
+      "line": 1492,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/lift_rpc.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "item.observed != \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/abs_call_sugar.py:abc6f996fff2bc6a:1",
+      "line": 79,
+      "literals": [
+        "Name",
+        "BinOp",
+        "UnaryOp",
+        "Call",
+        "Attribute",
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/abs_call_sugar.py",
+      "replacement": "NodeKind.NAME, NodeKind.BIN_OP, NodeKind.UNARY_OP, NodeKind.CALL, NodeKind.ATTRIBUTE, NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "arg.observed in { \"Name\", \"BinOp\", \"UnaryOp\", \"Call\", \"Attribute\", \"Subscript\", }"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/abs_call_sugar.py:b450848f1b428283:1",
+      "line": 28,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/abs_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/abs_call_sugar.py:bd9dc9fb0a05558d:1",
+      "line": 77,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/abs_call_sugar.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "arg.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/abs_call_sugar.py:f5ec8d535a7339ed:1",
+      "line": 33,
+      "literals": [
+        "Starred"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/abs_call_sugar.py",
+      "replacement": "NodeKind.STARRED",
+      "subject": "observed",
+      "text": "arg.observed == \"Starred\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/add_assign_sugar.py:4eddd1c14b27e7d2:1",
+      "line": 27,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/add_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.aug_assign_target().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/add_assign_sugar.py:f8a5b80a38de4646:1",
+      "line": 25,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/add_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/add_op_sugar.py:1940185dab2e3d09:1",
+      "line": 25,
+      "literals": [
+        "Add"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/add_op_sugar.py",
+      "replacement": "OperatorKind.ADD",
+      "subject": "operator_kind",
+      "text": "site.operator_kind() == \"Add\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/add_op_sugar.py:dfb50da99406d2f9:1",
+      "line": 25,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/add_op_sugar.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/alias_sugar.py:d956fcf688a50577:1",
+      "line": 22,
+      "literals": [
+        "alias"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/alias_sugar.py",
+      "replacement": "NodeKind.ALIAS",
+      "subject": "observed",
+      "text": "site.observed == \"alias\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/ann_assign_sugar.py:0592589351f64201:1",
+      "line": 41,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/ann_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "target.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/ann_assign_sugar.py:e3d22c6868a15135:1",
+      "line": 38,
+      "literals": [
+        "AnnAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/ann_assign_sugar.py",
+      "replacement": "NodeKind.ANN_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"AnnAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/annotation_union_sugar.py:87387f6f9b046876:1",
+      "line": 29,
+      "literals": [
+        "BitOr"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/annotation_union_sugar.py",
+      "replacement": "OperatorKind.BIT_OR",
+      "subject": "operator_kind",
+      "text": "site.operator_kind() == \"BitOr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/annotation_union_sugar.py:d74373f5b31cf5e6:1",
+      "line": 28,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/annotation_union_sugar.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/append_call_sugar.py:01dbfc323f32eeb0:1",
+      "line": 37,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/append_call_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "receiver.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/append_call_sugar.py:82a4643947c7848d:1",
+      "line": 32,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/append_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed != \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/assert_sugar.py:fb8034a2070a6c2e:1",
+      "line": 26,
+      "literals": [
+        "Assert"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/assert_sugar.py",
+      "replacement": "NodeKind.ASSERT",
+      "subject": "observed",
+      "text": "site.observed == \"Assert\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/assign_sugar.py:d0af1005ca7da689:1",
+      "line": 27,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/assign_sugar.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "site.observed == \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/async_for_sugar.py:828e172b2b32202e:1",
+      "line": 32,
+      "literals": [
+        "AsyncFor"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/async_for_sugar.py",
+      "replacement": "NodeKind.ASYNC_FOR",
+      "subject": "observed",
+      "text": "site.observed == \"AsyncFor\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/async_with_sugar.py:fdc3a5717c9c1939:1",
+      "line": 32,
+      "literals": [
+        "AsyncWith"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/async_with_sugar.py",
+      "replacement": "NodeKind.ASYNC_WITH",
+      "subject": "observed",
+      "text": "site.observed == \"AsyncWith\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_add_assign_sugar.py:5739074c99f845ec:1",
+      "line": 26,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_add_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_add_assign_sugar.py:b09049d128361eff:1",
+      "line": 30,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_add_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "target.attr_receiver().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_add_assign_sugar.py:cd6f66047f58fbaf:1",
+      "line": 30,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_add_assign_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "target.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_ann_assign_sugar.py:01cedfa4ac93ee5d:1",
+      "line": 28,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_ann_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "target.attr_receiver().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_ann_assign_sugar.py:aa060ade955ca794:1",
+      "line": 28,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_ann_assign_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "target.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_ann_assign_sugar.py:bf706071d81f8abf:1",
+      "line": 24,
+      "literals": [
+        "AnnAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_ann_assign_sugar.py",
+      "replacement": "NodeKind.ANN_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"AnnAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_assign_sugar.py:c05ad7d01851d820:1",
+      "line": 30,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_assign_sugar.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_aug_assign_sugar.py:23efd17b7ed1613f:1",
+      "line": 25,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_aug_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_aug_assign_sugar.py:241897f8ed734aa7:1",
+      "line": 29,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_aug_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "target.attr_receiver().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_aug_assign_sugar.py:8abd5de2f65eb6c8:1",
+      "line": 29,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_aug_assign_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "target.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_delete_sugar.py:0f73360f5a002090:1",
+      "line": 24,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_delete_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "site.delete_targets()[0].observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_delete_sugar.py:141b241bcc2bfe5c:1",
+      "line": 22,
+      "literals": [
+        "Delete"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_delete_sugar.py",
+      "replacement": "NodeKind.DELETE",
+      "subject": "observed",
+      "text": "site.observed == \"Delete\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/attribute_sugar.py:de632012b321c1ae:1",
+      "line": 71,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/attribute_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "site.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/await_sugar.py:baf9cc17609f7932:1",
+      "line": 25,
+      "literals": [
+        "Await"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/await_sugar.py",
+      "replacement": "NodeKind.AWAIT",
+      "subject": "observed",
+      "text": "site.observed == \"Await\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/bare_return_sugar.py:cc2e4568791a739c:1",
+      "line": 24,
+      "literals": [
+        "Return"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/bare_return_sugar.py",
+      "replacement": "NodeKind.RETURN",
+      "subject": "observed",
+      "text": "site.observed == \"Return\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/block_sugar.py:2ad1381a8146d1d6:1",
+      "line": 29,
+      "literals": [
+        "Block"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/block_sugar.py",
+      "replacement": "NodeKind.BLOCK",
+      "subject": "observed",
+      "text": "site.observed == \"Block\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/bool_op_sugar.py:8aecc8da3551d01a:1",
+      "line": 24,
+      "literals": [
+        "BoolOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/bool_op_sugar.py",
+      "replacement": "NodeKind.BOOL_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BoolOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/break_sugar.py:aff6702e2f67ab44:1",
+      "line": 20,
+      "literals": [
+        "Break"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/break_sugar.py",
+      "replacement": "NodeKind.BREAK",
+      "subject": "observed",
+      "text": "site.observed == \"Break\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/builtin_dunder_call_sugar.py:b016915c3a082b46:1",
+      "line": 47,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/builtin_dunder_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/builtin_module_name_sugar.py:81537de00664428a:1",
+      "line": 88,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/builtin_module_name_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/builtin_type_name_sugar.py:e199cffa551b29d1:1",
+      "line": 53,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/builtin_type_name_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/bytes_literal_sugar.py:3595bcce24b9bbb6:1",
+      "line": 29,
+      "literals": [
+        "Constant"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/bytes_literal_sugar.py",
+      "replacement": "NodeKind.CONSTANT",
+      "subject": "observed",
+      "text": "site.observed == \"Constant\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/call_result_call_sugar.py:135d103b50660959:1",
+      "line": 29,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/call_result_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.call_func().observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/call_result_call_sugar.py:b5527bd3d8479cc4:1",
+      "line": 29,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/call_result_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/call_sugar.py:12f88cd9e25b12f9:1",
+      "line": 86,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py:304eebec92a65446:1",
+      "line": 107,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "current.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py:464a6f2a8c89fc58:1",
+      "line": 99,
+      "literals": [
+        "Name",
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py",
+      "replacement": "NodeKind.NAME, NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "target.observed in {\"Name\", \"Subscript\"}"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py:79f0c7c8030828aa:1",
+      "line": 125,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "target.observed == \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py:a63540bcdd4d2691:1",
+      "line": 110,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "current.observed != \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py:a91393902f47a68c:1",
+      "line": 129,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "receiver.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py:d1a456b2b7904b06:1",
+      "line": 123,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "target.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py:d2adef5fa91889d4:1",
+      "line": 101,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "target.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py:d90051b763e690d8:1",
+      "line": 53,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/chained_assign_sugar.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/chained_compare_sugar.py:0a6a0ad86b3e529e:1",
+      "line": 105,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/chained_compare_sugar.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed != \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/class_def_sugar.py:76a9e385901914d9:1",
+      "line": 39,
+      "literals": [
+        "ClassDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/class_def_sugar.py",
+      "replacement": "NodeKind.CLASS_DEF",
+      "subject": "observed",
+      "text": "site.observed != \"ClassDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/complex_literal_sugar.py:dfaed3d48f091127:1",
+      "line": 21,
+      "literals": [
+        "Constant"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/complex_literal_sugar.py",
+      "replacement": "NodeKind.CONSTANT",
+      "subject": "observed",
+      "text": "site.observed == \"Constant\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py:0c80c53304b754cb:1",
+      "line": 42,
+      "literals": [
+        "ClassDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py",
+      "replacement": "NodeKind.CLASS_DEF",
+      "subject": "observed",
+      "text": "SourceFragment.from_node(node, ctx.filename).observed != \"ClassDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py:451a04826d0cad9c:1",
+      "line": 145,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "stmt.observed == \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py:451a04826d0cad9c:2",
+      "line": 199,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "stmt.observed == \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py:744420b0c046fbe9:1",
+      "line": 140,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "stmt.expr_value().observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py:8a288b135548dca5:1",
+      "line": 26,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed != \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py:b9f27ef538840c8b:1",
+      "line": 183,
+      "literals": [
+        "Return"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py",
+      "replacement": "NodeKind.RETURN",
+      "subject": "observed",
+      "text": "body[0].observed == \"Return\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py:f88eadea7bb1c308:1",
+      "line": 139,
+      "literals": [
+        "Expr"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py",
+      "replacement": "NodeKind.EXPR",
+      "subject": "observed",
+      "text": "stmt.observed == \"Expr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py:fef40643aa2a671c:1",
+      "line": 101,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "stmt.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py:fef40643aa2a671c:2",
+      "line": 178,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "stmt.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py:fef40643aa2a671c:3",
+      "line": 180,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/constructor_call_sugar.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "stmt.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/continue_sugar.py:5870209b9e9a8f4c:1",
+      "line": 17,
+      "literals": [
+        "Continue"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/continue_sugar.py",
+      "replacement": "NodeKind.CONTINUE",
+      "subject": "observed",
+      "text": "site.observed == \"Continue\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/delete_sugar.py:a016b562fbe999ec:1",
+      "line": 39,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/delete_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "target.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/delete_sugar.py:d08981dee538c396:1",
+      "line": 36,
+      "literals": [
+        "Delete"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/delete_sugar.py",
+      "replacement": "NodeKind.DELETE",
+      "subject": "observed",
+      "text": "site.observed != \"Delete\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/dict_comp_sugar.py:6901adb84ba672be:1",
+      "line": 29,
+      "literals": [
+        "DictComp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/dict_comp_sugar.py",
+      "replacement": "NodeKind.DICT_COMP",
+      "subject": "observed",
+      "text": "site.observed == \"DictComp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/dict_literal_sugar.py:92fe9cd1c1dd2efb:1",
+      "line": 25,
+      "literals": [
+        "Dict"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/dict_literal_sugar.py",
+      "replacement": "NodeKind.DICT",
+      "subject": "observed",
+      "text": "site.observed == \"Dict\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/div_assign_sugar.py:a1003400b83470a2:1",
+      "line": 25,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/div_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/div_assign_sugar.py:dea0f6ff2fe73b29:1",
+      "line": 27,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/div_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.aug_assign_target().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/divide_op_sugar.py:0e7e0f9f537d44d8:1",
+      "line": 25,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/divide_op_sugar.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/divide_op_sugar.py:29a6363b417bb480:1",
+      "line": 25,
+      "literals": [
+        "Div"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/divide_op_sugar.py",
+      "replacement": "OperatorKind.DIV",
+      "subject": "operator_kind",
+      "text": "site.operator_kind() == \"Div\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/divmod_dunder_call_sugar.py:5820a2fcd283434d:1",
+      "line": 22,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/divmod_dunder_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/ellipsis_literal_sugar.py:cbcefd24d974cbfa:1",
+      "line": 19,
+      "literals": [
+        "Constant"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/ellipsis_literal_sugar.py",
+      "replacement": "NodeKind.CONSTANT",
+      "subject": "observed",
+      "text": "site.observed == \"Constant\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/equality_op_sugar.py:7dda5ae1c76d6176:1",
+      "line": 26,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/equality_op_sugar.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/expr_sugar.py:d829332a9dcf1135:1",
+      "line": 23,
+      "literals": [
+        "Expr"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/expr_sugar.py",
+      "replacement": "NodeKind.EXPR",
+      "subject": "observed",
+      "text": "site.observed == \"Expr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/false_bool_literal_sugar.py:2019b8c9534015fb:1",
+      "line": 31,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/false_bool_literal_sugar.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "site.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/float_literal_sugar.py:6d7b17f3b795eb5e:1",
+      "line": 24,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/float_literal_sugar.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "site.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/floor_div_assign_sugar.py:70bde026b2e3a7c2:1",
+      "line": 25,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/floor_div_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.aug_assign_target().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/floor_div_assign_sugar.py:db36b54b928f18a2:1",
+      "line": 23,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/floor_div_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/floor_divide_op_sugar.py:5facaecc4703a4df:1",
+      "line": 22,
+      "literals": [
+        "FloorDiv"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/floor_divide_op_sugar.py",
+      "replacement": "OperatorKind.FLOOR_DIV",
+      "subject": "operator_kind",
+      "text": "site.operator_kind() == \"FloorDiv\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/floor_divide_op_sugar.py:a54a41b4ad139bdc:1",
+      "line": 22,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/floor_divide_op_sugar.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/for_else_sugar.py:b53e25b73b05efd5:1",
+      "line": 31,
+      "literals": [
+        "For"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/for_else_sugar.py",
+      "replacement": "NodeKind.FOR",
+      "subject": "observed",
+      "text": "site.observed != \"For\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/for_sugar.py:e5ae6497135c05a8:1",
+      "line": 44,
+      "literals": [
+        "For"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/for_sugar.py",
+      "replacement": "NodeKind.FOR",
+      "subject": "observed",
+      "text": "site.observed != \"For\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/format_dunder_call_sugar.py:b78df81c40d68d6a:1",
+      "line": 22,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/format_dunder_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/full_slice_column_subscript_sugar.py:15a3259e12b56bb0:1",
+      "line": 32,
+      "literals": [
+        "Tuple"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/full_slice_column_subscript_sugar.py",
+      "replacement": "NodeKind.TUPLE",
+      "subject": "observed",
+      "text": "index.observed != \"Tuple\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/full_slice_column_subscript_sugar.py:9751b4228c8b26cf:1",
+      "line": 49,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/full_slice_column_subscript_sugar.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "column.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/full_slice_column_subscript_sugar.py:bf9ff2cdb7390f43:1",
+      "line": 29,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/full_slice_column_subscript_sugar.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "site.observed != \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/full_slice_column_subscript_sugar.py:fb82ebceeee82ee9:1",
+      "line": 35,
+      "literals": [
+        "Slice"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/full_slice_column_subscript_sugar.py",
+      "replacement": "NodeKind.SLICE",
+      "subject": "observed",
+      "text": "elements[0].observed != \"Slice\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/function_def_sugar.py:255b95c5d5fcc1ed:1",
+      "line": 31,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/function_def_sugar.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "site.observed != \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/generator_exp_sugar.py:31407fdde05f3c79:1",
+      "line": 28,
+      "literals": [
+        "GeneratorExp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/generator_exp_sugar.py",
+      "replacement": "NodeKind.GENERATOR_EXP",
+      "subject": "observed",
+      "text": "site.observed == \"GeneratorExp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/getattr_builtin_sugar.py:9f5b5a9c7ad5f943:1",
+      "line": 36,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/getattr_builtin_sugar.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "name.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/getattr_builtin_sugar.py:e2fc763404dd52c9:1",
+      "line": 26,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/getattr_builtin_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/global_sugar.py:f7e3dce0d24ed45f:1",
+      "line": 33,
+      "literals": [
+        "Global"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/global_sugar.py",
+      "replacement": "NodeKind.GLOBAL",
+      "subject": "observed",
+      "text": "site.observed == \"Global\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/greater_equal_op_sugar.py:0dcb8e892a8685e0:1",
+      "line": 25,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/greater_equal_op_sugar.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/greater_than_op_sugar.py:db463180b555455d:1",
+      "line": 26,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/greater_than_op_sugar.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/if_exp_sugar.py:7160601fdef2ca37:1",
+      "line": 28,
+      "literals": [
+        "IfExp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/if_exp_sugar.py",
+      "replacement": "NodeKind.IF_EXP",
+      "subject": "observed",
+      "text": "site.observed == \"IfExp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/if_sugar.py:9d06b862924dae5a:1",
+      "line": 28,
+      "literals": [
+        "If"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/if_sugar.py",
+      "replacement": "NodeKind.IF",
+      "subject": "observed",
+      "text": "site.observed == \"If\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/import_from_sugar.py:bfd35cfc3b97c677:1",
+      "line": 22,
+      "literals": [
+        "ImportFrom"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/import_from_sugar.py",
+      "replacement": "NodeKind.IMPORT_FROM",
+      "subject": "observed",
+      "text": "site.observed != \"ImportFrom\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/import_sugar.py:478393a1cc70a341:1",
+      "line": 21,
+      "literals": [
+        "Import"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/import_sugar.py",
+      "replacement": "NodeKind.IMPORT",
+      "subject": "observed",
+      "text": "site.observed == \"Import\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/in_op_sugar.py:1f898da35dee7053:1",
+      "line": 30,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/in_op_sugar.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/inequality_op_sugar.py:e095b4030466f8c1:1",
+      "line": 26,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/inequality_op_sugar.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:0929dd197f4e196a:1",
+      "line": 175,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "stmt.observed != \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:2471e1f245c4deba:1",
+      "line": 688,
+      "literals": [
+        "Try",
+        "If"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.TRY, NodeKind.IF",
+      "subject": "observed",
+      "text": "last.observed in (\"Try\", \"If\")"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:3377959250624af6:1",
+      "line": 172,
+      "literals": [
+        "ClassDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.CLASS_DEF",
+      "subject": "observed",
+      "text": "child.observed == \"ClassDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:36862b132210be8e:1",
+      "line": 675,
+      "literals": [
+        "Assign",
+        "AnnAssign",
+        "AugAssign",
+        "Expr",
+        "Pass",
+        "Try",
+        "If"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.ASSIGN, NodeKind.ANN_ASSIGN, NodeKind.AUG_ASSIGN, NodeKind.EXPR, NodeKind.PASS, NodeKind.TRY, NodeKind.IF",
+      "subject": "observed",
+      "text": "stmt.observed not in ( \"Assign\", \"AnnAssign\", \"AugAssign\", \"Expr\", \"Pass\", \"Try\", \"If\", )"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:58cb796917c41ac4:1",
+      "line": 164,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "child.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:58cb796917c41ac4:2",
+      "line": 550,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "child.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:87a78a1379f0ea5f:1",
+      "line": 686,
+      "literals": [
+        "Return"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.RETURN",
+      "subject": "observed",
+      "text": "last.observed == \"Return\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:b5ed1cbcf5362762:1",
+      "line": 699,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "recv.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:e5c00fec0e0b1d6b:1",
+      "line": 571,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "site.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:e5c00fec0e0b1d6b:2",
+      "line": 639,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "site.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:f78416df7d5b31e8:1",
+      "line": 668,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "fn_site.observed != \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:f78416df7d5b31e8:2",
+      "line": 816,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "fn_site.observed != \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/install_source_dig.py:faa0268d9d01b955:1",
+      "line": 856,
+      "literals": [
+        "Return"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/install_source_dig.py",
+      "replacement": "NodeKind.RETURN",
+      "subject": "observed",
+      "text": "frags[0].observed == \"Return\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/int_literal_sugar.py:3bac2511a0f50d02:1",
+      "line": 24,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/int_literal_sugar.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "site.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/is_not_op_sugar.py:da9f53d99be4c444:1",
+      "line": 24,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/is_not_op_sugar.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/is_op_sugar.py:41af499b765184f3:1",
+      "line": 25,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/is_op_sugar.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/isinstance_call_sugar.py:02a0b95b1762bd64:1",
+      "line": 34,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/isinstance_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/isinstance_call_sugar.py:462721e20472b27d:1",
+      "line": 39,
+      "literals": [
+        "Starred"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/isinstance_call_sugar.py",
+      "replacement": "NodeKind.STARRED",
+      "subject": "observed",
+      "text": "arg.observed == \"Starred\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/joined_str_sugar.py:0ca34269db5d042e:1",
+      "line": 46,
+      "literals": [
+        "JoinedStr"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/joined_str_sugar.py",
+      "replacement": "NodeKind.JOINED_STR",
+      "subject": "observed",
+      "text": "site.observed == \"JoinedStr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/joined_str_sugar.py:31ff9b2ee6c2f4e0:1",
+      "line": 71,
+      "literals": [
+        "FormattedValue"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/joined_str_sugar.py",
+      "replacement": "NodeKind.FORMATTED_VALUE",
+      "subject": "observed",
+      "text": "part.observed != \"FormattedValue\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/joined_str_sugar.py:5c9497431bb73710:1",
+      "line": 53,
+      "literals": [
+        "PrimitiveLiteral",
+        "Constant"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/joined_str_sugar.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL, NodeKind.CONSTANT",
+      "subject": "observed",
+      "text": "part.observed in {\"PrimitiveLiteral\", \"Constant\"}"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/keyword_call_sugar.py:a5dde6e732bb9dbe:1",
+      "line": 36,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/keyword_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed != \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/lambda_sugar.py:97362e068c98570e:1",
+      "line": 39,
+      "literals": [
+        "Lambda"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/lambda_sugar.py",
+      "replacement": "NodeKind.LAMBDA",
+      "subject": "observed",
+      "text": "site.observed != \"Lambda\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/len_call_sugar.py:d8c131e12c6329c3:1",
+      "line": 29,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/len_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/less_equal_op_sugar.py:86edb305f2313462:1",
+      "line": 25,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/less_equal_op_sugar.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/less_than_op_sugar.py:06391e426d7e23ea:1",
+      "line": 25,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/less_than_op_sugar.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/list_comp_sugar.py:7553202cc5a732b1:1",
+      "line": 31,
+      "literals": [
+        "ListComp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/list_comp_sugar.py",
+      "replacement": "NodeKind.LIST_COMP",
+      "subject": "observed",
+      "text": "site.observed == \"ListComp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/list_literal_sugar.py:94707494603daba4:1",
+      "line": 24,
+      "literals": [
+        "List"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/list_literal_sugar.py",
+      "replacement": "NodeKind.LIST",
+      "subject": "observed",
+      "text": "site.observed == \"List\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/matrix_multiply_op_sugar.py:1d0d3bbd621941f2:1",
+      "line": 22,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/matrix_multiply_op_sugar.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/matrix_multiply_op_sugar.py:e4fa30ebda241e13:1",
+      "line": 22,
+      "literals": [
+        "MatMult"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/matrix_multiply_op_sugar.py",
+      "replacement": "OperatorKind.MAT_MULT",
+      "subject": "operator_kind",
+      "text": "site.operator_kind() == \"MatMult\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/method_call_sugar.py:7be96ca7647b381e:1",
+      "line": 37,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/method_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/method_chain_sugar.py:7c14af9582a3605b:1",
+      "line": 34,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/method_chain_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/method_chain_sugar.py:e5ad5808b91df2d9:1",
+      "line": 35,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/method_chain_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "receiver.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/mod_assign_sugar.py:0796f3b79996437d:1",
+      "line": 27,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/mod_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.aug_assign_target().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/mod_assign_sugar.py:1dd861755a2d6981:1",
+      "line": 25,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/mod_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/modulo_op_sugar.py:530a371632206431:1",
+      "line": 25,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/modulo_op_sugar.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/modulo_op_sugar.py:e9b7c57cdba21edb:1",
+      "line": 25,
+      "literals": [
+        "Mod"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/modulo_op_sugar.py",
+      "replacement": "OperatorKind.MOD",
+      "subject": "operator_kind",
+      "text": "site.operator_kind() == \"Mod\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/mult_assign_sugar.py:8be89cf167d636d0:1",
+      "line": 25,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/mult_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/mult_assign_sugar.py:ee5a3e3c035ea77c:1",
+      "line": 27,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/mult_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.aug_assign_target().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/multiply_op_sugar.py:4d04e846ed23672c:1",
+      "line": 24,
+      "literals": [
+        "Mult"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/multiply_op_sugar.py",
+      "replacement": "OperatorKind.MULT",
+      "subject": "operator_kind",
+      "text": "site.operator_kind() == \"Mult\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/multiply_op_sugar.py:d88b7d2155955b42:1",
+      "line": 24,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/multiply_op_sugar.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/name_sugar.py:28385187e52fca7a:1",
+      "line": 23,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/name_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/named_expr_sugar.py:fb0c0ef317bec7a7:1",
+      "line": 23,
+      "literals": [
+        "NamedExpr"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/named_expr_sugar.py",
+      "replacement": "NodeKind.NAMED_EXPR",
+      "subject": "observed",
+      "text": "site.observed == \"NamedExpr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/nested_attribute_assign_sugar.py:314fdeaeea389e99:1",
+      "line": 23,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/nested_attribute_assign_sugar.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/nested_tuple_for_sugar.py:a27b53f2eda6cd78:1",
+      "line": 24,
+      "literals": [
+        "For"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/nested_tuple_for_sugar.py",
+      "replacement": "NodeKind.FOR",
+      "subject": "observed",
+      "text": "site.observed == \"For\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/none_literal_sugar.py:9aca6d816ec12d9b:1",
+      "line": 21,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/none_literal_sugar.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "site.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/not_in_op_sugar.py:d203b1155bdff282:1",
+      "line": 27,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/not_in_op_sugar.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/os_sugar.py:37038643f732aa4f:1",
+      "line": 27,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/os_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/pass_sugar.py:ec3e12544409474f:1",
+      "line": 17,
+      "literals": [
+        "Pass"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/pass_sugar.py",
+      "replacement": "NodeKind.PASS",
+      "subject": "observed",
+      "text": "site.observed == \"Pass\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/pow_assign_sugar.py:0da1d163c380f980:1",
+      "line": 26,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/pow_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.aug_assign_target().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/pow_assign_sugar.py:abdc40ed6ccc423d:1",
+      "line": 24,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/pow_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed == \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/power_op_sugar.py:bf3a2f4f7e5f700f:1",
+      "line": 22,
+      "literals": [
+        "Pow"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/power_op_sugar.py",
+      "replacement": "OperatorKind.POW",
+      "subject": "operator_kind",
+      "text": "site.operator_kind() == \"Pow\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/power_op_sugar.py:fb3edf0404c1770f:1",
+      "line": 22,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/power_op_sugar.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py:2a9d2087d54078c0:1",
+      "line": 14,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed != \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py:2a9d2087d54078c0:2",
+      "line": 34,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed != \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py:4444ab059eeb3af2:1",
+      "line": 82,
+      "literals": [
+        "With"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py",
+      "replacement": "NodeKind.WITH",
+      "subject": "observed",
+      "text": "site.observed != \"With\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py:47b6fb0fe8d04aa4:1",
+      "line": 24,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "recv.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py:8948ea426f82b554:1",
+      "line": 47,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py:ca22b35d35a82422:1",
+      "line": 49,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "site.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py:d69e8ea9d21b784b:1",
+      "line": 22,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "recv.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py:f112825096a4ede4:1",
+      "line": 54,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/pytest_raises_with_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/raise_sugar.py:314f4c90d33eea91:1",
+      "line": 31,
+      "literals": [
+        "Raise"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/raise_sugar.py",
+      "replacement": "NodeKind.RAISE",
+      "subject": "observed",
+      "text": "site.observed == \"Raise\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/raise_sugar.py:53a260b48e9c577f:1",
+      "line": 40,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/raise_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "exc.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/raise_sugar.py:b0575c119cbf75a2:1",
+      "line": 140,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/raise_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "site.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/raise_sugar.py:d245ab3fd262963c:1",
+      "line": 138,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/raise_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/raise_sugar.py:e93c2b75b9342322:1",
+      "line": 136,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/raise_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py:254d109b21c3afea:1",
+      "line": 25,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed == \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py:254d109b21c3afea:2",
+      "line": 72,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed == \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py:254d109b21c3afea:3",
+      "line": 113,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed == \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py:57f8cf11d5d33fb7:1",
+      "line": 26,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.aug_assign_target().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py:57f8cf11d5d33fb7:2",
+      "line": 73,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.aug_assign_target().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py:668c63e31869c1db:1",
+      "line": 124,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "receiver.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py:6d6e492046bc338a:1",
+      "line": 114,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/residual_aug_assign_sugar.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "site.aug_assign_target().observed == \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/return_sugar.py:a294f92d57e6a237:1",
+      "line": 25,
+      "literals": [
+        "Return"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/return_sugar.py",
+      "replacement": "NodeKind.RETURN",
+      "subject": "observed",
+      "text": "site.observed == \"Return\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/right_shift_op_sugar.py:04b11d5f364abaa9:1",
+      "line": 22,
+      "literals": [
+        "RShift"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/right_shift_op_sugar.py",
+      "replacement": "OperatorKind.R_SHIFT",
+      "subject": "operator_kind",
+      "text": "site.operator_kind() == \"RShift\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/right_shift_op_sugar.py:6fa6db14bb806a26:1",
+      "line": 22,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/right_shift_op_sugar.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/runtime_bitwise_op_sugar.py:2e592fea213ccbea:1",
+      "line": 30,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/runtime_bitwise_op_sugar.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed != \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/runtime_bitwise_op_sugar.py:c0b92b0d540e1481:1",
+      "line": 32,
+      "literals": [
+        "BitOr"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/runtime_bitwise_op_sugar.py",
+      "replacement": "OperatorKind.BIT_OR",
+      "subject": "operator_kind",
+      "text": "site.operator_kind() == \"BitOr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/selected_attribute_assign_sugar.py:26e8bfe5811e1738:1",
+      "line": 36,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/selected_attribute_assign_sugar.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/selected_attribute_assign_sugar.py:bae9be6c172f874e:1",
+      "line": 41,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/selected_attribute_assign_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "targets[0].observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/set_comp_sugar.py:662f39f651560238:1",
+      "line": 28,
+      "literals": [
+        "SetComp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/set_comp_sugar.py",
+      "replacement": "NodeKind.SET_COMP",
+      "subject": "observed",
+      "text": "site.observed == \"SetComp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/set_literal_sugar.py:382d2f69260427d0:1",
+      "line": 24,
+      "literals": [
+        "Set"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/set_literal_sugar.py",
+      "replacement": "NodeKind.SET",
+      "subject": "observed",
+      "text": "site.observed == \"Set\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/single_importfrom_sugar.py:530b50c701dd7bea:1",
+      "line": 26,
+      "literals": [
+        "ImportFrom"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/single_importfrom_sugar.py",
+      "replacement": "NodeKind.IMPORT_FROM",
+      "subject": "observed",
+      "text": "site.observed != \"ImportFrom\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/slice_subscript_sugar.py:666e4b3f7e0665af:1",
+      "line": 31,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/slice_subscript_sugar.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "site.observed != \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/slice_subscript_sugar.py:a091bdb07d1a4192:1",
+      "line": 119,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/slice_subscript_sugar.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "bound.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/slice_subscript_sugar.py:eaa79e9968d1d169:1",
+      "line": 34,
+      "literals": [
+        "Slice"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/slice_subscript_sugar.py",
+      "replacement": "NodeKind.SLICE",
+      "subject": "observed",
+      "text": "index.observed != \"Slice\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/slice_subscript_sugar.py:efd20bde2950afd6:1",
+      "line": 120,
+      "literals": [
+        "BitOr"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/slice_subscript_sugar.py",
+      "replacement": "OperatorKind.BIT_OR",
+      "subject": "operator_kind",
+      "text": "bound.operator_kind() == \"BitOr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/slice_sugar.py:27d9be8311a2bdeb:1",
+      "line": 28,
+      "literals": [
+        "Slice"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/slice_sugar.py",
+      "replacement": "NodeKind.SLICE",
+      "subject": "observed",
+      "text": "site.observed == \"Slice\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/starred_sugar.py:54d671283c1dc075:1",
+      "line": 25,
+      "literals": [
+        "Starred"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/starred_sugar.py",
+      "replacement": "NodeKind.STARRED",
+      "subject": "observed",
+      "text": "site.observed == \"Starred\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/statement_function_def_sugar.py:55e6082ba610d6e1:1",
+      "line": 26,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/statement_function_def_sugar.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "site.observed == \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/string_literal_sugar.py:41c0e6c3191490e7:1",
+      "line": 22,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/string_literal_sugar.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "site.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/sub_assign_sugar.py:3c9e2dfd56905526:1",
+      "line": 27,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/sub_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.aug_assign_target().observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/sub_assign_sugar.py:d35f15cdd9b8b78e:1",
+      "line": 25,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/sub_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_assign_sugar.py:2be1966441f22fa6:1",
+      "line": 34,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_assign_sugar.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "targets[0].observed == \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_assign_sugar.py:77c63b5ba54ebea0:1",
+      "line": 31,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_assign_sugar.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_assign_sugar.py:affa33adebbda270:1",
+      "line": 42,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "receiver.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_aug_assign_sugar.py:005f67a5fbeb5e2c:1",
+      "line": 29,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_aug_assign_sugar.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "target.observed == \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_aug_assign_sugar.py:21545fb32f58e294:1",
+      "line": 26,
+      "literals": [
+        "AugAssign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_aug_assign_sugar.py",
+      "replacement": "NodeKind.AUG_ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"AugAssign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_aug_assign_sugar.py:f805f2c37ccfd26e:1",
+      "line": 37,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_aug_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "receiver.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_call_sugar.py:067c39606b856678:1",
+      "line": 32,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_call_sugar.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_call_sugar.py:2cb3be552ccb68b7:1",
+      "line": 33,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_call_sugar.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "site.call_func().observed == \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_call_sugar.py:9e880c13682c6343:1",
+      "line": 34,
+      "literals": [
+        "Starred"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_call_sugar.py",
+      "replacement": "NodeKind.STARRED",
+      "subject": "observed",
+      "text": "arg.observed != \"Starred\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_delete_sugar.py:6e27bea6acf5c688:1",
+      "line": 25,
+      "literals": [
+        "Delete"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_delete_sugar.py",
+      "replacement": "NodeKind.DELETE",
+      "subject": "observed",
+      "text": "site.observed != \"Delete\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_delete_sugar.py:9a4c36cfba4afacc:1",
+      "line": 36,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_delete_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "receiver.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_delete_sugar.py:ea1ccacbed793897:1",
+      "line": 28,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_delete_sugar.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "targets[0].observed == \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_sugar.py:8a965ee44cd08f55:1",
+      "line": 28,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_sugar.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "site.observed != \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subscript_sugar.py:d5bc100645468013:1",
+      "line": 31,
+      "literals": [
+        "Slice"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subscript_sugar.py",
+      "replacement": "NodeKind.SLICE",
+      "subject": "observed",
+      "text": "index.observed == \"Slice\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subtract_op_sugar.py:0eb77369f73591ce:1",
+      "line": 24,
+      "literals": [
+        "Sub"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subtract_op_sugar.py",
+      "replacement": "OperatorKind.SUB",
+      "subject": "operator_kind",
+      "text": "site.operator_kind() == \"Sub\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/subtract_op_sugar.py:54f3468c55c40820:1",
+      "line": 24,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/subtract_op_sugar.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:2800f0355a2946f8:1",
+      "line": 42,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:2800f0355a2946f8:2",
+      "line": 131,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "site.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:2edb51560f2337ac:1",
+      "line": 55,
+      "literals": [
+        "Dict"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.DICT",
+      "subject": "observed",
+      "text": "site.observed == \"Dict\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:2edb51560f2337ac:2",
+      "line": 172,
+      "literals": [
+        "Dict"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.DICT",
+      "subject": "observed",
+      "text": "site.observed == \"Dict\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:3519a8af25a5df3d:1",
+      "line": 101,
+      "literals": [
+        "GeneratorExp",
+        "comprehension"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.GENERATOR_EXP, NodeKind.COMPREHENSION",
+      "subject": "observed",
+      "text": "site.observed in {\"GeneratorExp\", \"comprehension\"}"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:3519a8af25a5df3d:2",
+      "line": 402,
+      "literals": [
+        "GeneratorExp",
+        "comprehension"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.GENERATOR_EXP, NodeKind.COMPREHENSION",
+      "subject": "observed",
+      "text": "site.observed in {\"GeneratorExp\", \"comprehension\"}"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:3563b4ce3daca806:1",
+      "line": 98,
+      "literals": [
+        "FormattedValue"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.FORMATTED_VALUE",
+      "subject": "observed",
+      "text": "site.observed == \"FormattedValue\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:3563b4ce3daca806:2",
+      "line": 387,
+      "literals": [
+        "FormattedValue"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.FORMATTED_VALUE",
+      "subject": "observed",
+      "text": "site.observed == \"FormattedValue\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:3c18bbe500b03a73:1",
+      "line": 417,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed == \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:462bfed7c34b928f:1",
+      "line": 66,
+      "literals": [
+        "Slice"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.SLICE",
+      "subject": "observed",
+      "text": "site.observed == \"Slice\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:462bfed7c34b928f:2",
+      "line": 259,
+      "literals": [
+        "Slice"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.SLICE",
+      "subject": "observed",
+      "text": "site.observed == \"Slice\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:4e6d1fc30a4f41fa:1",
+      "line": 404,
+      "literals": [
+        "GeneratorExp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.GENERATOR_EXP",
+      "subject": "observed",
+      "text": "site.observed == \"GeneratorExp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:549c417cc21503a5:1",
+      "line": 44,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "site.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:549c417cc21503a5:2",
+      "line": 133,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "site.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:6741d6b56193b310:1",
+      "line": 85,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:6741d6b56193b310:2",
+      "line": 342,
+      "literals": [
+        "Compare"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.COMPARE",
+      "subject": "observed",
+      "text": "site.observed == \"Compare\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:6aa3a254419e6bf7:1",
+      "line": 103,
+      "literals": [
+        "Call"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.CALL",
+      "subject": "observed",
+      "text": "site.observed != \"Call\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:888169a8ec518486:1",
+      "line": 75,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:888169a8ec518486:2",
+      "line": 289,
+      "literals": [
+        "BinOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.BIN_OP",
+      "subject": "observed",
+      "text": "site.observed == \"BinOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:a8f4fb98fb7156cf:1",
+      "line": 62,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "site.observed == \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:a8f4fb98fb7156cf:2",
+      "line": 237,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "site.observed == \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:b7db07e0abf7d021:1",
+      "line": 60,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "site.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:b7db07e0abf7d021:2",
+      "line": 219,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "site.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:d259ad60d64c2de5:1",
+      "line": 53,
+      "literals": [
+        "Tuple"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.TUPLE",
+      "subject": "observed",
+      "text": "site.observed == \"Tuple\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:d259ad60d64c2de5:2",
+      "line": 204,
+      "literals": [
+        "Tuple"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.TUPLE",
+      "subject": "observed",
+      "text": "site.observed == \"Tuple\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:d335fd828eabd3ec:1",
+      "line": 51,
+      "literals": [
+        "List"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.LIST",
+      "subject": "observed",
+      "text": "site.observed == \"List\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:d335fd828eabd3ec:2",
+      "line": 157,
+      "literals": [
+        "List"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.LIST",
+      "subject": "observed",
+      "text": "site.observed == \"List\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:daa4c364943923e8:1",
+      "line": 49,
+      "literals": [
+        "Constant"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.CONSTANT",
+      "subject": "observed",
+      "text": "site.observed == \"Constant\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:daa4c364943923e8:2",
+      "line": 145,
+      "literals": [
+        "Constant"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.CONSTANT",
+      "subject": "observed",
+      "text": "site.observed == \"Constant\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:dfeb387fbf55c704:1",
+      "line": 82,
+      "literals": [
+        "UAdd",
+        "USub"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "OperatorKind.U_ADD, OperatorKind.U_SUB",
+      "subject": "operator_kind",
+      "text": "site.operator_kind() in {\"UAdd\", \"USub\"}"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:e8b1949473c82906:1",
+      "line": 521,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "site.observed != \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:ea4c7ed221399e96:1",
+      "line": 96,
+      "literals": [
+        "JoinedStr"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.JOINED_STR",
+      "subject": "observed",
+      "text": "site.observed == \"JoinedStr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:ea4c7ed221399e96:2",
+      "line": 372,
+      "literals": [
+        "JoinedStr"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.JOINED_STR",
+      "subject": "observed",
+      "text": "site.observed == \"JoinedStr\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:f31755e1cba9aea8:1",
+      "line": 81,
+      "literals": [
+        "UnaryOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.UNARY_OP",
+      "subject": "observed",
+      "text": "site.observed == \"UnaryOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/symbolic_term.py:f31755e1cba9aea8:2",
+      "line": 313,
+      "literals": [
+        "UnaryOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/symbolic_term.py",
+      "replacement": "NodeKind.UNARY_OP",
+      "subject": "observed",
+      "text": "site.observed == \"UnaryOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/test_function_def_sugar.py:9df37379642d4a11:1",
+      "line": 30,
+      "literals": [
+        "FunctionDef"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/test_function_def_sugar.py",
+      "replacement": "NodeKind.FUNCTION_DEF",
+      "subject": "observed",
+      "text": "site.observed != \"FunctionDef\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/true_bool_literal_sugar.py:65fe554f5e70d179:1",
+      "line": 30,
+      "literals": [
+        "PrimitiveLiteral"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/true_bool_literal_sugar.py",
+      "replacement": "NodeKind.PRIMITIVE_LITERAL",
+      "subject": "observed",
+      "text": "site.observed == \"PrimitiveLiteral\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/try_sugar.py:dca7b470782059c9:1",
+      "line": 60,
+      "literals": [
+        "Try"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/try_sugar.py",
+      "replacement": "NodeKind.TRY",
+      "subject": "observed",
+      "text": "site.observed != \"Try\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/tuple_for_sugar.py:a85445c6b0321c0b:1",
+      "line": 29,
+      "literals": [
+        "For"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/tuple_for_sugar.py",
+      "replacement": "NodeKind.FOR",
+      "subject": "observed",
+      "text": "site.observed != \"For\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/tuple_literal_sugar.py:30777e498e786bec:1",
+      "line": 24,
+      "literals": [
+        "Tuple"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/tuple_literal_sugar.py",
+      "replacement": "NodeKind.TUPLE",
+      "subject": "observed",
+      "text": "site.observed == \"Tuple\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py:1e9efdda89e25af6:1",
+      "line": 190,
+      "literals": [
+        "Subscript"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py",
+      "replacement": "NodeKind.SUBSCRIPT",
+      "subject": "observed",
+      "text": "target.observed == \"Subscript\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py:48a9fa2f2a4446e9:1",
+      "line": 212,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "current.observed != \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py:68ac366ede92e919:1",
+      "line": 209,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "current.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py:8d8cbe89f49a7fd8:1",
+      "line": 110,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "target_receiver.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py:92ca8783e3e83a6d:1",
+      "line": 69,
+      "literals": [
+        "Assign"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py",
+      "replacement": "NodeKind.ASSIGN",
+      "subject": "observed",
+      "text": "site.observed != \"Assign\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py:94a16ab4cf15fd24:1",
+      "line": 185,
+      "literals": [
+        "Attribute"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py",
+      "replacement": "NodeKind.ATTRIBUTE",
+      "subject": "observed",
+      "text": "target.observed == \"Attribute\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py:ecbb5a912e505268:1",
+      "line": 192,
+      "literals": [
+        "Tuple",
+        "List"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py",
+      "replacement": "NodeKind.TUPLE, NodeKind.LIST",
+      "subject": "observed",
+      "text": "target.observed not in {\"Tuple\", \"List\"}"
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py:ecfe7967ba3cd850:1",
+      "line": 72,
+      "literals": [
+        "Tuple"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py",
+      "replacement": "NodeKind.TUPLE",
+      "subject": "observed",
+      "text": "targets[0].observed != \"Tuple\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py:f87afc90486aabbb:1",
+      "line": 183,
+      "literals": [
+        "Name"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py",
+      "replacement": "NodeKind.NAME",
+      "subject": "observed",
+      "text": "target.observed == \"Name\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py:f8f33d2b0b703f82:1",
+      "line": 194,
+      "literals": [
+        "Tuple"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/tuple_unpack_assign_sugar.py",
+      "replacement": "NodeKind.TUPLE",
+      "subject": "observed",
+      "text": "target.observed == \"Tuple\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/unary_op_sugar.py:5bbcd05761ba6316:1",
+      "line": 35,
+      "literals": [
+        "UnaryOp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/unary_op_sugar.py",
+      "replacement": "NodeKind.UNARY_OP",
+      "subject": "observed",
+      "text": "site.observed == \"UnaryOp\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/while_sugar.py:2eaa508b6dfa184b:1",
+      "line": 82,
+      "literals": [
+        "While"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/while_sugar.py",
+      "replacement": "NodeKind.WHILE",
+      "subject": "observed",
+      "text": "site.observed != \"While\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/with_sugar.py:8849555439497239:1",
+      "line": 34,
+      "literals": [
+        "With"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/with_sugar.py",
+      "replacement": "NodeKind.WITH",
+      "subject": "observed",
+      "text": "site.observed != \"With\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/yield_from_sugar.py:57b838949f2411e9:1",
+      "line": 21,
+      "literals": [
+        "YieldFrom"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/yield_from_sugar.py",
+      "replacement": "NodeKind.YIELD_FROM",
+      "subject": "observed",
+      "text": "site.observed == \"YieldFrom\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar/yield_sugar.py:8bd27367dfa63f02:1",
+      "line": 18,
+      "literals": [
+        "Yield"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar/yield_sugar.py",
+      "replacement": "NodeKind.YIELD",
+      "subject": "observed",
+      "text": "site.observed == \"Yield\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar_body/sugar_body.py:7299db680b631cc0:1",
+      "line": 126,
+      "literals": [
+        "Block"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar_body/sugar_body.py",
+      "replacement": "NodeKind.BLOCK",
+      "subject": "observed",
+      "text": "self.audit_row.observed != \"Block\""
+    },
+    {
+      "key": "src/sugar_lift_py_tests/sugar_body/sugar_body.py:a2fc499cfe01cf29:1",
+      "line": 120,
+      "literals": [
+        "GeneratorExp",
+        "ListComp",
+        "SetComp",
+        "DictComp"
+      ],
+      "path": "src/sugar_lift_py_tests/sugar_body/sugar_body.py",
+      "replacement": "NodeKind.GENERATOR_EXP, NodeKind.LIST_COMP, NodeKind.SET_COMP, NodeKind.DICT_COMP",
+      "subject": "observed",
+      "text": "self.audit_row.observed in {\"GeneratorExp\", \"ListComp\", \"SetComp\", \"DictComp\"}"
+    }
+  ],
+  "schema": 1,
+  "subject_counts": {
+    "observed": 365,
+    "operator_kind": 17
+  }
+}

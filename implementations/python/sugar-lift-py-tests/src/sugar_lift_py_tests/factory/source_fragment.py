@@ -31,6 +31,7 @@ from sugar_lift_python_source.source_tables import (
 )
 
 from .block import Block
+from .node_kind import NodeKind, OperatorKind
 
 
 def _is_suite(value) -> bool:
@@ -368,17 +369,14 @@ class SourceFragment:
         return [child for child in self.fragments() if isinstance(child.node, ast.expr)]
 
     @property
-    def observed(self) -> str:
-        if isinstance(self.node, ast.Constant) and isinstance(
-            self.node.value,
-            (int, float, str, bool, type(None)),
-        ):
-            # float IS a primitive literal: the numeric type is COLLAPSED -- Int embeds in
-            # Real losslessly (3 and 3.0 are the same number), so 3.0 == 3 is reflexively
-            # true and there is no Int/Real split at the value level (the SMT sort is an
-            # emission-time inference: stay Int unless you meet a Real, then ride up).
-            return "PrimitiveLiteral"
-        return type(self.node).__name__
+    def observed(self) -> "NodeKind":
+        # float IS a primitive literal: the numeric type is COLLAPSED -- Int embeds in
+        # Real losslessly (3 and 3.0 are the same number), so 3.0 == 3 is reflexively
+        # true and there is no Int/Real split at the value level (the SMT sort is an
+        # emission-time inference: stay Int unless you meet a Real, then ride up).
+        # NodeKind.of owns that collapse; NodeKind is a StrEnum so every existing
+        # string comparison and wire projection keeps working byte-identically.
+        return NodeKind.of(self.node)
 
     def __str__(self) -> str:
         # The site IS the address: its display projection, computed at print time.
@@ -520,10 +518,13 @@ class SourceFragment:
         self._require(ast.Call)
         return any(kw.arg is None for kw in self.node.keywords)  # type: ignore[attr-defined]
 
-    def operator_kind(self) -> str:
-        """Return the operator class name for BinOp or UnaryOp (e.g. 'Add', 'Not')."""
+    def operator_kind(self) -> "OperatorKind":
+        """Return the operator kind for BinOp or UnaryOp (e.g. Add, Not).
+
+        OperatorKind is a StrEnum whose value is the ast op class name, so
+        existing string comparisons keep working unchanged."""
         self._require(ast.BinOp, ast.UnaryOp)
-        return type(self.node.op).__name__  # type: ignore[attr-defined]
+        return OperatorKind.of(self.node.op)  # type: ignore[attr-defined]
 
     def binop_left(self) -> "SourceFragment":
         """Return a SourceFragment for the left operand of a BinOp."""
