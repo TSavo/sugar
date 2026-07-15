@@ -174,16 +174,17 @@ impl LiftPluginKit {
         command: Vec<String>,
         working_dir: Option<PathBuf>,
     ) -> Self {
+        let resident_max_requests = resident_max_requests();
         Self {
             surface: surface.into(),
             command,
             working_dir,
             lift_method: "lift".to_string(),
             question_cache: std::sync::Arc::new(Mutex::new(
-                sugar_lift_rpc_client::QuestionCache::default(),
+                sugar_lift_rpc_client::QuestionCache::bounded(resident_max_requests),
             )),
             resident: std::sync::Arc::new(ResidentSlot(Mutex::new(None))),
-            resident_max_requests: resident_max_requests(),
+            resident_max_requests,
             terminal_error: std::sync::Arc::new(Mutex::new(None)),
         }
     }

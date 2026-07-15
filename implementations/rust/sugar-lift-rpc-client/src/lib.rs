@@ -31,17 +31,34 @@ use std::process::{Command, Stdio};
 use serde_json::{json, Value};
 use sugar_proof_envelope::{compute_formula_cid, MementoCid};
 
-/// Process-window cache for RPC questions. There is deliberately no clear or
-/// eviction method. Dropping the owning RPC client is the only invalidation
-/// operation, so a consistency window can never be half-invalidated.
-#[derive(Debug, Default, Clone)]
+/// Bounded process-window cache for RPC questions. When the window reaches
+/// capacity, the next distinct question drops the whole prior window before
+/// crossing the wire. Whole-window rollover preserves the consistency law: a
+/// window is either fully live or fully retired, never half-invalidated.
+#[derive(Debug, Clone)]
 pub struct QuestionCache {
     answers: BTreeMap<MementoCid, Value>,
     hits: usize,
     misses: usize,
+    max_entries: usize,
+}
+
+impl Default for QuestionCache {
+    fn default() -> Self {
+        Self::bounded(256)
+    }
 }
 
 impl QuestionCache {
+    pub fn bounded(max_entries: usize) -> Self {
+        Self {
+            answers: BTreeMap::new(),
+            hits: 0,
+            misses: 0,
+            max_entries: max_entries.max(1),
+        }
+    }
+
     pub fn ask<E>(
         &mut self,
         question: &Value,
@@ -76,8 +93,28 @@ impl QuestionCache {
             misses = self.misses,
         );
         let answer = wire()?;
+        if self.answers.len() >= self.max_entries {
+            let retired_entries = self.answers.len();
+            self.answers.clear();
+            tracing::info!(
+                target: "sugar::rpc_cache",
+                event = "rpc_question_cache_window_rollover",
+                retired_entries,
+                max_entries = self.max_entries,
+                hits = self.hits,
+                misses = self.misses,
+            );
+        }
         self.answers.entry(question_cid).or_insert(answer.clone());
         Ok(answer)
+    }
+
+    pub fn len(&self) -> usize {
+        self.answers.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.answers.is_empty()
     }
 
     pub fn hits(&self) -> usize {
@@ -448,6 +485,44 @@ fn read_response<R: BufRead>(reader: &mut R, expect_id: i64) -> Result<Value, Rp
 mod tests {
     use super::QuestionCache;
     use serde_json::json;
+
+    #[test]
+    fn bounded_question_cache_rolls_the_whole_consistency_window() {
+        let mut cache = QuestionCache::bounded(2);
+        let first = json!({"level": "facts", "at": {"file": "first.py"}});
+        let second = json!({"level": "facts", "at": {"file": "second.py"}});
+        let third = json!({"level": "facts", "at": {"file": "third.py"}});
+        let mut wire_calls = 0;
+
+        for question in [&first, &second, &second] {
+            cache
+                .ask(question, || {
+                    wire_calls += 1;
+                    Ok::<_, ()>(json!({"nodes": []}))
+                })
+                .unwrap();
+        }
+        assert_eq!(wire_calls, 2);
+        assert_eq!(cache.len(), 2);
+
+        cache
+            .ask(&third, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": []}))
+            })
+            .unwrap();
+        assert_eq!(wire_calls, 3);
+        assert_eq!(cache.len(), 1, "rollover drops the whole old window");
+
+        cache
+            .ask(&second, || {
+                wire_calls += 1;
+                Ok::<_, ()>(json!({"nodes": []}))
+            })
+            .unwrap();
+        assert_eq!(wire_calls, 4, "old-window answers must cross again");
+        assert_eq!(cache.len(), 2);
+    }
 
     #[test]
     fn canonical_question_cache_crosses_wire_once_per_distinct_question() {
