@@ -818,15 +818,29 @@ build_from_source() {
   local stamp="$1" identity="$2"
   log "building $bin_name once for this session (set SUGAR_BIN to skip)"
   local cargo_bin="${SUGAR_BINARY_CARGO:-cargo}"
+  local target_root="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}"
+  local build_base="${SUGAR_BINARY_BUILD_ROOT:-$(cache_dir)/.build}"
+  local build_root="$build_base/$(stamp_for_filename "$identity")"
   local args=(build --locked --manifest-path "$rust_workspace/Cargo.toml" -p "$package" --bin "$bin_name")
   if [[ "$profile" == "release" ]]; then
     args+=(--release)
   fi
-  SUGAR_BUILD_STAMP="$stamp" "$cargo_bin" "${args[@]}"
-  local built="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
+  mkdir -p "$build_root"
+  CARGO_TARGET_DIR="$build_root" SUGAR_BUILD_STAMP="$stamp" "$cargo_bin" "${args[@]}"
+  local built="$build_root/$profile/$bin_name"
   [[ -x "$built" ]] || { log "Cargo did not produce requested executable $built"; return 1; }
-  write_artifact_manifest "$built" "$stamp" "$identity"
-  rm -f "${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/.sugarbin-source-stamp"
+
+  # The shared target is a published cache cell, never Cargo's freshness owner.
+  # Install only bytes produced inside this exact build-identity directory so a
+  # persistent runner cannot wrap a stale executable in a fresh manifest.
+  local candidate="$target_root/$profile/$bin_name"
+  local staged="$candidate.sugarbin-stage.$$"
+  mkdir -p "$(dirname "$candidate")"
+  cp "$built" "$staged"
+  chmod +x "$staged"
+  mv -f "$staged" "$candidate"
+  write_artifact_manifest "$candidate" "$stamp" "$identity"
+  rm -f "$target_root/$profile/.sugarbin-source-stamp"
 }
 
 main() {
