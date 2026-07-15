@@ -45,6 +45,7 @@ from sugar_lift_py_tests.sugar.witnesses import (
 from sugar_lift_py_tests.witness_harness import (
     WitnessPipelineResult,
     WitnessPipelineError,
+    ProofObligationPanic,
     _stage_cli_project,
     mint_and_prove,
     prove_verdict,
@@ -1508,3 +1509,24 @@ def test_sugar_witness_cli_exits_clean_only_when_residue_is_zero(
 def test_witness_pipeline_solver_absence_is_loud() -> None:
     with pytest.raises(WitnessPipelineError, match="no rows"):
         prove_verdict({"rows": []})
+
+
+@pytest.mark.parametrize("status", ["refused", "undecidable"])
+def test_witness_pipeline_panics_with_complete_terminal_proof_row(status: str) -> None:
+    offender = {
+        "status": status,
+        "obligationCid": "blake3-512:offender",
+        "formula": {"kind": "app", "name": "unsupported-floor"},
+        "reason": "verifier lacks this floor",
+    }
+
+    with pytest.raises(ProofObligationPanic) as raised:
+        prove_verdict(
+            {"rows": [{"status": "discharged"}, offender, {"status": "refused"}]}
+        )
+
+    assert raised.value.row == offender
+    assert str(raised.value) == (
+        "PROOF OBLIGATION PANIC: "
+        + json.dumps(offender, sort_keys=True, separators=(",", ":"))
+    )
