@@ -195,14 +195,15 @@ moved is not orientation.
 
 | Instrument | Command | Status (local 2026-07-15 post-reboot) |
 |------------|---------|--------|
-| B1 resident ownership | `make check-resident-ownership` | **red** — `R=4` all in `source_tables.py` (`lru_cache(maxsize=None)`) |
+| B1 resident ownership | `make check-resident-ownership` | **green** — `R=0` after source_tables bound (`SOURCE_TABLE_CAPACITY=64`) |
 | A1 showcase kit preflight | `make check-showcase-kit-preflight` (also prerequisite of `test-showcases`) | **green** — `A1=0` (source PYTHONPATH + fresh editable + sticky venvs) |
+
+**ΔR (B1):** 4 → 0 by replacing `lru_cache(maxsize=None)` with
+`maxsize=SOURCE_TABLE_CAPACITY` (64) on the four tables in `source_tables.py`.
+Eviction recomputes; semantics preserved. Measured by census + focused tests.
 
 Local `A1=0` means the *declared* install contracts work on this host. Hosted CI
 `ModuleNotFoundError: sugar_lift_python_source` is therefore either a runner-only
 sticky/path divergence (preflight will name it on that host) or an **A2**
 verdict/path problem past import. Next Lane A work: run preflight on the CI
 runner, then measure showcase verdict residue (`A2`), not another silent eject.
-
-Repair order: confirm `A1` on CI host → `A2` showcase verdicts → Lane B census
-`R` (bound `source_tables` first under B1).
