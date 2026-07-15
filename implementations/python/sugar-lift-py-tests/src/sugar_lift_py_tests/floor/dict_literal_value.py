@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.effect import (
+    DictMethodRuntimeEffect,
+    KeyErrorRuntimeEffect,
+    runtime_effect_witness,
+)
 from sugar_lift_py_tests.ir import (
     _ConstBool,
     _ConstInt,
@@ -85,12 +89,13 @@ def _call_method_effect(
     from sugar_lift_py_tests.outcome import Incomplete
 
     return Incomplete(
-        RuntimeEffect(
+        DictMethodRuntimeEffect(
             "dict builtin method runtime boundary: "
             f"{observed} has no reduced floor semantics in this tranche. "
             "Python dictionary method results can expose runtime view/mutation "
             "semantics; keep as typed red until a narrower vendor-cited "
-            f"reduction owns the shape. blame={blame}"
+            f"reduction owns the shape. blame={blame}",
+            witness=runtime_effect_witness("py.call_method", observed, blame),
         )
     )
 
@@ -103,12 +108,13 @@ def _subscript_effect(
     from sugar_lift_py_tests.outcome import Incomplete
 
     return Incomplete(
-        RuntimeEffect(
+        KeyErrorRuntimeEffect(
             "dict subscript runtime boundary: "
             f"{observed} has no statically matching entry. Python dictionary "
             "lookup can raise KeyError or depend on runtime __hash__/__eq__; "
             "keep as typed red until a narrower vendor-cited reduction owns "
-            f"the shape. blame={blame}"
+            f"the shape. blame={blame}",
+            witness=runtime_effect_witness("py.subscript", observed, blame),
         )
     )
 

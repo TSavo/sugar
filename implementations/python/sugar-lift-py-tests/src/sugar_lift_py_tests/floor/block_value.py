@@ -86,7 +86,10 @@ class BlockValue(FloorValue):
         return self._redispatch_operator(operation, ctx, kind="subscript")
 
     def _redispatch_operator(self, operation: Any, ctx: Any, *, kind: str) -> Any:
-        from sugar_lift_py_tests.effect import RuntimeEffect
+        from sugar_lift_py_tests.effect import (
+            BlockOperatorRuntimeEffect,
+            runtime_effect_witness,
+        )
         from sugar_lift_py_tests.floor.return_value import ReturnValue
         from sugar_lift_py_tests.operations.perform_operation import perform_operation
         from sugar_lift_py_tests.outcome import Incomplete
@@ -94,11 +97,14 @@ class BlockValue(FloorValue):
         op_label = getattr(operation, "operator", kind)
         if len(self.statements) != 1 or self.fall_through:
             return Incomplete(
-                RuntimeEffect(
+                BlockOperatorRuntimeEffect(
                     f"block {kind} operator runtime boundary: multi-exit or "
                     f"fall-through block cannot host `{op_label}` "
                     f"statically; keep as typed red until branch-wise {kind} "
-                    f"floors own this shape. blame={operation.blame}"
+                    f"floors own this shape. blame={operation.blame}",
+                    witness=runtime_effect_witness(
+                        f"py.block_{kind}", op_label, operation.blame
+                    ),
                 )
             )
         exit_value = self.statements[0]
@@ -106,10 +112,13 @@ class BlockValue(FloorValue):
             exit_value = exit_value.value
         if not isinstance(exit_value, FloorValue):
             return Incomplete(
-                RuntimeEffect(
+                BlockOperatorRuntimeEffect(
                     f"block {kind} operator runtime boundary: single exit is "
                     f"`{type(exit_value).__name__}`, not a FloorValue; "
-                    f"blame={operation.blame}"
+                    f"blame={operation.blame}",
+                    witness=runtime_effect_witness(
+                        f"py.block_{kind}", op_label, operation.blame
+                    ),
                 )
             )
         return perform_operation(

@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 from .assertion_failed_runtime_effect import AssertionFailedRuntimeEffect
+from .async_context_manager_runtime_effect import AsyncContextManagerRuntimeEffect
+from .async_iteration_runtime_effect import AsyncIterationRuntimeEffect
 from .attribute_store_runtime_effect import AttributeStoreRuntimeEffect
+from .await_runtime_effect import AwaitRuntimeEffect
+from .block_operator_runtime_effect import BlockOperatorRuntimeEffect
+from .bytes_conversion_runtime_effect import BytesConversionRuntimeEffect
+from .dict_method_runtime_effect import DictMethodRuntimeEffect
+from .map_receiver_runtime_effect import MapReceiverRuntimeEffect
+from .set_method_runtime_effect import SetMethodRuntimeEffect
+from .string_float_conversion_runtime_effect import StringFloatConversionRuntimeEffect
 from .coverage_gap_effect import CoverageGapEffect
 from .conditional_expression_runtime_effect import ConditionalExpressionRuntimeEffect
 from .call_result_type_runtime_effect import CallResultTypeRuntimeEffect
@@ -26,7 +35,16 @@ from .try_handler_dispatch_runtime_effect import TryHandlerDispatchRuntimeEffect
 
 __all__ = [
     "AssertionFailedRuntimeEffect",
+    "AsyncContextManagerRuntimeEffect",
+    "AsyncIterationRuntimeEffect",
     "AttributeStoreRuntimeEffect",
+    "AwaitRuntimeEffect",
+    "BlockOperatorRuntimeEffect",
+    "BytesConversionRuntimeEffect",
+    "DictMethodRuntimeEffect",
+    "MapReceiverRuntimeEffect",
+    "SetMethodRuntimeEffect",
+    "StringFloatConversionRuntimeEffect",
     "CoverageGapEffect",
     "ConditionalExpressionRuntimeEffect",
     "CallResultTypeRuntimeEffect",
