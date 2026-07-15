@@ -12,8 +12,8 @@ An offender is an `ast.Compare` whose one side is an attribute access
 is a string literal or a set/tuple/list of string literals, under
 Eq/NotEq/In/NotIn.
 
-Ratchet convention (see tools/check-lift-refusal-vocabulary.py): the current
-offender multiset is pinned in stringly_kind_census.json. NEW stringly
+Vocabulary ratchet convention: the current offender multiset is pinned in
+stringly_kind_census.json. NEW stringly
 comparisons go red immediately; draining the declared debt requires
 re-pinning (--write-current) with a shrinking count. The instrument is red
 until R=0, at which point pyright-typed signatures (`observed -> NodeKind`,
