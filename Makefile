@@ -65,6 +65,8 @@ help:
 	@echo "  make assertion-lift-frontier   run the explicit recursive assertion_lift frontier ratchet"
 	@echo "  make check-resident-ownership  Lane B: unbounded process-lifetime cache census (R→0)"
 	@echo "  make check-showcase-kit-preflight  Lane A: showcase kit import contracts (A1→0)"
+	@echo "  make wall-progress            Lane B: score partial wall run → progress.json"
+	@echo "  make showcase-verdict-scoreboard  Lane A: classify showcase log → A2 residue"
 	@echo "  make test-python-format       Black check for implementations/python"
 	@echo "  make test-<lang>              csharp / php / c"
 	@echo "  make test-compiler-warning-de compiler-warning delta-epsilon instrument"
@@ -162,6 +164,35 @@ check-resident-ownership:
 check-showcase-kit-preflight:
 	$(PYTHON) tools/showcase_kit_preflight.py --self-test
 	$(PYTHON) tools/showcase_kit_preflight.py
+
+# Lane B instrument 3: partial wall progress receipt (not a product gate).
+# Score transport.jsonl + wall.txt → progress.json. Incomplete is measured.
+.PHONY: wall-progress
+wall-progress:
+	$(PYTHON) tools/wall_progress_scoreboard.py --self-test
+	$(PYTHON) tools/wall_progress_scoreboard.py \
+	  --wall "$${WALL:-pandas}" \
+	  --wall-dir "$${WALL_DIR:-.sugar/$${WALL:-pandas}-wall}" \
+	  --logs-dir "$${LOGS_DIR:-.sugar/$${WALL:-pandas}-wall-logs}" \
+	  --output "$${WALL_PROGRESS_OUT:-.sugar/$${WALL:-pandas}-wall/progress.json}" \
+	  $${WALL_EXIT:+--exit-code $$WALL_EXIT}
+
+# Lane A instrument A2: classify test-showcases / CI log residue.
+# Requires SHOWCASE_LOG=path (or --from-log). Self-test always runs.
+.PHONY: showcase-verdict-scoreboard
+showcase-verdict-scoreboard:
+	$(PYTHON) tools/showcase_verdict_scoreboard.py --self-test
+	@if [ -n "$${SHOWCASE_LOG:-}" ]; then \
+	  $(PYTHON) tools/showcase_verdict_scoreboard.py \
+	    --from-log "$$SHOWCASE_LOG" \
+	    $${SHOWCASE_VERDICT_OUT:+--output $$SHOWCASE_VERDICT_OUT}; \
+	elif [ -n "$${SHOWCASE_LOG_DIR:-}" ]; then \
+	  $(PYTHON) tools/showcase_verdict_scoreboard.py \
+	    --from-dir "$$SHOWCASE_LOG_DIR" \
+	    $${SHOWCASE_VERDICT_OUT:+--output $$SHOWCASE_VERDICT_OUT}; \
+	else \
+	  echo "showcase-verdict-scoreboard: self-test only (set SHOWCASE_LOG=path to score a run)"; \
+	fi
 
 .PHONY: numpy-wall
 numpy-wall:

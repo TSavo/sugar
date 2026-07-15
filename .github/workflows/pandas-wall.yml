@@ -58,9 +58,34 @@ jobs:
           wall_exit=$?
           set -e
           echo "wall_exit=$wall_exit" >> "$GITHUB_OUTPUT"
-          test -s .sugar/pandas-wall/frontier.json
+          # Frontier is the success receipt; partial runs are scored below.
+          if [ -s .sugar/pandas-wall/frontier.json ]; then
+            echo "has_frontier=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_frontier=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write wall progress scoreboard
+        if: always()
+        env:
+          WALL_EXIT: ${{ steps.wall.outputs.wall_exit }}
+        run: |
+          python tools/wall_progress_scoreboard.py --self-test
+          python tools/wall_progress_scoreboard.py \
+            --wall pandas \
+            --wall-dir .sugar/pandas-wall \
+            --logs-dir .sugar/pandas-wall-logs \
+            --output .sugar/pandas-wall/progress.json \
+            --exit-code "${WALL_EXIT:-1}"
+          {
+            echo "### pandas wall progress"
+            echo '```json'
+            python -c "import json,pathlib; p=pathlib.Path('.sugar/pandas-wall/progress.json'); print(p.read_text() if p.is_file() else '{}')"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Publish pandas telemetry vector
+        if: steps.wall.outputs.has_frontier == '1'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
