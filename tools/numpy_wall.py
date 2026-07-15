@@ -11,8 +11,9 @@ def _repo_root() -> Path:
 
 def main() -> int:
     root = _repo_root()
-    src = root / "implementations/python/sugar-lift-py-tests/src"
-    sys.path.insert(0, str(src))
+    python_root = root / "implementations/python"
+    for package in ("sugar-lift-python-source", "sugar-lift-py-tests"):
+        sys.path.insert(0, str(python_root / package / "src"))
 
     from sugar_lift_py_tests.idd.numpy_wall import main as numpy_wall_main
 
