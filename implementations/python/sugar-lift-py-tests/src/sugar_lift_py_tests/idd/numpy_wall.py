@@ -407,6 +407,14 @@ def _int_field(data: Mapping[str, Any], field: str) -> int:
 
 
 def _resolve_sugar_bin(root: Path, profile: str, runner: RunCommand) -> Path:
+    if os.name == "nt":
+        # The POSIX broker is not a Windows executable.  Keep wall acquisition
+        # on the same platform-aware route used by the witness harness so
+        # Battleaxe builds locally and other Windows hosts use their broker.
+        from sugar_lift_py_tests.sugar_binary import resolve_sugar_binary
+
+        return resolve_sugar_binary(profile=profile).resolve()
+
     resolver_env = os.environ.copy()
     # A wall is evidence about this checkout. Runner services may carry an
     # ambient handoff from an earlier job, but the stamp-addressed broker must
