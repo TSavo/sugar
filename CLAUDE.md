@@ -1,4 +1,11 @@
-# context-mode — MANDATORY routing rules
+# context-mode — MANDATORY routing rules (when available)
+
+**Applicability gate:** these rules apply ONLY when context-mode MCP tools
+(`mcp__*context-mode*__ctx_*`) are actually available in the session. The
+context-mode server is machine-local configuration, not checked into this
+repo — in a fresh clone or any session without it, IGNORE this file entirely
+and use the standard tools (Bash, Read, Grep, WebFetch) normally; nothing is
+blocked. Do not report ctx_* tools as missing capabilities.
 
 You have context-mode MCP tools available. These rules are NOT optional — they protect your context window from flooding. A single unrouted command can dump 56 KB into context and waste the entire session.
 
