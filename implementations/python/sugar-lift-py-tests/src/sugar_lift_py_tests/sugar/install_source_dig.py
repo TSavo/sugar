@@ -106,6 +106,55 @@ def _absolute_import_from_module(
     return ".".join(base) or None
 
 
+def _resolve_qualified_native_callable(
+    import_target: str, *, resolving: frozenset[str] = frozenset()
+):
+    """Follow one static re-export route to an installed extension symbol."""
+    if "." not in import_target or import_target in resolving:
+        return None
+    resolving = resolving | {import_target}
+    module_name, attr = import_target.rsplit(".", 1)
+    origin = _installed_native_extension(module_name)
+    if origin is not None:
+        from sugar_lift_py_tests.floor import NativeCallableValue
+
+        return NativeCallableValue(
+            qualified_name=import_target,
+            module_origin=origin,
+        )
+
+    installed = _installed_source(module_name)
+    if installed is None:
+        return None
+    source, sourcefile = installed
+    try:
+        parsed = ast.parse(source, filename=sourcefile)
+    except SyntaxError:
+        return None
+    if any(
+        isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and statement.name == attr
+        for statement in parsed.body
+    ):
+        return None
+
+    reexports: list[str] = []
+    for statement in parsed.body:
+        if not isinstance(statement, ast.ImportFrom):
+            continue
+        for alias in statement.names:
+            if (alias.asname or alias.name) != attr or alias.name == "*":
+                continue
+            target_module = _absolute_import_from_module(
+                module_name, statement.module, statement.level
+            )
+            if target_module:
+                reexports.append(f"{target_module}.{alias.name}")
+    if len(reexports) != 1:
+        return None
+    return _resolve_qualified_native_callable(reexports[0], resolving=resolving)
+
+
 def module_sibling_function_nodes(module_name: str) -> dict:
     """Copy-on-read facade over the memoized bridge table (callers may pop)."""
     return dict(_module_sibling_function_nodes(module_name))
@@ -457,15 +506,10 @@ def resolve_install_source_value(
     if "." not in import_target or import_target in _resolving:
         return None
     resolving = _resolving | {import_target}
+    native = _resolve_qualified_native_callable(import_target, resolving=_resolving)
+    if native is not None:
+        return native
     module_name, attr = import_target.rsplit(".", 1)
-    native_origin = _installed_native_extension(module_name)
-    if native_origin is not None:
-        from sugar_lift_py_tests.floor import NativeCallableValue
-
-        return NativeCallableValue(
-            qualified_name=import_target,
-            module_origin=native_origin,
-        )
     installed = _installed_source(module_name)
     if installed is None:
         return None

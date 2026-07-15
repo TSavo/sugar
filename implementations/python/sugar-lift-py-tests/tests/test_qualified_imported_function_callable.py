@@ -75,6 +75,38 @@ def test_direct_extension_symbol_emits_qualified_bodyless_bridge_without_executi
     assert "fixture_native" not in sys.modules
 
 
+def test_reexported_extension_symbol_keeps_ultimate_native_coordinate_without_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "fixture_native_reexport"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        'raise RuntimeError("package must not execute")\n'
+    )
+    (package / "api.py").write_text(
+        'raise RuntimeError("api must not execute")\n'
+        "from .native import exact as exported\n"
+    )
+    extension = package / f"native{importlib.machinery.EXTENSION_SUFFIXES[0]}"
+    extension.write_bytes(b"not a loadable extension")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    callsite, temporal = _consumer_call(
+        "from fixture_native_reexport.api import exported as chosen\n", "chosen(7)"
+    )
+
+    alias = temporal.value_for("chosen")
+    assert isinstance(alias, ImportAliasValue)
+    assert alias.import_target == "fixture_native_reexport.api.exported"
+    assert alias.resolved_value is not None
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.target_name == "fixture_native_reexport.native.exact"
+    assert callsite.arg_values == (TermValue(7),)
+    assert callsite.body is None
+    assert callsite.term.name == "call:fixture_native_reexport.native.exact"
+    assert not any(name.startswith("fixture_native_reexport") for name in sys.modules)
+
+
 def test_reexported_qualified_function_reaches_function_callable_binder_without_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
