@@ -65,6 +65,7 @@ help:
 	@echo "  make assertion-lift-frontier   run the explicit recursive assertion_lift frontier ratchet"
 	@echo "  make check-resident-ownership  Lane B: unbounded process-lifetime cache census (R→0)"
 	@echo "  make check-showcase-kit-preflight  Lane A: showcase kit import contracts (A1→0)"
+	@echo "  make check-lift-manifest-pythonpath  Lane A: lift_rpc PYTHONPATH + bind_rpc --rpc census"
 	@echo "  make wall-progress            Lane B: score partial wall run → progress.json"
 	@echo "  make showcase-verdict-scoreboard  Lane A: classify showcase log → A2 residue"
 	@echo "  make test-python-format       Black check for implementations/python"
@@ -164,6 +165,13 @@ check-resident-ownership:
 check-showcase-kit-preflight:
 	$(PYTHON) tools/showcase_kit_preflight.py --self-test
 	$(PYTHON) tools/showcase_kit_preflight.py
+
+# Lane A instrument: showcase lift manifests must put sugar-lift-python-source
+# on PYTHONPATH for sugar_lift_py_tests launches, and bind_rpc must pass --rpc.
+.PHONY: check-lift-manifest-pythonpath
+check-lift-manifest-pythonpath:
+	$(PYTHON) tools/check_lift_manifest_pythonpath.py --self-test
+	$(PYTHON) tools/check_lift_manifest_pythonpath.py
 
 # Lane B instrument 3: partial wall progress receipt (not a product gate).
 # Score transport.jsonl + wall.txt → progress.json. Incomplete is measured.
@@ -445,7 +453,7 @@ examples-gate-extended:
 	  --nice $(EXAMPLES_GATE_NICE)
 
 .PHONY: test-showcases
-test-showcases: check-showcase-kit-preflight
+test-showcases: check-showcase-kit-preflight check-lift-manifest-pythonpath
 	@set -e; \
 	if [ "$${SHOWCASES_ON_REMOTE:-0}" != "1" ] && [ "$$(uname -s)" != "Linux" ] && [ "$${USE_BCARGO:-1}" != "0" ]; then \
 	  echo "==== test-showcases on battleaxe via bcargo ===="; \

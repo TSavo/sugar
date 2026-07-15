@@ -77,7 +77,7 @@ cat > "$NUMPY_DIR/.sugar/lift/python-bind/manifest.toml" <<EOF
 name = "python-bind-lift"
 version = "0.1.0"
 kind = "lift"
-command = ["/usr/bin/env", "SUGAR_LEAN_SOURCE=1", "PYTHONPATH=$PP", "$VENV/bin/python", "-m", "sugar_lift_python_source.bind_rpc"]
+command = ["/usr/bin/env", "SUGAR_LEAN_SOURCE=1", "PYTHONPATH=$PP", "$VENV/bin/python", "-m", "sugar_lift_python_source.bind_rpc", "--rpc"]
 working_dir = "$REPO"
 [capabilities]
 authoring_surfaces = ["python-bind"]
