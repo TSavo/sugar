@@ -536,7 +536,7 @@ def test_python_wrapper_uses_native_windows_sugarbin(monkeypatch) -> None:
     ]
 
 
-def test_python_wrapper_keeps_windows_laptop_on_broker(monkeypatch) -> None:
+def test_python_wrapper_keeps_non_battleaxe_windows_on_broker(monkeypatch) -> None:
     from sugar_lift_py_tests import sugar_binary
 
     resolved = Path("/remote/cache/sugar")
@@ -563,6 +563,21 @@ def test_python_wrapper_keeps_windows_laptop_on_broker(monkeypatch) -> None:
     assert calls[0][1]["env"]["SUGAR_WINDOWS_SCRIPT"] == str(
         sugar_binary.SUGARBIN
     )
+
+
+def test_mac_laptop_routes_to_posix_offload_broker() -> None:
+    from sugar_lift_py_tests.sugar_binary import sugarbin_route
+
+    assert (
+        sugarbin_route(os_name="posix", hostname="Tsavo-MacBook-Pro")
+        == "posix-broker"
+    )
+
+
+def test_battleaxe_routes_to_native_local_build() -> None:
+    from sugar_lift_py_tests.sugar_binary import sugarbin_route
+
+    assert sugarbin_route(os_name="nt", hostname="Battleaxe") == "battleaxe-native"
 
 
 def test_witness_harness_resolves_sugar_once_for_parallel_callers(
