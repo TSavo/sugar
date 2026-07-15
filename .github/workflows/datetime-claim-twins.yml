@@ -1,0 +1,82 @@
+name: Datetime Claim Twins
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "29 9 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: datetime-claim-twins
+  cancel-in-progress: false
+
+jobs:
+  datetime-claim-twins:
+    name: measure datetime SAT/UNSAT twins
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust 1.96.0
+        uses: dtolnay/rust-toolchain@1.96.0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install runtime and Python lift packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends z3 b3sum
+          python -m pip install --quiet \
+            -e implementations/python/sugar-lift-python-source \
+            -e 'implementations/python/sugar-lift-py-tests[test]'
+          bin/sugarbin --profile release >/dev/null
+
+      - name: Run focused twins and retain red telemetry
+        id: twins
+        shell: bash
+        run: |
+          mkdir -p .sugar/datetime-claim-twins
+          set +e
+          SUGAR_BIN="$(bin/sugarbin --profile release)" \
+            python -m pytest -q \
+              implementations/python/sugar-lift-py-tests/tests/test_datetime_claim_twins.py \
+              --junitxml=.sugar/datetime-claim-twins/junit.xml \
+              2>&1 | tee .sugar/datetime-claim-twins/pytest.log
+          pytest_exit=${PIPESTATUS[0]}
+          set -e
+          echo "pytest_exit=$pytest_exit" >> "$GITHUB_OUTPUT"
+          test -s .sugar/datetime-claim-twins/junit.xml
+
+      - name: Publish complete datetime vector
+        if: always()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python tools/datetime_claim_twins_telemetry.py \
+            --junit .sugar/datetime-claim-twins/junit.xml \
+            --pytest-exit "${{ steps.twins.outputs.pytest_exit }}" \
+            --run-url "$RUN_URL" \
+            --json-output .sugar/datetime-claim-twins/vector.json \
+            --markdown-output .sugar/datetime-claim-twins/vector.md \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload datetime artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: datetime-claim-twins
+          path: .sugar/datetime-claim-twins/
+          if-no-files-found: error
+
+      - name: Keep the instrument red while R is nonzero
+        if: always()
+        run: test "${{ steps.twins.outputs.pytest_exit }}" = 0

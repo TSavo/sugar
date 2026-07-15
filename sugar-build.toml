@@ -76,6 +76,12 @@ binaries = ["sugar"]
 command = ["python", "-m", "pytest"]
 network = "none"
 
+[tasks.datetime-claim-twins]
+capabilities = ["python-test", "solver-z3"]
+binaries = ["sugar"]
+command = ["python", "-m", "pytest", "-q", "implementations/python/sugar-lift-py-tests/tests/test_datetime_claim_twins.py", "--junitxml=.sugar/datetime-claim-twins/junit.xml"]
+network = "none"
+
 [tasks.rust-unit]
 capabilities = ["solver-z3"]
 binaries = []
