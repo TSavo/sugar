@@ -11,7 +11,10 @@ from typing import (
 )
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
+from sugar_lift_py_tests.factory.factory_audit_row import (
+    FactoryAuditRow,
+    FactoryAuditStatus,
+)
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
@@ -149,7 +152,7 @@ class SugarBody(Generic[ReductionT_co]):
                     ),
                     source_cid=blake3_512_of(b""),
                 )
-            if audit.status == "selected":
+            if audit.status is FactoryAuditStatus.SELECTED:
                 rows.append(
                     FactoryWalkCompleteRowDto(
                         file=file,

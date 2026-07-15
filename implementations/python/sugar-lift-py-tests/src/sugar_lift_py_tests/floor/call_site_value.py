@@ -8,6 +8,7 @@ from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUnivers
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 from .floor_value import FloorValue
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 _FORCE_FLOOR_BUDGET = 64
 
@@ -627,7 +628,7 @@ def _force_floor_gap(
         info,
         FactoryAuditRow(
             role="force_floor",
-            status="floor-gap",
+            status=FactoryAuditStatus.FLOOR_GAP,
             observed=observed,
             blame=target_name,
             selected=None,

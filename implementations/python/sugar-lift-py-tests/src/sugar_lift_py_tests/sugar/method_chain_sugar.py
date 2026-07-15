@@ -52,7 +52,7 @@ class MethodChainSugar(
         ):
             factory_panic_gap(
                 owner=cls.__name__,
-                blame=str(site),
+                blame=site,
                 observed="unclassified chained-call receiver",
                 requested="method-call receiver with an ordinary bound self",
                 fix="classify the receiver call before unrolling the method chain",

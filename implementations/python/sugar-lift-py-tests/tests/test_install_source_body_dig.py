@@ -2,6 +2,7 @@
 """Install-source body dig: CallSugar attaches body when resolve succeeds."""
 
 from __future__ import annotations
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 import pytest
 
@@ -109,7 +110,7 @@ class _NoReturnStatement:
 
         self.audit_row = FactoryAuditRow(
             role="statement",
-            status="selected",
+            status=FactoryAuditStatus.SELECTED,
             observed="If",
             blame="numpy/_core/repro.py:17:4",
             selected="IfSugar",

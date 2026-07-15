@@ -26,6 +26,7 @@ import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 
 def _installed_source(module_name: str) -> tuple[str, str] | None:
@@ -60,6 +61,36 @@ def _installed_source(module_name: str) -> tuple[str, str] | None:
         return None
 
 
+def _installed_native_extension(module_name: str) -> str | None:
+    """Return one exact extension-module origin without importing the module."""
+    if not module_name:
+        return None
+    parts = module_name.split(".")
+    search_path = None
+    spec = None
+    try:
+        for index in range(1, len(parts) + 1):
+            qualified = ".".join(parts[:index])
+            spec = importlib.machinery.PathFinder.find_spec(qualified, search_path)
+            if spec is None:
+                return None
+            if index < len(parts):
+                search_path = spec.submodule_search_locations
+                if search_path is None:
+                    return None
+        origin = getattr(spec, "origin", None)
+        loader = getattr(spec, "loader", None)
+        if not isinstance(origin, str) or not isinstance(
+            loader, importlib.machinery.ExtensionFileLoader
+        ):
+            return None
+        if not origin.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES)):
+            return None
+        return origin
+    except (ImportError, ModuleNotFoundError, OSError, TypeError, ValueError):
+        return None
+
+
 def _absolute_import_from_module(
     defining_module: str, imported_module: str | None, level: int
 ) -> str | None:
@@ -73,6 +104,55 @@ def _absolute_import_from_module(
     if imported_module:
         base.extend(imported_module.split("."))
     return ".".join(base) or None
+
+
+def _resolve_qualified_native_callable(
+    import_target: str, *, resolving: frozenset[str] = frozenset()
+):
+    """Follow one static re-export route to an installed extension symbol."""
+    if "." not in import_target or import_target in resolving:
+        return None
+    resolving = resolving | {import_target}
+    module_name, attr = import_target.rsplit(".", 1)
+    origin = _installed_native_extension(module_name)
+    if origin is not None:
+        from sugar_lift_py_tests.floor import NativeCallableValue
+
+        return NativeCallableValue(
+            qualified_name=import_target,
+            module_origin=origin,
+        )
+
+    installed = _installed_source(module_name)
+    if installed is None:
+        return None
+    source, sourcefile = installed
+    try:
+        parsed = ast.parse(source, filename=sourcefile)
+    except SyntaxError:
+        return None
+    if any(
+        isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and statement.name == attr
+        for statement in parsed.body
+    ):
+        return None
+
+    reexports: list[str] = []
+    for statement in parsed.body:
+        if not isinstance(statement, ast.ImportFrom):
+            continue
+        for alias in statement.names:
+            if (alias.asname or alias.name) != attr or alias.name == "*":
+                continue
+            target_module = _absolute_import_from_module(
+                module_name, statement.module, statement.level
+            )
+            if target_module:
+                reexports.append(f"{target_module}.{alias.name}")
+    if len(reexports) != 1:
+        return None
+    return _resolve_qualified_native_callable(reexports[0], resolving=resolving)
 
 
 def module_sibling_function_nodes(module_name: str) -> dict:
@@ -145,7 +225,7 @@ def _module_sibling_function_nodes(module_name: str) -> dict:
                 info,
                 FactoryAuditRow(
                     role="install-source import",
-                    status="floor-gap",
+                    status=FactoryAuditStatus.FLOOR_GAP,
                     observed=type(skipped).__name__,
                     blame=module_name,
                     selected=None,
@@ -426,6 +506,9 @@ def resolve_install_source_value(
     if "." not in import_target or import_target in _resolving:
         return None
     resolving = _resolving | {import_target}
+    native = _resolve_qualified_native_callable(import_target, resolving=_resolving)
+    if native is not None:
+        return native
     module_name, attr = import_target.rsplit(".", 1)
     installed = _installed_source(module_name)
     if installed is None:

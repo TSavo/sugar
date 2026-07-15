@@ -38,9 +38,13 @@ def _validate_terminal_vectors(label: str, payload: Mapping[str, Any]) -> None:
         if not isinstance(demanded_body, Mapping):
             raise RuntimeError(f"{label} panic row {index} lacks demandedBody identity")
         if not isinstance(demanded_source, str) or not demanded_source:
-            raise RuntimeError(f"{label} panic row {index} lacks demandedSource identity")
+            raise RuntimeError(
+                f"{label} panic row {index} lacks demandedSource identity"
+            )
         if not isinstance(terminal_gap_locus, str) or not terminal_gap_locus:
-            raise RuntimeError(f"{label} panic row {index} lacks terminalGapLocus identity")
+            raise RuntimeError(
+                f"{label} panic row {index} lacks terminalGapLocus identity"
+            )
         typed_gap_locus = gap.get("blame") or gap.get("gap_locus")
         if terminal_gap_locus != typed_gap_locus:
             raise RuntimeError(
@@ -53,9 +57,13 @@ def _validate_terminal_vectors(label: str, payload: Mapping[str, Any]) -> None:
         }
         if owner_identity != expected_identity:
             raise RuntimeError(f"{label} panic row {index} has malformed ownerIdentity")
-        identity_key = json.dumps(expected_identity, sort_keys=True, separators=(",", ":"))
+        identity_key = json.dumps(
+            expected_identity, sort_keys=True, separators=(",", ":")
+        )
         if identity_key in seen_panic_owners:
-            raise RuntimeError(f"{label} frontier has duplicate recovered panic owner identity")
+            raise RuntimeError(
+                f"{label} frontier has duplicate recovered panic owner identity"
+            )
         seen_panic_owners.add(identity_key)
 
     terminal_loci: dict[str, set[str]] = {}

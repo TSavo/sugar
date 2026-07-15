@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from .floor_value import FloorValue
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context import FactoryBuildContext
@@ -338,7 +339,7 @@ class ObjectValue(FloorValue):
         arguments: tuple[FloorValue, ...],
         *,
         owner: str,
-        blame: str,
+        blame: object,
         ctx: Any | None = None,
     ) -> Outcome:
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
@@ -416,7 +417,7 @@ class ObjectValue(FloorValue):
         self,
         *,
         owner: str,
-        blame: str,
+        blame: object,
         observed: str,
         requested: str,
         fix: str,
@@ -431,7 +432,7 @@ class ObjectValue(FloorValue):
 
         info = FactoryGapInfo(
             owner=owner,
-            blame=blame,
+            blame=str(blame),
             observed=observed,
             requested=requested,
             fix=fix,
@@ -446,9 +447,9 @@ class ObjectValue(FloorValue):
             info,
             FactoryAuditRow(
                 role=requested,
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
-                blame=blame,
+                blame=str(blame),
                 selected=None,
                 candidates=[],
                 message=info.message,

@@ -13,6 +13,7 @@ from sugar_lift_py_tests.floor import ObjectField, ObjectMethodValue, ObjectValu
 from sugar_lift_py_tests.floor.call_site_value import _ctx_with_curried_args
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,7 @@ class ConstructorStrategy:
                 info,
                 FactoryAuditRow(
                     role="constructor field floor",
-                    status="floor-gap",
+                    status=FactoryAuditStatus.FLOOR_GAP,
                     observed=info.observed,
                     blame=info.blame,
                     selected=None,
@@ -127,7 +128,7 @@ class ConstructorStrategy:
                 info,
                 FactoryAuditRow(
                     role="class descriptor __set_name__ effect",
-                    status="floor-gap",
+                    status=FactoryAuditStatus.FLOOR_GAP,
                     observed=info.observed,
                     blame=info.blame,
                     selected=None,

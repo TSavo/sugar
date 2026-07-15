@@ -13,6 +13,7 @@ from .factory_gap_info import FactoryGapInfo, GapKind, GapLocus
 from .source_fragment import SourceFragment
 from .source_fragment_stack import SourceFragmentStack
 from sugar_lift_py_tests.sugar_body import ReducibleSugar
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 
 def build_node(
@@ -91,7 +92,7 @@ def _build_site(
         )
         audit_row = FactoryAuditRow(
             role=role.value,
-            status="sugar-gap",
+            status=FactoryAuditStatus.SUGAR_GAP,
             observed=site.observed,
             blame=site.blame,
             selected=None,
@@ -109,7 +110,7 @@ def _build_site(
     )
     audit_row = FactoryAuditRow(
         role=role.value,
-        status="selected",
+        status=FactoryAuditStatus.SELECTED,
         observed=site.observed,
         blame=site.blame,
         selected=selected.name,
@@ -185,7 +186,7 @@ def _raise_ambiguous_candidates(
     )
     audit_row = FactoryAuditRow(
         role=role.value,
-        status="sugar-ambiguous",
+        status=FactoryAuditStatus.SUGAR_AMBIGUOUS,
         observed=site.observed,
         blame=site.blame,
         selected=None,

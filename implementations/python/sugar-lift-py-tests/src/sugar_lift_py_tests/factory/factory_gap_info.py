@@ -110,17 +110,17 @@ def gap_locus_label(locus: GapLocus) -> str:
 
 def gap_kind_status(kind: GapKind) -> FactoryAuditStatus:
     if kind is GapKind.FLOOR:
-        return "floor-gap"
+        return FactoryAuditStatus.FLOOR_GAP
     if kind is GapKind.SUGAR:
-        return "sugar-gap"
+        return FactoryAuditStatus.SUGAR_GAP
     if kind is GapKind.CONSTRUCTOR:
-        return "constructor-gap"
+        return FactoryAuditStatus.CONSTRUCTOR_GAP
     if kind is GapKind.SUGAR_ORDERING:
-        return "sugar-ambiguous"
+        return FactoryAuditStatus.SUGAR_AMBIGUOUS
     if kind is GapKind.OPERATION:
-        return "operation-gap"
+        return FactoryAuditStatus.OPERATION_GAP
     if kind is GapKind.PROOFIR:
-        return "proofir-gap"
+        return FactoryAuditStatus.PROOFIR_GAP
     return _unhandled_gap_kind(kind)
 
 

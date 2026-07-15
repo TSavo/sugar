@@ -32,6 +32,7 @@ from sugar_lift_py_tests.kit_rpc import (
     SuppressedAuditLocusDto,
 )
 from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 KIT_ID = "python"
 KIT_VERSION = "0.1.0"
@@ -1690,7 +1691,7 @@ def audit_lift_file(
             )
             audit = FactoryAuditRow(
                 role="statement",
-                status="sugar-gap",
+                status=FactoryAuditStatus.SUGAR_GAP,
                 observed=locus.kind,
                 blame=f"{locus.file}:{locus.line}:{locus.col}",
                 selected=None,
@@ -1826,7 +1827,7 @@ def _factory_walk_red_from_gap(gap: AuditOnlyGap):
         ast_kind=str(audit.observed or gap.info.get("observed") or "unknown"),
         selected=audit.selected,
         status="unclassified",
-        output=str(audit.status or "sugar-gap"),
+        output=str(audit.status or FactoryAuditStatus.SUGAR_GAP),
         source_memento=memento,
         reason=reason,
         extra={

@@ -67,10 +67,7 @@ fn sugar_bin() -> Option<PathBuf> {
             return Some(pb);
         }
     }
-    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()?
-        .parent()?
-        .parent()?;
+    let repo = repo_root();
     let profile = if cfg!(debug_assertions) {
         "debug"
     } else {

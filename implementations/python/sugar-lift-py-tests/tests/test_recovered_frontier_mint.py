@@ -237,7 +237,9 @@ def test_successful_nonzero_frontier_mint_keeps_red_exit_artifact(
     assert (output_dir / "frontier.json").is_file()
 
 
-def test_frontier_preserves_same_gap_for_distinct_demanded_bodies(tmp_path: Path) -> None:
+def test_frontier_preserves_same_gap_for_distinct_demanded_bodies(
+    tmp_path: Path,
+) -> None:
     payload = _payload(
         source_files=2,
         body_demands=2,
@@ -288,7 +290,9 @@ def test_frontier_rejects_exact_duplicate_demand_identity(tmp_path: Path) -> Non
     assert not (output_dir / "frontier.json").exists()
 
 
-def test_frontier_rejects_terminal_locus_that_differs_from_typed_gap(tmp_path: Path) -> None:
+def test_frontier_rejects_terminal_locus_that_differs_from_typed_gap(
+    tmp_path: Path,
+) -> None:
     payload = _payload(
         source_files=1,
         body_demands=1,
@@ -306,7 +310,9 @@ def test_frontier_rejects_terminal_locus_that_differs_from_typed_gap(tmp_path: P
     identity["terminalGapLocus"] = row["terminalGapLocus"]
     output_dir, mint = _mint(tmp_path, payload, 2)
 
-    with pytest.raises(RuntimeError, match="terminalGapLocus does not match typed gap locus"):
+    with pytest.raises(
+        RuntimeError, match="terminalGapLocus does not match typed gap locus"
+    ):
         mint()
 
     assert not (output_dir / "frontier.json").exists()

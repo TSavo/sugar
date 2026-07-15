@@ -9,6 +9,7 @@ from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 
 from .temporal_binding import TemporalBinding
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 
 @dataclass(frozen=True)
@@ -120,7 +121,7 @@ class TemporalContext:
             info,
             FactoryAuditRow(
                 role=requested,
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=blame,
                 selected=None,

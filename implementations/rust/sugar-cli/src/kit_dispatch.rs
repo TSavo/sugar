@@ -1117,7 +1117,6 @@ fn rpc_emit_witness(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     // `optional_rpc_method_refusal_accepts_legacy_unknown_method_error` moved
     // to `sugar_compiler::resolve` (SEAM 4) alongside the

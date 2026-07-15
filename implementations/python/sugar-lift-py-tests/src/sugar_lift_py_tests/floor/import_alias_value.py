@@ -182,9 +182,9 @@ def _runtime_alias_effect(
     return _runtime_alias_effect_at_site(
         value,
         shape=shape,
-        # Prefer the operation's real fragment; its blame string stays the
-        # prose fallback for operations that never carried a site.
-        site=getattr(operation, "site", None) or operation.blame,
+        # Every dispatched operation owns its site fragment; a blame-only
+        # operation is a construction gap, not a soft fallback.
+        site=operation.site,
         replacement=replacement,
     )
 
@@ -193,8 +193,6 @@ def _runtime_alias_effect_at_site(
     value: ImportAliasValue, *, shape: str, site, replacement: str
 ):
     import importlib.util
-
-    blame = str(site)
 
     target = value.import_target or value.name
     module_name = target.rsplit(".", 1)[0] if "." in target else target
@@ -209,7 +207,7 @@ def _runtime_alias_effect_at_site(
 
         factory_panic_gap(
             owner="ImportAliasValue",
-            blame=blame,
+            blame=site,
             observed=target,
             requested="dig installed import source before applying floor operation",
             fix=f"route `{shape}` through install_source_dig for source `{origin}`",
@@ -233,7 +231,7 @@ def _runtime_alias_effect_at_site(
             f"`{value.bound_name} -> {value.name}` at runtime. "
             "The alias floor records name binding only; it does not fabricate "
             "module object semantics. "
-            f"replacement={replacement}; blame={blame}",
+            f"replacement={replacement}; blame={site}",
             witness=RuntimeEffectWitness(
                 operation=ctor(
                     "python:import_floor_operation",

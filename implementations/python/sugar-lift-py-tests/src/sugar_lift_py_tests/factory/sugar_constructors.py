@@ -306,7 +306,10 @@ def _module_level_declarations_before(
             for candidate in candidates
         ):
             return declarations
-        if statement.observed == "Assign" and statement.assign_target_name() is not None:
+        if (
+            statement.observed == "Assign"
+            and statement.assign_target_name() is not None
+        ):
             declarations.append(statement)
         elif statement.observed == "AnnAssign":
             try:

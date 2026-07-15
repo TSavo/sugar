@@ -418,8 +418,7 @@ def prove_verdict(prove_doc: dict) -> Verdict:
         (
             row
             for row in rows
-            if row.get("status")
-            not in {"discharged", "unsatisfied", "solver-timeout"}
+            if row.get("status") not in {"discharged", "unsatisfied", "solver-timeout"}
         ),
         None,
     )

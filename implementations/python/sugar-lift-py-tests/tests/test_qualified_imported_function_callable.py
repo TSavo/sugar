@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.machinery
 import sys
 from pathlib import Path
 
@@ -40,12 +41,70 @@ def _consumer_call(source: str, call: str, filename: str = "consumer.py"):
         module_temporal=temporal,
     )
     node = ast.parse(call, filename=filename).body[0].value
-    return complete_value(
-        build_node(node, filename=filename, role=SugarRole.TERM, ctx=ctx).sugar.desugar(
-            ctx
+    return (
+        complete_value(
+            build_node(
+                node, filename=filename, role=SugarRole.TERM, ctx=ctx
+            ).sugar.desugar(ctx),
+            owner="qualified imported function fixture",
         ),
-        owner="qualified imported function fixture",
-    ), temporal
+        temporal,
+    )
+
+
+def test_direct_extension_symbol_emits_qualified_bodyless_bridge_without_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    extension = tmp_path / f"fixture_native{importlib.machinery.EXTENSION_SUFFIXES[0]}"
+    extension.write_bytes(b"not a loadable extension")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    callsite, temporal = _consumer_call(
+        "from fixture_native import exact as chosen\n", "chosen(7)"
+    )
+
+    alias = temporal.value_for("chosen")
+    assert isinstance(alias, ImportAliasValue)
+    assert alias.import_target == "fixture_native.exact"
+    assert alias.resolved_value is not None
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.target_name == "fixture_native.exact"
+    assert callsite.arg_values == (TermValue(7),)
+    assert callsite.body is None
+    assert callsite.term.name == "call:fixture_native.exact"
+    assert "fixture_native" not in sys.modules
+
+
+def test_reexported_extension_symbol_keeps_ultimate_native_coordinate_without_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "fixture_native_reexport"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        'raise RuntimeError("package must not execute")\n'
+    )
+    (package / "api.py").write_text(
+        'raise RuntimeError("api must not execute")\n'
+        "from .native import exact as exported\n"
+    )
+    extension = package / f"native{importlib.machinery.EXTENSION_SUFFIXES[0]}"
+    extension.write_bytes(b"not a loadable extension")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    callsite, temporal = _consumer_call(
+        "from fixture_native_reexport.api import exported as chosen\n", "chosen(7)"
+    )
+
+    alias = temporal.value_for("chosen")
+    assert isinstance(alias, ImportAliasValue)
+    assert alias.import_target == "fixture_native_reexport.api.exported"
+    assert alias.resolved_value is not None
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.target_name == "fixture_native_reexport.native.exact"
+    assert callsite.arg_values == (TermValue(7),)
+    assert callsite.body is None
+    assert callsite.term.name == "call:fixture_native_reexport.native.exact"
+    assert not any(name.startswith("fixture_native_reexport") for name in sys.modules)
 
 
 def test_reexported_qualified_function_reaches_function_callable_binder_without_execution(
@@ -111,8 +170,12 @@ def test_same_leaf_modules_bind_their_own_exact_reexported_body(
         "from fixture_right.api import exported as chosen\n", "chosen()", "right.py"
     )
     force_ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
-    assert left.force_floor(force_ctx, owner="left", project_callsite=False) == TermValue(11)
-    assert right.force_floor(force_ctx, owner="right", project_callsite=False) == TermValue(22)
+    assert left.force_floor(
+        force_ctx, owner="left", project_callsite=False
+    ) == TermValue(11)
+    assert right.force_floor(
+        force_ctx, owner="right", project_callsite=False
+    ) == TermValue(22)
     assert not any(
         name.startswith(("fixture_left", "fixture_right")) for name in sys.modules
     )

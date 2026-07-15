@@ -23,6 +23,7 @@ from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -141,7 +142,7 @@ def test_factory_gap_preserves_typed_info_until_effect_boundary() -> None:
         info,
         FactoryAuditRow(
             role="term",
-            status="floor-gap",
+            status=FactoryAuditStatus.FLOOR_GAP,
             observed="x",
             blame="b",
             selected=None,
@@ -199,17 +200,20 @@ def test_gap_kind_status_handles_each_member() -> None:
     assert gap_kind_status(GapKind.PROOFIR) == "proofir-gap"
 
 
-def test_factory_audit_row_rejects_refused_lift_status() -> None:
-    with pytest.raises(TypeError, match="illegal='refused'"):
-        FactoryAuditRow(
-            role="term",
-            status="refused",
-            observed="call-builtin:sum",
-            blame="t.py:1:0",
-            selected="CallSugar",
-            candidates=["CallSugar"],
-            message="refusal belongs to verify, not lift",
-        )
+def test_factory_audit_status_makes_refused_unrepresentable() -> None:
+    # "refused" belongs to verify, not lift: it is not a member of the
+    # FactoryAuditStatus enum, so an illegal status cannot be constructed.
+    with pytest.raises(ValueError, match="refused"):
+        FactoryAuditStatus("refused")
+    assert {member.value for member in FactoryAuditStatus} == {
+        "selected",
+        "sugar-gap",
+        "sugar-ambiguous",
+        "floor-gap",
+        "constructor-gap",
+        "operation-gap",
+        "proofir-gap",
+    }
 
 
 def test_gap_kind_missing_arm_is_a_pyright_error(tmp_path: Path) -> None:
