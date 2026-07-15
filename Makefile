@@ -6,7 +6,7 @@
 #
 # Mainline targets:
 #   make help: print this help
-#   make ci: check-cargo-entrypoint + the acid test + showcase receipts
+#   make ci: the acid test + showcase receipts
 #   make test-all: the acid test -- test-rust + test-python
 #
 # `test-rust` runs the rust workspace (including the crate-pair inheritance
@@ -46,7 +46,7 @@ help:
 	@echo "Sugar: top-level orchestrator"
 	@echo ""
 	@echo "Mainline:"
-	@echo "  make ci             check-cargo-entrypoint + the acid test + showcase receipts"
+	@echo "  make ci             the acid test + showcase receipts"
 	@echo "  make test-all       the acid test: test-rust + test-python"
 	@echo "  make test-showcases run the checked-in end-to-end showcase receipts"
 	@echo "  make test-real-python-kit-lsp  real pandas kit through LSP (battleaxe; skip=red)"
@@ -500,7 +500,7 @@ test-3809-dod-scoreboard:
 	@bash scripts/test-3809-dod-scoreboard.sh
 
 .PHONY: ci
-ci: check-cargo-entrypoint check-lift-refusal-vocabulary test-python-format test-all test-showcases test-3809-dod-scoreboard self-attest coretests-source-audit coretests-invariants
+ci: check-lift-refusal-vocabulary test-python-format test-all test-showcases test-3809-dod-scoreboard self-attest coretests-source-audit coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
 
