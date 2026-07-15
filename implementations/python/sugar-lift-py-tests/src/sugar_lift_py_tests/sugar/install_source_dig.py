@@ -61,6 +61,36 @@ def _installed_source(module_name: str) -> tuple[str, str] | None:
         return None
 
 
+def _installed_native_extension(module_name: str) -> str | None:
+    """Return one exact extension-module origin without importing the module."""
+    if not module_name:
+        return None
+    parts = module_name.split(".")
+    search_path = None
+    spec = None
+    try:
+        for index in range(1, len(parts) + 1):
+            qualified = ".".join(parts[:index])
+            spec = importlib.machinery.PathFinder.find_spec(qualified, search_path)
+            if spec is None:
+                return None
+            if index < len(parts):
+                search_path = spec.submodule_search_locations
+                if search_path is None:
+                    return None
+        origin = getattr(spec, "origin", None)
+        loader = getattr(spec, "loader", None)
+        if not isinstance(origin, str) or not isinstance(
+            loader, importlib.machinery.ExtensionFileLoader
+        ):
+            return None
+        if not origin.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES)):
+            return None
+        return origin
+    except (ImportError, ModuleNotFoundError, OSError, TypeError, ValueError):
+        return None
+
+
 def _absolute_import_from_module(
     defining_module: str, imported_module: str | None, level: int
 ) -> str | None:
@@ -428,6 +458,14 @@ def resolve_install_source_value(
         return None
     resolving = _resolving | {import_target}
     module_name, attr = import_target.rsplit(".", 1)
+    native_origin = _installed_native_extension(module_name)
+    if native_origin is not None:
+        from sugar_lift_py_tests.floor import NativeCallableValue
+
+        return NativeCallableValue(
+            qualified_name=import_target,
+            module_origin=native_origin,
+        )
     installed = _installed_source(module_name)
     if installed is None:
         return None

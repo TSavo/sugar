@@ -145,6 +145,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 CallSiteValue,
                 ExceptionValue,
                 FunctionCallable,
+                NativeCallableValue,
             )
             from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.sugar.install_source_dig import (
@@ -159,6 +160,25 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             if isinstance(bound, ImportAliasValue):
                 if isinstance(bound.resolved_value, FunctionCallable):
                     bound = bound.resolved_value
+                elif isinstance(bound.resolved_value, NativeCallableValue):
+                    native = bound.resolved_value
+                    return Complete(
+                        CallSiteValue(
+                            target_name=native.qualified_name,
+                            arg_values=accumulated,
+                            parameters=self.keyword_names,
+                            term=ctor(
+                                f"call:{native.qualified_name}",
+                                [
+                                    value.to_term(owner=str(self.site))
+                                    for value in accumulated
+                                ],
+                                symbol_kind="contract-target",
+                            ),
+                            body=None,
+                            site=self.site,
+                        )
+                    )
                 else:
                     from sugar_lift_py_tests.factory import factory_panic_gap
                     from sugar_lift_py_tests.factory.factory_gap_info import (

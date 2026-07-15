@@ -5,6 +5,7 @@ from .block_value import BlockValue
 from .bound_var import BoundVar
 from .module_bound_var import ModuleBoundVar
 from .named_expression_value import NamedExpressionValue
+from .native_callable_value import NativeCallableValue
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
 from .builtin_exception_class_value import BuiltinExceptionClassValue
@@ -64,6 +65,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     BlockValue,
     BoundVar,
     NamedExpressionValue,
+    NativeCallableValue,
     BuilderState,
     Bv32Value,
     BuiltinExceptionClassValue,
@@ -121,6 +123,7 @@ __all__ = [
     "BoundVar",
     "ModuleBoundVar",
     "NamedExpressionValue",
+    "NativeCallableValue",
     "BuilderState",
     "Bv32Value",
     "BuiltinExceptionClassValue",
