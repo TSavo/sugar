@@ -64,7 +64,7 @@ class YieldSugar(Sugar, role=SugarRole.TERM):
                 witness=RuntimeEffectWitness(
                     operation=ctor("py.generator_yield", [yielded]),
                     operand=yielded,
-                    locus=str(self.site),
+                    site=self.site,
                 ),
             )
         )

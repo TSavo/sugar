@@ -152,7 +152,7 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
             return part.value.reduce(ctx).and_then(
                 lambda value: part.dynamic_spec.reduce(ctx).and_then(
                     lambda spec: _runtime_format_effect(
-                        str(self.site),
+                        self.site,
                         part.dynamic_reason,
                         value,
                         spec,
@@ -241,8 +241,9 @@ def _try_ground_format(value, conversion: int, spec: str, site) -> str | None:
 
 
 def _runtime_format_effect(
-    blame: str, reason: str, value, spec, conversion: int
+    site, reason: str, value, spec, conversion: int
 ) -> Incomplete:
+    blame = str(site)
     from sugar_lift_py_tests.effect import (
         DynamicFormatRuntimeEffect,
         RuntimeEffectWitness,
@@ -266,7 +267,7 @@ def _runtime_format_effect(
             witness=RuntimeEffectWitness(
                 operation=ctor("py.format.dynamic_spec", [operand]),
                 operand=operand,
-                locus=blame,
+                site=site,
             ),
         )
     )

@@ -1,35 +1,34 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
+from typing import TYPE_CHECKING
 
 from sugar_lift_py_tests.ir import Term
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
 
 @dataclass(frozen=True)
 class RuntimeEffectWitness:
-    """Evidence that perfect lift-time machinery still meets a runtime operand."""
+    """Evidence that perfect lift-time machinery still meets a runtime operand.
+
+    Constructed FROM the SourceFragment that owns the runtime boundary: the
+    site IS the address, so an absolute or empty locus is unrepresentable by
+    construction (SourceFragment.from_node normalizes filenames at the door).
+    """
 
     operation: Term
     operand: Term
-    locus: str
+    site: "SourceFragment"
 
-    def __post_init__(self) -> None:
-        if not self.locus:
-            raise ValueError("RuntimeEffectWitness requires a stable source locus")
-        if self.locus.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", self.locus):
-            from sugar_lift_py_tests.factory import factory_panic_gap
-
-            factory_panic_gap(
-                owner="RuntimeEffectWitness",
-                blame=self.locus,
-                observed="absolute source locus",
-                requested="workspace-relative source locus",
-                fix="construct the witness from a workspace-relative SourceFragment",
-            )
+    @property
+    def locus(self) -> str:
+        """The witness address, projected for display: ``file:line:col``."""
+        return str(self.site)
 
 
-def runtime_effect_witness(operation: str, operand, locus) -> RuntimeEffectWitness:
+def runtime_effect_witness(operation: str, operand, site) -> RuntimeEffectWitness:
     """Build the required witness from the operation's real runtime operand."""
     from sugar_lift_py_tests.ir import Term, ctor, str_const
 
@@ -40,7 +39,7 @@ def runtime_effect_witness(operation: str, operand, locus) -> RuntimeEffectWitne
     else:
         term = str_const(str(operand))
     return RuntimeEffectWitness(
-        operation=ctor(operation, [term]), operand=term, locus=str(locus)
+        operation=ctor(operation, [term]), operand=term, site=site
     )
 
 

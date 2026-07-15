@@ -28,7 +28,7 @@ class _EffectValue(FloorValue):
             witness=RuntimeEffectWitness(
                 operation=operand,
                 operand=operand,
-                locus="t.py:1:0",
+                site="t.py:1:0",
             ),
         )
 
