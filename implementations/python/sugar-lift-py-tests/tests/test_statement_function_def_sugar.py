@@ -9,6 +9,7 @@ from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import CallSiteValue, TermValue, UniverseValue
+from sugar_lift_py_tests.ir import ctor, num
 from sugar_lift_py_tests.outcome import complete_value
 
 
@@ -63,6 +64,111 @@ def test_nested_callable_captures_lexical_bindings_and_overlays_actuals() -> Non
         ctx, owner="nested closure regression", project_callsite=False
     )
     assert dug == TermValue(9)
+
+
+def test_nested_callable_binds_an_omitted_trailing_default_without_rekeying_callsite() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(y, increment=4):\n"
+        "        return y + increment\n"
+        "    return inner(5)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("y", "increment")
+    assert callsite.arg_values == (TermValue(5), TermValue(4))
+    # Identity belongs to the consumer spelling, not to the expanded binding.
+    assert callsite.term == ctor("call:inner", [num(5)])
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="nested default regression", project_callsite=False
+    ) == TermValue(9)
+
+
+def test_nested_callable_binds_multiple_omitted_trailing_defaults_in_formal_order() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(required, first=4, second=6):\n"
+        "        return required + first + second\n"
+        "    return inner(5)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("required", "first", "second")
+    assert callsite.arg_values == (TermValue(5), TermValue(4), TermValue(6))
+    assert callsite.term == ctor("call:inner", [num(5)])
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="multiple default alignment", project_callsite=False
+    ) == TermValue(15)
+
+
+def test_nested_callable_supplied_positional_overrides_only_its_aligned_default() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(required, first=4, second=6):\n"
+        "        return required + first + second\n"
+        "    return inner(5, 10)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.arg_values == (TermValue(5), TermValue(10), TermValue(6))
+    assert callsite.term == ctor("call:inner", [num(5), num(10)])
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="supplied default override", project_callsite=False
+    ) == TermValue(21)
+
+
+def test_nested_callable_default_is_assigned_once_at_its_temporal_coordinate() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    x = 5\n"
+        "    def inner(value=x):\n"
+        "        return value\n"
+        "    x = 9\n"
+        "    return inner()\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.arg_values == (TermValue(5),)
+    assert callsite.term == ctor("call:inner", [])
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="nested default assignment", project_callsite=False
+    ) == TermValue(5)
+
+
+def test_nested_callable_missing_required_positional_stays_a_signature_gap() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _root_universe(
+            "def outer(x):\n"
+            "    def inner(required, optional=4):\n"
+            "        return required + optional\n"
+            "    return inner()\n"
+        )
+
+    assert raised.value.info.owner == "FunctionCallable"
+    assert raised.value.info.requested == "bind call arguments to a function signature"
+    assert raised.value.info.observed == ("positional", "positional")
+
+
+def test_nested_callable_extra_positional_stays_a_signature_gap() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _root_universe(
+            "def outer(x):\n"
+            "    def inner(required, optional=4):\n"
+            "        return required + optional\n"
+            "    return inner(x, 6, 7)\n"
+        )
+
+    assert raised.value.info.owner == "FunctionCallable"
+    assert raised.value.info.requested == "bind call arguments to a function signature"
+    assert raised.value.info.observed == ("positional", "positional")
 
 
 def test_decorated_statement_def_stays_loud() -> None:
