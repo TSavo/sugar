@@ -28,6 +28,15 @@ class WitnessPipelineError(RuntimeError):
     pass
 
 
+class ProofObligationPanic(WitnessPipelineError):
+    """Terminal prove row that has no lawful aggregate verdict."""
+
+    def __init__(self, row: object):
+        self.row = row
+        rendered = json.dumps(row, sort_keys=True, separators=(",", ":"))
+        super().__init__(f"PROOF OBLIGATION PANIC: {rendered}")
+
+
 @dataclass(frozen=True)
 class WitnessPipelineResult:
     lift_doc: dict
@@ -397,13 +406,25 @@ def prove_verdict(prove_doc: dict) -> Verdict:
     rows = prove_doc.get("rows", [])
     if not rows:
         raise WitnessPipelineError(f"sugar prove returned no rows: {prove_doc!r}")
-    statuses = [row.get("status") for row in rows if isinstance(row, dict)]
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ProofObligationPanic(row)
+    statuses = [row.get("status") for row in rows]
     if "unsatisfied" in statuses:
         return "unsat"
     if statuses and all(status == "discharged" for status in statuses):
         return "sat"
+    terminal = next(
+        (
+            row
+            for row in rows
+            if row.get("status")
+            not in {"discharged", "unsatisfied", "solver-timeout"}
+        ),
+        None,
+    )
+    if terminal is not None:
+        raise ProofObligationPanic(terminal)
     if "solver-timeout" in statuses:
         return "solver-timeout"
-    raise WitnessPipelineError(
-        f"sugar prove returned no SAT/UNSAT verdict; statuses={statuses!r}"
-    )
+    raise ProofObligationPanic(prove_doc)
