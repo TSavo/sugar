@@ -1,4 +1,5 @@
 from __future__ import annotations
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 from typing import NoReturn
 
@@ -31,7 +32,7 @@ def proofir_construction_gap(
         info,
         FactoryAuditRow(
             role="proofir-construction-law",
-            status="proofir-gap",
+            status=FactoryAuditStatus.PROOFIR_GAP,
             observed=observed,
             blame="proofir-construction-law",
             selected=None,

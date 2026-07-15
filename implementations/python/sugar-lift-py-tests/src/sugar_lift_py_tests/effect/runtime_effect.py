@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -44,19 +45,18 @@ def runtime_effect_witness(operation: str, operand, site) -> RuntimeEffectWitnes
 
 
 @dataclass(frozen=True)
-class RuntimeEffect:
-    """A runtime effect: a value that does not exist until the program runs. Abstract --
-    never constructed directly. The KIND of runtime effect is a TYPE, so you build a
-    named subclass (OSExitRuntimeEffect, ...); a generic RuntimeEffect does not exist.
+class RuntimeEffect(ABC):
+    """A runtime effect: a value that does not exist until the program runs. Abstract
+    by class machinery (ABC), so a generic RuntimeEffect is unrepresentable: only a
+    named subclass (OSExitRuntimeEffect, ...) that declares its kind can be built.
+    The KIND of runtime effect is a TYPE, not a reason string.
     """
 
     reason: str
     witness: RuntimeEffectWitness
 
-    def __post_init__(self) -> None:
-        if type(self) is RuntimeEffect:
-            raise TypeError(
-                "RuntimeEffect is abstract and cannot be constructed directly; build a "
-                "named runtime effect (e.g. OSExitRuntimeEffect). The kind of effect is "
-                "a type, not a reason string."
-            )
+    @abstractmethod
+    def kind(self) -> type["RuntimeEffect"]:
+        """The kind of this effect: its own named type. Declaring this is what makes
+        a subclass a named runtime effect; the base leaves it abstract so direct
+        instantiation fails at class machinery level."""

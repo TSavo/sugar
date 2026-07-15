@@ -7,6 +7,7 @@ from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 _UNARY_OPS = frozenset({"USub", "UAdd", "Not", "Invert"})
 
@@ -93,7 +94,7 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM, comes_before=("NotOpSugar",)):
             ),
             FactoryAuditRow(
                 role="term",
-                status="sugar-gap",
+                status=FactoryAuditStatus.SUGAR_GAP,
                 observed=self.op,
                 blame=str(self.site),
                 selected=None,

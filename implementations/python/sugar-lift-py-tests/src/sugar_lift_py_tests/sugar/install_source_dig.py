@@ -26,6 +26,7 @@ import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 
 def _installed_source(module_name: str) -> tuple[str, str] | None:
@@ -49,7 +50,14 @@ def _installed_source(module_name: str) -> tuple[str, str] | None:
         if not origin or not origin.endswith((".py", ".pyi")):
             return None
         return Path(origin).read_text(encoding="utf-8"), origin
-    except (ImportError, ModuleNotFoundError, OSError, TypeError, UnicodeError, ValueError):
+    except (
+        ImportError,
+        ModuleNotFoundError,
+        OSError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+    ):
         return None
 
 
@@ -133,7 +141,7 @@ def _module_sibling_function_nodes(module_name: str) -> dict:
                 info,
                 FactoryAuditRow(
                     role="install-source import",
-                    status="floor-gap",
+                    status=FactoryAuditStatus.FLOOR_GAP,
                     observed=type(skipped).__name__,
                     blame=module_name,
                     selected=None,
@@ -428,9 +436,7 @@ def resolve_install_source_value(
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
-    function = _resolve_qualified_function_fragment(
-        import_target, resolving=_resolving
-    )
+    function = _resolve_qualified_function_fragment(import_target, resolving=_resolving)
     if function is not None:
         defining_source = function.node._sugar_source  # type: ignore[attr-defined]
         defining_file = function.node._sugar_file  # type: ignore[attr-defined]

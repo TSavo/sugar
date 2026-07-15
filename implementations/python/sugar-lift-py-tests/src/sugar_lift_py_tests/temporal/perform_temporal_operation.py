@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .temporal_context import TemporalContext
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 _DECLARED_OPERATION_MODULE = "sugar_lift_py_tests.temporal."
 
@@ -36,7 +37,7 @@ def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
         info,
         FactoryAuditRow(
             role="method_name",
-            status="operation-gap",
+            status=FactoryAuditStatus.OPERATION_GAP,
             observed=operation_name,
             blame=blame,
             selected=None,
@@ -82,7 +83,7 @@ def _missing_temporal_floor_gap(
         info,
         FactoryAuditRow(
             role=method_name,
-            status="floor-gap",
+            status=FactoryAuditStatus.FLOOR_GAP,
             observed=observed,
             blame=blame,
             selected=None,
@@ -135,7 +136,7 @@ def perform_temporal_operation(
             info,
             FactoryAuditRow(
                 role=method_name,
-                status="operation-gap",
+                status=FactoryAuditStatus.OPERATION_GAP,
                 observed=operation_name,
                 blame=blame,
                 selected=None,

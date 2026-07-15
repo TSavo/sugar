@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import NoReturn
 
-from .factory_audit_row import FactoryAuditRow
+from .factory_audit_row import FactoryAuditRow, FactoryAuditStatus
 from .factory_gap_info import FactoryGapInfo, GapKind, GapLocus
 
 
@@ -48,7 +48,7 @@ def factory_panic_gap(
     fix: str,
     gap_kind: GapKind = GapKind.FLOOR,
     gap_locus: GapLocus = GapLocus.CONSTRUCTION,
-    status: str = "sugar-gap",
+    status: FactoryAuditStatus = FactoryAuditStatus.SUGAR_GAP,
     selected: str | None = None,
 ) -> NoReturn:
     """Mouth for sites that previously built FactoryGapEffect / FactoryGap."""

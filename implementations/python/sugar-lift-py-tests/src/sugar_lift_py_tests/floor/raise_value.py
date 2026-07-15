@@ -6,6 +6,7 @@ from sugar_lift_py_tests.effect import RaiseEffect
 
 from .exception_value import ExceptionValue
 from .floor_value import FloorValue
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,7 @@ def _exceptional_exit_formula(effect: RaiseEffect, guards: tuple = ()):
             observed="unclassified raise exit",
             requested="an exceptional-exit coordinate",
             fix="classify the raised exception before projecting the scope exit",
-            status="floor-gap",
+            status=FactoryAuditStatus.FLOOR_GAP,
         )
 
     from sugar_lift_py_tests.ir import and_, ctor, eq, implies, make_var, str_const

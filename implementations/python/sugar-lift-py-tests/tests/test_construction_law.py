@@ -56,6 +56,7 @@ from sugar_lift_py_tests.proofir.formulas import Eq, Formula
 from sugar_lift_py_tests.proofir.scope import ClosedFormula, PostCondition
 from sugar_lift_py_tests.proofir.sorts import IntSort, StringSort, UnknownSort
 from sugar_lift_py_tests.proofir.terms import CallTerm, ConstTerm, VarTerm
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -365,7 +366,7 @@ def test_refusal_record_gap_effects_are_typed_before_legacy_lowering() -> None:
         gap_info,
         FactoryAuditRow(
             role="BodyUniverse",
-            status="sugar-gap",
+            status=FactoryAuditStatus.SUGAR_GAP,
             observed="Dict",
             blame="factory",
             selected=None,
