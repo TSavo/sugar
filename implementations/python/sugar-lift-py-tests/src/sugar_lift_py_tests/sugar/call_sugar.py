@@ -145,7 +145,6 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 CallSiteValue,
                 ExceptionValue,
                 FunctionCallable,
-                SymbolicValue,
             )
             from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.sugar.install_source_dig import (
@@ -185,24 +184,6 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 )
 
             if type(bound) is BuiltinExceptionClassValue:
-                unconstructed = tuple(
-                    value
-                    for value in accumulated
-                    if isinstance(value, (SymbolicValue, CallSiteValue))
-                )
-                if unconstructed:
-                    from sugar_lift_py_tests.factory import factory_panic_gap
-
-                    factory_panic_gap(
-                        owner="CallSugar",
-                        blame=str(self.site),
-                        observed=tuple(type(value).__name__ for value in unconstructed),
-                        requested="constructed exception argument values",
-                        fix=(
-                            "construct every builtin exception argument before "
-                            "building ExceptionValue; keep symbolic/call results loud"
-                        ),
-                    )
                 return Complete(
                     ExceptionValue(
                         exception_name=bound.name,

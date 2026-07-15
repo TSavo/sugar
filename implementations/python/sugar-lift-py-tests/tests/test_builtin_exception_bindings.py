@@ -9,12 +9,19 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.floor import ClassValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    ClassValue,
+    ExceptionValue,
+    SymbolicValue,
+)
+from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 import sugar_lift_py_tests.temporal as temporal_module
 from sugar_lift_py_tests.temporal import TemporalContext
+from factory_reduce import reduce_value
 
 
 def test_builtin_callable_names_construct_as_decorators_and_values() -> None:
@@ -63,6 +70,25 @@ def test_builtin_exception_names_construct_in_raise_and_isinstance() -> None:
     )
     assert assertions["lifted_cited"] == 1
     assert assertions["refused_loud"] == 0
+
+
+def test_builtin_exception_preserves_constructed_symbolic_argument() -> None:
+    value = reduce_value(
+        "ValueError(message)",
+        binds={"message": SymbolicValue(make_var("message"))},
+    )
+
+    assert isinstance(value, ExceptionValue)
+    assert value.arguments == (SymbolicValue(make_var("message")),)
+
+
+def test_builtin_exception_preserves_constructed_call_argument() -> None:
+    value = reduce_value("ValueError(render(1))")
+
+    assert isinstance(value, ExceptionValue)
+    assert len(value.arguments) == 1
+    assert isinstance(value.arguments[0], CallSiteValue)
+    assert value.arguments[0].target_name == "render"
 
 
 def test_genuinely_undefined_name_still_panics_loudly() -> None:
