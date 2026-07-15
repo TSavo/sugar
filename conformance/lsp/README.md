@@ -66,8 +66,8 @@ normalized field is intentional only if this list is updated in the same PR.
 
 ## Replay DoD
 
-`cargo test -p sugar-lsp --test real_python_kit_conversation_golden` (with the
-real kit present / `SUGAR_REAL_KIT_LSP_REQUIRED=1` on the gate):
+`make test-3809-dod-scoreboard` (with the real kit present /
+`SUGAR_REAL_KIT_LSP_REQUIRED=1` on the explicit battleaxe instrument):
 
 1. Drive the real kit through the same conversation.
 2. Normalize the live stream with the table above.
@@ -77,5 +77,7 @@ Update the golden only from a real RAN (never a skip):
 
 ```bash
 SUGAR_LSP_GOLDEN_UPDATE=1 SUGAR_REAL_KIT_LSP_REQUIRED=1 \
-  cargo test -p sugar-lsp --test real_python_kit_conversation_golden -- --nocapture
+  cargo test -p sugar-lsp --test real_python_kit_conversation_golden \
+  real_python_kit_conversation_is_byte_identical_to_golden_ndjson \
+  -- --ignored --exact --nocapture
 ```

@@ -15,7 +15,9 @@
 //
 // Update (real RAN only):
 //   SUGAR_LSP_GOLDEN_UPDATE=1 SUGAR_REAL_KIT_LSP_REQUIRED=1 \
-//     cargo test -p sugar-lsp --test real_python_kit_conversation_golden -- --nocapture
+//     cargo test -p sugar-lsp --test real_python_kit_conversation_golden \
+//       real_python_kit_conversation_is_byte_identical_to_golden_ndjson \
+//       -- --ignored --exact --nocapture
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -613,6 +615,7 @@ fn capture_real_kit_conversation() -> String {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[ignore = "explicit real-Pandas battleaxe instrument: run make test-3809-dod-scoreboard"]
 fn real_python_kit_conversation_is_byte_identical_to_golden_ndjson() {
     let Some(_py) = require_real_kit_or_skip() else {
         return;
