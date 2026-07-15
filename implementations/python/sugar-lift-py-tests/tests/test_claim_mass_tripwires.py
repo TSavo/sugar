@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -9,73 +8,13 @@ import pytest
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
+from claim_mass_corpus import ClaimMassPin, DATETIME_PIN
 
 VENDOR = Path(__file__).parent / "vendor"
 
 
-@dataclass(frozen=True)
-class ClaimMassPin:
-    name: str
-    relative_path: str
-    sha256: str
-    assertion_count: int
-    lifted_loci: tuple[int | tuple[str, int], ...]
-
-
 PINS = (
-    ClaimMassPin(
-        name="datetime",
-        relative_path="cpython-3.11/datetime.py",
-        sha256="cc9bcb0f1c2f44e1a6cd51882979e113e973c2e65ed84b9aaedabb48d47aa356",
-        assertion_count=45,
-        lifted_loci=(
-            53,
-            60,
-            65,
-            67,
-            78,
-            82,
-            86,
-            131,
-            137,
-            144,
-            243,
-            274,
-            328,
-            504,
-            618,
-            620,
-            625,
-            626,
-            627,
-            628,
-            633,
-            636,
-            640,
-            641,
-            643,
-            647,
-            648,
-            652,
-            668,
-            669,
-            670,
-            671,
-            679,
-            680,
-            681,
-            867,
-            1126,
-            1440,
-            1480,
-            1507,
-            1510,
-            1889,
-            2044,
-            2047,
-            2141,
-        ),
-    ),
+    DATETIME_PIN,
     ClaimMassPin(
         name="itsdangerous",
         relative_path="itsdangerous-2.2.0/test_serializer.py",
@@ -185,9 +124,10 @@ def test_claim_mass_corpus_never_silently_shrinks(pin: ClaimMassPin) -> None:
     lifted_loci: list[int | tuple[str, int]] = []
     for source_path in files:
         source = source_path.read_text(encoding="utf-8")
-        payload, _gaps = audit_lift_file(source, str(source_path), hold_panic=True)
+        filename = source_path.relative_to(VENDOR).as_posix()
+        payload, _gaps = audit_lift_file(source, filename)
         assertions = account_lift_coverage(
-            census_source(source, file=str(source_path)), payload.to_rpc()
+            census_source(source, file=filename), payload.to_rpc()
         ).to_json()["assertions"]
         silent += assertions["silently_unaccounted"]
         lifted += assertions["lifted_cited"]

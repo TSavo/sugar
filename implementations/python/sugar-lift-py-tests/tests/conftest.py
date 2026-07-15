@@ -19,6 +19,7 @@ from sugar_lift_py_tests.sugar_binary import (  # noqa: E402
     SugarBinaryResolutionError,
     resolve_sugar_binary,
 )
+from claim_mass_corpus import DATETIME_SHA256  # noqa: E402
 
 _SUGAR_PROJECT_SUBCOMMANDS = frozenset({"mint", "prove", "lift", "verify"})
 
@@ -94,9 +95,7 @@ def refuse_non_hermetic_sugar_cli(monkeypatch: pytest.MonkeyPatch) -> None:
 # measurements pin this exact source; the hash makes corpus movement
 # reproducible and a drifted copy loud instead of silently re-baselined.
 _CPYTHON_311_DATETIME = Path(_HERE) / "vendor" / "cpython-3.11" / "datetime.py"
-_CPYTHON_311_DATETIME_SHA256 = (
-    "cc9bcb0f1c2f44e1a6cd51882979e113e973c2e65ed84b9aaedabb48d47aa356"
-)
+_CPYTHON_311_DATETIME_SHA256 = DATETIME_SHA256
 
 
 @pytest.fixture(scope="session")
