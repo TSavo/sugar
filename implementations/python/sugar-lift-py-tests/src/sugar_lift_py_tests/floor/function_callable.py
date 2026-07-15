@@ -59,12 +59,63 @@ class FunctionCallable(FloorValue):
         simple = all(
             kind in {"positional", "positional-only"} for kind in self.parameter_kinds
         )
-        required_count = len(self.parameters) - len(self.positional_defaults)
         supplied_count = len(arg_values)
-        valid_positional_arity = required_count <= supplied_count <= len(
-            self.parameters
-        )
-        if not simple or keyword_names or not valid_positional_arity:
+        if simple:
+            required_count = len(self.parameters) - len(self.positional_defaults)
+            valid_positional_arity = required_count <= supplied_count <= len(
+                self.parameters
+            )
+            if not keyword_names and valid_positional_arity:
+                missing_count = len(self.parameters) - supplied_count
+                bound_values = (
+                    *arg_values,
+                    *self.positional_defaults[
+                        len(self.positional_defaults) - missing_count :
+                    ],
+                )
+            else:
+                bound_values = None
+        else:
+            fixed_positional_count = sum(
+                kind in {"positional", "positional-only"}
+                for kind in self.parameter_kinds
+            )
+            empty_variadic_signature = (
+                any(
+                    kind in {"var-positional", "var-keyword"}
+                    for kind in self.parameter_kinds
+                )
+                and all(
+                    kind
+                    in {
+                        "positional",
+                        "positional-only",
+                        "var-positional",
+                        "var-keyword",
+                    }
+                    for kind in self.parameter_kinds
+                )
+            )
+            if (
+                empty_variadic_signature
+                and not keyword_names
+                and supplied_count == fixed_positional_count
+            ):
+                from .dict_value import DictValue
+                from .tuple_value import TupleValue
+
+                positional = iter(arg_values)
+                bound_values = tuple(
+                    next(positional)
+                    if kind in {"positional", "positional-only"}
+                    else TupleValue(())
+                    if kind == "var-positional"
+                    else DictValue(())
+                    for kind in self.parameter_kinds
+                )
+            else:
+                bound_values = None
+        if bound_values is None:
             factory_panic_gap(
                 owner="FunctionCallable",
                 blame=str(site),
@@ -74,11 +125,6 @@ class FunctionCallable(FloorValue):
                 gap_kind=GapKind.FLOOR,
                 gap_locus=GapLocus.CONSTRUCTION,
             )
-        missing_count = len(self.parameters) - supplied_count
-        bound_values = (
-            *arg_values,
-            *self.positional_defaults[len(self.positional_defaults) - missing_count :],
-        )
         return Complete(
             CallSiteValue(
                 target_name=self.name,
