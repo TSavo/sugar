@@ -329,6 +329,7 @@ pub struct Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libsugar::compose::OpacityMementoLookup;
     use serde_json::json;
 
     fn cid(seed: &str) -> MementoCid {
