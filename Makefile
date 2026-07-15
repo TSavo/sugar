@@ -63,6 +63,8 @@ help:
 	@echo "  make numpy-wall                build and ratchet-check the NumPy lift wall"
 	@echo "  make pandas-wall               build and ratchet-check the pandas lift wall"
 	@echo "  make assertion-lift-frontier   run the explicit recursive assertion_lift frontier ratchet"
+	@echo "  make check-resident-ownership  Lane B: unbounded process-lifetime cache census (R→0)"
+	@echo "  make check-showcase-kit-preflight  Lane A: showcase kit import contracts (A1→0)"
 	@echo "  make test-python-format       Black check for implementations/python"
 	@echo "  make test-<lang>              csharp / php / c"
 	@echo "  make test-compiler-warning-de compiler-warning delta-epsilon instrument"
@@ -144,6 +146,22 @@ check-cargo-entrypoint:
 check-lift-refusal-vocabulary:
 	tools/check-lift-refusal-vocabulary.py
 	tools/check-lift-refusal-vocabulary.py --self-test
+
+# Lane B instrument (explicit): unbounded process-lifetime cache decorators.
+# Stays red while R>0. Do not re-enter default `make ci` until R=0.
+# See docs/analysis/ci-whack-a-mole-course-2026-07-15.md.
+.PHONY: check-resident-ownership
+check-resident-ownership:
+	$(PYTHON) tools/resident_ownership_census.py --self-test
+	$(PYTHON) tools/resident_ownership_census.py
+
+# Lane A instrument: showcase kit imports under declared contracts.
+# Prerequisite of test-showcases so missing kits fail with a named A1, not a
+# refuse-cascade three minutes later.
+.PHONY: check-showcase-kit-preflight
+check-showcase-kit-preflight:
+	$(PYTHON) tools/showcase_kit_preflight.py --self-test
+	$(PYTHON) tools/showcase_kit_preflight.py
 
 .PHONY: numpy-wall
 numpy-wall:
@@ -388,7 +406,7 @@ examples-gate-extended:
 	  --nice $(EXAMPLES_GATE_NICE)
 
 .PHONY: test-showcases
-test-showcases:
+test-showcases: check-showcase-kit-preflight
 	@set -e; \
 	if [ "$${SHOWCASES_ON_REMOTE:-0}" != "1" ] && [ "$$(uname -s)" != "Linux" ] && [ "$${USE_BCARGO:-1}" != "0" ]; then \
 	  echo "==== test-showcases on battleaxe via bcargo ===="; \
