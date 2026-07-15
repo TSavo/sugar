@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.machinery
 import sys
 from pathlib import Path
 
@@ -49,6 +50,29 @@ def _consumer_call(source: str, call: str, filename: str = "consumer.py"):
         ),
         temporal,
     )
+
+
+def test_direct_extension_symbol_emits_qualified_bodyless_bridge_without_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    extension = tmp_path / f"fixture_native{importlib.machinery.EXTENSION_SUFFIXES[0]}"
+    extension.write_bytes(b"not a loadable extension")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    callsite, temporal = _consumer_call(
+        "from fixture_native import exact as chosen\n", "chosen(7)"
+    )
+
+    alias = temporal.value_for("chosen")
+    assert isinstance(alias, ImportAliasValue)
+    assert alias.import_target == "fixture_native.exact"
+    assert alias.resolved_value is not None
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.target_name == "fixture_native.exact"
+    assert callsite.arg_values == (TermValue(7),)
+    assert callsite.body is None
+    assert callsite.term.name == "call:fixture_native.exact"
+    assert "fixture_native" not in sys.modules
 
 
 def test_reexported_qualified_function_reaches_function_callable_binder_without_execution(
