@@ -171,6 +171,9 @@ def _write_stamp_fixture(root: Path) -> Path:
     script.parent.mkdir(parents=True)
     shutil.copy2(SUGARBIN, script)
     script.chmod(0o755)
+    # sugarbin sources bin/lib/sugar-exec.sh (execution broker split); the
+    # fixture copy must carry the library or the copied script dies at source.
+    shutil.copytree(SUGARBIN.parent / "lib", root / "bin" / "lib")
 
     rust_src = root / "implementations" / "rust" / "sugar-cli" / "src"
     rust_src.mkdir(parents=True)
