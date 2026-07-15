@@ -95,25 +95,64 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         from sugar_lift_py_tests.floor.call_site_value import force_floor
 
         if isinstance(cm, CallSiteValue):
-            # Timeless substitution: the as-binding is the next ordinary
-            # method-chain name, manager().__enter__(), never manager().
-            entered = cm.linear_method_call("__enter__", (), self.site)
+            # A source-backed producer may expose its complete manager result.
+            # Dig that result structurally so __enter__/__exit__ resolve on the
+            # exact ObjectValue method table; never borrow a same-leaf method
+            # from a resolver or invent a suppression contract.
+            manager = cm._dig_floor_or_none(ctx, owner="WithSugar manager result")
+            if isinstance(manager, ObjectValue):
+                enter_call = manager.call_method_value(
+                    "__enter__",
+                    (),
+                    owner=type(self).__name__,
+                    blame=str(self.site),
+                    ctx=ctx,
+                ).value
+                entered = force_floor(
+                    enter_call, ctx, owner="WithSugar.__enter__", project_callsite=False
+                )
+            else:
+                # Coordinate-only managers keep the historical non-raising
+                # rewrite. A raising body below turns this soft coordinate into
+                # a hard demand for the exact manager result and __exit__ body.
+                entered = cm.linear_method_call("__enter__", (), self.site)
+
             body_ctx = ctx
             if as_name is not None:
                 body_ctx = ScopeRebind(as_name, entered).extend_scope(ctx)
             outcome = self._enter_items(remaining, body_ctx)
-            if _carries_raise_effect(outcome):
-                from sugar_lift_py_tests.factory import factory_panic_gap
+            if not _carries_raise_effect(outcome):
+                return outcome
 
-                factory_panic_gap(
-                    owner="WithSugar",
-                    blame=str(self.site),
-                    observed="raise-carrying callsite with-body",
-                    requested="dig manager().__exit__ exception suppression contract",
-                    fix="attach the __exit__ method-chain body before reducing a raising with-body",
+            if not isinstance(manager, ObjectValue):
+                if cm.body is None:
+                    _unresolved_callsite_exit(self.site)
+                manager = force_floor(
+                    cm, ctx, owner="WithSugar manager result", project_callsite=False
                 )
-            # A non-raising body has no exceptional answer for __exit__ to
-            # suppress. Its ordinary result is already the complete rewrite.
+            if not isinstance(manager, ObjectValue) or not manager.has_method("__exit__"):
+                _unresolved_callsite_exit(self.site)
+
+            exit_call = manager.call_method_value(
+                "__exit__",
+                (entered, entered, entered),
+                owner=type(self).__name__,
+                blame=str(self.site),
+                ctx=ctx,
+            ).value
+            exit_value = force_floor(
+                exit_call, ctx, owner="WithSugar.__exit__", project_callsite=False
+            )
+            if _constructed_truthy(exit_value, self.site):
+                from sugar_lift_py_tests.floor import BlockValue
+                from sugar_lift_py_tests.outcome import Complete
+
+                # Suppression removes the exceptional body contribution and
+                # permits the enclosing block to continue after the with. The
+                # optional-as binding remains live after the with statement.
+                if as_name is not None:
+                    return Complete(ScopeRebind(as_name, entered))
+                return Complete(BlockValue(()))
             return outcome
 
         if not isinstance(cm, ObjectValue):
@@ -166,6 +205,29 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
 
     def walk_children(self):
         return (*(context for context, _as_name in self.items), self.body)
+
+
+def _unresolved_callsite_exit(site) -> None:
+    from sugar_lift_py_tests.factory import factory_panic_gap
+
+    factory_panic_gap(
+        owner="WithSugar",
+        blame=str(site),
+        observed="raise-carrying callsite with-body",
+        requested="dig manager().__exit__ exception suppression contract",
+        fix="attach the exact __exit__ method body before reducing a raising with-body",
+    )
+
+
+def _constructed_truthy(value, site) -> bool:
+    """Suppress only when the constructed __exit__ result folds to literal True."""
+    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    truth = value.truth(site)
+    if isinstance(truth, Incomplete):
+        return False
+    return type(getattr(truth, "value", None)) is TrueBoolLiteralSugar
 
 
 def _carries_raise_effect(outcome) -> bool:
