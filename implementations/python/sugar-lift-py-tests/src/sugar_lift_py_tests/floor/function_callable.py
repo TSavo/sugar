@@ -80,7 +80,7 @@ class FunctionCallable(FloorValue):
                 kind in {"positional", "positional-only"}
                 for kind in self.parameter_kinds
             )
-            empty_variadic_signature = (
+            supported_variadic_signature = (
                 any(
                     kind in {"var-positional", "var-keyword"}
                     for kind in self.parameter_kinds
@@ -96,19 +96,33 @@ class FunctionCallable(FloorValue):
                     for kind in self.parameter_kinds
                 )
             )
+            has_var_positional = "var-positional" in self.parameter_kinds
+            required_count = fixed_positional_count - len(self.positional_defaults)
+            valid_positional_arity = required_count <= supplied_count and (
+                has_var_positional or supplied_count <= fixed_positional_count
+            )
             if (
-                empty_variadic_signature
+                supported_variadic_signature
                 and not keyword_names
-                and supplied_count == fixed_positional_count
+                and valid_positional_arity
             ):
                 from .dict_value import DictValue
                 from .tuple_value import TupleValue
 
-                positional = iter(arg_values)
+                supplied_fixed_count = min(supplied_count, fixed_positional_count)
+                missing_fixed_count = fixed_positional_count - supplied_fixed_count
+                fixed_values = (
+                    *arg_values[:supplied_fixed_count],
+                    *self.positional_defaults[
+                        len(self.positional_defaults) - missing_fixed_count :
+                    ],
+                )
+                positional = iter(fixed_values)
+                surplus = arg_values[fixed_positional_count:]
                 bound_values = tuple(
                     next(positional)
                     if kind in {"positional", "positional-only"}
-                    else TupleValue(())
+                    else TupleValue(surplus)
                     if kind == "var-positional"
                     else DictValue(())
                     for kind in self.parameter_kinds

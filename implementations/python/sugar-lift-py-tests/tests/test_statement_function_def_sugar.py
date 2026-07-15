@@ -196,6 +196,68 @@ def test_nested_callable_binds_empty_variadic_parameters_without_rekeying_callsi
     ) == TupleValue(())
 
 
+def test_nested_callable_collects_surplus_positionals_in_source_order_without_rekeying_callsite() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(required, /, *extras, **options):\n"
+        "        return extras\n"
+        "    return inner(5, 6, 7, 8)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("required", "extras", "options")
+    assert callsite.arg_values == (
+        TermValue(5),
+        TupleValue((TermValue(6), TermValue(7), TermValue(8))),
+        DictValue(()),
+    )
+    assert callsite.term == ctor("call:inner", [num(5), num(6), num(7), num(8)])
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="surplus positional binding", project_callsite=False
+    ) == TupleValue((TermValue(6), TermValue(7), TermValue(8)))
+
+
+def test_nested_callable_aligns_positional_default_before_collecting_surplus() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(required, optional=4, *extras, **options):\n"
+        "        return extras\n"
+        "    return inner(5, 10, 11, 12)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("required", "optional", "extras", "options")
+    assert callsite.arg_values == (
+        TermValue(5),
+        TermValue(10),
+        TupleValue((TermValue(11), TermValue(12))),
+        DictValue(()),
+    )
+    assert callsite.term == ctor("call:inner", [num(5), num(10), num(11), num(12)])
+
+
+def test_nested_callable_omitted_positional_default_precedes_empty_variadics() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(required, optional=4, *extras, **options):\n"
+        "        return optional\n"
+        "    return inner(5)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.arg_values == (
+        TermValue(5),
+        TermValue(4),
+        TupleValue(()),
+        DictValue(()),
+    )
+    assert callsite.term == ctor("call:inner", [num(5)])
+
+
 def test_nested_callable_exact_fixed_positional_control_stays_unchanged() -> None:
     universe = _root_universe(
         "def outer():\n"
@@ -209,6 +271,25 @@ def test_nested_callable_exact_fixed_positional_control_stays_unchanged() -> Non
     assert callsite.parameters == ("required",)
     assert callsite.arg_values == (TermValue(5),)
     assert callsite.term == ctor("call:inner", [num(5)])
+
+
+def test_nested_callable_keyword_only_boundary_is_not_filled_by_surplus_positionals() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _root_universe(
+            "def outer():\n"
+            "    def inner(required, /, *extras, flag, **options):\n"
+            "        return extras\n"
+            "    return inner(5, 6, 7)\n"
+        )
+
+    assert raised.value.info.owner == "FunctionCallable"
+    assert raised.value.info.requested == "bind call arguments to a function signature"
+    assert raised.value.info.observed == (
+        "positional-only",
+        "var-positional",
+        "keyword-only",
+        "var-keyword",
+    )
 
 
 def test_nested_callable_empty_variadics_do_not_hide_missing_required_positional() -> None:
