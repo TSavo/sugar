@@ -6,9 +6,9 @@ fn sugar_bin() -> PathBuf {
 }
 
 #[test]
-fn construction_gap_continuation_requires_audit_frontier() {
+fn allowed_broken_components_requires_audit_frontier() {
     let rejected = Command::new(sugar_bin())
-        .args(["lift", "--continue-on-construction-gaps"])
+        .args(["lift", "--allowed-broken-components", "python"])
         .output()
         .expect("spawn sugar lift");
     assert!(!rejected.status.success());
@@ -22,7 +22,8 @@ fn audit_frontier_rejects_completed_lift_modes() {
             .args([
                 "lift",
                 "--audit-frontier",
-                "--continue-on-construction-gaps",
+                "--allowed-broken-components",
+                "python",
                 completed_mode,
             ])
             .output()

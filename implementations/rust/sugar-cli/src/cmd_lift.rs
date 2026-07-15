@@ -200,8 +200,6 @@ pub fn run(args: LiftArgs) -> u8 {
     lift_options.identify_only = args.identify_only;
     lift_options.library_bindings = args.library_bindings;
     lift_options.report_summary = args.report_summary;
-    lift_options.audit_frontier = args.audit_frontier;
-    lift_options.continue_on_construction_gaps = args.continue_on_construction_gaps;
     tracing::trace!(
         surface = %surface,
         emit = ?lift_options.emit,
@@ -233,7 +231,7 @@ pub fn run(args: LiftArgs) -> u8 {
                 return EXIT_USER_ERROR;
             }
         }
-        match recovered_audit_tree(&project_root, &surface) {
+        match recovered_audit_tree(&project_root, &surface, &args.allowed_broken_components) {
             Ok(response) => {
                 let audit = match serde_json::from_value::<RecoveredAudit>(response) {
                     Ok(audit) => audit,
@@ -512,7 +510,11 @@ pub fn run(args: LiftArgs) -> u8 {
 /// absent from the `sugar-cli` library target, while `lift_plugin` is shared by
 /// both targets. Putting this command-only wrapper in the shared module made it
 /// compiler-proven dead in the library build (#4381).
-fn recovered_audit_tree(project_root: &Path, surface: &str) -> Result<Value, String> {
+fn recovered_audit_tree(
+    project_root: &Path,
+    surface: &str,
+    allowed_broken_components: &[String],
+) -> Result<Value, String> {
     let manifest = lift_plugin::find_manifest_for_surface(project_root, surface).map_err(|error| {
         format!(
             "lift-plugin.manifest: {error}; configure a lift manifest whose sugar.enumerate method serves the keyed audit tree"
@@ -527,7 +529,7 @@ fn recovered_audit_tree(project_root: &Path, surface: &str) -> Result<Value, Str
         method: manifest.method.clone(),
     })
     .map_err(|error| format!("lift.rendezvous: {error}"))?;
-    sugar_compiler::tree::fold_recovered_audit(&kit, project_root)
+    sugar_compiler::tree::fold_recovered_audit(&kit, project_root, allowed_broken_components)
         .map_err(|error| format!("lift.path: {error}"))
 }
 
@@ -10824,8 +10826,6 @@ mod tests {
             library_bindings: false,
             report: false,
             report_summary: false,
-            audit_frontier: false,
-            continue_on_construction_gaps: false,
             visual: false,
             prove: false,
             z3: "z3".to_string(),

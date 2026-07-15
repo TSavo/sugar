@@ -2406,6 +2406,12 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     seek = bool(params.get("seek", False))
     options = params.get("options") if isinstance(params.get("options"), dict) else {}
     audit_walk = options.get("auditFrontier") is True
+    allowed_broken_components = options.get("allowedBrokenComponents", [])
+    recovery_allowed = (
+        audit_walk
+        and isinstance(allowed_broken_components, list)
+        and KIT_ID in allowed_broken_components
+    )
     root = Path(workspace_root).resolve()
     _TRANSPORT_LOG.info(
         "enumeration_request",
@@ -2491,10 +2497,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 return
             if audit_walk and level == "functions":
-                source = full_path.read_text(encoding="utf-8")
+                source_bytes = full_path.read_bytes()
+                source = source_bytes.decode("utf-8")
                 from sugar_lift_py_tests.canonicalizer import blake3_512_of
 
-                file_cid = blake3_512_of(source.encode())
+                file_cid = blake3_512_of(source_bytes)
                 requested_cid = at.get("source_cid") if at else None
                 if requested_cid and requested_cid != file_cid:
                     _send_enumerate_result(
@@ -2509,7 +2516,12 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     )
                     return
                 context_hit = file_cid in _AUDIT_FILE_CONTEXTS
-                context = _audit_file_context(source, file_rel, file_cid)
+                context = _audit_file_context(
+                    source,
+                    file_rel,
+                    file_cid,
+                    hold_seed_panics=recovery_allowed,
+                )
                 nodes = []
                 # The module owner exists only when the source has a statement
                 # to own. Empty package markers are leaf files, so their
@@ -2537,10 +2549,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 return
             if audit_walk and level == "facts":
-                source = full_path.read_text(encoding="utf-8")
+                source_bytes = full_path.read_bytes()
+                source = source_bytes.decode("utf-8")
                 from sugar_lift_py_tests.canonicalizer import blake3_512_of
 
-                actual_file_cid = blake3_512_of(source.encode())
+                actual_file_cid = blake3_512_of(source_bytes)
                 requested_file_cid = at.get("file_cid")
                 if requested_file_cid and requested_file_cid != actual_file_cid:
                     _send_enumerate_result(
@@ -2556,14 +2569,19 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     return
                 file_cid = actual_file_cid
                 context_hit = file_cid in _AUDIT_FILE_CONTEXTS
-                context = _audit_file_context(source, file_rel, file_cid)
+                context = _audit_file_context(
+                    source,
+                    file_rel,
+                    file_cid,
+                    hold_seed_panics=recovery_allowed,
+                )
                 from sugar_lift_py_tests.ir import term_intern_scope
 
                 with term_intern_scope():
                     recovered = audit_lift_file(
                         source,
                         file_rel,
-                        recover_panics=True,
+                        recover_panics=recovery_allowed,
                         target_memento=at,
                         audit_context=context,
                     )
@@ -3035,19 +3053,6 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
         contract_bindings = []
     options = params.get("options") if isinstance(params.get("options"), dict) else {}
     audit_frontier = options.get("auditFrontier") is True
-    continue_on_gaps = options.get("continueOnConstructionGaps") is True
-    if audit_frontier != continue_on_gaps:
-        _send(
-            {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "error": {
-                    "code": -32602,
-                    "message": "construction-gap recovery requires both auditFrontier and continueOnConstructionGaps",
-                },
-            }
-        )
-        return
     try:
         if audit_frontier:
             _send(
@@ -3395,7 +3400,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     if "--audit-only" in argv:
         raise SystemExit(
             "--audit-only no longer enables construction-gap recovery; "
-            "use sugar lift --audit-frontier --continue-on-construction-gaps"
+            "use sugar lift --audit-frontier --allowed-broken-components python"
         )
     while True:
         msg = _recv()

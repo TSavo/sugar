@@ -7,7 +7,7 @@ Missing construction on valid Python remains a mandatory `FactoryPanic`. The cam
 Normal lift stops at the first panic and emits no completed artifact. Diagnostic recovery requires both runtime flags:
 
 ```text
-sugar lift --audit-frontier --continue-on-construction-gaps <project>
+sugar lift --audit-frontier --allowed-broken-components python <project>
 ```
 
 The response is a separately tagged `recovered-construction-audit`, written as `frontier.json`. It contains mandatory panic records and explicitly suppressed descendants. It has no IR lane and cannot be selected with report, identify, library-binding, or prove modes. Panics keep the process red/nonzero.
