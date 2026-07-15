@@ -8,7 +8,13 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-from sugar_lift_py_tests.floor import CallSiteValue, TermValue, UniverseValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    DictValue,
+    TermValue,
+    TupleValue,
+    UniverseValue,
+)
 from sugar_lift_py_tests.ir import ctor, num
 from sugar_lift_py_tests.outcome import complete_value
 
@@ -169,6 +175,58 @@ def test_nested_callable_extra_positional_stays_a_signature_gap() -> None:
     assert raised.value.info.owner == "FunctionCallable"
     assert raised.value.info.requested == "bind call arguments to a function signature"
     assert raised.value.info.observed == ("positional", "positional")
+
+
+def test_nested_callable_binds_empty_variadic_parameters_without_rekeying_callsite() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(required, /, *extras, **options):\n"
+        "        return extras\n"
+        "    return inner(5)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("required", "extras", "options")
+    assert callsite.arg_values == (TermValue(5), TupleValue(()), DictValue(()))
+    assert callsite.term == ctor("call:inner", [num(5)])
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="empty variadic binding", project_callsite=False
+    ) == TupleValue(())
+
+
+def test_nested_callable_exact_fixed_positional_control_stays_unchanged() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(required):\n"
+        "        return required\n"
+        "    return inner(5)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("required",)
+    assert callsite.arg_values == (TermValue(5),)
+    assert callsite.term == ctor("call:inner", [num(5)])
+
+
+def test_nested_callable_empty_variadics_do_not_hide_missing_required_positional() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _root_universe(
+            "def outer():\n"
+            "    def inner(required, *extras, **options):\n"
+            "        return required\n"
+            "    return inner()\n"
+        )
+
+    assert raised.value.info.owner == "FunctionCallable"
+    assert raised.value.info.requested == "bind call arguments to a function signature"
+    assert raised.value.info.observed == (
+        "positional",
+        "var-positional",
+        "var-keyword",
+    )
 
 
 def test_decorated_statement_def_stays_loud() -> None:
