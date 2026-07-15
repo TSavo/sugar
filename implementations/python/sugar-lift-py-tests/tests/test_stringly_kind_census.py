@@ -22,6 +22,17 @@ def test_stringly_kind_census_self_test() -> None:
     assert census.self_test() == 0
 
 
+def test_stringly_kind_census_path_identity_is_host_independent() -> None:
+    windows_path = r"src\sugar_lift_py_tests\factory\source_fragment.py"
+    posix_path = "src/sugar_lift_py_tests/factory/source_fragment.py"
+    canonical = census._canonical_identity_path(windows_path)
+
+    assert canonical == posix_path
+    assert census._stable_digest(canonical, 'site.observed == "Name"') == (
+        census._stable_digest(posix_path, 'site.observed == "Name"')
+    )
+
+
 def test_stringly_kind_census_matches_pinned_multiset() -> None:
     assert census.DEFAULT_CENSUS.exists(), "missing pinned census; run --write-current"
     expected = census.load_expected(census.DEFAULT_CENSUS)
