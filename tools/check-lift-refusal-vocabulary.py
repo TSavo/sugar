@@ -148,6 +148,14 @@ def classify(path: str, text: str) -> Classified:
     to quote the prove-side `refused` verdict.
     """
 
+    if path.endswith("/temporal/builtin_name_bindings.py"):
+        return Classified(
+            "vendor-language-identifier",
+            "not-lift-output",
+            "canonical Python builtin exception identity, not a Sugar result",
+            "preserve the vendor-owned symbol exactly; classify it at the lexical census boundary",
+        )
+
     if path.startswith("implementations/python/sugar-build-witness/src/"):
         return Classified(
             "verifier-verdict-quote",
@@ -428,6 +436,18 @@ def compare(expected: list[Occurrence], observed: list[Occurrence]) -> int:
 
 
 def self_test() -> int:
+    vendor = classify(
+        "implementations/python/sugar-lift-py-tests/src/"
+        "sugar_lift_py_tests/temporal/builtin_name_bindings.py",
+        '"ConnectionRefusedError",',
+    )
+    if vendor.speaker != "vendor-language-identifier":
+        print(
+            "FAIL: canonical ConnectionRefusedError was classified as Sugar output",
+            file=sys.stderr,
+        )
+        return 1
+
     planted = Occurrence(
         key="implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/planted_refusal_tooth.py:planted:1",
         path="implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/planted_refusal_tooth.py",
