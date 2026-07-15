@@ -40,12 +40,15 @@ class FunctionCallable(FloorValue):
         del formula
         return self
 
-    def callsite(self, arg_values, keyword_names, site):
+    def callsite(self, arg_values, keyword_names, site, *, source_arg_values=None):
         from sugar_lift_py_tests.factory import factory_panic_gap
         from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
+
+        if source_arg_values is None:
+            source_arg_values = arg_values
 
         if self.body is None:
             factory_panic_gap(
@@ -140,7 +143,7 @@ class FunctionCallable(FloorValue):
                 parameters=self.parameters,
                 term=ctor(
                     f"call:{self.name}",
-                    [value.to_term(owner=str(site)) for value in arg_values],
+                    [value.to_term(owner=str(site)) for value in source_arg_values],
                     symbol_kind="contract-target",
                 ),
                 body=self.body,

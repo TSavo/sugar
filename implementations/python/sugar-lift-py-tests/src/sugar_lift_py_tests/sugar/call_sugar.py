@@ -15,6 +15,46 @@ from sugar_lift_py_tests.sugar.install_source_dig import (
 )
 
 
+def _expand_function_positional_args(arg_values: tuple, *, site: object) -> tuple:
+    """Expand only structurally known finite ``*`` operands for a bound function.
+
+    ``StarredSugar`` preserves the source spelling as a ``CallSiteValue``. This
+    binder view unwraps constructed tuple/list floors without changing that
+    source value, so the call coordinate remains keyed by what the caller wrote.
+    """
+    from sugar_lift_py_tests.factory import factory_panic_gap
+    from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+    from sugar_lift_py_tests.floor import CallSiteValue, ListValue, TupleValue
+
+    expanded = []
+    for value in arg_values:
+        if not (isinstance(value, CallSiteValue) and value.target_name == "*"):
+            expanded.append(value)
+            continue
+
+        operand = value.arg_values[0]
+        if type(operand) in (TupleValue, ListValue):
+            expanded.extend(operand.elements)
+            continue
+
+        factory_panic_gap(
+            owner="CallSugar",
+            blame=str(site),
+            observed=type(operand).__name__,
+            requested=(
+                "expand a constructed finite positional sequence at a starred "
+                "call argument"
+            ),
+            fix=(
+                "construct a TupleValue/ListValue before starred positional "
+                "binding; keep symbolic, mapping, and non-iterable expansion loud"
+            ),
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+    return tuple(expanded)
+
+
 @dataclass(frozen=True)
 class CallSugar(Sugar, role=SugarRole.TERM):
     """A plain-name call `f(<args>)` / `f(<args>, k=v)`.
@@ -110,7 +150,12 @@ class CallSugar(Sugar, role=SugarRole.TERM):
 
             bound = ctx.temporal.value_if_bound(self.target_name)
             if isinstance(bound, FunctionCallable):
-                return bound.callsite(accumulated, self.keyword_names, self.site)
+                return bound.callsite(
+                    _expand_function_positional_args(accumulated, site=self.site),
+                    self.keyword_names,
+                    self.site,
+                    source_arg_values=accumulated,
+                )
 
             # Install-source / same-module body dig: attach factory-built body
             # when resolve succeeds. body=None remains lawful coordinate-only.
