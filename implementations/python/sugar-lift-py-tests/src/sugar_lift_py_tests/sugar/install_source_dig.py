@@ -49,7 +49,14 @@ def _installed_source(module_name: str) -> tuple[str, str] | None:
         if not origin or not origin.endswith((".py", ".pyi")):
             return None
         return Path(origin).read_text(encoding="utf-8"), origin
-    except (ImportError, ModuleNotFoundError, OSError, TypeError, UnicodeError, ValueError):
+    except (
+        ImportError,
+        ModuleNotFoundError,
+        OSError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+    ):
         return None
 
 
@@ -105,7 +112,12 @@ def _module_sibling_function_nodes(module_name: str) -> dict:
     if source is None:
         try:
             from _pytest.outcomes import Skipped
+        except ImportError:
 
+            class Skipped(BaseException):  # type: ignore[no-redef]
+                pass
+
+        try:
             module = importlib.import_module(module_name)
             sourcefile = inspect.getsourcefile(module)
             if not sourcefile:
@@ -428,9 +440,7 @@ def resolve_install_source_value(
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
-    function = _resolve_qualified_function_fragment(
-        import_target, resolving=_resolving
-    )
+    function = _resolve_qualified_function_fragment(import_target, resolving=_resolving)
     if function is not None:
         defining_source = function.node._sugar_source  # type: ignore[attr-defined]
         defining_file = function.node._sugar_file  # type: ignore[attr-defined]
