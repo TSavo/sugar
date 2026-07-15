@@ -74,11 +74,11 @@ class ListValue(FloorValue):
         return super().add(other, site)
 
     def multiply(self, other, site):
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.term_value import TermValue
 
+        # List repetition is constructed only after the count has reached the
+        # concrete integer floor. A symbolic/callsite/import value has not proved
+        # Python's __index__ contract and must stay a named construction gap.
         if type(other) is TermValue and type(other.value) is int:
             from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
             from sugar_lift_py_tests.outcome import Complete, Incomplete
@@ -97,8 +97,6 @@ class ListValue(FloorValue):
                 )
 
             return Complete(ListValue(self.elements * other.value))
-        if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
-            return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
         return super().multiply(other, site)
 
     def subscript(self, index, site):
