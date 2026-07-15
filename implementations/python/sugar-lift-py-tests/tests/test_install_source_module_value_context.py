@@ -77,6 +77,22 @@ def test_install_source_value_does_not_construct_unneeded_prior_global(
     assert resolved == TermValue(42)
 
 
+def test_install_source_value_leaves_runtime_selected_prerequisite_unresolved(
+    tmp_path, monkeypatch
+) -> None:
+    """A runtime conditional is an effect boundary, never a value to force-read."""
+    (tmp_path / "runtime_selected_value.py").write_text(
+        "import os\nFLAG = 40 if os else 41\nANSWER = FLAG + 2\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+
+    resolved = resolve_install_source_value("runtime_selected_value.ANSWER", _ctx())
+
+    assert resolved is None
+
+
 def test_stdlib_future_annotations_constructs_compiler_flag_from_module_source() -> (
     None
 ):

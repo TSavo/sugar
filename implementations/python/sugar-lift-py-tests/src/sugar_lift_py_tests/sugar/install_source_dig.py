@@ -329,7 +329,7 @@ def _ctx_with_required_module_bindings(
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.floor import ImportAliasValue
-    from sugar_lift_py_tests.outcome import complete_value
+    from sugar_lift_py_tests.outcome import Incomplete, complete_value
     from sugar_lift_py_tests.temporal import TemporalContext
 
     # Imported values are constructed in the defining module's lexical frame.
@@ -390,6 +390,11 @@ def _ctx_with_required_module_bindings(
         outcome = module_ctx.build_body(fragment, SugarRole.STATEMENT).reduce(
             module_ctx
         )
+        if isinstance(outcome, Incomplete):
+            # Runtime-selected prerequisites do not have a static value to
+            # seed. Keep the imported coordinate unresolved for its consumer
+            # instead of force-reading an effect as though it had completed.
+            return None
         complete_value(outcome, owner="install-source module prerequisite")
         extended = outcome.extend_scope(module_ctx)
         module_ctx = replace(extended, module_temporal=extended.temporal)
@@ -421,7 +426,7 @@ def resolve_install_source_value(
 
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-    from sugar_lift_py_tests.outcome import complete_value
+    from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
     function = _resolve_qualified_function_fragment(
         import_target, resolving=_resolving
@@ -453,10 +458,13 @@ def resolve_install_source_value(
             ctx=ctx,
             resolving=resolving,
         )
+        if module_ctx is None:
+            return None
         body = module_ctx.build_body(function, SugarRole.STATEMENT)
-        return complete_value(
-            body.reduce(module_ctx), owner="install-source imported function"
-        )
+        outcome = body.reduce(module_ctx)
+        if isinstance(outcome, Incomplete):
+            return None
+        return complete_value(outcome, owner="install-source imported function")
 
     for target_index, statement in enumerate(parsed.body):
         value_node = None
@@ -480,13 +488,16 @@ def resolve_install_source_value(
                 ctx=ctx,
                 resolving=resolving,
             )
+            if module_ctx is None:
+                return None
             body = module_ctx.build_body(
                 SourceFragment.from_node(value_node, sourcefile, source=source),
                 SugarRole.TERM,
             )
-            return complete_value(
-                body.reduce(module_ctx), owner="install-source imported value"
-            )
+            outcome = body.reduce(module_ctx)
+            if isinstance(outcome, Incomplete):
+                return None
+            return complete_value(outcome, owner="install-source imported value")
     return None
 
 

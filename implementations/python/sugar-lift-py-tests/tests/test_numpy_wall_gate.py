@@ -83,7 +83,9 @@ def test_floor_gate_names_every_delta() -> None:
     ]
 
 
-def test_build_uses_sugarbin_and_reuses_one_audit_workspace(tmp_path: Path) -> None:
+def test_build_uses_sugarbin_and_reuses_one_audit_workspace(
+    tmp_path: Path, monkeypatch
+) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     (root / "bin").mkdir()
@@ -92,12 +94,16 @@ def test_build_uses_sugarbin_and_reuses_one_audit_workspace(tmp_path: Path) -> N
     package.mkdir()
     (package / "__init__.py").write_text("x = 1\n", encoding="utf-8")
     commands: list[list[str]] = []
+    monkeypatch.setenv("SUGAR_BIN", "/ambient/stale/sugar")
+    monkeypatch.setenv("SUGAR_BINARY_DIR", "/ambient/stale")
 
     def fake_runner(
         command: list[str], cwd: Path, env: dict[str, str]
     ) -> CommandResult:
         commands.append(command)
         if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
+            assert "SUGAR_BIN" not in env
+            assert "SUGAR_BINARY_DIR" not in env
             return CommandResult(
                 0,
                 str(tmp_path / "shelf" / "sugar-darwin-x86_64-release-stamp") + "\n",
@@ -218,9 +224,25 @@ def test_frontier_mode_mints_recovered_artifact_over_construction_gaps(
                             "sourceBodiesDemanded": 1,
                             "auditLeavesCompleted": 1,
                         },
-                        "panics": [{"kind": "FactoryPanic"}],
-                        "suppressedDescendants": [{"kind": "suppressed"}],
-                        "effects": [{"kind": "RuntimeEffect"}],
+                        "panics": [
+                            {
+                                "kind": "FactoryPanic",
+                                "status": "mandatory-panic",
+                                "reason": "fixture gap",
+                                "locus": "pkg.py:1:0",
+                                "demandedSource": "pkg.py:1:0",
+                                "terminalGapLocus": "pkg.py:1:0",
+                                "gap": {"blame": "pkg.py:1:0"},
+                                "demandedBody": {"file": "pkg.py", "line": 1},
+                                "ownerIdentity": {
+                                    "demandedBody": {"file": "pkg.py", "line": 1},
+                                    "demandedSource": "pkg.py:1:0",
+                                    "terminalGapLocus": "pkg.py:1:0",
+                                },
+                            }
+                        ],
+                        "suppressedDescendants": [],
+                        "effects": [],
                     }
                 ),
                 encoding="utf-8",
@@ -242,8 +264,8 @@ def test_frontier_mode_mints_recovered_artifact_over_construction_gaps(
     assert result.summary.frontier == {
         "kind": "recovered-construction-audit",
         "independentPanicCount": 1,
-        "suppressedDescendantCount": 1,
-        "effectCount": 1,
+        "suppressedDescendantCount": 0,
+        "effectCount": 0,
     }
 
 
