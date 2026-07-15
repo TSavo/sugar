@@ -10,6 +10,7 @@ from sugar_lift_py_tests.idd.numpy_wall import (
     NumpyWallFloors,
     NumpyWallSummary,
     build_numpy_wall,
+    check_frontier_ceilings,
     check_wall_floors,
     summarize_numpy_wall,
 )
@@ -295,3 +296,66 @@ def test_report_mode_still_refuses_construction_gaps_without_frontier(
         )
 
     assert not (tmp_path / "wall" / "frontier.json").exists()
+
+
+def _frontier_summary(independent: int, suppressed: int) -> NumpyWallSummary:
+    return NumpyWallSummary(
+        mode="frontier",
+        green=0,
+        red_reasoned=0,
+        red_bare=0,
+        contracts=0,
+        pre_bearing=0,
+        call_edges_resolved=0,
+        implications=0,
+        frontier={
+            "kind": "recovered-construction-audit",
+            "independentPanicCount": independent,
+            "suppressedDescendantCount": suppressed,
+            "effectCount": 0,
+        },
+    )
+
+
+def test_frontier_ceilings_load_from_pinned_floors_json() -> None:
+    root = Path(__file__).resolve().parents[4]
+    floors = NumpyWallFloors.from_json_dict(
+        json.loads((root / "tools" / "numpy-wall-floors.json").read_text())
+    )
+    # #4489 re-baseline: honest instrument reach, pinned on the record.
+    assert floors.frontier_independent_panics == 5569
+    assert floors.frontier_suppressed_descendants == 7315
+
+
+def test_frontier_ceiling_reds_on_planted_higher_count() -> None:
+    floors = NumpyWallFloors(
+        green=0,
+        pre_bearing=0,
+        implications=0,
+        frontier_independent_panics=5569,
+        frontier_suppressed_descendants=7315,
+    )
+    breaches = check_frontier_ceilings(_frontier_summary(5570, 7316), floors)
+    assert breaches == [
+        "frontier independent_panics ceiling breached: "
+        "observed=5570 ceiling=5569 delta=1",
+        "frontier suppressed_descendants ceiling breached: "
+        "observed=7316 ceiling=7315 delta=1",
+    ]
+
+
+def test_frontier_ceiling_passes_at_or_below_the_pin() -> None:
+    floors = NumpyWallFloors(
+        green=0,
+        pre_bearing=0,
+        implications=0,
+        frontier_independent_panics=5569,
+        frontier_suppressed_descendants=7315,
+    )
+    assert check_frontier_ceilings(_frontier_summary(5569, 7315), floors) == []
+    assert check_frontier_ceilings(_frontier_summary(0, 0), floors) == []
+
+
+def test_unpinned_frontier_ceilings_do_not_gate() -> None:
+    floors = NumpyWallFloors(green=0, pre_bearing=0, implications=0)
+    assert check_frontier_ceilings(_frontier_summary(10**6, 10**6), floors) == []

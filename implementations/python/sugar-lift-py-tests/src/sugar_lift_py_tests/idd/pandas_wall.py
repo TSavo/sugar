@@ -67,6 +67,12 @@ class PandasWallFloors:
     frontier_owner: str
     frontier_shape: str
 
+    # Recovered-frontier ratchet ceilings (#4489 re-baseline): while the wall
+    # is red, independent panic and suppressed-descendant counts may only fall
+    # from the pinned baseline. None means the ceiling is unpinned.
+    frontier_independent_panics: Optional[int] = None
+    frontier_suppressed_descendants: Optional[int] = None
+
     @classmethod
     def from_json_dict(cls, data: Mapping[str, Any]) -> "PandasWallFloors":
         floors = data.get("floors", data)
@@ -85,6 +91,9 @@ class PandasWallFloors:
         templates = construction.get("templates", {})
         if not isinstance(templates, Mapping):
             raise TypeError("pandas wall gap templates must be a mapping")
+        ceilings = floors.get("frontier_ceilings")
+        if ceilings is not None and not isinstance(ceilings, Mapping):
+            raise TypeError("pandas wall frontier_ceilings must be a mapping")
         return cls(
             mode=mode,
             gaps_total_ceiling=_int_field(construction, "total_ceiling"),
@@ -98,11 +107,25 @@ class PandasWallFloors:
             frontier_needle=str(frontier.get("message_needle", "")),
             frontier_owner=str(frontier.get("owner", "")),
             frontier_shape=str(frontier.get("shape", "")),
+            frontier_independent_panics=(
+                None if ceilings is None else _int_field(ceilings, "independent_panics")
+            ),
+            frontier_suppressed_descendants=(
+                None
+                if ceilings is None
+                else _int_field(ceilings, "suppressed_descendants")
+            ),
         )
 
     def to_json_dict(self) -> dict[str, Any]:
+        ceilings: dict[str, Any] = {}
+        if self.frontier_independent_panics is not None:
+            ceilings["independent_panics"] = self.frontier_independent_panics
+        if self.frontier_suppressed_descendants is not None:
+            ceilings["suppressed_descendants"] = self.frontier_suppressed_descendants
         return {
             "mode": self.mode,
+            **({"frontier_ceilings": ceilings} if ceilings else {}),
             "construction_gaps": {
                 "total_ceiling": self.gaps_total_ceiling,
                 "templates": dict(sorted(self.gap_template_ceilings.items())),
@@ -598,6 +621,27 @@ def _check_frontier_floors(
             "recovered construction audit is red: "
             f"independent_panics={independent_panics}"
         )
+    # #4489 re-baseline ratchet: frontier counts may only fall from the pin.
+    for label, key, ceiling in (
+        (
+            "independent_panics",
+            "independentPanicCount",
+            floors.frontier_independent_panics,
+        ),
+        (
+            "suppressed_descendants",
+            "suppressedDescendantCount",
+            floors.frontier_suppressed_descendants,
+        ),
+    ):
+        if ceiling is None:
+            continue
+        observed = summary.frontier.get(key, 0)
+        if isinstance(observed, int) and observed > ceiling:
+            breaches.append(
+                f"frontier {label} ceiling breached: observed={observed} "
+                f"ceiling={ceiling} delta={observed - ceiling}"
+            )
     if floors.mode != "frontier":
         breaches.append(
             "pandas wall stopped at a named frontier; switch "
