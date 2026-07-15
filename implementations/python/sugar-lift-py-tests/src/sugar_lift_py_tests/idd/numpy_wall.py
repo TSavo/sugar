@@ -353,8 +353,15 @@ def _int_field(data: Mapping[str, Any], field: str) -> int:
 
 
 def _resolve_sugar_bin(root: Path, profile: str, runner: RunCommand) -> Path:
+    resolver_env = os.environ.copy()
+    # A wall is evidence about this checkout. Runner services may carry an
+    # ambient handoff from an earlier job, but the stamp-addressed broker must
+    # own binary selection here; otherwise current Python can speak to a stale
+    # Rust wire schema and the resulting wall has no source provenance.
+    resolver_env.pop("SUGAR_BIN", None)
+    resolver_env.pop("SUGAR_BINARY_DIR", None)
     result = runner(
-        [str(root / "bin/sugarbin"), "--profile", profile], root, os.environ.copy()
+        [str(root / "bin/sugarbin"), "--profile", profile], root, resolver_env
     )
     if result.returncode != 0:
         raise RuntimeError(
