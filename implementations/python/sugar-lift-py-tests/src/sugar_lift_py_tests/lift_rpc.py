@@ -1063,7 +1063,11 @@ def _module_import_temporal(
                     if recovered_panics is None:
                         raise
                     recovered_panics.append(
-                        (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
+                        (
+                            f"{stmt.filename}:{stmt.line}:{stmt.col}",
+                            import_target,
+                            panic,
+                        )
                     )
                     resolved_value = None
                 temporal = temporal.bind_value(
@@ -1117,7 +1121,11 @@ def _module_import_temporal(
                     if recovered_panics is None:
                         raise
                     recovered_panics.append(
-                        (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
+                        (
+                            f"{stmt.filename}:{stmt.line}:{stmt.col}",
+                            f"assert:{stmt.line}:{stmt.col}",
+                            panic,
+                        )
                     )
                     continue
                 if isinstance(outcome, Incomplete):
@@ -1148,7 +1156,11 @@ def _module_import_temporal(
                 if recovered_panics is None:
                     raise
                 recovered_panics.append(
-                    (f"{stmt.filename}:{stmt.line}:{stmt.col}", panic)
+                    (
+                        f"{stmt.filename}:{stmt.line}:{stmt.col}",
+                        f"binding:{name}",
+                        panic,
+                    )
                 )
                 continue
             except (TypeError, ValueError, AssertionError):
@@ -1229,7 +1241,7 @@ class _AuditFileContext:
     catalog: Any
     module: Any
     module_temporal: Any
-    seed_panics: tuple[tuple[str, FactoryPanic], ...]
+    seed_panics: tuple[tuple[str, str, FactoryPanic], ...]
     module_assertions: tuple[Any, ...]
     import_aliases: dict[str, str]
     from_imports: dict[str, tuple[str, str]]
@@ -1281,7 +1293,7 @@ def _audit_file_context(
     # Keep it as the context root so enumeration can answer with its honest
     # empty child set instead of throwing outside the recovered-audit door.
     module = roots[0] if roots else source_root
-    seed_panics: list[tuple[str, FactoryPanic]] = []
+    seed_panics: list[tuple[str, str, FactoryPanic]] = []
     module_assertions: list[Any] = []
     module_temporal = _module_import_temporal(
         module,
@@ -1417,12 +1429,14 @@ def audit_lift_file(
         else None
     )
     target_is_module = target_owner == "<module>"
-    for label, panic in (
+    for label, demanded_source, panic in (
         (seed_panics or ()) if target_memento is None or target_is_module else ()
     ):
         recovered_panics.append(
             RecoveredFactoryPanicDto(
                 locus=label,
+                demanded_source=demanded_source,
+                terminal_gap_locus=panic.info.blame,
                 reason=panic.info.message,
                 gap=panic.info.to_json(),
             )
@@ -1620,6 +1634,8 @@ def audit_lift_file(
                 recovered_panics.append(
                     RecoveredFactoryPanicDto(
                         locus=label,
+                        demanded_source=f"definition:{stmt.function_name()}",
+                        terminal_gap_locus=panic.info.blame,
                         reason=panic.info.message,
                         gap=panic.info.to_json(),
                     )
@@ -1717,6 +1733,8 @@ def audit_lift_file(
                     recovered_panics.append(
                         RecoveredFactoryPanicDto(
                             locus=locus.identity,
+                            demanded_source=f"conservation:{locus.identity}",
+                            terminal_gap_locus=locus.identity,
                             reason=message,
                             gap=gap.info,
                         )

@@ -44,4 +44,7 @@ class NameSugar(Sugar, role=SugarRole.TERM):
         # Ask the context what stands at this name; the binding answers.
         # A BoundVar recomposes its source against its definition scope; a
         # concrete or symbolic binding stands as itself.
-        return ctx.temporal.value_for(self.name).answer(ctx)
+        return ctx.temporal.value_for(
+            self.name,
+            blame=f"{self.site.filename}:{self.site.line}:{self.site.col}",
+        ).answer(ctx)
