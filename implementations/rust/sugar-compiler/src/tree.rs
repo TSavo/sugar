@@ -38,7 +38,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use sugar_ir_types::{IrFormula, Sort};
 use sugar_linker::LinkerContract;
 use sugar_walk::source_oracle::{SourceMemento, SrcSpan};
@@ -842,6 +842,54 @@ fn enumerate_result_from_response(plugin: &str, response: Value) -> Result<Value
     Ok(response)
 }
 
+/// Closed Python producer wire row. Identity supplied by the producer is the
+/// source/body demand owner plus the exact terminal gap coordinate; the Rust
+/// fold adds the demanded SourceMemento and complete owner identity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecoveredFactoryPanicWire {
+    kind: String,
+    status: String,
+    reason: String,
+    locus: String,
+    demanded_source: String,
+    terminal_gap_locus: String,
+    gap: Map<String, Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecoveredAuditLeafWire {
+    kind: String,
+    recovery_override: bool,
+    status: String,
+    panics: Vec<RecoveredFactoryPanicWire>,
+    effects: Vec<Value>,
+    suppressed_descendants: Vec<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecoveredPanicOwnerIdentity {
+    demanded_body: Value,
+    demanded_source: String,
+    terminal_gap_locus: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecoveredFactoryPanicRow {
+    kind: String,
+    status: String,
+    reason: String,
+    locus: String,
+    demanded_source: String,
+    terminal_gap_locus: String,
+    gap: Map<String, Value>,
+    demanded_body: Value,
+    owner_identity: RecoveredPanicOwnerIdentity,
+}
+
 /// Consumer fold for recovered construction audit. A frontier is a closed
 /// result: every enumerated source file must have its body demanded and every
 /// discovered audit leaf must complete with a separately typed recovered
@@ -908,6 +956,7 @@ pub fn fold_recovered_audit(kit: &Kit, workspace_root: &Path) -> Result<Value, K
             })?;
             merge_recovered_audit_leaf(
                 &conn.surface,
+                &definition.memento,
                 audit,
                 &mut panics,
                 &mut effects,
@@ -949,6 +998,7 @@ pub fn fold_recovered_audit(kit: &Kit, workspace_root: &Path) -> Result<Value, K
 
 fn merge_recovered_audit_leaf(
     plugin: &str,
+    demanded_body: &SourceMemento,
     audit: Value,
     panics: &mut Vec<Value>,
     effects: &mut Vec<Value>,
@@ -960,41 +1010,98 @@ fn merge_recovered_audit_leaf(
             reason,
         })
     };
-    if audit.get("kind").and_then(Value::as_str) != Some("recovered-construction-audit")
-        || audit.get("recoveryOverride").and_then(Value::as_bool) != Some(true)
-    {
+    let leaf: RecoveredAuditLeafWire = serde_json::from_value(audit).map_err(|error| {
+        malformed(format!(
+            "audit leaf does not decode as closed recovered wire schema: {error}"
+        ))
+    })?;
+    if leaf.kind != "recovered-construction-audit" || !leaf.recovery_override {
         return Err(malformed(
             "audit leaf is not a recovery-override construction audit".to_string(),
         ));
     }
-    let leaf_panics = audit
-        .get("panics")
-        .and_then(Value::as_array)
-        .ok_or_else(|| malformed("audit leaf panics must be an array".to_string()))?;
-    let leaf_effects = audit
-        .get("effects")
-        .and_then(Value::as_array)
-        .ok_or_else(|| malformed("audit leaf effects must be an array".to_string()))?;
-    let leaf_suppressed = audit
-        .get("suppressedDescendants")
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            malformed("audit leaf suppressedDescendants must be an array".to_string())
-        })?;
-    let expected_status = if leaf_panics.is_empty() {
+    let expected_status = if leaf.panics.is_empty() {
         "clean"
     } else {
         "failed"
     };
-    if audit.get("status").and_then(Value::as_str) != Some(expected_status) {
+    if leaf.status != expected_status {
         return Err(malformed(format!(
             "audit leaf status must be {expected_status} for panics={}",
-            leaf_panics.len()
+            leaf.panics.len()
         )));
     }
-    panics.extend(leaf_panics.iter().cloned());
-    effects.extend(leaf_effects.iter().cloned());
-    suppressed.extend(leaf_suppressed.iter().cloned());
+    let demanded_body = demanded_body.to_json();
+    for panic in leaf.panics {
+        if panic.kind != "FactoryPanic" || panic.status != "mandatory-panic" {
+            return Err(malformed(
+                "recovered panic row must be a mandatory FactoryPanic".to_string(),
+            ));
+        }
+        if panic.locus.is_empty() || panic.demanded_source.is_empty() {
+            return Err(malformed(
+                "recovered panic row omitted source or demandedSource identity".to_string(),
+            ));
+        }
+        let typed_gap_locus = panic
+            .gap
+            .get("blame")
+            .or_else(|| panic.gap.get("gap_locus"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                malformed("recovered panic typed gap omitted terminal locus".to_string())
+            })?;
+        if panic.terminal_gap_locus != typed_gap_locus {
+            return Err(malformed(format!(
+                "recovered panic terminalGapLocus must match typed gap locus: terminal={:?} gap={:?}",
+                panic.terminal_gap_locus, typed_gap_locus
+            )));
+        }
+        let owner_identity = RecoveredPanicOwnerIdentity {
+            demanded_body: demanded_body.clone(),
+            demanded_source: panic.demanded_source.clone(),
+            terminal_gap_locus: panic.terminal_gap_locus.clone(),
+        };
+        let owner_identity_value = serde_json::to_value(&owner_identity)
+            .expect("recovered panic owner identity must serialize");
+        if panics
+            .iter()
+            .any(|existing| existing.get("ownerIdentity") == Some(&owner_identity_value))
+        {
+            return Err(malformed(format!(
+                "duplicate recovered panic owner identity: {owner_identity_value}"
+            )));
+        }
+        let row = RecoveredFactoryPanicRow {
+            kind: panic.kind,
+            status: panic.status,
+            reason: panic.reason,
+            locus: panic.locus,
+            demanded_source: panic.demanded_source,
+            terminal_gap_locus: panic.terminal_gap_locus,
+            gap: panic.gap,
+            demanded_body: demanded_body.clone(),
+            owner_identity,
+        };
+        panics.push(
+            serde_json::to_value(row).expect("closed recovered panic row must serialize"),
+        );
+    }
+    for effect in leaf.effects {
+        let mut effect = effect.as_object().cloned().ok_or_else(|| {
+            malformed("recovered effect row must be an object".to_string())
+        })?;
+        effect.insert("demandedBody".to_string(), demanded_body.clone());
+        effects.push(Value::Object(effect));
+    }
+    for locus in leaf.suppressed_descendants {
+        let mut locus = locus.as_object().cloned().ok_or_else(|| {
+            malformed("suppressed descendant row must be an object".to_string())
+        })?;
+        locus.insert("demandedBody".to_string(), demanded_body.clone());
+        suppressed.push(Value::Object(locus));
+    }
     Ok(())
 }
 
@@ -1446,6 +1553,176 @@ impl Assertion {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn recovered_owner(file: &str, function: &str, line: usize) -> SourceMemento {
+        SourceMemento {
+            file: file.to_string(),
+            function_name: function.to_string(),
+            span: SrcSpan {
+                start_line: line,
+                start_col: 0,
+                end_line: line + 1,
+                end_col: 0,
+            },
+            param_names: Vec::new(),
+            source_cid: format!("blake3-512:{file}:{function}:{line}"),
+            template_cid: String::new(),
+        }
+    }
+
+    fn recovered_leaf(panics: Vec<Value>) -> Value {
+        json!({
+            "kind": "recovered-construction-audit",
+            "recoveryOverride": true,
+            "status": if panics.is_empty() { "clean" } else { "failed" },
+            "panics": panics,
+            "effects": [],
+            "suppressedDescendants": [],
+        })
+    }
+
+    fn recovered_panic(demand: &str) -> Value {
+        json!({
+            "kind": "FactoryPanic",
+            "status": "mandatory-panic",
+            "reason": "unbound propagated dependency name",
+            "locus": "consumer.py:1:0",
+            "demandedSource": demand,
+            "terminalGapLocus": "typing.py:753:11",
+            "gap": {
+                "owner": "TemporalContext",
+                "blame": "typing.py:753:11",
+                "observed": "_LiteralSpecialForm",
+                "requested": "value",
+                "fix": "bind the name",
+                "gap_kind": "Floor",
+                "gap_locus": "Construction"
+            }
+        })
+    }
+
+    #[test]
+    fn recovered_panic_collision_preserves_distinct_demanded_owners() {
+        let mut panics = Vec::new();
+        let mut effects = Vec::new();
+        let mut suppressed = Vec::new();
+        let first = recovered_owner("consumer.py", "first", 10);
+        let second = recovered_owner("consumer.py", "second", 20);
+
+        merge_recovered_audit_leaf(
+            "fixture",
+            &first,
+            recovered_leaf(vec![recovered_panic("pandas._typing.A")]),
+            &mut panics,
+            &mut effects,
+            &mut suppressed,
+        )
+        .expect("first distinct demand");
+        merge_recovered_audit_leaf(
+            "fixture",
+            &second,
+            recovered_leaf(vec![recovered_panic("pandas._typing.A")]),
+            &mut panics,
+            &mut effects,
+            &mut suppressed,
+        )
+        .expect("second distinct demand");
+
+        assert_eq!(panics.len(), 2);
+        assert_eq!(panics[0]["gap"], panics[1]["gap"]);
+        assert_ne!(panics[0]["demandedBody"], panics[1]["demandedBody"]);
+        assert_eq!(panics[0]["terminalGapLocus"], "typing.py:753:11");
+    }
+
+    #[test]
+    fn recovered_panic_collision_preserves_distinct_demands_in_one_body() {
+        let mut panics = Vec::new();
+        let mut effects = Vec::new();
+        let mut suppressed = Vec::new();
+        let owner = recovered_owner("api/typing/aliases.py", "<module>", 1);
+
+        merge_recovered_audit_leaf(
+            "fixture",
+            &owner,
+            recovered_leaf(vec![
+                recovered_panic("pandas._typing.TypeGuard"),
+                recovered_panic("pandas._typing.TypeAlias"),
+            ]),
+            &mut panics,
+            &mut effects,
+            &mut suppressed,
+        )
+        .expect("distinct import demands sharing one terminal gap");
+
+        assert_eq!(panics.len(), 2);
+        assert_eq!(panics[0]["demandedBody"], panics[1]["demandedBody"]);
+        assert_ne!(panics[0]["demandedSource"], panics[1]["demandedSource"]);
+    }
+
+    #[test]
+    fn recovered_panic_rejects_exact_duplicate_owner_identity() {
+        let mut panics = Vec::new();
+        let mut effects = Vec::new();
+        let mut suppressed = Vec::new();
+        let owner = recovered_owner("api/typing/aliases.py", "<module>", 1);
+        let duplicate = recovered_panic("pandas._typing.TypeGuard");
+
+        let error = merge_recovered_audit_leaf(
+            "fixture",
+            &owner,
+            recovered_leaf(vec![duplicate.clone(), duplicate]),
+            &mut panics,
+            &mut effects,
+            &mut suppressed,
+        )
+        .expect_err("same demanded owner may emit one terminal row only");
+
+        assert!(error.to_string().contains("duplicate recovered panic owner identity"));
+    }
+
+    #[test]
+    fn recovered_panic_rejects_terminal_locus_that_is_not_the_gap_coordinate() {
+        let mut panics = Vec::new();
+        let mut effects = Vec::new();
+        let mut suppressed = Vec::new();
+        let owner = recovered_owner("api/typing/aliases.py", "<module>", 1);
+        let mut wrong = recovered_panic("pandas._typing.TypeGuard");
+        wrong["terminalGapLocus"] = json!("consumer.py:1:0");
+
+        let error = merge_recovered_audit_leaf(
+            "fixture",
+            &owner,
+            recovered_leaf(vec![wrong]),
+            &mut panics,
+            &mut effects,
+            &mut suppressed,
+        )
+        .expect_err("terminalGapLocus must identify the exact typed gap coordinate");
+
+        assert!(error.to_string().contains("terminalGapLocus must match typed gap locus"));
+    }
+
+    #[test]
+    fn recovered_panic_rejects_producer_forged_fold_identity_fields() {
+        let mut panics = Vec::new();
+        let mut effects = Vec::new();
+        let mut suppressed = Vec::new();
+        let owner = recovered_owner("api/typing/aliases.py", "<module>", 1);
+        let mut forged = recovered_panic("pandas._typing.TypeGuard");
+        forged["demandedBody"] = owner.to_json();
+
+        let error = merge_recovered_audit_leaf(
+            "fixture",
+            &owner,
+            recovered_leaf(vec![forged]),
+            &mut panics,
+            &mut effects,
+            &mut suppressed,
+        )
+        .expect_err("Rust fold exclusively owns complete demanded-body identity");
+
+        assert!(error.to_string().contains("unknown field `demandedBody`"));
+    }
 
     #[test]
     fn decode_memento_round_trips_through_to_json() {

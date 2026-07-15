@@ -7,6 +7,8 @@ from typing import Any
 @dataclass(frozen=True)
 class RecoveredFactoryPanicDto:
     locus: str
+    demanded_source: str
+    terminal_gap_locus: str
     reason: str
     gap: dict[str, str]
 
@@ -16,6 +18,8 @@ class RecoveredFactoryPanicDto:
             "status": "mandatory-panic",
             "reason": self.reason,
             "locus": self.locus,
+            "demandedSource": self.demanded_source,
+            "terminalGapLocus": self.terminal_gap_locus,
             "gap": dict(self.gap),
         }
 

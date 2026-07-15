@@ -7,6 +7,7 @@ import pytest
 
 from sugar_lift_py_tests.idd.command_result import CommandResult
 from sugar_lift_py_tests.idd.recovered_frontier import mint_recovered_frontier
+from sugar_lift_py_tests.lift_rpc import audit_lift_file
 
 
 def _payload(
@@ -17,6 +18,38 @@ def _payload(
     panics: int = 0,
     status: str,
 ) -> dict[str, object]:
+    panic_rows = []
+    for index in range(panics):
+        demanded_body = {
+            "file": f"fixture-{index}.py",
+            "function_name": f"owner_{index}",
+            "span": {
+                "start_line": index + 1,
+                "start_col": 0,
+                "end_line": index + 2,
+                "end_col": 0,
+            },
+            "source_cid": f"blake3-512:{index}",
+        }
+        identity = {
+            "demandedBody": demanded_body,
+            "demandedSource": f"definition:owner_{index}",
+            "terminalGapLocus": f"dependency.py:{index + 10}:0",
+        }
+        panic_rows.append(
+            {
+                "kind": "FactoryPanic",
+                "status": "mandatory-panic",
+                "reason": "fixture recovered construction gap",
+                "locus": f"fixture-{index}.py:{index + 1}:0",
+                "gap": {
+                    "blame": identity["terminalGapLocus"],
+                    "gap_locus": "Construction",
+                },
+                **identity,
+                "ownerIdentity": identity,
+            }
+        )
     return {
         "kind": "recovered-construction-audit",
         "recoveryOverride": True,
@@ -27,7 +60,7 @@ def _payload(
             "sourceBodiesDemanded": body_demands,
             "auditLeavesCompleted": completed_leaves,
         },
-        "panics": [{"kind": "factory-panic"} for _ in range(panics)],
+        "panics": panic_rows,
         "effects": [],
         "suppressedDescendants": [],
     }
@@ -202,3 +235,92 @@ def test_successful_nonzero_frontier_mint_keeps_red_exit_artifact(
 
     assert len(artifact["panics"]) == 1
     assert (output_dir / "frontier.json").is_file()
+
+
+def test_frontier_preserves_same_gap_for_distinct_demanded_bodies(tmp_path: Path) -> None:
+    payload = _payload(
+        source_files=2,
+        body_demands=2,
+        completed_leaves=2,
+        panics=2,
+        status="failed",
+    )
+    rows = payload["panics"]
+    assert isinstance(rows, list)
+    first, second = rows
+    assert isinstance(first, dict)
+    assert isinstance(second, dict)
+    second["locus"] = first["locus"]
+    second["gap"] = first["gap"]
+    second["demandedSource"] = first["demandedSource"]
+    second["terminalGapLocus"] = first["terminalGapLocus"]
+    second["ownerIdentity"] = {
+        "demandedBody": second["demandedBody"],
+        "demandedSource": second["demandedSource"],
+        "terminalGapLocus": second["terminalGapLocus"],
+    }
+    _output_dir, mint = _mint(tmp_path, payload, 2)
+
+    artifact = mint()
+
+    assert len(artifact["panics"]) == 2
+    identities = [row["ownerIdentity"] for row in artifact["panics"]]
+    assert identities[0] != identities[1]
+    assert identities[0]["demandedBody"] != identities[1]["demandedBody"]
+
+
+def test_frontier_rejects_exact_duplicate_demand_identity(tmp_path: Path) -> None:
+    payload = _payload(
+        source_files=1,
+        body_demands=1,
+        completed_leaves=1,
+        panics=2,
+        status="failed",
+    )
+    rows = payload["panics"]
+    assert isinstance(rows, list)
+    rows[1] = json.loads(json.dumps(rows[0]))
+    output_dir, mint = _mint(tmp_path, payload, 2)
+
+    with pytest.raises(RuntimeError, match="duplicate recovered panic owner identity"):
+        mint()
+
+    assert not (output_dir / "frontier.json").exists()
+
+
+def test_frontier_rejects_terminal_locus_that_differs_from_typed_gap(tmp_path: Path) -> None:
+    payload = _payload(
+        source_files=1,
+        body_demands=1,
+        completed_leaves=1,
+        panics=1,
+        status="failed",
+    )
+    rows = payload["panics"]
+    assert isinstance(rows, list)
+    row = rows[0]
+    assert isinstance(row, dict)
+    row["terminalGapLocus"] = "wrong.py:1:0"
+    identity = row["ownerIdentity"]
+    assert isinstance(identity, dict)
+    identity["terminalGapLocus"] = row["terminalGapLocus"]
+    output_dir, mint = _mint(tmp_path, payload, 2)
+
+    with pytest.raises(RuntimeError, match="terminalGapLocus does not match typed gap locus"):
+        mint()
+
+    assert not (output_dir / "frontier.json").exists()
+
+
+def test_recovered_panic_names_body_owner_and_exact_failing_term() -> None:
+    wire = audit_lift_file(
+        "def consumer():\n    return missing\n",
+        "owner.py",
+        recover_panics=True,
+    ).to_rpc()
+
+    assert len(wire["panics"]) == 1
+    panic = wire["panics"][0]
+    assert panic["demandedSource"] == "definition:consumer"
+    assert panic["terminalGapLocus"] == "owner.py:2:11"
+    assert panic["terminalGapLocus"] == panic["gap"]["blame"]

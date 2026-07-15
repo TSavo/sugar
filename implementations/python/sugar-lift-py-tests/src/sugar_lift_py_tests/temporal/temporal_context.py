@@ -21,13 +21,13 @@ class TemporalContext:
 
         return builtin_name_temporal()
 
-    def value_for(self, name: str) -> FloorValue:
+    def value_for(self, name: str, *, blame: str = "<temporal>") -> FloorValue:
         for binding in reversed(self.bindings):
             if binding.name == name:
                 return binding.value
         self._gap(
             owner="TemporalContext",
-            blame="<temporal>",
+            blame=blame,
             observed=name,
             requested="value",
             fix=f"bind `{name}` before reducing NameSugar",
