@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 1831,
+  "lift_output_backlog": 1835,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -915,6 +915,26 @@
       "wire_marker": "wire-protocol:rpc-dto"
     },
     {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:0a1c415b29f7978e:1",
+      "line": 2775,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "\"reason\": \"no call site for exact memento; refusing implication substitution\",",
+      "wire_marker": "wire-protocol:rpc-dto"
+    },
+    {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:2056e06be9cd313e:1",
+      "line": 2680,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "\"reason\": \"no call site for exact memento; refusing call-site substitution\",",
+      "wire_marker": "wire-protocol:rpc-dto"
+    },
+    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:275e3195e042e920:1",
       "line": 740,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
@@ -946,7 +966,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:8613735061af6d4d:1",
-      "line": 2140,
+      "line": 2200,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -962,6 +982,16 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "except SourceOracleRefusal as exc:",
+      "wire_marker": "wire-protocol:rpc-dto"
+    },
+    {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b222d14df22a442a:1",
+      "line": 2910,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "\"reason\": \"no call site for exact memento; refusing universe substitution\",",
       "wire_marker": "wire-protocol:rpc-dto"
     },
     {
@@ -986,12 +1016,22 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:d3469ccfa48c2cd7:1",
-      "line": 2164,
+      "line": 2224,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "\"\"\"Construct one closed enumeration result or refuse it.",
+      "wire_marker": "wire-protocol:rpc-dto"
+    },
+    {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:f87a140483c0687b:1",
+      "line": 1949,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "Ambiguous or absent evidence refuses substitution instead of choosing the",
       "wire_marker": "wire-protocol:rpc-dto"
     },
     {
@@ -20700,10 +20740,10 @@
     "emitter-provenance-guard": 3,
     "grammar-census-prose": 23,
     "instrument-prose": 40,
-    "lift-output-backlog": 1831,
+    "lift-output-backlog": 1835,
     "provenance-oracle-guard": 79,
     "verifier-verdict-quote": 51,
     "verify-dialect-boundary": 42
   },
-  "total_occurrences": 2069
+  "total_occurrences": 2073
 }
