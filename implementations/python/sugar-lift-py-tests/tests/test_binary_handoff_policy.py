@@ -500,7 +500,69 @@ def test_python_wrapper_delegates_to_sugarbin(tmp_path: Path, monkeypatch) -> No
     )
     fake.chmod(0o755)
     monkeypatch.setattr(sugar_binary, "SUGARBIN", fake)
+    monkeypatch.setattr(sugar_binary.platform, "node", lambda: "MapLaptop")
+    monkeypatch.setattr(
+        sugar_binary,
+        "subprocess_run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, f"{resolved}\n", ""
+        ),
+    )
     assert sugar_binary.resolve_sugar_binary() == resolved
+
+
+def test_python_wrapper_uses_native_windows_sugarbin(monkeypatch) -> None:
+    from sugar_lift_py_tests import sugar_binary
+
+    resolved = Path(r"C:\sugar\target\release\sugar.exe")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, f"{resolved}\n", "")
+
+    monkeypatch.setattr(sugar_binary.os, "name", "nt")
+    monkeypatch.setattr(sugar_binary.platform, "node", lambda: "Battleaxe")
+    monkeypatch.setattr(sugar_binary, "subprocess_run", fake_run)
+
+    assert sugar_binary.resolve_sugar_binary() == resolved
+    assert calls[0][0] == [
+        "powershell.exe",
+        "-NoProfile",
+        "-File",
+        str(sugar_binary.SUGARBIN_WINDOWS),
+        "-Profile",
+        "release",
+    ]
+
+
+def test_python_wrapper_keeps_windows_laptop_on_broker(monkeypatch) -> None:
+    from sugar_lift_py_tests import sugar_binary
+
+    resolved = Path("/remote/cache/sugar")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, f"{resolved}\n", "")
+
+    monkeypatch.setattr(sugar_binary.os, "name", "nt")
+    monkeypatch.setattr(sugar_binary.platform, "node", lambda: "MapLaptop")
+    monkeypatch.setattr(sugar_binary, "subprocess_run", fake_run)
+
+    assert sugar_binary.resolve_sugar_binary() == resolved
+    assert calls[0][0] == [
+        "bash.exe",
+        "-lc",
+        'script="$(cygpath -u "$SUGAR_WINDOWS_SCRIPT" 2>/dev/null || '
+        'wslpath -u "$SUGAR_WINDOWS_SCRIPT")"; '
+        'exec "$script" --profile "$1"',
+        "sugarbin",
+        "release",
+    ]
+    assert calls[0][1]["env"]["SUGAR_WINDOWS_SCRIPT"] == str(
+        sugar_binary.SUGARBIN
+    )
 
 
 def test_witness_harness_resolves_sugar_once_for_parallel_callers(
