@@ -130,7 +130,7 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
             if value.has_method(self.attr_name):
                 return value._floor_gap(
                     owner=type(self).__name__,
-                    blame=str(self.site),
+                    blame=self.site,
                     observed=f"{value.class_name}.{self.attr_name}",
                     requested="bound method attribute floor",
                     fix="construct a bound method value before bare attribute access",
@@ -140,12 +140,12 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
                     "__getattr__",
                     (StringValue(self.attr_name),),
                     owner=type(self).__name__,
-                    blame=str(self.site),
+                    blame=self.site,
                     ctx=ctx,
                 )
             return value._floor_gap(
                 owner=type(self).__name__,
-                blame=str(self.site),
+                blame=self.site,
                 observed=f"{value.class_name}.{self.attr_name}",
                 requested="constructor-bound field",
                 fix=f"construct field `{value.class_name}.{self.attr_name}` or __getattr__",
@@ -180,7 +180,7 @@ def project_object_attribute(value, attr_name: str, site, ctx) -> Outcome:
             "__getattribute__",
             (name,),
             owner="AttributeSugar",
-            blame=str(site),
+            blame=site,
             ctx=ctx,
         )
     descriptor = value.class_field_value(attr_name)
@@ -189,7 +189,7 @@ def project_object_attribute(value, attr_name: str, site, ctx) -> Outcome:
             "__get__",
             (value, StringValue(value.class_name)),
             owner="AttributeSugar",
-            blame=str(site),
+            blame=site,
             ctx=ctx,
         )
     for object_field in value.fields:
@@ -198,18 +198,18 @@ def project_object_attribute(value, attr_name: str, site, ctx) -> Outcome:
     if value.has_method(attr_name):
         return value._floor_gap(
             owner="AttributeSugar",
-            blame=str(site),
+            blame=site,
             observed=f"{value.class_name}.{attr_name}",
             requested="bound method attribute floor",
             fix="construct a bound method value before bare attribute access",
         )
     if value.has_method("__getattr__"):
         return value.call_method_value(
-            "__getattr__", (name,), owner="AttributeSugar", blame=str(site), ctx=ctx
+            "__getattr__", (name,), owner="AttributeSugar", blame=site, ctx=ctx
         )
     return value._floor_gap(
         owner="AttributeSugar",
-        blame=str(site),
+        blame=site,
         observed=f"{value.class_name}.{attr_name}",
         requested="constructor-bound field",
         fix=f"construct field `{value.class_name}.{attr_name}` or __getattr__",

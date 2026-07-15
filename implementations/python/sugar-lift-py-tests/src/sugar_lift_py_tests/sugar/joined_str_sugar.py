@@ -144,7 +144,7 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
 
                 factory_panic_gap(
                     owner="JoinedStrSugar",
-                    blame=str(self.site),
+                    blame=self.site,
                     observed="FormattedValue",
                     requested="term",
                     fix=part.dynamic_reason,
@@ -165,7 +165,7 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
 
             factory_panic_gap(
                 owner="JoinedStrSugar",
-                blame=str(self.site),
+                blame=self.site,
                 observed="FormattedValue",
                 requested="term",
                 fix="formatted string literal field has no reducible value",
@@ -243,7 +243,6 @@ def _try_ground_format(value, conversion: int, spec: str, site) -> str | None:
 def _runtime_format_effect(
     site, reason: str, value, spec, conversion: int
 ) -> Incomplete:
-    blame = str(site)
     from sugar_lift_py_tests.effect import (
         DynamicFormatRuntimeEffect,
         RuntimeEffectWitness,
@@ -253,8 +252,8 @@ def _runtime_format_effect(
     operand = ctor(
         "py.format.arguments",
         [
-            value.to_term(owner=blame),
-            spec.to_term(owner=blame),
+            value.to_term(owner=str(site)),
+            spec.to_term(owner=str(site)),
             num(conversion),
         ],
     )
@@ -263,7 +262,7 @@ def _runtime_format_effect(
         DynamicFormatRuntimeEffect(
             "formatted string runtime boundary: "
             f"{reason}; keep as typed red until a narrower floor owns this "
-            f"shape. blame={blame}",
+            f"shape. blame={site}",
             witness=RuntimeEffectWitness(
                 operation=ctor("py.format.dynamic_spec", [operand]),
                 operand=operand,

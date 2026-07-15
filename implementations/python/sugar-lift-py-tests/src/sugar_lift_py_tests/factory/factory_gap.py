@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from .factory_audit_row import FactoryAuditRow
 from .factory_gap_info import FactoryGapInfo, GapKind, GapLocus
+
+if TYPE_CHECKING:
+    from .source_fragment import SourceFragment
 
 
 class FactoryPanic(BaseException):
@@ -42,7 +45,7 @@ def factory_panic(
 def factory_panic_gap(
     *,
     owner: str,
-    blame: str,
+    blame: "SourceFragment | str",
     observed: str,
     requested: str,
     fix: str,
@@ -51,10 +54,15 @@ def factory_panic_gap(
     status: str = "sugar-gap",
     selected: str | None = None,
 ) -> NoReturn:
-    """Mouth for sites that previously built FactoryGapEffect / FactoryGap."""
+    """Mouth for sites that previously built FactoryGapEffect / FactoryGap.
+
+    ``blame`` accepts the SourceFragment itself; FactoryGapInfo.blame is prose,
+    so the fragment is projected to ``file:line:col`` here -- at the prose
+    boundary -- and nowhere earlier.
+    """
     info = FactoryGapInfo(
         owner=owner,
-        blame=blame,
+        blame=str(blame),
         observed=observed,
         requested=requested,
         fix=fix,
@@ -65,7 +73,7 @@ def factory_panic_gap(
         role=requested,
         status=status,
         observed=observed,
-        blame=blame,
+        blame=str(blame),
         selected=selected,
         candidates=[],
         message=info.message,

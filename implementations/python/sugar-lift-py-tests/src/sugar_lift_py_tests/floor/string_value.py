@@ -127,7 +127,7 @@ class StringValue(FloorValue):
 
                     factory_panic_gap(
                         owner="StringValue.subscript",
-                        blame=str(site),
+                        blame=site,
                         observed="slice step 0",
                         requested="ground Python string slice",
                         fix="use a nonzero literal integer step or emit ValueErrorRuntimeEffect",
