@@ -17,13 +17,23 @@ class SugarBinaryResolutionError(RuntimeError):
     pass
 
 
+def sugarbin_route(*, os_name: str, hostname: str) -> str:
+    """Select acquisition topology without attempting acquisition."""
+    if os_name == "nt" and hostname.casefold() == "battleaxe":
+        return "battleaxe-native"
+    if os_name == "nt":
+        return "windows-broker"
+    return "posix-broker"
+
+
 def resolve_sugar_binary(
     *,
     env: Mapping[str, str] | None = None,
     profile: str = "release",
 ) -> Path:
     child_env = dict(os.environ if env is None else env)
-    if os.name == "nt" and platform.node().casefold() == "battleaxe":
+    route = sugarbin_route(os_name=os.name, hostname=platform.node())
+    if route == "battleaxe-native":
         command = [
             "powershell.exe",
             "-NoProfile",
@@ -32,7 +42,7 @@ def resolve_sugar_binary(
             "-Profile",
             profile,
         ]
-    elif os.name == "nt":
+    elif route == "windows-broker":
         child_env["SUGAR_WINDOWS_SCRIPT"] = str(SUGARBIN)
         command = [
             "bash.exe",
