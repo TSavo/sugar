@@ -26,7 +26,7 @@ __all__ = [
 ]
 
 
-@functools.lru_cache(maxsize=256)
+@functools.lru_cache(maxsize=None)
 def source_splitlines(source: str) -> tuple[str, ...]:
     """`str.splitlines(keepends=True)` split once per source.
 
@@ -37,7 +37,7 @@ def source_splitlines(source: str) -> tuple[str, ...]:
     return tuple(source.splitlines(keepends=True))
 
 
-@functools.lru_cache(maxsize=256)
+@functools.lru_cache(maxsize=None)
 def source_lines(source: str) -> tuple[str, ...]:
     """The module's line table (line ends kept), split once per source.
 
@@ -70,7 +70,7 @@ def source_segment(source: str, node: ast.AST) -> str | None:
     return "".join((first, *lines[lineno + 1 : end_lineno], last))
 
 
-@functools.lru_cache(maxsize=64)
+@functools.lru_cache(maxsize=None)
 def _parsed(source: str, filename: str) -> ast.Module:
     return ast.parse(source, filename=filename)
 
@@ -84,7 +84,7 @@ def parsed_tree(source: str, filename: str = "<unknown>") -> ast.Module:
     return _parsed(source, filename)
 
 
-@functools.lru_cache(maxsize=64)
+@functools.lru_cache(maxsize=None)
 def parsed_parents(source: str) -> "tuple[ast.Module, dict[ast.AST, ast.AST]] | None":
     """The parsed tree plus its child->parent map, or None on a syntax error.
 
