@@ -547,7 +547,10 @@ fn replacement_for(artifact: &Artifact) -> String {
     if let Some(root) = broad_sync_root(&artifact.rel_path) {
         return format!("add {root} to sync_paths in bin/lib/sugar-bx.sh");
     }
-    format!("add {} to sync_paths in bin/lib/sugar-bx.sh", artifact.rel_path)
+    format!(
+        "add {} to sync_paths in bin/lib/sugar-bx.sh",
+        artifact.rel_path
+    )
 }
 
 fn broad_sync_root(path: &str) -> Option<String> {
