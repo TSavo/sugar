@@ -109,6 +109,7 @@ build-c:
 
 .PHONY: build-python
 build-python:
+	rm -rf $(PYTHON_KIT_VENV)
 	$(PYTHON) -m venv $(PYTHON_KIT_VENV)
 	$(PYTHON_KIT_PIP) install --quiet --upgrade pip
 	# The rust integration suite spawns the python lifter over RPC
@@ -186,7 +187,10 @@ test-compiler-warning-de:
 test-rust: build-python
 	@failed=""; \
 	PATH="$(PYTHON_KIT_BIN):$$PATH" \
-	  $(CARGO) test --no-fail-fast --release --manifest-path implementations/rust/Cargo.toml \
+	  $(CARGO) build --workspace --bins --manifest-path implementations/rust/Cargo.toml \
+	  || failed="$$failed implementations/rust-build"; \
+	PATH="$(PYTHON_KIT_BIN):$$PATH" \
+	  $(CARGO) test --no-fail-fast --manifest-path implementations/rust/Cargo.toml \
 	  || failed="$$failed implementations/rust"; \
 	if [ -n "$$failed" ]; then echo "test-rust FAIL:$$failed"; exit 1; fi
 
@@ -213,26 +217,31 @@ test-python: build-python
 	@failed=""; \
 	sugar_bin="$$(bin/sugarbin --profile release)" || exit $$?; \
 	(cd implementations/python/sugar-lift-py-tests && \
+		rm -rf .venv && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
 		python -m pip install --quiet -e ../sugar-lift-python-source -e '.[test]' numpy pandas scikit-learn && \
 		SUGAR_BIN="$$sugar_bin" pytest) || failed="$$failed sugar-lift-py-tests"; \
 	(cd implementations/python/sugar-emit-python-pytest && \
+		rm -rf .venv && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
 		python -m pip install --quiet -e . pytest && \
 		pytest) || failed="$$failed sugar-emit-python-pytest"; \
 	(cd implementations/python/sugar-lift-python-source && \
+		rm -rf .venv && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
 		python -m pip install --quiet -e ../sugar-lift-py-tests -e . pytest blake3 numpy pandas && \
 		SUGAR_BIN="$$sugar_bin" pytest) || failed="$$failed sugar-lift-python-source"; \
 	(cd implementations/python/sugar-lift-py-pytest-witness && \
+		rm -rf .venv && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
 		python -m pip install --quiet -e ../sugar-lift-py-tests -e . pytest pynacl blake3 cbor2 && \
 		SUGAR_BIN="$$sugar_bin" pytest) || failed="$$failed sugar-lift-py-pytest-witness"; \
 	(cd implementations/python/sugar-build-witness && \
+		rm -rf .venv && \
 		python3 -m venv .venv && \
 		. .venv/bin/activate && \
 		python -m pip install --quiet -e ../sugar-lift-py-tests -e . pytest pynacl blake3 cbor2 && \
