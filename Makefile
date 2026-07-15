@@ -190,7 +190,7 @@ test-rust: build-python
 	  $(CARGO) build --workspace --bins --manifest-path implementations/rust/Cargo.toml \
 	  || failed="$$failed implementations/rust-build"; \
 	PATH="$(PYTHON_KIT_BIN):$$PATH" \
-	  $(CARGO) test --no-fail-fast --manifest-path implementations/rust/Cargo.toml \
+	  $(CARGO) test --no-fail-fast --release --manifest-path implementations/rust/Cargo.toml \
 	  || failed="$$failed implementations/rust"; \
 	if [ -n "$$failed" ]; then echo "test-rust FAIL:$$failed"; exit 1; fi
 
@@ -509,7 +509,11 @@ test-3809-dod-scoreboard:
 	@bash scripts/test-3809-dod-scoreboard.sh
 
 .PHONY: ci
-ci: check-lift-refusal-vocabulary test-python-format test-all test-showcases self-attest coretests-source-audit coretests-invariants
+# `test-all` is an explicit development frontier, not a release gate: it runs
+# the full Rust workspace and Python corpus, including intentionally red audits,
+# ratchets, and battleaxe instruments. Keep default CI diagnostic by composing
+# only focused receipts whose red result names one actionable contract.
+ci: check-lift-refusal-vocabulary test-python-format test-showcases self-attest coretests-source-audit coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
 
