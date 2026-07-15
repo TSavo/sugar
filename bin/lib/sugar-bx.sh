@@ -52,7 +52,15 @@ sync_paths=(
 )
 
 sugar_bx_quote() { printf "'"; printf %s "$1" | sed "s/'/'\\\\''/g"; printf "'"; }
-sugar_bx_ssh() { "$SUGAR_BX_SSH" -o BatchMode=yes "$SUGAR_BX_HOST" "$@"; }
+# When already on the target machine (SUGAR_BX_LOCAL=1) run the command in a
+# local login shell instead of over ssh; exit status propagates identically.
+sugar_bx_ssh() {
+  if [[ "${SUGAR_BX_LOCAL:-0}" == 1 ]]; then
+    bash -lc "$*"
+  else
+    "$SUGAR_BX_SSH" -o BatchMode=yes "$SUGAR_BX_HOST" "$@"
+  fi
+}
 
 sugar_bx_init() {
   SUGAR_BX_REPO_ROOT="$(cd "$1" && pwd -P)"
@@ -66,6 +74,17 @@ sugar_bx_init() {
   local tag; tag="$(printf %s "$SUGAR_BX_REPO_ROOT" | shasum 2>/dev/null | cut -c1-12)"; tag="${tag:-default}"
   SUGAR_BX_ROOT="${BCARGO_REMOTE_ROOT:-/home/tsavo/remote/sugar-bcargo-$tag}"
   SUGAR_BX_REPO="$SUGAR_BX_ROOT/sugar"
+  SUGAR_BX_LOCAL=0
+  local local_host; local_host="$(hostname 2>/dev/null || true)"
+  if [[ "${BCARGO_FORCE_REMOTE:-0}" != 1 && -n "$local_host" ]]; then
+    local a="${local_host,,}" b="${SUGAR_BX_HOST,,}"
+    if [[ "$a" == "$b" ]]; then
+      SUGAR_BX_LOCAL=1
+      # Run directly in the current checkout: no scratch root, no sync.
+      SUGAR_BX_REPO="$SUGAR_BX_REPO_ROOT"
+      echo "bx: already on $SUGAR_BX_HOST; running locally" >&2
+    fi
+  fi
   SUGAR_BX_BINARY_CACHE="${BCARGO_REMOTE_BINARY_CACHE:-/home/tsavo/.cache/sugar/binaries}"
   SUGAR_BX_SSH="${BCARGO_SSH:-ssh}"; SUGAR_BX_RSYNC="${BCARGO_RSYNC:-rsync}"
   SUGAR_BX_CLEAN="${BCARGO_CLEAN_REMOTE_ROOT:-never}"
@@ -76,12 +95,14 @@ sugar_bx_init() {
     return 2
   fi
   local days="${BCARGO_REAP_DAYS:-2}"
-  if [[ "$days" != 0 ]]; then
+  if [[ "$days" != 0 && "$SUGAR_BX_LOCAL" != 1 ]]; then
     sugar_bx_ssh "mkdir -p $(sugar_bx_quote "$SUGAR_BX_ROOT") && touch $(sugar_bx_quote "$SUGAR_BX_ROOT") && nohup find /home/tsavo/remote -mindepth 1 -maxdepth 1 -name 'sugar-bcargo-*' ! -path $(sugar_bx_quote "$SUGAR_BX_ROOT") -mtime +$(sugar_bx_quote "$days") -exec rm -rf {} + >/dev/null 2>&1 &" || true
   fi
 }
 
 sugar_bx_sync_workspace() {
+  # Local mode runs in the checkout itself: nothing to sync.
+  [[ "${SUGAR_BX_LOCAL:-0}" == 1 ]] && return 0
   local existing=() rel manifest
   for rel in "${sync_paths[@]}"; do [[ -e "$SUGAR_BX_REPO_ROOT/$rel" ]] && existing+=("$rel"); done
   sugar_bx_ssh "rm -rf $(sugar_bx_quote "$SUGAR_BX_REPO/menagerie") && mkdir -p $(sugar_bx_quote "$SUGAR_BX_REPO")"
@@ -175,8 +196,11 @@ sugar_bx_run_docker() {
 sugar_bx_is_foreign() { [[ "$(uname -s 2>/dev/null)" != Linux ]] && [[ "$(file -b "$1" 2>/dev/null || true)" == *ELF* ]]; }
 sugar_bx_sync_back() {
   local remote="$1" local_path="$2" tmp
+  if [[ "${SUGAR_BX_LOCAL:-0}" == 1 && "$remote" == "$local_path" ]]; then return 0; fi
   mkdir -p "$(dirname "$local_path")"; tmp="$(mktemp "${local_path}.sugar-bx-sync.XXXXXX")"
-  "$SUGAR_BX_RSYNC" -az "$SUGAR_BX_HOST:$remote" "$tmp"
+  local src="$SUGAR_BX_HOST:$remote"
+  [[ "${SUGAR_BX_LOCAL:-0}" == 1 ]] && src="$remote"
+  "$SUGAR_BX_RSYNC" -az "$src" "$tmp"
   if sugar_bx_is_foreign "$tmp"; then
     echo "sugarbin: refusing to deposit foreign-platform binary: crime=foreign-platform-binary owner=bin/lib/sugar-bx.sh path=$local_path replacement=run the binary on $SUGAR_BX_HOST or rebuild locally" >&2
     rm -f "$tmp"; [[ -e "$local_path" ]] && sugar_bx_is_foreign "$local_path" && rm -f "$local_path"; return 0
