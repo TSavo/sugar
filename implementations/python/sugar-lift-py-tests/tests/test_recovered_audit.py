@@ -150,7 +150,7 @@ def test_recovered_audit_keeps_typed_effects_out_of_construction_gaps() -> None:
 
 
 def test_legacy_audit_only_is_not_a_recovery_backdoor() -> None:
-    with pytest.raises(SystemExit, match="continue-on-construction-gaps"):
+    with pytest.raises(SystemExit, match="allowed-broken-components"):
         main(["--audit-only"])
 
 

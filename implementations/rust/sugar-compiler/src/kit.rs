@@ -240,6 +240,7 @@ impl Kit {
             working_dir: self.manifest.working_dir.clone(),
             workspace_root: workspace_root.to_path_buf(),
             audit_frontier: false,
+            allowed_broken_components: Vec::new(),
             transport: crate::kit_path::LiftPluginKit::new(
                 self.manifest.surface.clone(),
                 self.manifest.command.clone(),

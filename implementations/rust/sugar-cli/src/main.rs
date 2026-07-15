@@ -284,11 +284,11 @@ pub struct LiftArgs {
     #[arg(long = "allow-failed-components")]
     pub allow_failed_components: bool,
     /// Emit only a recovered construction-panic frontier, never ProofIR or a lift report.
-    #[arg(long, requires = "continue_on_construction_gaps", conflicts_with_all = ["report", "identify_only", "library_bindings", "prove", "report_summary", "visual", "contract"])]
+    #[arg(long, requires = "allowed_broken_components", conflicts_with_all = ["report", "identify_only", "library_bindings", "prove", "report_summary", "visual", "contract"])]
     pub audit_frontier: bool,
-    /// Explicitly recover at the audit boundary to inventory independent FactoryPanics.
-    #[arg(long, requires = "audit_frontier")]
-    pub continue_on_construction_gaps: bool,
+    /// Component ids whose FactoryPanics may be held at the single audit boundary.
+    #[arg(long, value_delimiter = ',', num_args = 1.., requires = "audit_frontier")]
+    pub allowed_broken_components: Vec<String>,
     #[command(flatten)]
     pub out: OutputFlags,
 }

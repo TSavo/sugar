@@ -79,7 +79,8 @@ fn genuine_empty_workspace_mints_only_explicit_valid_empty_receipt() {
     let dir = tempfile::tempdir().expect("tempdir");
     let workspace = dir.path().join("workspace");
     fs::create_dir(&workspace).expect("workspace");
-    let payload = fold_recovered_audit(&python_kit(dir.path()), &workspace).expect("closed fold");
+    let payload = fold_recovered_audit(&python_kit(dir.path()), &workspace, &["python".into()])
+        .expect("closed fold");
 
     assert_eq!(payload["status"], "valid-empty");
     assert_eq!(payload["census"]["kind"], "recovered-frontier-census");
@@ -97,7 +98,8 @@ fn known_nonempty_zero_frontier_proves_file_body_was_demanded() {
     let workspace = dir.path().join("workspace");
     fs::create_dir(&workspace).expect("workspace");
     fs::write(workspace.join("__init__.py"), "# package marker only\n").expect("source");
-    let payload = fold_recovered_audit(&python_kit(dir.path()), &workspace).expect("closed fold");
+    let payload = fold_recovered_audit(&python_kit(dir.path()), &workspace, &["python".into()])
+        .expect("closed fold");
 
     assert_eq!(payload["status"], "complete");
     assert_eq!(count(&payload, "sourceFilesEnumerated"), 1);
@@ -119,7 +121,8 @@ fn successful_nonzero_frontier_has_completed_census_and_panics() {
         "def broken(xs):\n    match xs:\n        case 0:\n            return xs\n",
     )
     .expect("source");
-    let payload = fold_recovered_audit(&python_kit(dir.path()), &workspace).expect("closed fold");
+    let payload = fold_recovered_audit(&python_kit(dir.path()), &workspace, &["python".into()])
+        .expect("closed fold");
 
     assert_eq!(payload["status"], "failed");
     assert_eq!(count(&payload, "sourceFilesEnumerated"), 1);

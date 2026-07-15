@@ -96,10 +96,6 @@ pub struct LiftPluginOptions {
     /// Ask a reporting-capable lifter to emit only gate summary accounting
     /// instead of transporting full ProofIR/report sidecars.
     pub report_summary: bool,
-    /// Request the separately typed recovered construction audit response.
-    pub audit_frontier: bool,
-    /// Explicit recovery override; only meaningful with audit_frontier.
-    pub continue_on_construction_gaps: bool,
     /// Contract bindings forwarded to implication consumer surfaces. Each
     /// entry is `{ "name": <contract name>, "contract_cid": <attestation cid> }`.
     pub contract_bindings: Vec<Value>,
@@ -708,12 +704,6 @@ pub fn build_lift_params(project_root: &Path, surface: &str, options: LiftPlugin
     }
     if options.report_summary {
         options_obj["reportSummary"] = json!(true);
-    }
-    if options.audit_frontier {
-        options_obj["auditFrontier"] = json!(true);
-    }
-    if options.continue_on_construction_gaps {
-        options_obj["continueOnConstructionGaps"] = json!(true);
     }
     // Preserve the original workspace_override in the request itself,
     // so consumers of the lift_request (like MintKit::transform_session)

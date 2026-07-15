@@ -42,6 +42,9 @@ def _enumerate(
 ):
     """Call `_handle_enumerate` directly and capture its `_send` output by
     monkeypatching the module's `_send` for the duration of one call."""
+    options = dict(options or {})
+    if options.get("auditFrontier") is True:
+        options.setdefault("allowedBrokenComponents", ["python"])
     captured = []
     original_send = lift_rpc._send
     lift_rpc._send = captured.append
@@ -53,7 +56,7 @@ def _enumerate(
                 "workspace_root": str(workspace_root),
                 "at": at,
                 "seek": seek,
-                "options": options or {},
+                "options": options,
             },
         )
     finally:
@@ -129,6 +132,7 @@ def third():
         panic_resolver,
     )
     lift_rpc._AUDIT_FILE_CONTEXTS.clear()
+    lift_rpc._ENUMERATION_FILE_CONTEXTS.clear()
     file_key = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
     definitions = _enumerate(
         "functions", tmp_path, at=file_key, options={"auditFrontier": True}
@@ -154,6 +158,48 @@ def third():
         panic for panic in panics if panic["gap"]["owner"] == "enumeration-seed-fixture"
     ]
     assert len(owned) == 1, owned
+
+
+def test_audit_frontier_is_not_permission_to_hold_an_unallowed_component_panic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "seeded.py").write_text(
+        "from fixture_module import VALUE\n\ndef f():\n    return VALUE\n",
+        encoding="utf-8",
+    )
+
+    def panic_resolver(import_target, ctx):
+        del import_target, ctx
+        factory_panic_gap(
+            owner="single-recovery-door",
+            blame="seeded.py:1:0",
+            observed="VALUE",
+            requested="resolved import value",
+            fix="name python in allowedBrokenComponents",
+        )
+
+    monkeypatch.setattr(
+        "sugar_lift_py_tests.sugar.install_source_dig.resolve_install_source_value",
+        panic_resolver,
+    )
+    lift_rpc._AUDIT_FILE_CONTEXTS.clear()
+    lift_rpc._ENUMERATION_FILE_CONTEXTS.clear()
+    file_key = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+
+    with pytest.raises(lift_rpc.FactoryPanic, match="single-recovery-door"):
+        lift_rpc._handle_enumerate(
+            1,
+            {
+                "level": "functions",
+                "workspace_root": str(tmp_path),
+                "at": file_key,
+                "seek": False,
+                "options": {
+                    "auditFrontier": True,
+                    "allowedBrokenComponents": [],
+                },
+            },
+        )
 
 
 def test_empty_package_module_enumerates_and_folds_as_an_empty_child_set(

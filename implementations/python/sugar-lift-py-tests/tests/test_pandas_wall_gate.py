@@ -624,7 +624,8 @@ def test_complete_mode_records_recovered_frontier_without_report_artifact(
     assert result.frontier_path.is_file()
     assert not (tmp_path / "wall/report.json").exists()
     assert commands[-1][1:3] == ["lift", "--audit-frontier"]
-    assert "--continue-on-construction-gaps" in commands[-1]
+    flag = commands[-1].index("--allowed-broken-components")
+    assert commands[-1][flag + 1] == "python"
     assert len(commands) == 3
 
 

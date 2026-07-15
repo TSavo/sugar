@@ -1381,8 +1381,6 @@ fn lift_options_from_request(
             .and_then(|options| options.get("reportSummary"))
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        audit_frontier: false,
-        continue_on_construction_gaps: false,
         contract_bindings,
     }
 }
@@ -2757,8 +2755,6 @@ fn mint_input_multi(
                 emit: plugin.emit.clone(),
                 layer: plugin.layer.clone(),
                 report_summary: false,
-                audit_frontier: false,
-                continue_on_construction_gaps: false,
                 contract_bindings: Vec::new(),
             },
         ));

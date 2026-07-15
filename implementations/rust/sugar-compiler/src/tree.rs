@@ -136,6 +136,7 @@ pub struct KitConn {
     pub working_dir: Option<PathBuf>,
     pub workspace_root: PathBuf,
     pub audit_frontier: bool,
+    pub allowed_broken_components: Vec<String>,
     pub transport: crate::kit_path::LiftPluginKit,
 }
 
@@ -146,6 +147,7 @@ impl PartialEq for KitConn {
             && self.working_dir == other.working_dir
             && self.workspace_root == other.workspace_root
             && self.audit_frontier == other.audit_frontier
+            && self.allowed_broken_components == other.allowed_broken_components
     }
 }
 
@@ -768,6 +770,10 @@ fn enumerate_rpc(
             reason: "empty command".to_string(),
         });
     }
+    let mut options = json!({"auditFrontier": conn.audit_frontier});
+    if !conn.allowed_broken_components.is_empty() {
+        options["allowedBrokenComponents"] = json!(conn.allowed_broken_components);
+    }
     let response = conn
         .transport
         .request(&json!({
@@ -775,7 +781,7 @@ fn enumerate_rpc(
             "at": at,
             "seek": seek,
             "workspace_root": conn.workspace_root.display().to_string(),
-            "options": {"auditFrontier": conn.audit_frontier},
+            "options": options,
         }))
         .map_err(|error| EnumerateError::Unavailable {
             plugin: plugin.clone(),
@@ -895,9 +901,14 @@ struct RecoveredFactoryPanicRow {
 /// discovered audit leaf must complete with a separately typed recovered
 /// payload. Any gap, seek miss, malformed leaf, or producer death returns Err;
 /// the CLI therefore has no value it could serialize as a frontier artifact.
-pub fn fold_recovered_audit(kit: &Kit, workspace_root: &Path) -> Result<Value, KitError> {
+pub fn fold_recovered_audit(
+    kit: &Kit,
+    workspace_root: &Path,
+    allowed_broken_components: &[String],
+) -> Result<Value, KitError> {
     let mut conn = kit.enumerate_conn(workspace_root);
     conn.audit_frontier = true;
+    conn.allowed_broken_components = allowed_broken_components.to_vec();
     let (files, source_gaps) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
     if !source_gaps.is_empty() {
         return Err(EnumerateError::Malformed {
