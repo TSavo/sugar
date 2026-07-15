@@ -68,6 +68,14 @@ struct RecoveredFactoryPanic {
     reason: String,
     locus: String,
     gap: Value,
+    #[serde(rename = "demandedBody")]
+    demanded_body: Value,
+    #[serde(rename = "demandedSource")]
+    demanded_source: String,
+    #[serde(rename = "terminalGapLocus")]
+    terminal_gap_locus: String,
+    #[serde(rename = "ownerIdentity")]
+    owner_identity: Value,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
