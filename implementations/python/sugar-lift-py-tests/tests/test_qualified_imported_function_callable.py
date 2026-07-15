@@ -40,12 +40,15 @@ def _consumer_call(source: str, call: str, filename: str = "consumer.py"):
         module_temporal=temporal,
     )
     node = ast.parse(call, filename=filename).body[0].value
-    return complete_value(
-        build_node(node, filename=filename, role=SugarRole.TERM, ctx=ctx).sugar.desugar(
-            ctx
+    return (
+        complete_value(
+            build_node(
+                node, filename=filename, role=SugarRole.TERM, ctx=ctx
+            ).sugar.desugar(ctx),
+            owner="qualified imported function fixture",
         ),
-        owner="qualified imported function fixture",
-    ), temporal
+        temporal,
+    )
 
 
 def test_reexported_qualified_function_reaches_function_callable_binder_without_execution(
@@ -111,8 +114,12 @@ def test_same_leaf_modules_bind_their_own_exact_reexported_body(
         "from fixture_right.api import exported as chosen\n", "chosen()", "right.py"
     )
     force_ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
-    assert left.force_floor(force_ctx, owner="left", project_callsite=False) == TermValue(11)
-    assert right.force_floor(force_ctx, owner="right", project_callsite=False) == TermValue(22)
+    assert left.force_floor(
+        force_ctx, owner="left", project_callsite=False
+    ) == TermValue(11)
+    assert right.force_floor(
+        force_ctx, owner="right", project_callsite=False
+    ) == TermValue(22)
     assert not any(
         name.startswith(("fixture_left", "fixture_right")) for name in sys.modules
     )

@@ -130,7 +130,9 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                 manager = force_floor(
                     cm, ctx, owner="WithSugar manager result", project_callsite=False
                 )
-            if not isinstance(manager, ObjectValue) or not manager.has_method("__exit__"):
+            if not isinstance(manager, ObjectValue) or not manager.has_method(
+                "__exit__"
+            ):
                 _unresolved_callsite_exit(self.site)
 
             exit_call = manager.call_method_value(

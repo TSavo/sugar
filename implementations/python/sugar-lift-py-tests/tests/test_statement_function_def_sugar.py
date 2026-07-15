@@ -72,7 +72,9 @@ def test_nested_callable_captures_lexical_bindings_and_overlays_actuals() -> Non
     assert dug == TermValue(9)
 
 
-def test_nested_callable_binds_an_omitted_trailing_default_without_rekeying_callsite() -> None:
+def test_nested_callable_binds_an_omitted_trailing_default_without_rekeying_callsite() -> (
+    None
+):
     universe = _root_universe(
         "def outer():\n"
         "    def inner(y, increment=4):\n"
@@ -92,7 +94,9 @@ def test_nested_callable_binds_an_omitted_trailing_default_without_rekeying_call
     ) == TermValue(9)
 
 
-def test_nested_callable_binds_multiple_omitted_trailing_defaults_in_formal_order() -> None:
+def test_nested_callable_binds_multiple_omitted_trailing_defaults_in_formal_order() -> (
+    None
+):
     universe = _root_universe(
         "def outer():\n"
         "    def inner(required, first=4, second=6):\n"
@@ -111,7 +115,9 @@ def test_nested_callable_binds_multiple_omitted_trailing_defaults_in_formal_orde
     ) == TermValue(15)
 
 
-def test_nested_callable_supplied_positional_overrides_only_its_aligned_default() -> None:
+def test_nested_callable_supplied_positional_overrides_only_its_aligned_default() -> (
+    None
+):
     universe = _root_universe(
         "def outer():\n"
         "    def inner(required, first=4, second=6):\n"
@@ -177,7 +183,9 @@ def test_nested_callable_extra_positional_stays_a_signature_gap() -> None:
     assert raised.value.info.observed == ("positional", "positional")
 
 
-def test_nested_callable_binds_empty_variadic_parameters_without_rekeying_callsite() -> None:
+def test_nested_callable_binds_empty_variadic_parameters_without_rekeying_callsite() -> (
+    None
+):
     universe = _root_universe(
         "def outer():\n"
         "    def inner(required, /, *extras, **options):\n"
@@ -196,7 +204,9 @@ def test_nested_callable_binds_empty_variadic_parameters_without_rekeying_callsi
     ) == TupleValue(())
 
 
-def test_nested_callable_collects_surplus_positionals_in_source_order_without_rekeying_callsite() -> None:
+def test_nested_callable_collects_surplus_positionals_in_source_order_without_rekeying_callsite() -> (
+    None
+):
     universe = _root_universe(
         "def outer():\n"
         "    def inner(required, /, *extras, **options):\n"
@@ -364,7 +374,9 @@ def test_nested_callable_missing_required_keyword_only_stays_a_signature_gap() -
     assert raised.value.info.observed == ("keyword-only",)
 
 
-def test_nested_callable_keyword_only_boundary_is_not_filled_by_surplus_positionals() -> None:
+def test_nested_callable_keyword_only_boundary_is_not_filled_by_surplus_positionals() -> (
+    None
+):
     with pytest.raises(FactoryPanic) as raised:
         _root_universe(
             "def outer():\n"
@@ -383,7 +395,9 @@ def test_nested_callable_keyword_only_boundary_is_not_filled_by_surplus_position
     )
 
 
-def test_nested_callable_empty_variadics_do_not_hide_missing_required_positional() -> None:
+def test_nested_callable_empty_variadics_do_not_hide_missing_required_positional() -> (
+    None
+):
     with pytest.raises(FactoryPanic) as raised:
         _root_universe(
             "def outer():\n"

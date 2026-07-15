@@ -560,17 +560,14 @@ def test_python_wrapper_keeps_non_battleaxe_windows_on_broker(monkeypatch) -> No
         "sugarbin",
         "release",
     ]
-    assert calls[0][1]["env"]["SUGAR_WINDOWS_SCRIPT"] == str(
-        sugar_binary.SUGARBIN
-    )
+    assert calls[0][1]["env"]["SUGAR_WINDOWS_SCRIPT"] == str(sugar_binary.SUGARBIN)
 
 
 def test_mac_laptop_routes_to_posix_offload_broker() -> None:
     from sugar_lift_py_tests.sugar_binary import sugarbin_route
 
     assert (
-        sugarbin_route(os_name="posix", hostname="Tsavo-MacBook-Pro")
-        == "posix-broker"
+        sugarbin_route(os_name="posix", hostname="Tsavo-MacBook-Pro") == "posix-broker"
     )
 
 
