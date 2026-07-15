@@ -51,13 +51,14 @@ struct RecoveredAuditCensus {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct RecoveredEffect {
     locus: String,
     effect: String,
     category: String,
     status: String,
     reason: String,
+    demanded_body: Value,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -83,10 +84,11 @@ struct RecoveredPanicOwnerIdentity {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct SuppressedAuditLocus {
     locus: String,
     reason: String,
+    demanded_body: Value,
 }
 
 fn validate_recovered_audit(audit: &RecoveredAudit) -> Result<(), String> {
@@ -10132,7 +10134,8 @@ mod tests {
                 "effect": "GetattrRuntimeEffect",
                 "category": "runtime",
                 "status": "boundary",
-                "reason": "attribute access crosses a runtime boundary"
+                "reason": "attribute access crosses a runtime boundary",
+                "demandedBody": {"file": "pkg.py", "qualname": "f"}
             }],
             "suppressedDescendants": []
         });
@@ -10146,6 +10149,37 @@ mod tests {
         assert_eq!(effect.category, "runtime");
         assert_eq!(effect.status, "boundary");
         assert_eq!(effect.reason, "attribute access crosses a runtime boundary");
+        assert_eq!(effect.demanded_body["file"], "pkg.py");
+        assert_eq!(serde_json::to_value(audit).expect("round trip"), fixture);
+    }
+
+    #[test]
+    fn recovered_audit_suppressed_ownership_round_trips_without_loss() {
+        let fixture = serde_json::json!({
+            "kind": "recovered-construction-audit",
+            "recoveryOverride": true,
+            "status": "complete",
+            "census": {
+                "kind": "recovered-frontier-census",
+                "sourceFilesEnumerated": 1,
+                "sourceBodiesDemanded": 1,
+                "auditLeavesCompleted": 1
+            },
+            "panics": [],
+            "effects": [],
+            "suppressedDescendants": [{
+                "locus": "numpy/core.py:9:2",
+                "reason": "ancestor FactoryPanic poisoned this source locus",
+                "demandedBody": {"file": "numpy/core.py", "qualname": "array"}
+            }]
+        });
+
+        let audit: RecoveredAudit =
+            serde_json::from_value(fixture.clone()).expect("typed recovered audit");
+        assert_eq!(
+            audit.suppressed_descendants[0].demanded_body["file"],
+            "numpy/core.py"
+        );
         assert_eq!(serde_json::to_value(audit).expect("round trip"), fixture);
     }
 

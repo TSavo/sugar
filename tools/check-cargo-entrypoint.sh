@@ -124,6 +124,8 @@ def exemption(path: str, line: str, reason: str) -> str | None:
         return "cleanup test asserts stale remote target removal, not binary acquisition"
     if path == "tests/sugarbin_artifact_manifest.sh" and "$tmp/target/release/sugar" in line:
         return "sugarbin's own conformance test drives a sandboxed fixture artifact, not a consumer acquisition"
+    if path == "tests/sugarbin_build_identity_target.sh" and "$tmp/target/release/sugar" in line:
+        return "sugarbin build-identity conformance test plants and inspects a sandboxed stale fixture, not a consumer acquisition"
     if path.startswith("implementations/rust/sugar-cli/tests/") and "CARGO_BIN_EXE_sugar" in line:
         return "Cargo integration tests exercise the test-built sugar subject binary"
     if path == "implementations/rust/sugar-cli/tests/perf_rss_floor.rs" and "dhat-heap" in line:
