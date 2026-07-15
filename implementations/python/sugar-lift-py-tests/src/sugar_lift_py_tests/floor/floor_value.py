@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from .floor_dispatch_surface import FLOOR_OPERATION_METHOD_NAMES
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context import FactoryBuildContext
@@ -133,7 +134,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role=requested,
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=blame,
                 selected=None,
@@ -196,7 +197,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="append_with",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -251,7 +252,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="guarded",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=observed,
                 selected=None,
@@ -504,7 +505,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="truth",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -539,7 +540,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="length",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -576,7 +577,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="subscript",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -609,7 +610,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="setitem",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -642,7 +643,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="delitem",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -674,7 +675,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="absolute",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -745,7 +746,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="negate",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=observed,
                 selected=None,
@@ -779,7 +780,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="unary_minus",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -812,7 +813,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="unary_plus",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -846,7 +847,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="bitwise_invert",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -947,7 +948,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="add",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -983,7 +984,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="subtract",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -1019,7 +1020,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="multiply",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -1068,7 +1069,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="divide",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -1104,7 +1105,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="modulo",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -1137,7 +1138,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="floor_divide",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -1170,7 +1171,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="right_shift",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,
@@ -1240,7 +1241,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role="to_term",
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=observed,
                 selected=None,
@@ -1274,7 +1275,7 @@ class FloorValue:
             info,
             FactoryAuditRow(
                 role=method_name,
-                status="floor-gap",
+                status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
                 blame=str(site),
                 selected=None,

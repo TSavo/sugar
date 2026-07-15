@@ -8,3 +8,6 @@ from .runtime_effect import RuntimeEffect
 @dataclass(frozen=True)
 class SequenceRepetitionRuntimeEffect(RuntimeEffect):
     """Sequence repetition that cannot be represented by a finite concrete floor."""
+
+    def kind(self) -> type[RuntimeEffect]:
+        return SequenceRepetitionRuntimeEffect

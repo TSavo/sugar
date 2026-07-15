@@ -1,4 +1,5 @@
 from __future__ import annotations
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 import json
 from abc import ABC, abstractmethod
@@ -301,7 +302,7 @@ def _proofir_gap(
         info,
         FactoryAuditRow(
             role="proofir-vocabulary",
-            status="proofir-gap",
+            status=FactoryAuditStatus.PROOFIR_GAP,
             observed=observed,
             blame="proofir-vocabulary",
             selected=None,

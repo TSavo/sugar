@@ -26,6 +26,7 @@ import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 
 def _installed_source(module_name: str) -> tuple[str, str] | None:
@@ -145,7 +146,7 @@ def _module_sibling_function_nodes(module_name: str) -> dict:
                 info,
                 FactoryAuditRow(
                     role="install-source import",
-                    status="floor-gap",
+                    status=FactoryAuditStatus.FLOOR_GAP,
                     observed=type(skipped).__name__,
                     blame=module_name,
                     selected=None,

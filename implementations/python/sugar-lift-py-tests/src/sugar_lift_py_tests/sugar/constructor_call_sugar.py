@@ -15,6 +15,7 @@ from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.constructor_strategy import ConstructorStrategy
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 
 @dataclass(frozen=True)
@@ -75,7 +76,7 @@ def _panic(site, observed: str, requested: str, fix: str):
         info,
         FactoryAuditRow(
             role=requested,
-            status="floor-gap",
+            status=FactoryAuditStatus.FLOOR_GAP,
             observed=observed,
             blame=site.blame,
             selected=None,

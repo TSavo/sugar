@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Literal, Optional, get_args
+from enum import StrEnum
+from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
     # kit_rpc's own import chain runs back through factory (effect_dto ->
@@ -11,17 +12,20 @@ if TYPE_CHECKING:
     # makes the FactoryAuditDto annotation below lazy.
     from sugar_lift_py_tests.kit_rpc import FactoryAuditDto
 
-FactoryAuditStatus = Literal[
-    "selected",
-    "sugar-gap",
-    "sugar-ambiguous",
-    "floor-gap",
-    "constructor-gap",
-    "operation-gap",
-    "proofir-gap",
-]
 
-_ALLOWED_STATUSES = frozenset(get_args(FactoryAuditStatus))
+class FactoryAuditStatus(StrEnum):
+    """A lift-audit status. An enum, not a string: an illegal status is
+    unrepresentable by construction, so FactoryAuditRow needs no runtime
+    membership guard. StrEnum keeps the wire bytes identical -- each member
+    renders as its literal status string in RPC/JSON."""
+
+    SELECTED = "selected"
+    SUGAR_GAP = "sugar-gap"
+    SUGAR_AMBIGUOUS = "sugar-ambiguous"
+    FLOOR_GAP = "floor-gap"
+    CONSTRUCTOR_GAP = "constructor-gap"
+    OPERATION_GAP = "operation-gap"
+    PROOFIR_GAP = "proofir-gap"
 
 
 @dataclass(frozen=True)
@@ -34,21 +38,11 @@ class FactoryAuditRow:
     candidates: List[str]
     message: str
 
-    def __post_init__(self) -> None:
-        if self.status not in _ALLOWED_STATUSES:
-            allowed = ", ".join(sorted(_ALLOWED_STATUSES))
-            raise TypeError(
-                "FactoryAuditRow.status must be a lift-audit status: "
-                f"owner=FactoryAuditRow illegal={self.status!r} "
-                f"replacement=Complete(...) or Incomplete(typed Effect); "
-                f"allowed={allowed}"
-            )
-
     def to_json(self) -> FactoryAuditDto:
         return {
             "kind": "factory-audit-row",
             "role": self.role,
-            "status": self.status,
+            "status": self.status.value,
             "observed": self.observed,
             "blame": self.blame,
             "selected": self.selected,
