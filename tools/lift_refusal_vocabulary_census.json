@@ -916,7 +916,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:0a1c415b29f7978e:1",
-      "line": 2775,
+      "line": 2793,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -926,7 +926,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:2056e06be9cd313e:1",
-      "line": 2680,
+      "line": 2698,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -966,7 +966,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:8613735061af6d4d:1",
-      "line": 2200,
+      "line": 2218,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -986,7 +986,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b222d14df22a442a:1",
-      "line": 2910,
+      "line": 2928,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1016,7 +1016,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:d3469ccfa48c2cd7:1",
-      "line": 2224,
+      "line": 2242,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1026,7 +1026,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:f87a140483c0687b:1",
-      "line": 1949,
+      "line": 1967,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1323,6 +1323,16 @@
       "speaker": "lift-output-backlog",
       "text": "if not isinstance(refusal, BoundaryRecord):",
       "wire_marker": "wire-protocol:proofir-node"
+    },
+    {
+      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/temporal/builtin_name_bindings.py:b3b3be6839a423c7:1",
+      "line": 23,
+      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/temporal/builtin_name_bindings.py",
+      "reason": "canonical Python builtin exception identity, not a Sugar result",
+      "replacement": "preserve the vendor-owned symbol exactly; classify it at the lexical census boundary",
+      "speaker": "vendor-language-identifier",
+      "text": "\"ConnectionRefusedError\",",
+      "wire_marker": "not-lift-output"
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py:2d82b1bec02988dd:1",
@@ -20742,8 +20752,9 @@
     "instrument-prose": 40,
     "lift-output-backlog": 1835,
     "provenance-oracle-guard": 79,
+    "vendor-language-identifier": 1,
     "verifier-verdict-quote": 51,
     "verify-dialect-boundary": 42
   },
-  "total_occurrences": 2073
+  "total_occurrences": 2074
 }
