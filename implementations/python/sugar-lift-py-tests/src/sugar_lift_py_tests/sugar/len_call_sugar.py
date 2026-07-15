@@ -94,6 +94,17 @@ class LenCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                 method_name="call_method_with",
                 operation=MethodCallOperation(),
             )
+
+        # A reduced list owns its cardinality structurally. Return that exact
+        # integer floor so downstream operations consume the proved value rather
+        # than the otherwise useful opaque builtin coordinate. Keep every other
+        # receiver on its existing bridge: attributes, calls, symbolic values,
+        # and objects without an owned __len__ have no truthful cardinality here.
+        from sugar_lift_py_tests.floor import ListValue
+
+        if type(value) is ListValue:
+            return value.length(self.site)
+
         computed = (
             TermValue(len(value.items)) if isinstance(value, ArrayLiteral) else None
         )
