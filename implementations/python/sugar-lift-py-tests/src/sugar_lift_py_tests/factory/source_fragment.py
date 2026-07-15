@@ -893,6 +893,23 @@ class SourceFragment:
             for value in self.node.args.defaults  # type: ignore[attr-defined]
         ]
 
+    def function_keyword_only_defaults(
+        self,
+    ) -> "list[SourceFragment | None]":
+        """Return keyword-only defaults exactly aligned with their formals.
+
+        ``None`` is Python's AST spelling for a required keyword-only formal.
+        """
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        return [
+            (
+                None
+                if value is None
+                else SourceFragment.from_node(value, self.filename, source=self.source)
+            )
+            for value in self.node.args.kw_defaults  # type: ignore[attr-defined]
+        ]
+
     def function_has_simple_positional_params(self) -> bool:
         """Whether a def has only ordinary positional parameters."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)

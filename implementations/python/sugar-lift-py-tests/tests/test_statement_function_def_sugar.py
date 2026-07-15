@@ -273,6 +273,97 @@ def test_nested_callable_exact_fixed_positional_control_stays_unchanged() -> Non
     assert callsite.term == ctor("call:inner", [num(5)])
 
 
+def test_nested_callable_binds_one_omitted_keyword_only_default() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(required, *, increment=4):\n"
+        "        return required + increment\n"
+        "    return inner(5)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("required", "increment")
+    assert callsite.arg_values == (TermValue(5), TermValue(4))
+    assert callsite.term == ctor("call:inner", [num(5)])
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="keyword-only default omission", project_callsite=False
+    ) == TermValue(9)
+
+
+def test_nested_callable_binds_multiple_keyword_only_defaults_in_exact_order() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(*, first=4, second=6):\n"
+        "        return first * 10 + second\n"
+        "    return inner()\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("first", "second")
+    assert callsite.arg_values == (TermValue(4), TermValue(6))
+    assert callsite.term == ctor("call:inner", [])
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="keyword-only default order", project_callsite=False
+    ) == TermValue(46)
+
+
+def test_nested_callable_separates_positional_and_keyword_only_defaults() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(positional=3, *, keyword_only=7):\n"
+        "        return positional * 10 + keyword_only\n"
+        "    return inner()\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("positional", "keyword_only")
+    assert callsite.arg_values == (TermValue(3), TermValue(7))
+    assert callsite.term == ctor("call:inner", [])
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="separate default alignment", project_callsite=False
+    ) == TermValue(37)
+
+
+def test_nested_callable_keyword_only_default_is_captured_at_definition_time() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    captured = 5\n"
+        "    def inner(*, value=captured):\n"
+        "        return value\n"
+        "    captured = 9\n"
+        "    return inner()\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.arg_values == (TermValue(5),)
+    assert callsite.term == ctor("call:inner", [])
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="keyword-only default capture", project_callsite=False
+    ) == TermValue(5)
+
+
+def test_nested_callable_missing_required_keyword_only_stays_a_signature_gap() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _root_universe(
+            "def outer():\n"
+            "    def inner(*, required):\n"
+            "        return required\n"
+            "    return inner()\n"
+        )
+
+    assert raised.value.info.owner == "FunctionCallable"
+    assert raised.value.info.requested == "bind call arguments to a function signature"
+    assert raised.value.info.observed == ("keyword-only",)
+
+
 def test_nested_callable_keyword_only_boundary_is_not_filled_by_surplus_positionals() -> None:
     with pytest.raises(FactoryPanic) as raised:
         _root_universe(
