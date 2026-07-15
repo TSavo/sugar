@@ -1,9 +1,24 @@
 from __future__ import annotations
 
 import ast
+import os
 import re
 from dataclasses import dataclass
 from typing import List, cast
+
+
+def _workspace_relative(filename: str) -> str:
+    """Normalize an absolute filename to workspace-relative AT THE DOOR.
+
+    Every fragment funnels through from_node, so normalizing here makes an
+    absolute-path locus unrepresentable downstream (the runtime-effect witness
+    used to gate this with a regex; the door normalizes instead). Pseudo
+    filenames like ``<contract>`` pass through untouched.
+    """
+    if os.path.isabs(filename) or re.match(r"^[A-Za-z]:[\\/]", filename):
+        return os.path.relpath(filename, os.getcwd())
+    return filename
+
 
 # The one source-through-the-AST API: table-backed and idempotent behind the
 # scenes, so every segment/ancestor request here is an O(1) lookup after the
@@ -151,7 +166,7 @@ class SourceFragment:
             )
         return cls(
             node=cast(ast.AST, node),
-            filename=filename,
+            filename=_workspace_relative(filename),
             line=getattr(node, "lineno", 0),
             col=getattr(node, "col_offset", 0),
             source=source,

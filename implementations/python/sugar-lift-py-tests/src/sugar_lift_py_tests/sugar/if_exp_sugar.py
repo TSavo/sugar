@@ -105,7 +105,7 @@ def _if_exp_join(cond, true_v, false_v, site) -> Outcome:
             witness=RuntimeEffectWitness(
                 operation=ctor("py.ifexp.select", [condition]),
                 operand=condition,
-                locus=str(site),
+                site=site,
             ),
         )
     )

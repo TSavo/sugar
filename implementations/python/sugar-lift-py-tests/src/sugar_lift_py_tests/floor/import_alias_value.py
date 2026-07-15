@@ -92,7 +92,7 @@ class ImportAliasValue(FloorValue):
         return _runtime_alias_effect_at_site(
             self,
             shape=f"format({self.bound_name}, ...)",
-            blame=str(site),
+            site=site,
             replacement="ImportedModuleFormatEffect",
         )
 
@@ -111,7 +111,7 @@ class ImportAliasValue(FloorValue):
         return _runtime_alias_effect_at_site(
             self,
             shape=f"{self.bound_name} {operator} ...",
-            blame=str(site),
+            site=site,
             replacement="ImportedModuleBinaryEffect",
         )
 
@@ -122,7 +122,7 @@ class ImportAliasValue(FloorValue):
         return _runtime_alias_effect_at_site(
             self,
             shape=f"{operator}{self.bound_name}",
-            blame=str(site),
+            site=site,
             replacement="ImportedModuleUnaryEffect",
         )
 
@@ -182,15 +182,19 @@ def _runtime_alias_effect(
     return _runtime_alias_effect_at_site(
         value,
         shape=shape,
-        blame=operation.blame,
+        # Prefer the operation's real fragment; its blame string stays the
+        # prose fallback for operations that never carried a site.
+        site=getattr(operation, "site", None) or operation.blame,
         replacement=replacement,
     )
 
 
 def _runtime_alias_effect_at_site(
-    value: ImportAliasValue, *, shape: str, blame: str, replacement: str
+    value: ImportAliasValue, *, shape: str, site, replacement: str
 ):
     import importlib.util
+
+    blame = str(site)
 
     target = value.import_target or value.name
     module_name = target.rsplit(".", 1)[0] if "." in target else target
@@ -236,7 +240,7 @@ def _runtime_alias_effect_at_site(
                     [str_const(replacement), str_const(shape)],
                 ),
                 operand=operand,
-                locus=blame,
+                site=site,
             ),
         )
     )

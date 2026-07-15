@@ -10,15 +10,18 @@ from sugar_lift_py_tests.effect import (
     RuntimeEffectWitness,
     SubscriptStoreRuntimeEffect,
 )
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.ir import ctor, make_var
 
 
-def test_runtime_effect_requires_operation_operand_and_locus_witness() -> None:
+def test_runtime_effect_requires_operation_operand_and_site_witness() -> None:
+    site = SourceFragment.from_source("x[i] = 1", "t.py").statements()[0]
     witness = RuntimeEffectWitness(
         operation=ctor("py.setitem", []),
         operand=make_var("runtime_index"),
-        locus="t.py:1:0",
+        site=site,
     )
+    assert witness.locus == "t.py:1:0"
 
     effect = SubscriptStoreRuntimeEffect("runtime store", witness=witness)
 
@@ -41,12 +44,22 @@ def test_statically_known_global_scope_cannot_mint_a_runtime_witness() -> None:
     assert not hasattr(effects, "GlobalScopeRuntimeEffect")
 
 
-def test_runtime_effect_witness_refuses_absolute_workspace_identity() -> None:
-    from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+def test_source_fragment_normalizes_absolute_filename_at_the_door() -> None:
+    import os
 
-    with pytest.raises(FactoryPanic, match="workspace-relative source locus"):
-        RuntimeEffectWitness(
-            operation=ctor("py.runtime", []),
-            operand=make_var("operand"),
-            locus="/tmp/checkout/vendor.py:1:0",
-        )
+    fragment = SourceFragment.from_source(
+        "x = 1", os.path.join(os.getcwd(), "vendor.py")
+    )
+    assert fragment.filename == "vendor.py"
+    site = fragment.statements()[0]
+    witness = RuntimeEffectWitness(
+        operation=ctor("py.runtime", []),
+        operand=make_var("operand"),
+        site=site,
+    )
+    assert witness.locus == "vendor.py:1:0"
+
+
+def test_source_fragment_passes_pseudo_filenames_untouched() -> None:
+    fragment = SourceFragment.from_source("x = 1", "<contract>")
+    assert fragment.filename == "<contract>"

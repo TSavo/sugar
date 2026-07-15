@@ -603,6 +603,9 @@ class SequentialDigBody:
     """
 
     statements: tuple  # SugarBody STATEMENT
+    # The dug FunctionDef's SourceFragment: the terminal-effect witness is
+    # constructed from a real fragment, never from a blame string.
+    fn_site: Any = None
 
     def desugar(self, ctx: Any = None):
         from sugar_lift_py_tests.floor.return_value import ReturnValue
@@ -633,6 +636,11 @@ class SequentialDigBody:
         audit_row = getattr(terminal, "audit_row", None)
         blame = getattr(audit_row, "blame", "<install-source-dig>")
         observed = getattr(audit_row, "observed", "SequentialDigBody")
+        # The witness is constructed from the real fragment: the terminal
+        # statement's own site when its sugar carries one, else the dug
+        # FunctionDef fragment threaded in at construction. The audit-row
+        # blame string stays in the reason prose only.
+        site = getattr(getattr(terminal, "sugar", None), "site", None) or self.fn_site
         terminal_selection = ctor(
             "py.sequential_terminal",
             [str_const(str(blame)), str_const(str(observed))],
@@ -644,7 +652,7 @@ class SequentialDigBody:
                 witness=RuntimeEffectWitness(
                     operation=ctor("py.conditional_select", [terminal_selection]),
                     operand=terminal_selection,
-                    locus=str(blame),
+                    site=site,
                 ),
             )
         )
@@ -741,7 +749,7 @@ def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
             formal_ctx.build_body(stmt, SugarRole.STATEMENT) for stmt in frags
         )
         sequential = SugarBody(
-            sugar=SequentialDigBody(statements=statements),
+            sugar=SequentialDigBody(statements=statements, fn_site=fn_site),
             role=SugarRole.TERM,
         )
         return _contextualized_dig_body(sequential, formal_ctx)
