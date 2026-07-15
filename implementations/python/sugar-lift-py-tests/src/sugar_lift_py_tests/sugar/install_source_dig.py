@@ -801,4 +801,3 @@ def bind_positional_defaults(fn_site, arg_values: tuple, ctx: Any):
 
 
 _resolve_install_source_funcdef = resolve_install_source_funcdef
-_module_sibling_function_nodes = module_sibling_function_nodes
