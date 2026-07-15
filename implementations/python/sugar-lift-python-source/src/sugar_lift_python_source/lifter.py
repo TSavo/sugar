@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+
+from sugar_lift_python_source.big_stack import parse_on_big_stack
 import locale
 import os
 import pickle
@@ -191,7 +193,7 @@ class _EffectSet:
 def lift_source(source: str, source_path: str) -> LiftResult:
     result = LiftResult()
     try:
-        tree = ast.parse(source, filename=source_path)
+        tree = parse_on_big_stack(source, filename=source_path)
     except SyntaxError as exc:
         result.refusals.append(
             _refusal(

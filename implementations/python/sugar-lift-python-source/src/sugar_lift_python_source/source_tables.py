@@ -24,6 +24,8 @@ from __future__ import annotations
 import ast
 import functools
 
+from sugar_lift_python_source.big_stack import parse_on_big_stack
+
 __all__ = [
     "SOURCE_TABLE_CAPACITY",
     "parsed_parents",
@@ -84,7 +86,7 @@ def source_segment(source: str, node: ast.AST) -> str | None:
 
 @functools.lru_cache(maxsize=SOURCE_TABLE_CAPACITY)
 def _parsed(source: str, filename: str) -> ast.Module:
-    return ast.parse(source, filename=filename)
+    return parse_on_big_stack(source, filename)
 
 
 def parsed_tree(source: str, filename: str = "<unknown>") -> ast.Module:

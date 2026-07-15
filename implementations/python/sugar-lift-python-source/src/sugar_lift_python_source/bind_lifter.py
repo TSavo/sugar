@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+
+from sugar_lift_python_source.big_stack import parse_on_big_stack
 import json
 import os
 import re
@@ -55,7 +57,7 @@ def lift_source(
 ) -> BindLiftResult:
     result = BindLiftResult()
     try:
-        tree = ast.parse(source, filename=source_path)
+        tree = parse_on_big_stack(source, filename=source_path)
     except SyntaxError as exc:
         result.diagnostics.append(
             {
@@ -266,7 +268,7 @@ def _literal_all_exports(root: Path, module: str) -> list[str]:
         return []
     try:
         source = file_path.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(file_path))
+        tree = parse_on_big_stack(source, filename=str(file_path))
     except (OSError, SyntaxError):
         return []
     for node in ast.walk(tree):

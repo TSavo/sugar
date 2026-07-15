@@ -31,6 +31,8 @@ fabricates a callsite it cannot faithfully lift.
 from __future__ import annotations
 
 import ast
+
+from sugar_lift_python_source.big_stack import parse_on_big_stack
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -59,7 +61,7 @@ class _Unsupported(Exception):
 def harvest_source(source: str, source_path: str) -> HarvestResult:
     result = HarvestResult()
     try:
-        tree = ast.parse(source, filename=source_path)
+        tree = parse_on_big_stack(source, filename=source_path)
     except SyntaxError as exc:
         result.diagnostics.append(
             {
