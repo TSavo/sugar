@@ -18,6 +18,17 @@ from sugar_lift_py_tests.idd.pandas_wall import (
 )
 
 
+def test_wall_workflows_install_both_python_lift_packages() -> None:
+    root = Path(__file__).resolve().parents[4]
+
+    for workflow_name in ("pandas-wall.yml", "numpy-wall.yml"):
+        workflow = (root / ".github" / "workflows" / workflow_name).read_text(
+            encoding="utf-8"
+        )
+        assert "-e implementations/python/sugar-lift-python-source" in workflow
+        assert "-e 'implementations/python/sugar-lift-py-tests[test]'" in workflow
+
+
 def test_summarizes_structured_construction_gaps_by_bucket() -> None:
     output = _structured_gap_output(
         [

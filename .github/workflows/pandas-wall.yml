@@ -33,7 +33,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends b3sum
       - name: Install lift package deps
-        run: python -m pip install --quiet blake3 pynacl cbor2 pytest
+        run: |
+          python -m pip install --quiet \
+            -e implementations/python/sugar-lift-python-source \
+            -e 'implementations/python/sugar-lift-py-tests[test]'
       - name: Install Python wall inputs
         run: python -m pip install --quiet pandas
 
