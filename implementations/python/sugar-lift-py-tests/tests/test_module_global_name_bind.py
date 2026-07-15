@@ -135,11 +135,7 @@ def test_unsupported_installed_source_global_remains_loud() -> None:
 
 def test_minimal_module_global_without_sugar_tag_does_not_seed() -> None:
     """Without install-source tags, formal-only temporal (no silent ambient seed)."""
-    src = (
-        'GLOBAL = b"untagged"\n'
-        "def f(s):\n"
-        "    return s.translate(GLOBAL)\n"
-    )
+    src = 'GLOBAL = b"untagged"\n' "def f(s):\n" "    return s.translate(GLOBAL)\n"
     root = SourceFragment.from_source(src, "mod_globals.py")
     fn = next(
         f
