@@ -531,7 +531,31 @@ fn recovered_audit_tree(project_root: &Path, surface: &str) -> Result<Value, Str
         .map_err(|error| format!("lift.path: {error}"))
 }
 
-fn report_implication_tree(project_root: &Path, surface: &str) -> Result<Vec<Value>, String> {
+/// Build the workspace solver plan + registry the demanded implications are
+/// discharged with — the SAME precedence `sugar verify` uses: a kit-declared
+/// `[solvers]` config wins verbatim; otherwise a default single-Z3 registry.
+/// Demand never runs solverless: the demanded answer is the discharge verdict.
+fn lift_solver_plan_and_registry(
+    project_root: &Path,
+) -> (sugar_linker::solver_api::SolverPlan, sugar_linker::Registry) {
+    use sugar_linker::solver_api::{registry, SolverPlan, SolversConfig};
+    if let Ok(Some(sc)) = SolversConfig::load(project_root) {
+        let reg = registry::build(&sc);
+        let plan = SolverPlan::from_config(&sc);
+        return (plan, reg);
+    }
+    (
+        SolverPlan::Single(sugar_linker::solver_api::SolverSeat::Z3),
+        registry::build_default_z3("z3"),
+    )
+}
+
+fn report_implication_tree(
+    project_root: &Path,
+    surface: &str,
+    registry: &sugar_linker::Registry,
+    plan: &sugar_linker::solver_api::SolverPlan,
+) -> Result<Vec<Value>, String> {
     let manifest = lift_plugin::find_manifest_for_surface(project_root, surface)
         .map_err(|error| format!("lift-plugin.manifest: {error}"))?;
     let kit = Kit::rendezvous(LiftManifest {
@@ -543,7 +567,7 @@ fn report_implication_tree(project_root: &Path, surface: &str) -> Result<Vec<Val
         method: manifest.method.clone(),
     })
     .map_err(|error| format!("lift.rendezvous: {error}"))?;
-    sugar_compiler::tree::fold_implication_tree(&kit, project_root)
+    sugar_compiler::tree::fold_implication_tree(&kit, project_root, registry, plan)
         .map_err(|error| format!("lift.implications: {error}"))
 }
 
@@ -553,8 +577,9 @@ fn attach_report_implications(
     surfaces: impl IntoIterator<Item = String>,
 ) -> Result<(), String> {
     let mut seen = BTreeSet::new();
+    let (plan, registry) = lift_solver_plan_and_registry(project_root);
     for surface in surfaces {
-        for implication in report_implication_tree(project_root, &surface)? {
+        for implication in report_implication_tree(project_root, &surface, &registry, &plan)? {
             let key = serde_json::to_string(&implication).map_err(|error| {
                 format!("lift.implications: serialize demanded question: {error}")
             })?;
@@ -4074,7 +4099,7 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
             let status = implication
                 .get("status")
                 .and_then(Value::as_str)
-                .unwrap_or("unsatisfied");
+                .unwrap_or("failed");
             let reason = implication
                 .get("reason")
                 .and_then(Value::as_str)

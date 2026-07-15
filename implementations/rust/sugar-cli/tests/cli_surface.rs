@@ -1075,18 +1075,18 @@ done
         .iter()
         .filter(|question| question["status"].as_str() == Some("discharged"))
         .count();
-    let unsatisfied = demanded_questions
+    let failed = demanded_questions
         .iter()
-        .filter(|question| question["status"].as_str() == Some("unsatisfied"))
+        .filter(|question| question["status"].as_str() == Some("failed"))
         .count();
     let unjoined = demanded_questions
         .iter()
         .filter(|question| question["status"].as_str() == Some("unjoined"))
         .count();
     assert_eq!(
-        (demanded_questions.len(), discharged, unsatisfied, unjoined),
+        (demanded_questions.len(), discharged, failed, unjoined),
         (2, 1, 0, 1),
-        "ledger must conserve demanded = discharged + unsatisfied + unjoined: {demanded_questions:#?}"
+        "ledger must conserve demanded = discharged + failed + unjoined: {demanded_questions:#?}"
     );
     let callsite_lines = demanded_questions
         .iter()
@@ -1118,7 +1118,7 @@ done
         vec![2, 2, 3],
         "mint and report each own one cache window: the duplicated line-2 node must cross once per window, while the distinct line-3 question still crosses in the report window; without the report cache this would be [2, 2, 2, 3]: {implication_log}"
     );
-    let demanded_resolved = discharged + unsatisfied;
+    let demanded_resolved = discharged + failed;
     let demanded_dangling = unjoined;
 
     let visual_output = output_retrying_etxtbsy(

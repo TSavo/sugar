@@ -627,11 +627,19 @@ pub struct ImplicationDemand {
     pub call_edge: LinkerCallEdge,
 }
 
+/// The demand verdict vocabulary, reconciled with the discharge path.
+///
+/// `Failed` replaced the old lossy `Unsatisfied`: a failed row always carries
+/// the exact [`LinkerErrorKind`] the discharge path produced (see
+/// [`ImplicationDemandAnswer::error_kind`]), never a collapsed "unsatisfied".
+/// `Unjoined` covers zero/ambiguous candidate discovery AND typed binding
+/// failures (`unresolved-symbol` / `signature-mismatch`), the latter with the
+/// `errorKind` preserved on the row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ImplicationDemandStatus {
     Discharged,
-    Unsatisfied,
+    Failed,
     Unjoined,
 }
 
@@ -646,6 +654,13 @@ pub struct ImplicationDemandAnswer {
     pub target_contract: Option<String>,
     pub target_symbol: String,
     pub status: ImplicationDemandStatus,
+    /// The exact typed [`LinkerErrorKind`] the discharge path produced, when
+    /// the edge bound but its obligation failed (`status: "failed"`) or the
+    /// authoritative binding itself refused (`status: "unjoined"` with
+    /// `unresolved-symbol` / `signature-mismatch`). Absent for discharged rows
+    /// and for zero/ambiguous candidate discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<LinkerErrorKind>,
     pub reason: String,
     pub obligation: Option<Json>,
 }
@@ -728,25 +743,30 @@ pub fn link(inputs: LinkerInputs) -> LinkerOutput {
     derive_link_bundle_inner(contracts, call_edges, &empty_registry, &no_op_plan)
 }
 
-fn implication_symbol_matches(candidate: &str, edge: &Symbol) -> bool {
-    let edge_wire = edge.to_wire();
-    if candidate == edge_wire {
-        return true;
-    }
-    let candidate_leaf = candidate
-        .split_once(':')
-        .map_or(candidate, |(_, leaf)| leaf);
-    let edge_leaf = edge_wire
-        .split_once(':')
-        .map_or(edge_wire.as_str(), |(_, leaf)| leaf);
-    candidate_leaf == edge_leaf
-}
-
-/// Execute the pure linker algebra for exactly one demanded callsite question.
-/// The worker selects one candidate, binds one edge, mints one obligation, and
-/// classifies its result. It is deliberately not a collector and has no API for
-/// more than one edge.
-pub fn demand_implication(demand: ImplicationDemand) -> ImplicationDemandAnswer {
+/// Execute the pure linker algebra for exactly one demanded callsite question,
+/// through the SAME per-edge worker the bundle derivation uses
+/// ([`derive_edge`]): one edge → one bind → one obligation mint → one
+/// discharge. The answer is the report projection of that single outcome; the
+/// bundle is the aggregate projection of the same worker over a batch.
+///
+/// Candidate *discovery* (which candidate universes answer the demanded
+/// symbol) remains language-owned via `bridge_source_symbol`; candidate
+/// *binding* goes through the authoritative [`bind`] constructor — the member
+/// re-check and `ImportSignature` check are never bypassed.
+///
+/// Classification policy (pinned by `demand_feeds_discharge_gate.rs`):
+/// - zero / ambiguous candidate discovery → `unjoined` (no `errorKind`);
+/// - `unresolved-symbol` / `signature-mismatch` from authoritative binding →
+///   `unjoined` with the typed `errorKind` preserved on the row;
+/// - every obligation failure → `failed` with the exact [`LinkerErrorKind`]
+///   (`unprovable-obligation`, `implication-unprovable`,
+///   `implication-undecidable`, `implication-solver-timeout`,
+///   `implication-refused`) — never reduced to a lossy "unsatisfied".
+pub fn demand_implication(
+    demand: ImplicationDemand,
+    registry: &Registry,
+    plan: &SolverPlan,
+) -> ImplicationDemandAnswer {
     let ImplicationDemand {
         source_contract,
         target_candidates,
@@ -754,11 +774,12 @@ pub fn demand_implication(demand: ImplicationDemand) -> ImplicationDemandAnswer 
     } = demand;
     let source_name = source_contract.name.clone();
     let target_symbol = call_edge.target_symbol.to_wire();
+
+    // Candidate discovery: language-owned. The kit names the demanded symbol
+    // each candidate universe answers; discovery is exact wire equality.
     let mut matching = target_candidates
         .into_iter()
-        .filter(|candidate| {
-            implication_symbol_matches(&candidate.bridge_source_symbol, &call_edge.target_symbol)
-        })
+        .filter(|candidate| candidate.bridge_source_symbol == target_symbol)
         .collect::<Vec<_>>();
 
     if matching.is_empty() {
@@ -768,6 +789,7 @@ pub fn demand_implication(demand: ImplicationDemand) -> ImplicationDemandAnswer 
             target_contract: None,
             target_symbol: target_symbol.clone(),
             status: ImplicationDemandStatus::Unjoined,
+            error_kind: None,
             reason: format!("no target candidate answers demanded symbol {target_symbol}"),
             obligation: None,
         };
@@ -784,6 +806,7 @@ pub fn demand_implication(demand: ImplicationDemand) -> ImplicationDemandAnswer 
             target_contract: None,
             target_symbol: target_symbol.clone(),
             status: ImplicationDemandStatus::Unjoined,
+            error_kind: None,
             reason: format!(
                 "ambiguous target candidates for demanded symbol {target_symbol}: {names}"
             ),
@@ -796,16 +819,37 @@ pub fn demand_implication(demand: ImplicationDemand) -> ImplicationDemandAnswer 
         .expect("one matching implication candidate after cardinality checks")
         .contract;
     let target_name = target.name.clone();
-    let obligation =
-        obligation_evidence_term(source_contract.post_json.as_ref(), target.pre_json.as_ref());
+
+    // Binding: linker-owned. The discovered candidate becomes a CID *claim* on
+    // the edge; `derive_edge` re-checks it through `bind` (member + signature)
+    // exactly as the bundle path does.
     call_edge.target_contract_cid = Some(target.contract_cid.clone());
-    let output = link(LinkerInputs {
-        contracts: vec![source_contract, target],
-        call_edges: vec![call_edge],
-    });
-    let (status, reason) = match output.linker_errors.first() {
+
+    // Single-edge symbol table over the demanded source + discovered candidate.
+    let contracts = [source_contract, target];
+    let mut name_kit_index: BTreeMap<Symbol, String> = BTreeMap::new();
+    let mut contracts_by_cid: BTreeMap<&str, &LinkerContract> = BTreeMap::new();
+    for c in &contracts {
+        name_kit_index.insert(
+            Symbol::qualified(c.kit.clone(), c.name.clone()),
+            c.contract_cid.as_str().to_string(),
+        );
+        contracts_by_cid.insert(c.contract_cid.as_str(), c);
+    }
+    let symbol_table = SymbolTable::new(&name_kit_index, &contracts_by_cid);
+
+    let outcome = derive_edge(&call_edge, &symbol_table, &contracts_by_cid, registry, plan);
+
+    // Project the single minted obligation into the report row: the wire
+    // evidence term is lowered FROM the in-memory state the discharge checked.
+    let obligation = outcome
+        .bridge
+        .as_ref()
+        .map(|bridge| bridge.obligation.evidence_term());
+    let (status, error_kind, reason) = match &outcome.error {
         None => (
             ImplicationDemandStatus::Discharged,
+            None,
             "linker discharged caller post implies callee pre".to_string(),
         ),
         Some(error)
@@ -814,9 +858,17 @@ pub fn demand_implication(demand: ImplicationDemand) -> ImplicationDemandAnswer 
                 LinkerErrorKind::UnresolvedSymbol | LinkerErrorKind::SignatureMismatch
             ) =>
         {
-            (ImplicationDemandStatus::Unjoined, error.reason.clone())
+            (
+                ImplicationDemandStatus::Unjoined,
+                Some(error.kind),
+                error.reason.clone(),
+            )
         }
-        Some(error) => (ImplicationDemandStatus::Unsatisfied, error.reason.clone()),
+        Some(error) => (
+            ImplicationDemandStatus::Failed,
+            Some(error.kind),
+            error.reason.clone(),
+        ),
     };
     ImplicationDemandAnswer {
         kind: "implication".to_string(),
@@ -824,8 +876,9 @@ pub fn demand_implication(demand: ImplicationDemand) -> ImplicationDemandAnswer 
         target_contract: Some(target_name),
         target_symbol,
         status,
+        error_kind,
         reason,
-        obligation: Some(obligation),
+        obligation,
     }
 }
 
@@ -911,75 +964,18 @@ fn derive_link_bundle_inner(
             })
     });
 
+    // The batch derivation is the aggregate projection of the SAME per-edge
+    // worker the demand path uses: one call to `derive_edge` per sorted edge,
+    // folding rich outcomes into bridges + linker errors. Batch-level set CIDs
+    // (contractSetCid / callEdgeSetCid / linkBundleCid) stay batch-owned below.
     for edge in &sorted_edges {
-        // Extract file from call-site locus for per-file diagnostics
-        let locus_file = edge.call_site_locus.as_ref().map(|l| l.file.clone());
-
-        // bind: the sole minter of a `BoundContractCid`, with two outcomes —
-        // the bound target, or the typed failure (undefined-symbol /
-        // signature-mismatch). This is the migrated resolve_target join: the
-        // string join and the member check that verify used to re-derive now
-        // live in one constructor signature.
-        let bound = match bind(edge, &symbol_table) {
-            Ok(bound) => bound,
-            Err(mut err) => {
-                err.file = locus_file;
-                err.call_site_locus = edge.call_site_locus.clone();
-                linker_errors_out.push(err);
-                continue;
-            }
-        };
-        let target_cid = bound.as_str();
-
-        let source_post = contracts_by_cid
-            .get(edge.source_contract_cid.as_str())
-            .and_then(|c| c.post_json.as_ref());
-        let target_pre = contracts_by_cid
-            .get(target_cid)
-            .and_then(|c| c.pre_json.as_ref());
-
-        // Construct the satisfaction obligation `post_B \u{2283} pre_A` ONCE,
-        // as a typed [`ObligationState`]. Before this seam the obligation was
-        // rebuilt as untyped JSON in disjoint places, so the term *carried on
-        // the bridge* could drift from the term *checked by the verifier*.
-        // Here it is a single value: attached to the [`DerivedBridge`] and
-        // discharged below. Carried == checked by construction.
-        let obligation = ObligationState::derive(source_post, target_pre);
-
-        // The on-wire `evidenceTerm` is now MINTED from the same obligation the
-        // verifier discharges — `Obligation::as_implies` lowered to JSON — instead
-        // of passing through the dead emit-side placeholder. So the term the wire
-        // bridge *carries* is byte-for-byte the `post ⊃ pre` term the linker
-        // *checks*: carried == checked on the wire, not just in memory. This
-        // migrates every bridge / linkBundle CID (the pinned gate re-pins below);
-        // no verdict changes, because the verifier discharges the in-memory
-        // `obligation`, never re-reading this projection.
-        let evidence_term = obligation_evidence_term(source_post, target_pre);
-        let memento = derive_bridge(
-            edge.source_contract_cid.as_str(),
-            target_cid,
-            &edge.call_site_locus,
-            &evidence_term,
-        );
-        let bridge = DerivedBridge {
-            memento,
-            obligation,
-        };
-
-        if let Some(mut err) = discharge_obligation(
-            &bridge.obligation,
-            edge.source_contract_cid.as_str(),
-            target_cid,
-            &edge.target_symbol,
-            registry,
-            plan,
-        ) {
-            err.file = locus_file;
-            err.call_site_locus = edge.call_site_locus.clone();
+        let outcome = derive_edge(edge, &symbol_table, &contracts_by_cid, registry, plan);
+        if let Some(err) = outcome.error {
             linker_errors_out.push(err);
         }
-
-        bridges.push(bridge);
+        if let Some(bridge) = outcome.bridge {
+            bridges.push(bridge);
+        }
     }
 
     // Sort bridges for determinism (over the wire memento only).
@@ -1074,6 +1070,112 @@ fn derive_link_bundle_inner(
             json: bundle_json,
         },
         linker_errors: linker_errors_out,
+    }
+}
+
+// -------------------------------------------------------------------
+// The per-edge worker: one edge -> one bind -> one obligation mint ->
+// one discharge -> multiple projections
+// -------------------------------------------------------------------
+
+/// The rich outcome of running the per-edge linker algebra on ONE call edge.
+///
+/// Both public paths project this one value: [`demand_implication`] projects it
+/// into an [`ImplicationDemandAnswer`] report row; [`derive_link_bundle_inner`]
+/// folds it into bundle bridges + linker errors. There is exactly one bind, one
+/// obligation mint, and one discharge per edge — here.
+struct EdgeOutcome {
+    /// The derived bridge (wire memento + the single minted in-memory
+    /// [`ObligationState`]), when the edge bound.
+    bridge: Option<DerivedBridge>,
+    /// The typed failure: a binding refusal (`unresolved-symbol` /
+    /// `signature-mismatch`) or an obligation-discharge failure, with the
+    /// call-site locus already stitched in.
+    error: Option<LinkerError>,
+}
+
+/// Run the per-edge linker algebra: bind the edge through the authoritative
+/// [`bind`] constructor, mint the [`ObligationState`] ONCE, lower the wire
+/// `evidenceTerm` FROM that minted state, and discharge it against the supplied
+/// registry + plan.
+fn derive_edge(
+    edge: &LinkerCallEdge,
+    symbol_table: &SymbolTable<'_>,
+    contracts_by_cid: &BTreeMap<&str, &LinkerContract>,
+    registry: &Registry,
+    plan: &SolverPlan,
+) -> EdgeOutcome {
+    // Extract file from call-site locus for per-file diagnostics
+    let locus_file = edge.call_site_locus.as_ref().map(|l| l.file.clone());
+
+    // bind: the sole minter of a `BoundContractCid`, with two outcomes —
+    // the bound target, or the typed failure (undefined-symbol /
+    // signature-mismatch). This is the migrated resolve_target join: the
+    // string join and the member check that verify used to re-derive now
+    // live in one constructor signature.
+    let bound = match bind(edge, symbol_table) {
+        Ok(bound) => bound,
+        Err(mut err) => {
+            err.file = locus_file;
+            err.call_site_locus = edge.call_site_locus.clone();
+            return EdgeOutcome {
+                bridge: None,
+                error: Some(err),
+            };
+        }
+    };
+    let target_cid = bound.as_str();
+
+    let source_post = contracts_by_cid
+        .get(edge.source_contract_cid.as_str())
+        .and_then(|c| c.post_json.as_ref());
+    let target_pre = contracts_by_cid
+        .get(target_cid)
+        .and_then(|c| c.pre_json.as_ref());
+
+    // Construct the satisfaction obligation `post_B \u{2283} pre_A` ONCE,
+    // as a typed [`ObligationState`]. Before this seam the obligation was
+    // rebuilt as untyped JSON in disjoint places, so the term *carried on
+    // the bridge* could drift from the term *checked by the verifier*.
+    // Here it is a single value: attached to the [`DerivedBridge`] and
+    // discharged below. Carried == checked by construction.
+    let obligation = ObligationState::derive(source_post, target_pre);
+
+    // The on-wire `evidenceTerm` is MINTED from the same obligation the
+    // verifier discharges — `ObligationState::evidence_term` lowers the minted
+    // state itself, never re-invoking the derivation on the original inputs.
+    // So the term the wire bridge *carries* is byte-for-byte the `post ⊃ pre`
+    // term the linker *checks*: carried == checked on the wire, not just in
+    // memory.
+    let evidence_term = obligation.evidence_term();
+    let memento = derive_bridge(
+        edge.source_contract_cid.as_str(),
+        target_cid,
+        &edge.call_site_locus,
+        &evidence_term,
+    );
+    let bridge = DerivedBridge {
+        memento,
+        obligation,
+    };
+
+    let error = discharge_obligation(
+        &bridge.obligation,
+        edge.source_contract_cid.as_str(),
+        target_cid,
+        &edge.target_symbol,
+        registry,
+        plan,
+    )
+    .map(|mut err| {
+        err.file = locus_file;
+        err.call_site_locus = edge.call_site_locus.clone();
+        err
+    });
+
+    EdgeOutcome {
+        bridge: Some(bridge),
+        error,
     }
 }
 
@@ -1349,7 +1451,7 @@ struct BridgeMetadata {
 
 /// The relation the linker derived for this bridge: `post-implies-pre`, carrying
 /// the live obligation's `evidenceTerm` (the `post ⊃ pre` implication minted by
-/// [`obligation_evidence_term`]). The in-memory obligation the verifier discharges
+/// [`ObligationState::evidence_term`]). The in-memory obligation the verifier discharges
 /// lives on [`DerivedBridge::obligation`]; this wire term is its projection.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 struct DerivedRelation {
@@ -1409,7 +1511,7 @@ fn derive_bridge(
 /// checked by construction.
 ///
 /// The bridge's on-wire `evidenceTerm` field is now minted from this obligation
-/// via [`obligation_evidence_term`] ([`Obligation::as_implies`] lowered to JSON),
+/// via [`ObligationState::evidence_term`] ([`Obligation::as_implies`] lowered to JSON),
 /// so the term the wire carries IS the term the verifier discharges — carried ==
 /// checked on the wire, not just in memory. The in-memory obligation on the
 /// [`DerivedBridge`] remains the authoritative value the verifier discharges; the
@@ -1455,47 +1557,26 @@ impl Obligation {
     }
 }
 
-/// Lower a bound edge's satisfaction obligation to the wire `evidenceTerm` its
-/// bridge carries: the `post ⊃ pre` implication the linker discharges, as JSON.
-///
-/// An absent operand lowers to the canonical `true` atomic — a caller that
-/// promises nothing has `post = ⊤`, a callee that requires nothing has
-/// `pre = ⊤` — so *every* bound edge carries the exact implication its
-/// obligation stands for. `⊤ ⊃ pre` for a caller-post-absent edge is precisely
-/// "establish `pre` unconditionally", which is why that obligation is
-/// unprovable; `post ⊃ ⊤` for a callee-pre-absent edge is a vacuous truth.
-///
-/// This is minted from the SAME `(source_post, target_pre)` pair
-/// [`ObligationState::derive`] consumes, so the term the wire bridge carries is
-/// the term the verifier discharges. The verifier never re-reads this JSON — it
-/// discharges the in-memory obligation — so this is a faithful projection, not a
-/// second source of truth: carried == checked by construction.
-fn obligation_evidence_term(post: Option<&IrFormula>, pre: Option<&IrFormula>) -> Json {
-    let top = || IrFormula::Atomic {
-        name: "true".to_string(),
-        args: Vec::new(),
-    };
-    let obligation = Obligation::new(
-        post.cloned().unwrap_or_else(top),
-        pre.cloned().unwrap_or_else(top),
-    );
-    serde_json::to_value(obligation.as_implies())
-        .expect("IrFormula::Implies always serializes to JSON")
-}
-
 /// The link-time obligation state for one bound edge: a concrete obligation to
 /// discharge, or one of the two structural short-circuits. Built once by
 /// [`ObligationState::derive`] and consumed by [`discharge_obligation`], so the
 /// discharge branches map one-to-one onto the historical error strings.
+///
+/// The short-circuit variants carry the formula that *was* present so the wire
+/// `evidenceTerm` can be lowered FROM the minted state itself (see
+/// [`ObligationState::evidence_term`]) — the state is the single mint; every
+/// projection reads it, and nothing re-derives from the original inputs.
 #[derive(Debug, Clone, PartialEq)]
 enum ObligationState {
     /// Both formulas present: a concrete `post \u{2283} pre` to discharge.
     Pending(Obligation),
     /// Caller post-condition absent: `post \u{2283} pre` cannot be discharged
-    /// (`unprovable-obligation`).
-    CallerPostAbsent,
-    /// Callee pre-condition absent: vacuously discharged.
-    VacuousPreAbsent,
+    /// (`unprovable-obligation`). Carries the callee pre (if any) for the
+    /// evidence-term projection `⊤ ⊃ pre`.
+    CallerPostAbsent { pre: Option<IrFormula> },
+    /// Callee pre-condition absent: vacuously discharged. Carries the caller
+    /// post for the evidence-term projection `post ⊃ ⊤`.
+    VacuousPreAbsent { post: IrFormula },
 }
 
 impl ObligationState {
@@ -1505,12 +1586,47 @@ impl ObligationState {
     /// no pre-condition.
     fn derive(source_post: Option<&IrFormula>, target_pre: Option<&IrFormula>) -> Self {
         match (source_post, target_pre) {
-            (None, _) => ObligationState::CallerPostAbsent,
-            (Some(_), None) => ObligationState::VacuousPreAbsent,
+            (None, _) => ObligationState::CallerPostAbsent {
+                pre: target_pre.cloned(),
+            },
+            (Some(post), None) => ObligationState::VacuousPreAbsent { post: post.clone() },
             (Some(post), Some(pre)) => {
                 ObligationState::Pending(Obligation::new(post.clone(), pre.clone()))
             }
         }
+    }
+
+    /// Lower this minted obligation to the wire `evidenceTerm` its bridge
+    /// carries: the `post ⊃ pre` implication the linker discharges, as JSON.
+    ///
+    /// An absent operand lowers to the canonical `true` atomic — a caller that
+    /// promises nothing has `post = ⊤`, a callee that requires nothing has
+    /// `pre = ⊤` — so *every* bound edge carries the exact implication its
+    /// obligation stands for. `⊤ ⊃ pre` for a caller-post-absent edge is
+    /// precisely "establish `pre` unconditionally", which is why that
+    /// obligation is unprovable; `post ⊃ ⊤` for a callee-pre-absent edge is a
+    /// vacuous truth.
+    ///
+    /// This is lowered from the SAME minted state [`discharge_obligation`]
+    /// consumes — never re-derived from the original `(post, pre)` inputs — so
+    /// the term the wire bridge carries is the term the verifier discharges.
+    /// The verifier never re-reads this JSON — it discharges the in-memory
+    /// obligation — so this is a faithful projection, not a second source of
+    /// truth: carried == checked by construction.
+    fn evidence_term(&self) -> Json {
+        let top = || IrFormula::Atomic {
+            name: "true".to_string(),
+            args: Vec::new(),
+        };
+        let obligation = match self {
+            ObligationState::Pending(o) => o.clone(),
+            ObligationState::CallerPostAbsent { pre } => {
+                Obligation::new(top(), pre.clone().unwrap_or_else(top))
+            }
+            ObligationState::VacuousPreAbsent { post } => Obligation::new(post.clone(), top()),
+        };
+        serde_json::to_value(obligation.as_implies())
+            .expect("IrFormula::Implies always serializes to JSON")
     }
 }
 
@@ -1574,7 +1690,7 @@ fn discharge_obligation(
     // `Option<IrFormula>`, so the old `Some(Json::Null)` arm folds into these
     // with identical behavior.)
     let obligation = match state {
-        ObligationState::CallerPostAbsent => {
+        ObligationState::CallerPostAbsent { .. } => {
             return Some(LinkerError {
                 kind: LinkerErrorKind::UnprovableObligation,
                 target_symbol: target_symbol.to_wire(),
@@ -1586,7 +1702,7 @@ fn discharge_obligation(
                 call_site_locus: None, // populated by caller from locus
             });
         }
-        ObligationState::VacuousPreAbsent => return None,
+        ObligationState::VacuousPreAbsent { .. } => return None,
         ObligationState::Pending(o) => o,
     };
 
@@ -2098,15 +2214,15 @@ mod tests {
 
         assert!(matches!(
             ObligationState::derive(None, None),
-            ObligationState::CallerPostAbsent
+            ObligationState::CallerPostAbsent { .. }
         ));
         assert!(matches!(
             ObligationState::derive(None, Some(&f)),
-            ObligationState::CallerPostAbsent
+            ObligationState::CallerPostAbsent { .. }
         ));
         assert!(matches!(
             ObligationState::derive(Some(&f), None),
-            ObligationState::VacuousPreAbsent
+            ObligationState::VacuousPreAbsent { .. }
         ));
         assert!(matches!(
             ObligationState::derive(Some(&f), Some(&f)),
@@ -2288,7 +2404,7 @@ mod tests {
             "blake3-512:45efc10566c2106a0fdccecad9c316a70a0aaf00becca03cea21b6d61a5d2a05b7346ffc22b1ae2f73e418aedce852d905f86f29d49c9fd7a06286d055beca40",
             "failure-case linkBundleCid: re-pinned when the bridge evidenceTerm \
              migrated from the dead lift-side placeholder to the live obligation \
-             `post ⊃ pre` (`obligation_evidence_term`); success-case CID is \
+             `post ⊃ pre` (`ObligationState::evidence_term`); success-case CID is \
              unchanged (no call edges → no bridge)"
         );
         assert_eq!(
