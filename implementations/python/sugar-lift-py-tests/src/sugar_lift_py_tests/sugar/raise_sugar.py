@@ -4,23 +4,27 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.floor import RaiseValue
+from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
 class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
     """`raise ...` -- routeable Python raise exit (not Incomplete).
 
-    Restored after the recognize-or-panic rebuild deleted the half-API form.
-    Owns every Raise so bodies under ``pytest.raises`` / try are constructible.
-    The block frontier carries ``RaiseValue``; rest after raise stays raw.
+    Constructor expressions reduce through their term sugar first. An exact
+    ``ExceptionValue`` then becomes the carried raise effect; arbitrary call
+    coordinates are not reclassified by spelling.
     """
 
     exception_name: str | None
+    exception_body: SugarBody | None
+    has_explicit_cause: bool
     site: object = dataclass_field(compare=False)
+    build_context: object = dataclass_field(compare=False)
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -28,17 +32,21 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def new(cls, site, ctx) -> "RaiseSugar":
-        del ctx
         exc = site.raise_exc()
         return cls(
             exception_name=_exception_name(exc) if exc is not None else None,
+            exception_body=(
+                ctx.build_body(exc, SugarRole.TERM)
+                if exc is not None and exc.observed == "Call"
+                else None
+            ),
+            has_explicit_cause=site.raise_cause() is not None,
             site=site,
+            build_context=ctx,
         )
 
     @classmethod
     def witnesses(cls):
-        # Raise is control-flow data; pair discriminates via try/except face when
-        # present. Minimal: raise in a path that prevents a wrong return.
         prefix = (
             "def A(z):\n"
             "    if z < 0:\n"
@@ -57,6 +65,9 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
         import hashlib
         from pathlib import Path
 
+        if ctx is None:
+            ctx = self.build_context
+
         if Path(self.site.filename).is_absolute():
             from sugar_lift_py_tests.factory import factory_panic_gap
 
@@ -68,16 +79,55 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
                 fix="route the source through the workspace-relative lift door",
             )
 
-        blame = str(self.site)
+        if self.has_explicit_cause:
+            from sugar_lift_py_tests.factory import factory_panic_gap
+
+            factory_panic_gap(
+                owner="RaiseSugar",
+                blame=str(self.site),
+                observed="raise ... from ...",
+                requested="an explicit exception-cause floor",
+                fix="construct and carry the cause separately from the raised exception",
+            )
+
         source_sha256 = None
         if self.site.source is not None:
             source_sha256 = hashlib.sha256(self.site.source.encode()).hexdigest()
-        return Complete(
-            RaiseValue(
-                RaiseEffect(self.exception_name, blame, source_sha256),
-                scope=ctx,
+
+        if self.exception_body is None:
+            return Complete(
+                RaiseValue(
+                    RaiseEffect(self.exception_name, str(self.site), source_sha256),
+                    scope=ctx,
+                )
             )
+        return self.exception_body.reduce(ctx).and_then(
+            lambda value: self._constructed_raise(value, ctx, source_sha256)
         )
+
+    def _constructed_raise(self, value, ctx, source_sha256: str | None) -> Outcome:
+        if not isinstance(value, ExceptionValue):
+            from sugar_lift_py_tests.factory import factory_panic_gap
+
+            factory_panic_gap(
+                owner="RaiseSugar",
+                blame=str(self.site),
+                observed=type(value).__name__,
+                requested="constructed exception floor",
+                fix=(
+                    "construct an exact builtin ExceptionValue before raise; "
+                    "do not substitute arbitrary call coordinates"
+                ),
+            )
+        effect = RaiseEffect(
+            value.exception_name,
+            str(self.site),
+            source_sha256,
+        )
+        return Complete(RaiseValue(effect, scope=ctx, exception=value))
+
+    def walk_children(self):
+        return (self.exception_body,) if self.exception_body is not None else ()
 
 
 def _exception_name(site) -> str | None:

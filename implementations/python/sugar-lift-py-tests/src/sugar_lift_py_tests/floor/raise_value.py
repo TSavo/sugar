@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.effect import RaiseEffect
 
+from .exception_value import ExceptionValue
 from .floor_value import FloorValue
 
 
@@ -17,6 +18,7 @@ class RaiseValue(FloorValue):
 
     effect: RaiseEffect
     scope: object = None
+    exception: ExceptionValue | None = None
 
     def follow_rest(self, rest, reduce):
         # Code after an unguarded raise never runs and is not part of the

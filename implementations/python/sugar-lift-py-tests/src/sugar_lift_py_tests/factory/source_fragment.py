@@ -1506,6 +1506,13 @@ class SourceFragment:
             return None
         return SourceFragment.from_node(self.node.exc, self.filename, source=self.source)  # type: ignore[attr-defined]
 
+    def raise_cause(self) -> "SourceFragment | None":
+        """Return the explicit cause of a Raise node, or None."""
+        self._require(ast.Raise)
+        if self.node.cause is None:  # type: ignore[attr-defined]
+            return None
+        return SourceFragment.from_node(self.node.cause, self.filename, source=self.source)  # type: ignore[attr-defined]
+
     # --- context managers -------------------------------------------------
 
     def with_item_count(self) -> int:
