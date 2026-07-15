@@ -98,7 +98,8 @@ pub struct LiftPluginKit {
     lift_method: String,
     question_cache: std::sync::Arc<Mutex<sugar_lift_rpc_client::QuestionCache>>,
     resident: std::sync::Arc<ResidentSlot>,
-    terminal_factory_panic: std::sync::Arc<Mutex<Option<FactoryPanicRpcError>>>,
+    resident_max_requests: usize,
+    terminal_error: std::sync::Arc<Mutex<Option<LiftPluginKitError>>>,
 }
 
 struct ResidentSlot(Mutex<Option<ResidentLifter>>);
@@ -182,7 +183,8 @@ impl LiftPluginKit {
                 sugar_lift_rpc_client::QuestionCache::default(),
             )),
             resident: std::sync::Arc::new(ResidentSlot(Mutex::new(None))),
-            terminal_factory_panic: std::sync::Arc::new(Mutex::new(None)),
+            resident_max_requests: resident_max_requests(),
+            terminal_error: std::sync::Arc::new(Mutex::new(None)),
         }
     }
 
@@ -341,12 +343,12 @@ impl LiftPluginKit {
 
     fn dispatch(&self, lift_params: &Value) -> Result<(Value, Value), LiftPluginKitError> {
         if let Some(error) = self
-            .terminal_factory_panic
+            .terminal_error
             .lock()
             .map_err(|_| LiftPluginKitError::Failed("terminal RPC state poisoned".to_string()))?
             .clone()
         {
-            return Err(LiftPluginKitError::FatalFactoryPanic(error));
+            return Err(error);
         }
         if self.command.is_empty() {
             return Err(LiftPluginKitError::Failed(
@@ -368,15 +370,8 @@ impl LiftPluginKit {
             match self.dispatch_resident(lift_params) {
                 Ok(pair) => return Ok(pair),
                 Err(ResidentDispatchError::Fatal(error)) => {
-                    self.remember_terminal_factory_panic(&error)?;
+                    self.remember_terminal_error(&error)?;
                     return Err(error);
-                }
-                Err(ResidentDispatchError::Retry) => {
-                    // Resident connection died mid-flight (broken pipe,
-                    // process exited, etc). Fall through to a one-shot
-                    // spawn for THIS request so the caller still gets an
-                    // answer; the pool slot was already evicted by
-                    // `dispatch_resident` and will be respawned next call.
                 }
             }
         }
@@ -385,7 +380,7 @@ impl LiftPluginKit {
             match self.spawn_and_run_once(lift_params) {
                 Ok(session) => session,
                 Err(error) => {
-                    self.remember_terminal_factory_panic(&error)?;
+                    self.remember_terminal_error(&error)?;
                     return Err(error);
                 }
             };
@@ -419,15 +414,12 @@ impl LiftPluginKit {
         Ok((initialize_response, response))
     }
 
-    fn remember_terminal_factory_panic(
+    fn remember_terminal_error(
         &self,
         error: &LiftPluginKitError,
     ) -> Result<(), LiftPluginKitError> {
-        let LiftPluginKitError::FatalFactoryPanic(error) = error else {
-            return Ok(());
-        };
         *self
-            .terminal_factory_panic
+            .terminal_error
             .lock()
             .map_err(|_| LiftPluginKitError::Failed("terminal RPC state poisoned".to_string()))? =
             Some(error.clone());
@@ -603,9 +595,9 @@ impl LiftPluginKit {
     /// heavy one-time interpreter/module cost) is paid exactly once per
     /// process, not once per mint.
     ///
-    /// The resident is valid exactly for this RPC client's lifetime. There
-    /// is no eviction or invalidation path: dropping the client drops the
-    /// process and every coherently cached answer together.
+    /// A generation is retired between requests after its configured number
+    /// of successful responses. Transport and protocol failures are terminal,
+    /// never rotation or retry signals.
     fn dispatch_resident(
         &self,
         lift_params: &Value,
@@ -616,7 +608,10 @@ impl LiftPluginKit {
             ))
         })?;
 
-        let needs_fresh = slot.is_none();
+        let needs_fresh = slot
+            .as_ref()
+            .map(|entry| entry.successful_responses >= self.resident_max_requests)
+            .unwrap_or(true);
         if needs_fresh {
             if let Some(mut old) = slot.take() {
                 old.shutdown_best_effort();
@@ -631,6 +626,7 @@ impl LiftPluginKit {
                 next_id: 3,
                 initialize_response,
                 first_lift_response: Some(first_response),
+                successful_responses: 1,
                 shutdown_allowed: true,
             });
         }
@@ -656,9 +652,11 @@ impl LiftPluginKit {
         let lift_frame = format!("{lift_req}\n");
         trace_frame("cli_to_kit", &lift_frame, "write_stdin.enter");
         if let Err(error) = entry.stdin.write_all(lift_frame.as_bytes()) {
-            slot.take();
-            return Err(ResidentDispatchError::retry_after(format!(
-                "write lift request to resident: {error}"
+            if let Some(mut entry) = slot.take() {
+                entry.abort_without_shutdown();
+            }
+            return Err(ResidentDispatchError::Fatal(LiftPluginKitError::Failed(
+                format!("write lift request to resident: {error}"),
             )));
         }
         info!(
@@ -672,9 +670,11 @@ impl LiftPluginKit {
             "lift-plugin buffer flush"
         );
         if let Err(error) = entry.stdin.flush() {
-            slot.take();
-            return Err(ResidentDispatchError::retry_after(format!(
-                "flush lift request to resident: {error}"
+            if let Some(mut entry) = slot.take() {
+                entry.abort_without_shutdown();
+            }
+            return Err(ResidentDispatchError::Fatal(LiftPluginKitError::Failed(
+                format!("flush lift request to resident: {error}"),
             )));
         }
         info!(
@@ -683,17 +683,15 @@ impl LiftPluginKit {
             "lift-plugin buffer flush"
         );
         match read_response(&entry.reader, id) {
-            Ok(response) => Ok((initialize_response, response)),
+            Ok(response) => {
+                entry.successful_responses += 1;
+                Ok((initialize_response, response))
+            }
             Err(error) => {
-                if error.is_transport_stop_the_line() {
-                    if let Some(mut entry) = slot.take() {
-                        entry.abort_without_shutdown();
-                    }
-                    Err(ResidentDispatchError::Fatal(error))
-                } else {
-                    slot.take();
-                    Err(ResidentDispatchError::retry_after(error.to_string()))
+                if let Some(mut entry) = slot.take() {
+                    entry.abort_without_shutdown();
                 }
+                Err(ResidentDispatchError::Fatal(error))
             }
         }
     }
@@ -725,6 +723,8 @@ struct ResidentLifter {
     /// historical one-shot protocol); consumed by the first
     /// `dispatch_resident` call against a freshly (re)spawned entry.
     first_lift_response: Option<Value>,
+    /// Successful lift responses served by this process generation.
+    successful_responses: usize,
     /// Fatal protocol frames forbid shutdown-as-recovery; false means kill only.
     shutdown_allowed: bool,
 }
@@ -768,23 +768,18 @@ fn resident_enabled() -> bool {
         .unwrap_or(true)
 }
 
+fn resident_max_requests() -> usize {
+    std::env::var("SUGAR_LIFT_RESIDENT_MAX_REQUESTS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(256)
+}
+
 /// Outcome of a resident-path dispatch attempt.
 enum ResidentDispatchError {
     /// A real failure the caller should propagate (e.g. binary missing).
     Fatal(LiftPluginKitError),
-    /// The resident connection died mid-flight; already evicted from the
-    /// pool. The caller should retry via a one-shot spawn for this request.
-    Retry,
-}
-
-impl ResidentDispatchError {
-    fn retry_after(reason: String) -> Self {
-        info!(
-            reason,
-            "resident lifter connection lost, evicting and retrying one-shot"
-        );
-        Self::Retry
-    }
 }
 
 impl LiftKit {
@@ -935,7 +930,7 @@ impl LiftPluginKitSession {
 }
 
 /// Errors from the lift-plugin Kit transport.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum LiftPluginKitError {
     /// The configured lifter binary was not found.
     #[error("lifter binary `{binary}` not found")]
@@ -950,13 +945,6 @@ pub enum LiftPluginKitError {
     /// The response term was no longer the deprecated JSON escape-hatch shape.
     #[error("lift plugin term no longer carries a legacy response")]
     LegacyResponseUnavailable,
-}
-
-impl LiftPluginKitError {
-    fn is_transport_stop_the_line(&self) -> bool {
-        matches!(self, Self::FatalFactoryPanic(_))
-            || matches!(self, Self::Failed(message) if message.contains("lift plugin transport stalled") || message.contains("lift plugin transport disconnected"))
-    }
 }
 
 /// Typed terminal payload emitted when the Python lift boundary reaches a
@@ -1384,7 +1372,8 @@ for line in sys.stdin:
         let temp = tempfile::tempdir().expect("test tempdir");
         let log_path = temp.path().join("requests.log");
         let (_stub, command) = protocol_stub(&log_path);
-        let kit = LiftPluginKit::new("python", command, None);
+        let mut kit = LiftPluginKit::new("python", command, None);
+        kit.resident_max_requests = 2;
 
         let control = kit
             .parse_session(&Input::Spec(json!({
@@ -1460,5 +1449,57 @@ for line in sys.stdin:
         assert_eq!(frames[0], format!("{pid}:initialize:none"));
         assert_eq!(frames[1], format!("{pid}:lift:control-one"));
         assert_eq!(frames[2], format!("{pid}:lift:control-two"));
+    }
+
+    #[test]
+    fn resident_rotates_only_after_bounded_successful_responses() {
+        let temp = tempfile::tempdir().expect("test tempdir");
+        let log_path = temp.path().join("requests.log");
+        let (_stub, command) = protocol_stub(&log_path);
+        let mut kit = LiftPluginKit::new("python", command, None);
+        kit.resident_max_requests = 2;
+
+        for request in 0..5 {
+            let session = kit
+                .parse_session(&Input::Spec(json!({
+                    "workspace_root": ".",
+                    "mode": format!("success-{request}")
+                })))
+                .expect("bounded resident generations preserve successful answers");
+            assert_eq!(
+                session.response(),
+                &json!({"kind": "ir-document", "ir": []})
+            );
+        }
+
+        let frames = protocol_log(&log_path);
+        let initialize_pids: Vec<_> = frames
+            .iter()
+            .filter_map(|frame| {
+                let (pid, rest) = frame.split_once(':')?;
+                rest.starts_with("initialize:").then_some(pid)
+            })
+            .collect();
+        let lift_pids: Vec<_> = frames
+            .iter()
+            .filter_map(|frame| {
+                let (pid, rest) = frame.split_once(':')?;
+                rest.starts_with("lift:").then_some(pid)
+            })
+            .collect();
+
+        assert_eq!(
+            initialize_pids.len(),
+            3,
+            "five successes at max=2 need three generations: {frames:?}"
+        );
+        assert_eq!(
+            lift_pids.len(),
+            5,
+            "rotation may not replay or drop a request: {frames:?}"
+        );
+        assert_eq!(&lift_pids[0..2], &[initialize_pids[0], initialize_pids[0]]);
+        assert_eq!(&lift_pids[2..4], &[initialize_pids[1], initialize_pids[1]]);
+        assert_eq!(lift_pids[4], initialize_pids[2]);
     }
 }
