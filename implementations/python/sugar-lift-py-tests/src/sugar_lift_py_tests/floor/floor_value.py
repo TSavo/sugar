@@ -103,12 +103,16 @@ class FloorValue:
         self,
         *,
         owner: str,
-        blame: str,
+        blame: object,
         observed: str,
         requested: str,
         fix: str,
     ) -> NoReturn:
-        """The common loud arm for unsupported floor protocol construction."""
+        """The common loud arm for unsupported floor protocol construction.
+
+        ``blame`` accepts the SourceFragment itself; it is projected to prose
+        here, at the FactoryGapInfo boundary, and nowhere earlier.
+        """
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow,
             FactoryGapInfo,
@@ -119,7 +123,7 @@ class FloorValue:
 
         info = FactoryGapInfo(
             owner=owner,
-            blame=blame,
+            blame=str(blame),
             observed=observed,
             requested=requested,
             fix=fix,
@@ -136,7 +140,7 @@ class FloorValue:
                 role=requested,
                 status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
-                blame=blame,
+                blame=str(blame),
                 selected=None,
                 candidates=[],
                 message=info.message,

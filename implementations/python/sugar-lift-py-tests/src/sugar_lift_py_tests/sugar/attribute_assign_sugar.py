@@ -99,7 +99,7 @@ def assign_attribute_value(*, receiver, field_name, value, key, site, ctx, owner
                 "__set__",
                 (receiver, value),
                 owner=owner,
-                blame=str(site),
+                blame=site,
                 ctx=ctx,
             )
         if receiver.has_method("__setattr__"):
@@ -107,7 +107,7 @@ def assign_attribute_value(*, receiver, field_name, value, key, site, ctx, owner
                 "__setattr__",
                 (StringValue(field_name), value),
                 owner=owner,
-                blame=str(site),
+                blame=site,
                 ctx=ctx,
             )
     return Complete(ScopeRebind(key, value))

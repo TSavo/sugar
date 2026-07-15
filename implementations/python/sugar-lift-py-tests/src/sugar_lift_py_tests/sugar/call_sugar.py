@@ -39,7 +39,7 @@ def _expand_function_positional_args(arg_values: tuple, *, site: object) -> tupl
 
         factory_panic_gap(
             owner="CallSugar",
-            blame=str(site),
+            blame=site,
             observed=type(operand).__name__,
             requested=(
                 "expand a constructed finite positional sequence at a starred "
@@ -168,7 +168,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
 
                     factory_panic_gap(
                         owner="CallSugar",
-                        blame=str(self.site),
+                        blame=self.site,
                         observed=bound.import_target or bound.name,
                         requested="resolve an exact installed-source FunctionDef for a called import alias",
                         fix="install one source-qualified function definition or keep the call opaque outside CallSugar",
