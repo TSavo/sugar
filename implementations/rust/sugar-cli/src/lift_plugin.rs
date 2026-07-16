@@ -27,12 +27,27 @@ use sugar_compiler::kit_path::{
 #[derive(Debug, Clone)]
 pub(crate) struct LiftPluginSession {
     pub claim: DomainClaim,
+    #[allow(dead_code)] // consumed by the binary-only cmd_lift report provenance gate
+    pub initialize_response: Option<Value>,
 }
 
 impl LiftPluginSession {
     pub(crate) fn from_claim(claim: DomainClaim) -> Result<Self, LiftPluginError> {
         LiftResponseProjection::from_claim(&claim)?;
-        Ok(Self { claim })
+        Ok(Self {
+            claim,
+            initialize_response: None,
+        })
+    }
+
+    fn from_kit_session(
+        session: sugar_compiler::kit_path::LiftPluginKitSession,
+    ) -> Result<Self, LiftPluginError> {
+        LiftResponseProjection::from_claim(&session.claim)?;
+        Ok(Self {
+            claim: session.claim,
+            initialize_response: Some(session.initialize_response),
+        })
     }
 
     pub(crate) fn response_projection(&self) -> LiftResponseProjection<'_> {
@@ -359,18 +374,21 @@ pub(crate) fn dispatch_lift_path(
     ));
 
     let before = current_rss_kib();
-    let claim = kit.lift(lift_params).map_err(lift_error_from_kit)?;
+    let core_session = kit
+        .lift_session(lift_params)
+        .map_err(LiftPluginError::from)?;
+    let claim = &core_session.claim;
     trace_lift_plugin_claim_checkpoint_with_delta(
         "dispatch_lift_path.after_kit_lift",
-        &claim,
+        claim,
         rss_delta_kib(before, current_rss_kib()),
     );
     trace_log(format!(
         "lift path executed surface={surface} elapsed={:?}",
         started.elapsed()
     ));
-    trace_lift_plugin_claim_checkpoint("dispatch_lift_path.before_response_projection", &claim);
-    LiftPluginSession::from_claim(claim)
+    trace_lift_plugin_claim_checkpoint("dispatch_lift_path.before_response_projection", claim);
+    LiftPluginSession::from_kit_session(core_session)
 }
 
 /// Unregistered-dialect fallback: builds the same source/path input the
@@ -419,6 +437,7 @@ fn lift_error_from_rendezvous(error: RendezvousError) -> LiftPluginError {
     )
 }
 
+#[allow(dead_code)]
 fn lift_error_from_kit(error: SugarKitError) -> LiftPluginError {
     match error {
         SugarKitError::PathExecution(path_error) => lift_error_from_path(path_error),

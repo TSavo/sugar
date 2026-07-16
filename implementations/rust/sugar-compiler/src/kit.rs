@@ -51,7 +51,10 @@ use serde_json::Value;
 use sugar_claim_envelope::KitDeclaration;
 
 use crate::kit_declaration::{load_kit_declaration_with_command, KitDeclarationLoadError};
-use crate::kit_path::{execute_path, KitRegistry, LiftKit, PathExecutionError};
+use crate::kit_path::{
+    execute_path, KitRegistry, LiftKit, LiftPluginKit, LiftPluginKitError, LiftPluginKitSession,
+    PathExecutionError,
+};
 use crate::resolve::{
     resolve_source, resolve_testimony, ResolvedSource, SourceRefusal, TestimonyError,
     TestimonyResolution,
@@ -224,6 +227,20 @@ impl Kit {
         }));
         let chain = execute_path(&path_input, &self.registry, &inputs)?;
         Ok(chain.into_terminal_claim())
+    }
+
+    /// Lift while retaining the initialize testimony returned by the kit that
+    /// actually performed this request.
+    pub fn lift_session(&self, request: Value) -> Result<LiftPluginKitSession, LiftPluginKitError> {
+        let mut lift_kit = LiftPluginKit::new(
+            self.manifest.surface.clone(),
+            self.manifest.command.clone(),
+            self.manifest.working_dir.clone(),
+        );
+        if let Some(method) = self.manifest.method.as_deref() {
+            lift_kit = lift_kit.with_method(method);
+        }
+        lift_kit.parse_session(&Input::Spec(request))
     }
 
     pub fn surface(&self) -> &str {

@@ -36,6 +36,7 @@ from sugar_lift_py_tests.kit_rpc import (
 )
 from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
+from sugar_lift_py_tests.source_provenance import kit_source_provenance
 
 KIT_ID = "python"
 KIT_VERSION = "0.1.0"
@@ -3042,6 +3043,7 @@ def _handle_initialize(msg_id: Any) -> None:
                 "version": KIT_VERSION,
                 "kit_id": KIT_ID,
                 "component_protocol_version": COMPONENT_PROTOCOL_VERSION,
+                "kit_source": kit_source_provenance(),
             },
         }
     )
