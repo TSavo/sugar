@@ -5589,6 +5589,9 @@ fn render_provenanced_vendor_assertion_row(
             .unwrap_or("cid-unavailable");
         let stated = resolve_source_memento_visual_source(source_lookup, warrant);
         out.push_str(&format!("      stated: {}\n", stated.trim()));
+        if let Some(message) = warrant.get("assertMessage").and_then(Value::as_str) {
+            out.push_str(&format!("      message: {message}\n"));
+        }
         for (chain, rewrite_locus) in contract_rewrite_chains(contract) {
             let construction = rewrite_locus
                 .map(|(path, line)| format!("{path}:{line}"))
@@ -15567,7 +15570,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         // source warrant role, not an `::assertion` name suffix.
         let warrant = serde_json::json!({
             "kind": "source-memento", "file": "datetime.py", "role": "assertion",
-            "sourceFunctionName": "date._cmp", "span": {"start_line": 3, "end_line": 3}
+            "sourceFunctionName": "date._cmp", "span": {"start_line": 3, "end_line": 3},
+            "assertMessage": "\"other must be a date\""
         });
         let mut report = minimal_source_report();
         report.project_root = Some(root.path().to_path_buf());
@@ -15623,6 +15627,10 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         );
         assert!(
             visual.contains("assert isinstance(other, date)"),
+            "{visual}"
+        );
+        assert!(
+            visual.contains("message: \"other must be a date\""),
             "{visual}"
         );
         assert!(visual.contains("adt.is_python_type"), "{visual}");
