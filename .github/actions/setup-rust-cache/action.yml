@@ -1,0 +1,52 @@
+name: Set up Sugar Rust build
+description: Install the pinned toolchain and either seed or consume the exact-commit build cache.
+
+inputs:
+  mode:
+    description: "seed may build/save; consume requires an exact cache hit"
+    required: true
+  components:
+    description: Additional rustup components
+    required: false
+    default: rustfmt
+
+runs:
+  using: composite
+  steps:
+    - name: Validate cache ownership mode
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+      run: |
+        case "$MODE" in
+          seed|consume) ;;
+          *) echo "::error::invalid Rust cache mode: $MODE (expected seed or consume)"; exit 2 ;;
+        esac
+
+    - name: Set up Rust 1.96.0
+      uses: dtolnay/rust-toolchain@1.96.0
+      with:
+        components: ${{ inputs.components }}
+
+    - name: Seed exact-commit Rust build cache
+      if: inputs.mode == 'seed'
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          implementations/rust/target
+        key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-
+
+    - name: Consume exact-commit Rust build cache
+      if: inputs.mode == 'consume'
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          implementations/rust/target
+        key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+        fail-on-cache-miss: true

@@ -36,19 +36,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Rust 1.96.0
-        uses: dtolnay/rust-toolchain@1.96.0
-
-      - name: Restore and save exact-commit Rust build
-        uses: actions/cache@v5
+      - name: Set up Rust build owner
+        uses: ./.github/actions/setup-rust-cache
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            implementations/rust/target
-          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-
+          mode: seed
 
       - name: Build shared Rust artifacts once
         run: |
@@ -64,67 +55,74 @@ jobs:
             -p sugar-lift-rust-cargo-test-witness --bin discharge_cli
 
   core:
-    name: acid core instruments
+    name: core (${{ matrix.name }})
     needs: prepare
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: refusal vocabulary
+            target: check-lift-refusal-vocabulary
+            python: false
+            z3: false
+          - name: Python format
+            target: test-python-format
+            python: true
+            z3: false
+          - name: self attestation
+            target: self-attest
+            python: false
+            z3: false
+          - name: coretests source audit
+            target: coretests-source-audit
+            python: true
+            z3: true
+          - name: coretests invariants
+            target: coretests-invariants
+            python: false
+            z3: false
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Rust 1.96.0
-        uses: dtolnay/rust-toolchain@1.96.0
+      - name: Consume shared Rust build
+        uses: ./.github/actions/setup-rust-cache
         with:
-          components: rustfmt
+          mode: consume
 
       - name: Check Rust formatting
+        if: matrix.target == 'check-lift-refusal-vocabulary'
         working-directory: implementations/rust
         run: cargo fmt --all -- --check
 
-      - name: Restore exact-commit Rust build
-        uses: actions/cache/restore@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            implementations/rust/target
-          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
-          fail-on-cache-miss: true
-
       - name: Set up Python 3.12
+        if: matrix.python
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: 'pip'
 
       - name: Install lift package deps
+        if: matrix.python
         run: python -m pip install --quiet blake3 pynacl cbor2 pytest
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
 
-      - name: Install system deps (z3, maven, vampire, b3sum)
+      - name: Install source-audit system deps
+        if: matrix.z3
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends z3 maven unzip b3sum
-          # Vampire v5.0.1 prebuilt static binary (matches tools/portfolio pin) so the
-          # forall-vampire showcase runs in CI for real instead of skipping.
-          curl -fsSL -o /tmp/vampire.zip https://github.com/vprover/vampire/releases/download/v5.0.1/vampire-Linux-X64.zip
-          unzip -o -q /tmp/vampire.zip -d /tmp/vampire-bin
-          sudo install -m 0755 /tmp/vampire-bin/vampire /usr/local/bin/vampire
-          vampire --version | head -1 || true
+          sudo apt-get install -y --no-install-recommends z3 b3sum
 
-      - name: Run core instruments
-        run: make ci-core
+      - name: Run core instrument
+        run: make ${{ matrix.target }}
         env:
           CI: '1'
           GH_TOKEN: ${{ github.token }}
 
       - name: Attest published sugar binary
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: matrix.target == 'self-attest' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: implementations/rust/target/release/sugar
@@ -143,20 +141,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Rust 1.96.0
-        uses: dtolnay/rust-toolchain@1.96.0
+      - name: Consume shared Rust build
+        uses: ./.github/actions/setup-rust-cache
         with:
-          components: rustfmt
-
-      - name: Restore exact-commit Rust build
-        uses: actions/cache/restore@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            implementations/rust/target
-          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
-          fail-on-cache-miss: true
+          mode: consume
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6

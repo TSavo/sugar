@@ -22,8 +22,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Rust 1.96.0
-        uses: dtolnay/rust-toolchain@1.96.0
+      - name: Reuse or seed the commit's Rust build
+        uses: ./.github/actions/setup-rust-cache
+        with:
+          mode: seed
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
