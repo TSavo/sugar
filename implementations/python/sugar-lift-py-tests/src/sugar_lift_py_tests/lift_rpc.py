@@ -142,6 +142,9 @@ class _StructuredTransportFormatter(logging.Formatter):
             "phase_total_ms",
             "phase_mean_ms",
             "phase_max_ms",
+            "rss_before_kib",
+            "rss_after_kib",
+            "error",
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)

@@ -66,6 +66,24 @@ def test_malloc_trim_failure_is_surfaced_not_swallowed(monkeypatch) -> None:
     assert [name for name, _ in warnings] == ["malloc_trim_failed"]
 
 
+def test_trim_rss_fields_survive_the_transport_formatter() -> None:
+    # The wall harvests rss_before/after from transport.jsonl; the structured
+    # formatter serializes only a fixed field whitelist, so these must be on it.
+    import json
+
+    record = logging.LogRecord(
+        "sugar.kit.transport", logging.INFO, __file__, 0, "resident_trim", (), None
+    )
+    record.stage = "resident.trim"
+    record.request_count = 250
+    record.rss_before_kib = 400000
+    record.rss_after_kib = 300000
+    payload = json.loads(lift_rpc._StructuredTransportFormatter().format(record))
+    assert payload["rss_before_kib"] == 400000
+    assert payload["rss_after_kib"] == 300000
+    assert payload["request_count"] == 250
+
+
 def test_transport_logger_name_unchanged() -> None:
     # Guards the logger the wall harvests trim/profile lines from.
     assert lift_rpc._TRANSPORT_LOG is logging.getLogger("sugar.kit.transport")
