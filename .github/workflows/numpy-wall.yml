@@ -49,6 +49,10 @@ jobs:
           SUGAR_ENGINE_CYCLE_THRESHOLD: "8"
           SUGAR_KIT_LOG: ${{ github.workspace }}/.sugar/numpy-wall-logs/transport.jsonl
           SUGAR_KIT_LOG_LEVEL: INFO
+          # Return freed AST-parse arenas to the OS periodically so the
+          # arena-fragmentation half of resident growth does not OOM the
+          # runner. Does not touch memory pinned by live references.
+          SUGAR_KIT_TRIM_EVERY: "250"
         run: |
           mkdir -p .sugar/numpy-wall-logs
           : > "$SUGAR_ENGINE_LOG"

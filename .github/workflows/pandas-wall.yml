@@ -58,6 +58,11 @@ jobs:
           # timeout rather than observing production behavior.
           SUGAR_KIT_PROFILE_EVERY: "25"
           SUGAR_KIT_MEMORY_PROFILE_EVERY: "0"
+          # Return freed AST-parse arenas to the OS periodically so the
+          # arena-fragmentation half of resident growth does not OOM the
+          # runner. Cheap (no tracemalloc): /proc read + gc + malloc_trim.
+          # Does not touch memory pinned by live references.
+          SUGAR_KIT_TRIM_EVERY: "250"
         run: |
           # Self-hosted workspaces may retain ignored .sugar outputs. A wall
           # receipt is valid only when every artifact was minted by this run.
