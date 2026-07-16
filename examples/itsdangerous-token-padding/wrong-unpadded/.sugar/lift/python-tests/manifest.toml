@@ -1,0 +1,11 @@
+name = "python-tests-lift"
+version = "0.1.0-draft"
+protocol_version = "pep/1.7.0"
+kind = "lift"
+command = ["./lift-shim.sh"]
+working_dir = "."
+
+[capabilities]
+authoring_surfaces = ["python-tests"]
+ir_version = "v1.1.0"
+emits_signed_mementos = false
