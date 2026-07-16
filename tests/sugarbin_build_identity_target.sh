@@ -100,4 +100,17 @@ resolved_again="$("$repo/bin/sugarbin" --bin sugar)"
 [[ "$resolved_again" == "$resolved" ]]
 [[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 1 ]]
 
+# BX/CI filesystem shelf: a local artifact contributes an atomic cell, then a
+# clean consumer recovers it without GitHub or another Cargo invocation.
+export SUGAR_BINARY_NO_SHELF=0 SUGAR_BINARY_PUBLISH=1
+export SUGAR_BINARY_SHELF_ROOT="$tmp/shelf"
+"$repo/bin/sugarbin" --bin sugar >/dev/null
+find "$tmp/shelf" -type f -name 'sugar-*.gz' | grep -q .
+rm "$tmp/target/release/sugar" "$tmp/target/release/sugar.sugarbin.json"
+rm -rf "$tmp/cache/.build"
+export SUGAR_BINARY_ALLOW_BUILD=0
+resolved_from_shelf="$("$repo/bin/sugarbin" --bin sugar)"
+[[ "$($resolved_from_shelf)" == "fresh:sugar" ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 1 ]]
+
 echo 'PASS: sugarbin Cargo output is isolated by build identity'

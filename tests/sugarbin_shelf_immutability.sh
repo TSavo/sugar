@@ -33,4 +33,12 @@ grep -Fq 'gzip -9 -c "$bin"' <<<"$publish_body" || {
   exit 1
 }
 
+main_body="$(sed -n '/^main()/,$p' "$repo/bin/sugarbin")"
+grep -Fq 'pull_from_filesystem_shelf' <<<"$main_body"
+grep -Fq 'publish_to_filesystem_shelf' <<<"$main_body"
+if grep -Eq 'pull_from_shelf|publish_if_absent' <<<"$main_body"; then
+  echo 'sugarbin main still routes shelf traffic through GitHub Releases' >&2
+  exit 1
+fi
+
 echo 'PASS: sugarbin shelf assets are immutable and race-idempotent'

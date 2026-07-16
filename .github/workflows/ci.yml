@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
   actions: read
   attestations: write
   id-token: write
@@ -45,9 +45,6 @@ jobs:
         run: tools/ci-apt-install.sh b3sum
 
       - name: Build shared Rust artifacts once
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SUGAR_BINARY_REQUIRE_PUBLISH: '1'
         run: |
           for b in sugar sugar-lift rust_test_assertions_rpc coretests_sweep; do
             bin/sugarbin --profile release --bin "$b" >/dev/null
