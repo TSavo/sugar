@@ -21,11 +21,12 @@ class RaiseValue(FloorValue):
     scope: object = None
     exception: ExceptionValue | None = None
 
-    def follow_rest(self, rest, reduce):
+    def follow_rest(self):
         # Code after an unguarded raise never runs and is not part of the
         # block record (unreachable). Drop it — same posture as a hard exit.
-        del rest, reduce
-        return ()
+        from sugar_lift_py_tests.outcome.follow_step import FollowStep
+
+        return FollowStep.halt(keeps_rest=False)
 
     def guarded(self, formula):
         from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise

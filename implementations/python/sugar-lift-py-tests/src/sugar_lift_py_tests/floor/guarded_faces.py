@@ -56,19 +56,26 @@ class GuardedFaces(FloorValue):
             temporal = temporal.bind_value(name, value)
         return replace(ctx, temporal=temporal)
 
-    def follow_rest(self, rest, reduce):
+    def follow_rest(self):
         # Exits decide what the continuation rides -- no type interrogation:
         # both exit -> unreachable (raw, like code after an unguarded return);
         # only then -> tail under not(guard); only else -> tail under guard;
         # neither -> reduce plain.
         if self.then_exits and self.else_exits:
-            del reduce
-            return rest
-        entries = reduce(rest)
+            from sugar_lift_py_tests.outcome.follow_step import FollowStep
+
+            return FollowStep.halt(keeps_rest=True)
+        from sugar_lift_py_tests.outcome.follow_step import FollowStep
+
         if self.then_exits:
             from sugar_lift_py_tests.ir import not_
 
-            return tuple(entry.guarded(not_(self.guard)) for entry in entries)
+            guard = not_(self.guard)
+            return FollowStep.continue_with(
+                lambda entries: tuple(entry.guarded(guard) for entry in entries)
+            )
         if self.else_exits:
-            return tuple(entry.guarded(self.guard) for entry in entries)
-        return entries
+            return FollowStep.continue_with(
+                lambda entries: tuple(entry.guarded(self.guard) for entry in entries),
+            )
+        return FollowStep.continue_with()

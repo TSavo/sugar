@@ -34,15 +34,16 @@ class BlockValue(FloorValue):
             for formula in entry.post_contribution()
         )
 
-    def follow_rest(self, rest, reduce):
+    def follow_rest(self):
         # Only an *unguarded* return makes the entire continuation unreachable.
         # GuardedReturn (if/except path) and other posts coexist with a live tail
         # — e.g. try/except: return; assert ... must still reduce the assert.
         from sugar_lift_py_tests.floor.return_value import ReturnValue
+        from sugar_lift_py_tests.outcome.follow_step import FollowStep
 
         if any(type(entry) is ReturnValue for entry in self.statements):
-            return rest
-        return reduce(rest)
+            return FollowStep.halt(keeps_rest=True)
+        return FollowStep.continue_with()
 
     def extend_scope(self, ctx):
         # Nested with / pytest.raises as-bindings live on entries (RaisesWithValue,

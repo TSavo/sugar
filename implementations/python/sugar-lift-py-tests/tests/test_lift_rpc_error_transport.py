@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import pytest
@@ -96,8 +97,23 @@ def test_rpc_dispatch_returns_recursion_error_as_json_rpc_error(monkeypatch) -> 
     assert "recursion limit exceeded" in sent[0]["error"]["message"]
 
 
-def test_rpc_serve_thread_uses_explicit_stack_and_recursion_limit() -> None:
-    """The serve loop runs on a worker thread with a large explicit C stack so
-    depth is bounded by the explicit recursion limit, not the OS stack."""
-    assert lift_rpc._SERVE_THREAD_STACK_BYTES == 512 * 1024 * 1024
-    assert lift_rpc._SERVE_RECURSION_LIMIT == 100_000
+def test_rpc_serves_on_main_thread_without_a_big_stack_shell(monkeypatch) -> None:
+    """Iterative block follow retires the oversized worker-stack workaround."""
+    messages = [{"jsonrpc": "2.0", "id": 8, "method": "shutdown", "params": {}}]
+    sent: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(lift_rpc, "_configure_transport_logging", lambda: None)
+    monkeypatch.setattr(lift_rpc, "_recv", lambda: messages.pop(0))
+    monkeypatch.setattr(lift_rpc, "_send", sent.append)
+
+    def worker_thread_is_retired(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError(
+            "RPC must not hide native recursion on a huge worker stack"
+        )
+
+    monkeypatch.setattr(threading, "Thread", worker_thread_is_retired)
+
+    lift_rpc.main(["--rpc"])
+
+    assert sent == [{"jsonrpc": "2.0", "id": 8, "result": {"ok": True}}]

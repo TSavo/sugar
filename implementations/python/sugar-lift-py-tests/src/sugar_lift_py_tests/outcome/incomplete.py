@@ -24,11 +24,12 @@ class Incomplete:
         del then, else_body, ctx, site
         return self
 
-    def follow(self, rest, reduce):
+    def follow(self):
         # An effect halts the run: the rest of the block is unreachable, so it stays
         # exactly as it is -- unreduced sugar. Never reason about code that never runs.
-        del reduce
-        return rest
+        from sugar_lift_py_tests.outcome.follow_step import FollowStep
+
+        return FollowStep.halt(keeps_rest=True)
 
     def contribution(self):
         # An effect contributes itself to the block record; the unresolved tail rides

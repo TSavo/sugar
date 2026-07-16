@@ -9,6 +9,9 @@ its statements (so the statements are built first, then the block composes them)
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
+import textwrap
 
 import pytest
 
@@ -32,6 +35,32 @@ def _compose_block(body_src: str):
     ctx = FactoryBuildContext(filename="f.py", catalog=default_catalog())
     result = build_node(block, filename="f.py", role=SugarRole.STATEMENT, ctx=ctx)
     return complete_value(result.sugar.desugar(ctx), owner="block")
+
+
+def _build_block_sugar(body_src: str):
+    fn = ast.parse(f"def f(x):\n{body_src}").body[0]
+    ctx = FactoryBuildContext(filename="f.py", catalog=default_catalog())
+    result = build_node(
+        Block.of(fn.body), filename="f.py", role=SugarRole.STATEMENT, ctx=ctx
+    )
+    return result.sugar, ctx
+
+
+def _recursive_collect(statements: tuple, ctx: object) -> tuple:
+    """The pre-#4581 collector, retained only as a bounded byte-identity oracle."""
+    if not statements:
+        return ()
+    head, *rest = statements
+    rest = tuple(rest)
+    outcome = head.reduce(ctx)
+    next_ctx = outcome.extend_scope(ctx)
+    follow = outcome.follow()
+    tail = rest if follow.keeps_rest else ()
+    if follow.continues:
+        tail = _recursive_collect(rest, next_ctx)
+        if follow.transform is not None:
+            tail = follow.transform(tail)
+    return (*outcome.contribution(), *tail)
 
 
 def test_stack_pushes_a_block_for_a_suite():
@@ -74,3 +103,45 @@ def test_block_sugar_panics_on_a_statement_with_no_sugar_yet():
     # catalog, finds nothing, and the factory panics. Never an ad-hoc raise or skip.
     with pytest.raises(FactoryPanic):
         _compose_block('    "doc"\n    del obj.attr\n')
+
+
+def test_block_collect_is_byte_identical_to_bounded_recursive_control():
+    sugar, ctx = _build_block_sugar(
+        "    x = 1\n"
+        "    if x:\n"
+        "        return x\n"
+        "    assert x == 1\n"
+        "    return x\n"
+    )
+
+    recursive = BlockValue(_recursive_collect(sugar.statements, ctx))
+    iterative = complete_value(sugar.desugar(ctx), owner="block")
+
+    assert iterative == recursive
+
+
+def test_lift_file_payload_handles_five_thousand_statement_block():
+    probe = textwrap.dedent("""
+        import sys
+
+        from sugar_lift_py_tests.lift_rpc import lift_file_payload
+
+        sys.setrecursionlimit(300)
+        source = "def f():\\n" + "".join(
+            f"    x{i} = {i}\\n" for i in range(5_000)
+        ) + "    return x4999\\n"
+        payload = lift_file_payload(source, "deep.py")
+        print(len(payload.ir))
+        """)
+
+    completed = subprocess.run(
+        [sys.executable, "-X", "faulthandler", "-c", probe],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, (
+        "block follow must be heap-bounded, not C-stack-bounded; "
+        f"exit={completed.returncode}\n{completed.stderr[-4000:]}"
+    )
