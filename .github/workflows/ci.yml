@@ -181,7 +181,9 @@ jobs:
 
   acid-test:
     name: acid test (make ci)
-    if: always()
+    # Aggregate genuine success/failure results, but do not manufacture a red
+    # test result when concurrency intentionally supersedes the whole run.
+    if: ${{ always() && !cancelled() }}
     needs: [prepare, core, showcases]
     runs-on: ubuntu-latest
     steps:
