@@ -165,6 +165,41 @@ mod tests {
         std::fs::remove_dir_all(&project_root).ok();
     }
 
+    /// #3864: when prove emission stamps vendorUniverseFol (from
+    /// linkedPosts[].vendorPost), the diagnostic message MUST include the
+    /// middle three-fact line. Soft-gating this was how the missing line hid.
+    #[test]
+    fn diagnostic_message_includes_vendor_universe_when_fol_present() {
+        let project_root = std::env::temp_dir().join("prove-diag-test-universe-3864");
+        std::fs::create_dir_all(&project_root).unwrap();
+        let target = project_root.join("src").join("lib.rs");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "fn main() {}").unwrap();
+
+        let rows = vec![row(
+            "unsatisfied",
+            "src/lib.rs",
+            4,
+            json!({
+                "vendorFactFol": "⊢ call:sum(series) = 6",
+                "vendorUniverseFol": "⊢ ∀ self. out = 6",
+                "clientFactFol": "⊢ call:sum(series) = 7",
+            }),
+        )];
+        let diags = build_row_diags(&rows, &target, &project_root);
+        assert_eq!(diags.len(), 1, "expected one diagnostic: {diags:?}");
+        let msg = &diags[0].message;
+        assert!(msg.contains("Vendor fact:"), "message: {msg}");
+        assert!(
+            msg.contains("Vendor universe:"),
+            "three-fact middle line must render when vendorUniverseFol is set: {msg}"
+        );
+        assert!(msg.contains("Your fact:"), "message: {msg}");
+        assert!(msg.contains("UNSAT"), "message: {msg}");
+
+        std::fs::remove_dir_all(&project_root).ok();
+    }
+
     #[test]
     fn discharged_row_is_not_painted() {
         let project_root = PathBuf::from("/tmp/prove-diag-test-b");
