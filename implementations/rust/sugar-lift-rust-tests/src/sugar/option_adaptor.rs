@@ -1885,12 +1885,12 @@ mod symbolic_collapse_family_tests {
             Outcome::Incomplete(Effect::UnestablishableMonadicFamily { method }) => {
                 assert_eq!(method, "unwrap_or_default");
             }
-            Outcome::Complete(_) => panic!(
-                "expected UnestablishableMonadicFamily Incomplete, got Complete"
-            ),
-            Outcome::Incomplete(_) => panic!(
-                "expected UnestablishableMonadicFamily Incomplete, got other Incomplete"
-            ),
+            Outcome::Complete(_) => {
+                panic!("expected UnestablishableMonadicFamily Incomplete, got Complete")
+            }
+            Outcome::Incomplete(_) => {
+                panic!("expected UnestablishableMonadicFamily Incomplete, got other Incomplete")
+            }
         }
     }
 
