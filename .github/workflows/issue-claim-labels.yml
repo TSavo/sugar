@@ -1,0 +1,69 @@
+name: Issue claim labels
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  synchronize-claim:
+    if: github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reflect explicit fleet claim state in labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const firstLine = context.payload.comment.body
+              .split(/\r?\n/, 1)[0]
+              .trim();
+            const claimed = /^CLAIMED(?:\b|\s|:)/i.test(firstLine);
+            const released = /^(?:RELEASED|COMPLETED)(?:\b|\s|:)/i.test(firstLine);
+
+            if (!claimed && !released) {
+              core.info("Comment does not declare a claim transition");
+              return;
+            }
+
+            const issue_number = context.issue.number;
+            const current = new Set(
+              context.payload.issue.labels.map(label =>
+                typeof label === "string" ? label : label.name
+              )
+            );
+
+            if (claimed) {
+              if (!current.has("in-progress")) {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number,
+                  labels: ["in-progress"],
+                });
+              }
+              if (current.has("available")) {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number,
+                  name: "available",
+                });
+              }
+              return;
+            }
+
+            if (current.has("in-progress")) {
+              await github.rest.issues.removeLabel({
+                ...context.repo,
+                issue_number,
+                name: "in-progress",
+              });
+            }
+            if (!current.has("available")) {
+              await github.rest.issues.addLabels({
+                ...context.repo,
+                issue_number,
+                labels: ["available"],
+              });
+            }
