@@ -107,10 +107,24 @@ for label, item in [
     print(f"  {label:<17} {item.get('status'):<12} {item.get('reason', '')[:130]}")
 print(f"  witness dimension total={dim.get('total')} ok={dim.get('ok')} verdicts={[w.get('verdict') for w in seen]}")
 
-if dim.get("total") != 1 or dim.get("ok") is not True:
-    raise SystemExit(f"FAIL({twin}): witnessDimension must verify exactly one witness package: {dim}")
-if not seen or seen[0].get("verdict") != "verified":
-    raise SystemExit(f"FAIL({twin}): durable witness body was not verified: {seen}")
+# Proofs may seat more than one witness memento (e.g. #3750
+# toolchain-plan-self-attestation next to the pytest package). The suite axis
+# is a verified package witness — not total==1 or witnesses[0] order.
+package_witnesses = [
+    w for w in seen
+    if any(
+        c in (w.get("checks") or [])
+        for c in ("content-address:package", "content-address:recompute")
+    )
+]
+if dim.get("ok") is not True:
+    raise SystemExit(f"FAIL({twin}): witnessDimension ok must be true: {dim}")
+if not package_witnesses:
+    raise SystemExit(f"FAIL({twin}): expected a verified package witness in dimension: {dim}")
+if any(w.get("verdict") != "verified" for w in package_witnesses):
+    raise SystemExit(f"FAIL({twin}): durable package witness body was not verified: {package_witnesses}")
+if any(w.get("verdict") != "verified" for w in seen):
+    raise SystemExit(f"FAIL({twin}): some witnessDimension entry failed verify: {seen}")
 
 if expect == "good":
     if prove_rc != 0 or verify_rc != 0:
