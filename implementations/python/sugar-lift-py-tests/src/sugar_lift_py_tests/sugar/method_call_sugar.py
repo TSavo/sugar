@@ -68,10 +68,9 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        # Keyword method call on the return-adjacent face: groupby(level=3)
-        # so the keyword value rides the coordinate; the pair discriminates
-        # on the enclosing return face (coordinates stay symbolic).
-        prefix = "def A(z):\n" "    y = z.groupby(level=3)\n" "    return 1\n" "\n"
+        # Positional method call: keyword-bearing calls belong to
+        # KeywordCallSugar and cannot witness this registry owner.
+        prefix = "def A(z):\n" "    y = z.groupby(3)\n" "    return 1\n" "\n"
         return _call_pair(
             name="method_call_return",
             owner_sugar="MethodCallSugar",

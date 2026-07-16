@@ -35,7 +35,15 @@ class AttributeDeleteSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A():\n    return 1\n\n"
+        prefix = (
+            "class Box:\n"
+            "    def __delattr__(self, name):\n"
+            "        return 1\n\n"
+            "def A():\n"
+            "    box = Box()\n"
+            "    del box.value\n"
+            "    return 1\n\n"
+        )
         return _call_pair(
             name="attribute_delete_dunder",
             owner_sugar=cls.__name__,

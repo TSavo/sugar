@@ -1,4 +1,4 @@
-"""The `not` operator (NotOpSugar): reduce the operand, ask it to negate itself.
+"""The `not` arm of UnaryOpSugar reduces the operand and asks it to negate itself.
 Bool literals flip; values that do not stand on the negate floor panic for free."""
 
 from __future__ import annotations

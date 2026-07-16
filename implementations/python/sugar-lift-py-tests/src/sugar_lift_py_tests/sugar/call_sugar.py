@@ -114,15 +114,14 @@ class CallSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        # Keyword-call return face: B is reached as B(w=z) so the keyword value
-        # rides the call coordinate. Truthful/lying twins discriminate on the
-        # enclosing assert face.
+        # Positional plain-name call: keyword-bearing calls belong to
+        # KeywordCallSugar and cannot witness this registry owner.
         prefix = (
-            "def B(w):\n"
+            "def b(w):\n"
             "    return w\n"
             "\n"
             "def A(z):\n"
-            "    y = B(w=z)\n"
+            "    y = b(z)\n"
             "    return y\n"
             "\n"
         )

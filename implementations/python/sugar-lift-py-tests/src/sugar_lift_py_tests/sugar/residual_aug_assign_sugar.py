@@ -84,7 +84,7 @@ class ResidualNameAugAssignSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A():\n    x = 5\n    x |= 2\n    return x\n\n"
+        prefix = "def A():\n    x = 5\n    x ^= 2\n    return x\n\n"
         return _call_pair(
             name="residual_name_augassign",
             owner_sugar=cls.__name__,

@@ -40,7 +40,9 @@ class AnnotationUnionSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A(value: int | str):\n    return value\n\n"
+        # AnnAssignSugar constructs its annotation through the term catalog, so
+        # this pair exercises the real nested AnnotationUnionSugar dispatch.
+        prefix = "def A(value):\n    result: int | str = value\n    return result\n\n"
         return _call_pair(
             name="annotation_union_parameter",
             owner_sugar="AnnotationUnionSugar",

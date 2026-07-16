@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import threading
 import time
@@ -26,6 +27,7 @@ from sugar_lift_py_tests.idd.sugar_witness_instruments import (
 )
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     DictLiteralValue,
@@ -1549,6 +1551,44 @@ def test_sugar_witness_non_circularity_bad_twin_names_mismatch(
     assert "SliceSubscriptSugar" in mismatch.selected_sugars
     assert "TrySugar" not in mismatch.selected_sugars
     assert report.triple_failures[0].axis == "sugar-fired"
+
+
+@pytest.mark.parametrize(
+    "seed_name",
+    (
+        "annotation_union_parameter",
+        "attribute_delete_dunder",
+        "call_return",
+        "general_slice_return",
+        "import_alias_return",
+        "method_call_return",
+        "not_return",
+        "residual_name_augassign",
+    ),
+)
+def test_witness_registry_owner_matches_live_classifier_dispatch(
+    tmp_path: Path,
+    seed_name: str,
+) -> None:
+    seed = next(item for item in DEFAULT_SUGAR_WITNESS_SEEDS if item.name == seed_name)
+    project = tmp_path / seed_name
+    _stage_cli_project(project, seed.truthful.source)
+
+    lift_doc = run_lift_rpc(project)
+    selected = WitnessPipelineResult(lift_doc=lift_doc, prove_doc={}).selected_sugars
+
+    assert seed.owner_sugar in selected, (
+        f"witness registry/classifier mismatch: seed={seed.name} "
+        f"registry-owner={seed.owner_sugar} "
+        f"live-selected={','.join(selected) or '<none>'}"
+    )
+
+
+def test_shape_without_registered_owner_remains_a_loud_named_gap() -> None:
+    node = ast.parse("type Alias = int\n").body[0]
+
+    with pytest.raises(FactoryPanic, match=r"observed=TypeAlias.*requested=statement"):
+        build_node(node, filename="unowned.py", role=SugarRole.STATEMENT)
 
 
 def test_sugar_witness_frontier_renders_all_three_vectors(

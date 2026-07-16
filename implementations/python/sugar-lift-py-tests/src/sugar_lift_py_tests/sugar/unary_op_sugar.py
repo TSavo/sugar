@@ -5,7 +5,11 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import (
+    SugarWitnessPair,
+    WitnessSource,
+    _call_pair,
+)
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
@@ -13,7 +17,7 @@ _UNARY_OPS = frozenset({"USub", "UAdd", "Not", "Invert"})
 
 
 @dataclass(frozen=True)
-class UnaryOpSugar(Sugar, role=SugarRole.TERM, comes_before=("NotOpSugar",)):
+class UnaryOpSugar(Sugar, role=SugarRole.TERM):
     """Unary operators: `-x`, `+x`, `not x`, `~x`.
 
     Fold when ground, emit a coordinate when symbolic, panic only inside
@@ -24,7 +28,7 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM, comes_before=("NotOpSugar",)):
     * `+` (UAdd): unary_plus floor -- ground fold, symbolic identity
     * `~` (Invert): bitwise_invert floor -- int fold, SymbolicValue py.invert
 
-    Comes before NotOpSugar so this arm owns all four UnaryOp shapes.
+    This is the sole registered owner of all four UnaryOp shapes.
     """
 
     op: str
@@ -54,11 +58,33 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM, comes_before=("NotOpSugar",)):
             "    return 0\n"
             "\n"
         )
-        return _call_pair(
-            name="unary_op_return",
-            owner_sugar="UnaryOpSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        not_prefix = (
+            "def A(z):\n"
+            "    if not 1 == 2:\n"
+            "        return z\n"
+            "    return 0\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="unary_op_return",
+                owner_sugar=cls.__name__,
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            SugarWitnessPair(
+                name="not_return",
+                owner_sugar=cls.__name__,
+                family="literal-call",
+                truthful=WitnessSource(
+                    source=not_prefix + "def test_a():\n    assert A(5) == 5\n",
+                    expected="sat",
+                ),
+                lying=WitnessSource(
+                    source=not_prefix + "def test_a():\n    assert A(5) == 0\n",
+                    expected="unsat",
+                ),
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

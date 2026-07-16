@@ -87,10 +87,7 @@ def test_owns_unary_not_binop_or_boolop() -> None:
     catalog = default_catalog()
     cands = [c.name for c in catalog.candidates_for(SugarRole.TERM, _site("-1"))]
     assert "UnaryOpSugar" in cands
-    assert "NotOpSugar" not in cands or not any(
-        c.name == "NotOpSugar" and c.claim.owns(_site("not True"))
-        for c in catalog.candidates_for(SugarRole.TERM, _site("not True"))
-    )
+    assert "NotOpSugar" not in cands
 
 
 def test_minus_one_term_is_negative_num() -> None:
