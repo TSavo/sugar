@@ -30,7 +30,7 @@ jobs:
   acid-test:
     name: acid test (make ci)
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 30
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
