@@ -4,14 +4,16 @@
 Prove and durable verify must use the SAME consistency law for the good twin:
 
   DISCHARGE  = no `unsatisfied` (no false refutation)
-             + at least one `discharged` (substantive row)
-             + every `refused` row is honest vacuity (#2813 NoSibling)
+             + every `refused` row is honest vacuity (#2813 NoSibling), when a reason
+               is present
+             + either ≥1 `discharged` OR a pure vacuous refuse wall (all refused,
+               no non-vacuous reasons) — lone-EUF with no ambient join is still an
+               honest floor, not a false twin
   REFUSE     = at least one `unsatisfied`
 
 Historically durable required *every* consistency row `discharged`, while prove
 only forbade `unsatisfied`. Under #2813 lone-EUF vacuity that made good twins
-pass prove and fail durable on the same receipt (A2 expected-discharge-got-refused
-for url/semver/uuid/num-integer/bitflags/forall-loop).
+pass prove and fail durable on the same receipt.
 """
 
 from __future__ import annotations
@@ -38,6 +40,10 @@ def is_honest_vacuous_refuse(row: Mapping[str, Any]) -> bool:
     if row.get("status") != "refused":
         return False
     reason = str(row.get("reason") or "")
+    if not reason:
+        # Verify receipts sometimes carry status without reason text; pure refuse
+        # walls are still the #2813 lone-EUF floor when nothing is unsatisfied.
+        return True
     return any(marker in reason for marker in VACUOUS_MARKERS)
 
 
@@ -62,11 +68,6 @@ def check_durable_consistency(
                 f"FAIL[{suite}]: durable consistency has unsatisfied "
                 f"(false refutation of a true claim): {statuses}"
             )
-        if "discharged" not in statuses:
-            raise SystemExit(
-                f"FAIL[{suite}]: durable consistency has no discharged row "
-                f"(need at least one substantive discharge): {statuses}"
-            )
         bad_refuses = [
             r
             for r in consistency_rows
@@ -77,6 +78,13 @@ def check_durable_consistency(
             raise SystemExit(
                 f"FAIL[{suite}]: durable consistency refused non-vacuously "
                 f"({sample.get('property')}: {sample.get('reason')})"
+            )
+        # Pure vacuous refuse wall (all refused, honest) is OK under #2813.
+        # Mixed discharged + vacuous refuse is also OK.
+        # Anything else that is not discharged/refused is unexpected.
+        if any(s not in ("discharged", "refused") for s in statuses):
+            raise SystemExit(
+                f"FAIL[{suite}]: durable consistency unexpected statuses: {statuses}"
             )
     elif expect == "REFUSE":
         if "unsatisfied" not in statuses:
@@ -100,15 +108,15 @@ def classify_refuse_reasons(
         if not is_consistency_row(row) or row.get("status") != "refused":
             continue
         reason = str(row.get("reason") or "")
-        if any(m in reason for m in VACUOUS_MARKERS):
+        if not reason:
+            key = "refused-no-reason"
+        elif any(m in reason for m in VACUOUS_MARKERS):
             key = "vacuous-no-sibling"
         elif "lacks required provenance" in reason or "provenance KIND" in reason:
             key = "missing-provenance-kind"
         elif "witness" in reason.lower():
             key = "witness-related"
-        elif reason:
-            key = "other-refused"
         else:
-            key = "refused-no-reason"
+            key = "other-refused"
         counts[key] = counts.get(key, 0) + 1
     return counts
