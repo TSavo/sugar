@@ -1246,7 +1246,12 @@ fn desugar_option_unwrap_or_default(
         }
         None => {
             let Some(default) = default else {
-                option_adaptor_gap("Option::unwrap_or_default had no reified default term");
+                // Default::default() was not reified from type context. Inventing a
+                // floor would be a fake dig; named incomplete, never a panic
+                // (coretests-invariants used to die here on Err/None without Default).
+                return Outcome::Incomplete(Effect::UnestablishableMonadicFamily {
+                    method: "unwrap_or_default".to_string(),
+                });
             };
             debug!(
                 target: "sugar_lift_rust_tests::sugar::option_adaptor",
@@ -1276,7 +1281,11 @@ fn desugar_result_unwrap_or_default(payload: ResultPayload, default: Option<Rc<T
                 return outcome;
             }
             let Some(default) = default else {
-                option_adaptor_gap("Result::unwrap_or_default had no reified default term");
+                // Same stop as the Option::None arm: Err path needs Default::default()
+                // for the Ok type, and we have no reified term. Incomplete, not panic.
+                return Outcome::Incomplete(Effect::UnestablishableMonadicFamily {
+                    method: "unwrap_or_default".to_string(),
+                });
             };
             debug!(
                 target: "sugar_lift_rust_tests::sugar::option_adaptor",
@@ -1858,6 +1867,29 @@ mod symbolic_collapse_family_tests {
             Outcome::Incomplete(_) => panic!(
                 "unestablishable family must yield Effect::UnestablishableMonadicFamily specifically, \
                  not some other Effect"
+            ),
+        }
+    }
+
+    #[test]
+    fn err_unwrap_or_default_without_reified_default_is_incomplete_not_panic() {
+        // Concrete Err payload but no Default::default() term reified from type
+        // context — must not die in option_adaptor_gap (coretests-invariants).
+        let err = Rc::new(Term::Ctor {
+            name: RES_ERR.to_string(),
+            args: vec![num(1)],
+        });
+        let payload = result_payload(&err).expect("Err ctor");
+        let outcome = desugar_result_unwrap_or_default(payload, None);
+        match outcome {
+            Outcome::Incomplete(Effect::UnestablishableMonadicFamily { method }) => {
+                assert_eq!(method, "unwrap_or_default");
+            }
+            Outcome::Complete(_) => panic!(
+                "expected UnestablishableMonadicFamily Incomplete, got Complete"
+            ),
+            Outcome::Incomplete(_) => panic!(
+                "expected UnestablishableMonadicFamily Incomplete, got other Incomplete"
             ),
         }
     }
