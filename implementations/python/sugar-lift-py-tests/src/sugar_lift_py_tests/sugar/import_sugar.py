@@ -3,17 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.floor import BlockValue, ImportAliasValue
+from sugar_lift_py_tests.floor import BlockValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
 class ImportSugar(Sugar, role=SugarRole.STATEMENT):
     """A Python ``import`` statement binds each source-stated module address."""
 
-    names: tuple[tuple[str, str | None], ...]
+    aliases: tuple[SugarBody, ...]
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -22,8 +23,12 @@ class ImportSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def new(cls, site, ctx) -> "ImportSugar":
-        del ctx
-        return cls(tuple(site.import_names()), site)
+        return cls(
+            aliases=tuple(
+                ctx.build_body(alias, SugarRole.TERM) for alias in site.import_aliases()
+            ),
+            site=site,
+        )
 
     @classmethod
     def witnesses(cls):
@@ -36,15 +41,16 @@ class ImportSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        del ctx
-        return Complete(
-            BlockValue(
-                tuple(
-                    ImportAliasValue(name, alias or name.split(".", 1)[0])
-                    for name, alias in self.names
-                )
-            )
+        return self._reduce_aliases(self.aliases, (), ctx)
+
+    @classmethod
+    def _reduce_aliases(cls, remaining, values, ctx) -> Outcome:
+        if not remaining:
+            return Complete(BlockValue(values))
+        head, *tail = remaining
+        return head.reduce(ctx).and_then(
+            lambda value: cls._reduce_aliases(tuple(tail), (*values, value), ctx)
         )
 
     def walk_children(self):
-        return ()
+        return self.aliases

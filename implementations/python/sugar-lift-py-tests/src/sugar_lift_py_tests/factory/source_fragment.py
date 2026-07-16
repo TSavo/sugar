@@ -1457,6 +1457,14 @@ class SourceFragment:
         self._require(ast.Import)
         return [(alias.name, alias.asname) for alias in self.node.names]  # type: ignore[attr-defined]
 
+    def import_aliases(self) -> "list[SourceFragment]":
+        """Return the independently constructible alias sites of an Import."""
+        self._require(ast.Import)
+        return [
+            SourceFragment.from_node(alias, self.filename, source=self.source)
+            for alias in self.node.names  # type: ignore[attr-defined]
+        ]
+
     def importfrom_module(self) -> "str | None":
         """Return the module string for an ImportFrom node (None for bare relative imports)."""
         self._require(ast.ImportFrom)

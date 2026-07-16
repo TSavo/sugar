@@ -43,16 +43,13 @@ class SliceSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def witnesses(cls):
         prefix = (
-            "def A(z):\n"
-            "    xs = [1, 2, 3]\n"
-            "    part = xs[z:]\n"
-            "    return 1\n\n"
+            "def A():\n" "    xs = [1, 2, 3]\n" "    xs[1:2] = [9]\n" "    return 1\n\n"
         )
         return _call_pair(
             name="general_slice_return",
             owner_sugar="SliceSugar",
-            truthful=prefix + "def test_a():\n    assert A(1) == 1\n",
-            lying=prefix + "def test_a():\n    assert A(1) == 2\n",
+            truthful=prefix + "def test_a():\n    assert A() == 1\n",
+            lying=prefix + "def test_a():\n    assert A() == 2\n",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

@@ -32,7 +32,9 @@ class AliasSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        prefix = "import math as m\n\ndef A():\n    return 1\n\n"
+        # ImportSugar constructs local aliases through the term catalog; a
+        # module import is bound by the module membrane before body dispatch.
+        prefix = "def A():\n    import math as m\n    return 1\n\n"
         return _call_pair(
             name="import_alias_return",
             owner_sugar="AliasSugar",
