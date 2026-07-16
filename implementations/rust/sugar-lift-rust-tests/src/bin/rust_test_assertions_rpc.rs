@@ -9445,7 +9445,7 @@ mod tests {
     /// Showcase shape: test calls a local helper that holds the assert_eq!.
     /// Statement spans resolve on the helper, not the test body — without a
     /// function-memento fallback the warranted fact sealed with zero provenance
-    /// and ambient consistency refused (A2 expected-discharge-got-refused).
+    /// so ambient consistency never got a KIND (A2 discharge gap).
     #[test]
     fn helper_call_assertion_carries_source_warrants_for_ambient() {
         let root = unique_temp_dir("helper_call_assertion_carries_source_warrants_for_ambient");
