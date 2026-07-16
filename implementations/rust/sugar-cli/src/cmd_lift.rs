@@ -5267,10 +5267,6 @@ impl<'a> VisualFormulaRenderer<'a> {
     }
 
     fn term_node(&mut self, term: &Arc<LiftTermNode>, depth: usize) -> String {
-        if !self.seen_term_cids.insert(term.cid().to_string()) {
-            self.reference_returns += 1;
-            return format!("<as above, cid={}>", term.cid());
-        }
         match term.kind() {
             LiftTermKind::Var { name } => {
                 let register = if name == "out" {
@@ -5286,9 +5282,54 @@ impl<'a> VisualFormulaRenderer<'a> {
                 self.color,
             ),
             LiftTermKind::Ctor { name, args } => {
+                if !self.seen_term_cids.insert(term.cid().to_string()) {
+                    let reference = format!("<as above, cid={}>", term.cid());
+                    let inline = self.term_node_unshared(term);
+                    if visible_width(&reference) < visible_width(&inline) {
+                        self.reference_returns += 1;
+                        return reference;
+                    }
+                }
                 let rendered_args = args
                     .iter()
                     .map(|arg| self.term_node(arg, depth + 1))
+                    .collect::<Vec<_>>();
+                if let Some(symbol) = visual_symbolic_ctor(name, &rendered_args) {
+                    return fol_paint(&symbol, FolRegister::Literal, self.color);
+                }
+                let display = name.strip_prefix("call:").unwrap_or(name);
+                if rendered_args.is_empty() && !name.starts_with("call:") {
+                    fol_paint(display, FolRegister::Literal, self.color)
+                } else {
+                    format_visual_application(
+                        &fol_paint(display, FolRegister::Callee, self.color),
+                        &rendered_args,
+                    )
+                }
+            }
+        }
+    }
+
+    fn term_node_unshared(&self, term: &LiftTermNode) -> String {
+        match term.kind() {
+            LiftTermKind::Var { name } => fol_paint(
+                name,
+                if name == "out" {
+                    FolRegister::Out
+                } else {
+                    FolRegister::Variable
+                },
+                self.color,
+            ),
+            LiftTermKind::Const { value, .. } => fol_paint(
+                &scalar_value_to_fol(value),
+                FolRegister::Literal,
+                self.color,
+            ),
+            LiftTermKind::Ctor { name, args } => {
+                let rendered_args = args
+                    .iter()
+                    .map(|arg| self.term_node_unshared(arg))
                     .collect::<Vec<_>>();
                 if let Some(symbol) = visual_symbolic_ctor(name, &rendered_args) {
                     return fol_paint(&symbol, FolRegister::Literal, self.color);
@@ -16039,8 +16080,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
         let rendered = pretty_visual_formula_with_terms(&formula, false, Some(&table));
 
-        assert_eq!(rendered.matches("normalize(").count(), 1, "{rendered}");
-        assert_eq!(rendered.matches("<as above, cid=").count(), 1, "{rendered}");
+        assert_eq!(rendered.matches("normalize(").count(), 2, "{rendered}");
+        assert_eq!(rendered.matches("<as above, cid=").count(), 0, "{rendered}");
 
         let contract = serde_json::json!({"post": formula});
         let testimony =
@@ -16068,6 +16109,92 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             contract_cid_of_ir_decl(&expanded_contract),
             "the DAG wire must not move contract identity"
         );
+    }
+
+    #[test]
+    fn visual_fol_term_table_repeated_variable_stays_inline() {
+        let variable = serde_json::json!({"kind": "var", "name": "month"});
+        let variable_cid = sugar_canonicalizer::jcs_cid_of_json(&variable);
+        let response = serde_json::json!({
+            "termTable": {
+                variable_cid.clone(): variable
+            }
+        });
+        let table = LiftTermTable::decode(&response).expect("valid term table");
+        let reference = serde_json::json!({"kind": "term-ref", "cid": variable_cid});
+        let formula = serde_json::json!({
+            "kind": "and", "operands": [
+                {"kind": "atomic", "name": "py.le", "args": [
+                    {"kind": "const", "value": 1}, reference.clone()
+                ]},
+                {"kind": "atomic", "name": "py.le", "args": [
+                    reference, {"kind": "const", "value": 12}
+                ]}
+            ]
+        });
+
+        let rendered = pretty_visual_formula_with_terms(&formula, false, Some(&table));
+
+        assert_eq!(rendered.matches("month").count(), 2, "{rendered}");
+        assert!(!rendered.contains("<as above"), "{rendered}");
+    }
+
+    #[test]
+    fn visual_fol_term_table_repeated_small_integer_stays_inline() {
+        let literal = serde_json::json!({
+            "kind": "const", "value": 12, "sort": {"kind": "int"}
+        });
+        let literal_cid = sugar_canonicalizer::jcs_cid_of_json(&literal);
+        let response = serde_json::json!({
+            "termTable": {
+                literal_cid.clone(): literal
+            }
+        });
+        let table = LiftTermTable::decode(&response).expect("valid term table");
+        let reference = serde_json::json!({"kind": "term-ref", "cid": literal_cid});
+        let formula = serde_json::json!({
+            "kind": "atomic", "name": "py.between", "args": [
+                reference.clone(), {"kind": "var", "name": "month"}, reference
+            ]
+        });
+
+        let rendered = pretty_visual_formula_with_terms(&formula, false, Some(&table));
+
+        assert_eq!(rendered.matches("12").count(), 2, "{rendered}");
+        assert!(!rendered.contains("<as above"), "{rendered}");
+    }
+
+    #[test]
+    fn visual_fol_term_table_deep_repeated_subtree_still_elides() {
+        let leaf = serde_json::json!({"kind": "var", "name": "month"});
+        let mut child_cid = sugar_canonicalizer::jcs_cid_of_json(&leaf);
+        let mut resolved_child = leaf.clone();
+        let mut nodes = serde_json::Map::from_iter([(child_cid.clone(), leaf)]);
+        for depth in 0..24 {
+            let node = serde_json::json!({
+                "kind": "ctor",
+                "name": format!("call:calendar_layer_{depth}"),
+                "args": [{"kind": "term-ref", "cid": child_cid}]
+            });
+            let resolved = serde_json::json!({
+                "kind": "ctor",
+                "name": format!("call:calendar_layer_{depth}"),
+                "args": [resolved_child]
+            });
+            child_cid = sugar_canonicalizer::jcs_cid_of_json(&resolved);
+            resolved_child = resolved;
+            nodes.insert(child_cid.clone(), node);
+        }
+        let response = serde_json::json!({"termTable": nodes});
+        let table = LiftTermTable::decode(&response).expect("valid term table");
+        let reference = serde_json::json!({"kind": "term-ref", "cid": child_cid});
+        let formula = serde_json::json!({
+            "kind": "atomic", "name": "=", "args": [reference.clone(), reference]
+        });
+
+        let rendered = pretty_visual_formula_with_terms(&formula, false, Some(&table));
+
+        assert_eq!(rendered.matches("<as above, cid=").count(), 1, "{rendered}");
     }
 
     #[test]
