@@ -684,6 +684,13 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // the Some/Ok/Err branch is known. Presence predicates complete without inspecting
         // the payload; `map`/`and_then`/`unwrap_or` cannot fabricate a runtime payload value.
         || reason.contains("runtime Option/Result payload, not literal")
+        // TERMINAL: a symbolic Option/Result receiver for a value-consuming adaptor
+        // (`unwrap_or` / `unwrap_or_default` / …) could not be pinned to a single
+        // monadic family from source. Guessing Option vs Result would be an unsound
+        // fake-dig (`Effect::UnestablishableMonadicFamily`). Named stop, not work.
+        // Without this whitelist the factory panics on Incomplete→Unclassified during
+        // coretests sweeps that hit symbolic monadic receivers.
+        || reason.contains("did not establish a single Option-or-Result family from source")
         // TERMINAL: Unicode full-case mapping is intentionally not lowered for non-ASCII
         // receivers because the result depends on the Unicode mapping table. ASCII receivers
         // still warrant through the complete path; only the version-sensitive frontier earns
@@ -26335,6 +26342,9 @@ fn t() {
             "format integer arithmetic overflow or divide-by-zero, not literal-determined; refused",
             "runtime format argument `runtime_var`, not literal-determined; refused",
             "format pointer address `template=\"{s:p}\"; source_memento=format ! (\"{s:p}\")` is runtime address identity; refused",
+            "symbolic Option/Result receiver for `unwrap_or_default` did not establish a \
+             single Option-or-Result family from source; returning incomplete rather than \
+             guessing which guarded split to emit",
             "Unicode string case mapping is not modeled for non-ASCII receivers; refused",
             "assertion in a side-effecting closure body (mutates captured state / advances an iterator); not a pure point-wise claim; refused",
             "assertion in a closure over an opaque/effectful accessor (bin-2: runtime data, not constructible from source literals); refused",
