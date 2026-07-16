@@ -384,6 +384,13 @@ fn recognize_for(
     if !receiver_matches_carrier(&call.receiver, fcx, carrier) {
         return None;
     }
+    let carrier = if carrier == Carrier::Any {
+        visible_call_monadic_return(&call.receiver, fcx)
+            .map(|(carrier, _)| carrier)
+            .unwrap_or(Carrier::Any)
+    } else {
+        carrier
+    };
     if method_from_call(&call.method.to_string(), call.args.len())? != method {
         return None;
     }
@@ -1429,6 +1436,9 @@ fn default_term_for_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> 
             default_term_for_type(ty)
         }
         Expr::Call(call) => {
+            if let Some((_, default_ty)) = visible_call_monadic_return(expr, fcx) {
+                return default_term_for_type(&default_ty);
+            }
             let Expr::Path(path) = strip_refs_groups(&call.func) else {
                 return None;
             };
@@ -1439,6 +1449,41 @@ fn default_term_for_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> 
         Expr::Group(group) => default_term_for_receiver(&group.expr, fcx, depth + 1),
         _ => None,
     }
+}
+
+fn visible_call_monadic_return(expr: &Expr, fcx: &SugarBuildCtx) -> Option<(Carrier, Type)> {
+    let Expr::Call(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return None;
+    };
+    let name = path.path.get_ident()?.to_string();
+    let helper = fcx.scope().visible_fn(&name)?;
+    let syn::ReturnType::Type(_, ty) = &helper.sig.output else {
+        return None;
+    };
+    monadic_carrier_and_default_type(ty)
+}
+
+fn monadic_carrier_and_default_type(ty: &Type) -> Option<(Carrier, Type)> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    let carrier = match segment.ident.to_string().as_str() {
+        "Option" => Carrier::Option,
+        "Result" => Carrier::Result,
+        _ => return None,
+    };
+    let PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    let default_ty = args.args.iter().find_map(|arg| match arg {
+        GenericArgument::Type(ty) => Some(ty.clone()),
+        _ => None,
+    })?;
+    Some((carrier, default_ty))
 }
 
 fn option_default_type(path: &syn::ExprPath) -> Option<&Type> {
@@ -1815,5 +1860,21 @@ mod symbolic_collapse_family_tests {
                  not some other Effect"
             ),
         }
+    }
+
+    #[test]
+    fn visible_helper_return_type_pins_monadic_family_and_default_type() {
+        let result_ty: Type = syn::parse_str("Result<isize, &'static str>").unwrap();
+        let option_ty: Type = syn::parse_str("Option<u8>").unwrap();
+
+        let (result_carrier, result_default) =
+            monadic_carrier_and_default_type(&result_ty).expect("Result return type");
+        assert_eq!(result_carrier, Carrier::Result);
+        assert_eq!(crate::token_key(result_default), "isize");
+
+        let (option_carrier, option_default) =
+            monadic_carrier_and_default_type(&option_ty).expect("Option return type");
+        assert_eq!(option_carrier, Carrier::Option);
+        assert_eq!(crate::token_key(option_default), "u8");
     }
 }

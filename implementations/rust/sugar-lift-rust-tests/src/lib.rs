@@ -21698,6 +21698,23 @@ mod lifter_key_tests {
             .collect()
     }
 
+    #[test]
+    fn visible_result_helper_pins_unwrap_or_default_family() {
+        let out = lift_src(
+            r#"
+            fn op1() -> Result<isize, &'static str> { Ok(666) }
+            fn op2() -> Result<isize, &'static str> { Err("sadface") }
+            #[test]
+            fn result_defaults() {
+                assert_eq!(op1().unwrap_or_default(), 666);
+                assert_eq!(op2().unwrap_or_default(), 0);
+            }
+            "#,
+        );
+        assert_eq!(out.assertions_refused, 0, "{:#?}", out.skip_reasons);
+        assert_eq!(out.assertions_lifted, 2, "{:#?}", out.assertion_facts);
+    }
+
     fn value_claim_decl_dump(out: &AdapterOutput) -> String {
         let value_claims: std::collections::BTreeSet<&str> = out
             .assertion_facts
