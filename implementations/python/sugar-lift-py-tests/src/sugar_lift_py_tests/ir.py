@@ -658,19 +658,128 @@ class TermTableBuilder:
         raise TypeError(f"unknown source-lifter formula kind: {kind!r}")
 
     def reference_rpc(self, term: dict[str, Any]) -> dict[str, str]:
-        """Intern one source-lifter RPC term under its canonical CID."""
-        cid = jcs_hash(_json_like_to_value(term))
-        if cid not in self.nodes:
-            kind = term.get("kind")
-            if kind == "ctor":
-                self.nodes[cid] = {
+        """Intern one source-lifter RPC term under its canonical CID.
+
+        Heap-backed postorder walk — same depth law as typed ``reference`` /
+        ``_materialize``. Native recursion here is the encode-side twin of the
+        typed stack overflow (#4573 residual): a deep ctor spine must not
+        depend on CPython's call stack for either CID minting or child interning.
+        """
+        cid = self._materialize_rpc(term)
+        return {"kind": "term-ref", "cid": cid}
+
+    def _materialize_rpc(self, root: dict[str, Any]) -> str:
+        """Intern one JSON-RPC term tree without native recursion.
+
+        Expanded-term canonical bytes (the CID preimage) are built bottom-up on
+        an explicit worklist. Table rows still store child ``term-ref`` edges so
+        the wire remains a DAG. Object-identity memo within one walk dedups
+        shared dicts; cross-call dedup remains CID-keyed via ``self.nodes``.
+        """
+        if not isinstance(root, dict):
+            raise TypeError(
+                f"reference_rpc expects a term dict, got {type(root)!r}; "
+                "fix=pass source-lifter RPC term objects only"
+            )
+
+        # Expanded canonical retained only for shared objects (inbound > 1).
+        inbound: dict[int, int] = {}
+        seen: set[int] = set()
+        pending: list[dict[str, Any]] = [root]
+        while pending:
+            term = pending.pop()
+            identity = id(term)
+            if identity in seen:
+                continue
+            if not isinstance(term, dict):
+                raise TypeError(
+                    f"RPC term child must be a dict, got {type(term)!r}; "
+                    "fix=source-lifter terms are JSON objects only"
+                )
+            seen.add(identity)
+            if term.get("kind") == "ctor":
+                for child in term.get("args", []) or []:
+                    if not isinstance(child, dict):
+                        raise TypeError(
+                            f"RPC ctor arg must be a dict, got {type(child)!r}"
+                        )
+                    child_id = id(child)
+                    inbound[child_id] = inbound.get(child_id, 0) + 1
+                    pending.append(child)
+
+        shared_canonical: dict[int, str] = {}
+        cid_by_id: dict[int, str] = {}
+        values: list[str] = []
+        work: list[tuple[dict[str, Any], bool]] = [(root, False)]
+        while work:
+            term, finishing = work.pop()
+            identity = id(term)
+            cached_value = shared_canonical.get(identity)
+            if not finishing and cached_value is not None:
+                values.append(cached_value)
+                continue
+            if term.get("kind") == "ctor" and not finishing:
+                work.append((term, True))
+                args = term.get("args", []) or []
+                work.extend((child, False) for child in reversed(args))
+                continue
+
+            if term.get("kind") == "ctor":
+                args = term.get("args", []) or []
+                arity = len(args)
+                children = values[-arity:] if arity else []
+                if arity:
+                    del values[-arity:]
+                canonical = (
+                    '{"args":['
+                    + ",".join(children)
+                    + '],"kind":"ctor","name":'
+                    + encode_jcs(vstr(term["name"]))
+                    + "}"
+                )
+                node_payload: dict[str, Any] = {
                     "kind": "ctor",
                     "name": term["name"],
-                    "args": [self.reference_rpc(arg) for arg in term.get("args", [])],
+                    "args": [
+                        {
+                            "kind": "term-ref",
+                            "cid": blake3_512_of(child.encode("utf-8")),
+                        }
+                        for child in children
+                    ],
                 }
             else:
-                self.nodes[cid] = json.loads(encode_jcs(_json_like_to_value(term)))
-        return {"kind": "term-ref", "cid": cid}
+                # Leaves are shallow JSON objects — encode_jcs over the value
+                # tree is O(leaf size), not O(spine depth).
+                canonical = encode_jcs(_json_like_to_value(term))
+                node_payload = json.loads(canonical)
+
+            cid = blake3_512_of(canonical.encode("utf-8"))
+            cid_by_id[identity] = cid
+            if inbound.get(identity, 0) > 1:
+                shared_canonical[identity] = canonical
+            if cid not in self.nodes:
+                self.nodes[cid] = node_payload
+                node_count = len(self.nodes)
+                if node_count % 1000 == 0:
+                    _TERM_TABLE_LOG.info(
+                        "term_table_progress",
+                        extra={
+                            "stage": "lift.workspace.to_rpc.term_table.progress",
+                            "unique_nodes": node_count,
+                            "door": "reference_rpc",
+                        },
+                    )
+            values.append(canonical)
+
+        if len(values) != 1:
+            raise AssertionError(
+                f"iterative RPC term encoder left {len(values)} canonical values"
+            )
+        root_cid = cid_by_id.get(id(root))
+        if root_cid is None:
+            raise AssertionError("iterative RPC term encoder lost the root CID")
+        return root_cid
 
     def _cid(self, term: Term) -> str:
         cid = self._cached_cid(term)
