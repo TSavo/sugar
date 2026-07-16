@@ -775,6 +775,9 @@ fn resident_max_requests() -> usize {
 }
 
 fn resident_max_requests_from(configured: Option<&str>) -> usize {
+    if configured.is_some_and(|value| value.eq_ignore_ascii_case("unlimited")) {
+        return usize::MAX;
+    }
     configured
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
@@ -1460,6 +1463,8 @@ for line in sys.stdin:
     fn resident_generation_budget_defaults_to_hosted_safe_bound() {
         assert_eq!(resident_max_requests_from(None), 64);
         assert_eq!(resident_max_requests_from(Some("2")), 2);
+        assert_eq!(resident_max_requests_from(Some("unlimited")), usize::MAX);
+        assert_eq!(resident_max_requests_from(Some("UNLIMITED")), usize::MAX);
         assert_eq!(resident_max_requests_from(Some("0")), 64);
         assert_eq!(resident_max_requests_from(Some("not-a-number")), 64);
     }
