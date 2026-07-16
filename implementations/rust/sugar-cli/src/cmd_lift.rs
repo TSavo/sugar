@@ -279,6 +279,24 @@ pub fn run(args: LiftArgs) -> u8 {
 
     match lift_plugin::dispatch_lift_path(&project_root, &surface, lift_options, true) {
         Ok(session) => {
+            let kit_source = if args.report && surface == "python" {
+                let provenance =
+                    match kit_source_from_initialize(session.initialize_response.as_ref()) {
+                        Ok(provenance) => provenance,
+                        Err(error) => {
+                            eprintln!("{error}");
+                            return EXIT_VERIFY_FAIL;
+                        }
+                    };
+                if let Err(error) = refuse_split_pipeline(&provenance, env!("SUGAR_BUILD_GIT_HEAD"))
+                {
+                    eprintln!("{error}");
+                    return EXIT_VERIFY_FAIL;
+                }
+                Some(provenance)
+            } else {
+                None
+            };
             let projection = session.response_projection();
             let response = match projection.response_value() {
                 Ok(response) => response,
@@ -364,6 +382,7 @@ pub fn run(args: LiftArgs) -> u8 {
                         }
                     };
                 report.project_root = Some(project_root.clone());
+                report.kit_source = kit_source;
                 report.source_oracle_routes = source_oracle_routes.clone();
                 if let Err(error) =
                     attach_report_implications(&mut report, &project_root, [surface.clone()])
@@ -500,6 +519,10 @@ pub fn run(args: LiftArgs) -> u8 {
         }
         Err(LiftPluginError::Diagnostic(error)) => {
             eprintln!("{}: {error}", "error".red().bold());
+            EXIT_VERIFY_FAIL
+        }
+        Err(LiftPluginError::SplitPipeline(error)) => {
+            eprintln!("{error}");
             EXIT_VERIFY_FAIL
         }
     }
@@ -831,7 +854,7 @@ fn run_configured_lift_report_graph(
                 return EXIT_USER_ERROR;
             }
             Err(error) => {
-                eprintln!("{}: {error}", "error".red().bold());
+                emit_configured_lift_error(&error);
                 return EXIT_USER_ERROR;
             }
         };
@@ -934,7 +957,7 @@ fn run_configured_lift_report_graph(
     ) {
         Ok(response) => response,
         Err(error) => {
-            eprintln!("{}: {error}", "error".red().bold());
+            emit_configured_lift_error(&error);
             return EXIT_USER_ERROR;
         }
     };
@@ -1066,6 +1089,14 @@ fn run_configured_lift_report_graph(
     }
 }
 
+fn emit_configured_lift_error(error: &str) {
+    if error.starts_with("refusing to mint from a split pipeline:") {
+        eprintln!("{error}");
+    } else {
+        eprintln!("{}: {error}", "error".red().bold());
+    }
+}
+
 fn run_configured_lift_report_response(
     args: &LiftArgs,
     project_root: &Path,
@@ -1081,7 +1112,7 @@ fn run_configured_lift_report_response(
     ) {
         Ok(response) => response,
         Err(error) => {
-            eprintln!("{}: {error}", "error".red().bold());
+            emit_configured_lift_error(&error);
             return EXIT_USER_ERROR;
         }
     };
@@ -1460,6 +1491,33 @@ struct LiftSourceReport {
     /// Carried through from the kit's liftCoverage field; independent AST
     /// census lives inside the kit, not re-computed here.
     lift_coverage: Option<Value>,
+    kit_source: Option<KitSourceProvenance>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+struct KitSourceProvenance {
+    identity: String,
+    kind: String,
+    dirty: bool,
+}
+
+fn kit_source_from_initialize(initialize: Option<&Value>) -> Result<KitSourceProvenance, String> {
+    let value = initialize
+        .and_then(|value| value.get("kit_source"))
+        .ok_or_else(|| "python kit initialize response omitted kit_source testimony".to_string())?;
+    serde_json::from_value(value.clone())
+        .map_err(|error| format!("invalid python kit_source testimony: {error}"))
+}
+
+fn refuse_split_pipeline(provenance: &KitSourceProvenance, binary: &str) -> Result<(), String> {
+    if provenance.identity == binary {
+        Ok(())
+    } else {
+        Err(format!(
+            "refusing to mint from a split pipeline: kit @{} != binary @{}",
+            provenance.identity, binary
+        ))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2112,6 +2170,7 @@ fn source_report_from_lift_response(
         project_root: None,
         source_oracle_routes: Vec::new(),
         lift_coverage,
+        kit_source: None,
     })
 }
 
@@ -2307,6 +2366,7 @@ fn source_report_from_proof_pool(
         project_root: None,
         source_oracle_routes: Vec::new(),
         lift_coverage: None,
+        kit_source: None,
     }
 }
 
@@ -6974,6 +7034,7 @@ struct ReportInvocation {
     command_line: Vec<String>,
     workspace_root: PathBuf,
     substrate_commit: String,
+    kit_source: Option<KitSourceProvenance>,
     mint_timestamp: String,
 }
 
@@ -6993,6 +7054,10 @@ fn current_report_invocation(report: &LiftSourceReport) -> ReportInvocation {
             .clone()
             .unwrap_or_else(|| PathBuf::from(".")),
         substrate_commit: env!("SUGAR_BUILD_GIT_HEAD").to_string(),
+        kit_source: report.kit_source.clone().or_else(|| {
+            lift_plugin::last_python_kit_source()
+                .and_then(|value| serde_json::from_value(value).ok())
+        }),
         mint_timestamp: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
     }
 }
@@ -7008,11 +7073,13 @@ fn render_report_prologue_with(report: &LiftSourceReport, invocation: &ReportInv
         invocation.version, invocation.binary_cid
     ));
     out.push_str(&format!(
-        "execution directory: {}\ncommand line: {}\nworkspace root: {}\nsubstrate commit: {}\nmint timestamp: {}\nLINK ran: {}\n",
+        "execution directory: {}\ncommand line: {}\nworkspace root: {}\nsubstrate commit: {}\nkit source: {}{}\nmint timestamp: {}\nLINK ran: {}\n",
         invocation.execution_directory.display(),
         invocation.command_line.join(" "),
         invocation.workspace_root.display(),
         invocation.substrate_commit,
+        invocation.kit_source.as_ref().map(|source| source.identity.as_str()).unwrap_or("unavailable"),
+        if invocation.kit_source.as_ref().is_some_and(|source| source.dirty) { " (dirty)" } else { "" },
         invocation.mint_timestamp,
         if report.implication_walk_ran { "yes" } else { "no" },
     ));
@@ -10376,6 +10443,7 @@ mod tests {
             project_root: None,
             source_oracle_routes: Vec::new(),
             lift_coverage: None,
+            kit_source: None,
         }
     }
 
@@ -15187,6 +15255,11 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             ],
             workspace_root: PathBuf::from("/workspace"),
             substrate_commit: "abc123".to_string(),
+            kit_source: Some(KitSourceProvenance {
+                identity: "abc123".to_string(),
+                kind: "git".to_string(),
+                dirty: false,
+            }),
             mint_timestamp: "2026-07-13T12:00:00.000Z".to_string(),
         };
 
@@ -15202,6 +15275,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "workspace root: /workspace",
             "datetime.py source blake3-512:source",
             "substrate commit: abc123",
+            "kit source: abc123",
             "mint timestamp: 2026-07-13T12:00:00.000Z",
             "LINK ran: yes",
             "same binary as python-lift",
@@ -15211,6 +15285,30 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "missing {expected}:\n{rendered}"
             );
         }
+    }
+
+    #[test]
+    fn split_pipeline_refusal_names_both_commits() {
+        let provenance = KitSourceProvenance {
+            identity: "kit-a".to_string(),
+            kind: "git".to_string(),
+            dirty: false,
+        };
+        assert_eq!(
+            refuse_split_pipeline(&provenance, "binary-b").unwrap_err(),
+            "refusing to mint from a split pipeline: kit @kit-a != binary @binary-b"
+        );
+        assert!(refuse_split_pipeline(&provenance, "kit-a").is_ok());
+    }
+
+    #[test]
+    fn dirty_kit_source_is_loud_but_does_not_change_identity_gate() {
+        let provenance = KitSourceProvenance {
+            identity: "abc123".to_string(),
+            kind: "git".to_string(),
+            dirty: true,
+        };
+        assert!(refuse_split_pipeline(&provenance, "abc123").is_ok());
     }
 
     #[test]
@@ -15574,6 +15672,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             project_root: None,
             source_oracle_routes: Vec::new(),
             lift_coverage: None,
+            kit_source: None,
         };
         let human = render_source_report_human(&report);
 

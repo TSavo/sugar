@@ -7,6 +7,7 @@
 // input, and derives compatibility response projections from typed claims.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use libsugar::core::{
@@ -27,12 +28,17 @@ use sugar_compiler::kit_path::{
 #[derive(Debug, Clone)]
 pub(crate) struct LiftPluginSession {
     pub claim: DomainClaim,
+    #[allow(dead_code)] // consumed by the binary-only cmd_lift report provenance gate
+    pub initialize_response: Option<Value>,
 }
 
 impl LiftPluginSession {
     pub(crate) fn from_claim(claim: DomainClaim) -> Result<Self, LiftPluginError> {
         LiftResponseProjection::from_claim(&claim)?;
-        Ok(Self { claim })
+        Ok(Self {
+            claim,
+            initialize_response: None,
+        })
     }
 
     pub(crate) fn response_projection(&self) -> LiftResponseProjection<'_> {
@@ -175,6 +181,7 @@ pub(crate) enum LiftPluginError {
     Refused(Box<CompositionBoundaryMemento>),
     FatalFactoryPanic(sugar_compiler::kit_path::FactoryPanicRpcError),
     Diagnostic(LiftPluginDiagnosticPayload),
+    SplitPipeline(String),
 }
 
 impl LiftPluginError {
@@ -222,6 +229,7 @@ impl std::fmt::Display for LiftPluginError {
                 refusal.header.failure_kind, refusal.header.failure_detail
             ),
             Self::Diagnostic(diagnostic) => diagnostic.fmt(f),
+            Self::SplitPipeline(message) => message.fmt(f),
         }
     }
 }
@@ -260,6 +268,22 @@ pub(crate) fn dispatch_lift(
         );
     }
 
+    let initialize_response = if surface == "python" {
+        let rendezvous = Kit::rendezvous(LiftManifest {
+            surface: surface.to_string(),
+            name: manifest.name.clone(),
+            dialect: dialect_for_surface(surface),
+            command: manifest.command.clone(),
+            working_dir: resolved_absolute_working_dir(project_root, &manifest),
+            method: manifest.method.clone(),
+        })
+        .map_err(lift_error_from_rendezvous)?;
+        enforce_python_kit_source(surface, rendezvous.initialize_response())?;
+        Some(rendezvous.initialize_response().clone())
+    } else {
+        None
+    };
+
     let lift_params = build_lift_params(project_root, surface, options);
     let mut kit = LiftPluginKit::new(
         surface,
@@ -292,7 +316,9 @@ pub(crate) fn dispatch_lift(
         }
     }
 
-    LiftPluginSession::from_claim(core_session.claim)
+    let mut session = LiftPluginSession::from_claim(core_session.claim)?;
+    session.initialize_response = initialize_response.or(Some(core_session.initialize_response));
+    Ok(session)
 }
 
 /// SEAM 6b sentence: `sugar lift` = `rendezvous(surface).lift(project) ->
@@ -358,6 +384,8 @@ pub(crate) fn dispatch_lift_path(
         started.elapsed()
     ));
 
+    let initialize_response = kit.initialize_response().clone();
+    enforce_python_kit_source(surface, &initialize_response)?;
     let before = current_rss_kib();
     let claim = kit.lift(lift_params).map_err(lift_error_from_kit)?;
     trace_lift_plugin_claim_checkpoint_with_delta(
@@ -370,7 +398,47 @@ pub(crate) fn dispatch_lift_path(
         started.elapsed()
     ));
     trace_lift_plugin_claim_checkpoint("dispatch_lift_path.before_response_projection", &claim);
-    LiftPluginSession::from_claim(claim)
+    let mut session = LiftPluginSession::from_claim(claim)?;
+    session.initialize_response = Some(initialize_response);
+    Ok(session)
+}
+
+fn enforce_python_kit_source(
+    surface: &str,
+    initialize_response: &Value,
+) -> Result<(), LiftPluginError> {
+    if surface != "python" {
+        return Ok(());
+    }
+    let identity = initialize_response
+        .pointer("/kit_source/identity")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            LiftPluginError::SplitPipeline(
+                "python kit initialize response omitted kit_source testimony".to_string(),
+            )
+        })?;
+    let binary = env!("SUGAR_BUILD_GIT_HEAD");
+    if identity == binary {
+        if let Ok(mut slot) = last_python_kit_source_slot().lock() {
+            *slot = initialize_response.get("kit_source").cloned();
+        }
+        Ok(())
+    } else {
+        Err(LiftPluginError::SplitPipeline(format!(
+            "refusing to mint from a split pipeline: kit @{identity} != binary @{binary}"
+        )))
+    }
+}
+
+fn last_python_kit_source_slot() -> &'static Mutex<Option<Value>> {
+    static SLOT: OnceLock<Mutex<Option<Value>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+#[allow(dead_code)] // consumed by binary-only cmd_lift graph report rendering
+pub(crate) fn last_python_kit_source() -> Option<Value> {
+    last_python_kit_source_slot().lock().ok()?.clone()
 }
 
 /// Unregistered-dialect fallback: builds the same source/path input the
@@ -419,6 +487,7 @@ fn lift_error_from_rendezvous(error: RendezvousError) -> LiftPluginError {
     )
 }
 
+#[allow(dead_code)]
 fn lift_error_from_kit(error: SugarKitError) -> LiftPluginError {
     match error {
         SugarKitError::PathExecution(path_error) => lift_error_from_path(path_error),

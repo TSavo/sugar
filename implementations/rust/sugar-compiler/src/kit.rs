@@ -50,7 +50,7 @@ use libsugar::core::{
 use serde_json::Value;
 use sugar_claim_envelope::KitDeclaration;
 
-use crate::kit_declaration::{load_kit_declaration_with_command, KitDeclarationLoadError};
+use crate::kit_declaration::{load_kit_handshake_with_command, KitDeclarationLoadError};
 use crate::kit_path::{execute_path, KitRegistry, LiftKit, PathExecutionError};
 use crate::resolve::{
     resolve_source, resolve_testimony, ResolvedSource, SourceRefusal, TestimonyError,
@@ -125,6 +125,7 @@ pub enum KitError {
 pub struct Kit {
     manifest: LiftManifest,
     declaration: KitDeclaration,
+    initialize_response: Value,
     registry: KitRegistry,
     kit_name: String,
 }
@@ -161,12 +162,13 @@ impl Kit {
                 });
             }
         }
-        let declaration =
-            load_kit_declaration_with_command(&manifest.command, manifest.working_dir.as_deref())
+        let handshake =
+            load_kit_handshake_with_command(&manifest.command, manifest.working_dir.as_deref())
                 .map_err(|source| RendezvousError::Handshake {
-                surface: manifest.surface.clone(),
-                source,
-            })?;
+                    surface: manifest.surface.clone(),
+                    source,
+                })?;
+        let declaration = handshake.declaration;
         let kit_name = format!("lift-{}", manifest.surface);
         let mut registry = KitRegistry::default();
         let mut lift_kit = LiftKit::new(
@@ -188,6 +190,7 @@ impl Kit {
         Ok(Kit {
             manifest,
             declaration,
+            initialize_response: handshake.initialize_response,
             registry,
             kit_name,
         })
@@ -197,6 +200,10 @@ impl Kit {
     /// strategy, as answered by the live handshake in `rendezvous`.
     pub fn declaration(&self) -> &KitDeclaration {
         &self.declaration
+    }
+
+    pub fn initialize_response(&self) -> &Value {
+        &self.initialize_response
     }
 
     /// `Kit::lift(project_root, request)`: folds `dispatch_lift_path`'s
