@@ -42,9 +42,7 @@ jobs:
           mode: seed
 
       - name: Install sugarbin hashing dependency
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends b3sum
+        run: tools/ci-apt-install.sh b3sum
 
       - name: Build shared Rust artifacts once
         env:
@@ -120,15 +118,11 @@ jobs:
 
       - name: Install source-audit system deps
         if: matrix.z3
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends z3 b3sum
+        run: tools/ci-apt-install.sh z3 b3sum
 
       - name: Install sugarbin hashing dependency
         if: matrix.b3sum && !matrix.z3
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends b3sum
+        run: tools/ci-apt-install.sh b3sum
 
       - name: Run core instrument
         run: make ${{ matrix.target }}
@@ -178,8 +172,7 @@ jobs:
 
       - name: Install system deps
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends z3 maven unzip b3sum
+          tools/ci-apt-install.sh z3 maven unzip b3sum
           if ! command -v vampire >/dev/null 2>&1; then
             curl -fsSL -o /tmp/vampire.zip https://github.com/vprover/vampire/releases/download/v5.0.1/vampire-Linux-X64.zip
             unzip -o -q /tmp/vampire.zip -d /tmp/vampire-bin
