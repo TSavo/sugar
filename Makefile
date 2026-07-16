@@ -543,7 +543,7 @@ CORETESTS_RUST_VER ?= 1.96.0
 CORETESTS_SOURCE_AUDIT_CORPUS ?= examples/rust-coretests-report/corpus
 
 # Full-corpus `lift --report` is one RPC over ~1.4k loci. Kit hang detector
-# defaults to 120s; this target sets SUGAR_LIFT_RESPONSE_TIMEOUT_SECS=900.
+# defaults to 120s. CI measured still-in-flight at 900s; default budget is 60m.
 # Keep the recipe as ONE shell (`\` continuations): bare comment lines between
 # `cd` and the lift start a new make shell and drop `sugar_bin` (Error 127).
 .PHONY: coretests-source-audit
@@ -558,7 +558,7 @@ coretests-source-audit:
 	  remote_tag="$${remote_tag:-default}"; \
 	  remote_root="$${BCARGO_REMOTE_ROOT:-/home/tsavo/remote/sugar-bcargo-$$remote_tag}"; \
 	  remote_repo="$$remote_root/sugar"; \
-	  remote_cmd="cd $$(printf '%q' "$$remote_repo") && CORETESTS_SOURCE_AUDIT_ON_REMOTE=1 USE_BCARGO=0 Z3=$${Z3:-/usr/bin/z3} SUGAR_LIFT_RESPONSE_TIMEOUT_SECS=$${SUGAR_LIFT_RESPONSE_TIMEOUT_SECS:-900} make coretests-source-audit"; \
+	  remote_cmd="cd $$(printf '%q' "$$remote_repo") && CORETESTS_SOURCE_AUDIT_ON_REMOTE=1 USE_BCARGO=0 Z3=$${Z3:-/usr/bin/z3} SUGAR_LIFT_RESPONSE_TIMEOUT_SECS=$${SUGAR_LIFT_RESPONSE_TIMEOUT_SECS:-3600} make coretests-source-audit"; \
 	  ssh -o BatchMode=yes "$$remote_host" "bash -lc $$(printf '%q' "$$remote_cmd")"; \
 	  exit $$?; \
 	fi; \
@@ -570,7 +570,7 @@ coretests-source-audit:
 	sed "s|@BIN_DIR@|$$bin_dir|g" "$$manifest_dir/manifest.toml.in" > "$$manifest_dir/manifest.toml"; \
 	echo "==== coretests-source-audit: panic-armed source totality ===="; \
 	cd "$$corpus"; \
-	SUGAR_LIFT_RESPONSE_TIMEOUT_SECS="$${SUGAR_LIFT_RESPONSE_TIMEOUT_SECS:-900}" \
+	SUGAR_LIFT_RESPONSE_TIMEOUT_SECS="$${SUGAR_LIFT_RESPONSE_TIMEOUT_SECS:-3600}" \
 	  RUST_LOG=error NO_COLOR=1 CLICOLOR=0 TERM=dumb \
 	  "$$sugar_bin" lift --report --report-summary
 

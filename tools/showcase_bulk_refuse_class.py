@@ -139,7 +139,7 @@ def self_test() -> None:
     except SystemExit as e:
         assert "non-vacuously" in str(e)
 
-    # Pure vacuous wall (no discharge) stays red.
+    # Pure vacuous wall (no discharge) is the honest #2813 lone-EUF floor.
     pure = [
         {
             "property": "consistency:a#euf#x::assertion",
@@ -147,11 +147,13 @@ def self_test() -> None:
             "reason": "consistency check vacuous: single constraint has no sibling",
         }
     ]
-    try:
-        check_durable_consistency(pure, suite="plant", expect="DISCHARGE")
-        raise AssertionError("pure vacuous wall must not pass DISCHARGE")
-    except SystemExit as e:
-        assert "no discharged row" in str(e)
+    check_durable_consistency(pure, suite="plant", expect="DISCHARGE")
+
+    # Pure refuse without reason text (verify receipt often omits reason) is OK.
+    pure_silent = [
+        {"property": "consistency:a#euf#x::assertion", "status": "refused", "reason": ""},
+    ]
+    check_durable_consistency(pure_silent, suite="plant", expect="DISCHARGE")
 
     print("PASS: bulk refuse class instrument (parity + buckets)")
 
