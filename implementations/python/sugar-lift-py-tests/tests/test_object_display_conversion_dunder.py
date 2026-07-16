@@ -116,3 +116,44 @@ class Box:
         )
     )
     assert force_floor(value, ctx, owner="format dunder bridge") == StringValue("")
+
+
+def test_production_lift_constructs_format_dunder_return_without_factory_panic() -> None:
+    """#4400: bare ClassDef must enroll so format(Box()) is ObjectValue, not transport death.
+
+    The witness seed rides the production audit door. Without bare class nodes in
+    name_resolver, ConstructorCallSugar falls back to an opaque CallSiteValue and
+    FormatDunderCallSugar dies in FloorValue.format_data_model. Enrollment makes the
+    constructor ObjectValue with __format__, so the lift returns proof-bearing IR.
+    """
+    from sugar_lift_py_tests.lift_rpc import audit_lift_file
+
+    source = (
+        "class Box:\n"
+        "    def __format__(self, spec):\n"
+        "        return spec\n"
+        "\n"
+        "def A():\n"
+        "    return format(Box(), 'x')\n"
+        "\n"
+        "def test_a():\n"
+        "    assert A() == 'x'\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "format_dunder_return.py")
+    rpc = payload.to_rpc()
+    selected = {
+        row["selected"]
+        for row in [
+            *rpc.get("factoryAuditSummary", {}).get("factoryWalk", []),
+            *rpc.get("factoryAudits", []),
+        ]
+        if isinstance(row, dict) and isinstance(row.get("selected"), str)
+    }
+
+    assert gaps == []
+    assert "FormatDunderCallSugar" in selected
+    assert "ConstructorCallSugar" in selected
+    assert rpc.get("ir"), "format dunder return must emit proof-bearing IR"
+    recovered = audit_lift_file(source, "format_dunder_return.py", recover_panics=True)
+    assert recovered.panics == []
