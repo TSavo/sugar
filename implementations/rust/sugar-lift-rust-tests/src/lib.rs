@@ -2979,6 +2979,29 @@ pub(crate) struct ConstRegistry {
     ambiguous: BTreeSet<String>,
 }
 
+fn local_const_type_is_primitive_int(ty: &Type) -> bool {
+    let Type::Path(path) = ty else {
+        return false;
+    };
+    path.qself.is_none()
+        && path.path.segments.last().is_some_and(|segment| {
+            matches!(
+                segment.ident.to_string().as_str(),
+                "i8" | "i16"
+                    | "i32"
+                    | "i64"
+                    | "i128"
+                    | "isize"
+                    | "u8"
+                    | "u16"
+                    | "u32"
+                    | "u64"
+                    | "u128"
+                    | "usize"
+            )
+        })
+}
+
 impl std::fmt::Debug for ConstRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ConstRegistry")
@@ -2998,7 +3021,14 @@ impl ConstRegistry {
             match stmt {
                 Stmt::Item(Item::Const(c)) => {
                     if local_const_initializer_is_safe(&c.expr) {
-                        self.insert(&c.ident.to_string(), Rc::new((*c.expr).clone()));
+                        let expr = if local_const_type_is_primitive_int(&c.ty) {
+                            let init = c.expr.as_ref();
+                            let ty = c.ty.as_ref();
+                            syn::parse_quote!((#init) as #ty)
+                        } else {
+                            (*c.expr).clone()
+                        };
+                        self.insert(&c.ident.to_string(), Rc::new(expr));
                     }
                 }
                 Stmt::Item(Item::Mod(m)) => {
@@ -6642,34 +6672,51 @@ pub(crate) fn const_fold_int_term(term: &Rc<Term>) -> Option<i128> {
         }
     }
     match term.as_ref() {
-        // bv32 bit-operation ctors: fold with u32 wrapping semantics, returning
-        // the result as i128 so the surrounding const_fold_int_term callers
-        // (comparisons, literal predicates) can compare values.
+        // `bv32.*` is the canonical protocol spelling for primitive bit operations,
+        // not a promise that the source operand is u32. Fold using the typed lhs
+        // width and signedness, returning the source integer value as i128.
         Term::Ctor { name, args } if name.starts_with("bv32.") && args.len() == 2 => {
-            fn bv_arg_i128(t: &Rc<Term>) -> Option<u32> {
-                match t.as_ref() {
-                    Term::Const {
-                        value: ConstValue::Int(n),
-                        ..
-                    } => u32::try_from(*n).ok(),
-                    _ => None,
+            let Term::Const {
+                value: ConstValue::Int(a),
+                sort,
+            } = args[0].as_ref()
+            else {
+                return None;
+            };
+            let kind = crate::sugar::int_literal::primitive_int_kind(sort.name.as_str());
+            let bits = kind.map_or(32, |kind| kind.bits);
+            let signed = kind.is_some_and(|kind| kind.signed);
+            let mask = if bits == 128 {
+                u128::MAX
+            } else {
+                (1u128 << bits) - 1
+            };
+            let raw_a = (*a as u128) & mask;
+            let b = const_fold_int_term(&args[1])?;
+            let shift = u32::try_from(b.rem_euclid(i128::from(bits))).ok()?;
+            let raw = match name.as_str() {
+                "bv32.shl" => raw_a.wrapping_shl(shift) & mask,
+                "bv32.lshr" if signed => ((*a >> shift) as u128) & mask,
+                "bv32.lshr" => raw_a.wrapping_shr(shift),
+                "bv32.and" => raw_a & ((const_fold_int_term(&args[1])? as u128) & mask),
+                "bv32.or" => raw_a | ((const_fold_int_term(&args[1])? as u128) & mask),
+                "bv32.xor" => raw_a ^ ((const_fold_int_term(&args[1])? as u128) & mask),
+                "bv32.add" => {
+                    raw_a.wrapping_add((const_fold_int_term(&args[1])? as u128) & mask) & mask
                 }
-            }
-            let a = bv_arg_i128(&args[0])
-                .or_else(|| u32::try_from(const_fold_int_term(&args[0])?).ok())?;
-            let b = bv_arg_i128(&args[1])
-                .or_else(|| u32::try_from(const_fold_int_term(&args[1])?).ok())?;
-            let result: u32 = match name.as_str() {
-                "bv32.shl" => a.wrapping_shl(b),
-                "bv32.lshr" => a.wrapping_shr(b),
-                "bv32.and" => a & b,
-                "bv32.or" => a | b,
-                "bv32.xor" => a ^ b,
-                "bv32.add" => a.wrapping_add(b),
-                "bv32.mul" => a.wrapping_mul(b),
+                "bv32.mul" => {
+                    raw_a.wrapping_mul((const_fold_int_term(&args[1])? as u128) & mask) & mask
+                }
                 _ => return None,
             };
-            Some(i128::from(result))
+            if signed && bits == 128 {
+                Some(raw as i128)
+            } else if signed && raw & (1u128 << (bits - 1)) != 0 {
+                let magnitude = ((!raw) & mask).checked_add(1)?;
+                i128::try_from(magnitude).ok()?.checked_neg()
+            } else {
+                i128::try_from(raw).ok()
+            }
         }
         Term::Ctor { name, args } if args.len() == 2 => {
             let a = const_fold_int_term(&args[0])?;
@@ -6777,31 +6824,47 @@ pub(crate) fn const_fold_u128_term(term: &Rc<Term>) -> Option<u128> {
                 _ => None,
             }
         }
-        // bv32 bit-operation ctors: ground-fold with u32 wrapping semantics.
+        // `bv32.*` is the canonical protocol spelling for primitive bit operations,
+        // but the source operand can be any primitive integer width. Ground-fold
+        // with the typed lhs width; retain u32 as the legacy default for untyped
+        // operands.
         // This arm fires BEFORE the general 2-arg arm so the early-exit guard
         // (which requires at least one operand to already be a u128 term) does
         // not block folding of bv32 const args whose sort is "u32" / "u8" etc.
         // We extract the Int value from any Const node regardless of sort name.
         Term::Ctor { name, args } if name.starts_with("bv32.") && args.len() == 2 => {
-            fn bv_arg_as_u32(t: &Rc<Term>) -> Option<u32> {
+            fn bv_arg_as_u128(t: &Rc<Term>) -> Option<u128> {
                 match t.as_ref() {
                     Term::Const {
                         value: ConstValue::Int(n),
                         ..
-                    } => u32::try_from(*n).ok(),
+                    } => u128::try_from(*n).ok(),
                     _ => None,
                 }
             }
-            let a = bv_arg_as_u32(&args[0])?;
-            let b = bv_arg_as_u32(&args[1])?;
+            let a = bv_arg_as_u128(&args[0])?;
+            let b = bv_arg_as_u128(&args[1])?;
+            let bits = match args[0].as_ref() {
+                Term::Const { sort, .. } => {
+                    crate::sugar::int_literal::primitive_int_kind(sort.name.as_str())
+                        .map_or(32, |kind| kind.bits)
+                }
+                _ => 32,
+            };
+            let mask = if bits == 128 {
+                u128::MAX
+            } else {
+                (1u128 << bits) - 1
+            };
+            let shift = u32::try_from(b % u128::from(bits)).ok()?;
             match name.as_str() {
-                "bv32.shl" => Some(u128::from(a.wrapping_shl(b))),
-                "bv32.lshr" => Some(u128::from(a.wrapping_shr(b))),
-                "bv32.and" => Some(u128::from(a & b)),
-                "bv32.or" => Some(u128::from(a | b)),
-                "bv32.xor" => Some(u128::from(a ^ b)),
-                "bv32.add" => Some(u128::from(a.wrapping_add(b))),
-                "bv32.mul" => Some(u128::from(a.wrapping_mul(b))),
+                "bv32.shl" => Some(a.wrapping_shl(shift) & mask),
+                "bv32.lshr" => Some((a & mask).wrapping_shr(shift)),
+                "bv32.and" => Some((a & b) & mask),
+                "bv32.or" => Some((a | b) & mask),
+                "bv32.xor" => Some((a ^ b) & mask),
+                "bv32.add" => Some(a.wrapping_add(b) & mask),
+                "bv32.mul" => Some(a.wrapping_mul(b) & mask),
                 _ => None,
             }
         }

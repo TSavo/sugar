@@ -17,7 +17,7 @@ use crate::sugar::int_literal::{
     IntKind, IsqrtVisitor, NumericFloor, NumericSqrt, PowVisitor, WrappingNegVisitor,
 };
 use crate::sugar::monadic::{none_term, some_term};
-use crate::sugar::nonzero::nonzero_assoc_const_expr;
+use crate::sugar::nonzero::{is_nonzero_derived, nonzero_assoc_const_expr};
 use crate::sugar::option_unwrap::is_known_monadic_source;
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
@@ -352,6 +352,7 @@ fn recognize(frag: &SourceFragment, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
         kind,
         kind_hint: integer_kind_hint_in_scope_frag(&receiver_frag, fcx, 0),
         assoc_const_count_ones: assoc_const_count_ones_frag(&receiver_frag),
+        receiver_is_nonzero: receiver_frag.as_expr().is_some_and(is_nonzero_derived),
     }))
 }
 
@@ -637,6 +638,7 @@ struct PrimitiveIntSugar {
     kind: Kind,
     kind_hint: Option<IntegerKind>,
     assoc_const_count_ones: Option<u32>,
+    receiver_is_nonzero: bool,
 }
 
 struct PrimitiveIntTupleProducer {
@@ -742,6 +744,43 @@ fn integer_kind_from_term(term: &Rc<Term>) -> Option<IntegerKind> {
     }
 }
 
+fn fold_bv_term_with_kind(term: &Rc<Term>, kind: IntegerKind) -> Option<u128> {
+    let mask = mask_for_bits(kind.bits)?;
+    match term.as_ref() {
+        Term::Const {
+            value: ConstValue::Int(value),
+            ..
+        } => Some((*value as u128) & mask),
+        Term::Ctor { name, args } if name.starts_with("bv32.") && args.len() == 2 => {
+            let lhs = fold_bv_term_with_kind(&args[0], kind)?;
+            let rhs = const_fold_int_term(&args[1])?;
+            let shift = u32::try_from(rhs.rem_euclid(i128::from(kind.bits))).ok()?;
+            match name.as_str() {
+                "bv32.shl" => Some(lhs.wrapping_shl(shift) & mask),
+                "bv32.lshr" if kind.signed => {
+                    let lhs = signed_value_from_raw(lhs, kind)?;
+                    Some(((lhs >> shift) as u128) & mask)
+                }
+                "bv32.lshr" => Some(lhs.wrapping_shr(shift)),
+                "bv32.and" => Some(lhs & fold_bv_term_with_kind(&args[1], kind)?),
+                "bv32.or" => Some(lhs | fold_bv_term_with_kind(&args[1], kind)?),
+                "bv32.xor" => Some(lhs ^ fold_bv_term_with_kind(&args[1], kind)?),
+                "bv32.add" => {
+                    Some(lhs.wrapping_add(fold_bv_term_with_kind(&args[1], kind)?) & mask)
+                }
+                "bv32.mul" => {
+                    Some(lhs.wrapping_mul(fold_bv_term_with_kind(&args[1], kind)?) & mask)
+                }
+                _ => None,
+            }
+        }
+        Term::Ctor { name, args } if name.starts_with("cast:") && args.len() == 1 => {
+            fold_bv_term_with_kind(&args[0], kind)
+        }
+        _ => None,
+    }
+}
+
 impl Sugar for PrimitiveIntTupleProducer {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let receiver = match term_body(&self.receiver, ctx, "primitive_int overflowing receiver") {
@@ -795,9 +834,22 @@ impl Sugar for PrimitiveIntSugar {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
-        let lhs_u128 = folded_u128_term(&receiver);
-        let lhs_i128 = folded_int_term(&receiver);
-        let kind_hint = self.kind_hint;
+        let kind_hint = self.kind_hint.or_else(|| integer_kind_from_term(&receiver));
+        let hinted_raw = kind_hint.and_then(|kind| fold_bv_term_with_kind(&receiver, kind));
+        let lhs_u128 = kind_hint
+            .filter(|kind| !kind.signed)
+            .and(hinted_raw)
+            .or_else(|| folded_u128_term(&receiver));
+        let lhs_i128 = (|| {
+            let kind = kind_hint?;
+            let raw = hinted_raw?;
+            if kind.signed {
+                signed_value_from_raw(raw, kind)
+            } else {
+                i128::try_from(raw).ok()
+            }
+        })()
+        .or_else(|| folded_int_term(&receiver));
 
         match &self.kind {
             Kind::CountOnes => {
@@ -893,36 +945,44 @@ impl Sugar for PrimitiveIntSugar {
                 Outcome::Complete(Desugared::Term(term))
             }
             Kind::HighestOne => {
-                let Some(value) = highest_one_value(lhs_i128, lhs_u128, kind_hint) else {
-                    primitive_int_gap(
+                let value = highest_one_value(lhs_i128, lhs_u128, kind_hint);
+                let term = match (value, self.receiver_is_nonzero) {
+                    (Some(value), true) => num(i128::from(value)),
+                    (Some(value), false) => some_term(num(i128::from(value))),
+                    (None, false) if lhs_i128 == Some(0) || lhs_u128 == Some(0) => none_term(),
+                    (None, _) => primitive_int_gap(
                         "highest_one receiver did not reduce to a typed integer floor",
-                    );
+                    ),
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
                     method = self.method.as_str(),
                     lhs_i128 = ?lhs_i128,
                     lhs_u128 = ?lhs_u128,
-                    value,
+                    value = ?value,
                     "resolved primitive highest_one integer axiom"
                 );
-                Outcome::Complete(Desugared::Term(num(i128::from(value))))
+                Outcome::Complete(Desugared::Term(term))
             }
             Kind::LowestOne => {
-                let Some(value) = lowest_one_value(lhs_i128, lhs_u128, kind_hint) else {
-                    primitive_int_gap(
+                let value = lowest_one_value(lhs_i128, lhs_u128, kind_hint);
+                let term = match (value, self.receiver_is_nonzero) {
+                    (Some(value), true) => num(i128::from(value)),
+                    (Some(value), false) => some_term(num(i128::from(value))),
+                    (None, false) if lhs_i128 == Some(0) || lhs_u128 == Some(0) => none_term(),
+                    (None, _) => primitive_int_gap(
                         "lowest_one receiver did not reduce to a typed integer floor",
-                    );
+                    ),
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
                     method = self.method.as_str(),
                     lhs_i128 = ?lhs_i128,
                     lhs_u128 = ?lhs_u128,
-                    value,
+                    value = ?value,
                     "resolved primitive lowest_one integer axiom"
                 );
-                Outcome::Complete(Desugared::Term(num(i128::from(value))))
+                Outcome::Complete(Desugared::Term(term))
             }
             Kind::Min(rhs) | Kind::Max(rhs) => {
                 let rhs = match term_body(&rhs.term, ctx, "primitive_int extremum rhs") {
