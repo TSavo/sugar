@@ -85,9 +85,12 @@ def _run_import_check(
     if proc.returncode == 0:
         return True, "ok"
     err = (proc.stderr or proc.stdout or "").strip()
-    # Keep one diagnostic line.
-    first = next((ln for ln in err.splitlines() if ln.strip()), f"exit={proc.returncode}")
-    return False, first
+    # Keep the tail of the traceback — the last lines carry the actual error;
+    # the first line is just "Traceback (most recent call last):".
+    lines = [ln for ln in err.splitlines() if ln.strip()]
+    if not lines:
+        return False, f"exit={proc.returncode}"
+    return False, " | ".join(ln.strip() for ln in lines[-3:])
 
 
 def check_source_pythonpath() -> list[Failure]:
@@ -215,23 +218,39 @@ def check_fresh_editable_install() -> list[Failure]:
     return failures
 
 
+def _kit_pythonpath_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(str(p) for p in SOURCE_PATHS)
+    return env
+
+
 def check_sticky_venvs() -> list[Failure]:
-    """If a showcase sticky venv already exists, it must resolve kit imports."""
+    """If a showcase sticky venv already exists, it must resolve kit imports.
+
+    Showcases never pip-install the sugar kit into the witness venvs — they
+    provide it via PYTHONPATH shims over the repo source trees (see e.g.
+    examples/pandas-source-accounting/good/lift-shim.sh). So the sticky
+    contract is: the venv's python, with the kit source trees on PYTHONPATH,
+    imports the kit modules (which also exercises the venv's pip deps —
+    blake3 / cbor2 / pynacl — that the kit imports at module load).
+    """
     failures: list[Failure] = []
+    env = _kit_pythonpath_env()
     for name, path in STICKY_VENVS:
         python = path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         if not python.is_file():
             continue  # not created yet — showcases create on demand
-        ok, detail = _run_import_check(python, REQUIRED_IMPORTS)
+        ok, detail = _run_import_check(python, REQUIRED_IMPORTS, env=env)
         if not ok:
             failures.append(
                 Failure(
                     axis="A1",
                     contract=f"sticky venv {name}",
                     detail=(
-                        f"{detail}; path={path}. "
+                        f"{detail}; path={path} (kit via PYTHONPATH shim). "
                         "Rebuild: remove the venv or re-run the showcase install "
-                        "block so sugar_lift_python_source is editable-installed."
+                        "block so its pip deps (pytest + pynacl + blake3 + cbor2 "
+                        "+ the family package) are present."
                     ),
                 )
             )
@@ -261,12 +280,13 @@ def report(failures: list[Failure]) -> int:
             print(item.render())
         print(
             "FAIL: A1 must be 0 before test-showcases "
-            "(install law: source PYTHONPATH + editable sticky venvs)"
+            "(install law: kit via source PYTHONPATH; sticky venvs carry pip deps)"
         )
         print(
             "hint: make build-python installs kits into "
             f"{os.environ.get('PYTHON_KIT_VENV', '/tmp/sugar-python-kit-env')}; "
-            "family showcases use their own sticky venvs under /tmp/*-witness-venv"
+            "family showcases use their own sticky venvs under /tmp/*-witness-venv "
+            "with the kit supplied via PYTHONPATH shims, not pip"
         )
         return 1
     print("PASS: A1=0 — showcase kit imports resolve under declared contracts")
@@ -303,12 +323,15 @@ def self_test() -> int:
             print("FAIL: missing module produced empty diagnostic", file=sys.stderr)
             return 1
 
-    # Synthetic sticky venv without packages must trip when present.
+    # Synthetic sticky venv without pip deps must trip when present, even with
+    # the kit source trees on PYTHONPATH (the kit imports blake3/cbor2/nacl).
     with tempfile.TemporaryDirectory(prefix="sugar-preflight-sticky-") as tmp:
         venv_dir = Path(tmp) / "sticky"
         venv.create(venv_dir, with_pip=False, clear=True)
         python = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        ok_sticky, sticky_detail = _run_import_check(python, REQUIRED_IMPORTS)
+        ok_sticky, sticky_detail = _run_import_check(
+            python, REQUIRED_IMPORTS, env=_kit_pythonpath_env()
+        )
         if ok_sticky:
             print(
                 "FAIL: empty sticky venv imported kits without install",
