@@ -17,9 +17,9 @@ use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor}
 use crate::sugar::source_fragment::SourceFragment;
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, const_fold_int_term,
-    const_fold_u128_term, count_asserts_in_stmts, loop_body_mutates, lower_assert_condition,
-    token_key, AssertionFactKind, Desugared, Effect, FactoryAuditLog, FloatWidthScope, LiftOptions,
-    Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
+    const_fold_u128_term, count_asserts_in_stmts, loop_body_mutates, token_key, AssertionFactKind,
+    Desugared, Effect, FactoryAuditLog, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
+    SugarCtx, TemporalScope, Warrant,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -186,14 +186,15 @@ impl Sugar for ConditionalSugar {
             // is not a translatable comparison). Otherwise fall back to lifting the guard
             // EXACTLY as `assert!(guard)` would; a guard outside the liftable predicate
             // set (an opaque method call, a float refinement we cannot width, ...) bails.
-            let guard = lower_assert_condition(
+            let guard = match crate::sugar::constraint::assertion_entry_with_audits(
                 &self.cond,
                 ctx.scope,
                 &ctx.float_widths.borrow(),
                 ctx.factory_audits,
-            )
-            .ok()?
-            .atom;
+            ) {
+                Ok(lowered) => lowered.atom,
+                Err(effect) => return Some(Outcome::Incomplete(effect)),
+            };
 
             let mut conjuncts: Vec<Rc<Formula>> = Vec::new();
             if then_count > 0 {
