@@ -25,6 +25,7 @@ from typing import Any, Iterator, List, Optional, Tuple, Union
 
 from .canonicalizer import (
     Value,
+    blake3_512_of,
     encode_jcs,
     jcs_hash,
     varr,
@@ -589,44 +590,19 @@ class TermTableBuilder:
 
     def __init__(self) -> None:
         self.nodes: dict[str, dict[str, Any]] = {}
-        self._cids: dict[Term, str] = {}
+        # Identity-keyed so looking up a deep frozen dataclass never invokes its
+        # recursively generated __hash__. The retained term guards against id
+        # reuse while this builder is alive.
+        self._cids: dict[int, tuple[Term, str]] = {}
 
     def reference(self, term: Term) -> dict[str, str]:
-        cid = self._cid(term)
-        hit = cid in self.nodes
-        if not hit:
-            self.nodes[cid] = self._node(term)
-            node_count = len(self.nodes)
-            if _TERM_TABLE_LOG.isEnabledFor(logging.DEBUG):
-                _TERM_TABLE_LOG.debug(
-                    "term_table_node",
-                    extra={
-                        "stage": "lift.workspace.to_rpc.term_table.node",
-                        "cid": cid,
-                        "node_count": node_count,
-                        "cache": "miss",
-                        "term_kind": type(term).__name__,
-                    },
-                )
-            if node_count % 1000 == 0:
-                _TERM_TABLE_LOG.info(
-                    "term_table_progress",
-                    extra={
-                        "stage": "lift.workspace.to_rpc.term_table.progress",
-                        "unique_nodes": node_count,
-                    },
-                )
-        elif _TERM_TABLE_LOG.isEnabledFor(logging.DEBUG):
-            _TERM_TABLE_LOG.debug(
-                "term_table_node",
-                extra={
-                    "stage": "lift.workspace.to_rpc.term_table.node",
-                    "cid": cid,
-                    "node_count": len(self.nodes),
-                    "cache": "hit",
-                    "term_kind": type(term).__name__,
-                },
-            )
+        cid = self._cached_cid(term)
+        if cid is not None and cid in self.nodes:
+            self._log_node(term, cid, cache="hit")
+            return {"kind": "term-ref", "cid": cid}
+
+        self._materialize(term)
+        cid = self._require_cached_cid(term)
         return {"kind": "term-ref", "cid": cid}
 
     def formula(self, formula: Formula) -> dict[str, Any]:
@@ -697,11 +673,90 @@ class TermTableBuilder:
         return {"kind": "term-ref", "cid": cid}
 
     def _cid(self, term: Term) -> str:
-        cid = self._cids.get(term)
+        cid = self._cached_cid(term)
         if cid is None:
-            started = time.monotonic()
-            cid = jcs_hash(term_to_value(term))
-            self._cids[term] = cid
+            self._materialize(term)
+            cid = self._require_cached_cid(term)
+        return cid
+
+    def _node(self, term: Term) -> dict[str, Any]:
+        if isinstance(term, _Ctor):
+            return {
+                "kind": "ctor",
+                "name": term.name,
+                "args": [
+                    {"kind": "term-ref", "cid": self._require_cached_cid(arg)}
+                    for arg in term.args
+                ],
+            }
+        return json.loads(encode_jcs(term_to_value(term)))
+
+    def _materialize(self, root: Term) -> None:
+        """Intern one expanded term tree with heap-backed postorder traversal."""
+        inbound: dict[int, int] = {}
+        seen: set[int] = set()
+        pending = [root]
+        while pending:
+            term = pending.pop()
+            identity = id(term)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if isinstance(term, _Ctor):
+                for child in term.args:
+                    child_id = id(child)
+                    inbound[child_id] = inbound.get(child_id, 0) + 1
+                    pending.append(child)
+
+        # Canonical strings are retained only for shared nodes. A linear spine
+        # therefore uses O(depth + root-bytes) memory instead of retaining every
+        # expanded prefix, while repeated DAG children are serialized once.
+        shared_canonical: dict[int, str] = {}
+        values: list[str] = []
+        work: list[tuple[Term, bool]] = [(root, False)]
+        while work:
+            term, finishing = work.pop()
+            identity = id(term)
+            cached_value = shared_canonical.get(identity)
+            if not finishing and cached_value is not None:
+                values.append(cached_value)
+                continue
+            if isinstance(term, _Ctor) and not finishing:
+                work.append((term, True))
+                work.extend((child, False) for child in reversed(term.args))
+                continue
+
+            if isinstance(term, _Ctor):
+                arity = len(term.args)
+                children = values[-arity:] if arity else []
+                if arity:
+                    del values[-arity:]
+                canonical = (
+                    '{"args":['
+                    + ",".join(children)
+                    + '],"kind":"ctor","name":'
+                    + encode_jcs(vstr(term.name))
+                    + "}"
+                )
+            else:
+                canonical = encode_jcs(term_to_value(term))
+
+            if inbound.get(identity, 0) > 1:
+                shared_canonical[identity] = canonical
+            self._record_node(term, canonical)
+            values.append(canonical)
+
+        if len(values) != 1:
+            raise AssertionError(
+                f"iterative term encoder left {len(values)} canonical values"
+            )
+
+    def _record_node(self, term: Term, canonical: str) -> None:
+        started = time.monotonic()
+        cid = self._cached_cid(term)
+        if cid is None:
+            cid = blake3_512_of(canonical.encode("utf-8"))
+            self._cids[id(term)] = (term, cid)
             if _TERM_TABLE_LOG.isEnabledFor(logging.DEBUG):
                 _TERM_TABLE_LOG.debug(
                     "term_cid_minted",
@@ -713,16 +768,47 @@ class TermTableBuilder:
                         "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
                     },
                 )
+        if cid in self.nodes:
+            self._log_node(term, cid, cache="hit")
+            return
+        self.nodes[cid] = self._node(term)
+        self._log_node(term, cid, cache="miss")
+        node_count = len(self.nodes)
+        if node_count % 1000 == 0:
+            _TERM_TABLE_LOG.info(
+                "term_table_progress",
+                extra={
+                    "stage": "lift.workspace.to_rpc.term_table.progress",
+                    "unique_nodes": node_count,
+                },
+            )
+
+    def _cached_cid(self, term: Term) -> str | None:
+        entry = self._cids.get(id(term))
+        if entry is not None and entry[0] is term:
+            return entry[1]
+        return None
+
+    def _require_cached_cid(self, term: Term) -> str:
+        cid = self._cached_cid(term)
+        if cid is None:
+            raise AssertionError(
+                f"term child reached node emission before CID mint: {type(term).__name__}"
+            )
         return cid
 
-    def _node(self, term: Term) -> dict[str, Any]:
-        if isinstance(term, _Ctor):
-            return {
-                "kind": "ctor",
-                "name": term.name,
-                "args": [self.reference(arg) for arg in term.args],
-            }
-        return json.loads(encode_jcs(term_to_value(term)))
+    def _log_node(self, term: Term, cid: str, *, cache: str) -> None:
+        if _TERM_TABLE_LOG.isEnabledFor(logging.DEBUG):
+            _TERM_TABLE_LOG.debug(
+                "term_table_node",
+                extra={
+                    "stage": "lift.workspace.to_rpc.term_table.node",
+                    "cid": cid,
+                    "node_count": len(self.nodes),
+                    "cache": cache,
+                    "term_kind": type(term).__name__,
+                },
+            )
 
 
 def formula_to_value(f: Formula) -> Value:
