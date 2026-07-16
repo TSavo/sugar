@@ -162,16 +162,37 @@ def _installed_native_extension(module_name: str) -> str | None:
         return None
 
 
+def _relative_import_package_parts(defining_module: str) -> list[str]:
+    """Package components used as the base for relative imports.
+
+    Matches importlib ``__package__``: a package ``__init__`` module uses its
+    own dotted name; a leaf module uses its parent package. Without this,
+    ``from ._private.utils import *`` inside ``numpy/testing/__init__.py``
+    wrongly resolves to ``numpy._private.utils`` instead of
+    ``numpy.testing._private.utils`` — so star-reexported callables like
+    ``numpy.testing.assert_equal`` never bind (CallSugar FactoryPanic, #4585).
+    """
+    if not defining_module:
+        return []
+    installed = _installed_source(defining_module)
+    if installed is not None:
+        _source, sourcefile = installed
+        if sourcefile.endswith(("__init__.py", "__init__.pyi")):
+            return defining_module.split(".")
+    parts = defining_module.split(".")
+    return parts[:-1]
+
+
 def _absolute_import_from_module(
     defining_module: str, imported_module: str | None, level: int
 ) -> str | None:
     if level == 0:
         return imported_module or None
-    package = defining_module.split(".")[:-1]
+    package = _relative_import_package_parts(defining_module)
     ascend = level - 1
     if ascend > len(package):
         return None
-    base = package[: len(package) - ascend] if ascend else package
+    base = list(package[: len(package) - ascend] if ascend else package)
     if imported_module:
         base.extend(imported_module.split("."))
     return ".".join(base) or None

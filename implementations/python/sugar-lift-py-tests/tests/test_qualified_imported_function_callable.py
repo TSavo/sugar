@@ -141,6 +141,54 @@ def test_literal_all_star_reexport_reaches_exact_function_without_execution(
     assert not any(name.startswith("fixture_star") for name in sys.modules)
 
 
+def test_package_init_star_reexport_resolves_like_numpy_testing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Package ``__init__.py`` relative star-import (numpy.testing shape).
+
+    ``numpy/testing/__init__.py`` does ``from ._private.utils import *`` with a
+    literal ``__all__`` on the child. Relative level-1 must use the package
+    itself as ``__package__``, not its parent — otherwise
+    ``numpy.testing.assert_equal`` never resolves (#4585).
+    """
+    package = tmp_path / "fixture_pkg_star"
+    package.mkdir()
+    private = package / "_private"
+    private.mkdir()
+    (private / "__init__.py").write_text(
+        'raise RuntimeError("private package must not execute")\n',
+        encoding="utf-8",
+    )
+    (private / "utils.py").write_text(
+        'raise RuntimeError("utils must not execute")\n'
+        '__all__ = ["exact"]\n'
+        "def exact(value=7):\n"
+        "    return value\n",
+        encoding="utf-8",
+    )
+    (package / "__init__.py").write_text(
+        'raise RuntimeError("package must not execute")\n'
+        "from ._private.utils import *\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    callsite, temporal = _consumer_call(
+        "from fixture_pkg_star import exact as chosen\n", "chosen()"
+    )
+
+    alias = temporal.value_for("chosen")
+    assert isinstance(alias, ImportAliasValue)
+    assert alias.import_target == "fixture_pkg_star.exact"
+    assert alias.resolved_value is not None
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.target_name == "fixture_pkg_star._private.utils.exact"
+    assert callsite.parameters == ("value",)
+    assert callsite.arg_values == (TermValue(7),)
+    assert callsite.body is not None
+    assert not any(name.startswith("fixture_pkg_star") for name in sys.modules)
+
+
 def test_dynamic_all_star_reexport_keeps_qualified_bodyless_coordinate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -285,9 +333,7 @@ def test_missing_qualified_imported_function_keeps_bodyless_coordinate(
     )
     monkeypatch.syspath_prepend(str(tmp_path))
 
-    callsite, _ = _consumer_call(
-        "from fixture_missing.api import absent\n", "absent()"
-    )
+    callsite, _ = _consumer_call("from fixture_missing.api import absent\n", "absent()")
 
     assert isinstance(callsite, CallSiteValue)
     assert callsite.target_name == "fixture_missing.api.absent"
