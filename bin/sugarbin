@@ -705,7 +705,13 @@ tool_versions() {
 build_identity() {
   local stamp="$1"
   require_b3sum || return 1
-  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$package" "$bin_name" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
+  # Monorepo HEAD is part of identity so a shelf/cache hit cannot serve a binary
+  # whose compile-time SUGAR_BUILD_GIT_HEAD disagrees with the checkout the
+  # Python kit reports (split-pipeline refuse: kit @HEAD != binary @oldHEAD).
+  local git_head
+  git_head="$(attestation_git_head)"
+  [[ -n "$git_head" ]] || git_head="unknown"
+  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$package" "$bin_name" "$git_head" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
 import sys
 def emit(label, value):
     label = label.encode(); value = value.encode()
@@ -713,7 +719,7 @@ def emit(label, value):
     sys.stdout.buffer.write(str(len(value)).encode() + b":" + value)
 for label, value in zip(("sourceStamp", "rustcVersionVerbose", "cargoVersionVerbose",
                          "platform", "targetTriple", "profile", "sortedFeatures",
-                         "package", "binary"), sys.argv[1:]):
+                         "package", "binary", "gitHead"), sys.argv[1:]):
     emit(label, value)
 PY
 }
@@ -1010,7 +1016,14 @@ build_from_source() {
     args+=(--release)
   fi
   mkdir -p "$build_root"
-  CARGO_TARGET_DIR="$build_root" SUGAR_BUILD_STAMP="$stamp" "$cargo_bin" "${args[@]}"
+  # Pin compile-time HEAD to this checkout so split-pipeline kit@HEAD matches.
+  local git_head
+  git_head="$(attestation_git_head)"
+  [[ -n "$git_head" ]] || git_head="unknown"
+  CARGO_TARGET_DIR="$build_root" \
+    SUGAR_BUILD_STAMP="$stamp" \
+    SUGAR_BUILD_GIT_HEAD="$git_head" \
+    "$cargo_bin" "${args[@]}"
   local built="$build_root/$profile/$bin_name"
   [[ -x "$built" ]] || { log "Cargo did not produce requested executable $built"; return 1; }
 
