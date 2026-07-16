@@ -260,7 +260,7 @@ def _cache_cardinalities() -> tuple[int, int]:
 
 
 def _log_resident_profile(request_count: int, method: Any) -> None:
-    every = _profile_interval("SUGAR_KIT_PROFILE_EVERY")
+    every = _profile_interval("SUGAR_KIT_MEMORY_PROFILE_EVERY")
     if every <= 0 or request_count % every:
         return
     rss_kib, peak_rss_kib = _resident_rss_kib()
@@ -3650,7 +3650,7 @@ def _serve() -> None:
 
 def main(argv: Optional[List[str]] = None) -> None:
     _configure_transport_logging()
-    if _profile_interval("SUGAR_KIT_PROFILE_EVERY") > 0:
+    if _profile_interval("SUGAR_KIT_MEMORY_PROFILE_EVERY") > 0:
         tracemalloc.start(1)
     argv = argv or []
     if "--audit-only" in argv:
