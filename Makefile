@@ -455,6 +455,10 @@ examples-gate-extended:
 .PHONY: test-showcases
 test-showcases: check-showcase-kit-preflight check-lift-manifest-pythonpath
 	@set -e; \
+	shard_count="$${SHOWCASE_SHARD_COUNT:-1}"; \
+	shard_index="$${SHOWCASE_SHARD_INDEX:-0}"; \
+	case "$$shard_count:$$shard_index" in *[!0-9:]*|:*|*:) echo "invalid showcase shard $$shard_index/$$shard_count" >&2; exit 2;; esac; \
+	if [ "$$shard_count" -lt 1 ] || [ "$$shard_index" -ge "$$shard_count" ]; then echo "invalid showcase shard $$shard_index/$$shard_count" >&2; exit 2; fi; \
 	if [ "$${SHOWCASES_ON_REMOTE:-0}" != "1" ] && [ "$$(uname -s)" != "Linux" ] && [ "$${USE_BCARGO:-1}" != "0" ]; then \
 	  echo "==== test-showcases on battleaxe via bcargo ===="; \
 	  $(BCARGO) build --manifest-path implementations/rust/Cargo.toml \
@@ -476,12 +480,18 @@ test-showcases: check-showcase-kit-preflight check-lift-manifest-pythonpath
 	done; \
 	bin/sugarbin --profile release >/dev/null || exit $$?; \
 	failed=""; \
+	showcase_ordinal=0; \
+	selected=0; \
 	for s in $(SHOWCASE_RUNS); do \
-	  echo ""; \
-	  echo "==== $$s ===="; \
-	  "$$s" || failed="$$failed $$s"; \
+		ordinal="$$showcase_ordinal"; showcase_ordinal=$$((showcase_ordinal + 1)); \
+		if [ $$((ordinal % shard_count)) -ne "$$shard_index" ]; then continue; fi; \
+		selected=$$((selected + 1)); \
+		echo ""; \
+		echo "==== [showcase shard $$shard_index/$$shard_count] $$s ===="; \
+		"$$s" || failed="$$failed $$s"; \
 	done; \
 	echo ""; \
+	echo "==== showcase shard $$shard_index/$$shard_count selected=$$selected ===="; \
 	if [ -n "$$failed" ]; then \
 	  echo "==== test-showcases FAIL:$$failed ===="; \
 	  exit 1; \
@@ -584,6 +594,13 @@ test-3809-dod-scoreboard:
 ci: check-lift-refusal-vocabulary test-python-format test-showcases self-attest coretests-source-audit coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
+
+.PHONY: ci-core
+# The non-showcase portion of the acid test. GitHub Actions runs this beside
+# deterministic showcase shards; `ci` remains the one-command local surface.
+ci-core: check-lift-refusal-vocabulary test-python-format self-attest coretests-source-audit coretests-invariants
+	@echo ""
+	@echo "==== ci-core: PASS ===="
 
 # --- Self-lift experiments ---------------------------------------------------
 #

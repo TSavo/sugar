@@ -27,8 +27,8 @@ permissions:
   id-token: write
 
 jobs:
-  acid-test:
-    name: acid test (make ci)
+  core:
+    name: acid core instruments
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 180
 
@@ -45,31 +45,16 @@ jobs:
         working-directory: implementations/rust
         run: cargo fmt --all -- --check
 
-      - name: Restore Rust target dirs
-        if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@v5
+      - name: Restore and save Rust target dirs
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             implementations/rust/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Cache Rust target dirs
-        if: github.event_name != 'pull_request'
-        uses: actions/cache/restore@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            implementations/rust/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-
+            ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}-
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
@@ -96,8 +81,8 @@ jobs:
           sudo install -m 0755 /tmp/vampire-bin/vampire /usr/local/bin/vampire
           vampire --version | head -1 || true
 
-      - name: make ci
-        run: make ci
+      - name: Run core instruments
+        run: make ci-core
         env:
           CI: '1'
           GH_TOKEN: ${{ github.token }}
@@ -107,3 +92,80 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: implementations/rust/target/release/sugar
+
+  showcases:
+    name: showcases (${{ matrix.shard }}/4)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust 1.96.0
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt
+
+      - name: Restore and save Rust target dirs
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            implementations/rust/target
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}-
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install lift package deps
+        run: python -m pip install --quiet blake3 pynacl cbor2 pytest
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends z3 maven unzip b3sum
+          if ! command -v vampire >/dev/null 2>&1; then
+            curl -fsSL -o /tmp/vampire.zip https://github.com/vprover/vampire/releases/download/v5.0.1/vampire-Linux-X64.zip
+            unzip -o -q /tmp/vampire.zip -d /tmp/vampire-bin
+            sudo install -m 0755 /tmp/vampire-bin/vampire /usr/local/bin/vampire
+          fi
+
+      - name: Run showcase shard
+        run: make test-showcases
+        env:
+          CI: '1'
+          GH_TOKEN: ${{ github.token }}
+          SHOWCASE_SHARD_COUNT: '4'
+          SHOWCASE_SHARD_INDEX: ${{ matrix.shard }}
+
+  acid-test:
+    name: acid test (make ci)
+    if: always()
+    needs: [core, showcases]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report the complete acid-test vector
+        env:
+          CORE_RESULT: ${{ needs.core.result }}
+          SHOWCASE_RESULT: ${{ needs.showcases.result }}
+        run: |
+          echo "core=$CORE_RESULT showcases=$SHOWCASE_RESULT"
+          test "$CORE_RESULT" = success
+          test "$SHOWCASE_RESULT" = success
