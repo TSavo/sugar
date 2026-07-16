@@ -1551,10 +1551,19 @@ def test_witness_pipeline_grades_unanimous_refusal_as_typed_red() -> None:
             "status": "refused",
             "verification": {
                 "solverInvocations": [
-                    {"solver": "z3", "verdict": "refused"},
-                    {"solver": "maude", "verdict": "undecidable"},
-                    {"solver": "coq", "verdict": "undecidable"},
-                ]
+                    {"solver": "z3", "verdict": "refused", "seatState": "inability"},
+                    {
+                        "solver": "maude",
+                        "verdict": "undecidable",
+                        "seatState": "inability",
+                    },
+                    {
+                        "solver": "coq",
+                        "verdict": "undecidable",
+                        "seatState": "inability",
+                    },
+                ],
+                "portfolioSeats": ["z3", "maude", "coq"],
             },
         }
     ]
@@ -1562,14 +1571,49 @@ def test_witness_pipeline_grades_unanimous_refusal_as_typed_red() -> None:
     assert prove_verdict({"rows": rows}) == "refused"
 
 
+def test_witness_pipeline_grades_unavailable_seat_as_provisional_refusal() -> None:
+    row = {
+        "status": "refused",
+        "verification": {
+            "portfolioSeats": ["z3", "maude"],
+            "solverInvocations": [
+                {"solver": "z3", "verdict": "refused", "seatState": "inability"},
+                {
+                    "solver": "maude",
+                    "verdict": "undecidable",
+                    "seatState": "unavailable",
+                },
+            ],
+        },
+    }
+
+    assert prove_verdict({"rows": [row]}) == "refused-modulo-unavailable-seats"
+
+
+def test_witness_pipeline_panics_when_refusal_ladder_omits_portfolio_seat() -> None:
+    row = {
+        "status": "refused",
+        "verification": {
+            "portfolioSeats": ["z3", "maude"],
+            "solverInvocations": [
+                {"solver": "z3", "verdict": "refused", "seatState": "inability"},
+            ],
+        },
+    }
+
+    with pytest.raises(ProofObligationPanic):
+        prove_verdict({"rows": [row]})
+
+
 def test_witness_pipeline_rejects_refusal_without_unanimous_ladder() -> None:
     row = {
         "status": "refused",
         "verification": {
             "solverInvocations": [
-                {"solver": "z3", "verdict": "refused"},
-                {"solver": "maude", "verdict": "discharged"},
-            ]
+                {"solver": "z3", "verdict": "refused", "seatState": "inability"},
+                {"solver": "maude", "verdict": "discharged", "seatState": "discharged"},
+            ],
+            "portfolioSeats": ["z3", "maude"],
         },
     }
 

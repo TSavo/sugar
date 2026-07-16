@@ -237,31 +237,21 @@ fn portfolio(
     source: InputSource<'_>,
     formula: Option<&CompilerInput>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
-    // Resolve handles up front; surface lookup misses as Undecidable.
-    let mut handles: Vec<&Arc<dyn Solver>> = vec![];
-    for n in names.iter().copied() {
-        match lookup(n, registry) {
-            Ok(h) => handles.push(h),
-            Err(e) => {
-                return (ObligationVerdict::Undecidable, e, vec![]);
-            }
-        }
-    }
-
     // Run all in parallel via rayon. We do not implement subprocess
     // cancellation in v0; first-wins is "first to *return* a definitive
     // verdict" not "first to start". For SubprocessSolver this means
     // remaining solvers continue until natural completion or timeout.
     // The plan-execution semantics (first definitive verdict wins) is
     // still honored by the post-collection sort.
-    let results: Vec<(String, SolverIdentity, SolveResult)> = handles
+    let results: Vec<(String, SolverIdentity, SolveResult)> = names
         .par_iter()
-        .map(|s| {
-            (
+        .map(|seat| match lookup(*seat, registry) {
+            Ok(s) => (
                 s.ir_compiler().to_string(),
                 s.identity(),
                 solve_with_input(s.as_ref(), source, formula),
-            )
+            ),
+            Err(error) => unavailable_seat_result(*seat, error),
         })
         .collect();
 
@@ -284,21 +274,24 @@ fn portfolio(
                     )
                 })
                 .cloned();
-            if definitive.is_none() && unanimous_refusal(names, &results) {
-                let reason = format!(
-                    "portfolio[first-wins]: unanimous refusal ladder: {}",
-                    refusal_ladder_reason(&results)
-                );
-                let invs = results
-                    .into_iter()
-                    .map(|(compiler, identity, result)| SolverInvocation {
-                        authoritative: true,
-                        compiler,
-                        identity,
-                        result,
-                    })
-                    .collect();
-                return (ObligationVerdict::Refused, reason, invs);
+            if definitive.is_none() {
+                if let Some(grade) = refusal_grade(names, &results) {
+                    let reason = format!(
+                        "portfolio[first-wins]: {}: {}",
+                        grade.reason_label(),
+                        refusal_ladder_reason(&results)
+                    );
+                    let invs = results
+                        .into_iter()
+                        .map(|(compiler, identity, result)| SolverInvocation {
+                            authoritative: true,
+                            compiler,
+                            identity,
+                            result,
+                        })
+                        .collect();
+                    return (ObligationVerdict::Refused, reason, invs);
+                }
             }
             let chosen = definitive.unwrap_or_else(|| sorted[0].clone());
             let mut invs: Vec<SolverInvocation> = vec![];
@@ -335,9 +328,10 @@ fn portfolio(
                 })
                 .collect();
             if definitives.is_empty() {
-                if unanimous_refusal(names, &results) {
+                if let Some(grade) = refusal_grade(names, &results) {
                     let reason = format!(
-                        "portfolio[consensus]: unanimous refusal ladder: {}",
+                        "portfolio[consensus]: {}: {}",
+                        grade.reason_label(),
                         refusal_ladder_reason(&results)
                     );
                     let invs = results
@@ -420,37 +414,99 @@ fn portfolio(
     }
 }
 
-fn unanimous_refusal(
+#[derive(Clone, Copy)]
+enum RefusalGrade {
+    Certified,
+    Provisional,
+}
+
+impl RefusalGrade {
+    fn reason_label(self) -> &'static str {
+        match self {
+            Self::Certified => "unanimous refusal ladder",
+            Self::Provisional => "refused-modulo-unavailable-seats",
+        }
+    }
+}
+
+fn refusal_grade(
     names: &[SolverSeat],
     results: &[(String, SolverIdentity, SolveResult)],
-) -> bool {
-    !results.is_empty()
-        && results.len() == names.len()
-        && results.iter().all(|(_, _, result)| {
-            matches!(
-                result.verdict,
-                ObligationVerdict::Refused | ObligationVerdict::Undecidable
-            ) && !matches!(
-                result.exit.kind,
-                SolverExitKind::SpawnError
-                    | SolverExitKind::StdinError
-                    | SolverExitKind::Timeout
-                    | SolverExitKind::WaitError
-                    | SolverExitKind::FrontendDecodeError
-            )
-        })
+) -> Option<RefusalGrade> {
+    if results.is_empty() || results.len() != names.len() {
+        return None;
+    }
+    let inability_count = results
+        .iter()
+        .filter(|(_, _, result)| is_logical_inability(result))
+        .count();
+    if inability_count == 0
+        || !results
+            .iter()
+            .all(|(_, _, result)| is_logical_inability(result) || is_unavailable(result))
+    {
+        return None;
+    }
+    if results.iter().any(|(_, _, result)| is_unavailable(result)) {
+        Some(RefusalGrade::Provisional)
+    } else {
+        Some(RefusalGrade::Certified)
+    }
+}
+
+fn is_logical_inability(result: &SolveResult) -> bool {
+    matches!(
+        result.verdict,
+        ObligationVerdict::Refused | ObligationVerdict::Undecidable
+    ) && !is_unavailable(result)
+}
+
+fn is_unavailable(result: &SolveResult) -> bool {
+    matches!(
+        result.exit.kind,
+        SolverExitKind::SpawnError
+            | SolverExitKind::StdinError
+            | SolverExitKind::Timeout
+            | SolverExitKind::WaitError
+            | SolverExitKind::FrontendDecodeError
+    )
+}
+
+fn unavailable_seat_result(
+    seat: SolverSeat,
+    error: String,
+) -> (String, SolverIdentity, SolveResult) {
+    (
+        "unavailable".to_string(),
+        SolverIdentity::default(),
+        SolveResult::with_evidence(
+            ObligationVerdict::Undecidable,
+            seat.as_str().to_string(),
+            "unavailable".to_string(),
+            SolverExitMetadata::new(SolverExitKind::SpawnError),
+            Some(error),
+            None,
+            None,
+            std::time::Duration::ZERO,
+            false,
+        ),
+    )
 }
 
 fn refusal_ladder_reason(results: &[(String, SolverIdentity, SolveResult)]) -> String {
     results
         .iter()
         .map(|(compiler, _, result)| {
-            format!(
-                "{}[{}]={}",
-                result.solver_name,
-                compiler,
-                result.verdict.as_str()
-            )
+            if is_unavailable(result) {
+                format!("{}=unavailable", result.solver_name)
+            } else {
+                format!(
+                    "{}[{}]={}",
+                    result.solver_name,
+                    compiler,
+                    result.verdict.as_str()
+                )
+            }
         })
         .collect::<Vec<_>>()
         .join(" -> ")
@@ -879,6 +935,31 @@ mod tests {
         let plan = SolverPlan::Single(SolverSeat::Bitwuzla);
         let (v, _, _) = run_plan(&plan, &r, "x", None);
         assert_eq!(v, ObligationVerdict::Undecidable);
+    }
+
+    #[test]
+    fn missing_portfolio_seat_is_recorded_as_provisional_unavailable() {
+        let mut reg: Registry = HashMap::new();
+        reg.insert(
+            SolverSeat::Z3,
+            Arc::new(StubSolver::new("z3", ObligationVerdict::Refused)) as SolverHandle,
+        );
+        let plan = SolverPlan::Portfolio {
+            names: vec![SolverSeat::Z3, SolverSeat::Maude],
+            mode: PortfolioMode::FirstWins,
+        };
+
+        let (verdict, reason, invocations) = run_plan(&plan, &reg, "x", None);
+
+        assert_eq!(verdict, ObligationVerdict::Refused);
+        assert!(reason.contains("refused-modulo-unavailable-seats"));
+        assert!(reason.contains("maude=unavailable"));
+        assert_eq!(invocations.len(), 2);
+        let maude = invocations
+            .iter()
+            .find(|invocation| invocation.result.solver_name == "maude")
+            .expect("configured missing seat remains in ladder");
+        assert_eq!(maude.result.exit.kind, SolverExitKind::SpawnError);
     }
 
     #[test]
