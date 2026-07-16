@@ -796,6 +796,11 @@ def test_verify_rpc_initialize_declares_python_verify_surface():
         "ir_version": "v1.1.0",
         "emits_signed_mementos": False,
     }
+    kit_source = result["kit_source"]
+    assert isinstance(kit_source, dict)
+    assert kit_source.get("identity")
+    assert kit_source.get("kind") in {"git", "content"}
+
 
 
 def test_checked_in_project_registers_python_verify_contract_surface():

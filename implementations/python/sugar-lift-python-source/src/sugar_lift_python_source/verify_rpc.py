@@ -42,6 +42,7 @@ from typing import Any
 
 from .leaf_assertions import harvest_source
 from .lifter import _module_path, lift_source
+from .source_provenance import kit_source_provenance
 from .verify_dialect import (
     VerifyDialectRefusal,
     collect_int_signatures,
@@ -80,6 +81,9 @@ def initialize_result() -> dict[str, Any]:
             "ir_version": "v1.1.0",
             "emits_signed_mementos": False,
         },
+        # Required when this RPC is registered as the `python` lift surface
+        # (CLI enforce_python_kit_source / split-pipeline provenance).
+        "kit_source": kit_source_provenance(),
     }
 
 
