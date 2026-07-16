@@ -103,6 +103,7 @@ def test_module_constant_dig_keeps_call_literal_and_records_testimony() -> None:
     inv = _expand_term(assertion["inv"], wire["termTable"])
 
     assert not gaps
+    assert inv["name"] == "py.eq"
     assert "call:days" in repr(inv)
     assert assertion["proofirProvenance"]["warrants"][1]["floorChain"] == [
         "DI4 = days(5)"
@@ -129,6 +130,8 @@ def test_ground_module_bindings_are_operands_when_definition_dig_loses_groundnes
     ]
 
     assert not gaps
+    assert inv["name"] == "="
+    assert inv["name"] != "py.eq"
     assert "call:days" not in repr(inv)
     assert "146097" in repr(inv)
     assert "36524" in repr(inv)
@@ -155,6 +158,9 @@ def test_datetime_93_and_97_discriminate_call_literal_from_ground_binding(
     inv_97 = _expand_term(rows[97]["inv"], wire["termTable"])
 
     assert not gaps
+    assert inv_93["name"] == "py.eq"
+    assert inv_97["name"] == "="
+    assert inv_97["name"] != "py.eq"
     assert "call:_days_before_year" in repr(inv_93)
     assert "call:_days_before_year" not in repr(inv_97)
     assert "146097" in repr(inv_97)

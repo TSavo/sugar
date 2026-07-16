@@ -9,6 +9,7 @@ from sugar_lift_py_tests.ir import (
     _ConstInt,
     _ConstReal,
     _ConstStr,
+    _Ctor,
     ctor,
     eq,
     implies,
@@ -29,6 +30,14 @@ def _term_sort(term: Term) -> EqualitySort | None:
         return "Bool"
     if isinstance(term, _ConstStr):
         return "String"
+    if isinstance(term, _Ctor) and term.name in {"+", "-", "*", "//", "%"}:
+        operand_sorts = tuple(_term_sort(operand) for operand in term.args)
+        if (
+            operand_sorts
+            and operand_sorts[0] in {"Int", "Real"}
+            and all(sort == operand_sorts[0] for sort in operand_sorts)
+        ):
+            return operand_sorts[0]
     return None
 
 
