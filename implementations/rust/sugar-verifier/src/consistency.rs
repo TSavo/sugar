@@ -2013,7 +2013,7 @@ fn lone_fact_has_covering_universe(inv: &Json) -> bool {
         },
         _ => inv,
     };
-    is_ground_regex_membership(node)
+    is_ground_regex_membership(node) || is_ground_string_theory_predicate(node)
 }
 
 /// A `str.in-regex(subject, R)` membership atom whose SUBJECT is a pinned ground
@@ -2039,6 +2039,34 @@ fn is_ground_regex_membership(node: &Json) -> bool {
         formula_is_closed(subject, &mut Vec::new()) && !term_has_opaque_call(subject);
     let pattern_is_const_literal = pattern.get("kind").and_then(|k| k.as_str()) == Some("const");
     subject_pinned && pattern_is_const_literal
+}
+
+/// A binary string-theory predicate (`prefix-of` / `suffix-of` / `contains`) whose
+/// BOTH operands are pinned ground terms (closed, no uninterpreted `call:` ctor).
+/// The Rust string-predicate lifter emits these atoms for literal receivers
+/// (`"abc".starts_with("a")` → `prefix-of("a","abc")`); z3's string sort decides
+/// them outright — the same covering-universe law as regex membership, a different
+/// string theory atom. Uninterpreted method EUF (`method:starts_with(...)`) is NOT
+/// covered here: that remains vacuous without a body universe or a sibling.
+fn is_ground_string_theory_predicate(node: &Json) -> bool {
+    if node.get("kind").and_then(|k| k.as_str()) != Some("atomic") {
+        return false;
+    }
+    let Some(name) = node.get("name").and_then(|v| v.as_str()) else {
+        return false;
+    };
+    if !matches!(name, "prefix-of" | "suffix-of" | "contains") {
+        return false;
+    }
+    let Some(args) = node.get("args").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    if args.len() != 2 {
+        return false;
+    }
+    args.iter().all(|arg| {
+        formula_is_closed(arg, &mut Vec::new()) && !term_has_opaque_call(arg)
+    })
 }
 
 /// True if any `call:*` ctor appears anywhere in `term`. Such a ctor is an
@@ -2110,9 +2138,11 @@ fn check_inv_consistency_with_vacuity_reason(
     // but a lone fact can still be genuinely decided by its RIGHT-HAND SORT'S
     // UNIVERSE when that universe is a real theory rather than the degenerate `=`
     // over an uninterpreted term. `str.in-regex(subject, R)` with a pinned ground
-    // subject is regex-as-language membership: z3 returns real SAT/UNSAT, so it is a
-    // substantive verdict and must reach the solver. Vacuous is therefore: alone in
-    // the bucket AND no covering universe — not merely count<2.
+    // subject is regex-as-language membership; ground `prefix-of`/`suffix-of`/
+    // `contains` are string-theory predicates. In both cases z3 returns real
+    // SAT/UNSAT, so the lone fact is a substantive verdict and must reach the
+    // solver. Vacuous is therefore: alone in the bucket AND no covering universe
+    // — not merely count<2.
     let constraint_count = count_top_level_constraints(&inv);
     if constraint_count < 2 && !lone_fact_has_covering_universe(&inv) {
         let effect = match vacuity_kind {
@@ -5926,6 +5956,113 @@ mod tests {
             res[0].reason
         );
     }
+
+    /// COVERING UNIVERSE — string theory. The string-predicate lifter emits
+    /// ground `prefix-of`/`suffix-of`/`contains` for literal receivers
+    /// (`"abc".starts_with("a")` → `prefix-of("a","abc")`). z3's string sort
+    /// decides these atoms; a lone matching ground predicate must DISCHARGE,
+    /// not trip the count<2 vacuity refuse (std-core-string-predicates).
+    #[test]
+    fn lone_ground_prefix_of_matching_subject_discharges() {
+        let (plan, reg) = z3_plan_and_registry();
+        let name = "method:starts_with#euf#c:callresult_method_starts_with_a2(s:\"abc\",s:\"a\")::assertion";
+        let inv = json!({
+            "kind": "and",
+            "operands": [{
+                "kind": "atomic",
+                "name": "prefix-of",
+                "args": [str_const("a"), str_const("abc")]
+            }]
+        });
+        let mut pool = MementoPool::default();
+        insert_contract(&mut pool, "blake3-512:prefixgood", name, inv);
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        assert_eq!(res.len(), 1, "one prefix-of row: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Discharged,
+            "ground prefix-of(\"a\",\"abc\") is string-theory membership of the prefix relation -> discharged: {res:?}"
+        );
+    }
+
+    /// THE TEETH: ground `contains` that is false under string theory is Unsatisfied.
+    #[test]
+    fn lone_ground_contains_nonmatching_is_refuted() {
+        let (plan, reg) = z3_plan_and_registry();
+        let name = "method:contains#euf#c:callresult_method_contains_a2(s:\"abc\",s:\"z\")::assertion";
+        let inv = json!({
+            "kind": "and",
+            "operands": [{
+                "kind": "atomic",
+                "name": "contains",
+                "args": [str_const("abc"), str_const("z")]
+            }]
+        });
+        let mut pool = MementoPool::default();
+        insert_contract(&mut pool, "blake3-512:containsbad", name, inv);
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        assert_eq!(res.len(), 1, "one contains row: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "ground contains(\"abc\",\"z\") is REFUTED by string theory: {res:?}"
+        );
+    }
+
+    /// SOUNDNESS RAIL. Opaque method EUF (uninterpreted callresult) stays vacuous —
+    /// covering universe is string-theory atoms, not `method:starts_with` as EUF.
+    #[test]
+    fn lone_opaque_method_starts_with_euf_stays_vacuous_refused() {
+        let (plan, reg) = z3_plan_and_registry();
+        let name = "method:starts_with#euf#c:callresult_method_starts_with_a2(s:\"abc\",s:\"a\")::assertion";
+        let call = json!({
+            "kind": "ctor",
+            "name": "method:starts_with",
+            "args": [str_const("abc"), str_const("a")]
+        });
+        let inv = json!({
+            "kind": "and",
+            "operands": [{
+                "kind": "atomic",
+                "name": "=",
+                "args": [call, {"kind":"const","sort":{"kind":"primitive","name":"Bool"},"value":true}]
+            }]
+        });
+        let mut pool = MementoPool::default();
+        insert_contract(&mut pool, "blake3-512:eufopaque", name, inv);
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        assert_eq!(res.len(), 1, "one euf row: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Refused,
+            "opaque method EUF without a body universe must stay vacuous-refused: {res:?}"
+        );
+        assert!(
+            res[0].reason.contains("no covering universe")
+                || res[0].reason.contains("no sibling"),
+            "reason must name vacuity, not invent discharge: {}",
+            res[0].reason
+        );
+    }
+
 
     /// MIXED-OPERATOR SAME-TERM, number sort universe. Two facts about the SAME
     /// left-operand call term but DIFFERENT operators must JOIN and let the number
