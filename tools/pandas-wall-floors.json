@@ -1,7 +1,7 @@
 {
   "kind": "pandas-wall-ratchet-floors",
   "floors": {
-    "mode": "complete",
+    "mode": "frontier",
     "construction_gaps": {
       "total_ceiling": 0,
       "templates": {}
