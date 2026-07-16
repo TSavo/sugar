@@ -36,23 +36,30 @@ impl Outcome {
     }
 }
 
-/// A typed CLASSIFICATION of a production solve, derived purely from the
-/// real pipeline's `Report` rows. This is the exact partition
-/// `sugar-cli`'s `proof_report_gate` computes to pick an exit code; naming
-/// it here lets `solve_project`'s callers reason about the outcome as a
-/// value instead of re-deriving the row tally, WITHOUT owning the exit-code
-/// constants (which live in `sugar-cli`). `exit_code()` reproduces today's
-/// mapping bit-for-bit, so the CLI's behavior is derivable from this class
-/// alone.
+/// A typed CLASSIFICATION of a production solve. This is the exact partition
+/// `sugar-cli`'s `proof_report_gate` (and the production prove face) uses to
+/// pick an exit code. Naming it here lets `solve_project`'s callers reason
+/// about the outcome as a value instead of re-deriving the row tally,
+/// WITHOUT owning the exit-code constants (which live in `sugar-cli`).
 ///
-/// Link errors are deliberately NOT a variant here: they are carried as a
-/// separate `ProvenOutcome::link_errors` field because they must NOT change
-/// the exit code today (see `ProvenOutcome` / `solve_project` docs). This
-/// class is exactly and only the report-derived verdict dimension.
+/// # Exit-code law (sugar#3893, T option C)
+///
+/// Unresolved link surface reddens the gate BY DEFAULT — no opt-in flag.
+/// Green over unbridged callsites is the vacuous pass this campaign kills.
+/// Link failure is a DISTINCT red from verify-fail and solver-fail:
+///
+/// - `Verified` → `0` (EXIT_OK)
+/// - `VerifyFailed` → `1` (EXIT_VERIFY_FAIL) — "refuted — change the fact"
+/// - `Undecided` → `3` (EXIT_SOLVER_FAIL) — "undecided"
+/// - `LinkFailed` → `4` (EXIT_LINK_FAIL) — "no program — feed more"
+///
+/// Discharge still runs when links are unresolved (annotate-not-block on the
+/// pipeline body); only the shell exit is red. Real pools with sparse bridges
+/// will exit 4 until density work drains the unbridged surface — intended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutcomeClass {
-    /// Report had at least one row, no load errors, and every row is
-    /// `Discharged`. Maps to the success exit code (`0`).
+    /// Report had at least one row, no load errors, every row is
+    /// `Discharged`, and the link surface is clean. Maps to exit `0`.
     Verified,
     /// Report had at least one HARD-failed row (`Unsatisfied`, `Refused`,
     /// or `Disagreement`). Maps to `EXIT_VERIFY_FAIL` (`1`).
@@ -61,13 +68,18 @@ pub enum OutcomeClass {
     /// (`Undecidable`/`SolverTimeout`), an empty report, or load errors.
     /// Maps to `EXIT_SOLVER_FAIL` (`3`).
     Undecided,
+    /// Unresolved / signature-mismatched cross-kit edges, or an undecodable
+    /// link view (`link_derivation_error`). Maps to `EXIT_LINK_FAIL` (`4`).
+    /// Takes precedence over a report that would otherwise be green or
+    /// undecided: unbridged surface is never a vacuous pass.
+    LinkFailed,
 }
 
 impl OutcomeClass {
     /// Classify a real-pipeline `Report` by the SAME partition
-    /// `sugar-cli::cmd_verify::proof_report_gate` uses. Kept byte-for-byte
-    /// in step with that gate: any change to the exit-code law must change
-    /// both together.
+    /// `sugar-cli::cmd_verify::proof_report_gate` uses for the *report*
+    /// dimension alone. Link surface is layered on top via
+    /// [`Self::with_link_surface`].
     pub fn from_report(report: &sugar_verifier::Report) -> Self {
         let mut hard_failed_rows = 0usize;
         let mut undecided_rows = 0usize;
@@ -94,16 +106,97 @@ impl OutcomeClass {
         }
     }
 
-    /// Today's exit code for this class, matching `sugar-cli`'s
-    /// `EXIT_OK` / `EXIT_VERIFY_FAIL` / `EXIT_SOLVER_FAIL` (`0` / `1` / `3`)
-    /// bit-for-bit. The CLI faces still call `proof_report_gate` directly for
-    /// their exit code (behavior parity); this method exists so the mapping is
-    /// derivable from the typed class alone.
+    /// Fold the link surface into a report-derived class under the #3893
+    /// exit-code law: unresolved links / undecodable link views redden to
+    /// `LinkFailed` BY DEFAULT. Link failure is the "no program — feed more"
+    /// diagnosis and takes precedence at the shell so CI can discriminate it
+    /// from verify-fail (refuted) and solver-fail (undecided). Report rows
+    /// still carry any refutations; only the exit-code class is reordered.
+    ///
+    /// - link surface dirty → `LinkFailed` (exit 4)
+    /// - else → report class unchanged
+    pub fn with_link_surface(self, has_link_errors: bool, has_link_derivation_error: bool) -> Self {
+        if has_link_errors || has_link_derivation_error {
+            return OutcomeClass::LinkFailed;
+        }
+        self
+    }
+
+    /// Exit code for this class, matching `sugar-cli`'s
+    /// `EXIT_OK` / `EXIT_VERIFY_FAIL` / `EXIT_SOLVER_FAIL` / `EXIT_LINK_FAIL`
+    /// (`0` / `1` / `3` / `4`). The CLI faces should derive their proof-dimension
+    /// exit from this class alone (gate convergence with `proof_report_gate`).
     pub fn exit_code(self) -> u8 {
         match self {
             OutcomeClass::Verified => 0,
             OutcomeClass::VerifyFailed => 1,
             OutcomeClass::Undecided => 3,
+            OutcomeClass::LinkFailed => 4,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sugar_verifier::{CallSite, ObligationVerdict, Report, ReportRow};
+
+    fn report_with(status: ObligationVerdict) -> Report {
+        let mut report = Report::default();
+        report.rows.push(ReportRow {
+            callsite: CallSite {
+                bridge_ir_name: "bridge".into(),
+                property_name: "property".into(),
+                ..CallSite::default()
+            },
+            status,
+            reason: status.as_str().to_string(),
+            discharge_method: None,
+            body_discharge_tier: None,
+            verification: None,
+        });
+        report
+    }
+
+    #[test]
+    fn link_surface_reddens_otherwise_verified_report() {
+        let class = OutcomeClass::from_report(&report_with(ObligationVerdict::Discharged));
+        assert_eq!(class, OutcomeClass::Verified);
+        assert_eq!(
+            class.with_link_surface(true, false),
+            OutcomeClass::LinkFailed
+        );
+        assert_eq!(
+            class.with_link_surface(false, true),
+            OutcomeClass::LinkFailed
+        );
+        assert_eq!(
+            class.with_link_surface(false, false),
+            OutcomeClass::Verified
+        );
+        assert_eq!(OutcomeClass::LinkFailed.exit_code(), 4);
+    }
+
+    #[test]
+    fn link_surface_outranks_hard_verify_fail_at_shell() {
+        // Report still names the refutation; exit code names the incomplete feed.
+        let class = OutcomeClass::from_report(&report_with(ObligationVerdict::Unsatisfied));
+        assert_eq!(class, OutcomeClass::VerifyFailed);
+        assert_eq!(
+            class.with_link_surface(true, true),
+            OutcomeClass::LinkFailed
+        );
+        assert_eq!(OutcomeClass::VerifyFailed.exit_code(), 1);
+        assert_eq!(OutcomeClass::LinkFailed.exit_code(), 4);
+    }
+
+    #[test]
+    fn undecided_with_links_is_link_failed_not_solver_fail() {
+        let class = OutcomeClass::from_report(&report_with(ObligationVerdict::Undecidable));
+        assert_eq!(class, OutcomeClass::Undecided);
+        assert_eq!(
+            class.with_link_surface(true, false),
+            OutcomeClass::LinkFailed
+        );
     }
 }

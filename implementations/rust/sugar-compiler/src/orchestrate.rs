@@ -165,11 +165,12 @@ impl Orchestrate for ProofGraph {
 }
 
 /// A production solve, classified. Beat 1 (`link_errors`, derived from the
-/// pool's real bridge data) ANNOTATES the run; beat 2 (`artifact`, the
-/// untouched `ProofRunArtifact` from the real `Runner` pipeline) IS the run.
-/// `outcome_class` partitions `artifact.report` onto today's exit-code law.
+/// pool's real bridge data) ANNOTATES the discharge body; beat 2 (`artifact`,
+/// the untouched `ProofRunArtifact` from the real `Runner` pipeline) IS the
+/// run. `outcome_class` folds report + link surface onto the exit-code law
+/// (sugar#3893).
 ///
-/// # Why beat 1 ANNOTATES and never blocks (do not relitigate)
+/// # Discharge still runs; the shell exit reddens (sugar#3893)
 ///
 /// `solve_project` runs the full `Runner` pipeline REGARDLESS of whether
 /// `link_errors` is empty. It does NOT short-circuit the way
@@ -178,43 +179,51 @@ impl Orchestrate for ProofGraph {
 /// `UnresolvedSymbol` link error (see `linker_inputs.rs`), and real
 /// production pools routinely carry unbridged callsites (prior work measured
 /// ~5 bridges against ~44k pool members). Short-circuiting on a non-empty
-/// `link_errors` would therefore brick nearly every real `prove`/`verify`
-/// run. So the link errors are carried ALONGSIDE the artifact as typed data,
-/// a distinct dimension from the report's verdicts, and they do NOT affect
-/// the exit code today.
+/// `link_errors` would suppress the report telemetry density work needs.
 ///
-/// Whether unresolved edges SHOULD one day tighten the exit code (closing the
-/// silent-vacuous soundness gap #3857 names) is an exit-code-law question that
-/// is deliberately OUT OF SCOPE here: this door keeps exit codes byte-identical
-/// to the pre-`solve_project` faces. Evolving the law is T's call, not this
-/// wrapper's.
+/// The exit-code law is separate from short-circuit: unresolved links and
+/// undecodable link views redden `outcome_class` to `LinkFailed` (exit 4) by
+/// default — green over unbridged callsites is the vacuous pass #3857/#3893
+/// kill. Real pools exit red until density work drains the unbridged surface;
+/// that is intended. No opt-in flag softens the gate.
 #[derive(Debug, Clone)]
 pub struct ProvenOutcome {
     /// Beat 1: unresolved / signature-mismatched cross-kit edges the pool's
-    /// bridge data left unbound. ANNOTATION ONLY -- non-empty here does NOT
-    /// suppress or alter `artifact`, and does NOT change the exit code today.
+    /// bridge data left unbound. Non-empty here does NOT suppress or alter
+    /// `artifact` (discharge still runs) but DOES redden `outcome_class` to
+    /// `LinkFailed` under the #3893 exit-code law.
     pub link_errors: Vec<LinkerError>,
     /// Beat 1 could not even derive edges (e.g. a malformed contract body,
-    /// #3869's strict decode). ANNOTATION ONLY, same law as `link_errors`:
-    /// production discharge (beat 2) still runs -- a pool that proves today
-    /// must not brick because its LINK VIEW is undecodable (gitar/Devin on
-    /// #3891). The strict doors (`solve`/`solve_deriving_links`) keep their
-    /// hard Err; this production wrapper annotates.
+    /// #3869's strict decode). Discharge (beat 2) still runs — a pool that
+    /// can discharge must not brick because its LINK VIEW is undecodable —
+    /// but the undecodable view reddens `outcome_class` to `LinkFailed`
+    /// (an unaccountable pool is not green).
     pub link_derivation_error: Option<String>,
     /// Beat 2: the untouched rich artifact from the real `Runner` pipeline
     /// (witnesses, stages, report). Report bytes are identical to a direct
     /// `Runner::run_with_proof_run` over the same pool.
     pub artifact: ProofRunArtifact,
-    /// The report-derived verdict class; `outcome_class.exit_code()`
-    /// reproduces today's CLI exit code bit-for-bit.
+    /// Report + link surface classification; `outcome_class.exit_code()` is
+    /// the production proof-dimension exit (`0`/`1`/`3`/`4`).
     pub outcome_class: OutcomeClass,
 }
 
 impl ProvenOutcome {
-    /// `true` iff beat 1 surfaced at least one unbound/mismatched edge. Pure
-    /// annotation -- see the type doc: this never gates the pipeline.
+    /// `true` iff beat 1 surfaced at least one unbound/mismatched edge.
+    /// Does not short-circuit discharge; reddens the exit via `outcome_class`.
     pub fn has_link_errors(&self) -> bool {
         !self.link_errors.is_empty()
+    }
+
+    /// `true` iff the link surface is dirty (unresolved edges and/or
+    /// undecodable derivation). Input to the #3893 gate.
+    pub fn has_unresolved_link_surface(&self) -> bool {
+        self.has_link_errors() || self.link_derivation_error.is_some()
+    }
+
+    /// Production proof-dimension exit code (`0`/`1`/`3`/`4`).
+    pub fn exit_code(&self) -> u8 {
+        self.outcome_class.exit_code()
     }
 }
 
@@ -228,11 +237,12 @@ impl ProvenOutcome {
 ///     `link_errors`;
 ///   - beat 2 is the untouched `ProofRunArtifact` (report bytes byte-identical
 ///     to a direct `run_with_proof_run` over the same pool);
-///   - `outcome_class` classifies `artifact.report` onto today's exit-code law.
+///   - `outcome_class` folds report + link surface onto the #3893 exit-code law
+///     (`LinkFailed` / exit 4 when the link surface is dirty).
 ///
-/// Beat 1 ANNOTATES, it does not block: the run happens regardless of
-/// `link_errors` (see `ProvenOutcome`'s doc for the empirical reason -- real
-/// pools are mostly unbridged, so a short-circuit would brick real runs).
+/// Beat 1 does not short-circuit discharge: the run happens regardless of
+/// `link_errors` (see `ProvenOutcome`'s doc). The shell exit still reddens
+/// when links are unresolved — that is the exit-code law, not a soft annotation.
 ///
 /// Disk-load face: builds the pool via [`load_pool`] then runs the **one**
 /// discharge body. Solve is one path, zero project FS (#3809 series).
@@ -252,10 +262,11 @@ pub fn solve_project(
 
 /// Production solve over a **preloaded** pool (sugar#3809 Task 8 / one-solve).
 ///
-/// Same annotate-not-block link + `Runner::run_with_proof_run_with_pool`
-/// discharge as [`solve_project`], without re-walking the project for
-/// `.proof` files. Use this when the pool was assembled with speakers via
-/// [`pool_from_graph_with_speaker`] and vendor `ProofBytes` merge.
+/// Same discharge-always link annotation + `Runner::run_with_proof_run_with_pool`
+/// body as [`solve_project`] (exit reddens on dirty link surface per #3893),
+/// without re-walking the project for `.proof` files. Use this when the pool
+/// was assembled with speakers via [`pool_from_graph_with_speaker`] and vendor
+/// `ProofBytes` merge.
 ///
 /// ## One path — zero project FS
 ///
@@ -285,20 +296,21 @@ pub fn solve_project_with_pool(
     discharge_with_pool(cfg, compilers, pool)
 }
 
-/// THE solve body: annotate-not-block LINK + Runner discharge over one pool.
+/// THE solve body: LINK surface (never short-circuits discharge) + Runner
+/// discharge over one pool. `outcome_class` applies the #3893 exit-code law.
 fn discharge_with_pool(
     cfg: RunnerConfig,
     compilers: CompilerRegistry,
     pool: MementoPool,
 ) -> Result<ProvenOutcome, SolveError> {
-    // Beat 1 -- LINK (annotate). Derive real edges from the pool's bridge data
+    // Beat 1 -- LINK surface. Derive real edges from the pool's bridge data
     // and bind; keep only the genuine LINK-class failures (mirrors
     // `link_beat`'s filter). This never short-circuits beat 2.
     let (link_errors, link_derivation_error) = match derive_linker_inputs(&pool) {
         Ok(links) => (link_class_errors(links), None),
-        // Annotate-not-block, applied to the derivation itself: a malformed
-        // contract makes the LINK VIEW undecodable, not the discharge
-        // invalid. Beat 2 proceeds; the refusal rides as typed data.
+        // A malformed contract makes the LINK VIEW undecodable, not the
+        // discharge invalid. Beat 2 proceeds; the refusal rides as typed data
+        // and reddens the exit via `with_link_surface`.
         Err(reason) => (Vec::new(), Some(reason.to_string())),
     };
 
@@ -306,7 +318,10 @@ fn discharge_with_pool(
     let runner = Runner::new_with_compilers(cfg, compilers);
     let artifact = runner.run_with_proof_run_with_pool(pool)?;
 
-    let outcome_class = OutcomeClass::from_report(&artifact.report);
+    let has_link_errors = !link_errors.is_empty();
+    let has_derivation_error = link_derivation_error.is_some();
+    let outcome_class = OutcomeClass::from_report(&artifact.report)
+        .with_link_surface(has_link_errors, has_derivation_error);
     Ok(ProvenOutcome {
         link_errors,
         link_derivation_error,

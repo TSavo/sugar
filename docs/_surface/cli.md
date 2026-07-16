@@ -596,9 +596,10 @@ Structured logging to stderr can be controlled:
 
 **sugar CLI exit codes** (from `implementations/rust/sugar-cli/src/main.rs`):
 - `0` = EXIT_OK — Success
-- `1` = EXIT_VERIFY_FAIL — Verification failure (proof does not hold)
+- `1` = EXIT_VERIFY_FAIL — Verification failure (proof does not hold; "refuted — change the fact")
 - `2` = EXIT_USER_ERROR — User error (bad args, file not found, invalid config)
-- `3` = EXIT_SOLVER_FAIL — Solver failure (Z3 unavailable, timeout, unsupported theory)
+- `3` = EXIT_SOLVER_FAIL — Solver failure (Z3 unavailable, timeout, unsupported theory; "undecided")
+- `4` = EXIT_LINK_FAIL — Unresolved / undecodable link surface (sugar#3893; "no program — feed more"). Unbridged callsites redden by default; green over them is a vacuous pass.
 
 Other binaries may use their own conventions; see individual documentation.
 
