@@ -492,7 +492,6 @@ package="$(package_for_bin "$bin_name")" || exit 2
 repo_root="$(git -C "$script_dir/.." rev-parse --show-toplevel 2>/dev/null || (cd "$script_dir/.." && pwd -P))"
 repo_root="$(cd "$repo_root" && pwd -P)"
 rust_workspace="$repo_root/implementations/rust"
-legacy_shelf_tag="sugar-binary-shelf"
 
 log() {
   printf 'sugarbin: %s\n' "$*" >&2
@@ -1123,6 +1122,117 @@ build_from_source() {
   rm -f "$target_root/$profile/.sugarbin-source-stamp"
 }
 
+filesystem_shelf_root() {
+  printf '%s\n' "${SUGAR_BINARY_SHELF_ROOT:-$HOME/.cache/sugar/binary-shelf-v2}"
+}
+
+filesystem_shelf_cell() {
+  local stamp="$1" name="$2"
+  printf '%s/%s/%s/%s/%s\n' \
+    "$(filesystem_shelf_root)" "$(platform_key)" "$profile" \
+    "$(stamp_for_filename "$stamp")" "$name"
+}
+
+filesystem_shelf_complete() {
+  local cell="$1" name="$2"
+  [[ -f "$cell/$name.gz" \
+    && -f "$cell/$name.sugarbin.json" \
+    && -f "$cell/$name.metadata.json" ]]
+}
+
+publish_to_filesystem_shelf() {
+  local bin="$1" stamp="$2" name="$3" manifest cell parent tmp actor sha meta
+  manifest="$(artifact_manifest_path "$bin")"
+  [[ "${SUGAR_BINARY_PUBLISH:-1}" != "0" ]] || { log "publish disabled by SUGAR_BINARY_PUBLISH=0"; return 0; }
+  cell="$(filesystem_shelf_cell "$stamp" "$name")"
+  if filesystem_shelf_complete "$cell" "$name"; then
+    log "filesystem shelf already has $name"
+    return 0
+  fi
+  command -v gzip >/dev/null 2>&1 || { log "gzip not found; cannot publish $name"; return 1; }
+  parent="$(dirname "$cell")"
+  mkdir -p "$parent/.incoming"
+  tmp="$(mktemp -d "$parent/.incoming/$name.XXXXXX")"
+  gzip -9 -c "$bin" >"$tmp/$name.gz"
+  cp "$manifest" "$tmp/$name.sugarbin.json"
+  actor="${GITHUB_ACTOR:-${USER:-unknown}}"
+  sha="$(sha256_file "$bin")"
+  meta="$tmp/$name.metadata.json"
+  python3 - "$meta" "$actor" "$stamp" "$(platform_key)" "$profile" "$sha" "$bin" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+path, actor, stamp, platform, profile, sha256, binary = sys.argv[1:]
+with open(path, "w", encoding="utf-8") as out:
+    json.dump({
+        "actor": actor,
+        "buildStamp": stamp,
+        "platform": platform,
+        "profile": profile,
+        "sha256": sha256,
+        "source": binary,
+        "publishedAt": datetime.now(timezone.utc).isoformat(),
+        "transport": "filesystem-cas-v2",
+    }, out, indent=2, sort_keys=True)
+    out.write("\n")
+PY
+  if python3 - "$tmp" "$cell" <<'PY'
+import os
+import sys
+
+source, destination = sys.argv[1:]
+try:
+    os.rename(source, destination)
+except FileExistsError:
+    raise SystemExit(3)
+PY
+  then
+    log "published $name to filesystem shelf"
+    return 0
+  fi
+  local status=$?
+  rm -rf "$tmp"
+  if [[ "$status" == 3 ]] && filesystem_shelf_complete "$cell" "$name"; then
+    log "filesystem shelf publish raced for $name; peer won"
+    return 0
+  fi
+  log "filesystem shelf publication failed for $name"
+  return 1
+}
+
+pull_from_filesystem_shelf() {
+  local stamp="$1" identity="$2" name="$3" dir candidate_dir candidate manifest cell tmp
+  dir="$(cache_dir)"
+  candidate_dir="$dir/$name"
+  candidate="$candidate_dir/$bin_name"
+  manifest="$(artifact_manifest_path "$candidate")"
+  if verify_artifact_manifest "$candidate" "$stamp" "$identity" "prebuilt cache"; then
+    log "prebuilt cache hit for $name"
+    materialize_cached_artifact "$candidate" "$stamp" "$identity"
+    return 0
+  fi
+  [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
+  cell="$(filesystem_shelf_cell "$stamp" "$name")"
+  if ! filesystem_shelf_complete "$cell" "$name"; then
+    log "filesystem shelf miss for $name"
+    return 1
+  fi
+  command -v gzip >/dev/null 2>&1 || { log "gzip not found; cannot unpack $name"; return 2; }
+  mkdir -p "$candidate_dir"
+  tmp="$candidate.sugarbin-stage.$$"
+  gzip -dc "$cell/$name.gz" >"$tmp"
+  cp "$cell/$name.sugarbin.json" "$manifest"
+  chmod +x "$tmp"
+  mv -f "$tmp" "$candidate"
+  if ! verify_artifact_manifest "$candidate" "$stamp" "$identity" "filesystem shelf artifact"; then
+    log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=remove the corrupt cell and rebuild from declared inputs"
+    return 2
+  fi
+  log "filesystem shelf hit for $name"
+  materialize_cached_artifact "$candidate" "$stamp" "$identity"
+}
+
 main() {
   if [[ "$print_source_stamp" == "1" ]]; then
     source_stamp
@@ -1147,14 +1257,17 @@ main() {
   candidate="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
   if verify_artifact_manifest "$candidate" "$stamp" "$identity" "local target"; then
     log "local target cache hit for $bin_name"
-    publish_if_absent "$candidate" "$stamp" "$name"
+    publish_to_filesystem_shelf "$candidate" "$stamp" "$name" || return $?
     printf '%s\n' "$candidate"
     return 0
   fi
 
-  if candidate="$(pull_from_shelf "$stamp" "$identity" "$name")"; then
+  if candidate="$(pull_from_filesystem_shelf "$stamp" "$identity" "$name")"; then
     printf '%s\n' "$candidate"
     return 0
+  else
+    local shelf_status=$?
+    [[ "$shelf_status" != 2 ]] || return 1
   fi
 
   if [[ "${SUGAR_BINARY_ALLOW_BUILD:-1}" == "0" ]]; then
@@ -1167,7 +1280,7 @@ main() {
     log "built binary did not match requested stamp $stamp"
     return 1
   fi
-  publish_if_absent "$built" "$stamp" "$name"
+  publish_to_filesystem_shelf "$built" "$stamp" "$name" || return $?
   printf '%s\n' "$built"
 }
 
