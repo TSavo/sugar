@@ -893,6 +893,29 @@ struct Replay<'a, 'c, 's> {
     insert: InsertSugar,
 }
 
+/// Heap-backed continuations for structural replay. Nested source control flow must
+/// not become nested Rust calls: a vendor test can have a shallow syntax tree whose
+/// finite domains multiply into tens of thousands of replay visits. Keeping one
+/// continuation per active source construct bounds native stack depth independently
+/// of that expansion.
+enum ReplayStep<'t> {
+    Stmts {
+        stmts: &'t [Stmt],
+        next: usize,
+    },
+    Expr(&'t Expr),
+    If(&'t syn::ExprIf),
+    Match(&'t syn::ExprMatch),
+    Loop {
+        vars: Vec<String>,
+        values: Vec<Expr>,
+        next: usize,
+        body: &'t [Stmt],
+        saved: Vec<(String, Option<Expr>)>,
+    },
+    Restore(Vec<(String, Option<Expr>)>),
+}
+
 impl<'a, 'c, 's> Replay<'a, 'c, 's> {
     fn new(ctx: &'s SugarCtx<'a, 'c>) -> Self {
         Self {
@@ -906,13 +929,73 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
     }
 
     fn replay_stmts(&mut self, stmts: &[Stmt]) -> Option<()> {
-        for stmt in stmts {
-            if self.replay_stmt(stmt).is_none() {
+        let mut work = vec![ReplayStep::Stmts { stmts, next: 0 }];
+        while let Some(step) = work.pop() {
+            let completed = match step {
+                ReplayStep::Stmts { stmts, next } => {
+                    let Some(stmt) = stmts.get(next) else {
+                        continue;
+                    };
+                    work.push(ReplayStep::Stmts {
+                        stmts,
+                        next: next + 1,
+                    });
+                    self.replay_stmt(stmt, &mut work)
+                }
+                ReplayStep::Expr(expr) => self.replay_expr_stmt(expr, &mut work),
+                ReplayStep::If(expr_if) => self.replay_if_stmt(expr_if, &mut work),
+                ReplayStep::Match(expr_match) => self.replay_match(expr_match, &mut work),
+                ReplayStep::Loop {
+                    vars,
+                    values,
+                    next,
+                    body,
+                    saved,
+                } => {
+                    if next == values.len() {
+                        self.restore_bindings(saved);
+                        continue;
+                    }
+                    let value = values[next].clone();
+                    if bind_loop_value(&mut self.bindings, &vars, value).is_none() {
+                        work.push(ReplayStep::Restore(saved));
+                        None
+                    } else {
+                        work.push(ReplayStep::Loop {
+                            vars,
+                            values,
+                            next: next + 1,
+                            body,
+                            saved,
+                        });
+                        work.push(ReplayStep::Stmts {
+                            stmts: body,
+                            next: 0,
+                        });
+                        Some(())
+                    }
+                }
+                ReplayStep::Restore(saved) => {
+                    self.restore_bindings(saved);
+                    Some(())
+                }
+            };
+            if completed.is_none() {
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::for_replay",
-                    stmt = %crate::token_key(stmt),
-                    "replay statement declined"
+                    "iterative replay step declined"
                 );
+                // Recursive replay restored every active loop/match binding while
+                // unwinding a declined child. Unwind the heap continuations in the
+                // same inner-to-outer order before returning the failure.
+                while let Some(pending) = work.pop() {
+                    match pending {
+                        ReplayStep::Loop { saved, .. } | ReplayStep::Restore(saved) => {
+                            self.restore_bindings(saved);
+                        }
+                        _ => {}
+                    }
+                }
                 return None;
             }
         }
@@ -939,7 +1022,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         Some(())
     }
 
-    fn replay_stmt(&mut self, stmt: &Stmt) -> Option<()> {
+    fn replay_stmt<'t>(&mut self, stmt: &'t Stmt, work: &mut Vec<ReplayStep<'t>>) -> Option<()> {
         match stmt {
             Stmt::Local(local) => {
                 let mut handled_temporal = false;
@@ -966,9 +1049,15 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             }
             Stmt::Macro(stmt_macro) => self.emit_macro(&stmt_macro.mac),
             Stmt::Expr(Expr::Macro(expr_macro), _) => self.emit_macro(&expr_macro.mac),
-            Stmt::Expr(Expr::If(expr_if), _) => self.replay_if_stmt(expr_if),
-            Stmt::Expr(Expr::ForLoop(for_loop), _) => self.replay_for_loop(for_loop),
-            Stmt::Expr(Expr::Match(expr_match), _) => self.replay_match(expr_match),
+            Stmt::Expr(Expr::If(expr_if), _) => {
+                work.push(ReplayStep::If(expr_if));
+                Some(())
+            }
+            Stmt::Expr(Expr::ForLoop(for_loop), _) => self.replay_for_loop(for_loop, work),
+            Stmt::Expr(Expr::Match(expr_match), _) => {
+                work.push(ReplayStep::Match(expr_match));
+                Some(())
+            }
             Stmt::Expr(Expr::Binary(binary), _)
                 if matches!(
                     binary.op,
@@ -978,31 +1067,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                 self.replay_compound_assign(binary)
             }
             Stmt::Expr(Expr::Assign(assign), _) => self.replay_assign(assign),
-            Stmt::Expr(expr, _) => {
-                match self
-                    .extract_if
-                    .replay_expr(expr, self.ctx.scope, &self.bindings)?
-                {
-                    ReplayAction::Handled(()) => return Some(()),
-                    ReplayAction::NotMine => {}
-                }
-                match self
-                    .insert
-                    .replay_expr(expr, self.ctx.scope, &self.bindings)?
-                {
-                    ReplayAction::Handled(()) => return Some(()),
-                    ReplayAction::NotMine => {}
-                }
-                if self.replay_helper_call_expr(expr)? {
-                    return Some(());
-                }
-                if count_asserts_in_expr_local(expr) == 0 {
-                    Some(())
-                } else {
-                    let substituted = substitute_expr(expr, &self.bindings);
-                    self.emit_constraint_expr(&substituted)
-                }
-            }
+            Stmt::Expr(expr, _) => self.replay_expr_stmt(expr, work),
             Stmt::Item(Item::Const(item)) => {
                 let expr = replay_const_initializer_expr(item);
                 let expr = substitute_expr(&expr, &self.bindings);
@@ -1019,7 +1084,53 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         }
     }
 
-    fn replay_if_stmt(&mut self, expr_if: &syn::ExprIf) -> Option<()> {
+    fn replay_expr_stmt<'t>(
+        &mut self,
+        expr: &'t Expr,
+        work: &mut Vec<ReplayStep<'t>>,
+    ) -> Option<()> {
+        match expr {
+            Expr::If(expr_if) => {
+                work.push(ReplayStep::If(expr_if));
+                return Some(());
+            }
+            Expr::ForLoop(for_loop) => return self.replay_for_loop(for_loop, work),
+            Expr::Match(expr_match) => {
+                work.push(ReplayStep::Match(expr_match));
+                return Some(());
+            }
+            _ => {}
+        }
+        match self
+            .extract_if
+            .replay_expr(expr, self.ctx.scope, &self.bindings)?
+        {
+            ReplayAction::Handled(()) => return Some(()),
+            ReplayAction::NotMine => {}
+        }
+        match self
+            .insert
+            .replay_expr(expr, self.ctx.scope, &self.bindings)?
+        {
+            ReplayAction::Handled(()) => return Some(()),
+            ReplayAction::NotMine => {}
+        }
+        if self.replay_helper_call_expr(expr)? {
+            return Some(());
+        }
+        if count_asserts_in_expr_local(expr) == 0 {
+            Some(())
+        } else {
+            let substituted = substitute_expr(expr, &self.bindings);
+            self.emit_constraint_expr(&substituted)
+        }
+    }
+
+    fn replay_if_stmt<'t>(
+        &mut self,
+        expr_if: &'t syn::ExprIf,
+        work: &mut Vec<ReplayStep<'t>>,
+    ) -> Option<()> {
         let cond = self.expr_const_bool(&expr_if.cond)?;
         debug!(
             sugar = "for_replay",
@@ -1028,21 +1139,35 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             "replayed const-if statement under pinned loop value"
         );
         if cond {
-            self.replay_stmts(&expr_if.then_branch.stmts)
+            work.push(ReplayStep::Stmts {
+                stmts: &expr_if.then_branch.stmts,
+                next: 0,
+            });
         } else {
             let Some((_, else_expr)) = expr_if.else_branch.as_ref() else {
                 return Some(());
             };
             match else_expr.as_ref() {
-                Expr::Block(block) => self.replay_stmts(&block.block.stmts),
-                Expr::If(next) => self.replay_if_stmt(next),
-                Expr::Unsafe(block) => self.replay_stmts(&block.block.stmts),
-                other => self.replay_stmt(&Stmt::Expr(other.clone(), None)),
+                Expr::Block(block) => work.push(ReplayStep::Stmts {
+                    stmts: &block.block.stmts,
+                    next: 0,
+                }),
+                Expr::If(next) => work.push(ReplayStep::If(next)),
+                Expr::Unsafe(block) => work.push(ReplayStep::Stmts {
+                    stmts: &block.block.stmts,
+                    next: 0,
+                }),
+                other => work.push(ReplayStep::Expr(other)),
             }
         }
+        Some(())
     }
 
-    fn replay_for_loop(&mut self, for_loop: &syn::ExprForLoop) -> Option<()> {
+    fn replay_for_loop<'t>(
+        &mut self,
+        for_loop: &'t syn::ExprForLoop,
+        work: &mut Vec<ReplayStep<'t>>,
+    ) -> Option<()> {
         let vars = loop_var_bindings(for_loop.pat.as_ref())?;
         let domain = substitute_expr(&for_loop.expr, &self.bindings);
         if range_domain_exceeds_replay_cap(&domain, self.ctx.scope) {
@@ -1062,13 +1187,17 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             .iter()
             .map(|name| (name.clone(), self.bindings.get(name).cloned()))
             .collect();
-        let result = (|| {
-            for value in values {
-                bind_loop_value(&mut self.bindings, &vars, value)?;
-                self.replay_stmts(&for_loop.body.stmts)?;
-            }
-            Some(())
-        })();
+        work.push(ReplayStep::Loop {
+            vars,
+            values,
+            next: 0,
+            body: &for_loop.body.stmts,
+            saved,
+        });
+        Some(())
+    }
+
+    fn restore_bindings(&mut self, saved: Vec<(String, Option<Expr>)>) {
         for (name, previous) in saved {
             if let Some(expr) = previous {
                 self.bindings.insert(name, expr);
@@ -1076,7 +1205,6 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                 self.bindings.remove(&name);
             }
         }
-        result
     }
 
     fn replay_helper_call_expr(&mut self, expr: &Expr) -> Option<bool> {
@@ -1188,7 +1316,11 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         Some(())
     }
 
-    fn replay_match(&mut self, expr_match: &syn::ExprMatch) -> Option<()> {
+    fn replay_match<'t>(
+        &mut self,
+        expr_match: &'t syn::ExprMatch,
+        work: &mut Vec<ReplayStep<'t>>,
+    ) -> Option<()> {
         let scrutinee = self.eval_expr(&expr_match.expr)?;
         for arm in &expr_match.arms {
             if arm.guard.is_some() {
@@ -1204,19 +1336,19 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                             .push((name.clone(), self.bindings.get(&name).cloned()));
                         self.bindings.insert(name, expr);
                     }
-                    let result = match arm.body.as_ref() {
-                        Expr::Block(block) => self.replay_stmts(&block.block.stmts),
-                        Expr::Unsafe(block) => self.replay_stmts(&block.block.stmts),
-                        other => self.replay_stmt(&Stmt::Expr(other.clone(), None)),
-                    };
-                    for (name, previous) in saved_pattern_bindings {
-                        if let Some(expr) = previous {
-                            self.bindings.insert(name, expr);
-                        } else {
-                            self.bindings.remove(&name);
-                        }
+                    work.push(ReplayStep::Restore(saved_pattern_bindings));
+                    match arm.body.as_ref() {
+                        Expr::Block(block) => work.push(ReplayStep::Stmts {
+                            stmts: &block.block.stmts,
+                            next: 0,
+                        }),
+                        Expr::Unsafe(block) => work.push(ReplayStep::Stmts {
+                            stmts: &block.block.stmts,
+                            next: 0,
+                        }),
+                        other => work.push(ReplayStep::Expr(other)),
                     }
-                    return result;
+                    return Some(());
                 }
             }
         }
