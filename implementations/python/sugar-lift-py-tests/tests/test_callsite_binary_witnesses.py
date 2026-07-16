@@ -63,14 +63,20 @@ def test_callsite_add_dig_truthful_sat_through_real_solver(tmp_path: Path) -> No
 
 
 def test_callsite_add_dig_dual_ir_has_contradictory_rhs() -> None:
-    """Dual-assert material: same contract name, RHS 3 vs 4 (injectivity fuel)."""
-    rpc = lift_file_payload(_DUAL, "t.py").to_rpc()
-    asserts = [r for r in rpc["ir"] if r.get("name") == "test_dual::assertion"]
+    """Dual-assert material: shared `#euf#` key, RHS 3 vs 4 (injectivity fuel)."""
+    payload = lift_file_payload(_DUAL, "t.py")
+    asserts = [
+        r
+        for r in payload.ir
+        if r.name.startswith("A#euf#") and r.name.endswith("::assertion")
+    ]
     assert len(asserts) == 2
-    rhs = sorted(r["inv"]["args"][1]["value"] for r in asserts)
+    # Same callsite key so ambient / mint conjoin can form the dual.
+    assert {r.name for r in asserts} == {asserts[0].name}
+    rhs = sorted(r.inv.ir_formula.args[1].value for r in asserts)
     assert rhs == [3, 4]
     # Shared left coordinate (call:A).
-    lefts = {r["inv"]["args"][0]["name"] for r in asserts}
+    lefts = {r.inv.ir_formula.args[0].name for r in asserts}
     assert lefts == {"call:A"}
 
 

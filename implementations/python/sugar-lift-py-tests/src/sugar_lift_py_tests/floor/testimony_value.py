@@ -15,7 +15,13 @@ class TestimonyValue(FloorValue):
     to support before mint -- a named gap until a per-body-mode ruling lands.)
 
     Projects ONLY facts: facts() from the record's inv_contribution. No post,
-    no universe."""
+    no universe.
+
+    Ground callsite equalities mint under the callsite-keyed `#euf#` name so
+    ambient consistency can join duals that share a left call term across test
+    functions (A2 dual-logo class). Bare `{test}::assertion` remains for
+    non-callsite facts.
+    """
 
     name: str
     formals: tuple[str, ...]
@@ -37,8 +43,9 @@ class TestimonyValue(FloorValue):
         )
 
     def payload_rows(self, def_memento):
-        # Testimony mints NO function-contract row. Each fact is a contract row
-        # named `{name}::assertion` -- the wire mark observed facts ride under.
+        # Testimony mints NO function-contract row. Each fact is a contract row.
+        # Ground callsite py.eq rides under its `#euf#` key (verifier ambient
+        # join); everything else keeps the historical `{test}::assertion` mark.
         import dataclasses
 
         from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
@@ -48,7 +55,7 @@ class TestimonyValue(FloorValue):
             for row in entry.mint_contribution(self.name, self.formals):
                 rows.append(
                     BodyUniverseDto(
-                        name=f"{self.name}::assertion",
+                        name=_assertion_contract_name(self.name, row.formula),
                         inv=row.formula,
                         source_warrants=[
                             dataclasses.replace(
@@ -65,3 +72,28 @@ class TestimonyValue(FloorValue):
                 )
         del def_memento  # no function-contract row to attach the def warrant to
         return rows
+
+
+def _assertion_contract_name(test_name: str, formula) -> str:
+    euf = _ground_callsite_euf_name(formula)
+    if euf is not None:
+        return euf
+    return f"{test_name}::assertion"
+
+
+def _ground_callsite_euf_name(formula) -> str | None:
+    """Return the `#euf#` contract name when `formula` is py.eq(call:…, …)."""
+    from sugar_lift_py_tests.ir import _Atomic, _Ctor
+    from sugar_lift_py_tests.proofir.nodes.equality_fact import (
+        canonical_euf_callsite_name,
+    )
+
+    ir = getattr(formula, "ir_formula", None)
+    if ir is None:
+        ir = formula
+    if not isinstance(ir, _Atomic) or ir.name != "py.eq" or len(ir.args) != 2:
+        return None
+    left = ir.args[0]
+    if not isinstance(left, _Ctor) or not left.name.startswith("call:"):
+        return None
+    return canonical_euf_callsite_name(left)

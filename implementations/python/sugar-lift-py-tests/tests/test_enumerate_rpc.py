@@ -1006,7 +1006,8 @@ def test_implication_seek_returns_one_linker_demand_for_resolved_call(
     assert question["kind"] == "implication-question"
     assert question["targetSymbol"] == "call:add"
     assert question["candidateCount"] == 1
-    assert demand["sourceContract"]["name"] == "test_add::assertion"
+    assert demand["sourceContract"]["name"].startswith("add#euf#")
+    assert demand["sourceContract"]["name"].endswith("::assertion")
     assert demand["callEdge"]["target_symbol"] == "call:add"
     assert [
         candidate["contract"]["name"] for candidate in demand["targetCandidates"]
