@@ -616,7 +616,18 @@ def _check_frontier_floors(
 ) -> list[str]:
     breaches: list[str] = []
     independent_panics = summary.frontier.get("independentPanicCount", 0)
-    if isinstance(independent_panics, int) and independent_panics > 0:
+    # #4489 recovered-audit stage: when ceilings are pinned, non-zero panics
+    # are the measured residue (status=failed is expected). Absolute red only
+    # applies to the old single-named-frontier mode without ceilings.
+    has_ceilings = (
+        floors.frontier_independent_panics is not None
+        or floors.frontier_suppressed_descendants is not None
+    )
+    if (
+        not has_ceilings
+        and isinstance(independent_panics, int)
+        and independent_panics > 0
+    ):
         breaches.append(
             "recovered construction audit is red: "
             f"independent_panics={independent_panics}"
@@ -644,8 +655,8 @@ def _check_frontier_floors(
             )
     if floors.mode != "frontier":
         breaches.append(
-            "pandas wall stopped at a named frontier; switch "
-            "tools/pandas-wall-floors.json to mode=frontier and pin the frontier"
+            "pandas wall stopped at a recovered frontier; switch "
+            "tools/pandas-wall-floors.json to mode=frontier and pin the ceilings"
         )
     message = summary.frontier.get("message", "")
     owner = summary.frontier.get("owner", "")

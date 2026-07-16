@@ -840,3 +840,13 @@ def test_pandas_frontier_ceiling_passes_at_or_below_the_pin() -> None:
         _pandas_frontier_summary(11417, 12938), _pandas_frontier_floors()
     )
     assert not any("ceiling breached" in breach for breach in breaches)
+    # Recovered-audit stage: non-zero panics under the pin are residue, not red.
+    assert breaches == []
+
+
+def test_pandas_frontier_with_ceilings_allows_nonzero_panics_under_pin() -> None:
+    breaches = check_pandas_wall_floors(
+        _pandas_frontier_summary(9769, 11679), _pandas_frontier_floors()
+    )
+    assert breaches == []
+    assert not any("audit is red" in breach for breach in breaches)
