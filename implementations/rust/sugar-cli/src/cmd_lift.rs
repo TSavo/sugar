@@ -5327,8 +5327,11 @@ impl<'a> VisualFormulaRenderer<'a> {
             ),
             LiftTermKind::Ctor { name, args } => {
                 let reference = format!("<as above, cid={}>", term.cid());
+                let reference_width = visible_width(&reference);
                 let shareable = self.term_repeats.get(term.cid()).copied().unwrap_or(0) > 1
-                    && visible_width(&reference) < visible_width(&self.term_node_unshared(term));
+                    && self
+                        .term_node_unshared_bounded(term, reference_width)
+                        .is_none();
                 if shareable && !self.seen_term_cids.insert(term.cid().to_string()) {
                     self.reference_returns += 1;
                     return reference;
@@ -5359,9 +5362,18 @@ impl<'a> VisualFormulaRenderer<'a> {
         }
     }
 
-    fn term_node_unshared(&self, term: &LiftTermNode) -> String {
+    /// Render only while the unshared form can still beat the CID reference.
+    ///
+    /// `LiftTermNode` is an Arc DAG. Recursively materializing its unshared
+    /// spelling can expand exponentially even though the stored graph is
+    /// small. The renderer needs only a comparison, so crossing `max_width`
+    /// returns `None` immediately and makes absurd allocator requests
+    /// unrepresentable (#4603).
+    fn term_node_unshared_bounded(&self, term: &LiftTermNode, max_width: usize) -> Option<String> {
+        let within_budget =
+            |rendered: String| (visible_width(&rendered) <= max_width).then_some(rendered);
         match term.kind() {
-            LiftTermKind::Var { name } => fol_paint(
+            LiftTermKind::Var { name } => within_budget(fol_paint(
                 name,
                 if name == "out" {
                     FolRegister::Out
@@ -5369,29 +5381,39 @@ impl<'a> VisualFormulaRenderer<'a> {
                     FolRegister::Variable
                 },
                 self.color,
-            ),
-            LiftTermKind::Const { value, .. } => fol_paint(
+            )),
+            LiftTermKind::Const { value, .. } => within_budget(fol_paint(
                 &scalar_value_to_fol(value),
                 FolRegister::Literal,
                 self.color,
-            ),
+            )),
             LiftTermKind::Ctor { name, args } => {
-                let rendered_args = args
-                    .iter()
-                    .map(|arg| self.term_node_unshared(arg))
-                    .collect::<Vec<_>>();
+                let mut rendered_args = Vec::new();
+                let mut known_width = 0usize;
+                for arg in args {
+                    let remaining = max_width.saturating_sub(known_width);
+                    let rendered = self.term_node_unshared_bounded(arg, remaining)?;
+                    known_width = known_width
+                        .saturating_add(visible_width(&rendered))
+                        .saturating_add(2);
+                    if known_width > max_width {
+                        return None;
+                    }
+                    rendered_args.push(rendered);
+                }
                 if let Some(symbol) = visual_symbolic_ctor(name, &rendered_args) {
-                    return fol_paint(&symbol, FolRegister::Literal, self.color);
+                    return within_budget(fol_paint(&symbol, FolRegister::Literal, self.color));
                 }
                 let display = name.strip_prefix("call:").unwrap_or(name);
-                if rendered_args.is_empty() && !name.starts_with("call:") {
+                let rendered = if rendered_args.is_empty() && !name.starts_with("call:") {
                     fol_paint(display, FolRegister::Literal, self.color)
                 } else {
                     format_visual_application(
                         &fol_paint(display, FolRegister::Callee, self.color),
                         &rendered_args,
                     )
-                }
+                };
+                within_budget(rendered)
             }
         }
     }
