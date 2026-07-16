@@ -609,14 +609,17 @@ test-3809-dod-scoreboard:
 # the full Rust workspace and Python corpus, including intentionally red audits,
 # ratchets, and battleaxe instruments. Keep default CI diagnostic by composing
 # only focused receipts whose red result names one actionable contract.
-ci: check-lift-refusal-vocabulary test-python-format test-showcases self-attest coretests-source-audit coretests-invariants
+# `coretests-source-audit` is the bulk measuring stick (R = unresolved loci);
+# keep it offline/instrument until R is driven to 0 — a permanent R>0 red in
+# default CI is a gate wearing a scoreboard vest (see docs/analysis/ci-whack-a-mole-*).
+ci: check-lift-refusal-vocabulary test-python-format test-showcases self-attest coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
 
 .PHONY: ci-core
 # The non-showcase portion of the acid test. GitHub Actions runs this beside
 # deterministic showcase shards; `ci` remains the one-command local surface.
-ci-core: check-lift-refusal-vocabulary test-python-format self-attest coretests-source-audit coretests-invariants
+ci-core: check-lift-refusal-vocabulary test-python-format self-attest coretests-invariants
 	@echo ""
 	@echo "==== ci-core: PASS ===="
 

@@ -422,14 +422,52 @@ fn lift(params: &Value) -> Value {
         let file_rss_before = current_rss_kib();
         let src = source.src.as_str();
         let file = &source.file;
-        let out = lift_file_with_all_source_imports(
-            file,
-            rel,
-            &options,
-            &macro_imports,
-            &const_imports,
-            &fn_imports,
-        );
+        // A factory structural gap (e.g. ForLoop as Composite) panics inside
+        // reduce. Catch per-file so one missing recognizer cannot abort the
+        // whole corpus walk; record a named lift-gap and continue (#3753
+        // transport survival at file grain, not only request grain).
+        let out = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            lift_file_with_all_source_imports(
+                file,
+                rel,
+                &options,
+                &macro_imports,
+                &const_imports,
+                &fn_imports,
+            )
+        })) {
+            Ok(out) => out,
+            Err(payload) => {
+                let message = panic_payload_message(payload);
+                let label = format!("rust-test-assertions::lift:{rel}");
+                if let Some(gap) = audit_only_gap_from_panic_message(&message, &label) {
+                    diagnostics.push(json!({
+                        "kind": "lift-gap",
+                        "path": rel,
+                        "item": "<file>",
+                        "reason": format!(
+                            "construction gap: no Sugar recognizer for this AST shape yet (typed effect, not a crash): {}",
+                            gap.get("message").and_then(Value::as_str).unwrap_or(&message)
+                        ),
+                        "auditOnlyGap": gap,
+                    }));
+                } else {
+                    diagnostics.push(json!({
+                        "kind": "lift-gap",
+                        "path": rel,
+                        "item": "<file>",
+                        "reason": format!("lift panicked: {message}"),
+                    }));
+                }
+                info!(
+                    file = rel,
+                    file_index = file_index + 1,
+                    file_total = rel_paths.len(),
+                    "rust-test-assertions file lift recovered from structural gap; continuing corpus"
+                );
+                sugar_lift_rust_tests::AdapterOutput::default()
+            }
+        };
         let mut source_cache = FileSourceOracleCache::new(rel, src);
         info!(
             file = rel,
