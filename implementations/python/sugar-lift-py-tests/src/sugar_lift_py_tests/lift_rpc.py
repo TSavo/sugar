@@ -55,6 +55,9 @@ PYTHON_SOURCE_ORACLE_NAME = "python-source-oracle"
 COMPONENT_PLAN_INTENTS = {"lift", "prove", "verify"}
 PARSE_ERROR = object()
 _TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
+_ENUMERATION_PHASES: Dict[str, tuple[int, float, float]] = {}
+_ENUMERATION_REQUEST_COUNT = 0
+_ENUMERATION_ACTIVE = False
 # Passive, process-lifetime context paid for by an enumeration demand. The
 # outer identity is the file content CID; the path seat is retained because
 # source mementos carry the workspace-relative filename even for identical
@@ -134,6 +137,11 @@ class _StructuredTransportFormatter(logging.Formatter):
             "allocation_line",
             "allocation_size_kib",
             "allocation_count",
+            "phase",
+            "phase_count",
+            "phase_total_ms",
+            "phase_mean_ms",
+            "phase_max_ms",
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
@@ -174,6 +182,45 @@ def _profile_interval(name: str) -> int:
         return max(0, int(os.environ.get(name, "0")))
     except ValueError:
         return 0
+
+
+def _observe_enumeration_phase(phase: str, elapsed_ms: float) -> None:
+    count, total_ms, max_ms = _ENUMERATION_PHASES.get(phase, (0, 0.0, 0.0))
+    _ENUMERATION_PHASES[phase] = (
+        count + 1,
+        total_ms + elapsed_ms,
+        max(max_ms, elapsed_ms),
+    )
+
+
+def _enumeration_phase_snapshot() -> list[dict[str, Any]]:
+    rows = []
+    for phase, (count, total_ms, max_ms) in _ENUMERATION_PHASES.items():
+        rows.append(
+            {
+                "phase": phase,
+                "phase_count": count,
+                "phase_total_ms": round(total_ms, 3),
+                "phase_mean_ms": round(total_ms / count, 3),
+                "phase_max_ms": round(max_ms, 3),
+            }
+        )
+    return sorted(rows, key=lambda row: row["phase_total_ms"], reverse=True)
+
+
+def _log_enumeration_phase_profile(request_count: int) -> None:
+    every = _profile_interval("SUGAR_KIT_PROFILE_EVERY")
+    if every <= 0 or request_count % every:
+        return
+    for row in _enumeration_phase_snapshot():
+        _TRANSPORT_LOG.info(
+            "enumeration_phase_profile",
+            extra={
+                "stage": "enumerate.phase_profile",
+                "request_count": request_count,
+                **row,
+            },
+        )
 
 
 def _resident_rss_kib() -> tuple[int | None, int | None]:
@@ -328,21 +375,27 @@ def _send(obj: Dict[str, Any]) -> None:
     started = time.monotonic()
     _TRANSPORT_LOG.info("response_scrub_enter", extra={"stage": "response.scrub"})
     safe = _scrub_lone_surrogates(obj)
+    scrub_ms = (time.monotonic() - started) * 1000
+    if _ENUMERATION_ACTIVE:
+        _observe_enumeration_phase("response.scrub", scrub_ms)
     _TRANSPORT_LOG.info(
         "response_scrub_exit",
         extra={
             "stage": "response.scrub",
-            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            "elapsed_ms": round(scrub_ms, 3),
         },
     )
     started = time.monotonic()
     _TRANSPORT_LOG.info("response_encode_enter", extra={"stage": "response.json.dumps"})
     frame = json.dumps(safe, separators=(",", ":")) + "\n"
+    encode_ms = (time.monotonic() - started) * 1000
+    if _ENUMERATION_ACTIVE:
+        _observe_enumeration_phase("response.encode", encode_ms)
     _TRANSPORT_LOG.info(
         "response_encode_exit",
         extra={
             "stage": "response.json.dumps",
-            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            "elapsed_ms": round(encode_ms, 3),
             "bytes": len(frame.encode()),
         },
     )
@@ -1071,11 +1124,19 @@ def _lift_file_for_enumeration(workspace_root: str, root: Path, file_rel: str) -
             },
         )
         return seats[file_rel]
+    lift_started = time.monotonic()
     file_payload = lift_file_payload(source, file_rel)
+    _observe_enumeration_phase(
+        "file_context.lift", (time.monotonic() - lift_started) * 1000
+    )
+    projection_started = time.monotonic()
     file_rpc = file_payload.to_rpc()
     ir_items = file_rpc["ir"]
     call_edges = file_rpc["callEdges"]
     term_table = file_rpc["termTable"]
+    _observe_enumeration_phase(
+        "file_context.project", (time.monotonic() - projection_started) * 1000
+    )
     result = (ir_items, call_edges, term_table)
     seats = _ENUMERATION_FILE_CONTEXTS.setdefault(file_cid, {})
     seats[file_rel] = result
@@ -1423,6 +1484,9 @@ def _audit_file_context(
                 "stage": "enumerate.context",
             },
         )
+        _observe_enumeration_phase(
+            "audit_context.hit", (time.monotonic() - started) * 1000
+        )
         return cached
 
     from sugar_lift_py_tests.factory.build import default_catalog
@@ -1485,6 +1549,9 @@ def _audit_file_context(
     )
     if hold_seed_panics:
         _remember_file_context(_AUDIT_FILE_CONTEXTS, file_cid, context)
+    _observe_enumeration_phase(
+        "audit_context.build", (time.monotonic() - started) * 1000
+    )
     _TRANSPORT_LOG.info(
         "enumeration_file_context",
         extra={
@@ -3485,7 +3552,18 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
             msg_id, params if isinstance(params, dict) else {}
         )
     elif method == ENUMERATE_RPC_METHOD:
-        _handle_enumerate(msg_id, params if isinstance(params, dict) else {})
+        global _ENUMERATION_ACTIVE, _ENUMERATION_REQUEST_COUNT
+        enumerate_started = time.monotonic()
+        _ENUMERATION_ACTIVE = True
+        try:
+            _handle_enumerate(msg_id, params if isinstance(params, dict) else {})
+        finally:
+            _observe_enumeration_phase(
+                "request.total", (time.monotonic() - enumerate_started) * 1000
+            )
+            _ENUMERATION_REQUEST_COUNT += 1
+            _log_enumeration_phase_profile(_ENUMERATION_REQUEST_COUNT)
+            _ENUMERATION_ACTIVE = False
     elif method == "shutdown":
         _send({"jsonrpc": "2.0", "id": msg_id, "result": {"ok": True}})
         return False
