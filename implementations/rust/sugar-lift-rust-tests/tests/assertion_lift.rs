@@ -26532,6 +26532,118 @@ fn test_nonzero_bit_width() {
 }
 
 #[test]
+fn rpc_source_warrants_primitive_uint_isolate_highest_one_loop() {
+    let doc = run_rpc_lift(
+        "tests/num/u64.rs",
+        r#"
+macro_rules! uint_module {
+    ($T:ty) => {
+        #[test]
+        fn test_isolate_highest_one() {
+            const BITS: $T = <$T>::MAX;
+            const MOST_SIG_ONE: $T = 1 << (<$T>::BITS - 1);
+            let mut i = 0;
+            while i < <$T>::BITS {
+                assert_eq!(
+                    (BITS >> i).isolate_highest_one(),
+                    (MOST_SIG_ONE >> i).isolate_highest_one(),
+                );
+                i += 1;
+            }
+        }
+
+        #[test]
+        fn test_highest_one() {
+            const ZERO: $T = 0;
+            const ONE: $T = 1;
+            assert_eq!(ZERO.highest_one(), None);
+            for i in 0..<$T>::BITS {
+                assert_eq!((ONE << i).highest_one(), Some(i));
+                assert_eq!((<$T>::MAX >> i).highest_one(), Some(<$T>::BITS - i - 1));
+                assert_eq!((<$T>::MAX << i).highest_one(), Some(<$T>::BITS - 1));
+            }
+        }
+
+        #[test]
+        fn test_lowest_one() {
+            const ZERO: $T = 0;
+            const ONE: $T = 1;
+            assert_eq!(ZERO.lowest_one(), None);
+            for i in 0..<$T>::BITS {
+                assert_eq!((ONE << i).lowest_one(), Some(i));
+                assert_eq!((<$T>::MAX >> i).lowest_one(), Some(0));
+                assert_eq!((<$T>::MAX << i).lowest_one(), Some(i));
+            }
+        }
+    };
+}
+
+uint_module!(u64);
+
+macro_rules! int_module {
+    ($T:ty) => {
+        #[test]
+        fn test_signed_isolate_highest_one() {
+            const BITS: $T = -1;
+            const MOST_SIG_ONE: $T = 1 << (<$T>::BITS - 1);
+            let mut i = 0;
+            while i < <$T>::BITS {
+                assert_eq!(
+                    (BITS >> i).isolate_highest_one(),
+                    (MOST_SIG_ONE >> i).isolate_highest_one(),
+                );
+                i += 1;
+            }
+        }
+
+        #[test]
+        fn test_signed_highest_one() {
+            const ZERO: $T = 0;
+            const ONE: $T = 1;
+            const MINUS_ONE: $T = -1;
+            assert_eq!(ZERO.highest_one(), None);
+            for i in 0..<$T>::BITS {
+                assert_eq!((ONE << i).highest_one(), Some(i));
+                if i != <$T>::BITS - 1 {
+                    assert_eq!((<$T>::MAX >> i).highest_one(), Some(<$T>::BITS - i - 2));
+                }
+                assert_eq!((MINUS_ONE << i).highest_one(), Some(<$T>::BITS - 1));
+            }
+        }
+
+        #[test]
+        fn test_signed_lowest_one() {
+            const ZERO: $T = 0;
+            const ONE: $T = 1;
+            const MINUS_ONE: $T = -1;
+            assert_eq!(ZERO.lowest_one(), None);
+            for i in 0..<$T>::BITS {
+                assert_eq!((ONE << i).lowest_one(), Some(i));
+                assert_eq!((<$T>::MAX >> i).lowest_one(), Some(0));
+                assert_eq!((MINUS_ONE << i).lowest_one(), Some(i));
+            }
+        }
+    };
+}
+
+int_module!(i64);
+"#,
+    );
+
+    assert_eq!(doc["diagnostics"].as_array().map(Vec::len), Some(0));
+    assert!(
+        doc["ir"]
+            .as_array()
+            .is_some_and(|decls| decls.iter().any(|decl| {
+                decl["name"]
+                    .as_str()
+                    .is_some_and(|name| name.contains("test_isolate_highest_one::loop::i"))
+            })),
+        "the primitive u64 loop should be replay-owned and warranted: {doc:#}"
+    );
+}
+
+#[test]
 fn rpc_source_lifts_cfg_select_active_assertions_with_literal_twin() {
     let doc = run_rpc_lift_with_config(
         "tests/macros.rs",

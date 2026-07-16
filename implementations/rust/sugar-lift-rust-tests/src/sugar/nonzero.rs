@@ -490,7 +490,7 @@ fn is_nonzero_new_func(func: &Expr) -> bool {
     method.ident == "new" && ty.ident.to_string().starts_with("NonZero")
 }
 
-fn is_nonzero_derived(expr: &Expr) -> bool {
+pub(crate) fn is_nonzero_derived(expr: &Expr) -> bool {
     match strip_refs_groups(expr) {
         Expr::Call(_) => is_nonzero_new_call(expr),
         Expr::MethodCall(call)
