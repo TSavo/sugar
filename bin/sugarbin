@@ -1033,23 +1033,27 @@ build_from_source() {
   local stamp="$1" identity="$2"
   log "building $bin_name once for this session (set SUGAR_BIN to skip)"
   local cargo_bin="${SUGAR_BINARY_CARGO:-cargo}"
+  local make_bin="${SUGAR_BINARY_MAKE:-make}"
+  command -v "$make_bin" >/dev/null 2>&1 || {
+    log "crime=missing-make owner=bin/sugarbin illegal shape=content-addressed target has no construction engine replacement=install GNU Make or set SUGAR_BINARY_MAKE"
+    return 1
+  }
   local target_root="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}"
   local build_base="${SUGAR_BINARY_BUILD_ROOT:-$(cache_dir)/.build}"
   local family_identity
   family_identity="$(build_family_identity "$stamp")" || return $?
   local build_root="$build_base/$(stamp_for_filename "$family_identity")"
-  local args=(build --locked --manifest-path "$rust_workspace/Cargo.toml" -p "$package" --bin "$bin_name")
-  if [[ "$profile" == "release" ]]; then
-    args+=(--release)
-  fi
   mkdir -p "$build_root"
-  # Keep embedded identity content-stable too. A global checkout HEAD would
-  # make different bytes for the same BLAKE3 build identity.
-  CARGO_TARGET_DIR="$build_root" \
-    SUGAR_BUILD_STAMP="$stamp" \
-    SUGAR_BUILD_GIT_HEAD="$stamp" \
-    "$cargo_bin" "${args[@]}"
   local built="$build_root/$profile/$bin_name"
+  SUGARBIN_OUTPUT="$built" \
+    SUGARBIN_TARGET_DIR="$build_root" \
+    SUGARBIN_MANIFEST="$rust_workspace/Cargo.toml" \
+    SUGARBIN_PACKAGE="$package" \
+    SUGARBIN_BINARY="$bin_name" \
+    SUGARBIN_BUILD_STAMP="$stamp" \
+    SUGARBIN_CARGO="$cargo_bin" \
+    SUGARBIN_PROFILE="$profile" \
+    "$make_bin" --silent --no-print-directory -f "$repo_root/tools/sugarbin-build.mk" sugarbin-build
   [[ -x "$built" ]] || { log "Cargo did not produce requested executable $built"; return 1; }
 
   # The shared target is a published cache cell, never Cargo's freshness owner.

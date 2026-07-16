@@ -86,6 +86,13 @@ resolved="$("$repo/bin/sugarbin" --bin sugar)"
 }
 grep -Fq "$tmp/cache/.build/" "$tmp/cargo.log"
 
+# If the published target disappears, Make still owns freshness inside the
+# addressed build cell and must reuse its already-constructed target.
+rm "$tmp/target/release/sugar" "$tmp/target/release/sugar.sugarbin.json"
+resolved_from_make="$("$repo/bin/sugarbin" --bin sugar)"
+[[ "$($resolved_from_make)" == "fresh:sugar" ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 1 ]]
+
 # Repository HEAD is not a build input. With the BLAKE3 source closure fixed,
 # an unrelated commit must reuse the exact artifact without invoking Cargo.
 export SUGARBIN_FAKE_GIT_HEAD="head-after-unrelated-change"
