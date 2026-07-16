@@ -2162,7 +2162,15 @@ public final class JavaTestAssertionsRpc {
                         vocab, frameworkKind, ambiguousFramework, universeRegistry, numericRegistry, patternRegistry, strongRegistry, crcValuePins, mtSeedPins, crcReceiverInputs, mtReceiverDraws, instanceUniverse,
                         ssaBindings, mutatedLocals, methodSourceMemento, unit, positions, ir, diagnostics);
             } else if (stmt instanceof ForLoopTree flt) {
-                liftForLoop(flt, scope, vocab, ambiguousFramework, mutatedLocals, ir, diagnostics);
+                liftForLoop(
+                        flt,
+                        scope,
+                        vocab,
+                        ambiguousFramework,
+                        mutatedLocals,
+                        methodSourceMemento,
+                        ir,
+                        diagnostics);
             }
         }
     }
@@ -2258,6 +2266,7 @@ public final class JavaTestAssertionsRpc {
             AssertionVocab vocab,
             boolean ambiguousFramework,
             Set<String> methodMutatedLocals,
+            JavaSourceOracle.SourceMemento methodSourceMemento,
             List<String> ir,
             List<String> diagnostics) {
 
@@ -2358,7 +2367,14 @@ public final class JavaTestAssertionsRpc {
         }
 
         String contractName = scope + "::loop::" + loopVar;
-        ir.add(buildForallContract(contractName, loopVar, startVal, endVal, inclusive, bodyFormulas));
+        ir.add(buildForallContract(
+                contractName,
+                loopVar,
+                startVal,
+                endVal,
+                inclusive,
+                bodyFormulas,
+                methodSourceMemento));
     }
 
     private static boolean isSimpleIncrement(ExpressionTree expr, String varName) {
@@ -2479,7 +2495,8 @@ public final class JavaTestAssertionsRpc {
             long startVal,
             long endVal,
             boolean inclusive,
-            List<String> bodyFormulas) {
+            List<String> bodyFormulas,
+            JavaSourceOracle.SourceMemento methodSourceMemento) {
 
         String varRef = "{\"kind\":\"var\",\"name\":\"" + esc(var) + "\"}";
         String startConst = "{\"kind\":\"const\",\"value\":" + startVal
@@ -2499,9 +2516,14 @@ public final class JavaTestAssertionsRpc {
         String forall = "{\"kind\":\"forall\",\"name\":\"" + esc(var)
                 + "\",\"sort\":{\"kind\":\"primitive\",\"name\":\"Int\"},\"body\":" + implies + "}";
 
+        // Same ambient-testimony door as other java contracts: sourceWarrants with
+        // kind source-memento → Stated. Omitting them made durable verify refuse
+        // loop::x claims with MissingProvenanceKind (java-forall-loop showcase).
         return "{\"kind\":\"contract\""
              + ",\"name\":\"" + esc(contractName) + "\""
              + ",\"outBinding\":\"out\""
+             + sourceWarrantsField(
+                    "java.loop-forall", "forall", null, methodSourceMemento)
              + ",\"inv\":{\"kind\":\"and\",\"operands\":[" + forall + "]}}";
     }
 
