@@ -109,3 +109,15 @@ jobs:
             .sugar/pandas-wall-logs/transport.jsonl
             .sugar/pandas-wall/
           if-no-files-found: error
+
+      - name: Enforce pandas frontier receipt
+        if: always()
+        env:
+          WALL_EXIT: ${{ steps.wall.outputs.wall_exit }}
+          HAS_FRONTIER: ${{ steps.wall.outputs.has_frontier }}
+        run: |
+          if [ "${WALL_EXIT:-1}" != "0" ] || [ "${HAS_FRONTIER:-0}" != "1" ]; then
+            echo "::error::pandas wall incomplete: wall_exit=${WALL_EXIT:-missing} has_frontier=${HAS_FRONTIER:-missing}; inspect progress.json artifact"
+            exit 1
+          fi
+          echo "pandas wall accepted: wall_exit=0 has_frontier=1"
