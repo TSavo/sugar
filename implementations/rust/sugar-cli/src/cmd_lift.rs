@@ -854,7 +854,7 @@ fn run_configured_lift_report_graph(
                 return EXIT_USER_ERROR;
             }
             Err(error) => {
-                eprintln!("{}: {error}", "error".red().bold());
+                emit_configured_lift_error(&error);
                 return EXIT_USER_ERROR;
             }
         };
@@ -957,7 +957,7 @@ fn run_configured_lift_report_graph(
     ) {
         Ok(response) => response,
         Err(error) => {
-            eprintln!("{}: {error}", "error".red().bold());
+            emit_configured_lift_error(&error);
             return EXIT_USER_ERROR;
         }
     };
@@ -1089,6 +1089,14 @@ fn run_configured_lift_report_graph(
     }
 }
 
+fn emit_configured_lift_error(error: &str) {
+    if error.starts_with("refusing to mint from a split pipeline:") {
+        eprintln!("{error}");
+    } else {
+        eprintln!("{}: {error}", "error".red().bold());
+    }
+}
+
 fn run_configured_lift_report_response(
     args: &LiftArgs,
     project_root: &Path,
@@ -1104,7 +1112,7 @@ fn run_configured_lift_report_response(
     ) {
         Ok(response) => response,
         Err(error) => {
-            eprintln!("{}: {error}", "error".red().bold());
+            emit_configured_lift_error(&error);
             return EXIT_USER_ERROR;
         }
     };
