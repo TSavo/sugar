@@ -9194,6 +9194,17 @@ pub(crate) enum Desugared {
         kind: AssertionFactKind,
         warrant: Warrant,
     },
+    /// A completed composite constraint whose source body also contained assertions
+    /// that do not exist in this target's cfg universe. `n` counts only active
+    /// warranted propositions in `atom`; every inactive source surface remains named
+    /// accounting and is propagated to the outer ledger by the emit boundary.
+    ConstraintsWithInactive {
+        atom: Rc<Formula>,
+        n: usize,
+        kind: AssertionFactKind,
+        warrant: Warrant,
+        inactive_reasons: Vec<String>,
+    },
     /// The TERM FLOOR: a single reified `Term` (an EUF/FOL term object). Produced
     /// by the term-sublanguage Sugar nodes (`CompareSugar`/`BinOpSugar`/`CallSugar`/
     /// `PathSugar`/`IndexSugar`/`UnarySugar`/term-`LiteralSugar`) — the third
@@ -9269,6 +9280,7 @@ impl Desugared {
             Desugared::Seq(s) => Some(s),
             Desugared::TermSeq(_) => None,
             Desugared::Constraints { .. } => None,
+            Desugared::ConstraintsWithInactive { .. } => None,
             Desugared::Term(_) => None,
             Desugared::LiteralString(_) => None,
             Desugared::LiteralCStr(_) => None,
@@ -9298,6 +9310,7 @@ impl Desugared {
             }
             Desugared::Seq(_) => None,
             Desugared::Constraints { .. } => None,
+            Desugared::ConstraintsWithInactive { .. } => None,
             Desugared::LiteralString(_) => None,
             Desugared::LiteralCStr(_) => None,
             Desugared::FormatValue(_) => None,
@@ -9320,6 +9333,7 @@ impl Desugared {
             Desugared::Seq(_)
             | Desugared::TermSeq(_)
             | Desugared::Constraints { .. }
+            | Desugared::ConstraintsWithInactive { .. }
             | Desugared::Term(_)
             | Desugared::LiteralString(_)
             | Desugared::LiteralCStr(_)
@@ -11390,6 +11404,7 @@ fn assoc_call_key(path: &syn::Path) -> Option<(String, String)> {
 fn emit_desugared(
     desugared: Desugared,
     entries: &mut Vec<AssertionEntry>,
+    skipped: &mut Vec<String>,
     macros_lifted: &mut usize,
 ) -> bool {
     match desugared {
@@ -11409,6 +11424,26 @@ fn emit_desugared(
             if kind.is_warranted() {
                 *macros_lifted += n;
             }
+            true
+        }
+        Desugared::ConstraintsWithInactive {
+            atom,
+            n,
+            kind,
+            warrant,
+            inactive_reasons,
+        } => {
+            entries.push(AssertionEntry {
+                name: warrant.name,
+                atom,
+                fact_span: None,
+                kind,
+                claim_count: n,
+            });
+            if kind.is_warranted() {
+                *macros_lifted += n;
+            }
+            skipped.extend(inactive_reasons);
             true
         }
         Desugared::Seq(_) | Desugared::TermSeq(_) => false,
@@ -11441,7 +11476,10 @@ fn emit_constraint_outcome(
 ) {
     match outcome {
         Outcome::Complete(desugared @ Desugared::Constraints { .. }) => {
-            emit_desugared(desugared, entries, macros_lifted);
+            emit_desugared(desugared, entries, skipped, macros_lifted);
+        }
+        Outcome::Complete(desugared @ Desugared::ConstraintsWithInactive { .. }) => {
+            emit_desugared(desugared, entries, skipped, macros_lifted);
         }
         Outcome::Complete(_) => skipped.push(format!(
             "constraint-shaped expression did not emit a constraint `{site}`; released to layer 0"
@@ -11478,6 +11516,29 @@ fn emit_assertion_surface_outcome(
                     "assertion surface `{site}` emitted only support facts; assertion without warranted fact emitted; released to layer 0"
                 ));
             }
+        }
+        Outcome::Complete(Desugared::ConstraintsWithInactive {
+            atom,
+            n,
+            kind,
+            warrant,
+            inactive_reasons,
+        }) => {
+            entries.push(AssertionEntry {
+                name: warrant.name,
+                atom,
+                fact_span: None,
+                kind,
+                claim_count: n,
+            });
+            if kind.is_warranted() {
+                *macros_lifted += n;
+            } else {
+                skipped.push(format!(
+                    "assertion surface `{site}` emitted only support facts; assertion without warranted fact emitted; released to layer 0"
+                ));
+            }
+            skipped.extend(inactive_reasons);
         }
         Outcome::Complete(_) => {
             skipped.push(format!(
@@ -13838,7 +13899,7 @@ fn collect_assertion_entries<'a>(
                     ) {
                         match outcome {
                             Outcome::Complete(desugared) => {
-                                emit_desugared(desugared, entries, macros_lifted);
+                                emit_desugared(desugared, entries, skipped, macros_lifted);
                             }
                             Outcome::Incomplete(effect) => {
                                 let mut count = count_asserts_in_expr(&init.expr);
@@ -14058,7 +14119,7 @@ fn collect_assertion_entries<'a>(
                             // `ForAllSugar` warrant, mirroring the Python reference
                             // (layer2.py PATTERN 1). A named universal is federatable and
                             // the engine conjoins it ambiently.
-                            if !emit_desugared(desugared, entries, macros_lifted) {
+                            if !emit_desugared(desugared, entries, skipped, macros_lifted) {
                                 let reason = for_context_refusal_reason(
                                     f,
                                     &for_scope,
@@ -14118,7 +14179,7 @@ fn collect_assertion_entries<'a>(
                         if total == 0 {
                             statement_temporal_replayed = true;
                         }
-                        emit_desugared(desugared, entries, macros_lifted);
+                        emit_desugared(desugared, entries, skipped, macros_lifted);
                     }
                     Some(Outcome::Incomplete(effect)) => {
                         let reason = effect.reason();
@@ -14187,7 +14248,7 @@ fn collect_assertion_entries<'a>(
                         factory_audits,
                     ) {
                         Outcome::Complete(desugared) => {
-                            emit_desugared(desugared, entries, macros_lifted);
+                            emit_desugared(desugared, entries, skipped, macros_lifted);
                         }
                         Outcome::Incomplete(effect) => {
                             let count = count_asserts_in_stmts(&i.then_branch.stmts)
@@ -14275,7 +14336,7 @@ fn collect_assertion_entries<'a>(
                         );
                         match match_outcome {
                             Outcome::Complete(desugared) => {
-                                emit_desugared(desugared, entries, macros_lifted);
+                                emit_desugared(desugared, entries, skipped, macros_lifted);
                             }
                             Outcome::Incomplete(effect) => {
                                 let count: usize = m
@@ -14463,7 +14524,7 @@ fn collect_assertion_entries<'a>(
                     if let Some(outcome) = composite_outcome {
                         match outcome {
                             Outcome::Complete(desugared) => {
-                                emit_desugared(desugared, entries, macros_lifted);
+                                emit_desugared(desugared, entries, skipped, macros_lifted);
                             }
                             Outcome::Incomplete(effect) => {
                                 let count = count_asserts_in_expr(e);
@@ -25817,6 +25878,61 @@ fn t() {
             contract_names(&out).iter().any(|n| n.contains("::loop::i")),
             "the drained loop is named `<test>::loop::<var>`: {:?}",
             contract_names(&out)
+        );
+    }
+
+    #[test]
+    fn forall_preserves_inactive_body_assertion_accounting() {
+        let src = r#"
+            #[test]
+            fn mixed_cfg_loop() {
+                for s in ["a", "b"] {
+                    #[cfg(target_family = "windows")]
+                    assert!(!s.is_empty());
+                    assert!(!s.is_empty());
+                    assert!(s.len() == 1);
+                }
+            }
+        "#;
+
+        let out = lift_src_cfg(src);
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "only the two active propositions belong to the forall formula: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.skip_reasons
+                .iter()
+                .filter(|reason| refusal_disposition(reason) == Disposition::Inactive)
+                .count(),
+            1,
+            "the cfg-inactive assertion must remain named outer-ledger accounting: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(out.assertions_refused, 1, "{:?}", out.skip_reasons);
+    }
+
+    #[test]
+    fn forall_ambiguous_body_cfg_still_reaches_hard_floor() {
+        let result = std::panic::catch_unwind(|| {
+            lift_src(
+                r#"
+                    #[test]
+                    fn ambiguous_cfg_loop() {
+                        for s in ["a", "b"] {
+                            #[cfg(target_has_reliable_f16)]
+                            assert!(!s.is_empty());
+                            assert!(!s.is_empty());
+                        }
+                    }
+                "#,
+            )
+        });
+
+        assert!(
+            result.is_err(),
+            "an ambiguous cfg is lifter work and must not complete the forall"
         );
     }
 

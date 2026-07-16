@@ -767,7 +767,8 @@ impl FactoryAuditSeed {
         outcome: &Outcome,
     ) -> (FactoryDisposition, &'static str, Option<String>) {
         match outcome {
-            Outcome::Complete(Desugared::Constraints { kind, .. }) => match kind {
+            Outcome::Complete(Desugared::Constraints { kind, .. })
+            | Outcome::Complete(Desugared::ConstraintsWithInactive { kind, .. }) => match kind {
                 AssertionFactKind::Warranted => {
                     (FactoryDisposition::Warranted, "constraints", None)
                 }
@@ -862,8 +863,10 @@ impl FactoryAuditSeed {
 }
 
 fn emitted_formula_jcs(outcome: &Outcome) -> Option<String> {
-    let Outcome::Complete(Desugared::Constraints { atom, .. }) = outcome else {
-        return None;
+    let atom = match outcome {
+        Outcome::Complete(Desugared::Constraints { atom, .. })
+        | Outcome::Complete(Desugared::ConstraintsWithInactive { atom, .. }) => atom,
+        _ => return None,
     };
     Some(encode_jcs(formula_to_value(atom.as_ref()).as_ref()))
 }
