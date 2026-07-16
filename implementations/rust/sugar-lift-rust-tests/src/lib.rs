@@ -21711,7 +21711,7 @@ mod lifter_key_tests {
             }
             "#,
         );
-        assert_eq!(out.assertions_refused, 0, "{:#?}", out.skip_reasons);
+        assert!(out.skip_reasons.is_empty(), "{:#?}", out.skip_reasons);
         assert_eq!(out.assertions_lifted, 2, "{:#?}", out.assertion_facts);
     }
 
