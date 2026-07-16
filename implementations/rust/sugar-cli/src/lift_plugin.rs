@@ -267,6 +267,22 @@ pub(crate) fn dispatch_lift(
         );
     }
 
+    let initialize_response = if surface == "python" {
+        let rendezvous = Kit::rendezvous(LiftManifest {
+            surface: surface.to_string(),
+            name: manifest.name.clone(),
+            dialect: dialect_for_surface(surface),
+            command: manifest.command.clone(),
+            working_dir: resolved_absolute_working_dir(project_root, &manifest),
+            method: manifest.method.clone(),
+        })
+        .map_err(lift_error_from_rendezvous)?;
+        enforce_python_kit_source(surface, rendezvous.initialize_response())?;
+        Some(rendezvous.initialize_response().clone())
+    } else {
+        None
+    };
+
     let lift_params = build_lift_params(project_root, surface, options);
     let mut kit = LiftPluginKit::new(
         surface,
@@ -299,7 +315,9 @@ pub(crate) fn dispatch_lift(
         }
     }
 
-    LiftPluginSession::from_claim(core_session.claim)
+    let mut session = LiftPluginSession::from_claim(core_session.claim)?;
+    session.initialize_response = initialize_response.or(Some(core_session.initialize_response));
+    Ok(session)
 }
 
 /// SEAM 6b sentence: `sugar lift` = `rendezvous(surface).lift(project) ->
@@ -366,22 +384,7 @@ pub(crate) fn dispatch_lift_path(
     ));
 
     let initialize_response = kit.initialize_response().clone();
-    if surface == "python" {
-        let identity = initialize_response
-            .pointer("/kit_source/identity")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                LiftPluginError::SplitPipeline(
-                    "python kit initialize response omitted kit_source testimony".to_string(),
-                )
-            })?;
-        let binary = env!("SUGAR_BUILD_GIT_HEAD");
-        if identity != binary {
-            return Err(LiftPluginError::SplitPipeline(format!(
-                "refusing to mint from a split pipeline: kit @{identity} != binary @{binary}"
-            )));
-        }
-    }
+    enforce_python_kit_source(surface, &initialize_response)?;
     let before = current_rss_kib();
     let claim = kit.lift(lift_params).map_err(lift_error_from_kit)?;
     trace_lift_plugin_claim_checkpoint_with_delta(
@@ -397,6 +400,31 @@ pub(crate) fn dispatch_lift_path(
     let mut session = LiftPluginSession::from_claim(claim)?;
     session.initialize_response = Some(initialize_response);
     Ok(session)
+}
+
+fn enforce_python_kit_source(
+    surface: &str,
+    initialize_response: &Value,
+) -> Result<(), LiftPluginError> {
+    if surface != "python" {
+        return Ok(());
+    }
+    let identity = initialize_response
+        .pointer("/kit_source/identity")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            LiftPluginError::SplitPipeline(
+                "python kit initialize response omitted kit_source testimony".to_string(),
+            )
+        })?;
+    let binary = env!("SUGAR_BUILD_GIT_HEAD");
+    if identity == binary {
+        Ok(())
+    } else {
+        Err(LiftPluginError::SplitPipeline(format!(
+            "refusing to mint from a split pipeline: kit @{identity} != binary @{binary}"
+        )))
+    }
 }
 
 /// Unregistered-dialect fallback: builds the same source/path input the
