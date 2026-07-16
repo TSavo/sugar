@@ -611,8 +611,207 @@ fn capture_real_kit_conversation() -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Test
+// Tests
 // ---------------------------------------------------------------------------
+
+/// #3928 gap-1 always-on pin: the checked-in golden NDJSON must freeze the
+/// pure field-mapping sequence without requiring a real-kit RAN.
+///
+/// Byte-identical live replay remains the battleaxe instrument below
+/// (`#[ignore]` + `make test-3809-dod-scoreboard`). This test is the local
+/// ratchet: deleting/corrupting the golden cannot go silent.
+#[test]
+fn golden_ndjson_freezes_field_mapping_sequence() {
+    let path = golden_path();
+    let text = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "R(gap1 golden_ndjson)>0: missing golden at {} ({e})\n\
+             replacement: capture with SUGAR_LSP_GOLDEN_UPDATE=1 + real kit RAN\n\
+             see conformance/lsp/README.md",
+            path.display()
+        );
+    });
+
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(
+        lines.len(),
+        7,
+        "R(gap1 golden_ndjson)>0: expected 7 field-mapping turns, got {}\n\
+         sequence: initialize → init-result → initialized → didOpen(lie) → \
+         publishDiagnostics(UNSAT) → didChange(truth) → publishDiagnostics([])\n\
+         path: {}",
+        lines.len(),
+        path.display()
+    );
+
+    let mut roles: Vec<String> = Vec::new();
+    let mut methods: Vec<Option<String>> = Vec::new();
+    let mut has_init_result = false;
+    for (i, line) in lines.iter().enumerate() {
+        let v: Value = serde_json::from_str(line).unwrap_or_else(|e| {
+            panic!("golden line {} not JSON: {e}\n  {line}", i + 1);
+        });
+        // Keys must be sorted recursively at the top level (byte-stable encode).
+        if let Some(obj) = v.as_object() {
+            let keys: Vec<&String> = obj.keys().collect();
+            let mut sorted = keys.clone();
+            sorted.sort();
+            assert_eq!(
+                keys,
+                sorted,
+                "golden line {} top-level keys not Unicode-sorted: {keys:?}",
+                i + 1
+            );
+        }
+        let role = v
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or_else(|| panic!("line {} missing role", i + 1));
+        roles.push(role.to_string());
+        let msg = v
+            .get("message")
+            .unwrap_or_else(|| panic!("line {} missing message", i + 1));
+        methods.push(
+            msg.get("method")
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string()),
+        );
+        if i == 1 {
+            assert!(
+                msg.get("result").is_some(),
+                "line 2 must be server initialize result"
+            );
+            has_init_result = true;
+        }
+    }
+    assert!(has_init_result);
+
+    assert_eq!(
+        roles,
+        ["client", "server", "client", "client", "server", "client", "server"],
+        "role sequence drift in golden"
+    );
+    assert_eq!(methods[0].as_deref(), Some("initialize"));
+    assert!(methods[1].is_none(), "init result has no method");
+    assert_eq!(methods[2].as_deref(), Some("initialized"));
+    assert_eq!(methods[3].as_deref(), Some("textDocument/didOpen"));
+    assert_eq!(
+        methods[4].as_deref(),
+        Some("textDocument/publishDiagnostics")
+    );
+    assert_eq!(methods[5].as_deref(), Some("textDocument/didChange"));
+    assert_eq!(
+        methods[6].as_deref(),
+        Some("textDocument/publishDiagnostics")
+    );
+
+    // Lying twin source frozen; real UNSAT discrimination frozen; clear frozen.
+    assert!(
+        text.contains("assert total == 6") && text.contains("assert total == 7"),
+        "golden must freeze lying dual-assert twin"
+    );
+    assert!(
+        text.contains("UNSAT") || text.to_ascii_lowercase().contains("unsatisfied"),
+        "golden must freeze real UNSAT diagnostic"
+    );
+    assert!(
+        text.contains("pandas") || text.contains("DataFrame") || text.contains("sum"),
+        "golden must freeze real pandas/sum claim (not mock demo.check)"
+    );
+    // Clear diagnostics = empty array on the second publishDiagnostics.
+    let clear_line = lines[6];
+    assert!(
+        clear_line.contains(r#""diagnostics":[]"#) || clear_line.contains(r#""diagnostics": []"#),
+        "final publishDiagnostics must clear (empty diagnostics): {clear_line}"
+    );
+    // Placeholder normalizations (no live /tmp paths).
+    assert!(
+        text.contains(PROJECT_PLACEHOLDER),
+        "golden must use {PROJECT_PLACEHOLDER} path placeholder"
+    );
+    assert!(
+        !text.contains("/tmp/"),
+        "golden must not leak live /tmp project paths"
+    );
+
+    eprintln!(
+        "RECEIPT #3928 gap1 pin: golden field-mapping sequence ok ({} bytes, 7 turns)",
+        text.len()
+    );
+}
+
+/// #3928 gap-2 always-on pin: real-kit prove instrument is enrolled (module
+/// present) and names the real python lift path — mock-only acceptance is
+/// not allowed to silently replace the PyCon face.
+#[test]
+fn real_python_kit_prove_instrument_is_enrolled() {
+    let prove_src =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/real_python_kit_prove.rs");
+    let text = fs::read_to_string(&prove_src).unwrap_or_else(|e| {
+        panic!(
+            "R(gap2 real_kit)>0: missing {p} ({e})\n\
+             replacement: restore real_python_kit_prove.rs (real lift_rpc, not mock)",
+            p = prove_src.display()
+        );
+    });
+    for needle in [
+        "sugar_lift_py_tests.lift_rpc",
+        "SUGAR_REAL_KIT_LSP_REQUIRED",
+        "real-kit LSP: RAN",
+        "LYING_TWIN",
+        "TRUTHFUL_TWIN",
+        "UNSAT",
+    ] {
+        assert!(
+            text.contains(needle),
+            "R(gap2 real_kit)>0: real_python_kit_prove.rs missing enrollment marker {needle:?}\n\
+             replacement: keep real kit face; mock stays in in_process_prove only"
+        );
+    }
+    eprintln!("RECEIPT #3928 gap2 pin: real_python_kit_prove instrument enrolled");
+}
+
+/// #3928 gap-3 always-on pin: LSP buffer re-solve discharges through the
+/// resident-base one door. `warm_solve` was deleted (#3981); warmth is
+/// derived (resident base index + pre-fed overlay), not a second function.
+/// Identity: LSP door = `verify_consistency_scoped_with_base_index`;
+/// Runner door = `solve_project_with_pool`. Both are pool-resident discharge.
+#[test]
+fn lsp_solve_buffer_uses_resident_base_one_door() {
+    let src_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/prove_engine.rs");
+    let text = fs::read_to_string(&src_path).expect("read prove_engine.rs");
+
+    assert!(
+        text.contains("verify_consistency_scoped_with_base_index"),
+        "R(gap3 warm_face)>0: solve_buffer must call the resident-base one door\n\
+         replacement: discharge via sugar_verifier::consistency::verify_consistency_scoped_with_base_index\n\
+         (warmth = resident base index; do not reintroduce a parallel cold load_pool path)"
+    );
+    // Count call sites in the solve_buffer body region: the function name must
+    // appear as an actual call, not only in docs.
+    let call_needle = "sugar_verifier::consistency::verify_consistency_scoped_with_base_index(";
+    assert!(
+        text.contains(call_needle),
+        "R(gap3 warm_face)>0: missing call {call_needle}\n\
+         prove_engine must route buffer re-solve through the one resident-base door"
+    );
+    // Parallel mint-as-feed is the illegal dual path (#4030 closed it).
+    // Call-site only: docs may name the banned symbol as the thing not to do.
+    assert!(
+        !text.contains("mint_project_scratch_proof("),
+        "R(gap3 warm_face)>0: mint-as-feed call reappeared in prove_engine\n\
+         replacement: keep enumerate→fold→resident-base door only; mint is seal/publish"
+    );
+    // Must not reintroduce the deleted dual warm_solve symbol as a second door.
+    assert!(
+        !text.contains("warm_solve("),
+        "R(gap3 warm_face)>0: warm_solve( call reintroduced — one door was the point of #3981\n\
+         warmth is derived residency, not a second function name"
+    );
+    eprintln!(
+        "RECEIPT #3928 gap3 pin: solve_buffer → verify_consistency_scoped_with_base_index (one door)"
+    );
+}
 
 #[test]
 #[ignore = "explicit real-Pandas battleaxe instrument: run make test-3809-dod-scoreboard"]

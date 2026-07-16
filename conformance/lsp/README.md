@@ -81,3 +81,23 @@ SUGAR_LSP_GOLDEN_UPDATE=1 SUGAR_REAL_KIT_LSP_REQUIRED=1 \
   real_python_kit_conversation_is_byte_identical_to_golden_ndjson \
   -- --ignored --exact --nocapture
 ```
+
+## #3928 always-on pins (no real kit)
+
+Local ratchet — does **not** need pandas/z3/battleaxe:
+
+```bash
+cargo test -p sugar-lsp --test real_python_kit_conversation_golden \
+  golden_ndjson_freezes_field_mapping_sequence \
+  real_python_kit_prove_instrument_is_enrolled \
+  lsp_solve_buffer_uses_resident_base_one_door \
+  -- --exact --nocapture
+```
+
+| Pin | Axis | What red means |
+|-----|------|----------------|
+| `golden_ndjson_freezes_field_mapping_sequence` | gap 1 | Golden missing/corrupt/wrong sequence |
+| `real_python_kit_prove_instrument_is_enrolled` | gap 2 | Real-kit prove instrument deleted or mock-only |
+| `lsp_solve_buffer_uses_resident_base_one_door` | gap 3 | Dual solve path / mint-as-feed / reintroduced `warm_solve(` |
+
+Residual (optional, not red): gap 4 daemon process-wide plan residency across CLI invocations.
