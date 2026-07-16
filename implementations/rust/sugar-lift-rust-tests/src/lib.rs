@@ -25791,6 +25791,72 @@ fn t() {
     }
 
     #[test]
+    fn iterative_for_replay_matches_recursive_bounded_control_bytes() {
+        // This control exercises all three structural continuation kinds changed by
+        // the iterative interpreter: nested for, const-selected if, and match. The
+        // CID was captured from the recursive implementation on origin/main; changing
+        // statement order, binding restoration, or formula construction changes it.
+        let src = r#"
+            #[test]
+            fn bounded_control() {
+                for i in [0i64, 1] {
+                    for j in [0i64, 1] {
+                        if j == 0 {
+                            match i {
+                                0 => assert_eq!(i + j, 0),
+                                _ => assert_eq!(i + j, 1),
+                            }
+                        } else {
+                            assert_eq!(i + j, i + 1);
+                        }
+                    }
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 3,
+            "bounded structural control must lift: {:?}",
+            out.skip_reasons
+        );
+        let bytes = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+        let cid = sugar_canonicalizer::blake3_512_of(bytes.as_bytes());
+        assert_eq!(
+            cid,
+            "blake3-512:b2a3c07c89dea98d29bd4020c789fffc3b3236b414116f7a252d9cfbe4cd0f13c88a8b7af68ed8346d8415ab0ba9ac1a168e13a90f327272df68d3edd622aa08"
+        );
+    }
+
+    #[test]
+    fn iterative_for_replay_handles_deep_finite_expansion() {
+        // 12^3 leaf visits exercise multiplicative nested materialization in the
+        // ordinary debug test profile; the real ASCII receipt supplies the larger
+        // 100-by-7-by-variable-length expansion. Each individual literal domain
+        // remains far below SUGAR_SEQ_CAP.
+        let values = (0..12).map(|n| n.to_string()).collect::<Vec<_>>().join(",");
+        let src = format!(
+            r#"
+                #[test]
+                fn deep_finite_expansion() {{
+                    for i in [{values}] {{
+                        for j in [{values}] {{
+                            for k in [{values}] {{
+                                assert_eq!(i + j + k, i + j + k);
+                            }}
+                        }}
+                    }}
+                }}
+            "#
+        );
+        let out = lift_src(&src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "deep finite replay must complete without native-stack or allocator failure: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
     fn forall_array_over_conditional_body_is_refutable_for_wrong_claim() {
         // ADVERSARIAL (the dangerous direction): a literal-array loop with a
         // guarded but DELIBERATELY WRONG claim must lift HONESTLY -- the finite
