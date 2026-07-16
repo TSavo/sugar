@@ -2396,11 +2396,17 @@ mod tests {
                 }
             }
             JsonValue::String(text) => {
+                // Only JSON-encoded string payloads can nest contracts; plain
+                // text is a leaf and cannot hide a function-contract object.
                 if let Ok(embedded) = serde_json::from_str::<JsonValue>(text) {
                     collect_function_contract_objects(&embedded, out);
                 }
             }
-            _ => {}
+            // Exhaustive leaf arms: scalar JSON values have no nested objects,
+            // so they cannot contain a function-contract. Named variants make
+            // a new serde_json::Value constructor a compile error here instead
+            // of a silent `_ => {}` loss (silent_drop_frontier / #3848).
+            JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) => {}
         }
     }
 
