@@ -49,6 +49,7 @@ _CMP: dict[type[ast.cmpop], str] = {
 @dataclass
 class HarvestResult:
     ir: list[Json] = field(default_factory=list)
+    call_edges: list[Json] = field(default_factory=list)
     diagnostics: list[Json] = field(default_factory=list)
 
 
@@ -84,6 +85,9 @@ def harvest_source(source: str, source_path: str) -> HarvestResult:
                 continue
             try:
                 atoms.append(_lift_assert(stmt))
+                result.call_edges.extend(
+                    _call_edges(stmt, source_path, source_contract=node.name)
+                )
             except _Unsupported as exc:
                 result.diagnostics.append(
                     {
@@ -106,6 +110,35 @@ def harvest_source(source: str, source_path: str) -> HarvestResult:
             }
         )
     return result
+
+
+def _call_edges(
+    stmt: ast.Assert, source_path: str, *, source_contract: str
+) -> list[Json]:
+    """Project the call coordinates already admitted by ``_lift_assert``.
+
+    This runs only after the assertion translated successfully, so an edge can
+    never claim a callsite whose consumer formula the harvester omitted.
+    ``targetSymbol`` deliberately uses the ctor's bare name: it is the exact
+    EUF coordinate stamped as ``bridgeSourceSymbol`` by ``verify_dialect``.
+    """
+    edges: list[Json] = []
+    for node in ast.walk(stmt.test):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        edges.append(
+            {
+                "kind": "call-edge",
+                "sourceContract": source_contract,
+                "targetSymbol": node.func.id,
+                "callSiteLocus": {
+                    "file": source_path,
+                    "line": node.lineno,
+                    "column": node.col_offset,
+                },
+            }
+        )
+    return edges
 
 
 def _lift_assert(stmt: ast.Assert) -> Json:

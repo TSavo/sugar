@@ -276,11 +276,18 @@ fn producer_responses_have_call_edges(responses: &[PerPluginDispatch]) -> bool {
         .any(|dispatch| response_has_call_edges(&dispatch.response))
 }
 
-fn bridge_ir_from_resolved_call_edge(edge: &Value) -> Option<Value> {
+fn bridge_ir_from_call_edge(edge: &Value) -> Option<Value> {
     let target_contract_cid = edge
         .get("targetContractCid")
         .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())?;
+        .filter(|s| !s.is_empty());
+    let target_contract = edge
+        .get("targetContract")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    if target_contract_cid.is_none() && target_contract.is_none() {
+        return None;
+    }
     let target_symbol = edge
         .get("targetSymbol")
         .and_then(Value::as_str)
@@ -290,14 +297,12 @@ fn bridge_ir_from_resolved_call_edge(edge: &Value) -> Option<Value> {
         "schemaVersion": "1",
         "sourceLayer": "source",
         "sourceSymbol": target_symbol,
-        "targetContractCid": target_contract_cid,
         "targetLayer": "kit",
     });
-    if let Some(target_contract) = edge
-        .get("targetContract")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(target_contract_cid) = target_contract_cid {
+        bridge["targetContractCid"] = Value::String(target_contract_cid.to_string());
+    }
+    if let Some(target_contract) = target_contract {
         bridge["targetContract"] = Value::String(target_contract.to_string());
     }
     if let Some(target_proof_cid) = edge
@@ -607,7 +612,7 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
         }
     }
     for edge in &merged_call_edges {
-        let Some(bridge) = bridge_ir_from_resolved_call_edge(edge) else {
+        let Some(bridge) = bridge_ir_from_call_edge(edge) else {
             continue;
         };
         let dedup_key = canonical_dedup_key(&bridge);
@@ -3187,7 +3192,7 @@ fn mint_lift_response(
                 .and_then(Value::as_array)
             {
                 for edge in call_edges {
-                    if let Some(bridge) = bridge_ir_from_resolved_call_edge(edge) {
+                    if let Some(bridge) = bridge_ir_from_call_edge(edge) {
                         ir_entries.push(bridge);
                     }
                 }
@@ -3448,7 +3453,7 @@ fn parse_bridge_callsite(
         None => false,
     };
     // A producer that does not know a callsite axis emits an explicit JSON
-    // `null` for it (see `bridge_ir_from_resolved_call_edge`'s callsite
+    // `null` for it (see `bridge_ir_from_call_edge`'s callsite
     // sanitization a few hundred lines up, which strips exactly these three
     // keys when null before building its own bridge). `mint_bridge_from_decl`
     // hands raw producer IR straight to this parser without going through
@@ -7361,6 +7366,98 @@ mod tests {
                 .iter()
                 .all(|target| target == &target_member_cid),
             "all call:scalar_sum bridges must target the loaded contract member CID {target_member_cid}, got {bridge_targets:?}"
+        );
+    }
+
+    #[test]
+    fn unresolved_named_call_edge_targets_local_minted_contract_member_cid() {
+        let root = temp_workspace("unresolved_named_call_edge_local_target");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+        let merged = merge_ir_document_responses(vec![PerPluginDispatch {
+            surface: "python-verify".to_string(),
+            response: json!({
+                "kind": "ir-document",
+                "ir": [
+                    {
+                        "kind": "function-contract",
+                        "name": "bounded_digit.bounded_digit",
+                        "bridgeSourceSymbol": "bounded_digit",
+                        "outBinding": "result",
+                        "formals": ["x"],
+                        "post": {
+                            "kind": "atomic",
+                            "name": "=",
+                            "args": [
+                                {"kind": "var", "name": "result"},
+                                {"kind": "var", "name": "x"}
+                            ]
+                        }
+                    },
+                    {
+                        "kind": "contract",
+                        "name": "test_bounded_digit",
+                        "inv": {
+                            "kind": "atomic",
+                            "name": "=",
+                            "args": [
+                                {"kind": "ctor", "name": "bounded_digit", "args": []},
+                                {"kind": "const", "sort": {"kind": "primitive", "name": "Int"}, "value": 16}
+                            ]
+                        }
+                    }
+                ],
+                "callEdges": [{
+                    "kind": "call-edge",
+                    "sourceContract": "test_bounded_digit",
+                    "targetSymbol": "bounded_digit",
+                    "targetContract": "bounded_digit.bounded_digit",
+                    "callSiteLocus": {"file": "test_bounded_digit.py", "line": 4, "column": 11}
+                }]
+            }),
+        }])
+        .expect("merge ir document");
+        let ir = merged["ir"].as_array().expect("merged ir entries").clone();
+
+        let minted = mint_ir_document(&ir, None, None, None, &root, &out_dir, true).expect("mint");
+        let graph = ProofGraph::read(&minted.bytes).expect("decode proof");
+        let target_member_cid = graph
+            .members_view()
+            .find_map(|view| {
+                (view.kind() == Some(MemberKind::Contract)
+                    && view.field("name").as_deref() == Some("bounded_digit.bounded_digit"))
+                .then(|| view.cid().as_str().to_string())
+            })
+            .expect("target contract member cid");
+        let bridges: Vec<Value> = graph.bridges().map(|view| view.json()).collect();
+        assert!(
+            bridges.iter().any(|bridge| {
+                let view = bridge.get("header").unwrap_or(bridge);
+                view.get("sourceSymbol").and_then(Value::as_str) == Some("bounded_digit")
+                    && view.get("targetContractCid").and_then(Value::as_str)
+                        == Some(target_member_cid.as_str())
+                    && view.get("callsite").is_some()
+            }),
+            "expected callsite bridge targeting local member; bridges={bridges:#?}"
+        );
+
+        let proof_path = out_dir.join(format!("{}.proof", minted.filename_cid));
+        std::fs::write(&proof_path, &minted.bytes).expect("write proof");
+        let mut pool = sugar_verifier::types::MementoPool::default();
+        sugar_verifier::load_all_proofs::load_files_into_pool(&[proof_path], &mut pool);
+        assert!(
+            pool.load_errors.is_empty(),
+            "proof with locally resolved edge must load: {:?}",
+            pool.load_errors
+        );
+        let callsite = sugar_verifier::enumerate_callsites::run(&pool)
+            .into_iter()
+            .find(|callsite| callsite.bridge_ir_name == "bounded_digit")
+            .expect("consumer callsite imported from loaded proof");
+        assert_eq!(
+            callsite.bridge_target_cid.as_ref().map(ToString::to_string),
+            Some(target_member_cid),
+            "loaded edge must specialize against the minted target member"
         );
     }
 
