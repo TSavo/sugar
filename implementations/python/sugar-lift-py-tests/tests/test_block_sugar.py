@@ -145,3 +145,42 @@ def test_lift_file_payload_handles_five_thousand_statement_block():
         "block follow must be heap-bounded, not C-stack-bounded; "
         f"exit={completed.returncode}\n{completed.stderr[-4000:]}"
     )
+
+
+def test_lift_file_payload_handles_real_datetime_under_bounded_stack(
+    cpython_311_datetime_path,
+):
+    """#4581 pin: real vendored datetime must lift without C-stack death.
+
+    Pre-#4583, statement-sequence recursion made long modules fatal
+    (SIGSEGV / faulthandler C-stack). The iterative block follow keeps depth
+    on the heap; this subprocess keeps Python's recursion limit low so any
+    reintroduction of native block-follow recursion fails loud.
+    """
+    probe = textwrap.dedent(f"""
+        import sys
+        from pathlib import Path
+
+        from sugar_lift_py_tests.lift_rpc import lift_file_payload
+
+        sys.setrecursionlimit(300)
+        source = Path({str(cpython_311_datetime_path)!r}).read_text(encoding="utf-8")
+        payload = lift_file_payload(source, "datetime.py")
+        print(len(payload.ir), len(payload.source_mementos))
+        """)
+
+    completed = subprocess.run(
+        [sys.executable, "-X", "faulthandler", "-c", probe],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, (
+        "real datetime block follow must be heap-bounded, not C-stack-bounded; "
+        f"exit={completed.returncode}\n{completed.stderr[-4000:]}"
+    )
+    assert completed.stdout.strip() == "185 140", (
+        "datetime lift receipt drifted from the #4581/#4583 pin "
+        f"(ir source_mementos); got {completed.stdout!r}"
+    )
