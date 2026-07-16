@@ -489,16 +489,33 @@ def test_bitwise_symbolic_witness_preserves_int_term_without_number_supersort(
     assert "RuntimeBitwiseOpSugar" in truthful_result.selected_sugars
     assert truthful_contract["post"] == lying_contract["post"]
     assert truthful_contract["formals"] == ["z"]
-    assert _ctor_names(truthful_contract["post"]) == {"&"}
+    # Universe post is CID term-refs in the lift document; resolve through
+    # termTable so the symbolic coordinate `&(z, 3)` remains visible.
+    assert (
+        _ctor_names(
+            truthful_contract["post"],
+            term_table=truthful_result.lift_doc.get("termTable"),
+        )
+        == {"&"}
+    )
     assert "Number" not in json.dumps(truthful_contract)
+    assert "Number" not in json.dumps(truthful_result.lift_doc.get("termTable"))
 
     assert truthful_result.verdict == "sat"
     assert _prove_statuses(truthful_result.prove_doc) == ["discharged"]
 
     assert "RuntimeBitwiseOpSugar" in lying_result.selected_sugars
-    # #4394: the grounded Int bitwise constructor must refute this lie.
+    # #4394: grounded Int bitwise folds after join so structural dual refuses
+    # py.eq(A(6), 1) against =(A(6), 2). Universe stays symbolic `&(z, 3)`.
     assert lying_result.verdict == "unsat"
     assert _prove_statuses(lying_result.prove_doc) == ["unsatisfied"]
+    lying_linked = lying_result.prove_doc["rows"][0]["verification"]["linkedPosts"][0]
+    assert lying_linked["instantiatedPost"]["args"][1] == {
+        "kind": "const",
+        "value": 2,
+        "sort": {"kind": "primitive", "name": "Int"},
+    }
+    assert lying_linked["vendorPost"]["args"][1]["name"] == "&"
 
 
 def test_subscript_assignment_post_state_witness_discharges_and_refutes(
@@ -1377,16 +1394,22 @@ def _walk_atoms(node) -> list[dict]:
     return []
 
 
-def _ctor_names(node) -> set[str]:
+def _ctor_names(node, *, term_table: dict | None = None) -> set[str]:
     if isinstance(node, dict):
+        if (
+            node.get("kind") == "term-ref"
+            and term_table is not None
+            and isinstance(node.get("cid"), str)
+        ):
+            return _ctor_names(term_table.get(node["cid"]), term_table=term_table)
         names = {node["name"]} if node.get("kind") == "ctor" else set()
         for value in node.values():
-            names.update(_ctor_names(value))
+            names.update(_ctor_names(value, term_table=term_table))
         return names
     if isinstance(node, list):
         names: set[str] = set()
         for item in node:
-            names.update(_ctor_names(item))
+            names.update(_ctor_names(item, term_table=term_table))
         return names
     return set()
 

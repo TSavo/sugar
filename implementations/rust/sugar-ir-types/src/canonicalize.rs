@@ -69,10 +69,22 @@ fn canon_term(t: &IrTerm, ctx: &Ctx) -> IrTerm {
             value: value.clone(),
             sort: sort.clone(),
         },
-        IrTerm::Ctor { name, args } => IrTerm::Ctor {
-            name: name.clone(),
-            args: args.iter().map(|a| canon_term(a, ctx)).collect(),
-        },
+        IrTerm::Ctor { name, args } => {
+            let args: Vec<IrTerm> = args.iter().map(|a| canon_term(a, ctx)).collect();
+            // Grounded Int bitwise is pure deterministic reduction (Python
+            // semantics), not a solver equivalence. After callsite join
+            // `&(6, 3)` is the same value as `2`, so content-address and
+            // structural dual both need the fold (#4394): otherwise
+            // `py.eq(A(6), 1) ∧ =(A(6), &(6, 3))` stays free under uninterpreted
+            // `&` and the lying arm SAT-discharges.
+            if let Some(folded) = fold_grounded_int_bitwise(name, &args) {
+                return folded;
+            }
+            IrTerm::Ctor {
+                name: name.clone(),
+                args,
+            }
+        }
         IrTerm::Lambda {
             param_name,
             param_sort,
@@ -163,6 +175,68 @@ fn canon_formula(f: &IrFormula, ctx: &Ctx) -> IrFormula {
 
 fn canon_ops(operands: &[IrFormula], ctx: &Ctx) -> Vec<IrFormula> {
     operands.iter().map(|o| canon_formula(o, ctx)).collect()
+}
+
+fn term_as_ground_int(term: &IrTerm) -> Option<i128> {
+    match term {
+        IrTerm::Const { value, .. } => {
+            if let Some(n) = value.as_i64() {
+                return Some(i128::from(n));
+            }
+            if let Some(s) = value.as_str() {
+                return s.parse::<i128>().ok();
+            }
+            None
+        }
+        IrTerm::Ctor { name, args } => {
+            // Nested grounded trees: `&(+(1,5), 3)` after other folds land here.
+            fold_grounded_int_bitwise(name, args).and_then(|t| term_as_ground_int(&t))
+        }
+        _ => None,
+    }
+}
+
+fn int_const_term(value: i128) -> IrTerm {
+    // Prefer i64 Number encoding so existing JCS / display paths stay stable
+    // for the common small-int surface used by Python witness seeds.
+    let json_value = if let Ok(n) = i64::try_from(value) {
+        serde_json::json!(n)
+    } else {
+        serde_json::Value::String(value.to_string())
+    };
+    IrTerm::Const {
+        value: json_value,
+        sort: crate::Sort::Primitive { name: "Int".into() },
+    }
+}
+
+/// Fold fully-ground Int bitwise constructors (`&` `|` `^` `<<` `>>`) like
+/// Python. Symbolic coordinates (any free var) stay open.
+fn fold_grounded_int_bitwise(name: &str, args: &[IrTerm]) -> Option<IrTerm> {
+    if args.len() != 2 {
+        return None;
+    }
+    let left = term_as_ground_int(&args[0])?;
+    let right = term_as_ground_int(&args[1])?;
+    let result = match name {
+        "&" => left & right,
+        "|" => left | right,
+        "^" => left ^ right,
+        "<<" => {
+            if !(0..128).contains(&right) {
+                return None;
+            }
+            left.checked_shl(right as u32)?
+        }
+        ">>" => {
+            if !(0..128).contains(&right) {
+                return None;
+            }
+            left >> (right as u32)
+        }
+        _ => return None,
+    };
+    Some(int_const_term(result))
 }
 
 /// Canonicalize a formula: alpha-canonicalize binders to `$b<depth>` and inline
@@ -294,6 +368,80 @@ mod tests {
         );
         let once = canonicalize_formula(&f);
         assert_eq!(once, canonicalize_formula(&once));
+    }
+
+    #[test]
+    fn grounded_int_bitwise_folds_in_canonicalize() {
+        // #4394: after join, =(call:A(6), &(6, 3)) must become =(call:A(6), 2)
+        // so structural dual with py.eq(call:A(6), 1) can refuse the lie.
+        let bitand = IrTerm::Ctor {
+            name: "&".into(),
+            args: vec![
+                IrTerm::Const {
+                    value: serde_json::json!(6),
+                    sort: crate::Sort::Primitive { name: "Int".into() },
+                },
+                IrTerm::Const {
+                    value: serde_json::json!(3),
+                    sort: crate::Sort::Primitive { name: "Int".into() },
+                },
+            ],
+        };
+        let formula = IrFormula::Atomic {
+            name: "=".into(),
+            args: vec![
+                IrTerm::Ctor {
+                    name: "call:A".into(),
+                    args: vec![IrTerm::Const {
+                        value: serde_json::json!(6),
+                        sort: crate::Sort::Primitive { name: "Int".into() },
+                    }],
+                },
+                bitand,
+            ],
+        };
+        let canon = canonicalize_formula(&formula);
+        match canon {
+            IrFormula::Atomic { name, args } => {
+                assert_eq!(name, "=");
+                assert_eq!(args.len(), 2);
+                match &args[1] {
+                    IrTerm::Const { value, .. } => {
+                        assert_eq!(value.as_i64(), Some(2), "&(6,3) must fold to 2");
+                    }
+                    other => panic!("expected const 2, got {other:?}"),
+                }
+            }
+            other => panic!("expected atomic, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn symbolic_int_bitwise_stays_open_in_canonicalize() {
+        let formula = IrFormula::Atomic {
+            name: "=".into(),
+            args: vec![
+                IrTerm::Var { name: "out".into() },
+                IrTerm::Ctor {
+                    name: "&".into(),
+                    args: vec![
+                        IrTerm::Var { name: "z".into() },
+                        IrTerm::Const {
+                            value: serde_json::json!(3),
+                            sort: crate::Sort::Primitive { name: "Int".into() },
+                        },
+                    ],
+                },
+            ],
+        };
+        let canon = canonicalize_formula(&formula);
+        match canon {
+            IrFormula::Atomic { args, .. } => match &args[1] {
+                IrTerm::Ctor { name, .. } => assert_eq!(name, "&"),
+                other => panic!("symbolic &(z,3) must stay a ctor, got {other:?}"),
+            },
+            other => panic!("expected atomic, got {other:?}"),
+        }
     }
 
     /// A free const is preserved (sort + value).

@@ -515,6 +515,25 @@ def _fold_numeric_ctor(name: str, args: list[IrTerm | None]) -> IrTerm | None:
     folded_bv32 = _fold_bv32_ctor(name, args)
     if folded_bv32 is not None:
         return folded_bv32
+    # Grounded Int bitwise (#4394): native `&`/`|`/`^`/`<<`/`>>` over ConstInt
+    # folds like Python so floor_models_post and callsite joins refute lies.
+    if name in {"&", "|", "^", "<<", ">>"}:
+        if len(args) != 2 or not all(isinstance(arg, _ConstInt) for arg in args):
+            return None
+        left, right = (arg.value for arg in args if isinstance(arg, _ConstInt))
+        if name == "&":
+            return num(left & right)
+        if name == "|":
+            return num(left | right)
+        if name == "^":
+            return num(left ^ right)
+        if name == "<<":
+            if right < 0:
+                return None
+            return num(left << right)
+        if right < 0:
+            return None
+        return num(left >> right)
     if name not in {"+", "-", "*"}:
         return None
     if not all(isinstance(arg, _ConstInt) for arg in args):

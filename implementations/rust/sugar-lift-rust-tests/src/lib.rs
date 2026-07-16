@@ -6678,6 +6678,13 @@ pub(crate) fn const_fold_int_term(term: &Rc<Term>) -> Option<i128> {
                 "+" => a.checked_add(b),
                 "-" => a.checked_sub(b),
                 "*" => a.checked_mul(b),
+                // Grounded Int bitwise (same Python-like family as the SMT
+                // emitter fold for #4394). Symbolic coordinates stay open.
+                "&" => Some(a & b),
+                "|" => Some(a | b),
+                "^" => Some(a ^ b),
+                "<<" if (0..128).contains(&b) => a.checked_shl(b as u32),
+                ">>" if (0..128).contains(&b) => Some(a >> (b as u32)),
                 "int-div" => {
                     if b == 0 {
                         None
