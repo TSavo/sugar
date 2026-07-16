@@ -843,6 +843,36 @@ upload_shelf_file() {
   return 1
 }
 
+ensure_shelf_release() {
+  local shelf_tag="$1" repo="$2" stamp_short="$3"
+  local attempt=1 max_attempts=4 err
+  while [[ "$attempt" -le "$max_attempts" ]]; do
+    if gh release view "$shelf_tag" --repo "$repo" >/dev/null 2>&1; then
+      return 0
+    fi
+    err="$(mktemp)"
+    if gh release create "$shelf_tag" \
+      --repo "$repo" \
+      --title "Sugar binary shelf $(platform_key) $profile $stamp_short" \
+      --notes "Content-addressed Sugar binaries for one source/platform/profile family." \
+      >"$err" 2>&1; then
+      rm -f "$err"
+      return 0
+    fi
+    # Race: peer created the same shelf tag between view and create.
+    if gh release view "$shelf_tag" --repo "$repo" >/dev/null 2>&1; then
+      log "shelf release $shelf_tag appeared during create race; continuing"
+      rm -f "$err"
+      return 0
+    fi
+    log "create shelf attempt $attempt/$max_attempts failed for $shelf_tag: $(tr '\n' ' ' <"$err" | sed 's/[[:space:]]\+/ /g')"
+    rm -f "$err"
+    sleep $((attempt * 2))
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
 publish_if_absent() {
   local bin="$1" stamp="$2" name="$3" manifest
   manifest="$(artifact_manifest_path "$bin")"
@@ -852,12 +882,12 @@ publish_if_absent() {
   repo="$(github_repo)" || { log "gh repo identity unavailable; cannot publish $name"; [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]] && return 0 || return 1; }
   shelf_tag="$(shelf_tag_for_stamp "$stamp")"
   stamp_short="${stamp#*:}"; stamp_short="${stamp_short:0:24}"
-  gh release view "$shelf_tag" --repo "$repo" >/dev/null 2>&1 \
-    || gh release create "$shelf_tag" \
-      --repo "$repo" \
-      --title "Sugar binary shelf $(platform_key) $profile $stamp_short" \
-      --notes "Content-addressed Sugar binaries for one source/platform/profile family." >/dev/null 2>&1 \
-    || { log "could not create shelf release $shelf_tag"; [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]] && return 0 || return 1; }
+  # Ensure the shelf release exists. Concurrent prepares can race create; treat
+  # "already exists" (view succeeds after create fails) as success.
+  if ! ensure_shelf_release "$shelf_tag" "$repo" "$stamp_short"; then
+    log "could not create shelf release $shelf_tag"
+    [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]] && return 0 || return 1
+  fi
   local shelf_assets
   shelf_assets="$(shelf_asset_names "$shelf_tag" "$repo")"
   if shelf_has_complete_artifact "$shelf_assets" "$name"; then
