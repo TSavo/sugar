@@ -492,7 +492,7 @@ package="$(package_for_bin "$bin_name")" || exit 2
 repo_root="$(git -C "$script_dir/.." rev-parse --show-toplevel 2>/dev/null || (cd "$script_dir/.." && pwd -P))"
 repo_root="$(cd "$repo_root" && pwd -P)"
 rust_workspace="$repo_root/implementations/rust"
-shelf_tag="${SUGAR_BINARY_SHELF_TAG:-sugar-binary-shelf}"
+legacy_shelf_tag="sugar-binary-shelf"
 
 log() {
   printf 'sugarbin: %s\n' "$*" >&2
@@ -729,19 +729,31 @@ cache_dir() {
   printf '%s\n' "${SUGAR_BINARY_CACHE_DIR:-$HOME/.cache/sugar/binaries}"
 }
 
+shelf_tag_for_stamp() {
+  local stamp="$1"
+  if [[ -n "${SUGAR_BINARY_SHELF_TAG:-}" ]]; then
+    printf '%s\n' "$SUGAR_BINARY_SHELF_TAG"
+    return 0
+  fi
+  local digest="${stamp#*:}"
+  printf 'sugar-binary-shelf-v2-%s-%s-%.24s\n' "$(platform_key)" "$profile" "$digest"
+}
+
 publish_if_absent() {
   local bin="$1" stamp="$2" name="$3" manifest
   manifest="$(artifact_manifest_path "$bin")"
   [[ "${SUGAR_BINARY_PUBLISH:-1}" != "0" ]] || { log "publish disabled by SUGAR_BINARY_PUBLISH=0"; return 0; }
-  command -v gh >/dev/null 2>&1 || { log "gh not found; not publishing $name"; return 0; }
-  local repo
-  repo="$(github_repo)" || { log "gh repo identity unavailable; not publishing $name"; return 0; }
+  command -v gh >/dev/null 2>&1 || { log "gh not found; cannot publish $name"; [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]] && return 0 || return 1; }
+  local repo shelf_tag stamp_short
+  repo="$(github_repo)" || { log "gh repo identity unavailable; cannot publish $name"; [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]] && return 0 || return 1; }
+  shelf_tag="$(shelf_tag_for_stamp "$stamp")"
+  stamp_short="${stamp#*:}"; stamp_short="${stamp_short:0:24}"
   gh release view "$shelf_tag" --repo "$repo" >/dev/null 2>&1 \
     || gh release create "$shelf_tag" \
       --repo "$repo" \
-      --title "Sugar binary shelf" \
-      --notes "Dumb shelf for stamp-addressed Sugar test binaries." >/dev/null 2>&1 \
-    || { log "could not create shelf release; not publishing $name"; return 0; }
+      --title "Sugar binary shelf $(platform_key) $profile $stamp_short" \
+      --notes "Content-addressed Sugar binaries for one source/platform/profile family." >/dev/null 2>&1 \
+    || { log "could not create shelf release $shelf_tag"; [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]] && return 0 || return 1; }
   local shelf_assets
   shelf_assets="$(gh release view "$shelf_tag" --repo "$repo" --json assets --jq '.assets[].name')"
   if grep -Fxq "$name" <<<"$shelf_assets" && grep -Fxq "$name.sugarbin.json" <<<"$shelf_assets"; then
@@ -782,11 +794,16 @@ with open(path, "w", encoding="utf-8") as out:
     out.write("\n")
 PY
   cp "$manifest" "$tmp/$name.sugarbin.json"
+  local publish_status=0
   gh release upload "$shelf_tag" "$asset" "$meta" "$tmp/$name.sugarbin.json" --clobber \
-    --repo "$repo" >/dev/null 2>&1 \
-    && log "published $name as $actor" \
-    || log "publish failed or raced for $name; continuing"
+    --repo "$repo" >/dev/null 2>&1 || publish_status=$?
   rm -rf "$tmp"
+  if [[ "$publish_status" == 0 ]]; then
+    log "published $name as $actor to $shelf_tag"
+    return 0
+  fi
+  log "publish failed for $name in $shelf_tag"
+  [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]]
 }
 
 verify_attestation_if_present() {
@@ -816,11 +833,22 @@ pull_from_shelf() {
   fi
   [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
   command -v gh >/dev/null 2>&1 || { log "gh not found; skipping shelf pull"; return 1; }
-  local repo
+  local repo shelf_tag found=0
   repo="$(github_repo)" || { log "gh repo identity unavailable; skipping shelf pull"; return 1; }
   download_dir="$dir/.downloads/$name"
-  mkdir -p "$download_dir"
-  if ! gh release download "$shelf_tag" --repo "$repo" --pattern "$name" --pattern "$name.sugarbin.json" --dir "$download_dir" >/dev/null 2>&1; then
+  shelf_tag="$(shelf_tag_for_stamp "$stamp")"
+  local -a shelf_tags=("$shelf_tag")
+  [[ -n "${SUGAR_BINARY_SHELF_TAG:-}" || "$shelf_tag" == "$legacy_shelf_tag" ]] || shelf_tags+=("$legacy_shelf_tag")
+  local candidate_tag
+  for candidate_tag in "${shelf_tags[@]}"; do
+    rm -rf "$download_dir"
+    mkdir -p "$download_dir"
+    if gh release download "$candidate_tag" --repo "$repo" --pattern "$name" --pattern "$name.sugarbin.json" --dir "$download_dir" >/dev/null 2>&1; then
+      found=1
+      break
+    fi
+  done
+  if [[ "$found" != 1 ]]; then
     log "shelf miss for $name"
     return 1
   fi
