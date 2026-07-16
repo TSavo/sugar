@@ -1495,10 +1495,21 @@ impl<'a> FileSourceOracleCache<'a> {
         else {
             return Vec::new();
         };
-        fact.fact_spans
+        let mut mementos: Vec<Value> = fact
+            .fact_spans
             .iter()
             .filter_map(|span| self.statement_memento(owner, *span))
-            .collect()
+            .collect();
+        // Helper-call / inlined-assert paths often carry claim_count without a
+        // statement span that resolves inside the test body (the span lands on
+        // the helper's assert_eq!, not the caller's stmt). Ambient testimony
+        // still requires a provenance KIND; fall back to the test function's
+        // source memento so warranted facts never seal without sourceWarrants.
+        // See examples/rust-test-assertion-consistency and A2 scoreboard.
+        if mementos.is_empty() {
+            mementos.push(self.function_memento(owner).to_json());
+        }
+        mementos
     }
 
     fn statement_memento(&mut self, owner: &FnRef<'_>, span: proc_macro2::Span) -> Option<Value> {
@@ -9426,6 +9437,72 @@ mod tests {
                         && edge["targetContract"] == json!("rust-source::answer")
                 })),
             "assertion fact must bridge to answer source contract: {response}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Showcase shape: test calls a local helper that holds the assert_eq!.
+    /// Statement spans resolve on the helper, not the test body — without a
+    /// function-memento fallback the warranted fact sealed with zero provenance
+    /// and ambient consistency refused (A2 expected-discharge-got-refused).
+    #[test]
+    fn helper_call_assertion_carries_source_warrants_for_ambient() {
+        let root = unique_temp_dir("helper_call_assertion_carries_source_warrants_for_ambient");
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(
+            root.join("src/lib.rs"),
+            r#"
+pub fn make_value() -> i32 {
+    6
+}
+
+#[cfg(test)]
+mod tests {
+    use super::make_value;
+
+    fn assert_same(actual: i32, expected: i32) {
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn scalar_is_six() {
+        assert_same(make_value(), 6);
+    }
+}
+"#,
+        )
+        .expect("write rust source");
+
+        let response = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"]
+        }));
+        let ir = response["ir"].as_array().expect("ir array");
+        let main = ir
+            .iter()
+            .find(|entry| {
+                entry["kind"] == json!("contract")
+                    && entry["name"].as_str().is_some_and(|name| {
+                        name.contains("scalar_is_six")
+                            && name.contains("make_value#euf#")
+                            && !name.contains("panic_callsite")
+                    })
+            })
+            .unwrap_or_else(|| panic!("missing main assertion contract: {response}"));
+        let warrants = main
+            .get("sourceWarrants")
+            .and_then(|v| v.as_array())
+            .unwrap_or_else(|| panic!("main assertion missing sourceWarrants: {main}"));
+        assert!(
+            !warrants.is_empty(),
+            "warranted helper-call assertion must carry sourceWarrants for ambient KIND: {main}"
+        );
+        assert_eq!(warrants[0]["file"], json!("src/lib.rs"));
+        assert!(
+            warrants[0]["sourceFunctionName"] == json!("tests::scalar_is_six")
+                || warrants[0]["source_function_name"] == json!("tests::scalar_is_six"),
+            "fallback warrant must name the test function: {main}"
         );
 
         let _ = std::fs::remove_dir_all(root);
