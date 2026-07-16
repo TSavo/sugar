@@ -21,14 +21,20 @@ def test_vendor_assert_mints_assertion_row_not_a_universe() -> None:
     )
     payload = lift_file_payload(source, "vendor.py")
     kinds = [row.kind for row in payload.ir]
-    # ONE function-contract (enc only); test_enc is testimony (no contract row).
     assert kinds.count("function-contract") == 1
-    assert payload.ir[0].kind == "function-contract"
-    assert payload.ir[0].name == "enc"
+
+    # ONE function-contract (enc only); test_enc is testimony (no contract row).
+    fn_rows = [row for row in payload.ir if row.kind == "function-contract"]
+    assert len(fn_rows) == 1
+    assert fn_rows[0].name in {"enc", "vendor.enc"}
 
     assertion_rows = [row for row in payload.ir if row.kind == "contract"]
-    assert any(row.name == "test_enc::assertion" for row in assertion_rows)
-    fact = next(row for row in assertion_rows if row.name == "test_enc::assertion")
+    # Ground callsite py.eq mints under the `#euf#` key so ambient dual join works.
+    assert len(assertion_rows) == 1
+    fact = assertion_rows[0]
+    assert "#euf#" in fact.name
+    assert fact.name.endswith("::assertion")
+    assert fact.name.startswith("enc#euf#") or fact.name.startswith("vendor.enc#euf#")
     assert fact.inv is not None
     assert fact.post is None
     assert fact.source_warrants[0].source_cid == blake3_512_of(
@@ -55,6 +61,9 @@ def test_test_function_mints_no_function_contract() -> None:
 def test_two_asserts_mint_two_assertion_rows() -> None:
     source = "def test_pair():\n" "    assert f(1) == 2\n" "    assert g(3) == 4\n"
     payload = lift_file_payload(source, "t.py")
-    assertion_rows = [row for row in payload.ir if row.name == "test_pair::assertion"]
+    assertion_rows = [row for row in payload.ir if row.kind == "contract"]
     assert len(assertion_rows) == 2
-    assert all(row.kind == "contract" and row.inv is not None for row in assertion_rows)
+    names = {row.name for row in assertion_rows}
+    assert any(n.startswith("f#euf#") for n in names)
+    assert any(n.startswith("g#euf#") for n in names)
+    assert all(row.inv is not None for row in assertion_rows)
