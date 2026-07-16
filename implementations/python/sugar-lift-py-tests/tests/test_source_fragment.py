@@ -58,6 +58,25 @@ def test_a_whole_function_body_decomposes_statements_then_terms():
     assert [t.observed for t in body.statements()[0].terms()] == ["Name", "BinOp"]
 
 
+def test_assert_source_memento_preserves_message_spelling_as_provenance() -> None:
+    source = (
+        "assert 1 <= month <= 12, month\n"
+        'assert 1 <= month <= 12, "month must be in 1..12"\n'
+        "assert 1 <= month <= 12\n"
+    )
+    assertions = (
+        SourceFragment.from_source(source, "datetime.py").fragments()[0].statements()
+    )
+
+    assert [
+        assertion.memento().to_rpc().get("assertMessage") for assertion in assertions
+    ] == [
+        "month",
+        '"month must be in 1..12"',
+        None,
+    ]
+
+
 # ------------------------------------------------------------------
 # Accessor tests
 # ------------------------------------------------------------------
