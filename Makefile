@@ -471,6 +471,9 @@ test-showcases: check-showcase-kit-preflight check-lift-manifest-pythonpath
 	  ssh -o BatchMode=yes "$$remote_host" "bash -lc $$(printf '%q' "$$remote_cmd")"; \
 	  exit $$?; \
 	fi; \
+	for b in sugar-ir-smt-lib sugar-ir-lean sugar-ir-coq sugar-ir-maude sugar-walk-rpc rust_test_assertions_rpc witness_rpc discharge_cli; do \
+	  bin/sugarbin --profile debug --bin "$$b" >/dev/null || exit $$?; \
+	done; \
 	bin/sugarbin --profile release >/dev/null || exit $$?; \
 	failed=""; \
 	for s in $(SHOWCASE_RUNS); do \
