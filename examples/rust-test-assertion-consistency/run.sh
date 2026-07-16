@@ -38,6 +38,8 @@ for row in d.get("rows", []):
         continue
     if prop.startswith("consistency:rust-source::"):
         continue
+    if "#panic_callsite#" in prop:
+        continue
     if "witness-package" in prop:
         continue
     rows.append(row)
@@ -64,14 +66,13 @@ run_suite() {
   local prove_json="$dir/.prove.json"
   ( cd "$dir" && "$SUGAR" prove . --json ) > "$prove_json" 2>/dev/null || true
 
-  # Select all TEST-ASSERTION consistency rows, not the production function's own
-  # `consistency:rust-source::<fn>` value self-contract (a single-fact inv that
-  # is trivially SAT and always discharges). The SourceOracle audit (PR #2138)
-  # began emitting that production self-contract into the same consistency
-  # report; this receipt is about the TEST's assertion-set consistency rows,
-  # whose callsites carry the test source path (`src/lib.rs::...`), NOT the
-  # `rust-source::` production prefix. Check the full set so a stale first
-  # discharged row cannot hide a later contradictory unsatisfied row.
+  # Select substantive TEST-ASSERTION consistency rows:
+  # - not production `consistency:rust-source::<fn>` self-contracts
+  # - not `#panic_callsite#` support rows (single-constraint ambient support;
+  #   vacuous by design, not the scalar claim under test)
+  # The SourceOracle audit (PR #2138) and panic-callsite support both land in
+  # the same prove report; this receipt is about the TEST assertion's
+  # consistency, whose callsites carry the test source path.
   local rows
   rows="$(consistency_statuses "$prove_json")"
   if [ -z "$rows" ]; then

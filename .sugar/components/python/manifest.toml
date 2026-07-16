@@ -3,5 +3,14 @@
 name = "python"
 version = "0.1.0"
 protocol_version = "sugar-component/1"
-command = ["python3", "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py", "--rpc"]
+# sugar_lift_py_tests imports sugar_lift_python_source at load (source_fragment);
+# both package src trees must be on PYTHONPATH or initialize dies before handshake.
+command = [
+    "/usr/bin/env",
+    "PYTHONPATH=implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-lift-python-source/src",
+    "python3",
+    "-m",
+    "sugar_lift_py_tests.lift_rpc",
+    "--rpc",
+]
 working_dir = "../../.."
