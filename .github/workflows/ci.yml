@@ -160,7 +160,13 @@ jobs:
           cache: 'pip'
 
       - name: Install lift package deps
-        run: python -m pip install --quiet blake3 pynacl cbor2 pytest
+        run: |
+          python -m pip install --quiet \
+            blake3 pynacl cbor2 pytest \
+            -e implementations/python/sugar-build-witness \
+            -e implementations/python/sugar-lift-py-tests \
+            -e implementations/python/sugar-lift-python-source \
+            -e implementations/python/sugar-lift-py-pytest-witness
 
       - name: Set up Java 21
         uses: actions/setup-java@v4
@@ -170,7 +176,7 @@ jobs:
 
       - name: Install system deps
         run: |
-          tools/ci-apt-install.sh z3 maven unzip b3sum
+          tools/ci-apt-install.sh z3 cvc5 maven unzip b3sum
           if ! command -v vampire >/dev/null 2>&1; then
             curl -fsSL -o /tmp/vampire.zip https://github.com/vprover/vampire/releases/download/v5.0.1/vampire-Linux-X64.zip
             unzip -o -q /tmp/vampire.zip -d /tmp/vampire-bin
