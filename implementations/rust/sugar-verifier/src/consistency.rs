@@ -2064,9 +2064,8 @@ fn is_ground_string_theory_predicate(node: &Json) -> bool {
     if args.len() != 2 {
         return false;
     }
-    args.iter().all(|arg| {
-        formula_is_closed(arg, &mut Vec::new()) && !term_has_opaque_call(arg)
-    })
+    args.iter()
+        .all(|arg| formula_is_closed(arg, &mut Vec::new()) && !term_has_opaque_call(arg))
 }
 
 /// True if any `call:*` ctor appears anywhere in `term`. Such a ctor is an
@@ -5995,7 +5994,8 @@ mod tests {
     #[test]
     fn lone_ground_contains_nonmatching_is_refuted() {
         let (plan, reg) = z3_plan_and_registry();
-        let name = "method:contains#euf#c:callresult_method_contains_a2(s:\"abc\",s:\"z\")::assertion";
+        let name =
+            "method:contains#euf#c:callresult_method_contains_a2(s:\"abc\",s:\"z\")::assertion";
         let inv = json!({
             "kind": "and",
             "operands": [{
@@ -6056,13 +6056,11 @@ mod tests {
             "opaque method EUF without a body universe must stay vacuous-refused: {res:?}"
         );
         assert!(
-            res[0].reason.contains("no covering universe")
-                || res[0].reason.contains("no sibling"),
+            res[0].reason.contains("no covering universe") || res[0].reason.contains("no sibling"),
             "reason must name vacuity, not invent discharge: {}",
             res[0].reason
         );
     }
-
 
     /// MIXED-OPERATOR SAME-TERM, number sort universe. Two facts about the SAME
     /// left-operand call term but DIFFERENT operators must JOIN and let the number
