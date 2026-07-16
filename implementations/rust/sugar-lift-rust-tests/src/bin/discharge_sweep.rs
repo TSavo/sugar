@@ -1255,9 +1255,14 @@ fn write_production_replay_project(
         std::fs::write(&dest, source).map_err(|err| format!("write {}: {err}", dest.display()))?;
     }
 
+    let lean_project = workspace
+        .parent()
+        .and_then(Path::parent)
+        .expect("rust workspace lives under implementations/rust")
+        .join("tools/portfolio/lean-mathlib");
     std::fs::write(
         project.join(".sugar/config.toml"),
-        r#"[[plugins]]
+        format!(r#"[[plugins]]
 name = "rust-test-assertions-lift"
 kind = "lift"
 surface = "rust-test-assertions"
@@ -1270,7 +1275,16 @@ version = "rustc 1.96.0"
 
 [solvers]
 mode = "first-wins"
-portfolio = ["z3"]
+portfolio = ["maude", "z3", "cvc5", "vampire", "coq", "lean"]
+
+[solvers.maude]
+binary = "maude"
+ir_compiler = "maude"
+timeout_seconds = 30
+ceta_gate = true
+ceta_binary = "ceta"
+termination_prover = "aprove"
+confluence_checker = "csi"
 
 [solvers.z3]
 binary = "z3"
@@ -1279,10 +1293,33 @@ flags = ["-smt2", "-in"]
 timeout_seconds = 30
 version = "4.x"
 
+[solvers.cvc5]
+binary = "cvc5"
+ir_compiler = "smt-lib-v2.6"
+flags = ["--lang=smt2", "--produce-models"]
+timeout_seconds = 30
+
+[solvers.vampire]
+binary = "vampire"
+ir_compiler = "smt-lib-v2.6"
+flags = ["--input_syntax", "smtlib2", "--output_mode", "smtcomp"]
+timeout_seconds = 30
+
+[solvers.coq]
+binary = "coqc"
+ir_compiler = "coq"
+timeout_seconds = 60
+
+[solvers.lean]
+binary = "lake"
+ir_compiler = "lean"
+timeout_seconds = 60
+lake_project = "{lean_project}"
+
 [rust-test-assertions.target_cfg]
 target = "x86_64-apple-darwin"
 facts = ["test", "debug_assertions", "target_arch=\"x86_64\"", "target_pointer_width=\"64\"", "target_os=\"macos\"", "unix"]
-"#,
+"#, lean_project = lean_project.display()),
     )
     .map_err(|err| format!("write .sugar/config.toml: {err}"))?;
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import tomllib
 from dataclasses import replace
 from pathlib import Path
 
@@ -1522,6 +1523,28 @@ def test_sugar_witness_cli_exits_clean_only_when_residue_is_zero(
 def test_witness_pipeline_solver_absence_is_loud() -> None:
     with pytest.raises(WitnessPipelineError, match="no rows"):
         prove_verdict({"rows": []})
+
+
+def test_object_equality_harness_stages_full_installed_portfolio(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "full-portfolio"
+    _stage_cli_project(project, "def test_a():\n    assert object() == object()\n")
+
+    config = tomllib.loads((project / ".sugar/config.toml").read_text())
+
+    assert config["solvers"]["portfolio"] == [
+        "z3",
+        "cvc5",
+        "vampire",
+        "maude",
+        "coq",
+        "lean",
+    ]
+    assert config["solvers"]["maude"]["ir_compiler"] == "maude"
+    assert config["solvers"]["coq"]["ir_compiler"] == "coq"
+    assert config["solvers"]["lean"]["binary"] == "lake"
+    assert config["solvers"]["lean"]["ir_compiler"] == "lean"
 
 
 @pytest.mark.parametrize("status", ["undecidable"])

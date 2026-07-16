@@ -104,13 +104,13 @@ def _stage_cli_project(project: Path, source: str) -> None:
     (sugar / "lift" / "python").mkdir(parents=True)
     (sugar / "components" / "python-lift").mkdir(parents=True)
     (sugar / "config.toml").write_text(
-        """[[plugins]]
+        f"""[[plugins]]
 name = "python-lift"
 kind = "lift"
 surface = "python"
 
 [solvers]
-portfolio = ["z3", "cvc5", "vampire", "maude", "coq"]
+portfolio = ["z3", "cvc5", "vampire", "maude", "coq", "lean"]
 mode = "first-wins"
 
 [solvers.z3]
@@ -140,6 +140,12 @@ timeout_seconds = 10
 binary = "coqc"
 ir_compiler = "coq"
 timeout_seconds = 10
+
+[solvers.lean]
+binary = "lake"
+ir_compiler = "lean"
+timeout_seconds = 10
+lake_project = "{ROOT / 'tools' / 'portfolio' / 'lean-mathlib'}"
 """,
         encoding="utf-8",
     )

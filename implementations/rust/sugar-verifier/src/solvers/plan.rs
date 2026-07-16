@@ -36,6 +36,21 @@ pub struct SolverInvocation {
     pub result: SolveResult,
 }
 
+impl SolverInvocation {
+    pub fn seat_state(&self) -> &'static str {
+        if is_unavailable(&self.result) {
+            "unavailable"
+        } else if matches!(
+            self.result.verdict,
+            ObligationVerdict::Discharged | ObligationVerdict::Unsatisfied
+        ) {
+            "discharged"
+        } else {
+            "inability"
+        }
+    }
+}
+
 /// Solver registry: seat -> handle. Built once at runner construction
 /// from the SolversConfig.
 pub type Registry = HashMap<SolverSeat, SolverHandle>;
@@ -649,6 +664,7 @@ mod tests {
         FrontendErrorPayload, IrCompiler, PROTOCOL_VERSION,
     };
     use sugar_ir_compiler_coq::CoqCompiler;
+    use sugar_ir_compiler_lean::LeanCompiler;
     use sugar_ir_compiler_smt_lib::SmtLibCompiler;
 
     fn registry() -> Registry {
@@ -960,6 +976,54 @@ mod tests {
             .find(|invocation| invocation.result.solver_name == "maude")
             .expect("configured missing seat remains in ladder");
         assert_eq!(maude.result.exit.kind, SolverExitKind::SpawnError);
+    }
+
+    #[test]
+    fn configured_lean_with_absent_binary_is_unavailable_not_omitted() {
+        let mut reg: Registry = HashMap::new();
+        reg.insert(
+            SolverSeat::Z3,
+            Arc::new(StubSolver::new("z3", ObligationVerdict::Undecidable)) as SolverHandle,
+        );
+        reg.insert(
+            SolverSeat::Lean,
+            Arc::new(crate::solvers::LeanSubprocessSolver::new(
+                "lean",
+                "/definitely/missing/lean-seat",
+                "test",
+                None,
+                Some(".".to_string()),
+                None,
+            )) as SolverHandle,
+        );
+        let plan = SolverPlan::Portfolio {
+            names: vec![SolverSeat::Z3, SolverSeat::Lean],
+            mode: PortfolioMode::FirstWins,
+        };
+        let mut compilers = CompilerRegistry::new();
+        compilers.register(Arc::new(SmtLibCompiler::new()));
+        compilers.register(Arc::new(LeanCompiler::new()));
+        let formula = compiler_input(serde_json::json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "const", "value": 1, "sort": {"kind": "primitive", "name": "Int"}},
+                {"kind": "const", "value": 1, "sort": {"kind": "primitive", "name": "Int"}}
+            ]
+        }));
+
+        let (verdict, reason, invocations) =
+            run_plan_with_compilers(&plan, &reg, &compilers, &formula);
+
+        assert_eq!(verdict, ObligationVerdict::Refused);
+        assert!(reason.contains("refused-modulo-unavailable-seats"));
+        assert_eq!(invocations.len(), 2);
+        let lean = invocations
+            .iter()
+            .find(|invocation| invocation.result.solver_name == "lean")
+            .expect("named Lean seat must remain in the ladder");
+        assert_eq!(lean.seat_state(), "unavailable");
+        assert_eq!(lean.result.exit.kind, SolverExitKind::SpawnError);
     }
 
     #[test]
