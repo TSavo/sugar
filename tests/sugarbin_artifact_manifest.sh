@@ -41,11 +41,12 @@ binary=""
 while [[ $# -gt 0 ]]; do
   if [[ "$1" == --bin ]]; then binary="$2"; shift 2; else shift; fi
 done
-cat >"$SUGAR_BINARY_TARGET_ROOT/release/$binary" <<EOF
+mkdir -p "$CARGO_TARGET_DIR/release"
+cat >"$CARGO_TARGET_DIR/release/$binary" <<EOF
 #!/usr/bin/env bash
 printf '%s\\n' '$binary' >>'$SUGARBIN_FAKE_CHILD_LOG'
 EOF
-chmod +x "$SUGAR_BINARY_TARGET_ROOT/release/$binary"
+chmod +x "$CARGO_TARGET_DIR/release/$binary"
 SH
 chmod +x "$tmp/bin/rustc" "$tmp/bin/cargo"
 
@@ -84,6 +85,8 @@ chmod +x "$tmp/target/release/sugar-ir-smt-lib"
 [[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]] || {
   echo 'stale sibling was accepted under another executable identity' >&2; exit 1;
 }
+build_dirs="$(find "$tmp/cache/.build" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+[[ "$build_dirs" == 1 ]] || { echo "binary misses used $build_dirs Cargo target families" >&2; exit 1; }
 python3 - "$tmp/target/release/sugar.sugarbin.json" <<'PY'
 import json, sys
 with open(sys.argv[1]) as f: data = json.load(f)

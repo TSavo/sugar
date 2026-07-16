@@ -403,6 +403,7 @@ every published binary: change any Rust source and every binary rebuilds;
 change only Python and every binary stays cache-hot. --bin selects which
 published binary to resolve (default: sugar). Known names:
   sugar                       sugar-cli
+  sugar-lift                  sugar-lift
   sugar-ra-oracle               sugar-ra-oracle
   sugar-lsp                    sugar-lsp
   sugar-walk-rpc               sugar-walk
@@ -410,6 +411,7 @@ published binary to resolve (default: sugar). Known names:
   discharge_cli                sugar-lift-rust-cargo-test-witness
   rust_test_assertions_rpc     sugar-lift-rust-tests
   discharge_sweep              sugar-lift-rust-tests
+  coretests_sweep               sugar-lift-rust-tests
   sugar-ir-smt-lib              sugar-ir-compiler-smt-lib
   sugar-ir-lean                 sugar-ir-compiler-lean
   sugar-ir-coq                   sugar-ir-compiler-coq
@@ -465,6 +467,7 @@ esac
 package_for_bin() {
   case "$1" in
     sugar) printf 'sugar-cli\n' ;;
+    sugar-lift) printf 'sugar-lift\n' ;;
     sugar-ra-oracle) printf 'sugar-ra-oracle\n' ;;
     sugar-lsp) printf 'sugar-lsp\n' ;;
     sugar-walk-rpc) printf 'sugar-walk\n' ;;
@@ -472,6 +475,7 @@ package_for_bin() {
     discharge_cli) printf 'sugar-lift-rust-cargo-test-witness\n' ;;
     rust_test_assertions_rpc) printf 'sugar-lift-rust-tests\n' ;;
     discharge_sweep) printf 'sugar-lift-rust-tests\n' ;;
+    coretests_sweep) printf 'sugar-lift-rust-tests\n' ;;
     sugar-ir-smt-lib) printf 'sugar-ir-compiler-smt-lib\n' ;;
     sugar-ir-lean) printf 'sugar-ir-compiler-lean\n' ;;
     sugar-ir-coq) printf 'sugar-ir-compiler-coq\n' ;;
@@ -650,6 +654,24 @@ for label, value in zip(("sourceStamp", "rustcVersionVerbose", "cargoVersionVerb
 PY
 }
 
+# Cargo freshness belongs to the source/toolchain/profile family, not to one
+# executable. Artifact identity remains binary-specific, but misses in the
+# same family share compiled dependencies.
+build_family_identity() {
+  local stamp="$1"
+  require_b3sum || return 1
+  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
+import sys
+def emit(label, value):
+    label = label.encode(); value = value.encode()
+    sys.stdout.buffer.write(str(len(label)).encode() + b":" + label)
+    sys.stdout.buffer.write(str(len(value)).encode() + b":" + value)
+for label, value in zip(("sourceStamp", "rustcVersionVerbose", "cargoVersionVerbose",
+                         "platform", "targetTriple", "profile", "sortedFeatures"), sys.argv[1:]):
+    emit(label, value)
+PY
+}
+
 artifact_manifest_path() { printf '%s.sugarbin.json\n' "$1"; }
 
 write_artifact_manifest() {
@@ -820,7 +842,9 @@ build_from_source() {
   local cargo_bin="${SUGAR_BINARY_CARGO:-cargo}"
   local target_root="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}"
   local build_base="${SUGAR_BINARY_BUILD_ROOT:-$(cache_dir)/.build}"
-  local build_root="$build_base/$(stamp_for_filename "$identity")"
+  local family_identity
+  family_identity="$(build_family_identity "$stamp")" || return $?
+  local build_root="$build_base/$(stamp_for_filename "$family_identity")"
   local args=(build --locked --manifest-path "$rust_workspace/Cargo.toml" -p "$package" --bin "$bin_name")
   if [[ "$profile" == "release" ]]; then
     args+=(--release)
