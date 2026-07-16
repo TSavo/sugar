@@ -25,10 +25,11 @@ class ReturnValue(FloorValue):
             return (conditional_post(out),)
         return (eq(out, self.value.to_term(owner="post")),)
 
-    def follow_rest(self, rest, reduce):
+    def follow_rest(self):
         # Code after an unguarded return never runs: keep it raw, unreduced.
-        del reduce
-        return rest
+        from sugar_lift_py_tests.outcome.follow_step import FollowStep
+
+        return FollowStep.halt(keeps_rest=True)
 
     def guarded(self, formula):
         # A return under a guard is a GuardedReturn.

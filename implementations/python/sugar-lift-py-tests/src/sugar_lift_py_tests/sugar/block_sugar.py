@@ -57,41 +57,37 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
         return BlockValue(statements), final_ctx
 
     def _collect_with_scope(self, statements: tuple, ctx: object):
-        if not statements:
-            return (), ctx
-        head, *rest = statements
-        rest = tuple(rest)
-        outcome = head.reduce(ctx)
-        next_ctx = outcome.extend_scope(ctx)
-        final_ctx = next_ctx
-
-        def reduce_tail(more):
-            nonlocal final_ctx
-            entries, final_ctx = self._collect_with_scope(more, next_ctx)
-            return entries
-
-        return (
-            (
-                *outcome.contribution(),
-                *outcome.follow(rest, reduce_tail),
-            ),
-            final_ctx,
-        )
+        return self._collect_iterative(statements, ctx)
 
     def _collect(self, statements: tuple, ctx: object) -> tuple:
-        if not statements:
-            return ()
-        head, *rest = statements
-        rest = tuple(rest)
-        outcome = head.reduce(ctx)
-        # The outcome owns what joins the record (floor value, or itself if incomplete),
-        # whether the rest reduces, and what scope the rest reduces under (a BoundVar
-        # extends; Support and ordinary values leave the scope alone).
-        next_ctx = outcome.extend_scope(ctx)
-        return (
-            *outcome.contribution(),
-            *outcome.follow(rest, lambda more: self._collect(more, next_ctx)),
-        )
+        entries, _final_ctx = self._collect_iterative(statements, ctx)
+        return entries
+
+    def _collect_iterative(self, statements: tuple, ctx: object):
+        entries: list[object] = []
+        transforms = []
+        final_ctx = ctx
+
+        for index, head in enumerate(statements):
+            outcome = head.reduce(final_ctx)
+            final_ctx = outcome.extend_scope(final_ctx)
+
+            contribution = outcome.contribution()
+            for transform in reversed(transforms):
+                contribution = transform(contribution)
+            entries.extend(contribution)
+
+            follow = outcome.follow()
+            if not follow.continues:
+                tail = statements[index + 1 :] if follow.keeps_rest else ()
+                for transform in reversed(transforms):
+                    tail = transform(tail)
+                entries.extend(tail)
+                break
+            if follow.transform is not None:
+                transforms.append(follow.transform)
+
+        return tuple(entries), final_ctx
 
     def walk_children(self):
         return self.statements

@@ -12,9 +12,10 @@ class LoopControlValue(FloorValue):
     action: str
     locus: str
 
-    def follow_rest(self, rest, reduce):
-        del reduce
-        return rest
+    def follow_rest(self):
+        from sugar_lift_py_tests.outcome.follow_step import FollowStep
+
+        return FollowStep.halt(keeps_rest=True)
 
     def guarded(self, formula):
         from .guarded_loop_control import GuardedLoopControl

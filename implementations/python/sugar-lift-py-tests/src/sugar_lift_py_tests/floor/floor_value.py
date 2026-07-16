@@ -225,9 +225,11 @@ class FloorValue:
         del source_contract
         return ()
 
-    def follow_rest(self, rest, reduce):
+    def follow_rest(self):
         # Default: an ordinary statement value lets the block go on.
-        return reduce(rest)
+        from sugar_lift_py_tests.outcome.follow_step import FollowStep
+
+        return FollowStep.continue_with()
 
     def guarded(self, formula):
         # Default: this value cannot ride under a guard. The record entries

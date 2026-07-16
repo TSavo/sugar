@@ -21,8 +21,8 @@ class LoopElseValue(FloorValue):
     def extend_scope(self, ctx):
         return self.else_faces.extend_scope(self.loop_scope.extend_scope(ctx))
 
-    def follow_rest(self, rest, reduce):
-        return self.else_faces.follow_rest(rest, reduce)
+    def follow_rest(self):
+        return self.else_faces.follow_rest()
 
     def inv_contribution(self):
         return self.else_faces.inv_contribution()

@@ -33,8 +33,8 @@ class NamedExpressionValue(FloorValue):
     def contribution(self):
         return self.presented_value.contribution()
 
-    def follow_rest(self, rest, reduce):
-        return self.presented_value.follow_rest(rest, reduce)
+    def follow_rest(self):
+        return self.presented_value.follow_rest()
 
     def inv_contribution(self):
         return self.presented_value.inv_contribution()

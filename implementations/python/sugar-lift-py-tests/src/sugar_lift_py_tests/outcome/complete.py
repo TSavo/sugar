@@ -14,11 +14,11 @@ class Complete:
         # else-face. Truth answers first for values that fold; the standing decides.
         return self.value.binary_conditional(then, else_body, ctx, site)
 
-    def follow(self, rest, reduce):
+    def follow(self):
         # The value owns whether and how the rest reduces: an ordinary value
         # lets the run go on, an exit keeps the rest raw (unreachable), a
         # guarded-faces value guards the continuation by its negated test.
-        return self.value.follow_rest(rest, reduce)
+        return self.value.follow_rest()
 
     def contribution(self):
         # The value owns its contribution to the block record -- no interrogation.
