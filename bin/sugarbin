@@ -803,6 +803,40 @@ shelf_tag_for_stamp() {
   printf 'sugar-binary-shelf-v2-%s-%s-%.24s\n' "$(platform_key)" "$profile" "$digest"
 }
 
+shelf_has_complete_artifact() {
+  local shelf_assets="$1" name="$2"
+  grep -Fxq "$name" <<<"$shelf_assets" \
+    && grep -Fxq "$name.sugarbin.json" <<<"$shelf_assets" \
+    && grep -Fxq "$name.metadata.json" <<<"$shelf_assets"
+}
+
+shelf_asset_names() {
+  local shelf_tag="$1" repo="$2"
+  # Prefer the assets array shape; fall back if older gh returns the field bare.
+  gh release view "$shelf_tag" --repo "$repo" --json assets --jq '
+    if type == "object" and has("assets") then .assets[].name
+    elif type == "array" then .[].name
+    else empty end
+  ' 2>/dev/null || true
+}
+
+upload_shelf_file() {
+  local shelf_tag="$1" repo="$2" file="$3"
+  local attempt=1 max_attempts=4 err
+  while [[ "$attempt" -le "$max_attempts" ]]; do
+    err="$(mktemp)"
+    if gh release upload "$shelf_tag" "$file" --clobber --repo "$repo" >"$err" 2>&1; then
+      rm -f "$err"
+      return 0
+    fi
+    log "upload attempt $attempt/$max_attempts failed for $(basename "$file"): $(tr '\n' ' ' <"$err" | sed 's/[[:space:]]\+/ /g')"
+    rm -f "$err"
+    sleep $((attempt * 2))
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
 publish_if_absent() {
   local bin="$1" stamp="$2" name="$3" manifest
   manifest="$(artifact_manifest_path "$bin")"
@@ -819,8 +853,8 @@ publish_if_absent() {
       --notes "Content-addressed Sugar binaries for one source/platform/profile family." >/dev/null 2>&1 \
     || { log "could not create shelf release $shelf_tag"; [[ "${SUGAR_BINARY_REQUIRE_PUBLISH:-0}" != 1 ]] && return 0 || return 1; }
   local shelf_assets
-  shelf_assets="$(gh release view "$shelf_tag" --repo "$repo" --json assets --jq '.assets[].name')"
-  if grep -Fxq "$name" <<<"$shelf_assets" && grep -Fxq "$name.sugarbin.json" <<<"$shelf_assets"; then
+  shelf_assets="$(shelf_asset_names "$shelf_tag" "$repo")"
+  if shelf_has_complete_artifact "$shelf_assets" "$name"; then
     log "shelf already has $name"
     return 0
   fi
@@ -860,12 +894,26 @@ with open(path, "w", encoding="utf-8") as out:
     out.write("\n")
 PY
   cp "$manifest" "$tmp/$name.sugarbin.json"
+  # Upload one file at a time. Multi-asset `gh release upload` can leave a
+  # partial shelf (metadata without binary) and still fail the whole batch;
+  # require-publish then hard-fails even though the runner has a good local bin.
   local publish_status=0
-  gh release upload "$shelf_tag" "$asset" "$meta" "$tmp/$name.sugarbin.json" --clobber \
-    --repo "$repo" >/dev/null 2>&1 || publish_status=$?
-  rm -rf "$tmp"
+  upload_shelf_file "$shelf_tag" "$repo" "$asset" || publish_status=$?
   if [[ "$publish_status" == 0 ]]; then
+    upload_shelf_file "$shelf_tag" "$repo" "$meta" || publish_status=$?
+  fi
+  if [[ "$publish_status" == 0 ]]; then
+    upload_shelf_file "$shelf_tag" "$repo" "$tmp/$name.sugarbin.json" || publish_status=$?
+  fi
+  rm -rf "$tmp"
+  # Race / eventual consistency: another runner may have completed the shelf.
+  shelf_assets="$(shelf_asset_names "$shelf_tag" "$repo")"
+  if shelf_has_complete_artifact "$shelf_assets" "$name"; then
     log "published $name as $actor to $shelf_tag"
+    return 0
+  fi
+  if [[ "$publish_status" == 0 ]]; then
+    log "published $name as $actor to $shelf_tag (assets not yet listed)"
     return 0
   fi
   log "publish failed for $name in $shelf_tag"
