@@ -44,8 +44,9 @@ class TestimonyValue(FloorValue):
 
     def payload_rows(self, def_memento):
         # Testimony mints NO function-contract row. Each fact is a contract row.
-        # Ground callsite py.eq rides under its `#euf#` key (verifier ambient
-        # join); everything else keeps the historical `{test}::assertion` mark.
+        # Ground callsite equality rides under its `#euf#` key (verifier
+        # ambient join); everything else keeps the historical
+        # `{test}::assertion` mark.
         import dataclasses
 
         from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
@@ -82,7 +83,7 @@ def _assertion_contract_name(test_name: str, formula) -> str:
 
 
 def _ground_callsite_euf_name(formula) -> str | None:
-    """Return the `#euf#` contract name when `formula` is py.eq(call:…, …)."""
+    """Return the `#euf#` name for stated or derived call equality."""
     from sugar_lift_py_tests.ir import _Atomic, _Ctor
     from sugar_lift_py_tests.proofir.nodes.equality_fact import (
         canonical_euf_callsite_name,
@@ -91,7 +92,11 @@ def _ground_callsite_euf_name(formula) -> str | None:
     ir = getattr(formula, "ir_formula", None)
     if ir is None:
         ir = formula
-    if not isinstance(ir, _Atomic) or ir.name != "py.eq" or len(ir.args) != 2:
+    if (
+        not isinstance(ir, _Atomic)
+        or ir.name not in {"=", "py.eq"}
+        or len(ir.args) != 2
+    ):
         return None
     left = ir.args[0]
     if not isinstance(left, _Ctor) or not left.name.startswith("call:"):
