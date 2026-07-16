@@ -141,7 +141,7 @@ def test_literal_all_star_reexport_reaches_exact_function_without_execution(
     assert not any(name.startswith("fixture_star") for name in sys.modules)
 
 
-def test_dynamic_all_star_reexport_stays_named_loud(
+def test_dynamic_all_star_reexport_keeps_qualified_bodyless_coordinate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_module(
@@ -160,11 +160,14 @@ def test_dynamic_all_star_reexport_stays_named_loud(
     )
     monkeypatch.syspath_prepend(str(tmp_path))
 
-    with pytest.raises(FactoryPanic) as raised:
-        _consumer_call("from fixture_dynamic_star.api import exact\n", "exact()")
+    callsite, _ = _consumer_call(
+        "from fixture_dynamic_star.api import exact\n", "exact()"
+    )
 
-    assert raised.value.info.owner == "CallSugar"
-    assert raised.value.info.observed == "fixture_dynamic_star.api.exact"
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.target_name == "fixture_dynamic_star.api.exact"
+    assert callsite.body is None
+    assert callsite.term.name == "call:fixture_dynamic_star.api.exact"
     assert not any(name.startswith("fixture_dynamic_star") for name in sys.modules)
 
 
@@ -272,7 +275,7 @@ def test_same_leaf_modules_bind_their_own_exact_reexported_body(
     )
 
 
-def test_missing_qualified_imported_function_stays_named_loud(
+def test_missing_qualified_imported_function_keeps_bodyless_coordinate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_module(
@@ -282,12 +285,14 @@ def test_missing_qualified_imported_function_stays_named_loud(
     )
     monkeypatch.syspath_prepend(str(tmp_path))
 
-    with pytest.raises(FactoryPanic) as raised:
-        _consumer_call("from fixture_missing.api import absent\n", "absent()")
+    callsite, _ = _consumer_call(
+        "from fixture_missing.api import absent\n", "absent()"
+    )
 
-    assert raised.value.info.owner == "CallSugar"
-    assert raised.value.info.observed == "fixture_missing.api.absent"
-    assert "exact installed-source FunctionDef" in raised.value.info.requested
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.target_name == "fixture_missing.api.absent"
+    assert callsite.body is None
+    assert callsite.term.name == "call:fixture_missing.api.absent"
     assert not any(name.startswith("fixture_missing") for name in sys.modules)
 
 

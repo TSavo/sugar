@@ -180,20 +180,28 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                         )
                     )
                 else:
-                    from sugar_lift_py_tests.factory import factory_panic_gap
-                    from sugar_lift_py_tests.factory.factory_gap_info import (
-                        GapKind,
-                        GapLocus,
-                    )
-
-                    factory_panic_gap(
-                        owner="CallSugar",
-                        blame=self.site,
-                        observed=bound.import_target or bound.name,
-                        requested="resolve an exact installed-source FunctionDef for a called import alias",
-                        fix="install one source-qualified function definition or keep the call opaque outside CallSugar",
-                        gap_kind=GapKind.FLOOR,
-                        gap_locus=GapLocus.CONSTRUCTION,
+                    # The import statement warrants this qualified runtime
+                    # coordinate even when no exact Python FunctionDef can be
+                    # claimed. Source resolution controls body ownership; it
+                    # must not turn an otherwise valid external call opaque to
+                    # the caller into a construction panic.
+                    target = bound.import_target or bound.name
+                    return Complete(
+                        CallSiteValue(
+                            target_name=target,
+                            arg_values=accumulated,
+                            parameters=self.keyword_names,
+                            term=ctor(
+                                f"call:{target}",
+                                [
+                                    value.to_term(owner=str(self.site))
+                                    for value in accumulated
+                                ],
+                                symbol_kind="contract-target",
+                            ),
+                            body=None,
+                            site=self.site,
+                        )
                     )
             if isinstance(bound, FunctionCallable):
                 return bound.callsite(
