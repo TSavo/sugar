@@ -2363,6 +2363,12 @@ struct AmbientGroundCallsiteFact {
     term_key: TermKey,
     witness_key: AmbientFactWitnessKey,
     fact: Json,
+    /// #3807: speaker provenance rides each ambient conjunct from pool intake.
+    /// Vendor-spoken ambient facts alone may surface as `vendorFactIr`;
+    /// consumer-spoken peers still CONJOIN for solver soundness but never
+    /// masquerade as the vendor half of a report row. Constructed at collect
+    /// time from `ConsistencyCandidate::spoken_by_vendor` — not re-inferred.
+    spoken_by_vendor: bool,
 }
 
 /// Collect closed ground facts about concrete callsite terms. A literal-domain
@@ -2373,11 +2379,16 @@ struct AmbientGroundCallsiteFact {
 /// claims stay same-scope so a good/bad twin pair can coexist (#3884). We collect
 /// only ground equalities whose subject is a `call:*` ctor; local variables and
 /// non-call helper ctors never travel.
+///
+/// `spoken_by_vendor` is the speaker stamp of the candidate this formula was
+/// collected from (#3807 provenance rides the conjuncts). Own-origin
+/// extractions (current obligation, client-fact scan) pass `false`.
 fn collect_ambient_ground_callsite_facts(
     inv: &Json,
     source: &Attribution,
     scope: &Option<Scope>,
     provenance_kind: ProofIrProvenanceKind,
+    spoken_by_vendor: bool,
     out: &mut Vec<AmbientGroundCallsiteFact>,
 ) {
     match inv.get("kind").and_then(|k| k.as_str()) {
@@ -2385,7 +2396,14 @@ fn collect_ambient_ground_callsite_facts(
         Some("and") => {
             if let Some(ops) = inv.get("operands").and_then(|v| v.as_array()) {
                 for op in ops {
-                    collect_ambient_ground_callsite_facts(op, source, scope, provenance_kind, out);
+                    collect_ambient_ground_callsite_facts(
+                        op,
+                        source,
+                        scope,
+                        provenance_kind,
+                        spoken_by_vendor,
+                        out,
+                    );
                 }
             }
         }
@@ -2394,7 +2412,14 @@ fn collect_ambient_ground_callsite_facts(
                 return;
             };
             if ops.len() == 2 && eval_ground_bool(&ops[0]) == Some(true) {
-                collect_ambient_ground_callsite_facts(&ops[1], source, scope, provenance_kind, out);
+                collect_ambient_ground_callsite_facts(
+                    &ops[1],
+                    source,
+                    scope,
+                    provenance_kind,
+                    spoken_by_vendor,
+                    out,
+                );
             }
         }
         Some("atomic") => {
@@ -2413,6 +2438,7 @@ fn collect_ambient_ground_callsite_facts(
                     provenance_kind,
                 },
                 fact: inv.clone(),
+                spoken_by_vendor,
             });
         }
         _ => {}
@@ -2430,6 +2456,7 @@ fn ground_callsite_witness_keys(
         &Attribution::OwnOrigin,
         scope,
         provenance_kind,
+        /*spoken_by_vendor=*/ false,
         &mut facts,
     );
     facts.into_iter().map(|fact| fact.witness_key).collect()
@@ -2509,6 +2536,7 @@ fn collect_vendor_sworn_facts(
         &Attribution::OwnOrigin,
         &None,
         ProofIrProvenanceKind::Stated,
+        /*spoken_by_vendor=*/ false,
         &mut client_facts,
     );
     for f in &client_facts {
@@ -2525,6 +2553,11 @@ fn collect_vendor_sworn_facts(
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for fact in ambient {
+        // #3807: display-only vendor vectors must be VENDOR-spoken. A
+        // consumer peer about the same callee is not a vendor sworn vector.
+        if !fact.spoken_by_vendor {
+            continue;
+        }
         if fact
             .attribution
             .source_cid()
@@ -2951,6 +2984,10 @@ fn with_ambient_ground_callsite_facts(
 
     let mut seen = std::collections::BTreeSet::new();
     let mut facts = Vec::new();
+    // #3807: solver conjoins every matching ambient fact (soundness), but the
+    // VENDOR-FACT label is a projection of speaker provenance only — consumer
+    // peers that join by TermKey must not land in `vendorFactIr`.
+    let mut vendor_label_facts = Vec::new();
     let mut skipped_same_kind_duplicate = false;
     for fact in ambient {
         // A stated row is not independent testimony for itself. The ambient
@@ -2983,23 +3020,22 @@ fn with_ambient_ground_callsite_facts(
         }
         if seen.insert(fact.witness_key.clone()) {
             facts.push(fact.fact.clone());
+            if fact.spoken_by_vendor {
+                vendor_label_facts.push(fact.fact.clone());
+            }
         }
     }
     if facts.is_empty() {
         return (inv, skipped_same_kind_duplicate, Vec::new());
     }
 
-    // The conjoined `facts` ARE the vendor's own sworn ground vectors (e.g.
-    // `encodeBase64("abc") == "YWJj"`) imported from the staged .proof; return
-    // them so the report can render the VENDOR FACT half of the three-part FOL.
-    let vendor_facts = facts.clone();
     let mut operands = Vec::with_capacity(facts.len() + 1);
     operands.push(inv);
     operands.extend(facts);
     (
         IrFormula::And(operands).to_value(),
         skipped_same_kind_duplicate,
-        vendor_facts,
+        vendor_label_facts,
     )
 }
 
@@ -3422,6 +3458,7 @@ pub fn build_manifest_from_pool(
             &Attribution::Imported(candidate.cid.clone()),
             &ground_scope,
             candidate.provenance_kind,
+            candidate.spoken_by_vendor,
             &mut facts,
         );
         if !facts.is_empty() {
@@ -3590,6 +3627,7 @@ fn build_consistency_index_filtered(
                 &Attribution::Imported(cid.clone()),
                 &ground_scope,
                 candidate.provenance_kind,
+                candidate.spoken_by_vendor,
                 &mut ambient_ground_callsite_facts,
             );
             if found > 0 {
@@ -5076,6 +5114,157 @@ mod tests {
             vendor,
             json!([says_6]),
             "flipped vendorFactIr must be EXACTLY the (now vendor-spoken) ==6 conjunct vector"
+        );
+    }
+
+    /// #3807 OVERLAY PATH: daemon base index (vendor pool) + consumer overlay
+    /// pool must label client/vendor from speaker provenance that rides each
+    /// candidate/ambient conjunct — identical to the single-pool CLI path.
+    /// Producer-dependent order (base-first vs overlay-first) must NOT invert
+    /// labels; flipping who spoke which value must flip labels only.
+    #[test]
+    fn overlay_base_index_labels_follow_speaker_provenance_not_producer_order() {
+        use crate::types::SpeakerRole;
+        let (plan, reg) = z3_plan_and_registry();
+        let compilers = test_compilers();
+        let name = "numpy.add#euf#callresult_numpy_add_a2(2,3)::assertion";
+        let says_6 = eqf(var("r"), int(6));
+        let says_5 = eqf(var("r"), int(5));
+        let and1 = |c: &Json| json!({"kind":"and","operands":[c]});
+        // Scoped door keeps groups only when locus_entries anchor in scope
+        // (#3802). Mirror the daemon face: sibling source-memento carries
+        // file/span; contract inv is the claim body.
+        let insert_claim = |pool: &mut MementoPool, cid: &str, inv: Json| {
+            let env = json!({
+                "envelope": {
+                    "header": {
+                        "kind": "contract",
+                        "contractName": name,
+                        "inv": inv,
+                        "proofirProvenance": proofir_provenance("Stated")
+                    }
+                }
+            });
+            pool.insert_unanchored_for_tests(test_cid(cid), env);
+        };
+        let insert_source_locus = |pool: &mut MementoPool, cid: &str| {
+            let env = json!({
+                "envelope": {
+                    "header": {
+                        "kind": "source-memento",
+                        "contractName": name,
+                        "file": "src/lib.rs",
+                        "span": {"start_line": 1, "start_col": 0, "end_line": 1, "end_col": 10},
+                    }
+                }
+            });
+            pool.insert_unanchored_for_tests(test_cid(cid), env);
+        };
+
+        let solve_overlay = |consumer_speaks_6: bool| -> ConsistencyResult {
+            let mut base_pool = MementoPool::default();
+            let mut overlay_pool = MementoPool::default();
+            let (consumer_val, vendor_val) = if consumer_speaks_6 {
+                (says_6.clone(), says_5.clone())
+            } else {
+                (says_5.clone(), says_6.clone())
+            };
+            // Base = vendor-only resident index (daemon `.sugar/imports` shape).
+            insert_claim(&mut base_pool, "overlay-vendor", vendor_val);
+            insert_source_locus(&mut base_pool, "overlay-vendor-src");
+            base_pool.attribute_member_for_tests(
+                &test_cid_string("overlay-vendor"),
+                SpeakerRole::Vendor,
+                "staged-import",
+            );
+            base_pool.attribute_member_for_tests(
+                &test_cid_string("overlay-vendor-src"),
+                SpeakerRole::Vendor,
+                "staged-import",
+            );
+            // Overlay = consumer buffer feed (enumerate→fold scratch).
+            insert_claim(&mut overlay_pool, "overlay-consumer", consumer_val);
+            insert_source_locus(&mut overlay_pool, "overlay-consumer-src");
+            overlay_pool.attribute_member_for_tests(
+                &test_cid_string("overlay-consumer"),
+                SpeakerRole::Consumer,
+                "sugar-lsp",
+            );
+            overlay_pool.attribute_member_for_tests(
+                &test_cid_string("overlay-consumer-src"),
+                SpeakerRole::Consumer,
+                "sugar-lsp",
+            );
+            let base_index = build_consistency_index(&base_pool);
+            let mut res = verify_consistency_scoped_with_base_index(
+                &base_index,
+                &overlay_pool,
+                &plan,
+                &reg,
+                &compilers,
+                std::path::Path::new("."),
+                std::path::Path::new("."),
+            );
+            assert_eq!(
+                res.len(),
+                1,
+                "one conjoined overlay+base group expected: {res:?}"
+            );
+            res.remove(0)
+        };
+
+        let labels = |r: &ConsistencyResult| -> (Json, Json) {
+            let v = r
+                .verification
+                .as_ref()
+                .expect("verification detail")
+                .to_json();
+            (
+                v.get("clientFactIr")
+                    .expect("clientFactIr on overlay path")
+                    .clone(),
+                v.get("vendorFactIr")
+                    .expect("vendorFactIr on overlay path")
+                    .clone(),
+            )
+        };
+
+        let normal = solve_overlay(true);
+        assert_eq!(
+            normal.verdict,
+            ObligationVerdict::Unsatisfied,
+            "consumer==6 ∧ vendor==5 must refuse: {normal:?}"
+        );
+        let (client, vendor) = labels(&normal);
+        assert_eq!(
+            client,
+            and1(&says_6),
+            "#3807: overlay path clientFactIr must be consumer ==6, not inverted \
+             (was: vendor fact leading clientFactIr when base index ordered first)"
+        );
+        assert_eq!(
+            vendor,
+            json!([says_5]),
+            "#3807: overlay path vendorFactIr must be vendor ==5, not consumer \
+             (was: consumer asserted literal landing in vendorFactIr)"
+        );
+
+        let flipped = solve_overlay(false);
+        assert_eq!(
+            flipped.verdict,
+            ObligationVerdict::Unsatisfied,
+            "flip must not change verdict"
+        );
+        let (client, vendor) = labels(&flipped);
+        assert_eq!(
+            client,
+            and1(&says_5),
+            "flipped overlay clientFactIr follows consumer speaker"
+        );
+        assert_eq!(
+            vendor,
+            json!([says_6]),
+            "flipped overlay vendorFactIr follows vendor speaker"
         );
     }
 
@@ -6714,6 +6903,7 @@ mod tests {
     /// when a domain universe was present; without a universe both were Refused.
     #[test]
     fn ambient_ground_facts_join_on_exact_term_across_property_prefixes_bad_twin_refutes() {
+        use crate::types::SpeakerRole;
         let (plan, reg) = z3_plan_and_registry();
         let call_len = |arg: Json| json!({"kind":"ctor","name":"call:len","args":[arg]});
         let derived_inv = json!({"kind":"and","operands":[eqf(call_len(int(100)), int(0))]});
@@ -6727,6 +6917,13 @@ mod tests {
             "blake3-512:derived-len-100-zero",
             derived_name,
             derived_inv.clone(),
+        );
+        // #3807: ambient derived testimony that surfaces as vendorFactIr is
+        // Vendor-spoken; stamp it so labels are a provenance projection.
+        good_pool.attribute_member_for_tests(
+            &test_cid_string("blake3-512:derived-len-100-zero"),
+            SpeakerRole::Vendor,
+            "derived-ambient",
         );
         insert_contract(
             &mut good_pool,
@@ -6759,6 +6956,11 @@ mod tests {
             "blake3-512:derived-len-100-zero-bad",
             derived_name,
             derived_inv,
+        );
+        bad_pool.attribute_member_for_tests(
+            &test_cid_string("blake3-512:derived-len-100-zero-bad"),
+            SpeakerRole::Vendor,
+            "derived-ambient",
         );
         insert_contract(
             &mut bad_pool,
@@ -6812,6 +7014,7 @@ mod tests {
     /// identity is the join key -- not the callee name `len`, not first-writer.
     #[test]
     fn ambient_ground_facts_never_attach_non_matching_argument_to_vendor_fact_ir() {
+        use crate::types::SpeakerRole;
         let (plan, reg) = z3_plan_and_registry();
         let call_len = |arg: Json| json!({"kind":"ctor","name":"call:len","args":[arg]});
 
@@ -6827,6 +7030,18 @@ mod tests {
             "blake3-512:derived-len-200",
             "src/lib.rs::tests::fresh_len_b::len#euf#c:call:len(i:200)::assertion",
             json!({"kind":"and","operands":[eqf(call_len(int(200)), int(5))]}),
+        );
+        // #3807: stamp derived ambient as Vendor so any vendorFactIr surface is
+        // a provenance projection (labels never invent Vendor from Imported alone).
+        pool.attribute_member_for_tests(
+            &test_cid_string("blake3-512:derived-len-100"),
+            SpeakerRole::Vendor,
+            "derived-ambient",
+        );
+        pool.attribute_member_for_tests(
+            &test_cid_string("blake3-512:derived-len-200"),
+            SpeakerRole::Vendor,
+            "derived-ambient",
         );
         // Consumer about len(100) only -- must not pick up len(200)==5.
         insert_contract(
