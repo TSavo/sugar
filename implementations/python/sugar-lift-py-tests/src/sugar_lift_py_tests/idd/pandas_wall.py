@@ -388,7 +388,15 @@ def build_pandas_wall(
     )
 
     visual_result = runner(
-        [os.fspath(sugar_bin), "lift", "--report", "--visual", str(workspace)],
+        [
+            os.fspath(sugar_bin),
+            "lift",
+            "--report",
+            "--visual",
+            "--allowed-broken-components",
+            "python",
+            str(workspace),
+        ],
         root,
         env,
     )
@@ -476,7 +484,15 @@ def build_pandas_wall(
         )
 
     report_result = runner(
-        [os.fspath(sugar_bin), "lift", "--report", "--json", str(workspace)],
+        [
+            os.fspath(sugar_bin),
+            "lift",
+            "--report",
+            "--json",
+            "--allowed-broken-components",
+            "python",
+            str(workspace),
+        ],
         root,
         env,
     )

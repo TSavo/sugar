@@ -127,6 +127,10 @@ pub struct Kit {
     declaration: KitDeclaration,
     registry: KitRegistry,
     kit_name: String,
+    /// Component ids whose FactoryPanics may be held at the single recovery
+    /// boundary. Copied onto every enumeration connection this kit mints so
+    /// report/visual tree folds carry the same allowlist the CLI was given.
+    allowed_broken_components: Vec<String>,
 }
 
 impl Kit {
@@ -190,7 +194,16 @@ impl Kit {
             declaration,
             registry,
             kit_name,
+            allowed_broken_components: Vec::new(),
         })
+    }
+
+    /// Name the components whose FactoryPanics this kit's enumeration
+    /// connections may hold at the recovery boundary. Recovery authority
+    /// stays with the caller-provided allowlist; an empty list (the
+    /// default) keeps every connection fail-fast.
+    pub fn set_allowed_broken_components(&mut self, components: Vec<String>) {
+        self.allowed_broken_components = components;
     }
 
     /// The kit's own declared identity, methods, and proof-resolution
@@ -240,7 +253,7 @@ impl Kit {
             working_dir: self.manifest.working_dir.clone(),
             workspace_root: workspace_root.to_path_buf(),
             audit_frontier: false,
-            allowed_broken_components: Vec::new(),
+            allowed_broken_components: self.allowed_broken_components.clone(),
             transport: crate::kit_path::LiftPluginKit::new(
                 self.manifest.surface.clone(),
                 self.manifest.command.clone(),

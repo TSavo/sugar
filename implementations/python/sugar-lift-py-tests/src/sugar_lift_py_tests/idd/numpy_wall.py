@@ -212,7 +212,15 @@ def build_numpy_wall(
     # that ANSI render is a human-facing product, not eligible evidence, and
     # scraping it here is exactly the practice this criterion retires.
     report_result = runner(
-        [os.fspath(sugar_bin), "lift", "--report", "--json", str(workspace)],
+        [
+            os.fspath(sugar_bin),
+            "lift",
+            "--report",
+            "--json",
+            "--allowed-broken-components",
+            "python",
+            str(workspace),
+        ],
         root,
         env,
     )

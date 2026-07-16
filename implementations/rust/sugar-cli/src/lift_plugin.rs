@@ -96,6 +96,11 @@ pub struct LiftPluginOptions {
     /// Ask a reporting-capable lifter to emit only gate summary accounting
     /// instead of transporting full ProofIR/report sidecars.
     pub report_summary: bool,
+    /// Component ids whose FactoryPanics may be held at the single recovery
+    /// boundary. Forwarded as `options.allowedBrokenComponents`; an
+    /// allowlisted lifter surfaces its construction panics as red
+    /// factory-walk rows instead of a fatal dispatch error.
+    pub allowed_broken_components: Vec<String>,
     /// Contract bindings forwarded to implication consumer surfaces. Each
     /// entry is `{ "name": <contract name>, "contract_cid": <attestation cid> }`.
     pub contract_bindings: Vec<Value>,
@@ -704,6 +709,9 @@ pub fn build_lift_params(project_root: &Path, surface: &str, options: LiftPlugin
     }
     if options.report_summary {
         options_obj["reportSummary"] = json!(true);
+    }
+    if !options.allowed_broken_components.is_empty() {
+        options_obj["allowedBrokenComponents"] = json!(options.allowed_broken_components);
     }
     // Preserve the original workspace_override in the request itself,
     // so consumers of the lift_request (like MintKit::transform_session)

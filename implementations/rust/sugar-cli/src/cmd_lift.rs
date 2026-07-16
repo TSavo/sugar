@@ -200,6 +200,7 @@ pub fn run(args: LiftArgs) -> u8 {
     lift_options.identify_only = args.identify_only;
     lift_options.library_bindings = args.library_bindings;
     lift_options.report_summary = args.report_summary;
+    lift_options.allowed_broken_components = args.allowed_broken_components.clone();
     tracing::trace!(
         surface = %surface,
         emit = ?lift_options.emit,
@@ -366,7 +367,12 @@ pub fn run(args: LiftArgs) -> u8 {
                 report.project_root = Some(project_root.clone());
                 report.source_oracle_routes = source_oracle_routes.clone();
                 if let Err(error) =
-                    attach_report_implications(&mut report, &project_root, [surface.clone()])
+                    attach_report_implications(
+                        &mut report,
+                        &project_root,
+                        [surface.clone()],
+                        &args.allowed_broken_components,
+                    )
                 {
                     eprintln!("{}: {error}", "error".red().bold());
                     return EXIT_USER_ERROR;
@@ -557,10 +563,11 @@ fn report_implication_tree(
     surface: &str,
     registry: &sugar_linker::Registry,
     plan: &sugar_linker::solver_api::SolverPlan,
+    allowed_broken_components: &[String],
 ) -> Result<Vec<Value>, String> {
     let manifest = lift_plugin::find_manifest_for_surface(project_root, surface)
         .map_err(|error| format!("lift-plugin.manifest: {error}"))?;
-    let kit = Kit::rendezvous(LiftManifest {
+    let mut kit = Kit::rendezvous(LiftManifest {
         surface: surface.to_string(),
         name: manifest.name.clone(),
         dialect: lift_plugin::dialect_for_surface(surface),
@@ -569,6 +576,7 @@ fn report_implication_tree(
         method: manifest.method.clone(),
     })
     .map_err(|error| format!("lift.rendezvous: {error}"))?;
+    kit.set_allowed_broken_components(allowed_broken_components.to_vec());
     sugar_compiler::tree::fold_implication_tree(&kit, project_root, registry, plan)
         .map_err(|error| format!("lift.implications: {error}"))
 }
@@ -577,11 +585,18 @@ fn attach_report_implications(
     report: &mut LiftSourceReport,
     project_root: &Path,
     surfaces: impl IntoIterator<Item = String>,
+    allowed_broken_components: &[String],
 ) -> Result<(), String> {
     let mut seen = BTreeSet::new();
     let (plan, registry) = lift_solver_plan_and_registry(project_root);
     for surface in surfaces {
-        for implication in report_implication_tree(project_root, &surface, &registry, &plan)? {
+        for implication in report_implication_tree(
+            project_root,
+            &surface,
+            &registry,
+            &plan,
+            allowed_broken_components,
+        )? {
             let key = serde_json::to_string(&implication).map_err(|error| {
                 format!("lift.implications: serialize demanded question: {error}")
             })?;
@@ -797,8 +812,13 @@ fn prepare_lift_report_prove_inputs(
         surfaces = ?plugins.iter().map(|plugin| plugin.surface.as_str()).collect::<Vec<_>>(),
         "lift-report-prove: auto-minting run-scoped proof input"
     );
-    let proof_file =
-        cmd_mint::mint_lift_plugins_for_report(project_root, &plugins, &out_dir, library_bindings)?;
+    let proof_file = cmd_mint::mint_lift_plugins_for_report(
+        project_root,
+        &plugins,
+        &out_dir,
+        library_bindings,
+        &[],
+    )?;
     tracing::info!(
         project = %project_root.display(),
         out_dir = %out_dir.display(),
@@ -821,6 +841,7 @@ fn run_configured_lift_report_graph(
             plugins,
             &out_dir,
             args.library_bindings,
+            &args.allowed_broken_components,
         ) {
             Ok(Some(proof_file)) => proof_file,
             Ok(None) => {
@@ -851,6 +872,7 @@ fn run_configured_lift_report_graph(
             &mut report,
             project_root,
             plugins.iter().map(|plugin| plugin.surface.clone()),
+            &args.allowed_broken_components,
         ) {
             eprintln!("{}: {error}", "error".red().bold());
             return EXIT_USER_ERROR;
@@ -931,6 +953,7 @@ fn run_configured_lift_report_graph(
         &out_dir,
         args.library_bindings,
         args.report_summary,
+        &args.allowed_broken_components,
     ) {
         Ok(response) => response,
         Err(error) => {
@@ -991,6 +1014,7 @@ fn run_configured_lift_report_graph(
         &mut report,
         project_root,
         plugins.iter().map(|plugin| plugin.surface.clone()),
+        &args.allowed_broken_components,
     ) {
         eprintln!("{}: {error}", "error".red().bold());
         return EXIT_USER_ERROR;
@@ -1078,6 +1102,7 @@ fn run_configured_lift_report_response(
         &out_dir,
         args.library_bindings,
         args.report_summary,
+        &args.allowed_broken_components,
     ) {
         Ok(response) => response,
         Err(error) => {
@@ -1138,6 +1163,7 @@ fn run_configured_lift_report_response(
         &mut report,
         project_root,
         plugins.iter().map(|plugin| plugin.surface.clone()),
+        &args.allowed_broken_components,
     ) {
         eprintln!("{}: {error}", "error".red().bold());
         return EXIT_USER_ERROR;
@@ -1236,8 +1262,13 @@ fn prepare_lift_report_prove_inputs_for_plugins(
         surfaces = ?plugins.iter().map(|plugin| plugin.surface.as_str()).collect::<Vec<_>>(),
         "lift-report-prove: auto-minting configured graph proof input"
     );
-    let proof_file =
-        cmd_mint::mint_lift_plugins_for_report(project_root, plugins, &out_dir, library_bindings)?;
+    let proof_file = cmd_mint::mint_lift_plugins_for_report(
+        project_root,
+        plugins,
+        &out_dir,
+        library_bindings,
+        &[],
+    )?;
     tracing::info!(
         project = %project_root.display(),
         out_dir = %out_dir.display(),

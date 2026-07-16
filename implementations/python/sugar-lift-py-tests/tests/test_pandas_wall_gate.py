@@ -442,6 +442,8 @@ def test_build_uses_sugarbin_cached_audit_workspace_and_structured_gap_mode(
             "lift",
             "--report",
             "--visual",
+            "--allowed-broken-components",
+            "python",
             str(result.workspace_path),
         ],
     ]

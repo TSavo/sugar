@@ -1351,6 +1351,18 @@ fn lift_options_from_request(
     contract_bindings: Vec<Value>,
 ) -> LiftPluginOptions {
     LiftPluginOptions {
+        allowed_broken_components: lift_request
+            .get("options")
+            .and_then(|options| options.get("allowedBrokenComponents"))
+            .and_then(Value::as_array)
+            .map(|components| {
+                components
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
         identify_only: lift_request
             .get("options")
             .and_then(|options| options.get("identifyOnly"))
@@ -2128,9 +2140,17 @@ fn dispatch_multi(
     out_dir: &Path,
     quiet: bool,
     library_bindings: bool,
+    allowed_broken_components: &[String],
 ) -> Result<MintSession, String> {
     let input_started = std::time::Instant::now();
-    let mint_input = mint_input_multi(project_root, plugins, out_dir, quiet, library_bindings);
+    let mint_input = mint_input_multi(
+        project_root,
+        plugins,
+        out_dir,
+        quiet,
+        library_bindings,
+        allowed_broken_components,
+    );
     let input_ms = input_started.elapsed().as_millis() as u64;
     let session_started = std::time::Instant::now();
     let session = MintKit::new(mint_input.inputs)
@@ -2151,8 +2171,16 @@ pub fn mint_lift_plugins_for_report(
     plugins: &[PluginEntry],
     out_dir: &Path,
     library_bindings: bool,
+    allowed_broken_components: &[String],
 ) -> Result<Option<PathBuf>, String> {
-    let session = dispatch_multi(project_root, plugins, out_dir, true, library_bindings)?;
+    let session = dispatch_multi(
+        project_root,
+        plugins,
+        out_dir,
+        true,
+        library_bindings,
+        allowed_broken_components,
+    )?;
     // Edge write (#3810): the lift-report callers (cmd_lift) genuinely
     // consume a `.proof` file on disk, so THIS caller persists the bytes.
     persist_proof_file(&session.result)
@@ -2207,7 +2235,7 @@ pub fn mint_project_scratch_proof(
     if lift_plugins.is_empty() {
         return Ok(None);
     }
-    let session = dispatch_multi(project_root, &lift_plugins, out_dir, true, library_bindings)?;
+    let session = dispatch_multi(project_root, &lift_plugins, out_dir, true, library_bindings, &[])?;
     let result = session.result;
     match result.proof_bytes {
         Some(bytes) => Ok(Some(ScratchProof {
@@ -2235,7 +2263,7 @@ pub fn report_lift_response_for_project(
     if lift_plugins.is_empty() {
         return Err("no lift plugins configured for report".to_string());
     }
-    lift_plugins_response_for_report(project_root, &lift_plugins, out_dir, false, true)
+    lift_plugins_response_for_report(project_root, &lift_plugins, out_dir, false, true, &[])
 }
 
 /// Lift plugins and return the kit report JSON (factoryWalk + liftCoverage).
@@ -2247,6 +2275,7 @@ pub fn lift_plugins_response_for_report(
     out_dir: &Path,
     library_bindings: bool,
     report_summary: bool,
+    allowed_broken_components: &[String],
 ) -> Result<Value, String> {
     let graph_started = std::time::Instant::now();
     tracing::info!(
@@ -2280,6 +2309,7 @@ pub fn lift_plugins_response_for_report(
             Vec::new(),
             library_bindings,
             report_summary_for_lift,
+            allowed_broken_components,
         )?;
         tracing::info!(
             stage = "lift_report_graph.producer.exit",
@@ -2328,6 +2358,7 @@ pub fn lift_plugins_response_for_report(
             contract_bindings.clone(),
             library_bindings,
             false,
+            allowed_broken_components,
         )?;
         tracing::info!(
             stage = "lift_report_graph.implicit_consumer.exit",
@@ -2353,6 +2384,7 @@ pub fn lift_plugins_response_for_report(
             contract_bindings.clone(),
             library_bindings,
             false,
+            allowed_broken_components,
         )?;
         tracing::info!(
             stage = "lift_report_graph.consumer.exit",
@@ -2546,6 +2578,7 @@ fn dispatch_report_lift_plugin(
     contract_bindings: Vec<Value>,
     library_bindings: bool,
     report_summary: bool,
+    allowed_broken_components: &[String],
 ) -> Result<Value, String> {
     let lift_options = LiftPluginOptions {
         workspace_override: plugin.workspace_override.clone(),
@@ -2553,6 +2586,7 @@ fn dispatch_report_lift_plugin(
         layer: plugin.layer.clone(),
         library_bindings,
         report_summary,
+        allowed_broken_components: allowed_broken_components.to_vec(),
         contract_bindings,
         ..Default::default()
     };
@@ -2721,6 +2755,7 @@ fn mint_input(
         out_dir,
         quiet,
         library_bindings,
+        &[],
     )
 }
 
@@ -2738,6 +2773,7 @@ fn mint_input_multi(
     out_dir: &Path,
     quiet: bool,
     library_bindings: bool,
+    allowed_broken_components: &[String],
 ) -> MintPathInput {
     let mut inputs = HashMapInputCatalog::default();
     let mut algebra: Vec<PathAlgebra> = Vec::with_capacity(plugins.len() + 1);
@@ -2755,6 +2791,7 @@ fn mint_input_multi(
                 emit: plugin.emit.clone(),
                 layer: plugin.layer.clone(),
                 report_summary: false,
+                allowed_broken_components: allowed_broken_components.to_vec(),
                 contract_bindings: Vec::new(),
             },
         ));
@@ -5742,6 +5779,7 @@ pub fn run(args: MintArgs) -> u8 {
             &out_dir,
             args.flags.quiet,
             args.library_bindings,
+            &[],
         )
     } else if args.surface.is_none()
         && derived_surface.is_none()
@@ -5795,6 +5833,7 @@ pub fn run(args: MintArgs) -> u8 {
             &out_dir,
             args.flags.quiet,
             args.library_bindings,
+            &[],
         )
     } else {
         // Resolve surface: --surface > --kit derived > project config > user config.

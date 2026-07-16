@@ -1050,8 +1050,8 @@ def test_term_ref_bridge_recovery_is_shared_by_callsite_universe_and_implication
     original = lift_rpc._lift_file_for_enumeration
     lift_rpc._ENUMERATION_FILE_CONTEXTS.clear()
 
-    def without_call_edges(workspace_root, root, file_rel):
-        items, _edges, term_table = original(workspace_root, root, file_rel)
+    def without_call_edges(workspace_root, root, file_rel, **kwargs):
+        items, _edges, term_table = original(workspace_root, root, file_rel, **kwargs)
         return items, [], term_table
 
     monkeypatch.setattr(lift_rpc, "_lift_file_for_enumeration", without_call_edges)
@@ -1089,10 +1089,10 @@ def test_distinct_descendant_demands_reuse_file_cid_context(
     original = lift_rpc.lift_file_payload
     crossings = 0
 
-    def counted(source: str, filename: str):
+    def counted(source: str, filename: str, **kwargs):
         nonlocal crossings
         crossings += 1
-        return original(source, filename)
+        return original(source, filename, **kwargs)
 
     monkeypatch.setattr(lift_rpc, "lift_file_payload", counted)
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
@@ -1134,10 +1134,10 @@ class date:
     original = lift_rpc.lift_file_payload
     crossings = 0
 
-    def counted(source: str, filename: str):
+    def counted(source: str, filename: str, **kwargs):
         nonlocal crossings
         crossings += 1
-        return original(source, filename)
+        return original(source, filename, **kwargs)
 
     monkeypatch.setattr(lift_rpc, "lift_file_payload", counted)
     file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]

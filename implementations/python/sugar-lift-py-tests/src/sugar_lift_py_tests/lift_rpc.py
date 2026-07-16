@@ -924,7 +924,13 @@ def _universe_bridge_matches(candidate: Any, call_site_bridge: str) -> bool:
     )
 
 
-def _lift_file_for_enumeration(workspace_root: str, root: Path, file_rel: str) -> tuple[
+def _lift_file_for_enumeration(
+    workspace_root: str,
+    root: Path,
+    file_rel: str,
+    *,
+    hold_broken_component: bool = False,
+) -> tuple[
     List[Dict[str, Any]],
     List[Dict[str, Any]],
     Dict[str, Dict[str, Any]],
@@ -952,8 +958,12 @@ def _lift_file_for_enumeration(workspace_root: str, root: Path, file_rel: str) -
     full_path = (root / file_rel).resolve()
     source = full_path.read_text(encoding="utf-8")
     file_cid = blake3_512_of(source.encode())
+    # The seat key carries the recovery mode: a payload lifted with the
+    # component allowlist door open holds red rows a fail-fast payload
+    # would not, so the two must never share a cache seat.
+    seat_key = (file_rel, hold_broken_component)
     seats = _ENUMERATION_FILE_CONTEXTS.get(file_cid)
-    if seats is not None and file_rel in seats:
+    if seats is not None and seat_key in seats:
         _ENUMERATION_FILE_CONTEXTS.move_to_end(file_cid)
         _TRANSPORT_LOG.info(
             "enumeration_file_context_hit",
@@ -964,15 +974,17 @@ def _lift_file_for_enumeration(workspace_root: str, root: Path, file_rel: str) -
                 "cache": "hit",
             },
         )
-        return seats[file_rel]
-    file_payload = lift_file_payload(source, file_rel)
+        return seats[seat_key]
+    file_payload = lift_file_payload(
+        source, file_rel, hold_broken_component=hold_broken_component
+    )
     file_rpc = file_payload.to_rpc()
     ir_items = file_rpc["ir"]
     call_edges = file_rpc["callEdges"]
     term_table = file_rpc["termTable"]
     result = (ir_items, call_edges, term_table)
     seats = _ENUMERATION_FILE_CONTEXTS.setdefault(file_cid, {})
-    seats[file_rel] = result
+    seats[seat_key] = result
     _remember_file_context(_ENUMERATION_FILE_CONTEXTS, file_cid, seats)
     _TRANSPORT_LOG.info(
         "enumeration_file_context_miss",
@@ -986,15 +998,20 @@ def _lift_file_for_enumeration(workspace_root: str, root: Path, file_rel: str) -
     return result
 
 
-def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
+def lift_file_payload(
+    source: str, filename: str, *, hold_broken_component: bool = False
+) -> LiftReportPayloadDto:
     """The RPC door over the collapse. Build each def through the factory,
     slam it, and serve the value's payload_rows: a universe mints a
     function-contract plus inv rows; testimony mints only ::assertion fact
     rows (no post, no contract). Enumeration is functions by design: module
     statements no FunctionDefSugar owns are not lifted here.
 
-    Mandatory FactoryPanic is fail-fast here. Diagnostic continuation is a
-    separate `RecoveredAuditDto` lane and can never be returned from this door.
+    Mandatory FactoryPanic is fail-fast here unless the caller opened the
+    component allowlist door (``hold_broken_component=True``): then each
+    held panic surfaces as a red factory-walk row on the payload it would
+    otherwise have killed. Diagnostic continuation is a separate
+    `RecoveredAuditDto` lane and can never be returned from this door.
     """
     from sugar_lift_py_tests.ir import constructor_symbol_kinds, term_intern_scope
 
@@ -1003,7 +1020,9 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
         _TRANSPORT_LOG.info(
             "lift_file_enter", extra={"stage": "lift_file.audit", "file": filename}
         )
-        payload, _gaps = audit_lift_file(source, filename)
+        payload, _gaps = audit_lift_file(
+            source, filename, hold_component_panics=hold_broken_component
+        )
         symbol_kinds = constructor_symbol_kinds()
         _TRANSPORT_LOG.info(
             "lift_file_exit",
@@ -1033,6 +1052,36 @@ def _detached_factory_panic(panic: FactoryPanic) -> FactoryPanic:
     panic.__context__ = None
     panic.__cause__ = None
     return panic
+
+
+def _gap_from_seed_evidence(evidence: "_SeedPanicEvidence") -> AuditOnlyGap:
+    """Project held module seed-panic evidence as an audit-only gap row.
+
+    The payload lane never retains the panic object, only its typed
+    FactoryGapInfo; this reconstructs the same AuditOnlyGap shape
+    ``gap_from_factory_panic`` mints so the held panic surfaces as an
+    honest red factory-walk row instead of vanishing.
+    """
+    from sugar_lift_py_tests.audit_only.collect_construction_gaps import (
+        gap_kind_status,
+    )
+    from sugar_lift_py_tests.factory import FactoryAuditRow
+
+    info = evidence.info.to_json()
+    return AuditOnlyGap(
+        label=evidence.locus,
+        info=info,
+        audit_row=FactoryAuditRow(
+            role=info["requested"],
+            status=gap_kind_status(evidence.info.gap_kind),
+            observed=info["observed"],
+            blame=info["blame"],
+            selected=None,
+            candidates=[],
+            message=evidence.info.message,
+        ),
+        message=evidence.info.message,
+    )
 
 
 def _module_import_temporal(
@@ -1406,6 +1455,7 @@ def audit_lift_file(
     *,
     hold_panic: Literal[False] = False,
     recover_panics: bool = False,
+    hold_component_panics: bool = False,
     target_memento: Optional[Dict[str, Any]] = None,
     audit_context: Optional[_AuditFileContext] = None,
 ) -> tuple[LiftReportPayloadDto, list[AuditOnlyGap]] | RecoveredAuditDto:
@@ -1440,7 +1490,7 @@ def audit_lift_file(
                 source,
                 filename,
                 blake3_512_of(source.encode()),
-                hold_seed_panics=recover_panics,
+                hold_seed_panics=recover_panics or hold_component_panics,
             )
         except ValueError:
             audit_context = None
@@ -1485,6 +1535,13 @@ def audit_lift_file(
                 gap=evidence.info.to_json(),
             )
         )
+    if hold_component_panics and not recover_panics:
+        # Payload lane with the component allowlist door open: held module
+        # seed panics surface as red factory-walk rows, never silently.
+        for evidence in seed_panics or ():
+            seed_gap = _gap_from_seed_evidence(evidence)
+            gaps.append(seed_gap)
+            payload.factory_walk.append(_factory_walk_red_from_gap(seed_gap))
     import_aliases = audit_context.import_aliases
     from_imports = audit_context.from_imports
     if target_is_module:
@@ -1669,7 +1726,16 @@ def audit_lift_file(
                 },
             )
             if not recover_panics:
-                raise
+                if not hold_component_panics:
+                    raise
+                # The component allowlist door on the payload lane: hold this
+                # definition's panic as a red factory-walk row and keep
+                # lifting independent definitions. The wall stays red; the
+                # panic stays visible.
+                held_gap = gap_from_factory_panic(label, panic)
+                gaps.append(held_gap)
+                payload.factory_walk.append(_factory_walk_red_from_gap(held_gap))
+                continue
             # Diagnostic recovery records the panic but never returns `payload`.
             gap = gap_from_factory_panic(label, panic)
             gaps.append(gap)
@@ -2417,11 +2483,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     options = params.get("options") if isinstance(params.get("options"), dict) else {}
     audit_walk = options.get("auditFrontier") is True
     allowed_broken_components = options.get("allowedBrokenComponents", [])
-    recovery_allowed = (
-        audit_walk
-        and isinstance(allowed_broken_components, list)
+    component_allowlisted = (
+        isinstance(allowed_broken_components, list)
         and KIT_ID in allowed_broken_components
     )
+    recovery_allowed = audit_walk and component_allowlisted
     root = Path(workspace_root).resolve()
     _TRANSPORT_LOG.info(
         "enumeration_request",
@@ -2610,7 +2676,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 return
             ir_items, call_edges, term_table = _lift_file_for_enumeration(
-                workspace_root, root, file_rel
+                workspace_root,
+                root,
+                file_rel,
+                hold_broken_component=component_allowlisted,
             )
 
             if level == "functions":
@@ -3063,6 +3132,11 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
         contract_bindings = []
     options = params.get("options") if isinstance(params.get("options"), dict) else {}
     audit_frontier = options.get("auditFrontier") is True
+    allowed_broken_components = options.get("allowedBrokenComponents", [])
+    hold_broken_component = (
+        isinstance(allowed_broken_components, list)
+        and KIT_ID in allowed_broken_components
+    )
     try:
         if audit_frontier:
             _send(
@@ -3103,7 +3177,11 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
                 },
             )
             with open(path, "r", encoding="utf-8") as handle:
-                file_payload = lift_file_payload(handle.read(), rel_path)
+                file_payload = lift_file_payload(
+                    handle.read(),
+                    rel_path,
+                    hold_broken_component=hold_broken_component,
+                )
             if bindings_backed_pass:
                 # Implications are not projected from the collapse yet (named
                 # gap). callEdges ride on the source-lifted path below.
