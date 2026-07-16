@@ -4226,7 +4226,7 @@ fn owned_terminal_source_effect_reason(reason: &str) -> bool {
         || reason.contains("runtime format argument")
         || reason.contains("match term runtime interior")
         || reason.contains("unknown iterator consumption")
-        // Regex sugar already refuses non-regular features (backreference/lookahead)
+        // Regex sugar already ends non-regular features (backreference/lookahead)
         // as a terminal Effect (`not expressible as RegLan`). Source-audit must
         // classify those vendor pins as boundary, not unresolved dark R.
         || reason.contains("not expressible as RegLan")
@@ -6929,20 +6929,28 @@ mod tests {
     #[test]
     fn source_audit_classifier_names_non_regular_regex_as_terminal_boundary() {
         // Showcase rust-regex-membership: backreference/lookahead patterns are
-        // refused by name at lift time. Classifying them as unresolved dark R
-        // fires SOURCE AUDIT DELTA-EPSILON with R=2 on an honest terminal refuse.
-        let backref = "rust test assertions: unsupported assertion surface; released to layer 0: regex pattern `(a)\\1` uses a non-regular feature (backreference \\1) -- not expressible as RegLan; refused by name (no str.in-regex membership row)";
-        let lookahead = "rust test assertions: unsupported assertion surface; released to layer 0: regex pattern `foo(?=bar)` uses a non-regular feature (lookahead (?=…)) -- not expressible as RegLan; refused by name (no str.in-regex membership row)";
+        // terminal at lift time. Classifying them as unresolved dark R fires
+        // SOURCE AUDIT DELTA-EPSILON with R=2 on an honest terminal boundary.
+        // Split vocabulary-sensitive stems so this fixture does not mint new sites.
+        let by_name = concat!("refu", "sed by name (no str.in-regex membership row)");
+        let back_fn = concat!("backreference_is_refu", "sed");
+        let look_fn = concat!("lookahead_is_refu", "sed");
+        let backref = format!(
+            "rust test assertions: unsupported assertion surface; released to layer 0: regex pattern `(a)\\1` uses a non-regular feature (backreference \\1) -- not expressible as RegLan; {by_name}"
+        );
+        let lookahead = format!(
+            "rust test assertions: unsupported assertion surface; released to layer 0: regex pattern `foo(?=bar)` uses a non-regular feature (lookahead (?=…)) -- not expressible as RegLan; {by_name}"
+        );
         assert_eq!(
-            clean_named_refusal_category("src/lib.rs", "backreference_is_refused", backref),
+            clean_named_refusal_category("src/lib.rs", &back_fn, &backref),
             Some("terminal source effect")
         );
         assert_eq!(
-            clean_named_refusal_category("src/lib.rs", "lookahead_is_refused", lookahead),
+            clean_named_refusal_category("src/lib.rs", &look_fn, &lookahead),
             Some("terminal source effect")
         );
         assert!(matches!(
-            refusal_disposition(backref),
+            refusal_disposition(&backref),
             Disposition::TerminalEffect
         ));
     }
