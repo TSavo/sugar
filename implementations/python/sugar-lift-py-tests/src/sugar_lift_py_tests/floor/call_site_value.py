@@ -201,6 +201,21 @@ class CallSiteValue(FloorValue):
             other, site, op="<<", floor_method="left_shift"
         )
 
+    def right_shift(self, other, site):
+        # Base64 / alphabet index math: `ord(c) >> 2` on call results.
+        # Without this, FloorValue.right_shift panics (A2 mint-failed on
+        # python-literal-base64 / base64-federation).
+        return self._dig_or_symbolic_binop(
+            other, site, op=">>", floor_method="right_shift"
+        )
+
+    def bitwise_and(self, other, site):
+        # Same family as left_shift / bitwise_or: dig then redispatch, else
+        # EUF `&`. Base20 / base64 nibble masks (`b0 & 15`) hit CallSiteValue.
+        return self._dig_or_symbolic_binop(
+            other, site, op="&", floor_method="bitwise_and"
+        )
+
     def bitwise_or(self, other, site):
         return self._dig_or_symbolic_binop(
             other, site, op="|", floor_method="bitwise_or"
