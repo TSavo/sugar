@@ -52,12 +52,12 @@ jobs:
           # One wall, one resident. Profile the ownership growth instead of
           # hiding it behind request-count process rotation.
           SUGAR_LIFT_RESIDENT_MAX_REQUESTS: unlimited
-            # Cheap cumulative phase counters identify time ownership. Memory
-            # tracing is deliberately separate: tracemalloc instruments every
-            # allocation and turned a 13-second cold context into a 120-second
-            # timeout rather than observing production behavior.
-            SUGAR_KIT_PROFILE_EVERY: "25"
-            SUGAR_KIT_MEMORY_PROFILE_EVERY: "0"
+          # Cheap cumulative phase counters identify time ownership. Memory
+          # tracing is deliberately separate: tracemalloc instruments every
+          # allocation and turned a 13-second cold context into a 120-second
+          # timeout rather than observing production behavior.
+          SUGAR_KIT_PROFILE_EVERY: "25"
+          SUGAR_KIT_MEMORY_PROFILE_EVERY: "0"
         run: |
           # Self-hosted workspaces may retain ignored .sugar outputs. A wall
           # receipt is valid only when every artifact was minted by this run.
