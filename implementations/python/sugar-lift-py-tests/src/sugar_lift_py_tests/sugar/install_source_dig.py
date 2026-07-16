@@ -475,6 +475,18 @@ def _module_assignment_name(statement: ast.stmt) -> str | None:
     return None
 
 
+def _module_declaration_name(statement: ast.stmt) -> str | None:
+    assigned = _module_assignment_name(statement)
+    if assigned is not None:
+        return assigned
+    if isinstance(
+        statement,
+        (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+    ):
+        return statement.name
+    return None
+
+
 def _module_import_bindings(statement: ast.stmt) -> dict[str, tuple[str, str | None]]:
     bindings: dict[str, tuple[str, str | None]] = {}
     if isinstance(statement, ast.Import):
@@ -546,7 +558,11 @@ def _ctx_with_required_module_bindings(
 
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-    from sugar_lift_py_tests.floor import ImportAliasValue
+    from sugar_lift_py_tests.floor import (
+        BlockValue,
+        ClassValue,
+        ImportAliasValue,
+    )
     from sugar_lift_py_tests.outcome import Incomplete, complete_value
     from sugar_lift_py_tests.temporal import TemporalContext
 
@@ -556,21 +572,19 @@ def _ctx_with_required_module_bindings(
 
     selected: list[ast.stmt] = []
     for statement in reversed(statements[:target_index]):
-        assigned = _module_assignment_name(statement)
+        declaration = _module_declaration_name(statement)
         imports = _module_import_bindings(statement)
-        owned = ({assigned} if assigned is not None else set()) | set(imports)
+        owned = ({declaration} if declaration is not None else set()) | set(imports)
         wanted = owned & needed
         if not wanted:
             continue
         selected.append(statement)
         needed.difference_update(wanted)
-        if assigned in wanted:
-            value = (
-                statement.value
-                if isinstance(statement, (ast.Assign, ast.AnnAssign))
-                else None
-            )
-            needed.update(_loaded_names(value))
+        if declaration in wanted:
+            if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                needed.update(_loaded_names(statement.value))
+            elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                needed.update(_function_definition_dependencies(statement))
     selected.reverse()
 
     lexical = TemporalContext.empty()
@@ -599,6 +613,20 @@ def _ctx_with_required_module_bindings(
                         resolved_value=resolved,
                     ),
                 )
+            module_ctx = replace(
+                module_ctx, temporal=temporal, module_temporal=temporal
+            )
+            continue
+
+        if isinstance(statement, ast.ClassDef):
+            temporal = module_ctx.temporal.bind_value(
+                statement.name,
+                ClassValue(
+                    name=statement.name,
+                    bases=(),
+                    record=BlockValue(()),
+                ),
+            )
             module_ctx = replace(
                 module_ctx, temporal=temporal, module_temporal=temporal
             )
