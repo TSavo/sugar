@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import collections
 import dataclasses
+import gc
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ import sys
 import threading
 import time
 import traceback
+import tracemalloc
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
@@ -117,6 +119,22 @@ class _StructuredTransportFormatter(logging.Formatter):
             "symbol",
             "at",
             "seek",
+            "request_count",
+            "rss_kib",
+            "peak_rss_kib",
+            "heap_current_kib",
+            "heap_peak_kib",
+            "gc_gen0",
+            "gc_gen1",
+            "gc_gen2",
+            "audit_contexts",
+            "enumeration_contexts",
+            "install_source_entries",
+            "source_table_entries",
+            "allocation_file",
+            "allocation_line",
+            "allocation_size_kib",
+            "allocation_count",
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
@@ -150,6 +168,94 @@ def _configure_transport_logging() -> None:
         previous_hook(exc_type, exc, tb)
 
     sys.excepthook = log_unhandled
+
+
+def _profile_interval(name: str) -> int:
+    try:
+        return max(0, int(os.environ.get(name, "0")))
+    except ValueError:
+        return 0
+
+
+def _resident_rss_kib() -> tuple[int | None, int | None]:
+    """Current/peak resident bytes from the process, without a new dependency."""
+    try:
+        fields = {}
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith(("VmRSS:", "VmHWM:")):
+                name, value, *_unit = line.split()
+                fields[name.rstrip(":")] = int(value)
+        return fields.get("VmRSS"), fields.get("VmHWM")
+    except (OSError, ValueError):
+        return None, None
+
+
+def _cache_cardinalities() -> tuple[int, int]:
+    install_entries = 0
+    install_module = sys.modules.get("sugar_lift_py_tests.sugar.install_source_dig")
+    if install_module is not None:
+        for name in (
+            "_module_sibling_function_nodes",
+            "resolve_install_source_funcdef",
+            "resolve_install_source_class_method",
+        ):
+            cached = getattr(install_module, name, None)
+            if cached is not None and hasattr(cached, "cache_info"):
+                install_entries += cached.cache_info().currsize
+
+    source_entries = 0
+    source_module = sys.modules.get("sugar_lift_python_source.source_tables")
+    if source_module is not None:
+        for name in ("source_splitlines", "source_lines", "_parsed", "parsed_parents"):
+            cached = getattr(source_module, name, None)
+            if cached is not None and hasattr(cached, "cache_info"):
+                source_entries += cached.cache_info().currsize
+    return install_entries, source_entries
+
+
+def _log_resident_profile(request_count: int, method: Any) -> None:
+    every = _profile_interval("SUGAR_KIT_PROFILE_EVERY")
+    if every <= 0 or request_count % every:
+        return
+    rss_kib, peak_rss_kib = _resident_rss_kib()
+    heap_current, heap_peak = tracemalloc.get_traced_memory()
+    gc_counts = gc.get_count()
+    install_entries, source_entries = _cache_cardinalities()
+    _TRANSPORT_LOG.info(
+        "resident_profile",
+        extra={
+            "stage": "resident.profile",
+            "method": method,
+            "request_count": request_count,
+            "rss_kib": rss_kib,
+            "peak_rss_kib": peak_rss_kib,
+            "heap_current_kib": heap_current // 1024,
+            "heap_peak_kib": heap_peak // 1024,
+            "gc_gen0": gc_counts[0],
+            "gc_gen1": gc_counts[1],
+            "gc_gen2": gc_counts[2],
+            "audit_contexts": len(_AUDIT_FILE_CONTEXTS),
+            "enumeration_contexts": len(_ENUMERATION_FILE_CONTEXTS),
+            "install_source_entries": install_entries,
+            "source_table_entries": source_entries,
+        },
+    )
+    top_every = _profile_interval("SUGAR_KIT_PROFILE_TOP_EVERY")
+    if top_every <= 0 or request_count % top_every:
+        return
+    for statistic in tracemalloc.take_snapshot().statistics("lineno")[:20]:
+        frame = statistic.traceback[0]
+        _TRANSPORT_LOG.info(
+            "resident_allocation",
+            extra={
+                "stage": "resident.profile.allocation",
+                "request_count": request_count,
+                "allocation_file": frame.filename,
+                "allocation_line": frame.lineno,
+                "allocation_size_kib": statistic.size // 1024,
+                "allocation_count": statistic.count,
+            },
+        )
 
 
 def _log_enumeration_demand(
@@ -3415,6 +3521,7 @@ _SERVE_RECURSION_LIMIT = 100_000
 
 def _serve() -> None:
     sys.setrecursionlimit(_SERVE_RECURSION_LIMIT)
+    request_count = 0
     while True:
         msg = _recv()
         if msg is None:
@@ -3431,9 +3538,9 @@ def _serve() -> None:
                 }
             )
             continue
+        request_count += 1
         try:
-            if not _dispatch_request(msg):
-                break
+            keep_serving = _dispatch_request(msg)
         except RecursionError:
             # Loud and typed: the request is rejected with an error frame; the
             # transport stays alive for the next request.
@@ -3455,6 +3562,7 @@ def _serve() -> None:
                     },
                 }
             )
+            _log_resident_profile(request_count, msg.get("method"))
             continue
         except FactoryPanic as panic:
             _send(
@@ -3472,11 +3580,17 @@ def _serve() -> None:
                     },
                 }
             )
+            _log_resident_profile(request_count, msg.get("method"))
             raise SystemExit(1) from panic
+        _log_resident_profile(request_count, msg.get("method"))
+        if not keep_serving:
+            break
 
 
 def main(argv: Optional[List[str]] = None) -> None:
     _configure_transport_logging()
+    if _profile_interval("SUGAR_KIT_PROFILE_EVERY") > 0:
+        tracemalloc.start(1)
     argv = argv or []
     if "--audit-only" in argv:
         raise SystemExit(

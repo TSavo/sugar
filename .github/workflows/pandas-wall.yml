@@ -49,11 +49,11 @@ jobs:
           SUGAR_ENGINE_CYCLE_THRESHOLD: "8"
           SUGAR_KIT_LOG: ${{ github.workspace }}/.sugar/pandas-wall-logs/transport.jsonl
           SUGAR_KIT_LOG_LEVEL: INFO
-          # Keep a warm generation large enough to preserve locality, but bound
-          # cumulative resident RSS. The recovered wall crosses ~30k requests;
-          # 8k yields only four generations and prevents the observed mid-wall
-          # process death at request 16,957.
-          SUGAR_LIFT_RESIDENT_MAX_REQUESTS: "8000"
+          # One wall, one resident. Profile the ownership growth instead of
+          # hiding it behind request-count process rotation.
+          SUGAR_LIFT_RESIDENT_MAX_REQUESTS: unlimited
+          SUGAR_KIT_PROFILE_EVERY: "250"
+          SUGAR_KIT_PROFILE_TOP_EVERY: "2000"
         run: |
           # Self-hosted workspaces may retain ignored .sugar outputs. A wall
           # receipt is valid only when every artifact was minted by this run.
