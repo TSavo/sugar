@@ -219,10 +219,10 @@ unpack_base64() {
 build_native_shim() {
   unpack_base64
   echo "== build native cdylib wrapper over real base64 crate =="
-  # base64 0.22.1 uses `#![cfg_attr(feature = "cargo-clippy", ...)]` which modern
-  # rustc rejects as unexpected_cfgs (error under -Dwarnings). Allow for this
-  # vendor dep build only; our shim source does not use that cfg.
-  RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }-Aunexpected_cfgs" \
+  # Vendored base64 0.22.1 is pre-1.96 lint surface (unexpected_cfgs on
+  # cargo-clippy, mismatched_lifetime_syntaxes, …). CI often has -Dwarnings;
+  # do not inherit that for this dependency-only compile.
+  RUSTFLAGS="-Awarnings" \
     cargo build --manifest-path "$NATIVE_DIR/Cargo.toml" --release >/dev/null
   case "$(uname -s)" in
     Darwin)      NATIVE_LIB="$NATIVE_DIR/target/release/libbase64_panama_demo.dylib" ;;
