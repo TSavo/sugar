@@ -587,6 +587,14 @@ fn report_implication_tree(
         method: manifest.method.clone(),
     })
     .map_err(|error| format!("lift.rendezvous: {error}"))?;
+    if !kit.supports_rpc_method("sugar.enumerate") {
+        eprintln!(
+            "{}: lift kit {} does not advertise sugar.enumerate; using composed lift implications",
+            "warning".yellow().bold(),
+            kit.declaration().kit.id
+        );
+        return Ok(Vec::new());
+    }
     sugar_compiler::tree::fold_implication_tree(&kit, project_root, registry, plan)
         .map_err(|error| format!("lift.implications: {error}"))
 }

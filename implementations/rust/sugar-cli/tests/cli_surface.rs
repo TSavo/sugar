@@ -909,33 +909,34 @@ done
 }
 
 #[test]
-#[ignore = "fixed-id RPC fixture can consume the protocol deadline; run explicitly"]
-fn lift_report_runs_single_surface_implication_pass_with_contract_bindings() {
+fn lift_report_uses_composed_implications_when_kit_cannot_enumerate() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let project = dir.path().join("project");
-    let manifest_dir = project.join(".sugar/lift/python");
+    let manifest_dir = project.join(".sugar/lift/java");
     fs::create_dir_all(&manifest_dir).expect("create manifest dir");
     fs::write(
         project.join(".sugar/config.toml"),
         r#"[[plugins]]
-name = "python"
+name = "java"
 kind = "lift"
-surface = "python"
+surface = "java"
 emit = "ir-document"
 "#,
     )
     .expect("write project config");
 
-    let plugin = dir.path().join("python.sh");
+    let plugin = dir.path().join("java.sh");
     write_executable(
         &plugin,
         r#"#!/usr/bin/env bash
 set -euo pipefail
 while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"python","protocol_version":"pep/1.7.0","capabilities":{}}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"java","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+  elif [[ "$line" == *'sugar.enumerate'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"unknown method: sugar.enumerate"}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     if [[ "$line" == *'"contract_bindings"'* ]]; then
       if [[ "$line" != *'"name":"callee"'* ]]; then
@@ -955,7 +956,7 @@ done
     );
     fs::write(
         manifest_dir.join("manifest.toml"),
-        format!("name = \"python\"\ncommand = [\"{}\"]\n", plugin.display()),
+        format!("name = \"java\"\ncommand = [\"{}\"]\n", plugin.display()),
     )
     .expect("write manifest");
 
@@ -971,18 +972,18 @@ done
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "lift report should run the single configured report plugin and its implication pass\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        "lift report should retain composed implications without calling unsupported sugar.enumerate\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     let report: serde_json::Value = serde_json::from_str(&stdout).expect("report JSON parses");
     let call_edges = report["callEdges"].as_array().expect("callEdges array");
+    assert_eq!(
+        call_edges.len(),
+        1,
+        "base lift call edge must survive fallback"
+    );
     assert!(
-        call_edges.iter().any(|edge| {
-            edge["kind"].as_str() == Some("implication")
-                && edge["sourceContract"].as_str() == Some("caller")
-                && edge["targetContract"].as_str() == Some("callee")
-                && edge["prover"].as_str() == Some("single-plugin-implications")
-        }),
-        "single-surface report must include the implication memento edge after the bindings-backed pass; callEdges={call_edges:#?}"
+        stderr.contains("does not advertise sugar.enumerate; using composed lift implications"),
+        "fallback should be explicit in report stderr; stderr:\n{stderr}"
     );
 }
 
