@@ -42,9 +42,9 @@ then
 fi
 
 echo "== resolve local proof binaries via sugarbin =="
-SUGAR="$("$REPO/bin/sugarbin" --profile debug)"
+SUGAR="${PYTHON_BODYGUARD_SUGAR:-$("$REPO/bin/sugarbin" --profile debug)}"
 BIN_DIR="$(dirname "$SUGAR")"
-WALK_RPC="$("$REPO/bin/sugarbin" --profile debug --bin sugar-walk-rpc)"
+WALK_RPC="${PYTHON_BODYGUARD_WALK_RPC:-$("$REPO/bin/sugarbin" --profile debug --bin sugar-walk-rpc)}"
 
 for bin in "$SUGAR" "$WALK_RPC"; do
   if [ ! -x "$bin" ]; then

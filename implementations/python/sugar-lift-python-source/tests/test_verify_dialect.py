@@ -784,6 +784,49 @@ def test_bare_surface_emits_all_functions(tmp_path):
     assert fn_names == ["double"]
 
 
+def test_verify_rpc_enumerates_bodyguard_call_edge_on_the_callee_coordinate(tmp_path):
+    (tmp_path / "bounded_digit.py").write_text(
+        "def bounded_digit(x: int) -> int:\n"
+        "    if x < 2 or x > 36:\n"
+        "        raise ValueError('x out of range')\n"
+        "    return x\n"
+    )
+    (tmp_path / "test_bounded_digit.py").write_text(
+        "from bounded_digit import bounded_digit\n\n"
+        "def test_bounded_digit():\n"
+        "    assert bounded_digit(16) == 16\n"
+    )
+
+    response = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "lift",
+            "params": {"workspace_root": str(tmp_path)},
+        }
+    )["result"]
+    target = next(
+        item
+        for item in response["ir"]
+        if item.get("kind") == "function-contract"
+        and item.get("bridgeSourceSymbol") == "bounded_digit"
+    )
+
+    assert response["callEdges"] == [
+        {
+            "kind": "call-edge",
+            "sourceContract": "test_bounded_digit",
+            "targetSymbol": target["bridgeSourceSymbol"],
+            "targetContract": target["fnName"],
+            "callSiteLocus": {
+                "file": "test_bounded_digit.py",
+                "line": 4,
+                "column": 11,
+            },
+        }
+    ]
+
+
 def test_verify_rpc_initialize_declares_python_verify_surface():
     result = initialize_result()
 

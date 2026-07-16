@@ -144,7 +144,14 @@ def _iter_py_files(root: Path):
 
 
 def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
-    """Walk every `.py` under root, returning (ir_items, diagnostics).
+    ir, _call_edges, diagnostics = _lift_workspace_document(root, mode)
+    return ir, diagnostics
+
+
+def _lift_workspace_document(
+    root: str, mode: str
+) -> tuple[list[Json], list[Json], list[Json]]:
+    """Walk every `.py`, returning (ir_items, call_edges, diagnostics).
 
     mode == "bindings": `library-sugar-binding-entry` per catalogued function
       (declaration catalog; mint skips it). Delegates to the bind lifter.
@@ -156,6 +163,7 @@ def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
     Json = dict
     root_path = Path(root or ".").resolve()
     ir_items: list[Json] = []
+    call_edges: list[Json] = []
     diagnostics: list[Json] = []
     seen_fn: set[str] = set()
     seen_contract: set[str] = set()
@@ -168,7 +176,7 @@ def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
         bind_result = bind_lifter.lift_paths(
             str(root_path), ["."], layer="library-bindings"
         )
-        return bind_result.ir, bind_result.diagnostics
+        return bind_result.ir, [], bind_result.diagnostics
 
     for path in _iter_py_files(root_path):
         try:
@@ -181,12 +189,19 @@ def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
         if _is_test_file(path.name):
             harvest = harvest_source(source, rel)
             diagnostics.extend(harvest.diagnostics)
+            accepted_contracts: set[str] = set()
             for decl in harvest.ir:
                 name = str(decl.get("name", ""))
                 if name in seen_contract:
                     continue
                 seen_contract.add(name)
+                accepted_contracts.add(name)
                 ir_items.append(decl)
+            call_edges.extend(
+                edge
+                for edge in harvest.call_edges
+                if edge.get("sourceContract") in accepted_contracts
+            )
             continue
 
         # Body-derived function-contracts (verify-facing dialect). Keyed by
@@ -227,7 +242,22 @@ def lift_workspace(root: str, mode: str) -> tuple[list[Json], list[Json]]:
             seen_fn.add(fn_name)
             ir_items.append(item)
 
-    return ir_items, diagnostics
+    targets_by_symbol: dict[str, list[str]] = {}
+    for item in ir_items:
+        if (
+            item.get("kind") == "function-contract"
+            and item.get("bridgeSourceSymbol")
+            and item.get("fnName")
+        ):
+            targets_by_symbol.setdefault(str(item["bridgeSourceSymbol"]), []).append(
+                str(item["fnName"])
+            )
+    for edge in call_edges:
+        candidates = targets_by_symbol.get(str(edge.get("targetSymbol", "")), [])
+        if len(candidates) == 1:
+            edge["targetContract"] = candidates[0]
+
+    return ir_items, call_edges, diagnostics
 
 
 def dispatch(request: dict[str, Any]) -> dict[str, Any]:
@@ -242,14 +272,14 @@ def dispatch(request: dict[str, Any]) -> dict[str, Any]:
     if method == "lift":
         root = str(params.get("workspace_root", "."))
         mode = _mode_from_options(params.get("options"))
-        ir_items, diagnostics = lift_workspace(root, mode)
+        ir_items, call_edges, diagnostics = _lift_workspace_document(root, mode)
         return {
             "jsonrpc": "2.0",
             "id": msg_id,
             "result": {
                 "kind": "ir-document",
                 "ir": ir_items,
-                "callEdges": [],
+                "callEdges": call_edges,
                 "diagnostics": diagnostics,
                 "opacityReport": [],
                 "refusals": [],
