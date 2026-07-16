@@ -253,6 +253,7 @@ struct Totals {
 }
 
 fn main() {
+    configure_proc_macro2_for_standalone_binary();
     init_tracing();
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -727,6 +728,15 @@ fn main() {
     }
 }
 
+fn configure_proc_macro2_for_standalone_binary() {
+    // This executable parses and rewrites tokens, but it is not a procedural
+    // macro and therefore never has rustc's proc-macro bridge available.
+    // Avoid proc-macro2's runtime bridge detection selecting compiler-backed
+    // spans on newer toolchains; those spans panic as soon as they touch the
+    // inactive bridge.
+    proc_macro2::fallback::force();
+}
+
 fn init_tracing() {
     let filter = if std::env::var_os("RUST_LOG").is_some() {
         tracing_subscriber::EnvFilter::builder()
@@ -954,6 +964,14 @@ fn build_ledger_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standalone_sweep_forces_proc_macro2_fallback() {
+        configure_proc_macro2_for_standalone_binary();
+
+        let _ = proc_macro2::Span::call_site();
+        let _: proc_macro2::TokenStream = "assert!(true)".parse().unwrap();
+    }
 
     fn fixture() -> (
         Totals,
