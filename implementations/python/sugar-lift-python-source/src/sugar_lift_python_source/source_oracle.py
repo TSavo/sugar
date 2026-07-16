@@ -21,6 +21,8 @@
 from __future__ import annotations
 
 import ast
+import functools
+import importlib.machinery
 import os
 from pathlib import Path
 from typing import Any
@@ -38,6 +40,54 @@ from .source_tables import parsed_tree, source_segment, source_splitlines
 class SourceOracleRefusal(Exception):
     """Raised LOUDLY when on-disk source does not recompute to the pinned CID:
     the source has drifted from what the `.proof` pins. Never a silent fallback."""
+
+
+INSTALLED_SOURCE_CAPACITY = 64
+
+
+@functools.lru_cache(maxsize=INSTALLED_SOURCE_CAPACITY)
+def installed_module_source(module_name: str) -> tuple[str, str, str] | None:
+    """Resolve installed Python source once through the SourceOracle boundary.
+
+    The returned identity is ``(source, filename, content CID)``.  Callers may
+    derive views from it, but must not independently discover/read/parse the
+    module.  Content-keyed ``parsed_tree`` then owns the one parsed AST.
+    """
+    if not module_name:
+        return None
+    parts = module_name.split(".")
+    search_path = None
+    spec = None
+    try:
+        for index in range(1, len(parts) + 1):
+            qualified = ".".join(parts[:index])
+            spec = importlib.machinery.PathFinder.find_spec(qualified, search_path)
+            if spec is None:
+                return None
+            if index < len(parts):
+                search_path = spec.submodule_search_locations
+                if search_path is None:
+                    return None
+        origin = getattr(spec, "origin", None)
+        if not origin or not origin.endswith((".py", ".pyi")):
+            return None
+        source = Path(origin).read_text(encoding="utf-8")
+    except (
+        ImportError,
+        ModuleNotFoundError,
+        OSError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+    ):
+        return None
+    # Parse before publishing a successful oracle answer. Syntax failures are
+    # not cached as completed source.
+    try:
+        parsed_tree(source, origin)
+    except SyntaxError:
+        return None
+    return source, origin, blake3_512_of(source.encode("utf-8"))
 
 
 def resolve_source_memento(

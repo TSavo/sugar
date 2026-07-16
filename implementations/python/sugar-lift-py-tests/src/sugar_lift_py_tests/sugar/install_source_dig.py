@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib
 import importlib.machinery
 import ast
+import copy
 import functools
 import inspect
 import textwrap
@@ -26,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
+from sugar_lift_python_source.source_oracle import installed_module_source
+from sugar_lift_python_source.source_tables import parsed_tree
 
 INSTALLED_SOURCE_INDEX_CAPACITY = 64
 
@@ -72,7 +75,7 @@ def _installed_source_index(module_name: str) -> _InstalledSourceIndex | None:
         return None
     source, sourcefile = installed
     try:
-        parsed = ast.parse(source, filename=sourcefile)
+        parsed = parsed_tree(source, sourcefile)
     except SyntaxError:
         return None
 
@@ -101,35 +104,12 @@ def _installed_source_index(module_name: str) -> _InstalledSourceIndex | None:
 
 
 def _installed_source(module_name: str) -> tuple[str, str] | None:
-    """Read dotted-module source without importing a package component."""
-    if not module_name:
+    """Compatibility view over the SourceOracle-owned installed source."""
+    resolved = installed_module_source(module_name)
+    if resolved is None:
         return None
-    parts = module_name.split(".")
-    search_path = None
-    spec = None
-    try:
-        for index in range(1, len(parts) + 1):
-            qualified = ".".join(parts[:index])
-            spec = importlib.machinery.PathFinder.find_spec(qualified, search_path)
-            if spec is None:
-                return None
-            if index < len(parts):
-                search_path = spec.submodule_search_locations
-                if search_path is None:
-                    return None
-        origin = getattr(spec, "origin", None)
-        if not origin or not origin.endswith((".py", ".pyi")):
-            return None
-        return Path(origin).read_text(encoding="utf-8"), origin
-    except (
-        ImportError,
-        ModuleNotFoundError,
-        OSError,
-        TypeError,
-        UnicodeError,
-        ValueError,
-    ):
-        return None
+    source, sourcefile, _source_cid = resolved
+    return source, sourcefile
 
 
 def _installed_native_extension(module_name: str) -> str | None:
@@ -220,7 +200,7 @@ def _resolve_qualified_native_callable(
         return None
     source, sourcefile = installed
     try:
-        parsed = ast.parse(source, filename=sourcefile)
+        parsed = parsed_tree(source, sourcefile)
     except SyntaxError:
         return None
     if any(
@@ -298,7 +278,7 @@ def _imported_module_source(module_name: str) -> tuple[str, str] | None:
 
 def _materialize_index_definitions(index: _InstalledSourceIndex) -> dict[str, ast.AST]:
     """Reparse an index into caller-owned nodes; cached state stays immutable."""
-    parsed = ast.parse(index.source, filename=index.sourcefile)
+    parsed = parsed_tree(index.source, index.sourcefile)
     nodes_by_locus = {
         (node.name, node.lineno, node.col_offset): node
         for node in ast.walk(parsed)
@@ -311,6 +291,7 @@ def _materialize_index_definitions(index: _InstalledSourceIndex) -> dict[str, as
         )
         if node is None:
             continue
+        node = copy.deepcopy(node)
         node.decorator_list = []
         node._sugar_source = index.source  # type: ignore[attr-defined]
         node._sugar_file = index.sourcefile  # type: ignore[attr-defined]
@@ -345,7 +326,7 @@ def _static_module_exports(module_name: str) -> frozenset[str] | None:
         return None
     source, sourcefile = installed
     try:
-        parsed = ast.parse(source, filename=sourcefile)
+        parsed = parsed_tree(source, sourcefile)
     except SyntaxError:
         return None
     manifests: list[tuple[str, ...]] = []
@@ -408,7 +389,7 @@ def _resolve_qualified_function_fragment(
     source = index.source
     sourcefile = index.sourcefile
     try:
-        parsed = ast.parse(source, filename=sourcefile)
+        parsed = parsed_tree(source, sourcefile)
     except SyntaxError:
         return None
 
@@ -439,7 +420,7 @@ def _resolve_qualified_function_fragment(
     if len(definitions) == 1:
         from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
-        node = definitions[0]
+        node = copy.deepcopy(definitions[0])
         node.decorator_list = []
         node._sugar_source = source  # type: ignore[attr-defined]
         node._sugar_file = sourcefile  # type: ignore[attr-defined]
@@ -690,7 +671,7 @@ def resolve_install_source_value(
         return None
     source, sourcefile = installed
     try:
-        parsed = ast.parse(source, filename=sourcefile)
+        parsed = parsed_tree(source, sourcefile)
     except SyntaxError:
         return None
 
@@ -702,7 +683,7 @@ def resolve_install_source_value(
     if function is not None:
         defining_source = function.node._sugar_source  # type: ignore[attr-defined]
         defining_file = function.node._sugar_file  # type: ignore[attr-defined]
-        defining_tree = ast.parse(defining_source, filename=defining_file)
+        defining_tree = copy.deepcopy(parsed_tree(defining_source, defining_file))
         target_index = next(
             index
             for index, statement in enumerate(defining_tree.body)
