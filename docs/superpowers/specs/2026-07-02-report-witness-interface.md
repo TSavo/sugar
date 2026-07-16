@@ -167,15 +167,22 @@ pub struct WitnessEntry {
 
 Unknown kinds fail with a user error rather than silently skipping.
 
-## 9. Witness discharge environment
+## 9. Witness discharge configuration
 
-The witness-discharge path resolves each lift surface's manifest — authored or planned — and exports per-tool discharge commands as environment variables. Current `cmd_prove.rs` comments specify the shape:
+The witness-discharge path resolves each lift surface's manifest — authored
+or planned — and builds a typed `WitnessDischargeContext` (project_dir +
+`resolve_witness_command` resolvers). That typed context is the sole config
+channel (#3809 step 3; #3860).
 
-```text
-SUGAR_WITNESS_DISCHARGE_<TOOL>
-```
+`SUGAR_WITNESS_DISCHARGE_<TOOL>` is **not** a config channel: there is no
+production reader, and production no longer stages those env vars. Showcase
+lie scripts may still set the env as process pollution to prove the package
+recompute path ignores kit-stdout lies. Verdict inputs remain
+content-addressed (packageCid + contract + resolver body).
 
-The important interface point is that witness recompute rides the same manifest as lift. There is no separate bespoke discharge registry.
+The important interface point is that witness recompute rides the same
+manifest as lift (`resolve_witness_command`). There is no separate bespoke
+discharge registry and no process-env side channel for discharge commands.
 
 ## 10. Invariants
 

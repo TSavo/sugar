@@ -279,10 +279,9 @@ or `bin/sugarbin run --host bx --env docker:solver-z3 -- z3 --version`.
 | `SUGAR_PLUGIN_STDERR` | Redirect plugin stderr to file | `SUGAR_PLUGIN_STDERR=/tmp/plugin.log` |
 | `SUGAR_IR_COMPILER_TIMEOUT_SECS` | Timeout for IR compiler invocation (seconds) | Default: per-solver config (e.g., 30s for z3) |
 | `SUGAR_SOLVER_TIMEOUT_SECS` | Override per-solver timeout (seconds) | Overrides `.sugar/config.toml` values |
-| `SUGAR_WITNESS_DISCHARGE` | Enable witness discharge mode | Any value enables |
-| `SUGAR_WITNESS_DISCHARGE_PYTEST` | Python-specific witness discharge | Used by pytest witness plugin |
-| `SUGAR_WITNESS_RESOLVERS` | Comma-separated list of witness resolvers | E.g., `"ci-log,local-test-run"` |
-| `SUGAR_WITNESS_PROJECT_DIR` | Project root for witness resolution | Path to repo root |
+| ~~`SUGAR_WITNESS_DISCHARGE*`~~ | **Retired (#3860 / #3809 step 3).** Not a config channel. Package recompute uses typed `WitnessDischargeContext` (project_dir + resolvers) only. Showcase lie scripts may still set `SUGAR_WITNESS_DISCHARGE_<TOOL>` as process pollution; production never reads or writes it. | — |
+| ~~`SUGAR_WITNESS_RESOLVERS`~~ | **Retired (#3809 step 3).** Typed `WitnessDischargeContext.resolvers` only. | — |
+| ~~`SUGAR_WITNESS_PROJECT_DIR`~~ | **Retired (#3809 step 3).** Typed `WitnessDischargeContext.project_dir` only. | — |
 | `SUGAR_WITNESS_SIGNER_SEED` | Ed25519 seed for witness signing (hex, 32 bytes) | `0x42424242...` (64 hex chars) |
 | `SUGAR_VERIFY_SIGNER_KEY` | Public key for proof verification (hex) | Used in `sugar verify` |
 | `SUGAR_VERIFY_SIGNER_KEY_FILE` | Path to public key file (PEM format) | Alternative to `SUGAR_VERIFY_SIGNER_KEY` |
