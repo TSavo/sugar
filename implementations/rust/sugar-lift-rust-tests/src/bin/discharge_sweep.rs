@@ -629,6 +629,7 @@ fn collect_rs_files(root: &Path) -> Vec<(String, String)> {
 }
 
 fn main() {
+    configure_proc_macro2_for_standalone_binary();
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
@@ -1146,6 +1147,16 @@ fn rust_workspace() -> PathBuf {
         .to_path_buf()
 }
 
+fn configure_proc_macro2_for_standalone_binary() {
+    // This executable parses and rewrites tokens, but it is not a procedural
+    // macro and therefore never has rustc's proc-macro bridge available.
+    // Avoid proc-macro2's runtime bridge detection selecting compiler-backed
+    // spans on newer toolchains; those spans panic as soon as they touch the
+    // inactive bridge. Mixed fallback/compiler backends also turn large
+    // for_replay expansions into allocator/stack crashes (#4591).
+    proc_macro2::fallback::force();
+}
+
 fn toml_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
@@ -1623,6 +1634,14 @@ fn production_replay_subset(
 mod tests {
     use super::*;
     use sugar_canonicalizer::{blake3_512_of, jcs_cid_of_json, BLAKE3_512_PREFIX};
+
+    #[test]
+    fn standalone_discharge_sweep_forces_proc_macro2_fallback() {
+        configure_proc_macro2_for_standalone_binary();
+
+        let _ = proc_macro2::Span::call_site();
+        let _: proc_macro2::TokenStream = "assert!(true)".parse().unwrap();
+    }
 
     fn inv_of(src: &str) -> Value {
         let file = syn::parse_file(src).expect("parses");

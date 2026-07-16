@@ -12488,7 +12488,7 @@ pub(crate) fn if_guard_is_runtime(cond: &Expr) -> bool {
 
 /// Is `cond` a `cfg!(..)` / `!cfg!(..)` macro call? A target-config predicate is a
 /// compile-time constant, not a runtime value -- so it must NOT be classified runtime.
-fn expr_is_cfg_macro(cond: &Expr) -> bool {
+pub(crate) fn expr_is_cfg_macro(cond: &Expr) -> bool {
     let inner = match cond {
         Expr::Unary(u) if matches!(u.op, syn::UnOp::Not(_)) => u.expr.as_ref(),
         other => other,
@@ -25883,6 +25883,105 @@ fn t() {
         assert_eq!(
             out.assertions_lifted, 1,
             "deep finite replay must complete without native-stack or allocator failure: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn corpus_array_rs_lifts_without_signal_death() {
+        // #4591: discharge_sweep SIGSEGV'd while lifting the standard corpus at
+        // array.rs. The mechanism was eager nested for_replay token expansion
+        // (heap-backed iterative replay in for_replay.rs) plus mixed proc_macro2
+        // backends at the standalone binary door. This pin loads the real corpus
+        // file and demands a completed lift: no native-stack death, no allocator
+        // abort, loud skips allowed.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../examples/rust-coretests-report/corpus/tests/array.rs");
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+        let file: syn::File = syn::parse_file(&src).expect("array.rs must parse");
+        let out = lift_file(&file, "tests/array.rs");
+        // Reaching marshal proves the lift finished and produced serializable
+        // declarations without native-stack or allocator death.
+        let bytes = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+        assert!(
+            !bytes.is_empty() || out.skip_reasons.iter().any(|r| !r.is_empty()),
+            "array.rs lift must complete with declarations or named skips: \
+             lifted={} refused={} facts={} skips={:?}",
+            out.assertions_lifted,
+            out.assertions_refused,
+            out.assertion_facts.len(),
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn cfg_sequence_conditional_without_target_cfg_is_typed_incomplete() {
+        // #4591 residual: without target_cfg, a cfg!-selected finite range domain
+        // must not SIGSEGV or process-panic. Lawful outcomes are a named skip
+        // (opaque/for-context or ambiguous-cfg Configuration) and zero warrants.
+        let src = r#"
+            #[test]
+            fn cfg_range() {
+                let iter = if cfg!(miri) { 0..2 } else { 0..4 };
+                for i in iter {
+                    assert_eq!(i, i);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted,
+            0,
+            "without target_cfg the cfg-selected domain must not silently warrant: {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            !out.skip_reasons.is_empty() || out.assertions_refused > 0,
+            "missing cfg facts must surface as a named skip/effect, not SIGSEGV/panic: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn nested_cfg_range_product_replays_without_signal_death() {
+        // #4591 residual of test_is_ascii_align_size_thoroughly: a cfg-selected
+        // finite range domain feeds nested product loops. Without iterative
+        // for_replay + folded cfg guards this class either SIGSEGVs or panics
+        // at the sequence-conditional gap. Keep the product small enough for
+        // the ordinary debug profile; the real ascii file is the long-run pin.
+        let target = TargetCfg::from_rustc_cfg_facts([
+            "debug_assertions",
+            "target_arch=\"x86_64\"",
+            "target_pointer_width=\"64\"",
+        ])
+        .expect("cfg facts");
+        let src = r#"
+            #[test]
+            fn cfg_range_product() {
+                let iter = if cfg!(miri) { 0..2 } else { 0..6 };
+                for i in iter {
+                    for j in [0i64, 1, 2] {
+                        for k in 0..=i {
+                            assert_eq!(i + j + k, i + j + k);
+                        }
+                    }
+                }
+            }
+        "#;
+        let file: syn::File = syn::parse_str(src).expect("parses");
+        let out = lift_file_with_options(
+            &file,
+            "tests/ascii_product.rs",
+            &LiftOptions::for_target_cfg(target),
+        );
+        let bytes = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+        assert!(
+            out.assertions_lifted > 0 || !bytes.is_empty() || !out.skip_reasons.is_empty(),
+            "cfg-selected nested product must complete without signal death: \
+             lifted={} refused={} skips={:?}",
+            out.assertions_lifted,
+            out.assertions_refused,
             out.skip_reasons
         );
     }

@@ -288,6 +288,21 @@ impl ConditionalSugar {
                 boundary: token_key(&self.cond),
             });
         }
+        // `cfg!` is compile-time, never runtime — but without target_cfg facts it
+        // cannot fold. That is incomplete measurement input, not a construction
+        // gap: return a typed Configuration effect so for_replay/discharge_sweep
+        // can decline loudly and continue, instead of panicking the whole process
+        // mid-corpus (#4591 residual after iterative nested replay).
+        if crate::expr_is_cfg_macro(&self.cond) {
+            return Outcome::Incomplete(Effect::Configuration {
+                reason: format!(
+                    "ambiguous cfg: sequence conditional guard `{}` did not fold against \
+                     LiftOptions.target_cfg ({reason}); supply corpus target_cfg facts so \
+                     the branch can select a finite sequence",
+                    token_key(&self.cond)
+                ),
+            });
+        }
         conditional_gap(reason)
     }
 
