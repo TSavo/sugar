@@ -104,32 +104,27 @@ next((r.get('status') for r in d.get('rows', []) if 'witness-package' in (r.get(
   echo "-- verify durable artifact --"
   local verify_json="$dir/.verify.json"
   ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json ) > "$verify_json" 2>/dev/null || true
-  python3 - "$suite" "$expect_consistency" "$expect_witness" "$verify_json" <<'PY'
-import json
+  python3 - "$suite" "$expect_consistency" "$expect_witness" "$verify_json" "$REPO" <<'PY'
 import sys
 
-suite, expect_consistency, expect_witness, path = sys.argv[1:]
-receipt = json.load(open(path, encoding="utf-8"))
+suite, expect_consistency, expect_witness, path, repo = sys.argv[1:]
+sys.path.insert(0, repo)
+from tools.showcase.durable_consistency import (
+    check_durable_consistency,
+    is_witness_package_row,
+)
+from tools.showcase.json_get import load_receipt
+
+receipt = load_receipt(path)
 rows = receipt.get("rows", [])
-consistency = [
-    r.get("status")
-    for r in rows
-    if (r.get("property") or "").startswith("consistency:")
-    and "witness-package" not in (r.get("property") or "")
-]
+consistency = check_durable_consistency(
+    rows, suite=suite, expect=expect_consistency
+)
 witness = [
     r.get("status")
     for r in rows
-    if "witness-package" in (r.get("property") or "")
+    if is_witness_package_row(r)
 ]
-if not consistency:
-    raise SystemExit(f"FAIL[{suite}]: durable verify has no consistency rows")
-if expect_consistency == "DISCHARGE":
-    if any(status != "discharged" for status in consistency):
-        raise SystemExit(f"FAIL[{suite}]: durable consistency statuses {consistency}")
-else:
-    if "unsatisfied" not in consistency:
-        raise SystemExit(f"FAIL[{suite}]: durable consistency statuses {consistency}")
 if expect_witness == "DISCHARGE":
     if witness != ["discharged"]:
         raise SystemExit(f"FAIL[{suite}]: durable witness statuses {witness}")

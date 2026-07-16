@@ -68,6 +68,7 @@ help:
 	@echo "  make check-lift-manifest-pythonpath  Lane A: lift_rpc PYTHONPATH + bind_rpc --rpc census"
 	@echo "  make wall-progress            Lane B: score partial wall run → progress.json"
 	@echo "  make showcase-verdict-scoreboard  Lane A: classify showcase log → A2 residue"
+	@echo "  make showcase-bulk-refuse-class   Lane A: prove/durable vacuity parity instrument"
 	@echo "  make test-python-format       Black check for implementations/python"
 	@echo "  make test-<lang>              csharp / php / c"
 	@echo "  make test-compiler-warning-de compiler-warning delta-epsilon instrument"
@@ -198,6 +199,7 @@ wall-progress:
 .PHONY: showcase-verdict-scoreboard
 showcase-verdict-scoreboard:
 	$(PYTHON) tools/showcase_verdict_scoreboard.py --self-test
+	$(PYTHON) tools/showcase_bulk_refuse_class.py --self-test
 	@if [ -n "$${SHOWCASE_LOG:-}" ]; then \
 	  $(PYTHON) tools/showcase_verdict_scoreboard.py \
 	    --from-log "$$SHOWCASE_LOG" \
@@ -208,6 +210,16 @@ showcase-verdict-scoreboard:
 	    $${SHOWCASE_VERDICT_OUT:+--output $$SHOWCASE_VERDICT_OUT}; \
 	else \
 	  echo "showcase-verdict-scoreboard: self-test only (set SHOWCASE_LOG=path to score a run)"; \
+	fi
+
+# Lane A: bulk-crate refuse class (prove/durable vacuity parity).
+.PHONY: showcase-bulk-refuse-class
+showcase-bulk-refuse-class:
+	$(PYTHON) tools/showcase_bulk_refuse_class.py --self-test
+	@if [ -n "$${SHOWCASE_RECEIPT:-}" ]; then \
+	  $(PYTHON) tools/showcase_bulk_refuse_class.py --from-receipt "$$SHOWCASE_RECEIPT"; \
+	elif [ -n "$${SHOWCASE_RECEIPT_DIR:-}" ]; then \
+	  $(PYTHON) tools/showcase_bulk_refuse_class.py --from-dir "$$SHOWCASE_RECEIPT_DIR"; \
 	fi
 
 .PHONY: numpy-wall
