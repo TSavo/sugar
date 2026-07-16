@@ -8,10 +8,17 @@
 //
 //   1. SIGNATURE -- rust verifies the ed25519 mark over the witness CID with the
 //      substrate's own primitive (`ed25519_verify_string`), not the oracle's word.
-//   2. RESOLVE + RECOMPUTE -- rust calls `sugar.plugin.resolve_witness` on the
-//      kit oracle to fetch the body bytes (from the witness package, or by
-//      re-running), then blake3's those bytes ITSELF and compares to the pinned
-//      `witness_cid`.
+//   2. RECOMPUTE the pinned CID -- two families:
+//      * Package / suite witnesses (cargo-test, pytest, …): call
+//        `sugar.plugin.resolve_witness` on the kit oracle to fetch body bytes
+//        (from the witness package, or by re-running), then blake3 those bytes
+//        ITSELF and compare to the pinned `witness_cid`.
+//      * `toolchain-plan-self-attestation` (#3750): the body IS the JCS of
+//        `{planCid, actualOutputCids}` seated on the memento. There is no
+//        package and no re-run; recompute that object from the fields and
+//        refuse to send it through package resolvers (which would always
+//        refuse "no package file and not re-runnable" and flip the whole
+//        witnessDimension red even when the suite package verified).
 //
 // A body the oracle hands back that does NOT recompute to the pinned CID is a
 // BROKEN ORACLE -- caught here because rust does the math anyway. Any mismatch
@@ -24,11 +31,15 @@ use std::process::{Command, Stdio};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde_json::{json, Value};
 
-use sugar_canonicalizer::blake3_512_of;
-use sugar_proof_envelope::{ed25519_verify_string, Signature};
+use sugar_canonicalizer::{blake3_512_of, jcs_cid_of_json};
+use sugar_proof_envelope::{ed25519_verify_string, Signature, StoredMember};
 use sugar_verifier::{
     MemberKind, MementoPool, VerifyEffect, WitnessVerificationCheck, WitnessVerificationOutcome,
 };
+
+/// Witness kind seated by `attach_toolchain_output_witness` (#3750). Content is
+/// the planCid + actualOutputCids pair; not a kit-resolved package body.
+const TOOLCHAIN_PLAN_SELF_ATTESTATION: &str = "toolchain-plan-self-attestation";
 
 /// One witness-memento's verdict from the rust verifier.
 #[derive(Debug, Clone)]
@@ -207,6 +218,28 @@ pub fn verify_witnesses_with_options(
             continue;
         }
 
+        // TOOLCHAIN PLAN SELF-ATTESTATION (#3750): recompute the seated
+        // {planCid, actualOutputCids} object. Do NOT route through package
+        // resolvers -- there is no package body and no suite re-run.
+        if is_toolchain_plan_self_attestation(member) {
+            match verify_toolchain_plan_self_attestation(member, &witness_cid) {
+                Ok(resolved_by) => {
+                    checks.push(format!("content-address:{resolved_by}"));
+                    out.push(WitnessVerifyResult::verified(
+                        witness_cid.clone(),
+                        checks,
+                        resolved_by,
+                    ));
+                }
+                Err(reason) => out.push(WitnessVerifyResult::refused(
+                    witness_cid.clone(),
+                    checks,
+                    WitnessVerificationCheck::ReplayRefused { reason },
+                )),
+            }
+            continue;
+        }
+
         // 2. RESOLVE via the kit oracle, then RECOMPUTE the CID here. Try each
         // declared resolver; ACCEPT the first whose returned body BLAKE3's to the
         // pinned witness_cid. The content-address check is the arbiter, so this is
@@ -246,6 +279,66 @@ pub fn verify_witnesses_with_options(
         }
     }
     out
+}
+
+fn witness_kind_of(member: &StoredMember) -> &str {
+    member
+        .field("witnessKind")
+        .or_else(|| member.field("witness_kind"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+}
+
+fn is_toolchain_plan_self_attestation(member: &StoredMember) -> bool {
+    witness_kind_of(member) == TOOLCHAIN_PLAN_SELF_ATTESTATION
+}
+
+/// Recompute `blake3(JCS({planCid, actualOutputCids}))` and match the pinned
+/// witness_cid -- the same preimage `mint_toolchain_output_witness_decl` seats.
+fn verify_toolchain_plan_self_attestation(
+    member: &StoredMember,
+    witness_cid: &str,
+) -> Result<String, String> {
+    let plan_cid = member
+        .field("planCid")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            "toolchain-plan-self-attestation missing planCid on the witness memento".to_string()
+        })?;
+    let actual_output_cids = member
+        .field("actualOutputCids")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            "toolchain-plan-self-attestation missing actualOutputCids on the witness memento"
+                .to_string()
+        })?;
+    let actual_output_cids: Vec<&str> = actual_output_cids
+        .iter()
+        .map(|v| {
+            v.as_str().ok_or_else(|| {
+                "toolchain-plan-self-attestation actualOutputCids entry is not a string".to_string()
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if actual_output_cids.is_empty() {
+        return Err(
+            "toolchain-plan-self-attestation actualOutputCids is empty; nothing to recompute"
+                .to_string(),
+        );
+    }
+    let preimage = json!({
+        "planCid": plan_cid,
+        "actualOutputCids": actual_output_cids,
+    });
+    let computed = jcs_cid_of_json(&preimage);
+    if computed == witness_cid {
+        Ok(TOOLCHAIN_PLAN_SELF_ATTESTATION.to_string())
+    } else {
+        Err(format!(
+            "toolchain-plan-self-attestation did not recompute: \
+             blake3(JCS({{planCid, actualOutputCids}}))={computed} != pinned {witness_cid}"
+        ))
+    }
 }
 
 /// True when the pool carries at least one `witness-memento`.
@@ -702,6 +795,91 @@ mod tests {
         assert!(
             signature_ok(&cid, "", &signer, &signature),
             "a package-family mark over the bare bundle CID must still verify"
+        );
+    }
+
+    // #A2: toolchain-plan-self-attestation (#3750) recomputes from seated
+    // fields; package resolvers must never see it (they refuse "no package
+    // file and not re-runnable" and flip witnessDimension red).
+    fn toolchain_self_attestation_member(
+        plan_cid: &str,
+        actual_output_cids: &[&str],
+    ) -> (String, StoredMember) {
+        let preimage = json!({
+            "planCid": plan_cid,
+            "actualOutputCids": actual_output_cids,
+        });
+        let witness_cid = jcs_cid_of_json(&preimage);
+        let signer = ed25519_pubkey_string(&TEST_SEED);
+        let signature = ed25519_sign_string(&TEST_SEED, witness_cid.as_bytes());
+        let envelope = json!({
+            "body": {
+                "kind": "witness-memento",
+                "witness_cid": witness_cid,
+                "witness_kind": TOOLCHAIN_PLAN_SELF_ATTESTATION,
+                "signer": signer,
+                "signature": signature,
+                "planCid": plan_cid,
+                "actualOutputCids": actual_output_cids,
+            },
+            "header": {
+                "kind": "witness-memento",
+                "signer": signer,
+                "witnessCid": witness_cid,
+                "witnessKind": TOOLCHAIN_PLAN_SELF_ATTESTATION,
+                "planCid": plan_cid,
+                "actualOutputCids": actual_output_cids,
+            },
+            "schemaVersion": "1",
+        });
+        let member = StoredMember::from_envelope(
+            sugar_proof_envelope::MementoCid::try_parse(format!(
+                "blake3-512:{}",
+                "a".repeat(128)
+            ))
+            .expect("test member cid"),
+            &envelope,
+        )
+        .expect("toolchain self-attestation envelope parses");
+        (witness_cid, member)
+    }
+
+    #[test]
+    fn toolchain_plan_self_attestation_recomputation_verifies() {
+        let plan_cid = format!("blake3-512:{}", "b".repeat(128));
+        let outs = [
+            format!("blake3-512:{}", "c".repeat(128)),
+            format!("blake3-512:{}", "d".repeat(128)),
+        ];
+        let out_refs: Vec<&str> = outs.iter().map(String::as_str).collect();
+        let (witness_cid, member) = toolchain_self_attestation_member(&plan_cid, &out_refs);
+        assert!(
+            is_toolchain_plan_self_attestation(&member),
+            "kind must classify as toolchain-plan-self-attestation"
+        );
+        let resolved = verify_toolchain_plan_self_attestation(&member, &witness_cid)
+            .expect("honest self-attestation must recompute");
+        assert_eq!(resolved, TOOLCHAIN_PLAN_SELF_ATTESTATION);
+    }
+
+    #[test]
+    fn toolchain_plan_self_attestation_tampered_outputs_refuse() {
+        let plan_cid = format!("blake3-512:{}", "b".repeat(128));
+        let outs = [format!("blake3-512:{}", "c".repeat(128))];
+        let out_refs: Vec<&str> = outs.iter().map(String::as_str).collect();
+        let (witness_cid, member) = toolchain_self_attestation_member(&plan_cid, &out_refs);
+        // Pin was over outs; recompute against a different set must refuse.
+        let wrong = json!({
+            "planCid": plan_cid,
+            "actualOutputCids": [format!("blake3-512:{}", "e".repeat(128))],
+        });
+        let wrong_cid = jcs_cid_of_json(&wrong);
+        assert_ne!(wrong_cid, witness_cid);
+        let err = verify_toolchain_plan_self_attestation(&member, &wrong_cid)
+            .expect_err("mismatched pin must refuse");
+        assert!(
+            err.contains("did not recompute"),
+            "reason must name recompute mismatch: {err}"
         );
     }
 }

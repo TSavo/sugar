@@ -93,14 +93,26 @@ next((r.get('status') for r in d.get('rows',[]) if 'witness-package' in (r.get('
 ")"
   echo "   witness-package row status: $status"
 
+  # Package CID pinned on the prove witness-package row. The proof can seat
+  # more than one witness-memento (e.g. a #3750 toolchain-plan-self-attestation
+  # next to the cargo-test package). The suite axis is THIS package CID -- not
+  # witnesses[0] (order is not a contract).
+  local package_cid
+  package_cid="$(pyget "$prove_json" "
+next(( (r.get('property') or '').split('witness-package:')[-1]
+       for r in d.get('rows',[])
+       if 'witness-package' in (r.get('property') or '') ), '')
+")"
+
   echo "-- verify: rust recomputes the witness CID (oracle untrusted) --"
   local verify_json="$dir/.verify.json"
   ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json ) > "$verify_json" 2>/dev/null || true
   local wverdict
+  # Single expression: json_get evals one expr over `d` (no multi-stmt).
   wverdict="$(pyget "$verify_json" "
-(d.get('witnessDimension',{}).get('witnesses') or [{}])[0].get('verdict','MISSING')
+next((w.get('verdict') for w in (d.get('witnessDimension',{}).get('witnesses') or []) if w.get('witnessCid') == '$package_cid'), next((w.get('verdict') for w in (d.get('witnessDimension',{}).get('witnesses') or []) if any(c in (w.get('checks') or []) for c in ('content-address:package','content-address:recompute'))), 'MISSING'))
 " 2>/dev/null || echo PARSE_ERR)"
-  echo "   witness-dimension verdict: $wverdict"
+  echo "   witness-dimension verdict: $wverdict (package=$package_cid)"
 
   if [ "$expect" = "DISCHARGE" ]; then
     # The good suite: prove DISCHARGES the witness package; verify RECOMPUTES it.
@@ -126,10 +138,10 @@ next((r.get('status') for r in d.get('rows',[]) if 'witness-package' in (r.get('
     ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json ) > "$recompute_json" 2>/dev/null || true
     local rverdict rchecks
     rverdict="$(pyget "$recompute_json" "
-(d.get('witnessDimension',{}).get('witnesses') or [{}])[0].get('verdict','MISSING')
+next((w.get('verdict') for w in (d.get('witnessDimension',{}).get('witnesses') or []) if w.get('witnessCid') == '$package_cid'), next((w.get('verdict') for w in (d.get('witnessDimension',{}).get('witnesses') or []) if any('recompute' in str(c) for c in (w.get('checks') or []))), 'MISSING'))
 " 2>/dev/null || echo PARSE_ERR)"
     rchecks="$(pyget "$recompute_json" "
-','.join((d.get('witnessDimension',{}).get('witnesses') or [{}])[0].get('checks',[]))
+','.join((next((w for w in (d.get('witnessDimension',{}).get('witnesses') or []) if w.get('witnessCid') == '$package_cid'), next((w for w in (d.get('witnessDimension',{}).get('witnesses') or []) if any('recompute' in str(c) for c in (w.get('checks') or []))), {}))).get('checks') or [])
 " 2>/dev/null || echo PARSE_ERR)"
     echo "   recompute verdict: $rverdict  checks: $rchecks"
     if [ "$rverdict" != "verified" ]; then
