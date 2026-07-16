@@ -202,6 +202,12 @@ impl Kit {
         &self.declaration
     }
 
+    /// Whether the live declaration advertises an RPC method. Callers must use
+    /// this before choosing a protocol path whose method is not universal.
+    pub fn supports_rpc_method(&self, method: &str) -> bool {
+        declaration_advertises_rpc_method(&self.declaration, method)
+    }
+
     pub fn initialize_response(&self) -> &Value {
         &self.initialize_response
     }
@@ -296,9 +302,34 @@ impl Kit {
     }
 }
 
+fn declaration_advertises_rpc_method(declaration: &KitDeclaration, method: &str) -> bool {
+    declaration
+        .rpc
+        .methods
+        .iter()
+        .any(|declared| declared.name == method)
+}
+
 #[cfg(test)]
 mod rendezvous_tests {
     use super::*;
+
+    #[test]
+    fn rpc_capability_query_distinguishes_enumerating_from_lift_only_kits() {
+        let lift_only: KitDeclaration = serde_json::from_value(serde_json::json!({
+            "kit": {"id": "lift-only", "language": "rust", "version": "1"},
+            "rpc": {"methods": [{"name": "lift", "required": true}]},
+            "proofResolution": {"strategy": "none"},
+            "residueCategories": []
+        }))
+        .expect("fixture declaration");
+
+        assert!(declaration_advertises_rpc_method(&lift_only, "lift"));
+        assert!(!declaration_advertises_rpc_method(
+            &lift_only,
+            "sugar.enumerate"
+        ));
+    }
 
     /// The negative arm of unforgeability: a forged manifest pointing at a
     /// command that is not a kit must FAIL the live handshake -- no Kit is
