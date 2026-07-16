@@ -43,12 +43,22 @@ REQUIRED_IMPORTS = (
     "sugar_pytest_witness",
 )
 
-# Sticky witness venvs used by family showcases. Checked only when present
-# so clean runners are not forced to pre-create them.
+# Sticky witness venvs are ambient artifacts, not declared kit-import
+# contracts: manifests inject repo source trees through PYTHONPATH. They are
+# inspected only under the explicit --check-sticky-venvs archaeology mode.
 STICKY_VENVS = (
-    ("numpy-witness", Path(os.environ.get("NUMPY_WITNESS_VENV", "/tmp/numpy-witness-venv"))),
-    ("pandas-witness", Path(os.environ.get("PANDAS_WITNESS_VENV", "/tmp/pandas-witness-venv"))),
-    ("sklearn-witness", Path(os.environ.get("SKLEARN_WITNESS_VENV", "/tmp/sklearn-witness-venv"))),
+    (
+        "numpy-witness",
+        Path(os.environ.get("NUMPY_WITNESS_VENV", "/tmp/numpy-witness-venv")),
+    ),
+    (
+        "pandas-witness",
+        Path(os.environ.get("PANDAS_WITNESS_VENV", "/tmp/pandas-witness-venv")),
+    ),
+    (
+        "sklearn-witness",
+        Path(os.environ.get("SKLEARN_WITNESS_VENV", "/tmp/sklearn-witness-venv")),
+    ),
 )
 
 PIP_DEPS = ("blake3", "cbor2", "pynacl")
@@ -86,7 +96,9 @@ def _run_import_check(
         return True, "ok"
     err = (proc.stderr or proc.stdout or "").strip()
     # Keep one diagnostic line.
-    first = next((ln for ln in err.splitlines() if ln.strip()), f"exit={proc.returncode}")
+    first = next(
+        (ln for ln in err.splitlines() if ln.strip()), f"exit={proc.returncode}"
+    )
     return False, first
 
 
@@ -187,7 +199,9 @@ def check_fresh_editable_install() -> list[Failure]:
             ]
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout or "").strip()
-            tail = "\n".join(err.splitlines()[-8:]) if err else f"exit={proc.returncode}"
+            tail = (
+                "\n".join(err.splitlines()[-8:]) if err else f"exit={proc.returncode}"
+            )
             return [
                 Failure(
                     axis="A1",
@@ -238,12 +252,17 @@ def check_sticky_venvs() -> list[Failure]:
     return failures
 
 
-def run_preflight(*, include_fresh_install: bool = True) -> list[Failure]:
+def run_preflight(
+    *,
+    include_fresh_install: bool = True,
+    include_sticky_venvs: bool = False,
+) -> list[Failure]:
     failures: list[Failure] = []
     failures.extend(check_source_pythonpath())
     if include_fresh_install:
         failures.extend(check_fresh_editable_install())
-    failures.extend(check_sticky_venvs())
+    if include_sticky_venvs:
+        failures.extend(check_sticky_venvs())
     return failures
 
 
@@ -251,22 +270,19 @@ def report(failures: list[Failure]) -> int:
     a1 = len(failures)
     print("SHOWCASE KIT PREFLIGHT")
     print(f"A1={a1} failed kit contracts")
-    print(
-        "required imports: "
-        + ", ".join(REQUIRED_IMPORTS)
-    )
+    print("required imports: " + ", ".join(REQUIRED_IMPORTS))
     if failures:
         print("failures:")
         for item in failures:
             print(item.render())
         print(
             "FAIL: A1 must be 0 before test-showcases "
-            "(install law: source PYTHONPATH + editable sticky venvs)"
+            "(declared law: source PYTHONPATH + clean editable install)"
         )
         print(
             "hint: make build-python installs kits into "
             f"{os.environ.get('PYTHON_KIT_VENV', '/tmp/sugar-python-kit-env')}; "
-            "family showcases use their own sticky venvs under /tmp/*-witness-venv"
+            "use --check-sticky-venvs only for explicit ambient-state archaeology"
         )
         return 1
     print("PASS: A1=0 — showcase kit imports resolve under declared contracts")
@@ -303,23 +319,40 @@ def self_test() -> int:
             print("FAIL: missing module produced empty diagnostic", file=sys.stderr)
             return 1
 
-    # Synthetic sticky venv without packages must trip when present.
-    with tempfile.TemporaryDirectory(prefix="sugar-preflight-sticky-") as tmp:
-        venv_dir = Path(tmp) / "sticky"
-        venv.create(venv_dir, with_pip=False, clear=True)
-        python = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        ok_sticky, sticky_detail = _run_import_check(python, REQUIRED_IMPORTS)
-        if ok_sticky:
-            print(
-                "FAIL: empty sticky venv imported kits without install",
-                file=sys.stderr,
+    # A stale ambient sticky venv is not a declared kit-import contract: the
+    # manifests inject repo source trees through PYTHONPATH. Default preflight
+    # must ignore it, while explicit archaeology must still report it.
+    global STICKY_VENVS
+    original_sticky_venvs = STICKY_VENVS
+    try:
+        with tempfile.TemporaryDirectory(prefix="sugar-preflight-sticky-") as tmp:
+            venv_dir = Path(tmp) / "sticky"
+            venv.create(venv_dir, with_pip=False, clear=True)
+            STICKY_VENVS = (("planted-stale", venv_dir),)
+            declared = run_preflight(
+                include_fresh_install=False,
+                include_sticky_venvs=False,
             )
-            return 1
-        if not sticky_detail:
-            print("FAIL: empty sticky venv produced empty diagnostic", file=sys.stderr)
-            return 1
+            if any(f.contract.startswith("sticky venv") for f in declared):
+                print(
+                    "FAIL: default preflight inspected ambient sticky state",
+                    file=sys.stderr,
+                )
+                return 1
+            archaeology = run_preflight(
+                include_fresh_install=False,
+                include_sticky_venvs=True,
+            )
+            if not any(f.contract == "sticky venv planted-stale" for f in archaeology):
+                print(
+                    "FAIL: explicit sticky archaeology missed planted venv",
+                    file=sys.stderr,
+                )
+                return 1
+    finally:
+        STICKY_VENVS = original_sticky_venvs
 
-    print("PASS: preflight detects missing kit imports with named diagnostics")
+    print("PASS: preflight gates declared contracts; sticky archaeology is explicit")
     return 0
 
 
@@ -332,6 +365,14 @@ def main(argv: list[str]) -> int:
         help="skip the clean-venv editable install check (faster local loop)",
     )
     parser.add_argument(
+        "--check-sticky-venvs",
+        action="store_true",
+        help=(
+            "explicitly inspect ambient /tmp witness venvs; not a declared "
+            "showcase kit-import contract"
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="emit machine-readable failures (still exit 1 if A1>0)",
@@ -341,7 +382,10 @@ def main(argv: list[str]) -> int:
     if args.self_test:
         return self_test()
 
-    failures = run_preflight(include_fresh_install=not args.skip_fresh_install)
+    failures = run_preflight(
+        include_fresh_install=not args.skip_fresh_install,
+        include_sticky_venvs=args.check_sticky_venvs,
+    )
     if args.json:
         import json
 
