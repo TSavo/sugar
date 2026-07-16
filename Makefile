@@ -542,6 +542,10 @@ self-attest:
 CORETESTS_RUST_VER ?= 1.96.0
 CORETESTS_SOURCE_AUDIT_CORPUS ?= examples/rust-coretests-report/corpus
 
+# Full-corpus `lift --report` is one RPC over ~1.4k loci. Kit hang detector
+# defaults to 120s; this target sets SUGAR_LIFT_RESPONSE_TIMEOUT_SECS=900.
+# Keep the recipe as ONE shell (`\` continuations): bare comment lines between
+# `cd` and the lift start a new make shell and drop `sugar_bin` (Error 127).
 .PHONY: coretests-source-audit
 coretests-source-audit:
 	@set -e; \
@@ -566,14 +570,8 @@ coretests-source-audit:
 	sed "s|@BIN_DIR@|$$bin_dir|g" "$$manifest_dir/manifest.toml.in" > "$$manifest_dir/manifest.toml"; \
 	echo "==== coretests-source-audit: panic-armed source totality ===="; \
 	cd "$$corpus"; \
-	# Full-corpus `lift --report` is ONE lift RPC over ~1.4k assertion loci.
-	# The kit transport default (120s) is a hang detector for ordinary plugins;
-	# this gate is intentionally heavy and regularly exceeds that under CI load
-	# (monadic family work, factory walks). Bound the wait via the existing
-	# SUGAR_LIFT_RESPONSE_TIMEOUT_SECS knob; allow override, default 15 min.
 	SUGAR_LIFT_RESPONSE_TIMEOUT_SECS="$${SUGAR_LIFT_RESPONSE_TIMEOUT_SECS:-900}" \
-	  RUST_LOG=rust_test_assertions_rpc=info,sugar_lift_rust_tests=info,error \
-	  NO_COLOR=1 CLICOLOR=0 TERM=dumb \
+	  RUST_LOG=error NO_COLOR=1 CLICOLOR=0 TERM=dumb \
 	  "$$sugar_bin" lift --report --report-summary
 
 .PHONY: coretests-invariants
