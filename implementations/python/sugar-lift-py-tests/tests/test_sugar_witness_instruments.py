@@ -446,6 +446,49 @@ def test_bitwise_literal_fold_witness_discharges_and_refutes(tmp_path: Path) -> 
     assert _prove_statuses(lying_result.prove_doc) == ["unsatisfied"]
 
 
+def test_isinstance_predicate_witness_has_real_callsite_and_refutes_lie(
+    tmp_path: Path,
+) -> None:
+    seed = next(
+        item
+        for item in DEFAULT_SUGAR_WITNESS_SEEDS
+        if item.name == "isinstance_predicate"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "isinstance-predicate-truth", seed.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "isinstance-predicate-lie", seed.lying.source
+    )
+
+    trace = {
+        "truthful": {
+            "verdict": truthful.verdict,
+            "selectedSugars": truthful.selected_sugars,
+            "ir": _a_callsite_euf_rows(truthful.lift_doc),
+            "rows": truthful.prove_doc.get("rows"),
+        },
+        "lying": {
+            "verdict": lying.verdict,
+            "selectedSugars": lying.selected_sugars,
+            "ir": _a_callsite_euf_rows(lying.lift_doc),
+            "rows": lying.prove_doc.get("rows"),
+        },
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert "IsinstanceCallSugar" in truthful.selected_sugars
+    assert len(_a_callsite_euf_rows(truthful.lift_doc)) == 1
+    assert truthful.verdict == "sat"
+    assert _prove_statuses(truthful.prove_doc) == ["discharged"]
+
+    assert "IsinstanceCallSugar" in lying.selected_sugars
+    assert len(_a_callsite_euf_rows(lying.lift_doc)) == 1
+    assert lying.verdict == "unsat"
+    assert _prove_statuses(lying.prove_doc) == ["unsatisfied"]
+
+
 def test_bitwise_symbolic_witness_preserves_int_term_without_number_supersort(
     tmp_path: Path,
 ) -> None:
