@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-Verdict = Literal["sat", "unsat"]
+Verdict = Literal["sat", "unsat", "refused"]
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,17 @@ class WitnessSource:
 @dataclass(frozen=True)
 class SugarWitnessPair:
     """One production witness pair for a verdict-bearing sugar."""
+
+    name: str
+    owner_sugar: str
+    family: str
+    truthful: WitnessSource
+    lying: WitnessSource
+
+
+@dataclass(frozen=True)
+class SugarRefusedWitnessPair:
+    """A lawful epistemic-red pair: neither arm may be guessed."""
 
     name: str
     owner_sugar: str
@@ -60,10 +71,17 @@ class NotVerdictBearing:
 
 SugarWitnesses = (
     SugarWitnessPair
+    | SugarRefusedWitnessPair
     | SugarRedEffectWitnessPair
     | tuple[SugarWitnessPair, ...]
     | NotVerdictBearing
-    | tuple[SugarWitnessPair | SugarRedEffectWitnessPair | NotVerdictBearing, ...]
+    | tuple[
+        SugarWitnessPair
+        | SugarRefusedWitnessPair
+        | SugarRedEffectWitnessPair
+        | NotVerdictBearing,
+        ...,
+    ]
 )
 
 
@@ -100,6 +118,31 @@ def _call_return_pair(
         truthful=base + f"def test_a():\n    assert A(5) == {truthful}\n",
         lying=base + f"def test_a():\n    assert A(5) == {lying}\n",
         family="literal-call",
+    )
+
+
+def _refused_call_return_pair(
+    *,
+    name: str,
+    owner_sugar: str,
+    body: str,
+    truthful: str,
+    lying: str,
+    prefix: str = "",
+) -> SugarRefusedWitnessPair:
+    base = prefix + f"def A(z):\n    return {body}\n\n"
+    return SugarRefusedWitnessPair(
+        name=name,
+        owner_sugar=owner_sugar,
+        family="opaque-equality-refusal",
+        truthful=WitnessSource(
+            source=base + f"def test_a():\n    assert A(5) == {truthful}\n",
+            expected="refused",
+        ),
+        lying=WitnessSource(
+            source=base + f"def test_a():\n    assert A(5) == {lying}\n",
+            expected="refused",
+        ),
     )
 
 

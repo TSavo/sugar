@@ -13,6 +13,7 @@ from sugar_lift_py_tests.sugar.witnesses import (
     EffectWitnessSource,
     NotVerdictBearing,
     SugarRedEffectWitnessPair,
+    SugarRefusedWitnessPair,
     SugarWitnessPair,
 )
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
@@ -29,7 +30,9 @@ class UnenrolledSugar:
         return {"name": self.name, "module": self.module, "role": self.role}
 
 
-SugarWitnessSeed = SugarWitnessPair | SugarRedEffectWitnessPair
+SugarWitnessSeed = (
+    SugarWitnessPair | SugarRefusedWitnessPair | SugarRedEffectWitnessPair
+)
 
 
 @dataclass(frozen=True)
@@ -760,13 +763,18 @@ def _claim_has_witness_or_opt_out(claim) -> bool:
 
 
 def _witness_pairs(witness: object) -> tuple[SugarWitnessSeed, ...]:
-    if isinstance(witness, (SugarWitnessPair, SugarRedEffectWitnessPair)):
+    if isinstance(
+        witness, (SugarWitnessPair, SugarRefusedWitnessPair, SugarRedEffectWitnessPair)
+    ):
         return (witness,)
     if isinstance(witness, tuple):
         return tuple(
             item
             for item in witness
-            if isinstance(item, (SugarWitnessPair, SugarRedEffectWitnessPair))
+            if isinstance(
+                item,
+                (SugarWitnessPair, SugarRefusedWitnessPair, SugarRedEffectWitnessPair),
+            )
         )
     return ()
 

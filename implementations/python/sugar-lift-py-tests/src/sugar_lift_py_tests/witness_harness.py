@@ -14,7 +14,9 @@ from sugar_lift_py_tests.sugar_binary import (
     resolve_sugar_binary,
 )
 
-Verdict = Literal["sat", "unsat", "solver-timeout"]
+Verdict = Literal[
+    "sat", "unsat", "refused", "refused-modulo-unavailable-seats", "solver-timeout"
+]
 
 ROOT = Path(__file__).resolve().parents[5]
 PY_TESTS = ROOT / "implementations" / "python" / "sugar-lift-py-tests"
@@ -108,16 +110,35 @@ kind = "lift"
 surface = "python"
 
 [solvers]
-default = "z3"
-
-[solvers.dispatch]
-linear_arithmetic = "z3"
-default = "z3"
+portfolio = ["z3", "cvc5", "vampire", "maude", "coq"]
+mode = "first-wins"
 
 [solvers.z3]
 binary = "z3"
 ir_compiler = "smt-lib-v2.6"
 flags = ["-smt2", "-in"]
+timeout_seconds = 10
+
+[solvers.cvc5]
+binary = "cvc5"
+ir_compiler = "smt-lib-v2.6"
+flags = ["--lang=smt2"]
+timeout_seconds = 10
+
+[solvers.vampire]
+binary = "vampire"
+ir_compiler = "smt-lib-v2.6"
+flags = ["--input_syntax", "smtlib2", "--output_mode", "smtcomp"]
+timeout_seconds = 10
+
+[solvers.maude]
+binary = "maude"
+ir_compiler = "maude"
+timeout_seconds = 10
+
+[solvers.coq]
+binary = "coqc"
+ir_compiler = "coq"
 timeout_seconds = 10
 """,
         encoding="utf-8",
@@ -414,6 +435,24 @@ def prove_verdict(prove_doc: dict) -> Verdict:
         return "unsat"
     if statuses and all(status == "discharged" for status in statuses):
         return "sat"
+    if statuses and all(status == "refused" for status in statuses):
+        provisional = False
+        for row in rows:
+            invocations = row.get("verification", {}).get("solverInvocations", [])
+            portfolio_seats = row.get("verification", {}).get("portfolioSeats")
+            if portfolio_seats is None and invocations:
+                portfolio_seats = invocations[0].get("portfolioSeats")
+            observed_seats = [invocation.get("solver") for invocation in invocations]
+            states = [invocation.get("seatState") for invocation in invocations]
+            if (
+                not invocations
+                or not isinstance(portfolio_seats, list)
+                or observed_seats != portfolio_seats
+                or any(state not in {"inability", "unavailable"} for state in states)
+            ):
+                raise ProofObligationPanic(row)
+            provisional = provisional or "unavailable" in states
+        return "refused-modulo-unavailable-seats" if provisional else "refused"
     terminal = next(
         (
             row

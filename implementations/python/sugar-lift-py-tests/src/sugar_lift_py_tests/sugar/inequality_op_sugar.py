@@ -5,7 +5,6 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -38,33 +37,7 @@ class InequalityOpSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        prefix = "class C:\n" "    def __init__(self, x):\n" "        self.x = x\n" "\n"
-        explicit_eq_prefix = (
-            "class C:\n"
-            "    def __init__(self, x):\n"
-            "        self.x = x\n"
-            "    def __eq__(self, other):\n"
-            "        return self.x == other.x\n"
-            "\n"
-        )
-        return (
-            _call_return_pair(
-                name="object_equality_identity_return",
-                owner_sugar="ObjectEqualityTermSugar",
-                body="C(z) == C(z)",
-                truthful="False",
-                lying="True",
-                prefix=prefix,
-            ),
-            _call_return_pair(
-                name="object_equality_return",
-                owner_sugar="ObjectEqualityTermSugar",
-                body="C(z) == C(z)",
-                truthful="True",
-                lying="False",
-                prefix=explicit_eq_prefix,
-            ),
-        )
+        return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
         return self.left.reduce(ctx).and_then(

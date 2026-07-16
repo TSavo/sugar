@@ -187,6 +187,19 @@ def test_catalog_witnesses_migrate_s1_seed_surface() -> None:
     assert len(seeds) >= len({seed.owner_sugar for seed in seeds})
 
 
+def test_opaque_object_equality_is_owned_by_refusal_sugar() -> None:
+    seed = next(
+        seed
+        for seed in DEFAULT_SUGAR_WITNESS_SEEDS
+        if seed.name == "object_equality_return"
+    )
+
+    assert type(seed).__name__ == "SugarRefusedWitnessPair"
+    assert seed.owner_sugar == "ObjectEqualityTermSugar"
+    assert seed.truthful.expected == "refused"
+    assert seed.lying.expected == "refused"
+
+
 def test_non_fol_opt_out_is_floor_anchored_and_bidirectional() -> None:
     assert SupportValue.non_fol_support is True
     assert ImportAliasValue.non_fol_support is False
@@ -1511,7 +1524,7 @@ def test_witness_pipeline_solver_absence_is_loud() -> None:
         prove_verdict({"rows": []})
 
 
-@pytest.mark.parametrize("status", ["refused", "undecidable"])
+@pytest.mark.parametrize("status", ["undecidable"])
 def test_witness_pipeline_panics_with_complete_terminal_proof_row(status: str) -> None:
     offender = {
         "status": status,
@@ -1530,3 +1543,81 @@ def test_witness_pipeline_panics_with_complete_terminal_proof_row(status: str) -
         "PROOF OBLIGATION PANIC: "
         + json.dumps(offender, sort_keys=True, separators=(",", ":"))
     )
+
+
+def test_witness_pipeline_grades_unanimous_refusal_as_typed_red() -> None:
+    rows = [
+        {
+            "status": "refused",
+            "verification": {
+                "solverInvocations": [
+                    {"solver": "z3", "verdict": "refused", "seatState": "inability"},
+                    {
+                        "solver": "maude",
+                        "verdict": "undecidable",
+                        "seatState": "inability",
+                    },
+                    {
+                        "solver": "coq",
+                        "verdict": "undecidable",
+                        "seatState": "inability",
+                    },
+                ],
+                "portfolioSeats": ["z3", "maude", "coq"],
+            },
+        }
+    ]
+
+    assert prove_verdict({"rows": rows}) == "refused"
+
+
+def test_witness_pipeline_grades_unavailable_seat_as_provisional_refusal() -> None:
+    row = {
+        "status": "refused",
+        "verification": {
+            "portfolioSeats": ["z3", "maude"],
+            "solverInvocations": [
+                {"solver": "z3", "verdict": "refused", "seatState": "inability"},
+                {
+                    "solver": "maude",
+                    "verdict": "undecidable",
+                    "seatState": "unavailable",
+                },
+            ],
+        },
+    }
+
+    assert prove_verdict({"rows": [row]}) == "refused-modulo-unavailable-seats"
+
+
+def test_witness_pipeline_panics_when_refusal_ladder_omits_portfolio_seat() -> None:
+    row = {
+        "status": "refused",
+        "verification": {
+            "portfolioSeats": ["z3", "maude"],
+            "solverInvocations": [
+                {"solver": "z3", "verdict": "refused", "seatState": "inability"},
+            ],
+        },
+    }
+
+    with pytest.raises(ProofObligationPanic):
+        prove_verdict({"rows": [row]})
+
+
+def test_witness_pipeline_rejects_refusal_without_unanimous_ladder() -> None:
+    row = {
+        "status": "refused",
+        "verification": {
+            "solverInvocations": [
+                {"solver": "z3", "verdict": "refused", "seatState": "inability"},
+                {"solver": "maude", "verdict": "discharged", "seatState": "discharged"},
+            ],
+            "portfolioSeats": ["z3", "maude"],
+        },
+    }
+
+    with pytest.raises(ProofObligationPanic) as raised:
+        prove_verdict({"rows": [row]})
+
+    assert raised.value.row == row

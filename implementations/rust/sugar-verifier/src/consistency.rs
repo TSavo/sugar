@@ -71,7 +71,7 @@ use tracing::{debug, info, warn};
 
 use crate::effects::{VerifyEffect, WitnessDischargeGround};
 use crate::solvers::{
-    run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan, SolverSeat,
+    run_plan_with_compilers, SolverExitKind, SolverHandle, SolverInvocation, SolverPlan, SolverSeat,
 };
 use crate::types::{
     MementoCid, MementoPool, ObligationVerdict, SourceLocus, SpeakerRole, StoredMember,
@@ -1787,6 +1787,10 @@ fn linked_posts_to_json(linked_posts: &[LinkedPostInstance]) -> Json {
 }
 
 fn solver_invocations_to_json(invs: &[SolverInvocation]) -> Json {
+    let portfolio_seats: Vec<&str> = invs
+        .iter()
+        .map(|inv| inv.result.solver_name.as_str())
+        .collect();
     Json::Array(
         invs.iter()
             .map(|inv| {
@@ -1811,6 +1815,18 @@ fn solver_invocations_to_json(invs: &[SolverInvocation]) -> Json {
                     "compiler": &inv.compiler,
                     "authoritative": inv.authoritative,
                     "verdict": inv.result.verdict.as_str(),
+                    "seatState": if matches!(
+                        inv.result.exit.kind,
+                        SolverExitKind::SpawnError
+                            | SolverExitKind::StdinError
+                            | SolverExitKind::Timeout
+                            | SolverExitKind::WaitError
+                            | SolverExitKind::FrontendDecodeError
+                    ) { "unavailable" } else if matches!(
+                        inv.result.verdict,
+                        ObligationVerdict::Discharged | ObligationVerdict::Unsatisfied
+                    ) { "discharged" } else { "inability" },
+                    "portfolioSeats": &portfolio_seats,
                     "exit": exit,
                 });
                 if let Some(stdout) = &inv.result.evidence.stdout {

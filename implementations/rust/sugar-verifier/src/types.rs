@@ -262,8 +262,9 @@ pub enum ObligationVerdict {
     SolverTimeout,
     Disagreement,
     /// First-class, loudly-bounded REFUSAL: there is no sound discharger for this
-    /// obligation (e.g. its precondition lowers to a construct the solver cannot
-    /// interpret -- z3 "unknown constant"). NOT a violation, NOT an undecidable
+    /// obligation: every capable seat in the dispatched portfolio declined to
+    /// interpret it, and the verdict carries that complete per-seat ladder. NOT a
+    /// violation, NOT an undecidable
     /// gap, NOT a crash: an honest "I decline to decide this, here is why." The
     /// trichotomy's third arm (exact / loudly-bounded-lossy / REFUSE), so it does
     /// not redden the gate -- a refusal is an expected, named outcome.
