@@ -117,3 +117,28 @@ def test_rpc_serves_on_main_thread_without_a_big_stack_shell(monkeypatch) -> Non
     lift_rpc.main(["--rpc"])
 
     assert sent == [{"jsonrpc": "2.0", "id": 8, "result": {"ok": True}}]
+
+
+def test_enumeration_phase_profile_orders_dominant_cost_first(monkeypatch) -> None:
+    monkeypatch.setattr(lift_rpc, "_ENUMERATION_PHASES", {})
+
+    lift_rpc._observe_enumeration_phase("response.encode", 2.0)
+    lift_rpc._observe_enumeration_phase("file_context.lift", 10.0)
+    lift_rpc._observe_enumeration_phase("file_context.lift", 20.0)
+
+    assert lift_rpc._enumeration_phase_snapshot() == [
+        {
+            "phase": "file_context.lift",
+            "phase_count": 2,
+            "phase_total_ms": 30.0,
+            "phase_mean_ms": 15.0,
+            "phase_max_ms": 20.0,
+        },
+        {
+            "phase": "response.encode",
+            "phase_count": 1,
+            "phase_total_ms": 2.0,
+            "phase_mean_ms": 2.0,
+            "phase_max_ms": 2.0,
+        },
+    ]
