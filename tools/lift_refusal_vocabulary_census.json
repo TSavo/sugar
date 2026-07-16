@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 1836,
+  "lift_output_backlog": 1835,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -4372,16 +4372,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "fn post_loop_read_refused() {",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:13b1dc8bc8858ae0:1",
-      "line": 9448,
-      "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "/// and ambient consistency refused (A2 expected-discharge-got-refused).",
       "wire_marker": "internal-only"
     },
     {
@@ -20760,11 +20750,11 @@
     "emitter-provenance-guard": 3,
     "grammar-census-prose": 23,
     "instrument-prose": 40,
-    "lift-output-backlog": 1836,
+    "lift-output-backlog": 1835,
     "provenance-oracle-guard": 79,
     "vendor-language-identifier": 1,
     "verifier-verdict-quote": 51,
     "verify-dialect-boundary": 42
   },
-  "total_occurrences": 2075
+  "total_occurrences": 2074
 }
