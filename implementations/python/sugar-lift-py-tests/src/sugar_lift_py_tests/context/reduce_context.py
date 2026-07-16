@@ -19,6 +19,8 @@ class ReduceContext:
     report_sink: Any = None
     factory_audit_sink: Any = None
     operation_log: list[tuple[str, str, str]] = field(default_factory=list)
+    module_rewrite_log: list[Any] = field(default_factory=list)
+    prefer_ground_module_bindings: bool = False
     # The DIG QUEUE. When a bridge emits `call:h(args)`, it appends the actual
     # CallSiteValue here -- a bridge OBLIGATES the dig of the tower it points at.
     # A bridge without its enqueued dig is a dangling uninterpreted symbol, a false
@@ -55,6 +57,10 @@ class ReduceContext:
             report_sink=source.report_sink,
             factory_audit_sink=source.factory_audit_sink,
             operation_log=source.operation_log,
+            module_rewrite_log=getattr(source, "module_rewrite_log", []),
+            prefer_ground_module_bindings=getattr(
+                source, "prefer_ground_module_bindings", False
+            ),
             dig_sink=source.dig_sink,
             external_bridge_sink=getattr(source, "external_bridge_sink", None),
         )
@@ -88,6 +94,8 @@ class ReduceContext:
             report_sink=self.report_sink,
             factory_audit_sink=self.factory_audit_sink,
             operation_log=self.operation_log,
+            module_rewrite_log=self.module_rewrite_log,
+            prefer_ground_module_bindings=self.prefer_ground_module_bindings,
             dig_sink=self.dig_sink,
             external_bridge_sink=self.external_bridge_sink,
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from dataclasses import replace
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
@@ -67,11 +68,34 @@ class EqualityOpSugar(Sugar, role=SugarRole.TERM):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        return self.left.reduce(ctx).and_then(
+        start = len(ctx.module_rewrite_log)
+        outcome = self.left.reduce(ctx).and_then(
             lambda left: self.right.reduce(ctx).and_then(
                 lambda right: left.equals(right, self.site)
             )
         )
+        rewrites = ctx.module_rewrite_log[start:]
+        ground_rewrites = [rewrite for rewrite in rewrites if rewrite[4] is not None]
+        if len(ground_rewrites) >= 2 and not ctx.prefer_ground_module_bindings:
+            rerun_start = len(ctx.module_rewrite_log)
+            ground_ctx = replace(ctx, prefer_ground_module_bindings=True)
+            outcome = self.left.reduce(ground_ctx).and_then(
+                lambda left: self.right.reduce(ground_ctx).and_then(
+                    lambda right: left.equals(right, self.site)
+                )
+            )
+            del ctx.module_rewrite_log[rerun_start:]
+
+        from sugar_lift_py_tests.floor import PredicateValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        if isinstance(outcome, Complete) and isinstance(outcome.value, PredicateValue):
+            chains = tuple(
+                (f"{name} = {replacement}", path, line)
+                for name, replacement, path, line, _ground in rewrites
+            )
+            outcome = Complete(replace(outcome.value, rewrite_chains=chains))
+        return outcome
 
     def walk_children(self):
         return (self.left, self.right)

@@ -44,7 +44,50 @@ class NameSugar(Sugar, role=SugarRole.TERM):
         # Ask the context what stands at this name; the binding answers.
         # A BoundVar recomposes its source against its definition scope; a
         # concrete or symbolic binding stands as itself.
-        return ctx.temporal.value_for(
+        binding = ctx.temporal.value_for(
             self.name,
             blame=f"{self.site.filename}:{self.site.line}:{self.site.col}",
-        ).answer(ctx)
+        )
+        outcome = binding.answer(ctx)
+        module_temporal = getattr(ctx, "module_temporal", None)
+        if (
+            module_temporal is None
+            or module_temporal.value_if_bound(self.name) is not binding
+        ):
+            return outcome
+
+        from sugar_lift_py_tests.floor import BoundVar, CallSiteValue, SymbolicValue
+        from sugar_lift_py_tests.floor.call_site_value import force_floor
+        from sugar_lift_py_tests.outcome import Complete
+
+        if not isinstance(binding, BoundVar) or not isinstance(outcome, Complete):
+            return outcome
+        source_site = getattr(getattr(binding.source, "sugar", None), "site", None)
+        replacement = source_site.unparse() if source_site is not None else self.name
+        ground = None
+        if isinstance(outcome.value, CallSiteValue):
+            from sugar_lift_py_tests.factory import FactoryPanic
+
+            try:
+                ground = force_floor(
+                    outcome.value,
+                    binding.scope,
+                    owner=f"module binding {self.name}",
+                    project_callsite=False,
+                )
+            except FactoryPanic:
+                pass
+        ctx.module_rewrite_log.append(
+            (
+                self.name,
+                replacement,
+                getattr(source_site, "filename", self.site.filename),
+                getattr(source_site, "line", 0),
+                ground,
+            )
+        )
+        if ground is not None and ctx.prefer_ground_module_bindings:
+            return Complete(
+                SymbolicValue(ground.to_term(owner=f"module binding {self.name}"))
+            )
+        return outcome
