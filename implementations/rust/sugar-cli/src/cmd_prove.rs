@@ -336,7 +336,15 @@ fn try_rendezvous_prove_kit(
         method: planned.method.clone(),
     };
     match sugar_compiler::kit::Kit::rendezvous(manifest) {
-        Ok(kit) => Some(kit),
+        Ok(kit) if kit.supports_rpc_method("sugar.enumerate") => Some(kit),
+        Ok(kit) => {
+            eprintln!(
+                "{}: lift kit {} does not advertise sugar.enumerate; using composed proof files",
+                "warning".yellow().bold(),
+                kit.declaration().kit.id
+            );
+            None
+        }
         Err(error) => {
             eprintln!(
                 "{}: lift kit rendezvous for prove skipped ({error})",
