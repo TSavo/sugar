@@ -935,12 +935,18 @@ fn is_const_value(node: &Json) -> bool {
 ///
 /// Whitelist is intentional: any non-data ground ctor (`+`, `*`, `py.attr`, …)
 /// must fall through to SMT so theory can prove `+(5,1) == 6`.
+///
+/// `py.complex` is a value (Python complex literal), not an operator — dual
+/// faces `call:A()=py.complex(0,2)` vs `call:A()=py.complex(0,3)` must refuse
+/// structurally (#4398). Arithmetic/`call:abs` stay out: abs is folded by
+/// [`fold_ground_applications`], arithmetic remains SMT theory.
 fn is_ground_data_ctor_name(name: &str) -> bool {
     matches!(
         name,
         "tuple"
             | "array"
             | "None"
+            | "py.complex"
             | "python:dict"
             | "python:dict_entry"
             | "python:set"
@@ -950,6 +956,75 @@ fn is_ground_data_ctor_name(name: &str) -> bool {
             | "python:list"
             | "python:tuple"
     )
+}
+
+/// Fold grounded primitive applications inside a formula/term so consistency
+/// sees concrete values instead of uninterpreted constructors (#4398).
+///
+/// Today: `call:abs(<Int const>) → |n|`. Arithmetic operators (`+`, `*`, …)
+/// intentionally stay uninterpreted here — SMT theory already owns them, and
+/// structural dual faces must not treat `+(5,1)` as the value `6` (#3924).
+fn fold_ground_applications(node: &Json) -> Json {
+    match node {
+        Json::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                if k == "args" || k == "operands" {
+                    if let Some(arr) = v.as_array() {
+                        out.insert(
+                            k.clone(),
+                            Json::Array(arr.iter().map(fold_ground_applications).collect()),
+                        );
+                        continue;
+                    }
+                }
+                out.insert(k.clone(), fold_ground_applications(v));
+            }
+            let folded = Json::Object(out);
+            if let Some(reduced) = fold_ground_ctor_once(&folded) {
+                return reduced;
+            }
+            folded
+        }
+        Json::Array(arr) => Json::Array(arr.iter().map(fold_ground_applications).collect()),
+        other => other.clone(),
+    }
+}
+
+/// One-step fold for a fully-grounded primitive application ctor.
+fn fold_ground_ctor_once(node: &Json) -> Option<Json> {
+    if node.get("kind").and_then(|k| k.as_str()) != Some("ctor") {
+        return None;
+    }
+    let name = node.get("name").and_then(|n| n.as_str())?;
+    let args = node.get("args").and_then(|v| v.as_array())?;
+    match name {
+        "call:abs" if args.len() == 1 => {
+            let n = int_const_value_i128(&args[0])?;
+            // Refuse to fold i128::MIN (no signed magnitude); leave uninterpreted.
+            let abs_n = n.checked_abs()?;
+            Some(int_const_json(abs_n))
+        }
+        _ => None,
+    }
+}
+
+fn int_const_json(value: i128) -> Json {
+    // Prefer i64 wire when it fits; otherwise emit as number via serde (i128
+    // that exceeds i64 still serializes). Witness seeds use ordinary Ints.
+    if let Ok(v) = i64::try_from(value) {
+        json!({
+            "kind": "const",
+            "value": v,
+            "sort": {"kind": "primitive", "name": "Int"},
+        })
+    } else {
+        json!({
+            "kind": "const",
+            "value": value,
+            "sort": {"kind": "primitive", "name": "Int"},
+        })
+    }
 }
 
 fn eval_ground_bool(node: &Json) -> Option<bool> {
@@ -989,20 +1064,84 @@ fn eval_ground_atomic_bool(node: &Json) -> Option<bool> {
     if args.len() != 2 {
         return None;
     }
-    let left = int_const_value(&args[0])?;
-    let right = int_const_value(&args[1])?;
-    match name {
-        "<" => Some(left < right),
-        ">" => Some(left > right),
-        "\u{2264}" | "<=" => Some(left <= right),
-        "\u{2265}" | ">=" => Some(left >= right),
-        "=" => Some(left == right),
-        "\u{2260}" | "!=" => Some(left != right),
-        _ => None,
+
+    // Python control-flow guards emit `py.eq` / `py.lt` / `identity` / `py.in`,
+    // not bare IR `=` / `<`. Vendor posts specialize those guards at grounded
+    // callsites (`py.eq(1,1) => out=7`); without evaluating them, implies arms
+    // never open and lying arms stay SAT (#4398).
+    if name == "py.in" {
+        return eval_ground_py_in(&args[0], &args[1]);
     }
+    if name == "identity" {
+        return eval_ground_identity(&args[0], &args[1]);
+    }
+
+    // Int comparisons: IR and Python predicate names share the same law.
+    if let (Some(left), Some(right)) = (
+        int_const_value_i128(&args[0]),
+        int_const_value_i128(&args[1]),
+    ) {
+        return match name {
+            "<" | "py.lt" => Some(left < right),
+            ">" | "py.gt" => Some(left > right),
+            "\u{2264}" | "<=" | "py.le" => Some(left <= right),
+            "\u{2265}" | ">=" | "py.ge" => Some(left >= right),
+            "=" | "py.eq" => Some(left == right),
+            "\u{2260}" | "!=" | "py.ne" => Some(left != right),
+            _ => None,
+        };
+    }
+
+    // Ground structural equality for non-int values (None, tuples, complex):
+    // only when both sides are closed data values. Never orient free vars.
+    if matches!(name, "=" | "py.eq") && is_const_value(&args[0]) && is_const_value(&args[1]) {
+        return Some(ground_values_equal(&args[0], &args[1]));
+    }
+    if matches!(name, "\u{2260}" | "!=" | "py.ne")
+        && is_const_value(&args[0])
+        && is_const_value(&args[1])
+    {
+        return Some(!ground_values_equal(&args[0], &args[1]));
+    }
+    None
 }
 
-fn int_const_value(node: &Json) -> Option<i64> {
+fn eval_ground_identity(left: &Json, right: &Json) -> Option<bool> {
+    // Python `is` / `is not`: only when both sides are ground values. A free
+    // var or opaque call leaves the guard unevaluable (honest None).
+    if !is_const_value(left) || !is_const_value(right) {
+        return None;
+    }
+    Some(ground_values_equal(left, right))
+}
+
+fn eval_ground_py_in(needle: &Json, haystack: &Json) -> Option<bool> {
+    if !is_const_value(needle) {
+        return None;
+    }
+    if haystack.get("kind").and_then(|k| k.as_str()) != Some("ctor") {
+        return None;
+    }
+    let name = haystack.get("name").and_then(|n| n.as_str())?;
+    if !matches!(name, "tuple" | "array" | "python:tuple" | "python:list") {
+        return None;
+    }
+    let args = haystack.get("args").and_then(|v| v.as_array())?;
+    if !args.iter().all(is_const_value) {
+        return None;
+    }
+    Some(args.iter().any(|item| ground_values_equal(needle, item)))
+}
+
+fn ground_values_equal(left: &Json, right: &Json) -> bool {
+    let left_key = libsugar::canonical::json_jcs(&federate_primitive_sorts(left))
+        .unwrap_or_else(|_| compact_json(left));
+    let right_key = libsugar::canonical::json_jcs(&federate_primitive_sorts(right))
+        .unwrap_or_else(|_| compact_json(right));
+    left_key == right_key
+}
+
+fn int_const_value_i128(node: &Json) -> Option<i128> {
     if node.get("kind").and_then(|k| k.as_str()) != Some("const") {
         return None;
     }
@@ -1019,7 +1158,17 @@ fn int_const_value(node: &Json) -> Option<i64> {
     {
         return None;
     }
-    node.get("value").and_then(|v| v.as_i64())
+    let value = node.get("value")?;
+    if let Some(v) = value.as_i64() {
+        return Some(i128::from(v));
+    }
+    if let Some(v) = value.as_u64() {
+        return Some(i128::from(v));
+    }
+    if let Some(s) = value.as_str() {
+        return s.parse::<i128>().ok();
+    }
+    None
 }
 
 fn compact_json(value: &Json) -> String {
@@ -2125,7 +2274,13 @@ fn check_inv_consistency_with_vacuity_reason(
     vacuity_kind: VacuityRefusalKind,
 ) -> ConsistencyResult {
     let t_local = std::time::Instant::now();
-    let inv = with_local_forall_instances(canonicalize_formula_json(&inv), property_name);
+    // Fold grounded primitive applications (`call:abs(-5)` → `5`) before
+    // structural dual / SMT. Without this, vendor posts that return a grounded
+    // constructor stay uninterpreted and lying arms SAT (#4398).
+    let inv = with_local_forall_instances(
+        canonicalize_formula_json(&fold_ground_applications(&inv)),
+        property_name,
+    );
     let local_inst_us = t_local.elapsed().as_micros();
     // VACUITY GUARD. A lone constraint (count < 2) has no sibling to contradict.
     // Any uninterpreted callsite trivially satisfies it under bare SAT, giving a
@@ -3257,6 +3412,9 @@ fn linked_ambient_post_instances_for_inv(
                 &post.binding.out_binding,
                 callsite,
             );
+            // Fold grounded primitives after specialization so linked posts
+            // and structural dual faces see concrete values (#4398).
+            instance = fold_ground_applications(&instance);
             if !formula_is_closed(&instance, &mut Vec::new()) {
                 // #4148: LOUD drop -- never silently skip an open specialized post.
                 tracing::warn!(
@@ -5320,6 +5478,124 @@ mod tests {
             res[0].reason.contains("equals both"),
             "reason should name the dual values: {}",
             res[0].reason
+        );
+    }
+
+    /// #4398: vendor if-posts specialize `py.eq` guards at grounded callsites.
+    /// `py.eq(1,1) => call:A(1)=7` conjoined with stated `call:A(1)=0` must
+    /// refuse structurally — previously `eval_ground_atomic_bool` ignored
+    /// `py.eq`, so the implies arm never opened and the lie SAT.
+    #[test]
+    fn grounded_py_eq_guard_opens_implies_for_structural_refute() {
+        let call_a = json!({"kind":"ctor","name":"call:A","args":[
+            {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":1}
+        ]});
+        let inv = json!({"kind":"and","operands":[
+            {"kind":"atomic","name":"py.eq","args":[
+                call_a.clone(),
+                {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":0},
+            ]},
+            {"kind":"implies","operands":[
+                {"kind":"atomic","name":"py.eq","args":[
+                    {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":1},
+                    {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":1},
+                ]},
+                {"kind":"atomic","name":"=","args":[
+                    call_a.clone(),
+                    {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":7},
+                ]},
+            ]},
+        ]});
+        let reason = structural_contradiction_reason(&inv)
+            .expect("py.eq(1,1) must open implies and dual-refute call:A(1)");
+        assert!(
+            reason.contains("equals both"),
+            "expected dual-value structural reason, got: {reason}"
+        );
+    }
+
+    /// #4398: `call:abs(-5)` folds to `5` so body dig + lying statement dual-refute.
+    #[test]
+    fn grounded_call_abs_folds_for_structural_refute() {
+        let call_a = json!({"kind":"ctor","name":"call:A","args":[
+            {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":-5}
+        ]});
+        let inv = json!({"kind":"and","operands":[
+            {"kind":"atomic","name":"py.eq","args":[
+                call_a.clone(),
+                {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":-5},
+            ]},
+            {"kind":"atomic","name":"=","args":[
+                call_a.clone(),
+                {"kind":"ctor","name":"call:abs","args":[
+                    {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":-5},
+                ]},
+            ]},
+        ]});
+        let folded = fold_ground_applications(&inv);
+        let reason = structural_contradiction_reason(&folded)
+            .expect("folded abs must dual-refute call:A(-5)=5 vs -5");
+        assert!(
+            reason.contains("equals both"),
+            "expected dual-value structural reason, got: {reason}"
+        );
+    }
+
+    /// #4398: `py.complex` is a data value — dual complex literals refuse.
+    #[test]
+    fn grounded_py_complex_value_contradiction_refuses_structurally() {
+        let call_a = json!({"kind":"ctor","name":"call:A","args":[
+            {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":5}
+        ]});
+        let complex = |im: &str| {
+            json!({"kind":"ctor","name":"py.complex","args":[
+                {"kind":"const","sort":{"kind":"primitive","name":"Real"},"value":"0.0"},
+                {"kind":"const","sort":{"kind":"primitive","name":"Real"},"value":im},
+            ]})
+        };
+        let inv = json!({"kind":"and","operands":[
+            {"kind":"atomic","name":"=","args":[call_a.clone(), complex("2.0")]},
+            {"kind":"atomic","name":"py.eq","args":[call_a.clone(), complex("3.0")]},
+        ]});
+        let reason = structural_contradiction_reason(&inv)
+            .expect("py.complex(0,2) vs py.complex(0,3) must dual-refute");
+        assert!(
+            reason.contains("equals both"),
+            "expected dual-value structural reason, got: {reason}"
+        );
+    }
+
+    /// #4398: `py.in` membership on a ground tuple opens implies arms.
+    #[test]
+    fn grounded_py_in_guard_opens_implies_for_structural_refute() {
+        let call_a = json!({"kind":"ctor","name":"call:A","args":[
+            {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":2}
+        ]});
+        let inv = json!({"kind":"and","operands":[
+            {"kind":"atomic","name":"py.eq","args":[
+                call_a.clone(),
+                {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":0},
+            ]},
+            {"kind":"implies","operands":[
+                {"kind":"atomic","name":"py.in","args":[
+                    {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":2},
+                    {"kind":"ctor","name":"tuple","args":[
+                        {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":1},
+                        {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":2},
+                        {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":3},
+                    ]},
+                ]},
+                {"kind":"atomic","name":"=","args":[
+                    call_a.clone(),
+                    {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":1},
+                ]},
+            ]},
+        ]});
+        let reason = structural_contradiction_reason(&inv)
+            .expect("py.in(2,tuple(1,2,3)) must open implies and dual-refute");
+        assert!(
+            reason.contains("equals both"),
+            "expected dual-value structural reason, got: {reason}"
         );
     }
 

@@ -1238,6 +1238,56 @@ def test_boolop_literal_residue_lie_lowers_to_concrete_false_operand(
     assert _formula_contains_eq_value(assertion["inv"], False, True)
 
 
+# #4398 measurable lying-arm set: grounded primitive / control-flow vendor posts
+# must refute lies (truthful SAT / lying UNSAT). Residual corpus seeds stay under
+# #4387 / siblings (call_return, keyword_call_return, nested shapes, etc.).
+_GROUNDED_PRIMITIVE_REFUTE_SEEDS = (
+    "abs_return",
+    "bare_return_none",
+    "complex_literal_return",
+    "if_return",
+    "in_return",
+    "is_not_return",
+    "chained_compare_return",
+)
+
+
+@pytest.mark.parametrize("seed_name", _GROUNDED_PRIMITIVE_REFUTE_SEEDS)
+def test_grounded_primitive_witness_lie_refutes(
+    tmp_path: Path,
+    seed_name: str,
+) -> None:
+    seed = next(item for item in DEFAULT_SUGAR_WITNESS_SEEDS if item.name == seed_name)
+
+    truthful = run_source_through_real_solver(
+        tmp_path / f"{seed_name}-truthful", seed.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / f"{seed_name}-lying", seed.lying.source
+    )
+
+    trace = {
+        "seed": seed.name,
+        "owner": seed.owner_sugar,
+        "truthful": {
+            "expected": seed.truthful.expected,
+            "observed": truthful.verdict,
+        },
+        "lying": {
+            "expected": seed.lying.expected,
+            "observed": lying.verdict,
+            "reason": (lying.prove_doc.get("rows") or [{}])[0].get("reason"),
+        },
+    }
+    print(json.dumps(trace, indent=2, sort_keys=True))
+
+    assert truthful.verdict == "sat", f"{seed_name} truthful must stay SAT"
+    assert lying.verdict == "unsat", (
+        f"{seed_name} lying must refute (not soft-pass refuse/sat); "
+        f"observed={lying.verdict}"
+    )
+
+
 def test_call_truth_boolop_residue_emits_local_call_derived_fact(
     tmp_path: Path,
 ) -> None:
