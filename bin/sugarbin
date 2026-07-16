@@ -821,6 +821,24 @@ verify_attestation_if_present() {
     || log "attestation absent or unverifiable for $(basename "$bin"); stamp tooth remains decisive"
 }
 
+materialize_cached_artifact() {
+  local cached="$1" stamp="$2" identity="$3"
+  local cached_manifest target target_manifest staged staged_manifest
+  cached_manifest="$(artifact_manifest_path "$cached")"
+  target="${SUGAR_BINARY_TARGET_ROOT:-$rust_workspace/target}/$profile/$bin_name"
+  target_manifest="$(artifact_manifest_path "$target")"
+  mkdir -p "$(dirname "$target")"
+  staged="$target.sugarbin-stage.$$"
+  staged_manifest="$target_manifest.sugarbin-stage.$$"
+  cp "$cached" "$staged"
+  cp "$cached_manifest" "$staged_manifest"
+  chmod +x "$staged"
+  mv -f "$staged" "$target"
+  mv -f "$staged_manifest" "$target_manifest"
+  verify_artifact_manifest "$target" "$stamp" "$identity" "materialized cache artifact" || return 1
+  printf '%s\n' "$target"
+}
+
 pull_from_shelf() {
   local stamp="$1" identity="$2" name="$3"
   local dir download_dir candidate candidate_dir manifest
@@ -830,7 +848,7 @@ pull_from_shelf() {
   manifest="$(artifact_manifest_path "$candidate")"
   if verify_artifact_manifest "$candidate" "$stamp" "$identity" "prebuilt cache"; then
     log "prebuilt cache hit for $name"
-    printf '%s\n' "$candidate"
+    materialize_cached_artifact "$candidate" "$stamp" "$identity"
     return 0
   fi
   [[ "${SUGAR_BINARY_NO_SHELF:-0}" != "1" ]] || { log "shelf pull disabled by SUGAR_BINARY_NO_SHELF=1"; return 1; }
@@ -863,7 +881,7 @@ pull_from_shelf() {
   chmod +x "$candidate"
   verify_artifact_manifest "$candidate" "$stamp" "$identity" "downloaded shelf artifact" || return 1
   verify_attestation_if_present "$candidate" "$stamp"
-  printf '%s\n' "$candidate"
+  materialize_cached_artifact "$candidate" "$stamp" "$identity"
 }
 
 build_from_source() {
