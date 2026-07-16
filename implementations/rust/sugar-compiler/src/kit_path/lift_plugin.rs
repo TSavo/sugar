@@ -152,6 +152,12 @@ fn stop_child_after_transport_failure(child: &mut Child) {
     let _ = child.wait();
 }
 
+/// Max wait for one lift-plugin JSON-RPC response frame.
+///
+/// Default 120s is a hang detector for ordinary kit calls. Heavy one-shot
+/// corpus lifts (e.g. `make coretests-source-audit`) override via
+/// `SUGAR_LIFT_RESPONSE_TIMEOUT_SECS` — they are intentionally longer, not
+/// silent infinite waits.
 fn response_deadline() -> Duration {
     std::env::var("SUGAR_LIFT_RESPONSE_TIMEOUT_SECS")
         .ok()
