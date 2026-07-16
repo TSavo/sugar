@@ -572,7 +572,8 @@ coretests-source-audit:
 	# (monadic family work, factory walks). Bound the wait via the existing
 	# SUGAR_LIFT_RESPONSE_TIMEOUT_SECS knob; allow override, default 15 min.
 	SUGAR_LIFT_RESPONSE_TIMEOUT_SECS="$${SUGAR_LIFT_RESPONSE_TIMEOUT_SECS:-900}" \
-	  RUST_LOG=error NO_COLOR=1 CLICOLOR=0 TERM=dumb \
+	  RUST_LOG=rust_test_assertions_rpc=info,sugar_lift_rust_tests=info,error \
+	  NO_COLOR=1 CLICOLOR=0 TERM=dumb \
 	  "$$sugar_bin" lift --report --report-summary
 
 .PHONY: coretests-invariants
