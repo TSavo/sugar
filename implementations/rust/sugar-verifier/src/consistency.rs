@@ -1332,6 +1332,7 @@ fn witness_package_claim(evidence: &Json, tool: &str) -> Result<WitnessPackageCl
         "cargo-test" => "cargo-test-witness-package",
         "junit" => "junit-test-witness-package",
         "testng" => "testng-test-witness-package",
+        "build-witness" => "build-witness",
         other => {
             return Err(format!(
                 "custom witness tool {other:?} has no rust-side package outcome mapping \
@@ -4737,6 +4738,18 @@ mod tests {
             "evidence": {"kind":"evidence","proofType":"custom",
                          "certificate":{"tool":tool,"proofData":proof_data}},
         })
+    }
+
+    #[test]
+    fn build_witness_claim_uses_existing_resolver_and_rust_package_verification_path() {
+        let body = package_contract("build-witness", "blake3-512:build", 1, 1);
+        let claim = witness_package_claim(body.get("evidence").expect("evidence"), "build-witness")
+            .expect("build-witness is an execution-witness package");
+
+        assert_eq!(claim.package_cid, "blake3-512:build");
+        assert_eq!(claim.witness_kind, "build-witness");
+        assert_eq!(claim.expected_count, 1);
+        assert_eq!(claim.expected_passed, 1);
     }
 
     fn package_contract_with_provenance(

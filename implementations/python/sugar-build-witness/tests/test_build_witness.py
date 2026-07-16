@@ -106,7 +106,7 @@ def test_post_mint_distributed_script_tamper_refuses_stale_witness(tmp_path):
     assert "distributed script CID mismatch" in reason
 
 
-def test_lift_emits_solver_checked_cid_equalities_not_custom_verdict(tmp_path):
+def test_lift_emits_cid_equalities_with_recomputable_custom_evidence(tmp_path):
     _write_project(tmp_path, dist_script=SCRIPT + "\n# injected tarball delta\n")
     proc = subprocess.Popen(
         [sys.executable, "-m", "sugar_build_witness.lift_lsp"],
@@ -131,7 +131,20 @@ def test_lift_emits_solver_checked_cid_equalities_not_custom_verdict(tmp_path):
 
     assert mementos and mementos[0]["witness_kind"] == "build-witness"
     assert contracts
-    assert all("evidence" not in row for row in contracts)
+    for row in contracts:
+        evidence = row["evidence"]
+        assert evidence["proofType"] == "custom"
+        certificate = evidence["certificate"]
+        assert certificate["tool"] == "build-witness"
+        proof_data = json.loads(certificate["proofData"])
+        assert proof_data == {
+            "kind": "witness-package",
+            "packageCid": mementos[0]["witness_cid"],
+            "testFiles": [],
+            "codeFiles": [],
+            "count": 1,
+            "passed": 0,
+        }
     script_rows = [
         row
         for row in contracts

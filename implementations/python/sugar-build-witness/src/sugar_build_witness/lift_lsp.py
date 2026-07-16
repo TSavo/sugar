@@ -18,6 +18,7 @@ from sugar_lift_py_tests.ir import (
 from .witness import (
     BUILD_WITNESS_KIND,
     DEFAULT_MANIFEST,
+    BuildWitness,
     build_witness_memento,
     run_build_witness,
     witness_body,
@@ -52,6 +53,32 @@ def build_witness_proofir_provenance(bundle_cid: str, manifest_cid: str) -> dict
                 "packageCid": bundle_cid,
             }
         ],
+    }
+
+
+def build_witness_evidence(witness: BuildWitness) -> dict[str, Any]:
+    """Commit a contract to the package Rust must resolve and recompute."""
+    proof_data = json.dumps(
+        {
+            "kind": "witness-package",
+            "packageCid": witness.cid,
+            "testFiles": [],
+            "codeFiles": [],
+            "count": 1,
+            "passed": 1 if witness.outcome == "passed" else 0,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return {
+        "kind": "evidence",
+        "proofType": "custom",
+        "certificate": {
+            "tool": BUILD_WITNESS_KIND,
+            "version": witness.toolchain_id,
+            "formulaHash": witness.cid,
+            "proofData": proof_data,
+        },
     }
 
 
@@ -122,6 +149,7 @@ def handle_lift(msg_id: Any, params: dict) -> None:
                 member["proofirProvenance"] = build_witness_proofir_provenance(
                     w.cid, w.manifest_cid
                 )
+                member["evidence"] = build_witness_evidence(w)
         ir = ir + [memento]
         _send(
             {

@@ -27,19 +27,20 @@ plain consistency claims:
 - repo script CID equals distributed script CID
 - distributed output CID equals rebuilt output CID
 
-z3 settles those equalities. The Rust verifier also asks the untrusted kit
-resolver to rerun the build and return only bytes; Rust does the BLAKE3
-recompute for stale-proof tampering.
+Each equality carries custom execution-witness evidence pinned to the shared
+build-witness package CID. The Rust verifier asks the untrusted kit resolver to
+rerun the build and return only bytes, then independently checks the BLAKE3 CID
+and committed outcome before discharging either equality.
 
 ## Twins
 
 - `good`: repo script, distributed script, and rebuilt artifact all match.
 - `bad-script`: distributed script differs from the repo script, the xz-shaped
-  tarball gap. The script equality row is unsatisfied even if the discharge
-  command lies and returns `DISCHARGED`.
-- `bad-output`: distributed artifact differs from the rebuilt artifact.
-  The output equality row is unsatisfied even if the discharge command lies and
-  returns `DISCHARGED`.
+  tarball gap. The failed shared package leaves both witness-backed equality
+  rows unsatisfied even if the discharge command lies and returns `DISCHARGED`.
+- `bad-output`: distributed artifact differs from the rebuilt artifact. The
+  failed shared package leaves both witness-backed equality rows unsatisfied
+  even if the discharge command lies and returns `DISCHARGED`.
 - `tampered-script`: a good witness is minted first, then the distributed
   script is changed before verification. Recompute produces a different witness
   CID, so Rust refuses the stale proof.
