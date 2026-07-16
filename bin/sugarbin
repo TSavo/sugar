@@ -824,15 +824,35 @@ shelf_asset_names() {
 }
 
 upload_shelf_file() {
-  local shelf_tag="$1" repo="$2" file="$3"
-  local attempt=1 max_attempts=4 err
+  local shelf_tag="$1" repo="$2" file="$3" stamp_short="$4"
+  local attempt=1 max_attempts=4 err asset_name
+  asset_name="$(basename "$file")"
   while [[ "$attempt" -le "$max_attempts" ]]; do
+    # Content-addressed assets are immutable. A concurrent publisher winning
+    # this name is success, never permission to delete and replace its bytes.
+    if grep -Fxq "$asset_name" <<<"$(shelf_asset_names "$shelf_tag" "$repo")"; then
+      return 0
+    fi
+    # A release can be replaced between resolution and upload. Re-resolve (or
+    # recreate) it on every attempt instead of retrying a stale upload URL.
+    if ! ensure_shelf_release "$shelf_tag" "$repo" "$stamp_short"; then
+      log "upload attempt $attempt/$max_attempts could not resolve shelf release $shelf_tag"
+      sleep $((attempt * 2))
+      attempt=$((attempt + 1))
+      continue
+    fi
     err="$(mktemp)"
-    if gh release upload "$shelf_tag" "$file" --clobber --repo "$repo" >"$err" 2>&1; then
+    if gh release upload "$shelf_tag" "$file" --repo "$repo" >"$err" 2>&1; then
       rm -f "$err"
       return 0
     fi
-    log "upload attempt $attempt/$max_attempts failed for $(basename "$file"): $(tr '\n' ' ' <"$err" | sed 's/[[:space:]]\+/ /g')"
+    # The upload and another publisher may race after the preflight listing.
+    # The immutable name appearing is sufficient evidence that work is done.
+    if grep -Fxq "$asset_name" <<<"$(shelf_asset_names "$shelf_tag" "$repo")"; then
+      rm -f "$err"
+      return 0
+    fi
+    log "upload attempt $attempt/$max_attempts failed for $asset_name: $(tr '\n' ' ' <"$err" | sed 's/[[:space:]]\+/ /g')"
     rm -f "$err"
     sleep $((attempt * 2))
     attempt=$((attempt + 1))
@@ -931,12 +951,12 @@ PY
   # partial shelf (metadata without binary) and still fail the whole batch;
   # require-publish then hard-fails even though the runner has a good local bin.
   local publish_status=0
-  upload_shelf_file "$shelf_tag" "$repo" "$asset" || publish_status=$?
+  upload_shelf_file "$shelf_tag" "$repo" "$asset" "$stamp_short" || publish_status=$?
   if [[ "$publish_status" == 0 ]]; then
-    upload_shelf_file "$shelf_tag" "$repo" "$meta" || publish_status=$?
+    upload_shelf_file "$shelf_tag" "$repo" "$meta" "$stamp_short" || publish_status=$?
   fi
   if [[ "$publish_status" == 0 ]]; then
-    upload_shelf_file "$shelf_tag" "$repo" "$tmp/$name.sugarbin.json" || publish_status=$?
+    upload_shelf_file "$shelf_tag" "$repo" "$tmp/$name.sugarbin.json" "$stamp_short" || publish_status=$?
   fi
   rm -rf "$tmp"
   # Race / eventual consistency: another runner may have completed the shelf.
