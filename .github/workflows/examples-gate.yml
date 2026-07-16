@@ -44,7 +44,7 @@ jobs:
       - name: Install system deps (z3, maven, vampire)
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends z3 maven unzip
+          sudo apt-get install -y --no-install-recommends z3 maven unzip b3sum
           curl -fsSL -o /tmp/vampire.zip https://github.com/vprover/vampire/releases/download/v5.0.1/vampire-Linux-X64.zip
           unzip -o -q /tmp/vampire.zip -d /tmp/vampire-bin
           sudo install -m 0755 /tmp/vampire-bin/vampire /usr/local/bin/vampire
