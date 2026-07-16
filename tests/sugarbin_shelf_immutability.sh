@@ -27,4 +27,10 @@ grep -Fq 'asset.get("state") == "starter"' <<<"$purge_body" || {
   exit 1
 }
 
+publish_body="$(sed -n '/^publish_if_absent()/,/^}/p' "$repo/bin/sugarbin")"
+grep -Fq 'gzip -9 -c "$bin"' <<<"$publish_body" || {
+  echo 'sugarbin shelf publisher still sends raw debug executables' >&2
+  exit 1
+}
+
 echo 'PASS: sugarbin shelf assets are immutable and race-idempotent'
