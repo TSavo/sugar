@@ -823,6 +823,29 @@ shelf_asset_names() {
   ' 2>/dev/null || true
 }
 
+purge_incomplete_shelf_asset() {
+  local shelf_tag="$1" repo="$2" asset_name="$3" release_id payload ids id
+  release_id="$(gh api "repos/$repo/releases/tags/$shelf_tag" --jq .id 2>/dev/null)" || return 0
+  [[ -n "$release_id" ]] || return 0
+  payload="$(gh api --paginate --slurp "repos/$repo/releases/$release_id/assets?per_page=100" 2>/dev/null)" || return 0
+  ids="$(python3 -c '
+import json
+import sys
+
+name = sys.argv[1]
+pages = json.load(sys.stdin)
+for page in pages:
+    for asset in page:
+        if asset.get("name") == name and asset.get("state") == "starter":
+            print(asset["id"])
+' "$asset_name" <<<"$payload")"
+  for id in $ids; do
+    if gh api --method DELETE "repos/$repo/releases/assets/$id" >/dev/null 2>&1; then
+      log "removed incomplete starter asset $asset_name before retry"
+    fi
+  done
+}
+
 upload_shelf_file() {
   local shelf_tag="$1" repo="$2" file="$3" stamp_short="$4"
   local attempt=1 max_attempts=4 err asset_name
@@ -852,6 +875,10 @@ upload_shelf_file() {
       rm -f "$err"
       return 0
     fi
+    # GitHub can accept every byte, leave the asset in its hidden `starter`
+    # state, and return 404. That object is not published immutable content;
+    # remove only this incomplete state so the next attempt has a clean name.
+    purge_incomplete_shelf_asset "$shelf_tag" "$repo" "$asset_name"
     log "upload attempt $attempt/$max_attempts failed for $asset_name: $(tr '\n' ' ' <"$err" | sed 's/[[:space:]]\+/ /g')"
     rm -f "$err"
     sleep $((attempt * 2))
