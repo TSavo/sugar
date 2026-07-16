@@ -324,15 +324,16 @@ fn seal_to_temp_project(graph: &ProofGraph) -> tempfile::TempDir {
     dir
 }
 
-/// sugar#3859 "annotate not block" receipt: `solve_project` over a pool with
-/// an UNBRIDGED callsite must (1) carry a non-empty `link_errors` (beat 1
-/// annotated the unresolved edge) AND (2) return an `artifact.report`
-/// BYTE-IDENTICAL to a direct `Runner::run_with_proof_run` over the SAME
-/// on-disk pool -- proving the link errors neither suppress nor alter the
-/// real pipeline's output. If beat 1 short-circuited on the non-empty
-/// link_errors, the report would be absent/empty and this would fail.
+/// sugar#3859 discharge-always + sugar#3893 exit-code law: `solve_project`
+/// over a pool with an UNBRIDGED callsite must (1) carry a non-empty
+/// `link_errors`, (2) return an `artifact.report` BYTE-IDENTICAL to a direct
+/// `Runner::run_with_proof_run` over the SAME on-disk pool (discharge is not
+/// short-circuited), AND (3) classify as `LinkFailed` / exit 4 so green over
+/// unbridged callsites is impossible.
 #[test]
 fn solve_project_annotates_link_errors_without_altering_the_report() {
+    use sugar_compiler::outcome::OutcomeClass;
+
     let mut graph = ProofGraph::new();
     push_caller_contract(&mut graph, "seam3859::caller#unbridged");
     let dir = seal_to_temp_project(&graph);
@@ -347,7 +348,7 @@ fn solve_project_annotates_link_errors_without_altering_the_report() {
     let proven = sugar_compiler::orchestrate::solve_project(make_cfg(), test_compilers())
         .expect("solve_project must stage this well-formed on-disk pool");
 
-    // (1) beat 1 ANNOTATED the unbridged callsite.
+    // (1) beat 1 surfaces the unbridged callsite.
     assert!(
         proven.has_link_errors(),
         "an unbridged callsite must surface as a non-empty link_errors annotation: {:?}",
@@ -362,7 +363,7 @@ fn solve_project_annotates_link_errors_without_altering_the_report() {
     );
 
     // (2) beat 2's report is byte-identical to a direct Runner run over the
-    // SAME on-disk pool -- the link errors did NOT block or alter it.
+    // SAME on-disk pool -- the link errors did NOT short-circuit discharge.
     let direct = Runner::new_with_compilers(make_cfg(), test_compilers())
         .run_with_proof_run()
         .expect("direct run over the same pool");
@@ -370,7 +371,67 @@ fn solve_project_annotates_link_errors_without_altering_the_report() {
         format!("{:?}", proven.artifact.report),
         format!("{:?}", direct.report),
         "solve_project's report must be byte-identical to a direct Runner run \
-         over the same pool (annotate-not-block)"
+         over the same pool (discharge-always)"
+    );
+
+    // (3) sugar#3893: unresolved links redden the gate BY DEFAULT.
+    assert_eq!(
+        proven.outcome_class,
+        OutcomeClass::LinkFailed,
+        "unbridged callsite must classify as LinkFailed, not a vacuous green: \
+         report-class-alone would have been {:?}; link_errors={:?}",
+        OutcomeClass::from_report(&proven.artifact.report),
+        proven.link_errors
+    );
+    assert_eq!(
+        proven.exit_code(),
+        4,
+        "LinkFailed must map to EXIT_LINK_FAIL=4"
+    );
+}
+
+/// sugar#3893 discrimination arm: a fully-bridged pool must NOT exit
+/// LinkFailed solely because links exist. When the report is clean of hard
+/// fails, `outcome_class` is report-derived (Verified or Undecided), never
+/// LinkFailed from a resolved surface.
+#[test]
+fn solve_project_bridged_callsite_is_not_link_failed() {
+    use sugar_compiler::outcome::OutcomeClass;
+
+    let mut graph = ProofGraph::new();
+    let callee_cid = push_callee_contract(&mut graph, "seam3893::callee#bridged");
+    push_caller_contract(&mut graph, "seam3893::caller#bridged");
+    push_bridge(&mut graph, &callee_cid);
+    let dir = seal_to_temp_project(&graph);
+
+    let cfg = RunnerConfig {
+        project_root: dir.path().to_path_buf(),
+        legacy_z3_fallback: Some(LegacyZ3Fallback::compat("z3")),
+        ..Default::default()
+    };
+    let proven = sugar_compiler::orchestrate::solve_project(cfg, test_compilers())
+        .expect("bridged pool must stage");
+
+    assert!(
+        !proven.has_link_errors(),
+        "bridged callsite must not produce link_errors: {:?}",
+        proven.link_errors
+    );
+    assert!(
+        proven.link_derivation_error.is_none(),
+        "bridged pool must derive cleanly: {:?}",
+        proven.link_derivation_error
+    );
+    assert_ne!(
+        proven.outcome_class,
+        OutcomeClass::LinkFailed,
+        "fully-bridged surface must not classify as LinkFailed: {:?}",
+        proven.outcome_class
+    );
+    assert_ne!(
+        proven.exit_code(),
+        4,
+        "fully-bridged surface must not exit EXIT_LINK_FAIL"
     );
 }
 
@@ -549,12 +610,14 @@ fn well_formed_formal_sort_derives_unchanged() {
     }
 }
 
-/// gitar/Devin on #3891: a MALFORMED contract must not brick production
-/// prove/verify -- the link VIEW becomes undecodable (annotated), the
-/// discharge still runs. Mirrors malformed_formal_sort_is_typed_error
-/// (the strict door keeps its hard Err) through the PRODUCTION door.
+/// gitar/Devin on #3891 + sugar#3893: a MALFORMED contract must not brick
+/// production discharge -- the link VIEW becomes undecodable (annotated),
+/// discharge still runs -- AND the undecodable view reddens the exit
+/// (unaccountable pool is not green).
 #[test]
 fn solve_project_annotates_malformed_derivation_and_still_discharges() {
+    use sugar_compiler::outcome::OutcomeClass;
+
     let mut graph = ProofGraph::new();
     push_contract_with_formal_sorts(
         &mut graph,
@@ -585,4 +648,11 @@ fn solve_project_annotates_malformed_derivation_and_still_discharges() {
         !format!("{:?}", proven.artifact.report).is_empty(),
         "discharge must still run"
     );
+    // sugar#3893: undecodable link view reddens (not green).
+    assert_eq!(
+        proven.outcome_class,
+        OutcomeClass::LinkFailed,
+        "undecodable link view must classify as LinkFailed"
+    );
+    assert_eq!(proven.exit_code(), 4);
 }

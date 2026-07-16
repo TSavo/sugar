@@ -55,25 +55,25 @@ pub fn run(args: ProveArgs) -> u8 {
     let component_plan_options = ComponentPlanOptions {
         allow_failed_components: args.allow_failed_components,
     };
-    let artifact = match build_prove_artifact_with_options(
+    let proven = match build_prove_outcome_with_options(
         &project_root,
         &args.z3,
         &args.with,
         component_plan_options,
     ) {
-        Ok(artifact) => artifact,
+        Ok(proven) => proven,
         Err(error) => {
             return emit_prove_setup_error(&error, args.out.json);
         }
     };
-    let report = &artifact.report;
+    let report = &proven.artifact.report;
     let report_json = report_fmt::report_to_json(report);
     if let Some(witness_dir) = &args.emit_witnesses {
         match emit_configured_witnesses(
             &project_root,
             &report_json,
             witness_dir,
-            artifact.plan_artifact.as_ref(),
+            proven.artifact.plan_artifact.as_ref(),
         ) {
             Ok(witnesses) => {
                 if !args.out.quiet {
@@ -109,7 +109,33 @@ pub fn run(args: ProveArgs) -> u8 {
         report_fmt::print_report_pretty(report, args.out.quiet);
     }
 
-    report_fmt::report_exit_code(report)
+    if !args.out.quiet && proven.has_unresolved_link_surface() {
+        eprintln!(
+            "{}: unresolved link surface ({} error(s)) — exit {} (EXIT_LINK_FAIL / feed more)",
+            "link".red().bold(),
+            proven.link_errors.len(),
+            crate::EXIT_LINK_FAIL
+        );
+    }
+
+    // sugar#3893: green over unbridged callsites is vacuous. Fold link
+    // surface onto prove's existing report exit without rewriting that
+    // face's report-only law for non-green cases.
+    prove_exit_code(report, &proven)
+}
+
+/// Prove face exit: keep `report_exit_code`'s report law, then apply #3893
+/// so a would-be green run with dirty link surface exits EXIT_LINK_FAIL.
+fn prove_exit_code(
+    report: &sugar_verifier::Report,
+    proven: &sugar_compiler::orchestrate::ProvenOutcome,
+) -> u8 {
+    let report_code = report_fmt::report_exit_code(report);
+    if report_code == crate::EXIT_OK && proven.has_unresolved_link_surface() {
+        crate::EXIT_LINK_FAIL
+    } else {
+        report_code
+    }
 }
 
 // `sugar prove --json` promises callers a parseable JSON report on stdout.
@@ -156,6 +182,18 @@ pub(crate) fn build_prove_artifact_with_options(
     with: &[String],
     component_plan_options: ComponentPlanOptions,
 ) -> Result<ProofRunArtifact, String> {
+    build_prove_outcome_with_options(project_root, z3, with, component_plan_options)
+        .map(|proven| proven.artifact)
+}
+
+/// Production prove door: full `ProvenOutcome` so the face can apply the
+/// #3893 exit-code law (unresolved links redden) without a second solve.
+pub(crate) fn build_prove_outcome_with_options(
+    project_root: &Path,
+    z3: &str,
+    with: &[String],
+    component_plan_options: ComponentPlanOptions,
+) -> Result<sugar_compiler::orchestrate::ProvenOutcome, String> {
     let cfg_doc = read_project_config(project_root);
     let component_plan = component_plan::plan_workspace_with_options(
         project_root,
@@ -251,24 +289,19 @@ pub(crate) fn build_prove_artifact_with_options(
     // failure is the prove result — never silent-fallback to disk. Disk
     // `solve_project` is only for projects with no planned lift kit (or
     // rendezvous skipped), where the fold path was never the chosen face.
-    if let Some(kit) = try_rendezvous_prove_kit(project_root, &component_plan) {
+    let mut proven = if let Some(kit) = try_rendezvous_prove_kit(project_root, &component_plan) {
         let speaker = sugar_verifier::Speaker::consumer("sugar-cli:prove");
-        return sugar_compiler::orchestrate::prove_from_kit(
-            &kit,
-            project_root,
-            speaker,
-            cfg,
-            compilers,
-        )
-        .map(|proven| cli_persist_proof_run(project_root, proven.artifact))
-        .map_err(|error| error.to_string());
-    }
-
-    // Disk-load face (sugar#3859): no lift kit for this project — prove over
-    // minted `.proof` files. Link errors ANNOTATE, they never gate.
-    sugar_compiler::orchestrate::solve_project(cfg, compilers)
-        .map(|proven| cli_persist_proof_run(project_root, proven.artifact))
-        .map_err(|error| error.to_string())
+        sugar_compiler::orchestrate::prove_from_kit(&kit, project_root, speaker, cfg, compilers)
+            .map_err(|error| error.to_string())?
+    } else {
+        // Disk-load face (sugar#3859): no lift kit for this project — prove
+        // over minted `.proof` files. Discharge always runs; dirty link
+        // surface reddens `outcome_class` under #3893.
+        sugar_compiler::orchestrate::solve_project(cfg, compilers)
+            .map_err(|error| error.to_string())?
+    };
+    proven.artifact = cli_persist_proof_run(project_root, proven.artifact);
+    Ok(proven)
 }
 
 /// #3809 cut #8: solve seals the proof-run in memory; the CLI face persists

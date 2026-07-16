@@ -61,6 +61,8 @@ pub const EXIT_OK: u8 = 0;
 pub const EXIT_VERIFY_FAIL: u8 = 1;
 pub const EXIT_USER_ERROR: u8 = 2;
 pub const EXIT_SOLVER_FAIL: u8 = 3;
+/// Unresolved / undecodable link surface (sugar#3893). "No program — feed more."
+pub const EXIT_LINK_FAIL: u8 = 4;
 
 #[derive(Parser, Debug)]
 #[command(
