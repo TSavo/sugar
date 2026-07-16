@@ -40,6 +40,10 @@ impl StubSolver {
         self.version = v.into();
         self
     }
+    pub fn with_ir_compiler(mut self, compiler: impl Into<String>) -> Self {
+        self.ir_compiler = compiler.into();
+        self
+    }
     pub fn with_delay(mut self, d: Duration) -> Self {
         self.delay = d;
         self

@@ -148,10 +148,14 @@ fn single(
             let compiler = s.ir_compiler().to_string();
             let identity = s.identity();
             let r = solve_with_input(s.as_ref(), source, formula);
-            let verdict = r.verdict;
+            let verdict = if r.verdict == ObligationVerdict::Refused {
+                ObligationVerdict::Undecidable
+            } else {
+                r.verdict
+            };
             let reason = reason_for(&r);
             let inv = SolverInvocation {
-                authoritative: true,
+                authoritative: r.verdict != ObligationVerdict::Refused,
                 compiler,
                 identity,
                 result: r,
@@ -271,7 +275,7 @@ fn portfolio(
                     .cmp(&b.2.wall_clock)
                     .then_with(|| a.2.solver_name.cmp(&b.2.solver_name))
             });
-            let chosen = sorted
+            let definitive = sorted
                 .iter()
                 .find(|(_, _, r)| {
                     matches!(
@@ -279,8 +283,24 @@ fn portfolio(
                         ObligationVerdict::Discharged | ObligationVerdict::Unsatisfied
                     )
                 })
-                .cloned()
-                .unwrap_or_else(|| sorted[0].clone());
+                .cloned();
+            if definitive.is_none() && unanimous_refusal(names, &results) {
+                let reason = format!(
+                    "portfolio[first-wins]: unanimous refusal ladder: {}",
+                    refusal_ladder_reason(&results)
+                );
+                let invs = results
+                    .into_iter()
+                    .map(|(compiler, identity, result)| SolverInvocation {
+                        authoritative: true,
+                        compiler,
+                        identity,
+                        result,
+                    })
+                    .collect();
+                return (ObligationVerdict::Refused, reason, invs);
+            }
+            let chosen = definitive.unwrap_or_else(|| sorted[0].clone());
             let mut invs: Vec<SolverInvocation> = vec![];
             for (compiler, identity, r) in results.into_iter() {
                 let auth = r.solver_name == chosen.2.solver_name && r.verdict == chosen.2.verdict;
@@ -315,6 +335,22 @@ fn portfolio(
                 })
                 .collect();
             if definitives.is_empty() {
+                if unanimous_refusal(names, &results) {
+                    let reason = format!(
+                        "portfolio[consensus]: unanimous refusal ladder: {}",
+                        refusal_ladder_reason(&results)
+                    );
+                    let invs = results
+                        .into_iter()
+                        .map(|(compiler, identity, result)| SolverInvocation {
+                            authoritative: true,
+                            compiler,
+                            identity,
+                            result,
+                        })
+                        .collect();
+                    return (ObligationVerdict::Refused, reason, invs);
+                }
                 let invs: Vec<SolverInvocation> = results
                     .into_iter()
                     .map(|(compiler, identity, r)| SolverInvocation {
@@ -382,6 +418,42 @@ fn portfolio(
             }
         }
     }
+}
+
+fn unanimous_refusal(
+    names: &[SolverSeat],
+    results: &[(String, SolverIdentity, SolveResult)],
+) -> bool {
+    !results.is_empty()
+        && results.len() == names.len()
+        && results.iter().all(|(_, _, result)| {
+            matches!(
+                result.verdict,
+                ObligationVerdict::Refused | ObligationVerdict::Undecidable
+            ) && !matches!(
+                result.exit.kind,
+                SolverExitKind::SpawnError
+                    | SolverExitKind::StdinError
+                    | SolverExitKind::Timeout
+                    | SolverExitKind::WaitError
+                    | SolverExitKind::FrontendDecodeError
+            )
+        })
+}
+
+fn refusal_ladder_reason(results: &[(String, SolverIdentity, SolveResult)]) -> String {
+    results
+        .iter()
+        .map(|(compiler, _, result)| {
+            format!(
+                "{}[{}]={}",
+                result.solver_name,
+                compiler,
+                result.verdict.as_str()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" -> ")
 }
 
 fn reason_for(r: &SolveResult) -> String {
@@ -520,6 +592,8 @@ mod tests {
         Capabilities, CompileError, CompiledFormula, CompilerInput, FrontendErrorKind,
         FrontendErrorPayload, IrCompiler, PROTOCOL_VERSION,
     };
+    use sugar_ir_compiler_coq::CoqCompiler;
+    use sugar_ir_compiler_smt_lib::SmtLibCompiler;
 
     fn registry() -> Registry {
         let mut r: Registry = HashMap::new();
@@ -670,6 +744,84 @@ mod tests {
         let (v, reason, _) = run_plan(&plan, &r, "x", None);
         assert_eq!(v, ObligationVerdict::Disagreement);
         assert!(reason.contains("DISAGREEMENT"));
+    }
+
+    #[test]
+    fn single_seat_cannot_stamp_refused() {
+        let mut reg: Registry = HashMap::new();
+        reg.insert(
+            SolverSeat::Z3,
+            Arc::new(StubSolver::new("z3", ObligationVerdict::Refused)) as SolverHandle,
+        );
+        let (verdict, _, invocations) =
+            run_plan(&SolverPlan::Single(SolverSeat::Z3), &reg, "x", None);
+        assert_eq!(verdict, ObligationVerdict::Undecidable);
+        assert_eq!(invocations[0].result.verdict, ObligationVerdict::Refused);
+        assert!(!invocations[0].authoritative);
+    }
+
+    #[test]
+    fn unanimous_portfolio_inability_is_refused_with_complete_ladder() {
+        let mut reg: Registry = HashMap::new();
+        reg.insert(
+            SolverSeat::Z3,
+            Arc::new(StubSolver::new("z3", ObligationVerdict::Refused)) as SolverHandle,
+        );
+        reg.insert(
+            SolverSeat::Vampire,
+            Arc::new(StubSolver::new("vampire", ObligationVerdict::Undecidable)) as SolverHandle,
+        );
+        let plan = SolverPlan::Portfolio {
+            names: vec![SolverSeat::Z3, SolverSeat::Vampire],
+            mode: PortfolioMode::FirstWins,
+        };
+        let (verdict, reason, invocations) = run_plan(&plan, &reg, "x", None);
+        assert_eq!(verdict, ObligationVerdict::Refused);
+        assert!(reason.contains("unanimous refusal ladder"));
+        assert!(reason.contains("z3"));
+        assert!(reason.contains("vampire"));
+        assert_eq!(invocations.len(), 2);
+        assert!(invocations
+            .iter()
+            .all(|invocation| invocation.authoritative));
+    }
+
+    #[test]
+    fn any_portfolio_discharge_defeats_false_opaque_refusal() {
+        let mut reg: Registry = HashMap::new();
+        reg.insert(
+            SolverSeat::Z3,
+            Arc::new(StubSolver::new("z3", ObligationVerdict::Refused)) as SolverHandle,
+        );
+        reg.insert(
+            SolverSeat::Coq,
+            Arc::new(StubSolver::new("coq", ObligationVerdict::Discharged).with_ir_compiler("coq"))
+                as SolverHandle,
+        );
+        let plan = SolverPlan::Portfolio {
+            names: vec![SolverSeat::Z3, SolverSeat::Coq],
+            mode: PortfolioMode::FirstWins,
+        };
+        let mut compilers = CompilerRegistry::new();
+        compilers.register(Arc::new(SmtLibCompiler::new()));
+        compilers.register(Arc::new(CoqCompiler::new()));
+        let formula = compiler_input(serde_json::json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "const", "value": 1, "sort": {"kind": "primitive", "name": "Int"}},
+                {"kind": "const", "value": 1, "sort": {"kind": "primitive", "name": "Int"}}
+            ]
+        }));
+        let (verdict, _, invocations) = run_plan_with_compilers(&plan, &reg, &compilers, &formula);
+        assert_eq!(verdict, ObligationVerdict::Discharged);
+        assert_ne!(verdict, ObligationVerdict::Refused);
+        assert_eq!(invocations.len(), 2);
+        assert!(invocations.iter().any(|invocation| {
+            invocation.authoritative
+                && invocation.result.solver_name == "coq"
+                && invocation.compiler == "coq"
+        }));
     }
 
     #[test]
