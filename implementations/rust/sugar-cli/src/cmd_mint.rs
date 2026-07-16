@@ -1063,6 +1063,9 @@ impl MintKit {
                 Err(LiftPluginError::Diagnostic(error)) => {
                     return Err(KitError::Transformation(error.to_string()))
                 }
+                Err(LiftPluginError::SplitPipeline(error)) => {
+                    return Err(KitError::Transformation(error))
+                }
             };
 
             let response = session
@@ -1164,6 +1167,9 @@ impl MintKit {
                 Err(LiftPluginError::Diagnostic(error)) => {
                     return Err(KitError::Transformation(error.to_string()))
                 }
+                Err(LiftPluginError::SplitPipeline(error)) => {
+                    return Err(KitError::Transformation(error))
+                }
             };
             let response = session
                 .response_projection()
@@ -1242,6 +1248,9 @@ impl MintKit {
                 }
                 Err(LiftPluginError::Diagnostic(error)) => {
                     return Err(KitError::Transformation(error.to_string()))
+                }
+                Err(LiftPluginError::SplitPipeline(error)) => {
+                    return Err(KitError::Transformation(error))
                 }
             };
 
@@ -2567,6 +2576,7 @@ fn dispatch_report_lift_plugin(
             ),
             LiftPluginError::FatalFactoryPanic(error) => error.to_string(),
             LiftPluginError::Diagnostic(error) => error.to_string(),
+            LiftPluginError::SplitPipeline(error) => error,
         })?;
     let mut response = session
         .response_projection()

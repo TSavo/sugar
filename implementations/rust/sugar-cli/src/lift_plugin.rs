@@ -40,16 +40,6 @@ impl LiftPluginSession {
         })
     }
 
-    fn from_kit_session(
-        session: sugar_compiler::kit_path::LiftPluginKitSession,
-    ) -> Result<Self, LiftPluginError> {
-        LiftResponseProjection::from_claim(&session.claim)?;
-        Ok(Self {
-            claim: session.claim,
-            initialize_response: Some(session.initialize_response),
-        })
-    }
-
     pub(crate) fn response_projection(&self) -> LiftResponseProjection<'_> {
         LiftResponseProjection { claim: &self.claim }
     }
@@ -190,6 +180,7 @@ pub(crate) enum LiftPluginError {
     Refused(Box<CompositionBoundaryMemento>),
     FatalFactoryPanic(sugar_compiler::kit_path::FactoryPanicRpcError),
     Diagnostic(LiftPluginDiagnosticPayload),
+    SplitPipeline(String),
 }
 
 impl LiftPluginError {
@@ -237,6 +228,7 @@ impl std::fmt::Display for LiftPluginError {
                 refusal.header.failure_kind, refusal.header.failure_detail
             ),
             Self::Diagnostic(diagnostic) => diagnostic.fmt(f),
+            Self::SplitPipeline(message) => message.fmt(f),
         }
     }
 }
@@ -373,22 +365,38 @@ pub(crate) fn dispatch_lift_path(
         started.elapsed()
     ));
 
+    let initialize_response = kit.initialize_response().clone();
+    if surface == "python" {
+        let identity = initialize_response
+            .pointer("/kit_source/identity")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                LiftPluginError::SplitPipeline(
+                    "python kit initialize response omitted kit_source testimony".to_string(),
+                )
+            })?;
+        let binary = env!("SUGAR_BUILD_GIT_HEAD");
+        if identity != binary {
+            return Err(LiftPluginError::SplitPipeline(format!(
+                "refusing to mint from a split pipeline: kit @{identity} != binary @{binary}"
+            )));
+        }
+    }
     let before = current_rss_kib();
-    let core_session = kit
-        .lift_session(lift_params)
-        .map_err(LiftPluginError::from)?;
-    let claim = &core_session.claim;
+    let claim = kit.lift(lift_params).map_err(lift_error_from_kit)?;
     trace_lift_plugin_claim_checkpoint_with_delta(
         "dispatch_lift_path.after_kit_lift",
-        claim,
+        &claim,
         rss_delta_kib(before, current_rss_kib()),
     );
     trace_log(format!(
         "lift path executed surface={surface} elapsed={:?}",
         started.elapsed()
     ));
-    trace_lift_plugin_claim_checkpoint("dispatch_lift_path.before_response_projection", claim);
-    LiftPluginSession::from_kit_session(core_session)
+    trace_lift_plugin_claim_checkpoint("dispatch_lift_path.before_response_projection", &claim);
+    let mut session = LiftPluginSession::from_claim(claim)?;
+    session.initialize_response = Some(initialize_response);
+    Ok(session)
 }
 
 /// Unregistered-dialect fallback: builds the same source/path input the

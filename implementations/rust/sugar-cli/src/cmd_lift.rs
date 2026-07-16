@@ -521,6 +521,10 @@ pub fn run(args: LiftArgs) -> u8 {
             eprintln!("{}: {error}", "error".red().bold());
             EXIT_VERIFY_FAIL
         }
+        Err(LiftPluginError::SplitPipeline(error)) => {
+            eprintln!("{error}");
+            EXIT_VERIFY_FAIL
+        }
     }
 }
 

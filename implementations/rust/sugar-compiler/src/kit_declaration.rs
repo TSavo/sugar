@@ -87,6 +87,19 @@ pub fn load_kit_declaration_with_command(
     command: &[String],
     working_dir: Option<&Path>,
 ) -> Result<KitDeclaration, KitDeclarationLoadError> {
+    load_kit_handshake_with_command(command, working_dir).map(|handshake| handshake.declaration)
+}
+
+#[derive(Debug, Clone)]
+pub struct KitHandshake {
+    pub initialize_response: Value,
+    pub declaration: KitDeclaration,
+}
+
+pub fn load_kit_handshake_with_command(
+    command: &[String],
+    working_dir: Option<&Path>,
+) -> Result<KitHandshake, KitDeclarationLoadError> {
     if command.is_empty() {
         return Err(KitDeclarationLoadError::EmptyCommand);
     }
@@ -119,11 +132,16 @@ pub fn load_kit_declaration_with_command(
         let _ = child.wait();
         return Err(error);
     }
-    if let Err(error) = read_response(&lines, "initialize", 1, command) {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(error);
-    }
+    let initialize_response = match read_response(&lines, "initialize", 1, command) {
+        Ok(response) => response.get("result").cloned().ok_or_else(|| {
+            KitDeclarationLoadError::Io("initialize response missing result".to_string())
+        })?,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
 
     let req = json!({
         "jsonrpc": "2.0",
@@ -177,7 +195,10 @@ pub fn load_kit_declaration_with_command(
             command: command.to_vec(),
             detail: format!("declaration failed validation: {error}"),
         })?;
-    Ok(declaration)
+    Ok(KitHandshake {
+        initialize_response,
+        declaration,
+    })
 }
 
 fn spawn_kit_declaration_command(
