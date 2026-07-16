@@ -132,7 +132,8 @@ def score_wall_txt(text: str) -> dict[str, Any]:
         "message_id_from_wall_txt": message_id,
         "wall_txt_tail": tail,
         "transport_failure": bool(
-            "kind=transport" in text or "lift-plugin.transport" in text
+            "kind=transport" in text
+            or "lift-plugin.transport" in text
             or DISCONNECT_ALT_RE.search(text)
         ),
     }
@@ -155,14 +156,20 @@ def build_progress(
             transport_path = alt
     engine_path = logs / "engine.jsonl"
     wall_txt = wall_dir / "wall.txt"
+    frontier_receipt = wall_dir / "wall.frontier.txt"
     frontier = wall_dir / "frontier.json"
     summary = wall_dir / "summary.json"
 
     transport_rows = _load_jsonl(transport_path)
     transport = score_transport(transport_rows)
+    diagnostic_receipt = (
+        frontier_receipt
+        if frontier_receipt.is_file() and not frontier.is_file()
+        else wall_txt
+    )
     wall_meta = score_wall_txt(
-        wall_txt.read_text(encoding="utf-8", errors="replace")
-        if wall_txt.is_file()
+        diagnostic_receipt.read_text(encoding="utf-8", errors="replace")
+        if diagnostic_receipt.is_file()
         else ""
     )
 
@@ -173,6 +180,9 @@ def build_progress(
         "has_frontier": frontier.is_file(),
         "has_summary": summary.is_file(),
         "has_wall_txt": wall_txt.is_file(),
+        "diagnostic_receipt": (
+            str(diagnostic_receipt) if diagnostic_receipt.is_file() else None
+        ),
         "has_transport_log": transport_path.is_file(),
         "has_engine_log": engine_path.is_file(),
         "transport_log": str(transport_path) if transport_path.is_file() else None,
@@ -261,6 +271,10 @@ def self_test() -> int:
             "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
         )
         (wall_dir / "wall.txt").write_text(
+            "stale initial fail-fast FactoryPanic\n",
+            encoding="utf-8",
+        )
+        (wall_dir / "wall.frontier.txt").write_text(
             'ERROR stage="read_line.disconnected" message_id=2 '
             "plugin process ended without responding\n",
             encoding="utf-8",
@@ -298,6 +312,12 @@ def self_test() -> int:
         if progress["message_id"] != 2:
             print(
                 f"FAIL: message_id wrong: {progress['message_id']}",
+                file=sys.stderr,
+            )
+            return 1
+        if not str(progress["diagnostic_receipt"]).endswith("wall.frontier.txt"):
+            print(
+                "FAIL: incomplete recovered lane must own the diagnostic receipt",
                 file=sys.stderr,
             )
             return 1
@@ -357,7 +377,9 @@ def main(argv: list[str]) -> int:
     )
     out = args.output or (wall_dir / "progress.json")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(progress, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    out.write_text(
+        json.dumps(progress, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     if args.json_only:
         print(json.dumps(progress, indent=2, sort_keys=True))
     else:
