@@ -504,16 +504,23 @@ def _loaded_names(node: ast.AST | None) -> set[str]:
 def _function_definition_dependencies(
     statement: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> set[str]:
-    """Names Python evaluates while constructing a function definition.
+    """Names constructed when this lifter builds a function definition.
 
-    A function body is deferred, but decorators are evaluated in the defining
-    module when the ``def`` statement executes.  Keep that temporal boundary
-    explicit: body globals belong to later call/dig construction and must not
-    make an unrelated decorator seed eagerly construct them.
+    The function body is deferred. Decorators, positional defaults, and
+    keyword-only defaults are reduced when ``StatementFunctionDefSugar``
+    constructs the callable, so each belongs to the defining module's lexical
+    temporal rather than the consumer's. Annotations remain deferred by the
+    current callable representation (and by ``from __future__ import
+    annotations`` sources such as pandas), so they are not eagerly seeded here.
     """
     needed: set[str] = set()
-    for decorator in statement.decorator_list:
-        needed.update(_loaded_names(decorator))
+    eager_terms = (
+        *statement.decorator_list,
+        *statement.args.defaults,
+        *(default for default in statement.args.kw_defaults if default is not None),
+    )
+    for term in eager_terms:
+        needed.update(_loaded_names(term))
     return needed
 
 
