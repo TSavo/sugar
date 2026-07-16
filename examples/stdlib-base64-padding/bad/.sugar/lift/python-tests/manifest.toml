@@ -2,9 +2,8 @@ name = "python-tests-lift"
 version = "0.1.0-draft"
 protocol_version = "pep/1.7.0"
 kind = "lift"
-# The lift shim exports PYTHONPATH = lifter sources + the showcase venv's
-# site-packages (so the walker can resolve itsdangerous' installed source),
-# then execs the pytest lifter.
+# Stdlib logo: lift shim exports kit PYTHONPATH and execs the pytest lifter
+# (no showcase venv; not itsdangerous).
 command = ["./lift-shim.sh"]
 working_dir = "."
 
