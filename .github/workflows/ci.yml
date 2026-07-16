@@ -42,17 +42,15 @@ jobs:
           mode: seed
 
       - name: Build shared Rust artifacts once
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          make build-rust
-          cargo build --manifest-path implementations/rust/Cargo.toml \
-            -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
-            -p sugar-ir-compiler-lean --bin sugar-ir-lean \
-            -p sugar-ir-compiler-coq --bin sugar-ir-coq \
-            -p sugar-ir-compiler-maude --bin sugar-ir-maude \
-            -p sugar-walk --bin sugar-walk-rpc \
-            -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
-            -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
-            -p sugar-lift-rust-cargo-test-witness --bin discharge_cli
+          for b in sugar sugar-lift rust_test_assertions_rpc coretests_sweep; do
+            bin/sugarbin --profile release --bin "$b" >/dev/null
+          done
+          for b in sugar sugar-ir-smt-lib sugar-ir-lean sugar-ir-coq sugar-ir-maude sugar-walk-rpc rust_test_assertions_rpc witness_rpc discharge_cli; do
+            bin/sugarbin --profile debug --bin "$b" >/dev/null
+          done
 
   core:
     name: core (${{ matrix.name }})

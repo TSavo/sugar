@@ -509,9 +509,10 @@ test-showcases: check-showcase-kit-preflight check-lift-manifest-pythonpath
 # (`package release`) mints the binaryCid receipts or the perimeter is inert.
 # Attest from the manifest, then re-verify against the pinned receipts --
 # producer -> gate, on the very tool doing the gating.
-self-attest: build-rust
+self-attest:
 	@set -e; \
 	sugar_bin="$$(bin/sugarbin --profile release)"; \
+	bin/sugarbin --profile release --bin sugar-lift >/dev/null; \
 	tmp=$$(mktemp -d); \
 	"$$sugar_bin" package release --manifest sugar-release.toml --receipts $$tmp; \
 	"$$sugar_bin" package release --manifest sugar-release.toml --receipts $$tmp --verify-only; \
@@ -546,8 +547,7 @@ coretests-source-audit:
 	  exit $$?; \
 	fi; \
 	sugar_bin="$$(bin/sugarbin --profile release)" || exit $$?; \
-	$(CARGO_LOCAL) build --manifest-path implementations/rust/Cargo.toml --release \
-	  -p sugar-lift-rust-tests --bin rust_test_assertions_rpc >/dev/null || exit $$?; \
+	bin/sugarbin --profile release --bin rust_test_assertions_rpc >/dev/null || exit $$?; \
 	bin_dir="$$(pwd -P)/implementations/rust/target/release"; \
 	corpus="$(CORETESTS_SOURCE_AUDIT_CORPUS)"; \
 	manifest_dir="$$corpus/.sugar/lift/rust-test-assertions"; \
@@ -560,9 +560,9 @@ coretests-source-audit:
 coretests-invariants:
 	@set -e; \
 	rustup toolchain install $(CORETESTS_RUST_VER) --component rust-src --profile minimal 2>/dev/null || true; \
-	$(CARGO_LOCAL) build --manifest-path implementations/rust/Cargo.toml --release -p sugar-lift-rust-tests --bin coretests_sweep; \
+	coretests_sweep="$$(bin/sugarbin --profile release --bin coretests_sweep)" || exit $$?; \
 	CORPUS="$$(rustc +$(CORETESTS_RUST_VER) --print sysroot)/lib/rustlib/src/rust/library/coretests/tests"; \
-	implementations/rust/target/release/coretests_sweep "$$CORPUS" --rustc-cfg > /tmp/coretests-hermetic.out; \
+	"$$coretests_sweep" "$$CORPUS" --rustc-cfg > /tmp/coretests-hermetic.out; \
 	python3 scripts/check-coretests-invariants.py /tmp/coretests-hermetic.out implementations/rust/coretests-invariants.json
 
 # Real python/pandas kit through sugar-lsp --in-process (PyCon demo path).
