@@ -313,16 +313,110 @@ async fn handle_client(
     }
 }
 
+/// Serialize one JSON-RPC response as an NDJSON line.
+///
+/// Serialization failure is loud-loss (#3851): never emit an empty/newline
+/// "response" that peers fail to parse with no diagnostic on either side.
+/// Callers that get `Err` must log and close (or return a proper JSON-RPC
+/// error on a separate successful encode) — not continue as if a response
+/// was written.
+fn encode_ndjson_line(value: &impl serde::Serialize) -> std::io::Result<Vec<u8>> {
+    let mut bytes = serde_json::to_vec(value).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "JSON-RPC response serialization failed (loud-loss law): {e}; \
+                 refusing to emit empty/newline response that peers cannot parse"
+            ),
+        )
+    })?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
 async fn write_response(
     writer: &mut tokio::net::unix::OwnedWriteHalf,
     value: &Json,
 ) -> std::io::Result<()> {
-    let mut bytes = serde_json::to_vec(value).unwrap_or_default();
-    bytes.push(b'\n');
+    let bytes = match encode_ndjson_line(value) {
+        Ok(b) => b,
+        Err(e) => {
+            // log+close: caller returns on Err and drops the socket half.
+            // Also log here so paths that do `let _ = write_response(...)`
+            // cannot silently swallow the loss.
+            error!("{e}");
+            return Err(e);
+        }
+    };
     writer.write_all(&bytes).await
 }
 
 use serde_json::Value as Json;
+
+#[cfg(test)]
+mod write_response_loud_loss_tests {
+    use super::encode_ndjson_line;
+    use serde::ser::{Error as SerError, Serializer};
+    use serde::Serialize;
+
+    /// Type whose Serialize always fails — stands in for any future
+    /// non-Value response payload that cannot be encoded.
+    struct AlwaysFailSerialize;
+
+    impl Serialize for AlwaysFailSerialize {
+        fn serialize<S: Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+            Err(SerError::custom("forced serialization failure for #3851"))
+        }
+    }
+
+    /// Red instrument for #3851: serialization failure must not become a
+    /// successful empty/newline NDJSON "response" (the unwrap_or_default
+    /// silent-swallow shape inherited from sugar-linkerd).
+    #[test]
+    fn serialization_failure_is_err_not_empty_newline() {
+        let err = encode_ndjson_line(&AlwaysFailSerialize).expect_err(
+            "loud-loss law: serialize failure must return Err, never Ok(b\"\\n\") \
+             (old shape: serde_json::to_vec(...).unwrap_or_default() + push newline)",
+        );
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::InvalidData,
+            "serialization failure is InvalidData, not a write/io race"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("loud-loss"),
+            "error must name the law so the next agent has the fix: {msg}"
+        );
+        assert!(
+            msg.contains("serialization failed"),
+            "error must name the crime: {msg}"
+        );
+    }
+
+    #[test]
+    fn successful_encode_is_single_ndjson_line() {
+        let value = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": null
+        });
+        let bytes = encode_ndjson_line(&value).expect("Value always serializes");
+        assert!(
+            bytes.ends_with(b"\n"),
+            "NDJSON framing requires trailing newline"
+        );
+        assert_ne!(
+            bytes.as_slice(),
+            b"\n",
+            "successful encode must not be empty body + newline"
+        );
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&bytes[..bytes.len() - 1]).expect("valid json body");
+        assert_eq!(parsed["jsonrpc"], "2.0");
+        assert_eq!(parsed["id"], 1);
+    }
+}
 
 #[cfg(unix)]
 extern crate libc;
