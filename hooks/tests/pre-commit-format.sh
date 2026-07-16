@@ -132,10 +132,22 @@ pub fn staged( )->i32{1}
 pub fn keep( )->i32{2}
 RS
 )
-commit_in_repo "$repo" "skip partial staging" >"$TMPDIR/pre-commit-format-partial.out" 2>&1
-grep -q "skipping partially staged Rust file: implementations/rust/fixture/src/partial.rs" "$TMPDIR/pre-commit-format-partial.out"
-expect_blob "$repo" implementations/rust/fixture/src/partial.rs $'pub fn staged( )->i32{1}\n\npub fn keep() -> i32 {\n    2\n}\n'
+# Partially staged Rust must hard-fail (do not skip): unformatted staged hunks
+# would otherwise land while the hook stays silent.
+if commit_in_repo "$repo" "refuse partial staging" >"$TMPDIR/pre-commit-format-partial.out" 2>&1; then
+  echo "expected pre-commit to refuse partially staged Rust" >&2
+  cat "$TMPDIR/pre-commit-format-partial.out" >&2
+  exit 1
+fi
+grep -q "has unstaged edits" "$TMPDIR/pre-commit-format-partial.out"
+# Commit aborted: HEAD still the last full commit; worktree still has unstaged keep().
+expect_blob "$repo" implementations/rust/fixture/src/partial.rs $'pub fn staged() -> i32 {\n    1\n}\n\npub fn keep() -> i32 {\n    2\n}\n'
 grep -q 'pub fn keep( )->i32{2}' "$repo/implementations/rust/fixture/src/partial.rs"
+# Drop the leftover staged partial so the next case is isolated.
+(
+  cd "$repo"
+  git restore --source=HEAD --staged --worktree implementations/rust/fixture/src/partial.rs
+)
 
 (
   cd "$repo"
