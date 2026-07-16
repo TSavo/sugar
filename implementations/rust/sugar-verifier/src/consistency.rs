@@ -516,10 +516,43 @@ fn contract_provenance_kind(
     {
         return source_warrants_provenance_kind(warrants);
     }
+    // Custom execution-witness packages (cargo-test / pytest suite packages)
+    // are Derived by construction: discharge is package recompute, not source
+    // statement. Sealed mementos sometimes carry `evidence` only on the header
+    // (body is inv atomCid alone) and historically dropped proofirProvenance —
+    // refuse-for-missing then made the whole showcase witness row refuse
+    // (A2 expected-discharge-got-refused / rust-witness). Default Derived when
+    // the memento is recognizably a custom execution-witness package.
+    if is_execution_witness_package(member, body) {
+        return Ok(ProofIrProvenanceKind::Derived);
+    }
     Err(
         "contract memento lacks required proofirProvenance/sourceWarrants provenance KIND"
             .to_string(),
     )
+}
+
+/// True when this contract is a custom execution-witness package (cargo-test /
+/// pytest suite package). Evidence may live on the sealed header while the
+/// body holds only the inv atom — so header and body both count.
+fn is_execution_witness_package(member: &StoredMember, body: &Json) -> bool {
+    if is_witness_member(body) {
+        return true;
+    }
+    if member
+        .field("evidence")
+        .and_then(|e| e.get("proofType"))
+        .and_then(|v| v.as_str())
+        == Some("custom")
+    {
+        return true;
+    }
+    let name = contract_property_name(body);
+    name.starts_with("witness-package:")
+        || member
+            .field("name")
+            .and_then(|n| n.as_str())
+            .is_some_and(|n| n.starts_with("witness-package:"))
 }
 
 fn proofir_provenance_kind(provenance: &Json) -> Result<ProofIrProvenanceKind, String> {
@@ -7491,6 +7524,53 @@ mod tests {
         eprintln!(
             "RECEIPT step2_oracle_door packageCid={} method={} verdict={:?} reason={}",
             package_cid, ORACLE_RESOLVE_METHOD, via_arm.verdict, via_arm.reason
+        );
+
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn missing_provenance_on_custom_execution_witness_package_defaults_derived() {
+        // Sealed cargo-test packages often carry evidence on the header and no
+        // proofirProvenance field. That must not refuse as MissingProvenanceKind.
+        let package_bytes = b"{\"outcome\":\"passed\",\"test\":\"one\"}\n";
+        let package_cid = blake3_512_of(package_bytes);
+        let project = unique_temp_dir("missing-witness-package-kind");
+        write_resolver_manifest(&project, package_bytes);
+
+        let body = package_contract("cargo-test", &package_cid, 1, 1);
+        assert!(
+            body.get("proofirProvenance").is_none(),
+            "fixture must omit proofirProvenance to pin the default-Derived path"
+        );
+        let mut pool = MementoPool::default();
+        insert_package_contract_with_provenance(
+            &mut pool,
+            "blake3-512:missing-witness-package",
+            body,
+        );
+        let (plan, reg) = z3_plan_and_registry();
+        let typed = typed_ctx_for_project(&project);
+        let res = verify_consistency_with_policy(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+            &typed,
+        );
+
+        assert_eq!(res.len(), 1, "one witness-package obligation: {res:?}");
+        assert_ne!(
+            res[0].verdict,
+            ObligationVerdict::Refused,
+            "missing provenance on a custom execution-witness package must default Derived, not MissingProvenanceKind: {}",
+            res[0].reason
+        );
+        assert!(
+            !res[0].reason.contains("lacks required provenance KIND"),
+            "must not refuse for missing provenance KIND: {}",
+            res[0].reason
         );
 
         let _ = std::fs::remove_dir_all(&project);
