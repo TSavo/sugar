@@ -144,6 +144,10 @@ export SUGAR_BINARY_NO_SHELF=0
 : >"$tmp/cargo.log"; : >"$tmp/child.log"
 "$repo/bin/sugarbin" run --needs sugar,sugar-ir-smt-lib -- true
 [[ ! -s "$tmp/cargo.log" ]] || { echo 'valid local cache required working gh' >&2; exit 1; }
+for binary in sugar sugar-ir-smt-lib; do
+  test -x "$tmp/target/release/$binary"
+  test -s "$tmp/target/release/$binary.sugarbin.json"
+done
 
 cat >"$tmp/bin/gh" <<'SH'
 #!/usr/bin/env bash
