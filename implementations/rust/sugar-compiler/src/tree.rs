@@ -333,6 +333,22 @@ impl Universe {
     pub fn payload(&self) -> Option<&Value> {
         self.payload.as_ref()
     }
+
+    /// Test/construction door for feed silent-loss instruments (#3901).
+    /// Production nodes arrive only via `CallSite::universe()` enumeration.
+    #[cfg(test)]
+    pub fn for_feed_test(
+        memento: SourceMemento,
+        ir_row: Option<Value>,
+        payload: Option<Value>,
+    ) -> Self {
+        Self {
+            memento,
+            audit: None,
+            ir_row,
+            payload,
+        }
+    }
 }
 
 /// ABI signature declared by a native export producer. These are the facts a
@@ -575,6 +591,22 @@ impl Fact {
     /// Full IR row from wire audit when the kit stamped the contract item.
     pub fn ir_row(&self) -> Option<&Value> {
         self.ir_row.as_ref()
+    }
+
+    /// Test/construction door for feed silent-loss instruments (#3901).
+    /// Production nodes arrive only via `Assertion::facts()` enumeration.
+    #[cfg(test)]
+    pub fn for_feed_test(
+        memento: SourceMemento,
+        payload: IrFormula,
+        ir_row: Option<Value>,
+    ) -> Self {
+        Self {
+            memento,
+            audit: None,
+            payload,
+            ir_row,
+        }
     }
 }
 

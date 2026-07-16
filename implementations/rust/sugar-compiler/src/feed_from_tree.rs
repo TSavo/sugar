@@ -109,6 +109,8 @@ struct ClaimExtras {
     formals: Vec<String>,
     /// When IR had an explicit `formals` field (even `[]`), emit empty formals.
     emit_empty_formals: bool,
+    /// Sorts parallel to `formals`. Carried, never silently dropped (#3901).
+    formal_sorts: Vec<Arc<CValue>>,
     bridge_source_symbol: Option<String>,
     out_binding: String,
     /// Must track mint's body-discharge policy. Default **false**: never claim
@@ -124,6 +126,7 @@ impl Default for ClaimExtras {
         Self {
             formals: Vec::new(),
             emit_empty_formals: false,
+            formal_sorts: Vec::new(),
             bridge_source_symbol: None,
             // Match mint IR default for this kit (`outBinding: "out"`).
             out_binding: "out".into(),
@@ -212,7 +215,10 @@ fn push_claim_with_slots(
         evidence_term: None,
         formals: extras.formals,
         emit_empty_formals: extras.emit_empty_formals,
-        formal_sorts: Vec::new(),
+        // #3901: formal sorts are load-bearing for mint CID + linker ABI.
+        // Never hardcode empty — carry whatever IR provided (or leave empty
+        // only when IR genuinely omitted them).
+        formal_sorts: extras.formal_sorts,
         library: None,
         bridge_source_symbol: extras.bridge_source_symbol,
         body_discharge_eligible: extras.body_discharge_eligible,
@@ -413,6 +419,50 @@ fn formals_from_ir_row(ir: &Json) -> (Vec<String>, bool) {
     }
 }
 
+/// IR `formalSorts` / `formal_sorts` → mint `formal_sorts` carrier (#3901).
+///
+/// Silent drop was the open class: formals names rode through while sorts
+/// were hardcoded `Vec::new()` at `push_claim_with_slots`. Mint CIDs and
+/// linker ABI both read sorts; dropping them forges a different contract.
+fn formal_sorts_from_ir_row(ir: &Json) -> Result<Vec<Arc<CValue>>, FeedError> {
+    let Some(arr) = ir
+        .get("formalSorts")
+        .or_else(|| ir.get("formal_sorts"))
+        .and_then(Json::as_array)
+    else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr {
+        out.push(json_to_cvalue(item)?);
+    }
+    Ok(out)
+}
+
+/// Warrants for a universe: prefer non-empty IR `sourceWarrants`, else the
+/// self-locating memento. Empty provenance on a function-contract is a
+/// provenance hole (#3901) — same fallback law as [`warrants_for_fact`].
+fn warrants_for_universe(u: &Universe) -> Result<(Vec<Json>, Vec<Arc<CValue>>), FeedError> {
+    if let Some(ir) = u.ir_row() {
+        if let Some(arr) = ir
+            .get("sourceWarrants")
+            .or_else(|| ir.get("source_warrants"))
+            .and_then(Json::as_array)
+        {
+            if !arr.is_empty() {
+                let mut cvals = Vec::with_capacity(arr.len());
+                for w in arr {
+                    cvals.push(json_to_cvalue(w)?);
+                }
+                return Ok((arr.clone(), cvals));
+            }
+        }
+    }
+    let memento_json = u.source_memento().to_json();
+    let cval = json_to_cvalue(&memento_json)?;
+    Ok((vec![memento_json], vec![cval]))
+}
+
 fn bridge_from_ir_row(ir: &Json) -> Option<String> {
     ir.get("bridgeSourceSymbol")
         .or_else(|| ir.get("bridge_source_symbol"))
@@ -599,22 +649,23 @@ pub fn graph_from_fact(fact: &Fact) -> Result<ProofGraph, FeedError> {
     let (warrant_jsons, warrants) = warrants_for_fact(fact)?;
     // Assertion contracts (kind=contract / inv-only claims) are not body-discharged
     // unless IR explicitly claims eligibility — default false.
-    let extras = fact
-        .ir_row()
-        .map(|ir| {
+    let extras = match fact.ir_row() {
+        Some(ir) => {
             let (formals, formals_present) = formals_from_ir_row(ir);
             let (eligible, reason) = body_policy_from_ir(ir, /*default_eligible=*/ false);
             ClaimExtras {
                 emit_empty_formals: formals_present && formals.is_empty(),
                 formals,
+                formal_sorts: formal_sorts_from_ir_row(ir)?,
                 bridge_source_symbol: bridge_from_ir_row(ir),
                 out_binding: out_binding_from_ir_row(ir),
                 body_discharge_eligible: eligible,
                 body_discharge_refusal_reason: reason,
                 proofir_provenance: None,
             }
-        })
-        .unwrap_or_default();
+        }
+        None => ClaimExtras::default(),
+    };
 
     let mut graph = ProofGraph::new();
     let provenance_variants = fact
@@ -680,6 +731,10 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
 
     let mut graph = ProofGraph::new();
 
+    // #3901: never mint empty provenance. Prefer IR warrants; fall back to
+    // the universe's self-locating memento (same law as graph_from_fact).
+    let (warrant_jsons, warrants) = warrants_for_universe(u)?;
+
     if let Some(ir) = u.ir_row() {
         let mut slots = slots_from_ir_row(ir);
         if slots.is_empty() {
@@ -691,21 +746,12 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
             }
         }
         let (formals, formals_present) = formals_from_ir_row(ir);
-        let warrant_jsons: Vec<Json> = ir
-            .get("sourceWarrants")
-            .or_else(|| ir.get("source_warrants"))
-            .and_then(Json::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mut warrants = Vec::with_capacity(warrant_jsons.len());
-        for w in &warrant_jsons {
-            warrants.push(json_to_cvalue(w)?);
-        }
         // Function-contracts are body-bearing by default; IR can refuse.
         let (eligible, reason) = body_policy_from_ir(ir, /*default_eligible=*/ true);
         let extras = ClaimExtras {
             emit_empty_formals: formals_present && formals.is_empty(),
             formals,
+            formal_sorts: formal_sorts_from_ir_row(ir)?,
             bridge_source_symbol: bridge_from_ir_row(ir),
             out_binding: out_binding_from_ir_row(ir),
             body_discharge_eligible: eligible,
@@ -718,6 +764,7 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
     }
 
     // No IR row: name shell only — never body-discharge eligible (no policy).
+    // Still carry memento warrants (provenance hole closed).
     let shell_extras = ClaimExtras {
         body_discharge_eligible: false,
         body_discharge_refusal_reason: Some(
@@ -725,23 +772,13 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
         ),
         ..ClaimExtras::default()
     };
-    if let Some(payload) = u.payload() {
-        push_claim_with_slots(
-            &mut graph,
-            &name,
-            vec![("post", payload.clone())],
-            Vec::new(),
-            shell_extras,
-        )?;
+    let slots = if let Some(payload) = u.payload() {
+        vec![("post", payload.clone())]
     } else {
-        push_claim_with_slots(
-            &mut graph,
-            &name,
-            vec![("pre", true_formula())],
-            Vec::new(),
-            shell_extras,
-        )?;
-    }
+        vec![("pre", true_formula())]
+    };
+    push_claim_with_slots(&mut graph, &name, slots, warrants, shell_extras)?;
+    push_source_mementos_from_warrants(&mut graph, &warrant_jsons, &name)?;
     Ok(graph)
 }
 
@@ -840,6 +877,165 @@ mod json_to_cvalue_tests {
                 }
             ),
             "got {err}"
+        );
+    }
+}
+
+/// #3901 silent-loss instruments at the feed→prove_from_kit boundary.
+///
+/// Axes:
+///   R_formal_sorts_dropped — IR formalSorts must reach the claim member
+///   R_universe_empty_warrants — bare / warrant-less IR must not mint empty
+///     provenance (fall back to self-locating memento)
+#[cfg(test)]
+mod silent_loss_3901_tests {
+    use super::*;
+    use serde_json::json;
+    use sugar_proof_envelope::typed_member::Member;
+    use sugar_walk::source_oracle::{SourceMemento, SrcSpan};
+
+    fn test_memento(function_name: &str) -> SourceMemento {
+        SourceMemento {
+            file: "fixture.py".into(),
+            function_name: function_name.into(),
+            span: SrcSpan {
+                start_line: 1,
+                start_col: 0,
+                end_line: 2,
+                end_col: 0,
+            },
+            param_names: vec!["x".into()],
+            source_cid: "blake3-512:feed-test-source".into(),
+            template_cid: "blake3-512:feed-test-template".into(),
+        }
+    }
+
+    fn first_contract(graph: &ProofGraph) -> sugar_proof_envelope::typed_member::ContractMember {
+        for (cid, member_res) in graph.typed_members_iter() {
+            let member = member_res.unwrap_or_else(|e| panic!("typed member {cid}: {e}"));
+            if let Member::Contract(c) = member.as_ref() {
+                return c.clone();
+            }
+        }
+        panic!("expected at least one contract member");
+    }
+
+    /// R_formal_sorts_dropped: IR formalSorts must not be hardcoded away.
+    #[test]
+    fn graph_from_universe_carries_formal_sorts_from_ir() {
+        let ir = json!({
+            "kind": "function-contract",
+            "name": "mathy::add::callable",
+            "formals": ["a", "b"],
+            "formalSorts": [
+                {"kind": "primitive", "name": "Int"},
+                {"kind": "primitive", "name": "Int"}
+            ],
+            "post": {"kind": "atomic", "name": "true", "args": []},
+            "bridgeSourceSymbol": "call:add",
+            "bodyDischargeEligible": true
+        });
+        let u = Universe::for_feed_test(test_memento("mathy::add::callable"), Some(ir), None);
+        let graph = graph_from_universe(&u).expect("graph_from_universe");
+        let c = first_contract(&graph);
+        let sorts = c.formal_sorts.as_ref().unwrap_or_else(|| {
+            panic!(
+                "R_formal_sorts_dropped=1 — formalSorts present on IR but absent on \
+                 feed claim member (name={}). Replacement: ClaimExtras.formal_sorts \
+                 from formal_sorts_from_ir_row into MintContractArgs.",
+                c.contract_name
+            )
+        });
+        assert_eq!(
+            sorts.len(),
+            2,
+            "R_formal_sorts_dropped: expected 2 formalSorts, got {sorts:?}"
+        );
+        assert_eq!(sorts[0]["kind"], json!("primitive"));
+        assert_eq!(sorts[0]["name"], json!("Int"));
+        assert_eq!(
+            c.formals.as_ref().map(|f| f.as_slice()),
+            Some(["a".to_string(), "b".to_string()].as_slice())
+        );
+        eprintln!(
+            "R_formal_sorts_dropped=0 — name={} formal_sorts={}",
+            c.contract_name,
+            sorts.len()
+        );
+    }
+
+    /// R_universe_empty_warrants: IR omitting sourceWarrants must still seal
+    /// with memento provenance (never empty sourceWarrants).
+    #[test]
+    fn graph_from_universe_falls_back_to_memento_when_ir_omits_warrants() {
+        let ir = json!({
+            "kind": "function-contract",
+            "name": "shell::fn::callable",
+            "formals": ["x"],
+            "formalSorts": [{"kind": "primitive", "name": "Int"}],
+            "post": {"kind": "atomic", "name": "true", "args": []}
+            // deliberately no sourceWarrants
+        });
+        let u = Universe::for_feed_test(test_memento("shell::fn::callable"), Some(ir), None);
+        let graph = graph_from_universe(&u).expect("graph_from_universe");
+        let c = first_contract(&graph);
+        let warrants = c.source_warrants.as_ref().unwrap_or_else(|| {
+            panic!(
+                "R_universe_empty_warrants=1 — IR omitted sourceWarrants and feed \
+                 minted empty provenance (name={}). Replacement: warrants_for_universe \
+                 memento fallback.",
+                c.contract_name
+            )
+        });
+        assert!(
+            !warrants.is_empty(),
+            "R_universe_empty_warrants=1 — sourceWarrants present but empty on {name}",
+            name = c.contract_name
+        );
+        // Co-member source-memento must exist for locus map keys.
+        let source_members = graph
+            .typed_members_iter()
+            .filter(|(_, m)| {
+                matches!(
+                    m.as_ref().map(|mm| mm.as_ref()),
+                    Ok(Member::SourceMemento(_))
+                )
+            })
+            .count();
+        assert!(
+            source_members >= 1,
+            "R_universe_empty_warrants: expected ≥1 source-memento co-member, got 0"
+        );
+        eprintln!(
+            "R_universe_empty_warrants=0 — name={} warrants={} sources={}",
+            c.contract_name,
+            warrants.len(),
+            source_members
+        );
+    }
+
+    /// Bare shell (no IR row) must also carry memento warrants.
+    #[test]
+    fn graph_from_universe_shell_without_ir_carries_memento_warrants() {
+        let u = Universe::for_feed_test(test_memento("bare::shell::callable"), None, None);
+        let graph = graph_from_universe(&u).expect("shell graph_from_universe");
+        let c = first_contract(&graph);
+        let warrants = c.source_warrants.as_ref().unwrap_or_else(|| {
+            panic!(
+                "R_universe_empty_warrants=1 — bare shell sealed with no warrants \
+                 (name={}). Replacement: warrants_for_universe memento fallback.",
+                c.contract_name
+            )
+        });
+        assert!(
+            !warrants.is_empty(),
+            "bare shell must not mint empty provenance: {name}",
+            name = c.contract_name
+        );
+        eprintln!(
+            "R_universe_empty_warrants=0 (shell) — name={} warrants={}",
+            c.contract_name,
+            warrants.len()
         );
     }
 }
