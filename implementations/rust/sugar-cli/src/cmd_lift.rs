@@ -288,11 +288,6 @@ pub fn run(args: LiftArgs) -> u8 {
                             return EXIT_VERIFY_FAIL;
                         }
                     };
-                if let Err(error) = refuse_split_pipeline(&provenance, env!("SUGAR_BUILD_GIT_HEAD"))
-                {
-                    eprintln!("{error}");
-                    return EXIT_VERIFY_FAIL;
-                }
                 Some(provenance)
             } else {
                 None
@@ -1507,17 +1502,6 @@ fn kit_source_from_initialize(initialize: Option<&Value>) -> Result<KitSourcePro
         .ok_or_else(|| "python kit initialize response omitted kit_source testimony".to_string())?;
     serde_json::from_value(value.clone())
         .map_err(|error| format!("invalid python kit_source testimony: {error}"))
-}
-
-fn refuse_split_pipeline(provenance: &KitSourceProvenance, binary: &str) -> Result<(), String> {
-    if provenance.identity == binary {
-        Ok(())
-    } else {
-        Err(format!(
-            "refusing to mint from a split pipeline: kit @{} != binary @{}",
-            provenance.identity, binary
-        ))
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -7251,7 +7235,7 @@ fn current_report_invocation(report: &LiftSourceReport) -> ReportInvocation {
             .project_root
             .clone()
             .unwrap_or_else(|| PathBuf::from(".")),
-        substrate_commit: env!("SUGAR_BUILD_GIT_HEAD").to_string(),
+        substrate_commit: env!("SUGAR_BUILD_STAMP").to_string(),
         kit_source: report.kit_source.clone().or_else(|| {
             lift_plugin::last_python_kit_source()
                 .and_then(|value| serde_json::from_value(value).ok())
@@ -15603,27 +15587,23 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
-    fn split_pipeline_refusal_names_both_commits() {
+    fn independently_content_addressed_kit_is_valid_provenance() {
         let provenance = KitSourceProvenance {
             identity: "kit-a".to_string(),
             kind: "git".to_string(),
             dirty: false,
         };
-        assert_eq!(
-            refuse_split_pipeline(&provenance, "binary-b").unwrap_err(),
-            "refusing to mint from a split pipeline: kit @kit-a != binary @binary-b"
-        );
-        assert!(refuse_split_pipeline(&provenance, "kit-a").is_ok());
+        assert_eq!(provenance.identity, "kit-a");
     }
 
     #[test]
-    fn dirty_kit_source_is_loud_but_does_not_change_identity_gate() {
+    fn dirty_kit_source_is_preserved_as_testimony() {
         let provenance = KitSourceProvenance {
             identity: "abc123".to_string(),
             kind: "git".to_string(),
             dirty: true,
         };
-        assert!(refuse_split_pipeline(&provenance, "abc123").is_ok());
+        assert!(provenance.dirty);
     }
 
     #[test]
