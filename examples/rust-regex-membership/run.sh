@@ -125,14 +125,26 @@ run_nonregular_suite() {
   local mint_log="$dir/.mint.log"
   ( cd "$dir" && "$SUGAR" mint --out . ) > "$mint_log" 2>&1 || true
 
-  # NO str.in-regex row may exist — the language is never approximated; the floor stands.
+  # NO str.in-regex membership ATOM may exist — the language is never approximated.
+  # Free-text refusal reasons may mention the atom name ("no str.in-regex membership
+  # row"); only discrete string-atom encodings count as a real membership row.
   python3 - "$dir" <<'PY'
 import glob, sys
+
+def has_membership_atom(data: bytes) -> bool:
+    # CBOR text string of length 12 named str.in-regex (major type 3, ai=12 → 0x6c).
+    if b"\x6cstr.in-regex" in data:
+        return True
+    # JSON-quoted atom name (not free prose containing the characters).
+    if b'"str.in-regex"' in data or b"'str.in-regex'" in data:
+        return True
+    return False
+
 dirp = sys.argv[1]
-bad = [p for p in glob.glob(dirp + "/blake3-512_*.proof") if b"str.in-regex" in open(p, "rb").read()]
+bad = [p for p in glob.glob(dirp + "/blake3-512_*.proof") if has_membership_atom(open(p, "rb").read())]
 if bad:
     raise SystemExit("FAIL[nonregular]: a non-regular pattern must NOT emit a str.in-regex row")
-print("   no str.in-regex row emitted (the weak floor stands)")
+print("   no str.in-regex membership atom emitted (the weak floor stands)")
 PY
 
   # The refusal must NAME the offending non-regular feature.
