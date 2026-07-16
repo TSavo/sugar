@@ -235,6 +235,14 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
     ),
 )
 
+# #4578 moved the opaque equality refusal witnesses to the classifier that
+# actually constructs that shape.  These entries are lawful only while the
+# named owner remains registered and carries witnesses in its own name.
+EXPECTED_WITNESS_OWNER_DELEGATIONS: dict[str, str] = {
+    "EqualityOpSugar": "ObjectEqualityTermSugar",
+    "InequalityOpSugar": "ObjectEqualityTermSugar",
+}
+
 
 def seeds_from_catalog_witnesses() -> tuple[SugarWitnessSeed, ...]:
     seeds: list[SugarWitnessSeed] = []
@@ -271,14 +279,16 @@ def collect_sugar_witness_frontier(
 
 
 def unenrolled_sugars() -> tuple[UnenrolledSugar, ...]:
+    claims = {claim.name: claim for claim in _catalog_claims()}
     return tuple(
         UnenrolledSugar(
             name=claim.name,
             module=_claim_module(claim),
             role=claim.role.value,
         )
-        for claim in _catalog_claims()
+        for claim in claims.values()
         if not _claim_has_witness_or_opt_out(claim)
+        and not _claim_has_witness_owner_delegation(claim, claims)
     )
 
 
@@ -760,6 +770,19 @@ def _claim_has_witness_or_opt_out(claim) -> bool:
             and opt_out.reason == pinned.reason
         )
     return False
+
+
+def _claim_has_witness_owner_delegation(claim, claims: dict[str, Any]) -> bool:
+    owner_name = EXPECTED_WITNESS_OWNER_DELEGATIONS.get(claim.name)
+    if owner_name is None:
+        return False
+    owner = claims.get(owner_name)
+    if owner is None:
+        return False
+    witnesses = _witness_pairs(_claim_witnesses(owner))
+    return bool(witnesses) and all(
+        witness.owner_sugar == owner_name for witness in witnesses
+    )
 
 
 def _witness_pairs(witness: object) -> tuple[SugarWitnessSeed, ...]:

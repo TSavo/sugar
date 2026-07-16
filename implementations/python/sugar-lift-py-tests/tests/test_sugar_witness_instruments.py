@@ -191,16 +191,46 @@ def test_catalog_witnesses_migrate_s1_seed_surface() -> None:
 
 
 def test_opaque_object_equality_is_owned_by_refusal_sugar() -> None:
+    seeds = tuple(
+        seed
+        for seed in DEFAULT_SUGAR_WITNESS_SEEDS
+        if seed.name in {"object_equality_identity_return", "object_equality_return"}
+    )
+
+    assert {seed.name for seed in seeds} == {
+        "object_equality_identity_return",
+        "object_equality_return",
+    }
+    assert all(type(seed).__name__ == "SugarRefusedWitnessPair" for seed in seeds)
+    assert all(seed.owner_sugar == "ObjectEqualityTermSugar" for seed in seeds)
+    assert all(seed.truthful.expected == "refused" for seed in seeds)
+    assert all(seed.lying.expected == "refused" for seed in seeds)
+
+
+def test_opaque_object_equality_lying_witness_still_refuses(tmp_path: Path) -> None:
     seed = next(
         seed
         for seed in DEFAULT_SUGAR_WITNESS_SEEDS
         if seed.name == "object_equality_return"
     )
 
-    assert type(seed).__name__ == "SugarRefusedWitnessPair"
-    assert seed.owner_sugar == "ObjectEqualityTermSugar"
-    assert seed.truthful.expected == "refused"
-    assert seed.lying.expected == "refused"
+    lying = run_source_through_real_solver(tmp_path / "lying", seed.lying.source)
+    print(
+        json.dumps(
+            {
+                "seed": seed.name,
+                "expected": seed.lying.expected,
+                "observed": lying.verdict,
+                "selectedSugars": lying.selected_sugars,
+                "rows": lying.prove_doc.get("rows"),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+    assert "ObjectEqualityTermSugar" in lying.selected_sugars
+    assert lying.verdict in {"refused", "refused-modulo-unavailable-seats"}
 
 
 def test_non_fol_opt_out_is_floor_anchored_and_bidirectional() -> None:
