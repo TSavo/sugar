@@ -142,6 +142,9 @@ class _StructuredTransportFormatter(logging.Formatter):
             "phase_total_ms",
             "phase_mean_ms",
             "phase_max_ms",
+            "rss_before_kib",
+            "rss_after_kib",
+            "error",
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
@@ -302,6 +305,64 @@ def _log_resident_profile(request_count: int, method: Any) -> None:
                 "allocation_count": statistic.count,
             },
         )
+
+
+_MALLOC_TRIM: Any = None
+
+
+def _malloc_trim() -> bool:
+    """Return freed glibc arenas to the OS. False where unavailable (e.g. musl,
+    macOS); resolved once and cached."""
+    global _MALLOC_TRIM
+    if _MALLOC_TRIM is None:
+        try:
+            import ctypes
+            import ctypes.util
+
+            libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6")
+            _MALLOC_TRIM = libc.malloc_trim
+        except (OSError, AttributeError):
+            _MALLOC_TRIM = False
+    if not _MALLOC_TRIM:
+        return False
+    try:
+        _MALLOC_TRIM(0)
+        return True
+    except Exception as exc:  # never crash the plugin, but surface the anomaly
+        _TRANSPORT_LOG.warning(
+            "malloc_trim_failed",
+            extra={"stage": "resident.trim", "error": repr(exc)},
+        )
+        return False
+
+
+def _maybe_trim_resident(request_count: int) -> None:
+    """Hand freed arenas back to the OS on a fixed request cadence.
+
+    A long wall run parses hundreds of thousands of tiny AST nodes per file;
+    when freed, glibc keeps the arenas, so RSS ratchets even though the live
+    object set stays modest. A periodic gc.collect() + malloc_trim(0) returns
+    that transient memory. Gated (default off) so ordinary lifting pays nothing;
+    the wall workflows opt in via SUGAR_KIT_TRIM_EVERY. This bounds the
+    arena-fragmentation component of resident growth only -- it does not release
+    memory pinned by live references (see #4584 profiling notes)."""
+    every = _profile_interval("SUGAR_KIT_TRIM_EVERY")
+    if every <= 0 or request_count % every:
+        return
+    rss_before, _ = _resident_rss_kib()
+    gc.collect()
+    if not _malloc_trim():
+        return
+    rss_after, _ = _resident_rss_kib()
+    _TRANSPORT_LOG.info(
+        "resident_trim",
+        extra={
+            "stage": "resident.trim",
+            "request_count": request_count,
+            "rss_before_kib": rss_before,
+            "rss_after_kib": rss_after,
+        },
+    )
 
 
 def _log_enumeration_demand(
@@ -3644,6 +3705,7 @@ def _serve() -> None:
             _log_resident_profile(request_count, msg.get("method"))
             raise SystemExit(1) from panic
         _log_resident_profile(request_count, msg.get("method"))
+        _maybe_trim_resident(request_count)
         if not keep_serving:
             break
 
