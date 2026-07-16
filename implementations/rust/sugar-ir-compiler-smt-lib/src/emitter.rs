@@ -43,6 +43,15 @@ fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
             emit_const_value(value, sort_name)
         }
         Term::Ctor { name, args, .. } => {
+            // Grounded Int bitwise constructors: Python kit emits native `&`/`|`/
+            // `^`/`<<`/`>>` over primitive Int (no Number supersort, no bv32
+            // cast). After callsite join those become fully-constant applications
+            // such as `&(6, 3)`. Without fold they stay uninterpreted EUF and a
+            // lying `A(6) == 1` stays SAT (#4394). Fold only the grounded case so
+            // the universe may still keep the symbolic coordinate `out = &(z, 3)`.
+            if let Some(folded) = emit_grounded_int_bitwise(name, args) {
+                return folded;
+            }
             if name == "to_real" && args.len() == 1 {
                 return format!(
                     "(to_real {})",
@@ -3486,6 +3495,70 @@ fn is_int_const(t: &Term) -> bool {
     )
 }
 
+/// Read a ground integer from a const term (i64 Number or decimal string i128).
+fn term_as_ground_int(term: &Term) -> Option<i128> {
+    match term {
+        Term::Const { value, sort, .. } => {
+            let sort_name = match sort {
+                Sort::Primitive { name } => name.as_str(),
+                _ => return None,
+            };
+            if sort_name != "Int" && !is_int_width_sort(sort_name) {
+                return None;
+            }
+            if let Some(n) = value.as_i64() {
+                return Some(i128::from(n));
+            }
+            if let Some(s) = value.as_str() {
+                return s.parse::<i128>().ok();
+            }
+            None
+        }
+        // Recursively fold nested grounded bitwise (and later arithmetic) trees
+        // so `&(+(1,5), 3)` still discharges after join.
+        Term::Ctor { name, args, .. } => emit_grounded_int_bitwise_value(name, args),
+        _ => None,
+    }
+}
+
+/// Python-like Int bitwise on a fully-ground application. Returns the folded
+/// integer when every argument is ground; `None` leaves the ctor uninterpreted.
+fn emit_grounded_int_bitwise_value(name: &str, args: &[Term]) -> Option<i128> {
+    if args.len() != 2 {
+        return None;
+    }
+    let left = term_as_ground_int(&args[0])?;
+    let right = term_as_ground_int(&args[1])?;
+    match name {
+        "&" => Some(left & right),
+        "|" => Some(left | right),
+        "^" => Some(left ^ right),
+        "<<" => {
+            if !(0..128).contains(&right) {
+                return None;
+            }
+            left.checked_shl(right as u32)
+        }
+        // Python arithmetic right-shift: sign-extends negatives.
+        ">>" => {
+            if !(0..128).contains(&right) {
+                return None;
+            }
+            Some(left >> (right as u32))
+        }
+        _ => None,
+    }
+}
+
+/// Emit a grounded Int bitwise ctor as an SMT-LIB integer numeral.
+fn emit_grounded_int_bitwise(name: &str, args: &[Term]) -> Option<String> {
+    let value = emit_grounded_int_bitwise_value(name, args)?;
+    Some(match value {
+        n if n >= 0 => n.to_string(),
+        n => format!("(- {})", n.unsigned_abs()),
+    })
+}
+
 /// Rewrite qualifying `=(subject, IntConst)` atoms into `int32.eq-const`
 /// atoms when `subject` is a known bv32 subject. Recurses structurally.
 fn promote_bv32_siblings_formula(formula: &Formula, subjects: &[Term]) -> Formula {
@@ -3959,6 +4032,56 @@ mod emit_term_direct_tests {
 
     fn var(name: &str) -> Term {
         Term::Var { name: name.into() }
+    }
+
+    #[test]
+    fn grounded_int_bitwise_and_folds_to_numeral() {
+        // #4394: A(6) joins to &(6, 3); the emitter must fold to 2 so the
+        // lying A(6)==1 obligation is UNSAT instead of free EUF SAT.
+        let term = Term::Ctor {
+            name: "&".into(),
+            args: vec![int_const(6), int_const(3)],
+        };
+        assert_eq!(emit_term(&term), "2");
+    }
+
+    #[test]
+    fn grounded_int_bitwise_ops_match_python() {
+        let cases = [
+            ("&", 6i64, 3i64, "2"),
+            ("|", 6, 3, "7"),
+            ("^", 6, 3, "5"),
+            ("<<", 3, 4, "48"),
+            (">>", 17, 2, "4"),
+            ("&", -5, 3, "3"),
+            (">>", -5, 1, "(- 3)"),
+        ];
+        for (op, left, right, expected) in cases {
+            let term = Term::Ctor {
+                name: op.into(),
+                args: vec![int_const(left), int_const(right)],
+            };
+            assert_eq!(
+                emit_term(&term),
+                expected,
+                "grounded {left} {op} {right} must fold like Python"
+            );
+        }
+    }
+
+    #[test]
+    fn symbolic_int_bitwise_stays_uninterpreted_coordinate() {
+        // Universe post keeps out = &(z, 3); only grounded applications fold.
+        let term = Term::Ctor {
+            name: "&".into(),
+            args: vec![var("z"), int_const(3)],
+        };
+        let smt = emit_term(&term);
+        assert!(
+            smt.contains('&') || smt.contains("|"),
+            "symbolic &(z,3) must remain a coordinate, got {smt}"
+        );
+        assert_ne!(smt, "2");
     }
 
     #[test]
