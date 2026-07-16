@@ -207,6 +207,11 @@ class SourceFragment:
                 gap_kind=GapKind.FLOOR,
                 gap_locus=GapLocus.CONSTRUCTION,
             )
+        extra = {}
+        if isinstance(self.node, ast.Assert) and self.node.msg is not None:
+            message = _cached_source_segment(self.source, self.node.msg)
+            if message is not None:
+                extra["assertMessage"] = message
         return SourceMementoDto(
             file=self.filename,
             span=SourceSpanDto(
@@ -216,6 +221,7 @@ class SourceFragment:
                 end_col=getattr(self.node, "end_col_offset", 0) or 0,
             ),
             source_cid=blake3_512_of(segment.encode()),
+            extra=extra,
         )
 
     def has_enclosing_loop(self) -> bool:

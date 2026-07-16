@@ -9637,7 +9637,23 @@ impl ReportFactRow {
     }
 
     fn source_annotations(&self, fallback_line: Option<u64>) -> Vec<ReportSourceAnnotation> {
-        self.source_annotation(fallback_line).into_iter().collect()
+        let mut annotations = self
+            .source_annotation(fallback_line)
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let (Some(line), Some(message)) = (
+            self.annotation_line.or(fallback_line),
+            self.source
+                .as_ref()
+                .and_then(|source| source.get("assertMessage"))
+                .and_then(Value::as_str),
+        ) {
+            annotations.push(ReportSourceAnnotation {
+                line,
+                label: format!("message: {message}"),
+            });
+        }
+        annotations
     }
 }
 
@@ -12382,6 +12398,7 @@ mod tests {
             "paramNames": [],
             "source_cid": format!("blake3-512:{}", "c".repeat(128)),
             "template_cid": format!("blake3-512:{}", "d".repeat(128)),
+            "assertMessage": "month",
             "sourceOracle": {
                 "status": "resolved",
                 "source": "assert_eq!(3, encoded_len(2, false).unwrap());",
@@ -12420,7 +12437,7 @@ mod tests {
 
         assert!(
             human.contains(
-                "    assert_eq!(3, encoded_len(2, false).unwrap());  FACT ⊢ ¬panic(encoded_len#panic_callsite(2, false))"
+                "    assert_eq!(3, encoded_len(2, false).unwrap());  FACT ⊢ ¬panic(encoded_len#panic_callsite(2, false)) ; message: month"
             ),
             "{human}"
         );
