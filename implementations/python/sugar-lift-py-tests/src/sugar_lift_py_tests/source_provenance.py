@@ -20,7 +20,9 @@ def _git(root: Path, *args: str) -> str | None:
 def _content_identity(roots: list[Path]) -> str:
     material = bytearray()
     for index, root in enumerate(roots):
-        for path in sorted(candidate for candidate in root.rglob("*") if candidate.is_file()):
+        for path in sorted(
+            candidate for candidate in root.rglob("*") if candidate.is_file()
+        ):
             if "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"}:
                 continue
             relative = path.relative_to(root).as_posix().encode()
@@ -37,11 +39,19 @@ def source_provenance_for_roots(roots: Iterable[Path]) -> dict[str, object]:
         top = _git(root, "rev-parse", "--show-toplevel")
         head = _git(root, "rev-parse", "HEAD")
         if top is None or head is None:
-            return {"identity": _content_identity(resolved), "kind": "content", "dirty": False}
+            return {
+                "identity": _content_identity(resolved),
+                "kind": "content",
+                "dirty": False,
+            }
         git_rows.append((Path(top), head, root.relative_to(Path(top)).as_posix()))
     heads = {head for _, head, _ in git_rows}
     if len(heads) != 1:
-        return {"identity": _content_identity(resolved), "kind": "content", "dirty": False}
+        return {
+            "identity": _content_identity(resolved),
+            "kind": "content",
+            "dirty": False,
+        }
     dirty = any(
         bool(_git(top, "status", "--porcelain", "--", relative))
         for top, _, relative in git_rows
