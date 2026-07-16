@@ -49,6 +49,10 @@ jobs:
           SUGAR_ENGINE_CYCLE_THRESHOLD: "8"
           SUGAR_KIT_LOG: ${{ github.workspace }}/.sugar/pandas-wall-logs/transport.jsonl
           SUGAR_KIT_LOG_LEVEL: INFO
+          # One logical wall traversal owns one resident kit. The Python-side
+          # ownership caches are independently bounded; request-count rotation
+          # would discard them and rebuild the same files hundreds of times.
+          SUGAR_LIFT_RESIDENT_MAX_REQUESTS: unlimited
         run: |
           mkdir -p .sugar/pandas-wall-logs
           : > "$SUGAR_ENGINE_LOG"
