@@ -684,6 +684,41 @@ mod tests {
     }
 
     #[test]
+    fn python_less_equal_compiles_to_native_ordering_and_lying_twin_refutes() {
+        let z3 = which_z3().expect("z3 required for py.le round-trip");
+        for (name, left, right, native) in [
+            ("py.le", 1, 12, "(<= 1 12)"),
+            ("py.gt", 12, 1, "(> 12 1)"),
+            ("py.ge", 12, 1, "(>= 12 1)"),
+        ] {
+            let parts =
+                fixture_compile_to_parts(&atomic(name, vec![int_const(left), int_const(right)]))
+                    .expect("compile comparison-family atom");
+            assert!(
+                parts.body.contains(native),
+                "{name} must compile as native SMT ordering:\n{}",
+                parts.body
+            );
+            assert!(
+                !parts.preamble.contains(&format!("declare-fun {name}")),
+                "{name} must not be declared as an uninterpreted predicate:\n{}",
+                parts.preamble
+            );
+        }
+
+        let truthful = atomic("py.le", vec![int_const(1), int_const(12)]);
+        let lying = atomic("py.le", vec![int_const(12), int_const(1)]);
+
+        let truthful_parts = fixture_compile_to_parts(&truthful).expect("compile truthful");
+        let lying_parts = fixture_compile_to_parts(&lying).expect("compile lying");
+        let truthful_script = format!("{}{}", truthful_parts.preamble, truthful_parts.body);
+        let lying_script = format!("{}{}", lying_parts.preamble, lying_parts.body);
+
+        assert_eq!(run_z3(&z3, &truthful_script).trim(), "unsat");
+        assert_eq!(run_z3(&z3, &lying_script).trim(), "sat");
+    }
+
+    #[test]
     fn float_refinement_predicate_uses_real_call_result_sort_and_has_unsat_teeth() {
         let z3 = which_z3().expect("z3 required for float refinement predicate check");
         for (predicate, call_name) in [

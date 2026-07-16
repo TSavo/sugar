@@ -11,9 +11,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class LessEqualOpSugar(Sugar, role=SugarRole.TERM):
-    """The `<=` operator. It is `not (b < a)`: the ordering floor with the operands
-    swapped, and the resulting bool literal negates itself. Its own sugar, its own
-    type; the value owns the answer, no fork."""
+    """The faithful Python `<=` operator, resolved per atom by operand warrants."""
 
     left: SugarBody
     right: SugarBody
@@ -37,8 +35,8 @@ class LessEqualOpSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        # `<=` is `not (b < a)`: folds concrete operands to the True/False literal, and
-        # the literal picks the if-face: the truthful twin rides the face `<=` picked,
+        # Concrete operands fold to the True/False literal, and the literal picks
+        # the if-face: the truthful twin rides the face `<=` picked,
         # the lying twin asserts the other -- the pair proves the lift discriminates
         # on order (including equality).
         prefix = (
@@ -54,9 +52,7 @@ class LessEqualOpSugar(Sugar, role=SugarRole.TERM):
     def desugar(self, ctx: object = None) -> Outcome:
         return self.left.reduce(ctx).and_then(
             lambda left: self.right.reduce(ctx).and_then(
-                lambda right: right.less_than(left, self.site).and_then(
-                    lambda less: less.negate()
-                )
+                lambda right: left.less_equal(right, self.site)
             )
         )
 

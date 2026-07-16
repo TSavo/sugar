@@ -25,7 +25,16 @@ _CHAIN_OPS = frozenset(
 
 
 def _op_atom(op: str, left_term, right_term):
-    from sugar_lift_py_tests.ir import atomic, identity, not_, py_eq, py_lt
+    from sugar_lift_py_tests.ir import (
+        atomic,
+        identity,
+        not_,
+        py_eq,
+        py_ge,
+        py_gt,
+        py_le,
+        py_lt,
+    )
 
     if op == "Eq":
         return py_eq(left_term, right_term)
@@ -34,11 +43,11 @@ def _op_atom(op: str, left_term, right_term):
     if op == "Lt":
         return py_lt(left_term, right_term)
     if op == "LtE":
-        return not_(py_lt(right_term, left_term))
+        return py_le(left_term, right_term)
     if op == "Gt":
-        return py_lt(right_term, left_term)
+        return py_gt(left_term, right_term)
     if op == "GtE":
-        return not_(py_lt(left_term, right_term))
+        return py_ge(left_term, right_term)
     if op == "Is":
         return identity(left_term, right_term)
     if op == "IsNot":
@@ -80,11 +89,16 @@ def _guarded_op_atom(op: str, left, right, site):
                 ),
             ]
         )
-    return _op_atom(
-        op,
-        left.to_term(owner=str(site)),
-        right.to_term(owner=str(site)),
-    )
+    if op in {"Lt", "LtE", "Gt", "GtE"}:
+        from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
+
+        return resolve_comparison_atom(
+            {"Lt": "lt", "LtE": "le", "Gt": "gt", "GtE": "ge"}[op],
+            left,
+            right,
+            owner=str(site),
+        )
+    return _op_atom(op, left.to_term(owner=str(site)), right.to_term(owner=str(site)))
 
 
 @dataclass(frozen=True)

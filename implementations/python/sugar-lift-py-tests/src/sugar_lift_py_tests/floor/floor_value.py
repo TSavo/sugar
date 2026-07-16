@@ -909,7 +909,7 @@ class FloorValue:
             NamedExpressionValue,
         )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import py_lt
+        from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
         from sugar_lift_py_tests.outcome import Complete
 
         if isinstance(other, GuardedValue):
@@ -919,7 +919,46 @@ class FloorValue:
 
         return Complete(
             PredicateValue(
-                py_lt(self.to_term(owner=str(site)), other.to_term(owner=str(site))),
+                resolve_comparison_atom("lt", self, other, owner=str(site)),
+                site,
+                operand_callsites=(*self.callsites(), *other.callsites()),
+            )
+        )
+
+    def less_equal(self, other, site):
+        from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                resolve_comparison_atom("le", self, other, owner=str(site)),
+                site,
+                operand_callsites=(*self.callsites(), *other.callsites()),
+            )
+        )
+
+    def greater_than(self, other, site):
+        from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                resolve_comparison_atom("gt", self, other, owner=str(site)),
+                site,
+                operand_callsites=(*self.callsites(), *other.callsites()),
+            )
+        )
+
+    def greater_equal(self, other, site):
+        from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                resolve_comparison_atom("ge", self, other, owner=str(site)),
                 site,
                 operand_callsites=(*self.callsites(), *other.callsites()),
             )
