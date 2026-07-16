@@ -7046,7 +7046,10 @@ fn current_report_invocation(report: &LiftSourceReport) -> ReportInvocation {
             .clone()
             .unwrap_or_else(|| PathBuf::from(".")),
         substrate_commit: env!("SUGAR_BUILD_GIT_HEAD").to_string(),
-        kit_source: report.kit_source.clone(),
+        kit_source: report.kit_source.clone().or_else(|| {
+            lift_plugin::last_python_kit_source()
+                .and_then(|value| serde_json::from_value(value).ok())
+        }),
         mint_timestamp: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
     }
 }

@@ -7,6 +7,7 @@
 // input, and derives compatibility response projections from typed claims.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use libsugar::core::{
@@ -419,12 +420,25 @@ fn enforce_python_kit_source(
         })?;
     let binary = env!("SUGAR_BUILD_GIT_HEAD");
     if identity == binary {
+        if let Ok(mut slot) = last_python_kit_source_slot().lock() {
+            *slot = initialize_response.get("kit_source").cloned();
+        }
         Ok(())
     } else {
         Err(LiftPluginError::SplitPipeline(format!(
             "refusing to mint from a split pipeline: kit @{identity} != binary @{binary}"
         )))
     }
+}
+
+fn last_python_kit_source_slot() -> &'static Mutex<Option<Value>> {
+    static SLOT: OnceLock<Mutex<Option<Value>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+#[allow(dead_code)] // consumed by binary-only cmd_lift graph report rendering
+pub(crate) fn last_python_kit_source() -> Option<Value> {
+    last_python_kit_source_slot().lock().ok()?.clone()
 }
 
 /// Unregistered-dialect fallback: builds the same source/path input the
