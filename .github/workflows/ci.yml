@@ -27,8 +27,45 @@ permissions:
   id-token: write
 
 jobs:
+  prepare:
+    name: shared Rust build
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust 1.96.0
+        uses: dtolnay/rust-toolchain@1.96.0
+
+      - name: Restore and save exact-commit Rust build
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            implementations/rust/target
+          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-
+
+      - name: Build shared Rust artifacts once
+        run: |
+          make build-rust
+          cargo build --manifest-path implementations/rust/Cargo.toml \
+            -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
+            -p sugar-ir-compiler-lean --bin sugar-ir-lean \
+            -p sugar-ir-compiler-coq --bin sugar-ir-coq \
+            -p sugar-ir-compiler-maude --bin sugar-ir-maude \
+            -p sugar-walk --bin sugar-walk-rpc \
+            -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
+            -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
+            -p sugar-lift-rust-cargo-test-witness --bin discharge_cli
+
   core:
     name: acid core instruments
+    needs: prepare
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 180
 
@@ -45,16 +82,15 @@ jobs:
         working-directory: implementations/rust
         run: cargo fmt --all -- --check
 
-      - name: Restore and save Rust target dirs
-        uses: actions/cache@v5
+      - name: Restore exact-commit Rust build
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             implementations/rust/target
-          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}-
+          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          fail-on-cache-miss: true
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
@@ -95,6 +131,7 @@ jobs:
 
   showcases:
     name: showcases (${{ matrix.shard }}/4)
+    needs: prepare
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 180
     strategy:
@@ -111,16 +148,15 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Restore and save Rust target dirs
-        uses: actions/cache@v5
+      - name: Restore exact-commit Rust build
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             implementations/rust/target
-          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}-
+          key: ${{ runner.os }}-cargo-v3-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          fail-on-cache-miss: true
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
@@ -158,14 +194,16 @@ jobs:
   acid-test:
     name: acid test (make ci)
     if: always()
-    needs: [core, showcases]
+    needs: [prepare, core, showcases]
     runs-on: ubuntu-latest
     steps:
       - name: Report the complete acid-test vector
         env:
+          PREPARE_RESULT: ${{ needs.prepare.result }}
           CORE_RESULT: ${{ needs.core.result }}
           SHOWCASE_RESULT: ${{ needs.showcases.result }}
         run: |
-          echo "core=$CORE_RESULT showcases=$SHOWCASE_RESULT"
+          echo "prepare=$PREPARE_RESULT core=$CORE_RESULT showcases=$SHOWCASE_RESULT"
+          test "$PREPARE_RESULT" = success
           test "$CORE_RESULT" = success
           test "$SHOWCASE_RESULT" = success
