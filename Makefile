@@ -554,7 +554,7 @@ coretests-source-audit:
 	  remote_tag="$${remote_tag:-default}"; \
 	  remote_root="$${BCARGO_REMOTE_ROOT:-/home/tsavo/remote/sugar-bcargo-$$remote_tag}"; \
 	  remote_repo="$$remote_root/sugar"; \
-	  remote_cmd="cd $$(printf '%q' "$$remote_repo") && CORETESTS_SOURCE_AUDIT_ON_REMOTE=1 USE_BCARGO=0 Z3=$${Z3:-/usr/bin/z3} make coretests-source-audit"; \
+	  remote_cmd="cd $$(printf '%q' "$$remote_repo") && CORETESTS_SOURCE_AUDIT_ON_REMOTE=1 USE_BCARGO=0 Z3=$${Z3:-/usr/bin/z3} SUGAR_LIFT_RESPONSE_TIMEOUT_SECS=$${SUGAR_LIFT_RESPONSE_TIMEOUT_SECS:-900} make coretests-source-audit"; \
 	  ssh -o BatchMode=yes "$$remote_host" "bash -lc $$(printf '%q' "$$remote_cmd")"; \
 	  exit $$?; \
 	fi; \
@@ -566,7 +566,14 @@ coretests-source-audit:
 	sed "s|@BIN_DIR@|$$bin_dir|g" "$$manifest_dir/manifest.toml.in" > "$$manifest_dir/manifest.toml"; \
 	echo "==== coretests-source-audit: panic-armed source totality ===="; \
 	cd "$$corpus"; \
-	RUST_LOG=error NO_COLOR=1 CLICOLOR=0 TERM=dumb "$$sugar_bin" lift --report --report-summary
+	# Full-corpus `lift --report` is ONE lift RPC over ~1.4k assertion loci.
+	# The kit transport default (120s) is a hang detector for ordinary plugins;
+	# this gate is intentionally heavy and regularly exceeds that under CI load
+	# (monadic family work, factory walks). Bound the wait via the existing
+	# SUGAR_LIFT_RESPONSE_TIMEOUT_SECS knob; allow override, default 15 min.
+	SUGAR_LIFT_RESPONSE_TIMEOUT_SECS="$${SUGAR_LIFT_RESPONSE_TIMEOUT_SECS:-900}" \
+	  RUST_LOG=error NO_COLOR=1 CLICOLOR=0 TERM=dumb \
+	  "$$sugar_bin" lift --report --report-summary
 
 .PHONY: coretests-invariants
 coretests-invariants:
