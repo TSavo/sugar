@@ -41,6 +41,25 @@ def test_recovered_audit_records_independent_panics_without_lift_payload() -> No
     assert all(item["status"] == "mandatory-panic" for item in wire["panics"])
 
 
+@pytest.mark.parametrize(
+    ("source", "demanded_source", "observed"),
+    [
+        ("bound = (yield missing)\n", "binding:bound", "Yield"),
+        ("assert missing\n", "assert:1:0", "missing"),
+    ],
+)
+def test_module_seed_panics_are_recovered_as_immutable_evidence(
+    source: str, demanded_source: str, observed: str
+) -> None:
+    wire = audit_lift_file(source, "module_seed.py", recover_panics=True).to_rpc()
+
+    assert wire["status"] == "failed"
+    assert len(wire["panics"]) == 1
+    assert wire["panics"][0]["locus"] == "module_seed.py:1:0"
+    assert wire["panics"][0]["demandedSource"] == demanded_source
+    assert wire["panics"][0]["gap"]["observed"] == observed
+
+
 def test_recovered_audit_does_not_mark_unsupported_async_definition_clean() -> None:
     source = "async def omitted():\n    nonlocal missing\n"
 

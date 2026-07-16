@@ -1155,10 +1155,10 @@ def _module_import_temporal(
                     if recovered_panics is None:
                         raise
                     recovered_panics.append(
-                        (
-                            f"{stmt.filename}:{stmt.line}:{stmt.col}",
-                            f"assert:{stmt.line}:{stmt.col}",
-                            _detached_factory_panic(panic),
+                        _SeedPanicEvidence(
+                            locus=f"{stmt.filename}:{stmt.line}:{stmt.col}",
+                            demanded_source=f"assert:{stmt.line}:{stmt.col}",
+                            info=panic.info,
                         )
                     )
                     continue
@@ -1190,10 +1190,10 @@ def _module_import_temporal(
                 if recovered_panics is None:
                     raise
                 recovered_panics.append(
-                    (
-                        f"{stmt.filename}:{stmt.line}:{stmt.col}",
-                        f"binding:{name}",
-                        _detached_factory_panic(panic),
+                    _SeedPanicEvidence(
+                        locus=f"{stmt.filename}:{stmt.line}:{stmt.col}",
+                        demanded_source=f"binding:{name}",
+                        info=panic.info,
                     )
                 )
                 continue
