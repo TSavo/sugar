@@ -404,8 +404,7 @@ def build_pandas_wall(
             )
         summary = summarize_pandas_construction_gaps(failure_output)
         recovered_frontier_mode = (
-            floors.mode == "complete"
-            or floors.frontier_independent_panics is not None
+            floors.mode == "complete" or floors.frontier_independent_panics is not None
         )
         if summary.gaps_total == 0 and recovered_frontier_mode:
             # Normal lift remains fail-fast and produces no report. The only lawful

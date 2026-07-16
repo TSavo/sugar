@@ -333,9 +333,7 @@ def test_missing_qualified_imported_function_keeps_bodyless_coordinate(
     )
     monkeypatch.syspath_prepend(str(tmp_path))
 
-    callsite, _ = _consumer_call(
-        "from fixture_missing.api import absent\n", "absent()"
-    )
+    callsite, _ = _consumer_call("from fixture_missing.api import absent\n", "absent()")
 
     assert isinstance(callsite, CallSiteValue)
     assert callsite.target_name == "fixture_missing.api.absent"
