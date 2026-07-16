@@ -761,7 +761,9 @@ publish_if_absent() {
     return 0
   fi
   local actor sha tmp asset meta
-  actor="$(gh api user --jq .login 2>/dev/null || printf unknown)"
+  # GITHUB_TOKEN is an installation token and cannot read `/user`. Actions
+  # already supplies the initiating identity without another API round trip.
+  actor="${GITHUB_ACTOR:-${USER:-unknown}}"
   sha="$(sha256_file "$bin")"
   tmp="$(mktemp -d)"
   asset="$tmp/$name"
