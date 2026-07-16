@@ -4535,6 +4535,7 @@ fn render_universe_visual_report(
     );
     let mut out = String::new();
     let mut breakdown_cache = BTreeMap::<(String, u8), String>::new();
+    let mut canonical_assertions = BTreeMap::<String, CanonicalAssertion>::new();
     out.push_str("universe visual:\n");
     let grouping_started = Instant::now();
     let groups = group_contracts_for_universe_visual_with_identities(report, identities);
@@ -4633,6 +4634,7 @@ fn render_universe_visual_report(
                     member,
                     identity,
                     &qualified_contracts,
+                    &mut canonical_assertions,
                 );
             }
             tracing::info!(
@@ -4922,6 +4924,7 @@ struct VisualFormulaRenderer<'a> {
     color: bool,
     term_table: Option<&'a LiftTermTable>,
     seen_term_cids: HashSet<String>,
+    term_repeats: HashMap<String, usize>,
     meta: HashMap<usize, VisualSubtreeMeta>,
     repeats: HashMap<[u8; 32], usize>,
     seen: HashSet<[u8; 32]>,
@@ -4940,6 +4943,7 @@ impl<'a> VisualFormulaRenderer<'a> {
             color,
             term_table,
             seen_term_cids: HashSet::new(),
+            term_repeats: HashMap::new(),
             meta: HashMap::new(),
             repeats: HashMap::new(),
             seen: HashSet::new(),
@@ -4956,7 +4960,47 @@ impl<'a> VisualFormulaRenderer<'a> {
             elided_returns: 0,
         };
         renderer.root_meta = renderer.inventory(root);
+        renderer.inventory_term_repeats(root);
         renderer
+    }
+
+    fn inventory_term_repeats(&mut self, value: &Value) {
+        if value.get("kind").and_then(Value::as_str) == Some("term-ref") {
+            let table = self.term_table.unwrap_or_else(|| {
+                panic!("term-ref reached the report without the required termTable")
+            });
+            let node = table
+                .resolve_reference(value)
+                .unwrap_or_else(|error| panic!("report term-table resolution failed: {error}"));
+            self.inventory_term_node_repeats(&node);
+            return;
+        }
+        match value {
+            Value::Array(values) => {
+                for child in values {
+                    self.inventory_term_repeats(child);
+                }
+            }
+            Value::Object(fields) => {
+                for child in fields.values() {
+                    self.inventory_term_repeats(child);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn inventory_term_node_repeats(&mut self, term: &LiftTermNode) {
+        let count = self.term_repeats.entry(term.cid().to_string()).or_default();
+        if *count >= 2 {
+            return;
+        }
+        *count += 1;
+        if let LiftTermKind::Ctor { args, .. } = term.kind() {
+            for arg in args {
+                self.inventory_term_node_repeats(arg);
+            }
+        }
     }
 
     fn inventory(&mut self, value: &Value) -> VisualSubtreeMeta {
@@ -5282,29 +5326,34 @@ impl<'a> VisualFormulaRenderer<'a> {
                 self.color,
             ),
             LiftTermKind::Ctor { name, args } => {
-                if !self.seen_term_cids.insert(term.cid().to_string()) {
-                    let reference = format!("<as above, cid={}>", term.cid());
-                    let inline = self.term_node_unshared(term);
-                    if visible_width(&reference) < visible_width(&inline) {
-                        self.reference_returns += 1;
-                        return reference;
-                    }
+                let reference = format!("<as above, cid={}>", term.cid());
+                let shareable = self.term_repeats.get(term.cid()).copied().unwrap_or(0) > 1
+                    && visible_width(&reference) < visible_width(&self.term_node_unshared(term));
+                if shareable && !self.seen_term_cids.insert(term.cid().to_string()) {
+                    self.reference_returns += 1;
+                    return reference;
                 }
+                let shared_cid = shareable.then(|| term.cid().to_string());
                 let rendered_args = args
                     .iter()
                     .map(|arg| self.term_node(arg, depth + 1))
                     .collect::<Vec<_>>();
-                if let Some(symbol) = visual_symbolic_ctor(name, &rendered_args) {
-                    return fol_paint(&symbol, FolRegister::Literal, self.color);
-                }
-                let display = name.strip_prefix("call:").unwrap_or(name);
-                if rendered_args.is_empty() && !name.starts_with("call:") {
-                    fol_paint(display, FolRegister::Literal, self.color)
+                let rendered = if let Some(symbol) = visual_symbolic_ctor(name, &rendered_args) {
+                    fol_paint(&symbol, FolRegister::Literal, self.color)
                 } else {
-                    format_visual_application(
-                        &fol_paint(display, FolRegister::Callee, self.color),
-                        &rendered_args,
-                    )
+                    let display = name.strip_prefix("call:").unwrap_or(name);
+                    if rendered_args.is_empty() && !name.starts_with("call:") {
+                        fol_paint(display, FolRegister::Literal, self.color)
+                    } else {
+                        format_visual_application(
+                            &fol_paint(display, FolRegister::Callee, self.color),
+                            &rendered_args,
+                        )
+                    }
+                };
+                match shared_cid {
+                    Some(cid) => format!("{rendered} [shared cid={cid}]"),
+                    None => rendered,
                 }
             }
         }
@@ -5542,6 +5591,55 @@ fn render_pretty_fol_with_provenance(out: &mut String, fol: &str, provenance: &s
     }
 }
 
+struct CanonicalAssertion {
+    location: String,
+    cid: String,
+    claim: String,
+}
+
+fn short_claim_cid(cid: &str) -> String {
+    let digest = cid.strip_prefix("blake3-512:").unwrap_or(cid);
+    if digest.len() <= 12 {
+        digest.to_string()
+    } else {
+        format!("{}…", &digest[..12])
+    }
+}
+
+fn readable_assertion_claim(stated: &str) -> String {
+    let stated = stated
+        .trim()
+        .strip_prefix("assert ")
+        .unwrap_or(stated.trim());
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in stated.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote.is_some() {
+            escaped = true;
+            continue;
+        }
+        if let Some(active) = quote {
+            if character == active {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '"' => quote = Some(character),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => return stated[..index].trim().to_string(),
+            _ => {}
+        }
+    }
+    stated.to_string()
+}
+
 fn render_provenanced_vendor_assertion_row(
     out: &mut String,
     report: &LiftSourceReport,
@@ -5549,7 +5647,42 @@ fn render_provenanced_vendor_assertion_row(
     contract: &Value,
     _identity: &str,
     qualified_contracts: &[(String, String)],
+    canonical_assertions: &mut BTreeMap<String, CanonicalAssertion>,
 ) {
+    let warrants = contract_visual_warrants(report, contract);
+    if let Some(warrant) = warrants.first() {
+        let source_cid = warrant
+            .get("sourceCid")
+            .or_else(|| warrant.get("source_cid"))
+            .and_then(Value::as_str)
+            .filter(|cid| *cid != "cid-unavailable");
+        if let Some(source_cid) = source_cid {
+            if let Some(canonical) = canonical_assertions.get(source_cid) {
+                out.push_str(&format!(
+                    "    same claim as {} [cid {}]: {}\n",
+                    canonical.location, canonical.cid, canonical.claim
+                ));
+                return;
+            }
+            let line = warrant
+                .get("span")
+                .and_then(|span| span.get("start_line").or_else(|| span.get("startLine")))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let function = source_function_name(warrant)
+                .and_then(|name| name.rsplit(['.', ':']).find(|part| !part.is_empty()))
+                .unwrap_or("<module>");
+            let stated = resolve_source_memento_visual_source(source_lookup, warrant);
+            canonical_assertions.insert(
+                source_cid.to_string(),
+                CanonicalAssertion {
+                    location: format!("{function}:{line}"),
+                    cid: short_claim_cid(source_cid),
+                    claim: readable_assertion_claim(&stated),
+                },
+            );
+        }
+    }
     let formula = ["post", "inv", "pre"]
         .iter()
         .find_map(|field| contract.get(field));
@@ -5564,7 +5697,6 @@ fn render_provenanced_vendor_assertion_row(
         },
     );
     let lifted = normalize_report_fol(&lifted, report.project_root.as_deref());
-    let warrants = contract_visual_warrants(report, contract);
     if warrants.is_empty() {
         render_pretty_fol_with_provenance(out, &lifted, "@ <missing provenance> warrant=<missing>");
         return;
@@ -10524,6 +10656,40 @@ mod tests {
         plain
     }
 
+    fn assert_visual_elisions_testify(rendered: &str) {
+        let plain = without_ansi(rendered);
+        for reference in plain.split("<as above, cid=").skip(1) {
+            let cid = reference.split('>').next().expect("reference closes");
+            assert!(
+                plain.contains(&format!("[shared cid={cid}]")),
+                "shared reference lacks a named full-form occurrence for {cid}:\n{plain}"
+            );
+        }
+        for line in plain.lines().filter(|line| {
+            let lower = line.to_ascii_lowercase();
+            lower.contains("elid")
+                || lower.contains("collaps")
+                || line.contains("<as above")
+                || line.contains("same claim as")
+        }) {
+            let testified = if line.contains("<as above") {
+                true
+            } else if line.contains("subtree elided") {
+                line.contains("cid=") && line.contains("nodes=") && line.contains("see mementos")
+            } else if line.contains("loci: elided") {
+                line.contains("package accounting")
+            } else if line.contains("same claim as") {
+                line.contains(" [cid ")
+                    && line
+                        .split_once("]: ")
+                        .is_some_and(|(_, claim)| !claim.is_empty())
+            } else {
+                false
+            };
+            assert!(testified, "silent or unknown elision path: {line}\n{plain}");
+        }
+    }
+
     fn stamp_source_oracles(value: &mut Value, source_text: &str) {
         match value {
             Value::Object(object) => {
@@ -15291,6 +15457,72 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
+    fn universe_visual_collapses_only_identical_assertions_with_testimony() {
+        fn assertion(function: &str, line: u64, source_cid: &str) -> Value {
+            serde_json::json!({
+                "kind": "contract",
+                "name": format!("datetime::{function}::{line}::assertion"),
+                "inv": {"kind": "atomic", "name": "py.le", "args": [
+                    {"kind": "var", "name": "month"},
+                    {"kind": "const", "value": 12, "sort": {"name": "Int"}}
+                ]},
+                "sourceWarrants": [{
+                    "kind": "source-memento",
+                    "role": "assertion",
+                    "file": "datetime.py",
+                    "sourceFunctionName": format!("datetime.{function}"),
+                    "sourceCid": source_cid,
+                    "span": {"start_line": line, "end_line": line},
+                    "sourceOracle": {
+                        "status": "resolved",
+                        "source": "assert 1 <= month <= 12, 'month must be in 1..12'"
+                    }
+                }]
+            })
+        }
+
+        let mut report = minimal_source_report();
+        report.contracts = vec![
+            assertion("_days_in_month", 67, "blake3-512:first"),
+            assertion("_days_before_month", 75, "blake3-512:shared"),
+            assertion("_ymd2ord", 81, "blake3-512:shared"),
+        ];
+
+        let visual =
+            render_universe_visual_report(&report, VisualSourceLookup { project_root: None });
+        let plain = without_ansi(&visual);
+
+        assert_eq!(plain.matches("FOL:").count(), 2, "{plain}");
+        assert_eq!(plain.matches("stated:").count(), 2, "{plain}");
+        assert!(
+            plain.contains("same claim as _days_before_month:75 [cid shared]: 1 <= month <= 12"),
+            "{plain}"
+        );
+        assert!(plain.contains("_days_in_month"), "{plain}");
+        assert!(plain.contains("_days_before_month"), "{plain}");
+        assert_visual_elisions_testify(&visual);
+    }
+
+    #[test]
+    fn visual_report_has_no_silent_elision_paths() {
+        let shared = serde_json::json!({
+            "kind": "ctor", "name": "call:normalize", "args": [{
+                "kind": "ctor", "name": "call:source", "args": [{
+                    "kind": "ctor", "name": "call:calendar", "args": [{
+                        "kind": "var", "name": "month"
+                    }]
+                }]
+            }]
+        });
+        let formula = serde_json::json!({
+            "kind": "atomic", "name": "=", "args": [shared.clone(), shared]
+        });
+        let rendered = pretty_visual_formula(&formula, false);
+
+        assert_visual_elisions_testify(&rendered);
+    }
+
+    #[test]
     fn visual_report_prologue_identifies_invocation_sources_and_same_binary_seats() {
         let mut report = minimal_source_report();
         report.implication_walk_ran = true;
@@ -16203,6 +16435,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let rendered = pretty_visual_formula_with_terms(&formula, false, Some(&table));
 
         assert_eq!(rendered.matches("<as above, cid=").count(), 1, "{rendered}");
+        assert_visual_elisions_testify(&rendered);
     }
 
     #[test]
