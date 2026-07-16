@@ -41,6 +41,11 @@ jobs:
         with:
           mode: seed
 
+      - name: Install sugarbin hashing dependency
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends b3sum
+
       - name: Build shared Rust artifacts once
         env:
           GH_TOKEN: ${{ github.token }}
@@ -66,22 +71,27 @@ jobs:
             target: check-lift-refusal-vocabulary
             python: false
             z3: false
+            b3sum: false
           - name: Python format
             target: test-python-format
             python: true
             z3: false
+            b3sum: false
           - name: self attestation
             target: self-attest
             python: false
             z3: false
+            b3sum: true
           - name: coretests source audit
             target: coretests-source-audit
             python: true
             z3: true
+            b3sum: true
           - name: coretests invariants
             target: coretests-invariants
             python: false
             z3: false
+            b3sum: true
 
     steps:
       - name: Checkout
@@ -113,6 +123,12 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends z3 b3sum
+
+      - name: Install sugarbin hashing dependency
+        if: matrix.b3sum && !matrix.z3
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends b3sum
 
       - name: Run core instrument
         run: make ${{ matrix.target }}
