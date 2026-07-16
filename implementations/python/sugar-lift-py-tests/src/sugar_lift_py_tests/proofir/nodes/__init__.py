@@ -51,9 +51,16 @@ class Stated:
 @dataclass(frozen=True)
 class Derived:
     floor_chain: tuple[str, ...]
+    locus: ConstructionSite | None = None
 
     def to_rpc(self) -> dict[str, Any]:
-        return {"kind": "Derived", "floorChain": list(self.floor_chain)}
+        value: dict[str, Any] = {
+            "kind": "Derived",
+            "floorChain": list(self.floor_chain),
+        }
+        if self.locus is not None:
+            value["locus"] = self.locus.to_rpc()
+        return value
 
 
 Warrant = Stated | Derived

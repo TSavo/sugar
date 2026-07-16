@@ -22,6 +22,9 @@ class InvValue(FloorValue):
     # carried so callEdges project from the collapse without a side channel.
     operand_callsites: tuple = dataclass_field(default=(), compare=False)
     derived_formulas: tuple = dataclass_field(default=(), compare=False)
+    rewrite_chains: tuple[tuple[str, str, int], ...] = dataclass_field(
+        default=(), compare=False
+    )
 
     def inv_contribution(self):
         # The stated fact IS the inv slot's row.
@@ -32,7 +35,11 @@ class InvValue(FloorValue):
         from sugar_lift_py_tests.ir import implies
 
         return InvValue(
-            implies(formula, self.formula), self.site, self.operand_callsites
+            implies(formula, self.formula),
+            self.site,
+            self.operand_callsites,
+            self.derived_formulas,
+            self.rewrite_chains,
         )
 
     def edge_contribution(self, source_contract):
@@ -52,7 +59,12 @@ class InvValue(FloorValue):
             claim_formula,
             construction_site,
         )
-        from sugar_lift_py_tests.proofir.nodes import Derived, Provenance, Stated
+        from sugar_lift_py_tests.proofir.nodes import (
+            ConstructionSite,
+            Derived,
+            Provenance,
+            Stated,
+        )
         from sugar_lift_py_tests.proofir.nodes.universe_mint import UniverseMint
 
         locus = construction_site(self.site)
@@ -65,6 +77,13 @@ class InvValue(FloorValue):
             from sugar_lift_py_tests.ir import and_
 
             stated_formula = and_([self.formula, self.formula])
+        rewrite_warrants = tuple(
+            Derived(
+                floor_chain=(chain,),
+                locus=ConstructionSite(path=path, line=line, column=0),
+            )
+            for chain, path, line in self.rewrite_chains
+        )
         stated_provenance = Provenance(
             node_class="UniverseMint",
             construction_site=locus,
@@ -72,9 +91,10 @@ class InvValue(FloorValue):
                 (
                     stated_warrant,
                     Derived(floor_chain=_derived_floor_chain(self.formula)),
+                    *rewrite_warrants,
                 )
                 if duplicate_derived
-                else stated_warrant
+                else (stated_warrant, *rewrite_warrants)
             ),
         )
         stated = (

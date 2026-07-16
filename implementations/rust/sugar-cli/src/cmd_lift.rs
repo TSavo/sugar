@@ -5488,16 +5488,20 @@ fn render_provenanced_vendor_assertion_row(
             .unwrap_or("cid-unavailable");
         let stated = resolve_source_memento_visual_source(source_lookup, warrant);
         out.push_str(&format!("      stated: {}\n", stated.trim()));
-        for chain in contract_rewrite_chains(contract) {
-            let construction = contract
-                .get("proofirProvenance")
-                .and_then(|provenance| provenance.get("constructionSite"))
-                .and_then(|site| {
-                    let path = site.get("path")?.as_str()?;
-                    let line = site.get("line").and_then(Value::as_u64).unwrap_or(0);
-                    Some(format!("{path}:{line}"))
-                })
-                .unwrap_or_else(|| format!("{file}:{line}"));
+        for (chain, rewrite_locus) in contract_rewrite_chains(contract) {
+            let construction = rewrite_locus
+                .map(|(path, line)| format!("{path}:{line}"))
+                .unwrap_or_else(|| {
+                    contract
+                        .get("proofirProvenance")
+                        .and_then(|provenance| provenance.get("constructionSite"))
+                        .and_then(|site| {
+                            let path = site.get("path")?.as_str()?;
+                            let line = site.get("line").and_then(Value::as_u64).unwrap_or(0);
+                            Some(format!("{path}:{line}"))
+                        })
+                        .unwrap_or_else(|| format!("{file}:{line}"))
+                });
             out.push_str(&format!(
                 "      via {} @ {construction}\n",
                 chain.join(" -> ")
@@ -5533,16 +5537,26 @@ fn render_provenanced_vendor_assertion_row(
     }
 }
 
-fn contract_rewrite_chains(contract: &Value) -> Vec<Vec<&str>> {
+fn contract_rewrite_chains(contract: &Value) -> Vec<(Vec<&str>, Option<(&str, u64)>)> {
     contract
         .get("proofirProvenance")
         .and_then(|provenance| provenance.get("warrants"))
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|warrant| warrant.get("floorChain").and_then(Value::as_array))
-        .map(|chain| chain.iter().filter_map(Value::as_str).collect::<Vec<_>>())
-        .filter(|chain| !chain.is_empty())
+        .filter_map(|warrant| {
+            let chain = warrant
+                .get("floorChain")?
+                .as_array()?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>();
+            let locus = warrant.get("locus").and_then(|locus| {
+                Some((locus.get("path")?.as_str()?, locus.get("line")?.as_u64()?))
+            });
+            Some((chain, locus))
+        })
+        .filter(|(chain, _)| !chain.is_empty())
         .collect()
 }
 
@@ -10857,6 +10871,8 @@ mod tests {
             with: vec![],
             contract: None,
             allow_failed_components: false,
+            audit_frontier: false,
+            allowed_broken_components: vec![],
             out: OutputFlags::default(),
         };
         assert_eq!(run(args), crate::EXIT_USER_ERROR);
@@ -15207,8 +15223,12 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             ]},
             "sourceWarrants": [{"kind": "source-memento", "file": "datetime.py", "span": {"start_line": 1}}],
             "proofirProvenance": {
-                "constructionSite": {"path": "datetime.py", "line": 92},
-                "warrants": [{"kind": "Derived", "floorChain": ["_DI4Y = _days_before_year(5)", "calendar-fold"]}]
+                "constructionSite": {"path": "datetime.py", "line": 93},
+                "warrants": [{
+                    "kind": "Derived",
+                    "floorChain": ["_DI4Y = _days_before_year(5)", "calendar-fold"],
+                    "locus": {"path": "datetime.py", "line": 92}
+                }]
             }
         })];
 

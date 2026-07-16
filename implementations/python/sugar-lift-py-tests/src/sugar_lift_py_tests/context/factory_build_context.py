@@ -47,6 +47,10 @@ class FactoryBuildContext:
     operation_log: list[tuple[str, str, str]] = field(
         default_factory=list[tuple[str, str, str]]
     )
+    # Module-name reads that recompose a definition are assertion-local rewrite
+    # testimony. EqualitySugar consumes this ledger into ProofIR provenance.
+    module_rewrite_log: list[Any] = field(default_factory=list[Any])
+    prefer_ground_module_bindings: bool = False
     dig_sink: Any = None
     record_operation: OperationRecorder | None = None
     # The set of callee names whose body is CURRENTLY being built, up the build stack.
@@ -118,6 +122,8 @@ class FactoryBuildContext:
             proof_sink=self.proof_sink,
             report_sink=self.report_sink,
             operation_log=self.operation_log,
+            module_rewrite_log=self.module_rewrite_log,
+            prefer_ground_module_bindings=self.prefer_ground_module_bindings,
             dig_sink=self.dig_sink,
             record_operation=self.record_operation,
             building=self.building,

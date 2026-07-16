@@ -24,6 +24,28 @@ COMPOSED_MODULE_CONSTANTS = (
     "    return TABLE[index] + OFFSET\n"
 )
 
+GROUND_BINDING_DIG_DISCRIMINATION = (
+    "def days(year):\n"
+    "    y = year - 1\n"
+    "    return y * 365 + y // 4 - y // 100 + y // 400\n"
+    "\n"
+    "DI4 = days(5)\n"
+    "DI100 = days(101)\n"
+    "DI400 = days(401)\n"
+    "assert DI4 == 4 * 365 + 1\n"
+    "assert DI400 == 4 * DI100 + 1\n"
+)
+
+
+def _expand_term(term, table):
+    if isinstance(term, list):
+        return [_expand_term(item, table) for item in term]
+    if not isinstance(term, dict):
+        return term
+    if term.get("kind") == "term-ref":
+        return _expand_term(table[term["cid"]], table)
+    return {key: _expand_term(value, table) for key, value in term.items()}
+
 
 def test_same_module_callee_dig_preserves_module_constant_temporal() -> None:
     payload, gaps = audit_lift_file(SAME_MODULE_TABLE_DIG, "module_table.py")
@@ -51,6 +73,95 @@ def test_module_constants_compose_arithmetic_and_list_tables_in_order() -> None:
     assert "py.subscript" in repr(select.post)
     assert "array" in repr(select.post)
     assert "python:module" not in repr(select.post)
+
+
+def test_module_constant_dig_keeps_call_literal_and_records_testimony() -> None:
+    payload, gaps = audit_lift_file(
+        GROUND_BINDING_DIG_DISCRIMINATION, "ground_binding.py"
+    )
+    wire = payload.to_rpc()
+    assertion = next(
+        row
+        for row in wire["ir"]
+        if row.get("proofirProvenance", {}).get("constructionSite", {}).get("line") == 8
+    )
+    inv = _expand_term(assertion["inv"], wire["termTable"])
+
+    assert not gaps
+    assert "call:days" in repr(inv)
+    assert assertion["proofirProvenance"]["warrants"][1]["floorChain"] == [
+        "DI4 = days(5)"
+    ]
+
+
+def test_ground_module_bindings_are_operands_when_definition_dig_loses_groundness() -> (
+    None
+):
+    payload, gaps = audit_lift_file(
+        GROUND_BINDING_DIG_DISCRIMINATION, "ground_binding.py"
+    )
+    wire = payload.to_rpc()
+    assertion = next(
+        row
+        for row in wire["ir"]
+        if row.get("proofirProvenance", {}).get("constructionSite", {}).get("line") == 9
+    )
+    inv = _expand_term(assertion["inv"], wire["termTable"])
+    floor_chains = [
+        warrant["floorChain"]
+        for warrant in assertion["proofirProvenance"]["warrants"]
+        if warrant["kind"] == "Derived"
+    ]
+
+    assert not gaps
+    assert "call:days" not in repr(inv)
+    assert "146097" in repr(inv)
+    assert "36524" in repr(inv)
+    assert floor_chains == [["DI400 = days(401)"], ["DI100 = days(101)"]]
+
+
+def test_datetime_93_and_97_discriminate_call_literal_from_ground_binding(
+    cpython_311_datetime_path,
+) -> None:
+    source = "".join(
+        cpython_311_datetime_path.read_text(encoding="utf-8").splitlines(keepends=True)[
+            :97
+        ]
+    )
+    payload, gaps = audit_lift_file(source, str(cpython_311_datetime_path))
+    wire = payload.to_rpc()
+    rows = {
+        row["proofirProvenance"]["constructionSite"]["line"]: row
+        for row in wire["ir"]
+        if row.get("proofirProvenance", {}).get("constructionSite", {}).get("line")
+        in {93, 97}
+    }
+    inv_93 = _expand_term(rows[93]["inv"], wire["termTable"])
+    inv_97 = _expand_term(rows[97]["inv"], wire["termTable"])
+
+    assert not gaps
+    assert "call:_days_before_year" in repr(inv_93)
+    assert "call:_days_before_year" not in repr(inv_97)
+    assert "146097" in repr(inv_97)
+    assert "36524" in repr(inv_97)
+    assert [
+        warrant["floorChain"]
+        for warrant in rows[93]["proofirProvenance"]["warrants"]
+        if warrant["kind"] == "Derived"
+    ] == [["_DI4Y = _days_before_year(5)"]]
+    assert [
+        warrant["floorChain"]
+        for warrant in rows[97]["proofirProvenance"]["warrants"]
+        if warrant["kind"] == "Derived"
+    ] == [
+        ["_DI400Y = _days_before_year(401)"],
+        ["_DI100Y = _days_before_year(101)"],
+    ]
+    assert [
+        warrant["locus"]["line"]
+        for warrant in rows[97]["proofirProvenance"]["warrants"]
+        if warrant["kind"] == "Derived"
+    ] == [87, 88]
 
 
 def test_full_datetime_module_globals_survive_same_module_dig(

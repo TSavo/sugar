@@ -24,6 +24,9 @@ class PredicateValue(FloorValue):
     # carried so callEdges project from the collapse without a side channel.
     operand_callsites: tuple = dataclass_field(default=(), compare=False)
     derived_formulas: tuple = dataclass_field(default=(), compare=False)
+    rewrite_chains: tuple[tuple[str, str, int], ...] = dataclass_field(
+        default=(), compare=False
+    )
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import _Atomic, _Connective, ctor
@@ -78,6 +81,7 @@ class PredicateValue(FloorValue):
                 site,
                 self.operand_callsites,
                 self.derived_formulas,
+                self.rewrite_chains,
             )
         )
 
