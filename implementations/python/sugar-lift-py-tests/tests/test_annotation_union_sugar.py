@@ -205,6 +205,24 @@ def test_annotation_and_runtime_bit_or_have_disjoint_factory_owners() -> None:
     ] == ["RuntimeBitwiseOpSugar"]
 
 
+def test_sourceful_annotation_membership_follows_only_the_parent_chain() -> None:
+    cases = (
+        ("def f(value: list[ArgType]):\n    pass\n", "ArgType", True),
+        ("def f() -> list[ReturnType]:\n    pass\n", "ReturnType", True),
+        ("value: list[AssignedType] = []\n", "AssignedType", True),
+        ("value = list[RuntimeType]\n", "RuntimeType", False),
+    )
+
+    for source, name, expected in cases:
+        node = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Name) and node.id == name
+        )
+        site = SourceFragment.from_node(node, "membership.py", source=source)
+        assert site.is_within_annotation() is expected
+
+
 def test_sourceless_runtime_bit_or_stays_unowned_and_loud() -> None:
     catalog = default_catalog()
     runtime = SourceFragment.from_node(

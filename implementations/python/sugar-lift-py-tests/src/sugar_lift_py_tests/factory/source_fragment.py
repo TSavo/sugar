@@ -271,11 +271,11 @@ class SourceFragment:
         parsed = _parsed_tree_and_parents(self.source)
         if parsed is None:
             return False
-        tree, _ = parsed
+        _tree, parents = parsed
         target = next(
             (
                 node
-                for node in ast.walk(tree)
+                for node in parents
                 if type(node) is type(self.node)
                 and getattr(node, "lineno", None) == self.line
                 and getattr(node, "col_offset", None) == self.col
@@ -288,7 +288,31 @@ class SourceFragment:
         )
         if target is None:
             return False
-        return any(target in ast.walk(root) for root in _annotation_roots(tree))
+
+        # The parent table was minted with the pristine cached parse. Annotation
+        # membership is an ancestry question, so do not re-walk the entire shared
+        # module (and thereby couple this site to unrelated later nodes).
+        current = target
+        while current in parents:
+            parent = parents[current]
+            if isinstance(parent, ast.arg) and parent.annotation is current:
+                return True
+            if (
+                isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and parent.returns is current
+            ):
+                return True
+            if isinstance(parent, ast.AnnAssign) and parent.annotation is current:
+                return True
+            type_alias = getattr(ast, "TypeAlias", ())
+            if (
+                type_alias
+                and isinstance(parent, type_alias)
+                and parent.value is current
+            ):
+                return True
+            current = parent
+        return False
 
     def is_within_runtime_expression(self) -> bool:
         """Whether a statement gateway classified this node as runtime syntax."""
