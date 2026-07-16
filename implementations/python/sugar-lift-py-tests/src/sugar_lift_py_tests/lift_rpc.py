@@ -1579,15 +1579,23 @@ def _audit_file_context(
         for stmt in definitions
         if stmt.observed == "FunctionDef"
     }
+    # Bare ClassDef enrollment is load-bearing for ConstructorCallSugar: without
+    # the class node, uppercase calls fall back to opaque CallSiteValue and any
+    # later floor verb (format_data_model, field read, dunder bridge) dies as a
+    # transport FactoryPanic instead of a constructed ObjectValue. Nested
+    # methods stay Class.method for dig; nested class names enroll bare too so
+    # same-module constructors resolve the same door.
     for stmt in module.statements():
         if stmt.observed != "ClassDef":
             continue
         cname = stmt.class_name()
+        name_resolver[cname] = stmt.node
         for body_stmt in stmt.class_body():
             if body_stmt.observed == "FunctionDef":
                 name_resolver[f"{cname}.{body_stmt.function_name()}"] = body_stmt.node
             elif body_stmt.observed == "ClassDef":
                 nested = body_stmt.class_name()
+                name_resolver[nested] = body_stmt.node
                 for nested_stmt in body_stmt.class_body():
                     if nested_stmt.observed == "FunctionDef":
                         name_resolver[f"{nested}.{nested_stmt.function_name()}"] = (
@@ -1725,7 +1733,7 @@ def audit_lift_file(
         )
         payload.ir.extend(module_testimony.payload_rows(None))
         payload.call_edges.extend(module_testimony.call_edges())
-    # Same-module name_resolver: bare f() and Class.method dig bodies.
+    # Same-module name_resolver: bare f(), bare Class, and Class.method dig bodies.
     name_resolver = audit_context.name_resolver
     definitions = audit_context.definitions
     if target_memento is not None:
