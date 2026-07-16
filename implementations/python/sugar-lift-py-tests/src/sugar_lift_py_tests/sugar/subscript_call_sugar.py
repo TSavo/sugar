@@ -28,11 +28,7 @@ class SubscriptCallSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def owns(cls, site) -> bool:
-        return (
-            site.observed == "Call"
-            and site.call_func().observed == "Subscript"
-            and all(arg.observed != "Starred" for arg in site.call_args())
-        )
+        return site.observed == "Call" and site.call_func().observed == "Subscript"
 
     @classmethod
     def new(cls, site, ctx) -> "SubscriptCallSugar":

@@ -80,6 +80,32 @@ def test_subscript_selected_callable_carries_kwargs_expansion_coordinate() -> No
     assert value.parameters == ("**",)
 
 
+def test_subscript_selected_callable_carries_both_argument_expansions() -> None:
+    value = reduce_value(
+        "dispatch[key](*args, **options)",
+        binds={
+            "dispatch": SymbolicValue(make_var("dispatch")),
+            "key": SymbolicValue(make_var("key")),
+            "args": SymbolicValue(make_var("args")),
+            "options": SymbolicValue(make_var("options")),
+        },
+    )
+
+    receiver = ctor("py.subscript", [make_var("dispatch"), make_var("key")])
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == "__call__"
+    assert value.arg_values[0].to_term(owner="test") == receiver
+    assert value.parameters == ("**",)
+    assert value.term == ctor(
+        "call:__call__",
+        [
+            receiver,
+            ctor("py.star", [make_var("args")]),
+            ctor("kw", [str_const("**"), make_var("options")]),
+        ],
+    )
+
+
 def test_subscript_named_keyword_value_discriminates_call_coordinate() -> None:
     binds = {
         "dispatch": SymbolicValue(make_var("dispatch")),
@@ -128,9 +154,12 @@ def test_subscript_keyword_discriminator_runs_both_process_arms(
 ) -> None:
     tests_dir = Path(__file__).resolve().parent
     src_dir = tests_dir.parent / "src"
+    python_source_dir = tests_dir.parent.parent / "sugar-lift-python-source" / "src"
     env = {
         **os.environ,
-        "PYTHONPATH": os.pathsep.join((str(tests_dir), str(src_dir))),
+        "PYTHONPATH": os.pathsep.join(
+            (str(tests_dir), str(src_dir), str(python_source_dir))
+        ),
     }
 
     def run(expected: str) -> subprocess.CompletedProcess[str]:
