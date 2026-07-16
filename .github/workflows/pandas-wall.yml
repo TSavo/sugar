@@ -54,6 +54,9 @@ jobs:
           # would discard them and rebuild the same files hundreds of times.
           SUGAR_LIFT_RESIDENT_MAX_REQUESTS: unlimited
         run: |
+          # Self-hosted workspaces may retain ignored .sugar outputs. A wall
+          # receipt is valid only when every artifact was minted by this run.
+          rm -rf .sugar/pandas-wall
           mkdir -p .sugar/pandas-wall-logs
           : > "$SUGAR_ENGINE_LOG"
           : > "$SUGAR_KIT_LOG"
