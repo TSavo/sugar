@@ -86,19 +86,19 @@ resolved="$("$repo/bin/sugarbin" --bin sugar)"
 }
 grep -Fq "$tmp/cache/.build/" "$tmp/cargo.log"
 
-# If the published target disappears, Make still owns freshness inside the
-# addressed build cell and must reuse its already-constructed target.
+# If the published target disappears, Make invokes Cargo in the persistent
+# family target. Cargo owns freshness and can reuse its compiled state.
 rm "$tmp/target/release/sugar" "$tmp/target/release/sugar.sugarbin.json"
 resolved_from_make="$("$repo/bin/sugarbin" --bin sugar)"
 [[ "$($resolved_from_make)" == "fresh:sugar" ]]
-[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 1 ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]]
 
 # Repository HEAD is not a build input. With the BLAKE3 source closure fixed,
 # an unrelated commit must reuse the exact artifact without invoking Cargo.
 export SUGARBIN_FAKE_GIT_HEAD="head-after-unrelated-change"
 resolved_again="$("$repo/bin/sugarbin" --bin sugar)"
 [[ "$resolved_again" == "$resolved" ]]
-[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 1 ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]]
 
 # BX/CI filesystem shelf: a local artifact contributes an atomic cell, then a
 # clean consumer recovers it without GitHub or another Cargo invocation.
@@ -107,10 +107,19 @@ export SUGAR_BINARY_SHELF_ROOT="$tmp/shelf"
 "$repo/bin/sugarbin" --bin sugar >/dev/null
 find "$tmp/shelf" -type f -name 'sugar-*.gz' | grep -q .
 rm "$tmp/target/release/sugar" "$tmp/target/release/sugar.sugarbin.json"
-rm -rf "$tmp/cache/.build"
 export SUGAR_BINARY_ALLOW_BUILD=0
 resolved_from_shelf="$("$repo/bin/sugarbin" --bin sugar)"
 [[ "$($resolved_from_shelf)" == "fresh:sugar" ]]
-[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 1 ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]]
+
+# A real source-closure change misses the artifact shelf and calls Cargo, but
+# reuses the same persistent toolchain/profile target so incremental state is
+# available. Cargo, not Make's target existence, owns freshness here.
+export SUGAR_BINARY_SOURCE_STAMP="blake3-512:$(printf '8%.0s' {1..128})"
+export SUGAR_BINARY_NO_SHELF=1 SUGAR_BINARY_PUBLISH=0 SUGAR_BINARY_ALLOW_BUILD=1
+rm "$tmp/target/release/sugar" "$tmp/target/release/sugar.sugarbin.json"
+"$repo/bin/sugarbin" --bin sugar >/dev/null
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 3 ]]
+[[ "$(cut -d'|' -f1 "$tmp/cargo.log" | sort -u | wc -l | tr -d ' ')" == 1 ]]
 
 echo 'PASS: sugarbin Cargo output is isolated by build identity'

@@ -707,7 +707,9 @@ build_identity() {
   # sourceStamp is the BLAKE3 closure of this package's actual build inputs.
   # Repository HEAD is deliberately not an input: unrelated commits are
   # outside the component's blast radius and must not invalidate its binary.
-  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$package" "$bin_name" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
+  local incremental="0"
+  [[ "$profile" != debug ]] || incremental="1"
+  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$package" "$bin_name" "$incremental" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
 import sys
 def emit(label, value):
     label = label.encode(); value = value.encode()
@@ -715,7 +717,7 @@ def emit(label, value):
     sys.stdout.buffer.write(str(len(value)).encode() + b":" + value)
 for label, value in zip(("sourceStamp", "rustcVersionVerbose", "cargoVersionVerbose",
                          "platform", "targetTriple", "profile", "sortedFeatures",
-                         "package", "binary"), sys.argv[1:]):
+                         "package", "binary", "incremental"), sys.argv[1:]):
     emit(label, value)
 PY
 }
@@ -726,14 +728,20 @@ PY
 build_family_identity() {
   local stamp="$1"
   require_b3sum || return 1
-  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
+  local incremental="0"
+  [[ "$profile" != debug ]] || incremental="1"
+  # Cargo's working target is shared across source stamps. Exact source
+  # identity belongs to the finished artifact; Cargo owns incremental
+  # freshness inside this toolchain/target/profile family.
+  python3 - "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$incremental" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
 import sys
 def emit(label, value):
     label = label.encode(); value = value.encode()
     sys.stdout.buffer.write(str(len(label)).encode() + b":" + label)
     sys.stdout.buffer.write(str(len(value)).encode() + b":" + value)
-for label, value in zip(("sourceStamp", "rustcVersionVerbose", "cargoVersionVerbose",
-                         "platform", "targetTriple", "profile", "sortedFeatures"), sys.argv[1:]):
+for label, value in zip(("rustcVersionVerbose", "cargoVersionVerbose",
+                         "platform", "targetTriple", "profile", "sortedFeatures",
+                         "incremental"), sys.argv[1:]):
     emit(label, value)
 PY
 }
