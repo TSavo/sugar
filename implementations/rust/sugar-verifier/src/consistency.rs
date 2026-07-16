@@ -417,6 +417,70 @@ fn contract_property_name(body: &Json) -> &str {
         .unwrap_or("<unnamed>")
 }
 
+const CRC_VALUE_PIN_SUFFIX: &str = "::crc-value-pin";
+const ASSERTION_SUFFIX: &str = "::assertion";
+
+fn has_source_warrant(body: &Json, role: &str, universe_kind: &str) -> bool {
+    body.get("sourceWarrants")
+        .or_else(|| body.get("source_warrants"))
+        .and_then(Json::as_array)
+        .is_some_and(|warrants| {
+            warrants.iter().any(|warrant| {
+                warrant.get("role").and_then(Json::as_str) == Some(role)
+                    && warrant.get("universe_kind").and_then(Json::as_str) == Some(universe_kind)
+            })
+        })
+}
+
+fn formula_contains_atomic(node: &Json, atom_name: &str) -> bool {
+    if node.get("kind").and_then(Json::as_str) == Some("atomic")
+        && node.get("name").and_then(Json::as_str) == Some(atom_name)
+    {
+        return true;
+    }
+    ["operands", "args"].iter().any(|field| {
+        node.get(field)
+            .and_then(Json::as_array)
+            .is_some_and(|children| {
+                children
+                    .iter()
+                    .any(|child| formula_contains_atomic(child, atom_name))
+            })
+    })
+}
+
+fn is_warranted_crc_value_pin(candidate: &ConsistencyCandidate) -> bool {
+    contract_property_name(&candidate.body).ends_with(CRC_VALUE_PIN_SUFFIX)
+        && has_source_warrant(&candidate.body, "java.crc-value-pin", "crc32.eq-walked")
+        && candidate
+            .body
+            .get("inv")
+            .is_some_and(|inv| formula_contains_atomic(inv, "crc32.eq-walked"))
+}
+
+fn consistency_group_name(candidate: &ConsistencyCandidate) -> String {
+    let name = contract_property_name(&candidate.body);
+    if is_warranted_crc_value_pin(candidate) {
+        if let Some(location) = name.strip_suffix(CRC_VALUE_PIN_SUFFIX) {
+            return format!("{location}{ASSERTION_SUFFIX}");
+        }
+    }
+    name.to_string()
+}
+
+fn has_crc_value_pin_assertion_pair(
+    property_name: &str,
+    candidates: &[ConsistencyCandidate],
+) -> bool {
+    let has_pin = candidates.iter().any(is_warranted_crc_value_pin);
+    let has_assertion = candidates.iter().any(|candidate| {
+        contract_property_name(&candidate.body) == property_name
+            && property_name.ends_with(ASSERTION_SUFFIX)
+            && has_source_warrant(&candidate.body, "java.test-fact", "vendor-fixedpoint")
+    });
+    has_pin && has_assertion
+}
+
 /// The pieces of a callsite-keyed group key, split ONCE at construction.
 #[derive(Debug, Clone, Copy)]
 struct EufParts<'a> {
@@ -4045,7 +4109,7 @@ pub fn verify_consistency_from_indexes(
     let mut by_name: std::collections::BTreeMap<String, Vec<&ConsistencyCandidate>> =
         std::collections::BTreeMap::new();
     for candidate in &candidates {
-        let name = contract_property_name(&candidate.body).to_string();
+        let name = consistency_group_name(candidate);
         by_name.entry(name).or_default().push(*candidate);
     }
 
@@ -4202,14 +4266,20 @@ fn process_consistency_group(
             return out;
         }
 
-        // CROSS-PROOF CONJOIN only for CALLSITE-KEYED names (`#euf#`). That key
-        // is `(callee, args)`, so same name == same call == sound to conjoin a
+        // CROSS-PROOF CONJOIN for CALLSITE-KEYED names (`#euf#`). That key is
+        // `(callee, args)`, so same name == same call == sound to conjoin a
         // consumer's assertion with an imported vendor contract -> `and(==5,==6)`
-        // -> unsat -> refused. A bare test/location name does NOT guarantee the
-        // same subject, so those stay PER-CONTRACT (conjoining them could falsely
-        // refuse two unrelated tests that happen to share a function name).
+        // -> unsat -> refused. A bare test/location name does NOT normally
+        // guarantee the same subject, so those stay PER-CONTRACT.
+        //
+        // CRC value pins are the one typed bare-coordinate exception: the Java
+        // owner emits a source-warranted `::assertion` and a source-warranted
+        // `::crc-value-pin` from the same `locationBase`. The grouping key above
+        // projects only that adjudicated pair onto the assertion coordinate;
+        // both warrants must be present before this gate permits the conjoin.
         let callsite_keyed = EufCoordinate::parse(property_name).is_callsite_keyed();
-        if callsite_keyed && inv_candidates.len() > 1 {
+        let crc_value_pin_join = has_crc_value_pin_assertion_pair(property_name, &inv_candidates);
+        if (callsite_keyed || crc_value_pin_join) && inv_candidates.len() > 1 {
             let invs: Vec<(Json, ProofIrProvenanceKind)> = inv_candidates
                 .iter()
                 .map(|candidate| {
@@ -4890,6 +4960,40 @@ mod tests {
 
     fn insert_contract(pool: &mut MementoPool, cid: &str, name: &str, inv: Json) {
         insert_contract_with_provenance(pool, cid, name, inv, "Stated");
+    }
+
+    fn insert_source_warranted_contract(
+        pool: &mut MementoPool,
+        cid: &str,
+        name: &str,
+        inv: Json,
+        role: &str,
+        universe_kind: &str,
+    ) {
+        let env = json!({
+            "envelope": {
+                "header": {
+                    "kind": "contract",
+                    "contractName": name,
+                    "inv": inv,
+                    "sourceWarrants": [{
+                        "kind": "source-memento",
+                        "role": role,
+                        "universe_kind": universe_kind,
+                        "file": "CrcValuePinTest.java",
+                        "source_cid": test_cid_string(cid),
+                        "template_cid": test_cid_string(&format!("{cid}-template")),
+                        "span": {
+                            "start_line": 1,
+                            "start_col": 0,
+                            "end_line": 1,
+                            "end_col": 1
+                        }
+                    }]
+                }
+            }
+        });
+        pool.insert_unanchored_for_tests(test_cid(cid), env);
     }
 
     fn insert_derived_contract(pool: &mut MementoPool, cid: &str, name: &str, inv: Json) {
@@ -6335,6 +6439,88 @@ mod tests {
         assert!(
             res[0].reason.contains("String vs Int"),
             "reason must name both regimes: {}",
+            res[0].reason
+        );
+    }
+
+    #[test]
+    fn crc_assertion_and_walked_value_pin_share_one_contradiction() {
+        let (plan, reg) = z3_plan_and_registry();
+        let location = "getValue@Test.java::CrcTest::wrong:crc";
+        let asserted = int(2);
+        let call = json!({
+            "kind": "ctor",
+            "name": "call:getValue",
+            "args": [{"kind": "var", "name": "crc"}]
+        });
+        let walked = serde_json::to_string(&json!({"kind": "const", "value": 1})).unwrap();
+        let mut pool = MementoPool::default();
+        insert_source_warranted_contract(
+            &mut pool,
+            "crc-assertion",
+            &format!("{location}::assertion"),
+            eqf(call, asserted.clone()),
+            "java.test-fact",
+            "vendor-fixedpoint",
+        );
+        insert_source_warranted_contract(
+            &mut pool,
+            "crc-walked-pin",
+            &format!("{location}::crc-value-pin"),
+            json!({
+                "kind": "atomic",
+                "name": "crc32.eq-walked",
+                "args": [asserted, str_const(&walked)]
+            }),
+            "java.crc-value-pin",
+            "crc32.eq-walked",
+        );
+
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        assert_eq!(res.len(), 1, "CRC facts must form one group: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "the walked value 1 contradicts the asserted CRC value 2: {res:?}"
+        );
+    }
+
+    #[test]
+    fn lone_consistent_crc_walked_pin_stays_vacuous_refused() {
+        let (plan, reg) = z3_plan_and_registry();
+        let walked = serde_json::to_string(&json!({"kind": "const", "value": 1})).unwrap();
+        let mut pool = MementoPool::default();
+        insert_source_warranted_contract(
+            &mut pool,
+            "crc-lone-pin",
+            "getValue@Test.java::CrcTest::lone:crc::crc-value-pin",
+            json!({
+                "kind": "atomic",
+                "name": "crc32.eq-walked",
+                "args": [int(1), str_const(&walked)]
+            }),
+            "java.crc-value-pin",
+            "crc32.eq-walked",
+        );
+
+        let res = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        assert_eq!(res.len(), 1, "one CRC pin yields one row: {res:?}");
+        assert_eq!(res[0].verdict, ObligationVerdict::Refused, "{res:?}");
+        assert!(
+            res[0].reason.contains("single constraint has no sibling"),
+            "the refusal must remain explicitly vacuous: {}",
             res[0].reason
         );
     }
