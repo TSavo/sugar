@@ -131,3 +131,33 @@ def test_install_source_function_constructs_minimal_pandas_option_context_shape(
 
     assert isinstance(resolved, FunctionCallable)
     assert isinstance(resolved.decorators[0], ImportAliasValue)
+
+
+@pytest.mark.parametrize(
+    ("signature", "default_field"),
+    [
+        ("value=sentinel", "positional_defaults"),
+        ("*, value=sentinel", "keyword_only_defaults"),
+    ],
+)
+def test_install_source_function_constructs_imported_defaults_in_defining_module(
+    tmp_path, monkeypatch, signature, default_field
+) -> None:
+    (tmp_path / "default_values.py").write_text("sentinel = 7\n", encoding="utf-8")
+    target = _module(
+        tmp_path,
+        monkeypatch,
+        f"imported_{default_field}",
+        "from default_values import sentinel\n"
+        f"def managed({signature}):\n"
+        "    return value\n",
+    )
+
+    resolved = resolve_install_source_value(target, _ctx())
+
+    assert isinstance(resolved, FunctionCallable)
+    defaults = getattr(resolved, default_field)
+    assert len(defaults) == 1
+    assert isinstance(defaults[0], ImportAliasValue)
+    assert defaults[0].import_target == "default_values.sentinel"
+    assert defaults[0].resolved_value == TermValue(7)
