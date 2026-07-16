@@ -1737,8 +1737,17 @@ fn formula_semantic_cid(formula: &Json) -> String {
 }
 
 fn top_level_conjuncts(formula: Json) -> Vec<Json> {
+    // Flatten nested `and` so `and([and([a,b,c])])` (loop-unroll / mint wrap
+    // shape) yields three sibling constraints, not one. Vacuity and provenance
+    // conjoin both count join partners at this level — a double-wrapped
+    // conjunction of three ground eqs is not a lone opaque equality (#A2
+    // forall-loop / bulk crate refuse).
     if let Some(operands) = IrFormula::and_operands(&formula) {
-        return operands.clone();
+        let mut out = Vec::with_capacity(operands.len());
+        for operand in operands {
+            out.extend(top_level_conjuncts(operand.clone()));
+        }
+        return out;
     }
     vec![formula]
 }
@@ -1932,13 +1941,14 @@ fn consistency_verification_detail(
 }
 
 /// Count the number of independent top-level atomic constraints in `inv`.
-/// An `and([a, b, ...])` contributes its operand count; any other shape
-/// (bare atomic, forall, implies, ctor equality, etc.) contributes 1.
+/// Nested `and` is flattened (see [`top_level_conjuncts`]):
+/// `and([and([a, b, c])])` contributes 3, not 1. Bare non-`and` shapes
+/// (atomic, forall, implies, …) contribute 1. Empty conjunction contributes 0.
 /// Used to gate the consistency-SAT check: a lone constraint with no sibling
 /// is trivially satisfiable (any uninterpreted callsite satisfies it) and must
 /// NOT count as a substantive discharge — there is nothing to contradict it.
 fn count_top_level_constraints(inv: &Json) -> usize {
-    IrFormula::and_operands(inv).map(|a| a.len()).unwrap_or(1)
+    top_level_conjuncts(inv.clone()).len()
 }
 
 /// Does a LONE fact carry a COVERING DOMAIN UNIVERSE that genuinely decides it?
@@ -7606,6 +7616,49 @@ mod tests {
                 .reason
                 .contains("single constraint has no sibling"),
             "vacuous-refused reason must cite the single-constraint guard, got: {}",
+            results[0].reason
+        );
+    }
+
+    #[test]
+    fn nested_and_of_ground_eqs_is_not_vacuous_single_constraint() {
+        // Loop-unroll mint shape: and([and([g(0)=1, g(1)=1, g(2)=1])]).
+        // Flattening must see three siblings so the vacuity guard does not
+        // refuse a multi-point bounded-loop conjunction as a lone fact.
+        let g = |n: i64| {
+            json!({"kind":"ctor","name":"call:g","args":[
+                {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":n}
+            ]})
+        };
+        let eq1 = json!({"kind":"atomic","name":"=","args":[g(0), int(1)]});
+        let eq2 = json!({"kind":"atomic","name":"=","args":[g(1), int(1)]});
+        let eq3 = json!({"kind":"atomic","name":"=","args":[g(2), int(1)]});
+        let inv = json!({
+            "kind":"and",
+            "operands":[{
+                "kind":"and",
+                "operands":[eq1, eq2, eq3]
+            }]
+        });
+        assert_eq!(
+            count_top_level_constraints(&inv),
+            3,
+            "nested and must flatten for vacuity join-partner count"
+        );
+        let pool = pool_with_contract("loop_unroll", inv);
+        let (plan, registry) = z3_plan_and_registry();
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        assert_eq!(results.len(), 1, "exactly one candidate");
+        assert_ne!(
+            results[0].verdict,
+            ObligationVerdict::Refused,
+            "three ground eqs under nested and must reach the solver, not vacuity-refuse: {}",
             results[0].reason
         );
     }
