@@ -4,7 +4,7 @@ import importlib
 
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.floor import CallSiteValue, TermValue
+from sugar_lift_py_tests.floor import CallSiteValue, FunctionCallable, TermValue
 from sugar_lift_py_tests.sugar.install_source_dig import resolve_install_source_value
 from sugar_lift_py_tests.temporal import TemporalContext
 
@@ -91,6 +91,32 @@ def test_install_source_value_leaves_runtime_selected_prerequisite_unresolved(
     resolved = resolve_install_source_value("runtime_selected_value.ANSWER", _ctx())
 
     assert resolved is None
+
+
+def test_install_source_value_constructs_source_defined_class_prerequisite(
+    tmp_path, monkeypatch
+) -> None:
+    (tmp_path / "class_value.py").write_text(
+        "class Token:\n    pass\nANSWER = Token()\n", encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+
+    resolved = resolve_install_source_value("class_value.ANSWER", _ctx())
+
+    assert resolved is not None
+
+
+def test_stdlib_typing_special_forms_construct_from_source_class_prerequisites() -> (
+    None
+):
+    literal = resolve_install_source_value("typing.Literal", _ctx())
+    self_type = resolve_install_source_value("typing.Self", _ctx())
+
+    assert isinstance(literal, FunctionCallable)
+    assert literal.name == "typing.Literal"
+    assert isinstance(self_type, FunctionCallable)
+    assert self_type.name == "typing.Self"
 
 
 def test_stdlib_future_annotations_constructs_compiler_flag_from_module_source() -> (
