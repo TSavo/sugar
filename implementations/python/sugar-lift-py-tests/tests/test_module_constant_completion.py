@@ -3,6 +3,9 @@ from __future__ import annotations
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.context.reduce_context import ReduceContext
+from sugar_lift_py_tests.factory.build import default_catalog
 
 SAME_MODULE_TABLE_DIG = (
     "TABLE = (10, 20)\n"
@@ -45,6 +48,18 @@ def _expand_term(term, table):
     if term.get("kind") == "term-ref":
         return _expand_term(table[term["cid"]], table)
     return {key: _expand_term(value, table) for key, value in term.items()}
+
+
+def test_reduce_context_carries_module_rewrite_testimony_state() -> None:
+    build_ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    build_ctx.module_rewrite_log.append(("A", "f(1)", "nested.py", 1, None))
+    reduce_ctx = ReduceContext.derived(build_ctx, owner="nested dig")
+
+    assert reduce_ctx.module_rewrite_log is build_ctx.module_rewrite_log
+    assert reduce_ctx.with_temporal(reduce_ctx.temporal).module_rewrite_log is (
+        build_ctx.module_rewrite_log
+    )
+    assert reduce_ctx.prefer_ground_module_bindings is False
 
 
 def test_same_module_callee_dig_preserves_module_constant_temporal() -> None:
