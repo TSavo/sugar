@@ -246,8 +246,11 @@ assertion-lift-frontier: build-python
 .PHONY: setup-git-hooks
 setup-git-hooks:
 	@test -x hooks/pre-commit || (echo "missing executable hook: hooks/pre-commit" >&2; exit 1)
-	git config core.hooksPath hooks
-	@echo "core.hooksPath=hooks"
+	@hooks_abs="$$(cd "$$(dirname "$$(git rev-parse --path-format=absolute --git-common-dir)")" && pwd)/hooks"; \
+		test -x "$$hooks_abs/pre-commit" || (echo "missing $$hooks_abs/pre-commit" >&2; exit 1); \
+		git config core.hooksPath "$$hooks_abs"; \
+		echo "core.hooksPath=$$hooks_abs"
+
 
 .PHONY: test-git-hooks
 test-git-hooks:

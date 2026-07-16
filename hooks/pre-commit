@@ -25,9 +25,11 @@ for path in "${staged[@]}"; do
   if [ ! -f "$path" ]; then
     continue
   fi
+  # Partially staged files: cargo fmt would rewrite unstaged hunks too. Fail
+  # loud so unformatted staged lines cannot sneak past (do not skip).
   if ! git diff --quiet -- "$path"; then
-    echo "pre-commit: skipping partially staged Rust file: $path" >&2
-    continue
+    echo "pre-commit: $path has unstaged edits; stage the whole file or stash unstaged work, then commit again" >&2
+    exit 1
   fi
   case "$path" in
     implementations/rust/*)
@@ -44,6 +46,7 @@ if [ "${#format_paths[@]}" -eq 0 ]; then
   exit 0
 fi
 
+echo "pre-commit: cargo fmt on ${#format_paths[@]} staged Rust file(s)" >&2
 # cargo fmt cannot resolve targets for file args via --manifest-path at the
 # virtual workspace root; run from the workspace dir with relative paths.
 (cd "$repo/implementations/rust" && cargo fmt -- "${format_paths[@]}")

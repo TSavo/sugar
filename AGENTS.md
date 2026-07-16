@@ -765,6 +765,7 @@ cache hit may skip compilation, never command or test execution. See
 - `make test-all`: run the acid test (`test-rust` plus `test-python`).
 - `make test-showcases`: run checked-in end-to-end showcase receipts.
 - `cd implementations/rust && cargo fmt`: format Rust code.
+- `make setup-git-hooks`: enable committed pre-commit (`cargo fmt` on staged Rust).
 - `cd implementations/rust && cargo test -p sugar-cli <test-name> -- --nocapture`: run a focused Rust test.
 
 ## Coding Style & Naming Conventions
@@ -801,6 +802,13 @@ that sentence is the retirement path, and an instrument without one is a
 scary number, not an instrument.
 
 ## Agent-Specific Instructions
+
+Wire Git hooks once per clone: `make setup-git-hooks`. That sets
+`core.hooksPath` to the absolute path of committed `hooks/` so linked
+worktrees under `.worktrees/` still run the Rust `cargo fmt` pre-commit. Do
+not commit staged `implementations/rust/**/*.rs` without that hook (or an
+equivalent local `cargo fmt`); CI `cargo fmt --check` will fail unformatted
+landings.
 
 For isolated work, create repo-local worktrees under `.worktrees/` from
 `origin/main`. Before editing, check `git status --short --branch`. If a
