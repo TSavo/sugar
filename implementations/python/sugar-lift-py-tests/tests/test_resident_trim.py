@@ -50,6 +50,22 @@ def test_trim_no_op_when_malloc_trim_unavailable(monkeypatch) -> None:
     assert not any(name == "resident_trim" for name, _ in events)
 
 
+def test_malloc_trim_failure_is_surfaced_not_swallowed(monkeypatch) -> None:
+    def _boom(_arg: int) -> int:
+        raise OSError("trim exploded")
+
+    monkeypatch.setattr(lift_rpc, "_MALLOC_TRIM", _boom)
+    events = _capture(monkeypatch)
+    warnings: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        lift_rpc._TRANSPORT_LOG,
+        "warning",
+        lambda msg, *a, **k: warnings.append((msg, k.get("extra") or {})),
+    )
+    assert lift_rpc._malloc_trim() is False
+    assert [name for name, _ in warnings] == ["malloc_trim_failed"]
+
+
 def test_transport_logger_name_unchanged() -> None:
     # Guards the logger the wall harvests trim/profile lines from.
     assert lift_rpc._TRANSPORT_LOG is logging.getLogger("sugar.kit.transport")

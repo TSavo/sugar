@@ -325,7 +325,11 @@ def _malloc_trim() -> bool:
     try:
         _MALLOC_TRIM(0)
         return True
-    except Exception:
+    except Exception as exc:  # never crash the plugin, but surface the anomaly
+        _TRANSPORT_LOG.warning(
+            "malloc_trim_failed",
+            extra={"stage": "resident.trim", "error": repr(exc)},
+        )
         return False
 
 
