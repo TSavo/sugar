@@ -3363,8 +3363,32 @@ def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
             with open(path, "r", encoding="utf-8") as handle:
                 file_payload = lift_file_payload(handle.read(), rel_path)
             if bindings_backed_pass:
-                # Implications are not projected from the collapse yet (named
-                # gap). callEdges ride on the source-lifted path below.
+                # Second (implicit-consumer) pass: re-project collapse call
+                # edges and seal them against imported contract_bindings so
+                # mint/report can materialize cross-bundle bridges. Full IR /
+                # audits stay on the producer pass (merge prefers resolved
+                # edges). Implications still a named gap.
+                from sugar_lift_py_tests.factory.call_edge_bindings import (
+                    resolve_call_edges_against_bindings,
+                )
+
+                sealed = resolve_call_edges_against_bindings(
+                    file_payload.call_edges, contract_bindings
+                )
+                payload.call_edges.extend(sealed)
+                _TRANSPORT_LOG.info(
+                    "workspace_file_exit",
+                    extra={
+                        "stage": "lift.workspace.file",
+                        "file": rel_path,
+                        "index": file_index,
+                        "pass": "bindings-backed",
+                        "call_edges": len(sealed),
+                        "elapsed_ms": round(
+                            (time.monotonic() - file_started) * 1000, 3
+                        ),
+                    },
+                )
                 continue
             payload.ir.extend(file_payload.ir)
             _merge_symbol_kinds(payload.symbol_kinds, file_payload.symbol_kinds)

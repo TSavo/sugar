@@ -641,14 +641,12 @@ def test_sum():
         "pandas-sum-good",
     );
     let good_report = run_lift_report(&good);
-    // The receiver-carrying edge is a method call (`df["a"].sum()`), so its
-    // call-edge targetSymbol is `method:sum` per #3668 (Shape 2: method call
-    // edges carry AliasFloor receiver identity). The vendor contract's own
-    // `bridgeSourceSymbol` stays `call:sum` (the EUF ctor head is always
-    // `call:<callee>` regardless of call-site shape); `_bridge_symbol_match_candidates`
-    // strips both prefixes to the bare name, so the universe linkage still
-    // resolves the edge to this imported proof under the new shape.
-    assert_report_edge_targets_imported_proof(&good_report, "method:sum", &proof_cid);
+    // Collapse projects `call:sum` (CallSiteValue always uses the EUF ctor
+    // head `call:<callee>`). The vendor binding's bridgeSourceSymbol is also
+    // `call:sum`. The bindings-backed report pass joins them via
+    // bridge_symbol_match_candidates (call:/method:/bare all collide on the
+    // bare leaf) and stamps targetProofCid so the universe line is audible.
+    assert_report_edge_targets_imported_proof(&good_report, "call:sum", &proof_cid);
     run_mint(&good);
     let (good_prove, good_code) = run_prove(&good);
     assert_eq!(
