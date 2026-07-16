@@ -69,11 +69,25 @@ class InvValue(FloorValue):
 
         locus = construction_site(self.site)
         stated_warrant = Stated(locus=locus)
-        duplicate_derived = any(
+        exact_duplicate = any(
             formula == self.formula for formula in self.derived_formulas
         )
+        equality_duplicate = next(
+            (
+                formula
+                for formula in self.derived_formulas
+                if _same_equality_operands(formula, self.formula)
+            ),
+            None,
+        )
+        duplicate_derived = exact_duplicate or equality_duplicate is not None
         stated_formula = self.formula
-        if duplicate_derived:
+        if equality_duplicate is not None:
+            # The derived warrant resolves the final per-atom vocabulary to
+            # FOL equality.  Collapse the truthful stated/derived pair by
+            # semantic operands while retaining both provenance warrants.
+            stated_formula = equality_duplicate
+        elif exact_duplicate:
             from sugar_lift_py_tests.ir import and_
 
             stated_formula = and_([self.formula, self.formula])
@@ -139,6 +153,7 @@ class InvValue(FloorValue):
             )
             for formula in self.derived_formulas
             if formula != self.formula
+            and not _same_equality_operands(formula, self.formula)
         )
         return (*stated, *derived)
 
@@ -161,3 +176,16 @@ def _derived_floor_chain(formula: Formula) -> tuple[str, ...]:
     ):
         return ("PythonEqualityPromotionBridge",)
     return ("OpaqueOpCallsite.computed",)
+
+
+def _same_equality_operands(left: Formula, right: Formula) -> bool:
+    from sugar_lift_py_tests.ir import _Atomic
+
+    return (
+        isinstance(left, _Atomic)
+        and isinstance(right, _Atomic)
+        and left.name in {"=", "py.eq"}
+        and right.name in {"=", "py.eq"}
+        and left.args == right.args
+        and left.name != right.name
+    )

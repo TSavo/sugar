@@ -566,13 +566,10 @@ def test_bitwise_symbolic_witness_preserves_int_term_without_number_supersort(
     assert truthful_contract["formals"] == ["z"]
     # Universe post is CID term-refs in the lift document; resolve through
     # termTable so the symbolic coordinate `&(z, 3)` remains visible.
-    assert (
-        _ctor_names(
-            truthful_contract["post"],
-            term_table=truthful_result.lift_doc.get("termTable"),
-        )
-        == {"&"}
-    )
+    assert _ctor_names(
+        truthful_contract["post"],
+        term_table=truthful_result.lift_doc.get("termTable"),
+    ) == {"&"}
     assert "Number" not in json.dumps(truthful_contract)
     assert "Number" not in json.dumps(truthful_result.lift_doc.get("termTable"))
 
@@ -1243,26 +1240,57 @@ def test_literal_call_residue_rows_emit_derived_fact_and_refute_lie(
 
     assert truthful.verdict == "sat"
     truthful_rows = _a_callsite_euf_rows(truthful.lift_doc)
+    truthful_term_table = truthful.lift_doc.get("termTable", {})
     truthful_value_rows = [
-        row for row in truthful_rows if _euf_rhs_fingerprint(row) == truthful_rhs
+        row
+        for row in truthful_rows
+        if _euf_rhs_fingerprint(row, truthful_term_table) == truthful_rhs
     ]
     assert len(truthful_value_rows) == 1
     assert _warrant_kinds(truthful_value_rows[0]) == {"Stated", "Derived"}
+    assert truthful_value_rows[0]["inv"]["name"] == "="
 
     assert lying.verdict == "unsat"
     lying_rows = _a_callsite_euf_rows(lying.lift_doc)
+    lying_term_table = lying.lift_doc.get("termTable", {})
     lying_value_rows = [
         row
         for row in lying_rows
-        if _euf_rhs_fingerprint(row) in {truthful_rhs, lying_rhs}
+        if _euf_rhs_fingerprint(row, lying_term_table) in {truthful_rhs, lying_rhs}
     ]
     assert len(lying_value_rows) == 2
     assert {
-        _euf_rhs_fingerprint(row): _warrant_kinds(row) for row in lying_value_rows
+        _euf_rhs_fingerprint(row, lying_term_table): _warrant_kinds(row)
+        for row in lying_value_rows
     } == {
         truthful_rhs: {"Derived"},
         lying_rhs: {"Stated"},
     }
+
+
+def test_call_without_derived_body_stays_named_vacuity_refusal(tmp_path: Path) -> None:
+    result = run_source_through_real_solver(
+        tmp_path / "no-derived-body",
+        "def test_a():\n    assert unavailable_value() == 5\n",
+    )
+
+    rows = [
+        row
+        for row in result.lift_doc["ir"]
+        if isinstance(row, dict)
+        and row.get("name")
+        == "unavailable_value#euf#c:call:unavailable_value()::assertion"
+    ]
+    assert len(rows) == 1
+    assert _warrant_kinds(rows[0]) == {"Stated"}
+    assert rows[0]["inv"]["name"] == "py.eq"
+
+    prove_rows = result.prove_doc.get("rows", [])
+    assert [row.get("status") for row in prove_rows] == ["refused"]
+    assert "consistency check vacuous" in prove_rows[0]["reason"]
+    assert "no covering universe joins the left-operand term" in prove_rows[0]["reason"]
+    with pytest.raises(ProofObligationPanic):
+        _ = result.verdict
 
 
 def test_solver_timeout_is_typed_not_logical_undecidable(
@@ -1501,8 +1529,14 @@ def _euf_rhs_value(row: dict) -> int:
     return row["inv"]["args"][1]["value"]
 
 
-def _euf_rhs_fingerprint(row: dict) -> object:
+def _euf_rhs_fingerprint(row: dict, term_table: dict | None = None) -> object:
     rhs = row["inv"]["args"][1]
+    while (
+        rhs.get("kind") == "term-ref"
+        and term_table is not None
+        and isinstance(rhs.get("cid"), str)
+    ):
+        rhs = term_table[rhs["cid"]]
     if rhs.get("kind") == "const":
         return rhs["value"]
     if rhs.get("kind") == "ctor":

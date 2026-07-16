@@ -44,7 +44,7 @@ class EqualityOpSugar(Sugar, role=SugarRole.TERM):
         start = len(ctx.module_rewrite_log)
         outcome = self.left.reduce(ctx).and_then(
             lambda left: self.right.reduce(ctx).and_then(
-                lambda right: left.equals(right, self.site)
+                lambda right: _equals_with_derived_residue(left, right, self.site, ctx)
             )
         )
         rewrites = ctx.module_rewrite_log[start:]
@@ -54,7 +54,9 @@ class EqualityOpSugar(Sugar, role=SugarRole.TERM):
             ground_ctx = replace(ctx, prefer_ground_module_bindings=True)
             outcome = self.left.reduce(ground_ctx).and_then(
                 lambda left: self.right.reduce(ground_ctx).and_then(
-                    lambda right: left.equals(right, self.site)
+                    lambda right: _equals_with_derived_residue(
+                        left, right, self.site, ground_ctx
+                    )
                 )
             )
             del ctx.module_rewrite_log[rerun_start:]
@@ -72,3 +74,24 @@ class EqualityOpSugar(Sugar, role=SugarRole.TERM):
 
     def walk_children(self):
         return (self.left, self.right)
+
+
+def _equals_with_derived_residue(left, right, site, ctx):
+    outcome = left.equals(right, site)
+
+    from sugar_lift_py_tests.floor import CallSiteValue, PredicateValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    if not isinstance(left, CallSiteValue):
+        return outcome
+    residue = left.derived_equality_residue(ctx)
+    if residue is None or not (
+        isinstance(outcome, Complete) and isinstance(outcome.value, PredicateValue)
+    ):
+        return outcome
+    return Complete(
+        replace(
+            outcome.value,
+            derived_formulas=(*outcome.value.derived_formulas, residue),
+        )
+    )

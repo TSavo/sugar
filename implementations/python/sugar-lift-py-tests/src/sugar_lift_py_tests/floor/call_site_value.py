@@ -151,6 +151,54 @@ class CallSiteValue(FloorValue):
         # inv that consumes the term can still project the edge later.
         return (self,)
 
+    def derived_equality_residue(self, ctx):
+        """Return the callsite's ground body fact when its dig warrants one.
+
+        The function universe already owns the body post.  Equality testimony
+        additionally needs the callsite-keyed residue so the stated assertion
+        and the derived value remain independently visible at the EUF join.
+        Only a single ``out = literal`` post is a derived value pin; opaque,
+        effectful, symbolic, and multi-exit bodies stay absent and therefore
+        loud at the existing refusal/gap boundary.
+        """
+        floor = self._dig_floor_or_none(
+            ctx,
+            owner="CallSiteValue.derived_equality_residue",
+        )
+        if floor is None:
+            return None
+        posts = tuple(floor.post_contribution())
+
+        from sugar_lift_py_tests.ir import (
+            _Atomic,
+            _ConstBool,
+            _ConstInt,
+            _ConstReal,
+            _ConstStr,
+            _Var,
+            eq,
+        )
+
+        literal_types = (_ConstBool, _ConstInt, _ConstReal, _ConstStr)
+        if not posts:
+            rhs = floor.to_term(owner="CallSiteValue.derived_equality_residue")
+        elif len(posts) == 1:
+            post = posts[0]
+            if not (
+                isinstance(post, _Atomic)
+                and post.name == "="
+                and len(post.args) == 2
+                and isinstance(post.args[0], _Var)
+                and post.args[0].name == "out"
+            ):
+                return None
+            rhs = post.args[1]
+        else:
+            return None
+        if not isinstance(rhs, literal_types):
+            return None
+        return eq(self.term, rhs)
+
     def linear_method_call(self, method_name: str, args: tuple, site):
         """Name the next link in a timeless receiver-method rewrite."""
         from sugar_lift_py_tests.ir import ctor
