@@ -4,10 +4,11 @@
 // (`~/.claude/plans/sugar-compiler-liftshift.md`, "SEAM 6").
 //
 // Shared home for the witness-discharge configuration both `cmd_prove` and
-// `cmd_verify` need before running the verifier pipeline: the discharge
-// command is declared in the KIT'S MANIFEST (alongside its lift `command`),
-// resolved through the SAME `find_manifest` dispatch lift uses, no bespoke
-// config. Both faces call `witness_discharge_for_plan` in this module.
+// `cmd_verify` need before running the verifier pipeline: the witness
+// *resolver* is declared in the KIT'S MANIFEST (alongside its lift
+// `command`), resolved through the SAME `find_manifest` dispatch lift uses,
+// no bespoke config. Both faces call `witness_discharge_for_plan` in this
+// module.
 //
 // #3809 witness-as-verb: this struct converts to
 // `sugar_verifier::WitnessDischargeContext` and is passed as a typed
@@ -15,9 +16,13 @@
 // `SUGAR_WITNESS_RESOLVERS` as a live config channel — typed context is the
 // sole surface for project_dir + resolvers. Verdict inputs are
 // content-addressed (packageCid + contract + resolver body).
-// Optional `SUGAR_WITNESS_DISCHARGE_<TOOL>` staging remains for showcase lie
-// scripts that pollute process env; the package-recompute path never reads it.
-use std::collections::BTreeMap;
+//
+// #3860: `SUGAR_WITNESS_DISCHARGE_<TOOL>` is NOT a config channel. There is
+// no production reader — package recompute settles via oracle resolve +
+// authenticated package bytes. Staging those env vars was a dead write into
+// the void; the writer is deleted. Showcase lie scripts may still *set* the
+// env as process pollution (negative tests prove the package path ignores
+// it); production code must never write or read it.
 use std::path::{Path, PathBuf};
 
 use owo_colors::OwoColorize;
@@ -26,24 +31,21 @@ use serde_json::{json, Value};
 use crate::component_plan::{self, ComponentPlan, PlannedLiftManifest};
 use crate::project_config::ProjectConfig;
 
-/// Typed witness-discharge config (project_dir + resolvers + optional lie-env keys).
+/// Typed witness-discharge config (project_dir + resolvers only).
 ///
-/// - `project_dir` / `resolvers` → typed `WitnessDischargeContext` only (step 3;
-///   no `SUGAR_WITNESS_PROJECT_DIR` / `SUGAR_WITNESS_RESOLVERS` staging)
-/// - `discharge_commands` → optional `SUGAR_WITNESS_DISCHARGE_<TOOL>` process
-///   pollution for showcase lie scripts (not a package-recompute input)
+/// - `project_dir` / `resolvers` → typed `WitnessDischargeContext` only
+///   (no `SUGAR_WITNESS_*` process-env staging of any kind)
+/// - Manifest `discharge_command` / `witness_tool` fields are schema/plan
+///   artifacts; they do **not** feed process env (#3860).
 #[derive(Debug, Clone, Default)]
 pub struct WitnessDischargeConfig {
     pub project_dir: Option<PathBuf>,
     pub resolvers: Vec<Value>,
-    pub discharge_commands: BTreeMap<String, String>,
 }
 
 impl WitnessDischargeConfig {
     /// Compute the config from the project's manifest-declared lift
-    /// plugins, mirroring the pre-SEAM-6
-    /// `configure_witness_discharge_env_with_plan` logic exactly, but as a
-    /// pure computation (no env mutation here).
+    /// plugins. Pure computation: no env mutation.
     pub fn from_plan(
         project_root: &Path,
         cfg_doc: &ProjectConfig,
@@ -74,7 +76,6 @@ impl WitnessDischargeConfig {
             };
 
         let mut resolvers: Vec<Value> = Vec::new();
-        let mut discharge_commands: BTreeMap<String, String> = BTreeMap::new();
         for plugin in plugins {
             let manifest =
                 match find_manifest_with_plan(project_root, &plugin.surface, component_plan) {
@@ -99,38 +100,14 @@ impl WitnessDischargeConfig {
                         .unwrap_or_else(|| "sugar.plugin.resolve_witness".to_string()),
                 }));
             }
-            if manifest.discharge_command.is_empty() {
-                continue;
-            }
-            let Some(tool) = manifest.witness_tool.as_deref() else {
-                continue;
-            };
-            let key = format!(
-                "SUGAR_WITNESS_DISCHARGE_{}",
-                tool.to_uppercase()
-                    .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
-            );
-            discharge_commands
-                .entry(key)
-                .or_insert_with(|| manifest.discharge_command.join(" "));
+            // #3860: do NOT stage SUGAR_WITNESS_DISCHARGE_<TOOL> from
+            // manifest.discharge_command / witness_tool. No production
+            // reader; package recompute uses resolvers above only.
         }
 
         WitnessDischargeConfig {
             project_dir,
             resolvers,
-            discharge_commands,
-        }
-    }
-
-    /// Stage optional `SUGAR_WITNESS_DISCHARGE_<TOOL>` process env for
-    /// showcase lie scripts. Does **not** stage `PROJECT_DIR` / `RESOLVERS`
-    /// (retired step 3 — those flow only via [`Self::to_verifier_context`]).
-    /// Pre-existing caller-set values win (`var_os(...).is_none()` guard).
-    pub fn apply_env(&self) {
-        for (key, argv) in &self.discharge_commands {
-            if std::env::var_os(key).is_none() {
-                std::env::set_var(key, argv);
-            }
         }
     }
 
@@ -181,24 +158,23 @@ impl WitnessDischargeConfig {
 }
 
 /// Compute typed verifier context from the project's manifest plan.
-/// `project_dir` + resolvers flow typed-only (step 3); optional DISCHARGE_*
-/// process pollution for showcase lie scripts is staged as a side effect.
+/// `project_dir` + resolvers flow typed-only. Does **not** mutate process env
+/// (#3860: `SUGAR_WITNESS_DISCHARGE_<TOOL>` writer deleted; zero production readers).
 pub(crate) fn witness_discharge_for_plan(
     project_root: &Path,
     cfg_doc: &ProjectConfig,
     component_plan: Option<&ComponentPlan>,
 ) -> sugar_verifier::consistency::WitnessDischargeContext {
-    let config = WitnessDischargeConfig::from_plan(project_root, cfg_doc, component_plan);
-    config.apply_env(); // DISCHARGE_* only; not PROJECT_DIR/RESOLVERS
-    config.to_verifier_context()
+    WitnessDischargeConfig::from_plan(project_root, cfg_doc, component_plan).to_verifier_context()
 }
 
 // The witness-discharge path loads the lift surface manifest at
 // `<project>/.sugar/lift/<surface>/manifest.toml` to read its
-// `discharge_command` + `witness_tool`. No hardcoded `sugar-lift-<kit>`.
+// `resolve_witness_command`. No hardcoded `sugar-lift-<kit>`.
 // Helpers below serve WitnessDischargeConfig::from_plan / witness_discharge_for_plan.
 // (Legacy configure_witness_discharge_env_with_plan deleted -- superseded by
 // witness_discharge_for_plan in b34b7fbb6 Part of #3809 witness-as-verb step 3.)
+// (#3860: SUGAR_WITNESS_DISCHARGE_<TOOL> env staging deleted -- void write.)
 
 fn find_manifest_with_plan(
     project_root: &Path,
@@ -275,6 +251,7 @@ fn parse_authored_lift_manifest(path: &Path, surface: &str) -> Result<PlannedLif
         working_dir: string_field("working_dir").map(PathBuf::from),
         method: string_field("method"),
         phase: string_field("phase"),
+        // Parsed for plan schema fidelity; not staged into process env (#3860).
         discharge_command: array_field("discharge_command")
             .into_iter()
             .chain(array_field("dischargeCommand"))
@@ -294,7 +271,7 @@ fn parse_authored_lift_manifest(path: &Path, surface: &str) -> Result<PlannedLif
 }
 
 /// The loud-loss diagnostic for a plugin whose manifest lookup failed:
-/// the discharge/resolver commands for this plugin are OMITTED from the
+/// the resolver commands for this plugin are OMITTED from the
 /// witness-discharge config, and the omission must say so (#3872). Names
 /// the plugin surface and carries the lookup error verbatim.
 fn manifest_lookup_warning(surface: &str, err: &str) -> String {
@@ -315,6 +292,17 @@ fn manifest_working_dir(project_root: &Path, manifest: &PlannedLiftManifest) -> 
             }
         })
         .unwrap_or_else(|| project_root.to_path_buf())
+}
+
+/// Env key shape historically written by the deleted DISCHARGE_* stager.
+/// Kept as a pure helper so the #3860 instrument can name the illegal key
+/// without reintroducing a writer.
+fn discharge_tool_env_key(tool: &str) -> String {
+    format!(
+        "SUGAR_WITNESS_DISCHARGE_{}",
+        tool.to_uppercase()
+            .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
+    )
 }
 
 #[cfg(test)]
@@ -348,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn from_plan_derives_resolvers_and_discharge_commands_from_plan_manifests() {
+    fn from_plan_derives_resolvers_from_plan_manifests() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = ProjectConfig {
             plugins: vec![lift_plugin("kit-a")],
@@ -374,15 +362,6 @@ mod tests {
             config.resolvers[0]["method"],
             json!("sugar.plugin.resolve_witness")
         );
-        // Discharge key is uppercased with non-alphanumerics replaced by `_`,
-        // value is the space-joined argv.
-        assert_eq!(
-            config
-                .discharge_commands
-                .get("SUGAR_WITNESS_DISCHARGE_MY_TOOL_9"),
-            Some(&"discharge --tool my-tool.9".to_string())
-        );
-        assert_eq!(config.discharge_commands.len(), 1);
     }
 
     #[test]
@@ -405,15 +384,14 @@ mod tests {
 
         let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
 
-        assert!(config
-            .discharge_commands
-            .contains_key("SUGAR_WITNESS_DISCHARGE_CFGTOOL"));
-        assert!(
-            !config
-                .discharge_commands
-                .contains_key("SUGAR_WITNESS_DISCHARGE_PLANTOOL"),
-            "plan plugin must not contribute when cfg declares lift plugins"
+        assert_eq!(config.resolvers.len(), 1);
+        assert_eq!(
+            config.resolvers[0]["argv"],
+            json!(["resolve-cmd", "--json"])
         );
+        // Only cfg-surface contributes; plantool's surface is not in cfg plugins.
+        let ctx = config.to_verifier_context();
+        assert_eq!(ctx.resolvers.len(), 1);
     }
 
     #[test]
@@ -438,61 +416,35 @@ mod tests {
 
         let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
 
-        assert!(config
-            .discharge_commands
-            .contains_key("SUGAR_WITNESS_DISCHARGE_PLANTOOL"));
+        assert_eq!(config.resolvers.len(), 1);
     }
 
     #[test]
-    fn from_plan_skips_manifests_without_discharge_or_tool_but_keeps_resolvers() {
-        // Loud-loss shape: a manifest with no discharge_command (or no
-        // witness_tool) contributes NO discharge env var, but its resolver
-        // is still collected -- the omission is per-channel, not global.
+    fn from_plan_skips_manifests_without_resolver_but_does_not_stage_discharge_env() {
+        // A manifest with no resolve_witness_command contributes no resolver.
+        // Its discharge_command / witness_tool must also not stage process env.
         let dir = tempfile::tempdir().unwrap();
-        let mut no_discharge = planned_manifest("kit-a", "toolless");
-        no_discharge.discharge_command.clear();
-        let mut no_tool = planned_manifest("kit-b", "ignored");
-        no_tool.witness_tool = None;
+        let mut no_resolver = planned_manifest("kit-a", "toolless");
+        no_resolver.resolve_witness_command.clear();
         let cfg = ProjectConfig {
-            plugins: vec![lift_plugin("kit-a"), lift_plugin("kit-b")],
+            plugins: vec![lift_plugin("kit-a")],
             ..Default::default()
         };
         let plan = ComponentPlan {
-            lift_manifests: vec![no_discharge, no_tool],
+            lift_manifests: vec![no_resolver],
             ..Default::default()
         };
 
+        let env_key = discharge_tool_env_key("toolless");
+        std::env::remove_var(&env_key);
         let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
+        let _ = witness_discharge_for_plan(dir.path(), &cfg, Some(&plan));
 
-        assert!(config.discharge_commands.is_empty());
-        assert_eq!(config.resolvers.len(), 2);
-    }
-
-    #[test]
-    fn from_plan_first_manifest_wins_on_duplicate_discharge_tool() {
-        // Two surfaces declaring the same witness_tool collapse to one env
-        // key; the FIRST surface's command is kept (BTreeMap entry().or_insert).
-        let dir = tempfile::tempdir().unwrap();
-        let cfg = ProjectConfig {
-            plugins: vec![lift_plugin("kit-a"), lift_plugin("kit-b")],
-            ..Default::default()
-        };
-        let mut second = planned_manifest("kit-b", "sametool");
-        second.discharge_command = vec!["other-discharge".to_string()];
-        let plan = ComponentPlan {
-            lift_manifests: vec![planned_manifest("kit-a", "sametool"), second],
-            ..Default::default()
-        };
-
-        let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
-
-        assert_eq!(
-            config
-                .discharge_commands
-                .get("SUGAR_WITNESS_DISCHARGE_SAMETOOL"),
-            Some(&"discharge --tool sametool".to_string())
+        assert!(config.resolvers.is_empty());
+        assert!(
+            std::env::var_os(&env_key).is_none(),
+            "discharge_command alone must not stage {env_key}"
         );
-        assert_eq!(config.discharge_commands.len(), 1);
     }
 
     #[test]
@@ -507,6 +459,7 @@ mod tests {
             r#"
 name = "kit-a"
 command = ["local-lift"]
+resolve_witness_command = ["local-resolve"]
 discharge_command = ["local-discharge"]
 witness_tool = "localtool"
 "#,
@@ -523,51 +476,87 @@ witness_tool = "localtool"
 
         let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
 
-        assert_eq!(
-            config
-                .discharge_commands
-                .get("SUGAR_WITNESS_DISCHARGE_LOCALTOOL"),
-            Some(&"local-discharge".to_string())
-        );
-        assert!(
-            !config
-                .discharge_commands
-                .contains_key("SUGAR_WITNESS_DISCHARGE_PLANTOOL"),
-            "project-local manifest must shadow the plan manifest"
-        );
+        assert_eq!(config.resolvers.len(), 1);
+        assert_eq!(config.resolvers[0]["argv"], json!(["local-resolve"]));
     }
 
+    /// #3860 instrument: `witness_discharge_for_plan` must never write
+    /// `SUGAR_WITNESS_DISCHARGE_<TOOL>` — zero production readers, so a
+    /// writer is a void write. Typed resolvers remain the live channel.
+    ///
+    /// Replacement architecture: package recompute via
+    /// `WitnessDischargeContext.resolvers` only. Showcase lie scripts may
+    /// still *set* the env as pollution; production code must not.
     #[test]
-    fn apply_env_caller_override_wins_over_derived_value() {
-        // Discrimination pair, same box: a pre-set caller env var survives
-        // apply_env; an unset one is populated. Unique key names keep this
-        // hermetic under parallel test execution; project_dir/resolvers are
-        // left empty so no shared SUGAR_WITNESS_* globals are touched.
-        let preset_key = "SUGAR_WITNESS_DISCHARGE_TEST3873_PRESET";
-        let fresh_key = "SUGAR_WITNESS_DISCHARGE_TEST3873_FRESH";
-        std::env::remove_var(preset_key);
-        std::env::remove_var(fresh_key);
-        std::env::set_var(preset_key, "caller-value");
+    fn issue_3860_discharge_tool_env_is_not_staged_by_witness_discharge_for_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = "test3860tool";
+        let env_key = discharge_tool_env_key(tool);
+        std::env::remove_var(&env_key);
 
-        let mut discharge_commands = BTreeMap::new();
-        discharge_commands.insert(preset_key.to_string(), "derived-value".to_string());
-        discharge_commands.insert(fresh_key.to_string(), "derived-value".to_string());
-        let config = WitnessDischargeConfig {
-            project_dir: None,
-            resolvers: Vec::new(),
-            discharge_commands,
+        let cfg = ProjectConfig {
+            plugins: vec![lift_plugin("kit-3860")],
+            ..Default::default()
         };
-        config.apply_env();
+        let plan = ComponentPlan {
+            plugins: vec![lift_plugin("kit-3860")],
+            lift_manifests: vec![planned_manifest("kit-3860", tool)],
+            ..Default::default()
+        };
+
+        let ctx = witness_discharge_for_plan(dir.path(), &cfg, Some(&plan));
+
+        assert!(
+            std::env::var_os(&env_key).is_none(),
+            "#3860: production must not stage {env_key} (dead writer / void channel). \
+             fix=delete apply_env / discharge_commands staging; feed \
+             WitnessDischargeContext.resolvers only"
+        );
+        assert_eq!(
+            ctx.resolvers.len(),
+            1,
+            "typed resolvers remain the live discharge surface"
+        );
+        assert_eq!(
+            ctx.resolvers[0].argv,
+            vec!["resolve-cmd".to_string(), "--json".to_string()]
+        );
+        assert!(
+            ctx.project_dir.is_some(),
+            "typed project_dir remains the live discharge surface"
+        );
+
+        std::env::remove_var(&env_key);
+    }
+
+    /// Discrimination pair: a caller who *already* set the pollution env
+    /// keeps their value — production neither overwrites nor clears it.
+    /// Showcase lie scripts rely on this "caller owns the pollution" rule.
+    #[test]
+    fn issue_3860_caller_set_discharge_env_survives_witness_discharge_for_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = "test3860preset";
+        let env_key = discharge_tool_env_key(tool);
+        std::env::set_var(&env_key, "caller-lie-script");
+
+        let cfg = ProjectConfig {
+            plugins: vec![lift_plugin("kit-3860-preset")],
+            ..Default::default()
+        };
+        let plan = ComponentPlan {
+            plugins: vec![lift_plugin("kit-3860-preset")],
+            lift_manifests: vec![planned_manifest("kit-3860-preset", tool)],
+            ..Default::default()
+        };
+
+        let _ = witness_discharge_for_plan(dir.path(), &cfg, Some(&plan));
 
         assert_eq!(
-            std::env::var(preset_key).as_deref(),
-            Ok("caller-value"),
-            "caller-set env var must win over the derived value"
+            std::env::var(&env_key).as_deref(),
+            Ok("caller-lie-script"),
+            "production must not clobber caller-set pollution env"
         );
-        assert_eq!(std::env::var(fresh_key).as_deref(), Ok("derived-value"));
-
-        std::env::remove_var(preset_key);
-        std::env::remove_var(fresh_key);
+        std::env::remove_var(&env_key);
     }
 
     fn plugin(surface: &str) -> PluginEntry {
@@ -579,7 +568,7 @@ witness_tool = "localtool"
     }
 
     /// #3872: the warn-emission function names the plugin surface and
-    /// carries the lookup error, so the omitted discharge command says so.
+    /// carries the lookup error, so the omitted resolver says so.
     #[test]
     fn manifest_lookup_warning_names_surface_and_error() {
         let msg = manifest_lookup_warning("rust-kit-3872", "no plugin manifest for surface");
@@ -598,8 +587,7 @@ witness_tool = "localtool"
     }
 
     /// Err arm: a plugin whose manifest lookup fails contributes nothing —
-    /// from_plan continues past it (and warns on stderr at line 85; the
-    /// warning text itself is asserted above).
+    /// from_plan continues past it (and warns on stderr).
     #[test]
     fn from_plan_skips_plugin_with_failed_manifest_lookup() {
         let dir = tempfile::tempdir().unwrap();
@@ -609,21 +597,20 @@ witness_tool = "localtool"
         };
         let plan = ComponentPlan::default();
         let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
-        assert!(config.discharge_commands.is_empty());
         assert!(config.resolvers.is_empty());
     }
 
     /// Ok arm (discrimination pair): the same box with a real manifest on
-    /// disk produces the discharge command — proving the Err arm's empty
-    /// result is the lookup failure, not a dead pipeline.
+    /// disk produces the resolver — proving the Err arm's empty result is
+    /// the lookup failure, not a dead pipeline.
     #[test]
-    fn from_plan_collects_discharge_command_when_manifest_resolves() {
+    fn from_plan_collects_resolver_when_manifest_resolves() {
         let dir = tempfile::tempdir().unwrap();
         let surface_dir = dir.path().join(".sugar").join("lift").join("kit-3872");
         std::fs::create_dir_all(&surface_dir).unwrap();
         std::fs::write(
             surface_dir.join("manifest.toml"),
-            "command = [\"lifter\"]\ndischarge_command = [\"discharge\", \"--fast\"]\nwitness_tool = \"z3\"\n",
+            "command = [\"lifter\"]\nresolve_witness_command = [\"resolve\", \"--fast\"]\ndischarge_command = [\"discharge\", \"--fast\"]\nwitness_tool = \"z3\"\n",
         )
         .unwrap();
         let cfg = ProjectConfig {
@@ -632,9 +619,15 @@ witness_tool = "localtool"
         };
         let plan = ComponentPlan::default();
         let config = WitnessDischargeConfig::from_plan(dir.path(), &cfg, Some(&plan));
-        assert_eq!(
-            config.discharge_commands.get("SUGAR_WITNESS_DISCHARGE_Z3"),
-            Some(&"discharge --fast".to_string())
+        assert_eq!(config.resolvers.len(), 1);
+        assert_eq!(config.resolvers[0]["argv"], json!(["resolve", "--fast"]));
+        // #3860: discharge_command present in manifest but never staged.
+        let env_key = discharge_tool_env_key("z3");
+        std::env::remove_var(&env_key);
+        let _ = witness_discharge_for_plan(dir.path(), &cfg, Some(&plan));
+        assert!(
+            std::env::var_os(&env_key).is_none(),
+            "manifest discharge_command must not stage {env_key}"
         );
     }
 }
