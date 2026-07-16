@@ -140,6 +140,12 @@ class OpaqueOpCallsite(FloorValue):
     def right_shift(self, other, site):
         return self._arithmetic("right_shift", other, site)
 
+    def bitwise_and(self, other, site):
+        return self._arithmetic("bitwise_and", other, site)
+
+    def bitwise_or(self, other, site):
+        return self._arithmetic("bitwise_or", other, site)
+
     def unary_minus(self, site):
         return self._downstream().unary_minus(site)
 
