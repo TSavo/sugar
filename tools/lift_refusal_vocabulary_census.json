@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 1835,
+  "lift_output_backlog": 1836,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -896,7 +896,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/numpy_wall.py:ae39c4af6797de8a:1",
-      "line": 84,
+      "line": 101,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/numpy_wall.py",
       "reason": "IDD instrument code names an existing frontier or vocabulary row",
       "replacement": "keep until the named frontier row is retired by its owning migration",
@@ -916,7 +916,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:0a1c415b29f7978e:1",
-      "line": 2793,
+      "line": 2850,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -926,7 +926,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:2056e06be9cd313e:1",
-      "line": 2698,
+      "line": 2755,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -936,7 +936,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:275e3195e042e920:1",
-      "line": 740,
+      "line": 762,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -946,7 +946,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:516a86ab996c4da5:1",
-      "line": 474,
+      "line": 496,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -956,7 +956,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:678aa91dc0fc33bb:1",
-      "line": 579,
+      "line": 601,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -966,7 +966,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:8613735061af6d4d:1",
-      "line": 2218,
+      "line": 2257,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -976,7 +976,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b13ac16af47d1f4d:1",
-      "line": 743,
+      "line": 765,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -986,7 +986,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b222d14df22a442a:1",
-      "line": 2928,
+      "line": 2985,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -996,7 +996,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b85f2cb26012bf60:1",
-      "line": 461,
+      "line": 483,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1006,7 +1006,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b85f2cb26012bf60:2",
-      "line": 471,
+      "line": 493,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1016,7 +1016,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:d3469ccfa48c2cd7:1",
-      "line": 2242,
+      "line": 2281,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1026,7 +1026,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:f87a140483c0687b:1",
-      "line": 1967,
+      "line": 2006,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1036,7 +1036,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py:279f0d747f004921:1",
-      "line": 110,
+      "line": 118,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1046,7 +1046,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py:285831c4dadf1b68:1",
-      "line": 360,
+      "line": 368,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1056,7 +1056,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py:8111817bbaf46949:1",
-      "line": 117,
+      "line": 125,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1086,7 +1086,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:12165ae09b91e3b5:1",
-      "line": 136,
+      "line": 137,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1096,7 +1096,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:1b9d0c85efd887cf:1",
-      "line": 169,
+      "line": 177,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1106,7 +1106,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:3c361e4c88ad0352:1",
-      "line": 154,
+      "line": 155,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1116,7 +1116,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:69fbf970966db818:1",
-      "line": 34,
+      "line": 35,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1126,7 +1126,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:71ca3f25fc42dff2:1",
-      "line": 146,
+      "line": 147,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1136,7 +1136,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:a162209c41cdd5e2:1",
-      "line": 133,
+      "line": 134,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1146,7 +1146,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:be260f09c476cf14:1",
-      "line": 149,
+      "line": 150,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -1156,7 +1156,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:eea283862e98c852:1",
-      "line": 145,
+      "line": 146,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2386,7 +2386,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py:c4829d099c3b9db1:1",
-      "line": 366,
+      "line": 386,
       "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2396,7 +2396,7 @@
     },
     {
       "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py:eae51ec3ab0e5a96:1",
-      "line": 409,
+      "line": 429,
       "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2896,7 +2896,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:177fb6724754cd35:1",
-      "line": 10861,
+      "line": 11003,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2906,7 +2906,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:3992ca116b5ac1c7:1",
-      "line": 1743,
+      "line": 1797,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2916,7 +2916,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:3992ca116b5ac1c7:2",
-      "line": 1904,
+      "line": 1958,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2926,7 +2926,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:3f1e67de2cb276d1:1",
-      "line": 10867,
+      "line": 11009,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2936,7 +2936,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:4b7fffd74e329bfb:1",
-      "line": 10852,
+      "line": 10994,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2946,7 +2946,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:4daf630d0caa2be3:1",
-      "line": 459,
+      "line": 484,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2956,7 +2956,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:6b7b6f2af828959a:1",
-      "line": 10880,
+      "line": 11022,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2966,7 +2966,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:8e238bc97800d568:1",
-      "line": 10876,
+      "line": 11018,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2976,7 +2976,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:976633debc022a35:1",
-      "line": 8813,
+      "line": 8881,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "line explicitly talks about verifier/prove-side refusal vocabulary",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -2986,7 +2986,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:9fcf97abf8c76316:1",
-      "line": 1893,
+      "line": 1947,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -2996,7 +2996,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:a3537c5b959e4a72:1",
-      "line": 10875,
+      "line": 11017,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3006,7 +3006,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:a588f37929ff6d61:1",
-      "line": 1737,
+      "line": 1791,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3016,7 +3016,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:a588f37929ff6d61:2",
-      "line": 1898,
+      "line": 1952,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3026,7 +3026,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:a6e2dd66ac5d07b5:1",
-      "line": 1892,
+      "line": 1946,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3036,7 +3036,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:a8bb7875dd6cbfc3:1",
-      "line": 10872,
+      "line": 11014,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3046,7 +3046,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:c906d11864ad1cbc:1",
-      "line": 463,
+      "line": 488,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3056,7 +3056,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:cfb9861733b4c49e:1",
-      "line": 466,
+      "line": 491,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3066,7 +3066,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:d3c4edf387dc29ad:1",
-      "line": 10862,
+      "line": 11004,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3076,7 +3076,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:d55db08b9ada68f9:1",
-      "line": 10871,
+      "line": 11013,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3086,7 +3086,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:f0d953f65d7d5dd4:1",
-      "line": 10869,
+      "line": 11011,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3096,7 +3096,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:0e01372e1d4da128:1",
-      "line": 4412,
+      "line": 4408,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3106,7 +3106,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:0f0ad1c4fc19af38:1",
-      "line": 1842,
+      "line": 1840,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3116,7 +3116,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:1691402edc0ab1c9:1",
-      "line": 8696,
+      "line": 8692,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3126,7 +3126,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:1b361a07e245180d:1",
-      "line": 7504,
+      "line": 7500,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3136,7 +3136,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:1cbc37b17fddcbd8:1",
-      "line": 3391,
+      "line": 3387,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3146,7 +3146,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:2524b8d838c5fd44:1",
-      "line": 7524,
+      "line": 7520,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3156,7 +3156,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:2b0c169996259c95:1",
-      "line": 8872,
+      "line": 8868,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3166,7 +3166,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:2e874578382c9c5c:1",
-      "line": 7725,
+      "line": 7721,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3176,7 +3176,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:3479f66aa9920760:1",
-      "line": 4983,
+      "line": 4979,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3196,7 +3196,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:3a15ee4688ea3644:1",
-      "line": 7209,
+      "line": 7205,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3206,7 +3206,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:3a24d3566a66f2fc:1",
-      "line": 7493,
+      "line": 7489,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3216,7 +3216,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:41ccc1fbb6c7028c:1",
-      "line": 1805,
+      "line": 1803,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3226,7 +3226,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:41ccc1fbb6c7028c:2",
-      "line": 1827,
+      "line": 1825,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3266,7 +3266,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:5303302f47d14292:4",
-      "line": 2568,
+      "line": 2566,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3276,7 +3276,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:5ee9567300371997:1",
-      "line": 7733,
+      "line": 7729,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3286,7 +3286,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:6c21546d2518624a:1",
-      "line": 7742,
+      "line": 7738,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3296,7 +3296,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:6d6c57bd7b2a6d7c:1",
-      "line": 8437,
+      "line": 8433,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3316,7 +3316,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:7d8a8347f3aa7401:1",
-      "line": 8458,
+      "line": 8454,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3326,7 +3326,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:7d8a8347f3aa7401:2",
-      "line": 8715,
+      "line": 8711,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3336,7 +3336,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:91b74959e632f791:1",
-      "line": 4550,
+      "line": 4546,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3346,7 +3346,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:91b74959e632f791:2",
-      "line": 4644,
+      "line": 4640,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3366,7 +3366,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:a8016719b19c0b34:1",
-      "line": 2566,
+      "line": 2564,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3376,7 +3376,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:ac88807707905e04:1",
-      "line": 8538,
+      "line": 8534,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3386,7 +3386,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:ac88807707905e04:2",
-      "line": 8616,
+      "line": 8612,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3396,7 +3396,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:ae7849dec23ebd64:1",
-      "line": 1710,
+      "line": 1708,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3406,7 +3406,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:ae7849dec23ebd64:2",
-      "line": 4418,
+      "line": 4414,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3416,7 +3416,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:bbd8031609dcbe72:1",
-      "line": 3770,
+      "line": 3766,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3426,7 +3426,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:c15cad30363cd4d7:1",
-      "line": 7904,
+      "line": 7900,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3436,7 +3436,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:c87032206ddd5438:1",
-      "line": 7188,
+      "line": 7184,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3446,7 +3446,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:caecd8a303caa1a3:1",
-      "line": 7750,
+      "line": 7746,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3456,7 +3456,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:ce03a7fddd65c578:1",
-      "line": 4413,
+      "line": 4409,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3466,7 +3466,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:cfd883a7a6abc363:1",
-      "line": 1701,
+      "line": 1699,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3476,7 +3476,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:cfd883a7a6abc363:2",
-      "line": 3929,
+      "line": 3925,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3486,7 +3486,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:d456672b809a792b:1",
-      "line": 7222,
+      "line": 7218,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3496,7 +3496,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:d6ea962968aacf61:1",
-      "line": 7477,
+      "line": 7473,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3506,7 +3506,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:d7e37935a03ce495:1",
-      "line": 1700,
+      "line": 1698,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3516,7 +3516,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:d7e37935a03ce495:2",
-      "line": 3928,
+      "line": 3924,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3526,7 +3526,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:dbe281bfd11d2396:1",
-      "line": 8476,
+      "line": 8472,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3536,7 +3536,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:dbe281bfd11d2396:2",
-      "line": 8734,
+      "line": 8730,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3546,7 +3546,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:e472cac90f9d3a19:1",
-      "line": 8697,
+      "line": 8693,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3556,7 +3556,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:ea45b628db7e9545:1",
-      "line": 3983,
+      "line": 3979,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3596,7 +3596,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:f5b832ffeed4c983:1",
-      "line": 8318,
+      "line": 8314,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3606,7 +3606,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:fe76d478c729b536:1",
-      "line": 8436,
+      "line": 8432,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3616,7 +3616,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:06f3956cf10bb1f5:1",
-      "line": 225,
+      "line": 221,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3626,7 +3626,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:57618e949ba4813e:1",
-      "line": 453,
+      "line": 449,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3636,7 +3636,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:6d49b15d59be8535:1",
-      "line": 179,
+      "line": 175,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3646,7 +3646,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:942388c53b2a296f:1",
-      "line": 226,
+      "line": 222,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3656,7 +3656,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:f9e9936f1b9cd32d:1",
-      "line": 223,
+      "line": 219,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4266,7 +4266,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:00c1ea334cb863ad:1",
-      "line": 8656,
+      "line": 8667,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4276,7 +4276,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:01f2c62991873873:1",
-      "line": 8765,
+      "line": 8776,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4286,7 +4286,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:02a88599a318f556:1",
-      "line": 7910,
+      "line": 7921,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4296,7 +4296,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:06ccd998b11dcf55:1",
-      "line": 7728,
+      "line": 7739,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4306,7 +4306,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:0897ee0c7cf8f5f5:1",
-      "line": 3059,
+      "line": 3070,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4326,7 +4326,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:0c11991598d805bb:1",
-      "line": 7453,
+      "line": 7464,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4336,7 +4336,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:0c19e2c67405c640:1",
-      "line": 3052,
+      "line": 3063,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4346,7 +4346,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:0e7eff390e5f11d0:1",
-      "line": 7347,
+      "line": 7358,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4366,12 +4366,22 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:11daeefc03513447:1",
-      "line": 8601,
+      "line": 8612,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "fn post_loop_read_refused() {",
+      "wire_marker": "internal-only"
+    },
+    {
+      "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:13b1dc8bc8858ae0:1",
+      "line": 9448,
+      "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "/// and ambient consistency refused (A2 expected-discharge-got-refused).",
       "wire_marker": "internal-only"
     },
     {
@@ -4386,7 +4396,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:148bcafbf4169955:1",
-      "line": 7950,
+      "line": 7961,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4396,7 +4406,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:151bbf7b7f448a2c:1",
-      "line": 7520,
+      "line": 7531,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4406,7 +4416,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:15ec4b7675494093:1",
-      "line": 7545,
+      "line": 7556,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4416,7 +4426,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:168d3213611ef260:1",
-      "line": 8596,
+      "line": 8607,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4426,7 +4436,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:173871b5529841f2:1",
-      "line": 7935,
+      "line": 7946,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4436,7 +4446,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:18c854128b190659:1",
-      "line": 3432,
+      "line": 3443,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4446,7 +4456,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:1aead6354bfff76c:1",
-      "line": 6521,
+      "line": 6532,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4456,7 +4466,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:1be009e2750c5849:1",
-      "line": 6949,
+      "line": 6960,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4466,7 +4476,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:1c9c73a640decca1:1",
-      "line": 6822,
+      "line": 6833,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4476,7 +4486,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:1e9367445933e494:1",
-      "line": 4281,
+      "line": 4292,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4486,7 +4496,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:1f669a4867925235:1",
-      "line": 7522,
+      "line": 7533,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4496,7 +4506,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:1fd62bb80330cbc9:1",
-      "line": 5810,
+      "line": 5821,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4506,7 +4516,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:2029a19d14ca57db:1",
-      "line": 8585,
+      "line": 8596,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4516,7 +4526,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:204c5a40bece5671:1",
-      "line": 8229,
+      "line": 8240,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4526,7 +4536,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:208ca7e859d02c12:1",
-      "line": 9092,
+      "line": 9103,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4536,7 +4546,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:21545eb90cad5d53:1",
-      "line": 7123,
+      "line": 7134,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4546,7 +4556,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:275093312fbf3631:1",
-      "line": 8632,
+      "line": 8643,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4556,7 +4566,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:298f0251d86bfdbe:1",
-      "line": 3206,
+      "line": 3217,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4566,7 +4576,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:298f0251d86bfdbe:2",
-      "line": 3984,
+      "line": 3995,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4576,7 +4586,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:2c8e8aa56e7196aa:1",
-      "line": 8565,
+      "line": 8576,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4586,7 +4596,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:2cabb1845dbc307d:1",
-      "line": 8654,
+      "line": 8665,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4596,7 +4606,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:2d61fdd5bf0819a0:1",
-      "line": 8619,
+      "line": 8630,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4606,7 +4616,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:2e062f33e7a3f753:1",
-      "line": 7566,
+      "line": 7577,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4616,7 +4626,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:2e4f26c105ce27db:1",
-      "line": 3970,
+      "line": 3981,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4626,7 +4636,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:2f52e2c611aa6d6f:1",
-      "line": 7498,
+      "line": 7509,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4636,7 +4646,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:31fbccce2fd411cd:1",
-      "line": 7429,
+      "line": 7440,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4646,7 +4656,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:321591cd95fbb4e1:1",
-      "line": 8725,
+      "line": 8736,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4656,7 +4666,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:3352b923866ca687:1",
-      "line": 7000,
+      "line": 7011,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4666,7 +4676,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:3415fdadb9174cbd:1",
-      "line": 8237,
+      "line": 8248,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4676,7 +4686,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:38c0d2112608fd43:1",
-      "line": 7849,
+      "line": 7860,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4686,7 +4696,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:396ce19160de98c6:1",
-      "line": 3437,
+      "line": 3448,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4696,7 +4706,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:3b49d50d672f6910:1",
-      "line": 4394,
+      "line": 4405,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4716,7 +4726,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:3c782258a058051a:1",
-      "line": 5812,
+      "line": 5823,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4726,7 +4736,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:3c782258a058051a:2",
-      "line": 5817,
+      "line": 5828,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4736,7 +4746,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:3d746a0fb2757bb1:1",
-      "line": 7870,
+      "line": 7881,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4746,7 +4756,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:3d9cd3fcb5c02879:1",
-      "line": 7507,
+      "line": 7518,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4766,7 +4776,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:3f882c604fb224f6:1",
-      "line": 7375,
+      "line": 7386,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4776,7 +4786,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:410f3f514c90a714:1",
-      "line": 7448,
+      "line": 7459,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4786,7 +4796,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:411e4224dc5a7ef5:1",
-      "line": 6963,
+      "line": 6974,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4796,7 +4806,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:411e4224dc5a7ef5:2",
-      "line": 7097,
+      "line": 7108,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4806,7 +4816,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:411e4224dc5a7ef5:3",
-      "line": 7119,
+      "line": 7130,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4816,7 +4826,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:41d13c7b74f95cf3:1",
-      "line": 4264,
+      "line": 4275,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4826,7 +4836,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:4258b9204214ebf6:1",
-      "line": 7350,
+      "line": 7361,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4836,7 +4846,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:42d17044f6d70960:1",
-      "line": 8373,
+      "line": 8384,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4846,7 +4856,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:45150935994e57c5:1",
-      "line": 5448,
+      "line": 5459,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4856,7 +4866,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:46387bdf2146ce56:1",
-      "line": 8400,
+      "line": 8411,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4866,7 +4876,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:4677f9cb73c4bb36:1",
-      "line": 6959,
+      "line": 6970,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4876,7 +4886,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:485bbfce70a57321:1",
-      "line": 8049,
+      "line": 8060,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4886,7 +4896,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:490f36b2e927e9fa:1",
-      "line": 5815,
+      "line": 5826,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4896,7 +4906,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:4a373a5bf346b178:1",
-      "line": 7552,
+      "line": 7563,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4906,7 +4916,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:4ad40a401223ffc5:1",
-      "line": 2955,
+      "line": 2966,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4916,7 +4926,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:4ad40a401223ffc5:2",
-      "line": 4498,
+      "line": 4509,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4926,7 +4936,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:4caf52a4435e6e9a:1",
-      "line": 7668,
+      "line": 7679,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4946,7 +4956,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:52954baed48c1c7c:1",
-      "line": 7788,
+      "line": 7799,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4956,7 +4966,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:52cbed418c2653fc:1",
-      "line": 7780,
+      "line": 7791,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4966,7 +4976,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:5400aeb4105abf49:1",
-      "line": 9071,
+      "line": 9082,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4976,7 +4986,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:54f710fc18346249:1",
-      "line": 4569,
+      "line": 4580,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4986,7 +4996,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:55396a475fafa2d2:1",
-      "line": 3132,
+      "line": 3143,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4996,7 +5006,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:5709917b3ccf9ec9:1",
-      "line": 7817,
+      "line": 7828,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5006,7 +5016,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:58213abafb3949f3:1",
-      "line": 7537,
+      "line": 7548,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5016,7 +5026,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:5aa5c002632cb10e:1",
-      "line": 7815,
+      "line": 7826,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5026,7 +5036,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:5e32c56f1a5e6828:1",
-      "line": 3420,
+      "line": 3431,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5036,7 +5046,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:5f1716407af17fee:1",
-      "line": 2887,
+      "line": 2898,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5046,7 +5056,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:5f94955c13c2a950:1",
-      "line": 3051,
+      "line": 3062,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5066,7 +5076,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:60b52502d9b81cf3:1",
-      "line": 6918,
+      "line": 6929,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5076,7 +5086,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:64be959f0dbba82c:1",
-      "line": 7764,
+      "line": 7775,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5086,7 +5096,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:6833417870277c41:1",
-      "line": 8732,
+      "line": 8743,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5096,7 +5106,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:69fbf2d82ca8a8b7:1",
-      "line": 8035,
+      "line": 8046,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5106,7 +5116,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:6aeb2a683edfb2d6:1",
-      "line": 8747,
+      "line": 8758,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5116,7 +5126,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:6ba6a3159c06e9f7:1",
-      "line": 4012,
+      "line": 4023,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5126,7 +5136,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:6c85a8280a8a1ee8:1",
-      "line": 7633,
+      "line": 7644,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5146,7 +5156,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:6d918ad6a77e74a8:1",
-      "line": 6832,
+      "line": 6843,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5156,7 +5166,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:6dd778f47096540b:1",
-      "line": 7885,
+      "line": 7896,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5166,7 +5176,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:6ded4939158673cb:1",
-      "line": 7844,
+      "line": 7855,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5176,7 +5186,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:6e02a5cd1c2a4a62:1",
-      "line": 8598,
+      "line": 8609,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5196,7 +5206,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:70a7caea262064e4:1",
-      "line": 2905,
+      "line": 2916,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5206,7 +5216,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:710cf2597369931c:1",
-      "line": 7604,
+      "line": 7615,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5216,7 +5226,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:71b9b8de151d4d54:1",
-      "line": 8317,
+      "line": 8328,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5226,7 +5236,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:72d608358239527e:1",
-      "line": 7574,
+      "line": 7585,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5236,7 +5246,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:73325b5a6db2cfd5:1",
-      "line": 5447,
+      "line": 5458,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5246,7 +5256,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:736b3b65efb8fe03:1",
-      "line": 7878,
+      "line": 7889,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5256,7 +5266,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:7470a521893f13b0:1",
-      "line": 3467,
+      "line": 3478,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5266,7 +5276,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:75c11e60d744f22d:1",
-      "line": 7162,
+      "line": 7173,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5276,7 +5286,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:7638384fd55eae41:1",
-      "line": 7372,
+      "line": 7383,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5286,7 +5296,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:7719d3cbe83a8fa5:1",
-      "line": 7072,
+      "line": 7083,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5296,7 +5306,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:77648f3c745de48f:1",
-      "line": 7757,
+      "line": 7768,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5306,7 +5316,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:7781e93feb0859ed:1",
-      "line": 2925,
+      "line": 2936,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5316,7 +5326,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:78ef9457dde26ba2:1",
-      "line": 7609,
+      "line": 7620,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5326,7 +5336,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:7942852dcda56174:1",
-      "line": 8698,
+      "line": 8709,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5346,7 +5356,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:7a13a54557cf242b:1",
-      "line": 3425,
+      "line": 3436,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5356,7 +5366,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:7b673116a052da1a:1",
-      "line": 7638,
+      "line": 7649,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5366,7 +5376,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:7d9cc4e53e8f2d71:1",
-      "line": 8627,
+      "line": 8638,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5376,7 +5386,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:7daa9ed4aace6511:1",
-      "line": 7692,
+      "line": 7703,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5386,7 +5396,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:7ef3eb80e68a5502:1",
-      "line": 4278,
+      "line": 4289,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5406,7 +5416,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:8213f6b3e83aead2:1",
-      "line": 6865,
+      "line": 6876,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5416,7 +5426,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:8213f6b3e83aead2:2",
-      "line": 7807,
+      "line": 7818,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5426,7 +5436,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:82d3b3d4944cbe24:1",
-      "line": 4501,
+      "line": 4512,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5436,7 +5446,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:82d3b3d4944cbe24:2",
-      "line": 4509,
+      "line": 4520,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5446,7 +5456,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:82d3b3d4944cbe24:3",
-      "line": 4517,
+      "line": 4528,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5456,7 +5466,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:82d3b3d4944cbe24:4",
-      "line": 4525,
+      "line": 4536,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5466,7 +5476,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:82d3b3d4944cbe24:5",
-      "line": 4533,
+      "line": 4544,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5476,7 +5486,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:82d3b3d4944cbe24:6",
-      "line": 4541,
+      "line": 4552,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5486,7 +5496,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:82d3b3d4944cbe24:7",
-      "line": 4549,
+      "line": 4560,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5496,7 +5506,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:831ac057e9128fae:1",
-      "line": 7971,
+      "line": 7982,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5506,7 +5516,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:8435320da7aa7811:1",
-      "line": 7834,
+      "line": 7845,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5516,7 +5526,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:85744c0c075b54d9:1",
-      "line": 7596,
+      "line": 7607,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5526,7 +5536,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:87bb0398af266726:1",
-      "line": 8646,
+      "line": 8657,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5536,7 +5546,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:88ba9104405053e1:1",
-      "line": 7790,
+      "line": 7801,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5546,7 +5556,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:89996bb92b129fd4:1",
-      "line": 8212,
+      "line": 8223,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5556,7 +5566,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:8c1c11f757786b8e:1",
-      "line": 8395,
+      "line": 8406,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5566,7 +5576,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:8c419dc8000e3c36:1",
-      "line": 7388,
+      "line": 7399,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5576,7 +5586,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:90c10bb355fdec9b:1",
-      "line": 7356,
+      "line": 7367,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5596,7 +5606,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:1",
-      "line": 3103,
+      "line": 3114,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5606,16 +5616,6 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:10",
-      "line": 3257,
-      "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return Some(SourceWarningClassification::Refused(",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:11",
       "line": 3268,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
@@ -5625,8 +5625,18 @@
       "wire_marker": "internal-only"
     },
     {
+      "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:11",
+      "line": 3279,
+      "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
+      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
+      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
+      "speaker": "lift-output-backlog",
+      "text": "return Some(SourceWarningClassification::Refused(",
+      "wire_marker": "internal-only"
+    },
+    {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:12",
-      "line": 3273,
+      "line": 3284,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5636,7 +5646,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:2",
-      "line": 3123,
+      "line": 3134,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5646,7 +5656,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:3",
-      "line": 3128,
+      "line": 3139,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5656,7 +5666,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:4",
-      "line": 3211,
+      "line": 3222,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5666,7 +5676,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:5",
-      "line": 3215,
+      "line": 3226,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5676,7 +5686,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:6",
-      "line": 3223,
+      "line": 3234,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5686,7 +5696,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:7",
-      "line": 3228,
+      "line": 3239,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5696,7 +5706,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:8",
-      "line": 3233,
+      "line": 3244,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5706,7 +5716,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:928644cffea39124:9",
-      "line": 3249,
+      "line": 3260,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5716,7 +5726,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:95ecbfc3255a3d8d:1",
-      "line": 3055,
+      "line": 3066,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5726,7 +5736,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:96db15fd190864b0:1",
-      "line": 8578,
+      "line": 8589,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5736,7 +5746,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:979371ab1937aa0f:1",
-      "line": 8661,
+      "line": 8672,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5746,7 +5756,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:986c128c8ea68364:1",
-      "line": 7902,
+      "line": 7913,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5756,7 +5766,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:98db74471efbef01:1",
-      "line": 7682,
+      "line": 7693,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5766,7 +5776,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:99017a019af7fad2:1",
-      "line": 8210,
+      "line": 8221,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5776,7 +5786,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:99b3e4897e4c0fe9:1",
-      "line": 2958,
+      "line": 2969,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5786,7 +5796,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:99b3e4897e4c0fe9:2",
-      "line": 3056,
+      "line": 3067,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5796,7 +5806,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:99f6e97a7daad50d:1",
-      "line": 6830,
+      "line": 6841,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5806,7 +5816,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:9a345f7fab453859:1",
-      "line": 7973,
+      "line": 7984,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5816,7 +5826,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:9adf8a724952b829:1",
-      "line": 7502,
+      "line": 7513,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5826,7 +5836,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:9bc79c06f30743a4:1",
-      "line": 8742,
+      "line": 8753,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5836,7 +5846,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:9cceb8584a937226:1",
-      "line": 6858,
+      "line": 6869,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5846,7 +5856,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:9d1e1c9054ca8edb:1",
-      "line": 6871,
+      "line": 6882,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5856,7 +5866,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:9dfdac128f0ed4ab:1",
-      "line": 7473,
+      "line": 7484,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5866,7 +5876,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:9eda8153218d72e9:1",
-      "line": 6908,
+      "line": 6919,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5876,7 +5886,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:a018902c48ae87da:1",
-      "line": 7822,
+      "line": 7833,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5886,7 +5896,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:a039984bd9dad2d8:1",
-      "line": 7749,
+      "line": 7760,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5896,7 +5906,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:a08dda5f7e37ed3e:1",
-      "line": 8190,
+      "line": 8201,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5906,7 +5916,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:a0dfa22da7f46d1c:1",
-      "line": 7581,
+      "line": 7592,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5916,7 +5926,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:a2dc1a4ab47586e4:1",
-      "line": 7160,
+      "line": 7171,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5926,7 +5936,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:a3fc7ddd087cfeac:1",
-      "line": 7653,
+      "line": 7664,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5936,7 +5946,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:a54d2b9a1f16dc24:1",
-      "line": 7927,
+      "line": 7938,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5946,7 +5956,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:a5c80a74bd94a3df:1",
-      "line": 7880,
+      "line": 7891,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5956,7 +5966,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:a6e6cf1292093437:1",
-      "line": 7661,
+      "line": 7672,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5966,7 +5976,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:a86b083b4363a2aa:1",
-      "line": 3208,
+      "line": 3219,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5976,7 +5986,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:a98fc2bba7554336:1",
-      "line": 6846,
+      "line": 6857,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -5986,7 +5996,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:ab53037683bb2555:1",
-      "line": 7465,
+      "line": 7476,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6006,7 +6016,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:af788cedb8dab5d2:1",
-      "line": 8579,
+      "line": 8590,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6016,7 +6026,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:afc90dd8dfc0a4a1:1",
-      "line": 4560,
+      "line": 4571,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6026,7 +6036,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b030f5a537fa4634:1",
-      "line": 7718,
+      "line": 7729,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6036,7 +6046,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b0a716fbfd846173:1",
-      "line": 7963,
+      "line": 7974,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6046,7 +6056,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b128cdc74016d83f:1",
-      "line": 7475,
+      "line": 7486,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6056,7 +6066,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b24bcc401aef24f3:1",
-      "line": 7401,
+      "line": 7412,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6066,7 +6076,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b2ffd9912e45070e:1",
-      "line": 7697,
+      "line": 7708,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6076,7 +6086,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b4c640438df07cba:1",
-      "line": 7425,
+      "line": 7436,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6086,7 +6096,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b4e5bde19069a88c:1",
-      "line": 7606,
+      "line": 7617,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6096,7 +6106,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b4fc5bd0f1dad52e:1",
-      "line": 7731,
+      "line": 7742,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6106,7 +6116,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b567c8a14a76e485:1",
-      "line": 6838,
+      "line": 6849,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6116,7 +6126,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b645fff3e7452937:1",
-      "line": 8950,
+      "line": 8961,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6146,7 +6156,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b7485afcb3845546:1",
-      "line": 8677,
+      "line": 8688,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6166,7 +6176,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b7a969867c5b0aa9:1",
-      "line": 8319,
+      "line": 8330,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6176,7 +6186,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b7d458d07902147e:1",
-      "line": 7726,
+      "line": 7737,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6186,7 +6196,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b804748e3a4495a6:1",
-      "line": 7547,
+      "line": 7558,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6196,7 +6206,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b835d254ed293055:1",
-      "line": 6943,
+      "line": 6954,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6206,7 +6216,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:b99153b40fc23f9f:1",
-      "line": 7912,
+      "line": 7923,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6216,7 +6226,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:bc78701f48a3450f:1",
-      "line": 6888,
+      "line": 6899,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6236,7 +6246,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:bd64157dde5ef393:1",
-      "line": 2954,
+      "line": 2965,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6246,7 +6256,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:c106e2508db35984:1",
-      "line": 8341,
+      "line": 8352,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6256,7 +6266,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:c29785555945b863:1",
-      "line": 3166,
+      "line": 3177,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6266,7 +6276,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:c323eaa7e210da9d:1",
-      "line": 6842,
+      "line": 6853,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6276,7 +6286,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:c3c6be2d155aa3ca:1",
-      "line": 7631,
+      "line": 7642,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6286,7 +6296,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:c5a2a5407c916b06:1",
-      "line": 6819,
+      "line": 6830,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6296,7 +6306,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:c6eb4589bac6c542:1",
-      "line": 8744,
+      "line": 8755,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6306,7 +6316,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:c7414bff7e750266:1",
-      "line": 6826,
+      "line": 6837,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6316,7 +6326,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:c7ff7cb3eac0edb2:1",
-      "line": 7398,
+      "line": 7409,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6326,7 +6336,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:c89decb7e7c30ac5:1",
-      "line": 7915,
+      "line": 7926,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6336,7 +6346,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:c9e20539149f5017:1",
-      "line": 8013,
+      "line": 8024,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6356,7 +6366,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:cd8f2124add319b0:1",
-      "line": 7525,
+      "line": 7536,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6366,7 +6376,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:d0f31e696b134ad6:1",
-      "line": 7101,
+      "line": 7112,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6376,7 +6386,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:d17601c5f2598259:1",
-      "line": 3133,
+      "line": 3144,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6386,7 +6396,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:d338264fc146889b:1",
-      "line": 7663,
+      "line": 7674,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6396,7 +6406,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:d377afa149971afa:1",
-      "line": 7478,
+      "line": 7489,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6406,7 +6416,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:d3d250568b7eb589:1",
-      "line": 8933,
+      "line": 8944,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6416,7 +6426,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:d6ccea385d7c49e5:1",
-      "line": 4167,
+      "line": 4178,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6426,7 +6436,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:d6fab892273ed3e8:1",
-      "line": 7417,
+      "line": 7428,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6436,7 +6446,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:d7757a192c1551cd:1",
-      "line": 7503,
+      "line": 7514,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6446,7 +6456,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:d7c67b8da1c0e44d:1",
-      "line": 8239,
+      "line": 8250,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6456,7 +6466,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:d842bd1fdd896aec:1",
-      "line": 7842,
+      "line": 7853,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6466,7 +6476,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:d8553a43ce511c1a:1",
-      "line": 9086,
+      "line": 9097,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6486,7 +6496,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:da29f3bff3739773:1",
-      "line": 7793,
+      "line": 7804,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6496,7 +6506,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:da8e2ab7e6fa6d97:1",
-      "line": 4398,
+      "line": 4409,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6506,7 +6516,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:dda9147397c0169f:1",
-      "line": 8324,
+      "line": 8335,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6526,7 +6536,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:e0df591923884403:2",
-      "line": 2935,
+      "line": 2946,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6536,7 +6546,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:e0df591923884403:3",
-      "line": 3426,
+      "line": 3437,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6546,7 +6556,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:e11f2d89a8d0e320:1",
-      "line": 4256,
+      "line": 4267,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6556,7 +6566,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:e160b079a714bd2a:1",
-      "line": 7450,
+      "line": 7461,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6566,7 +6576,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:e2569648dac29adb:1",
-      "line": 7690,
+      "line": 7701,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6576,7 +6586,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:e5c6acc6d1851f8d:1",
-      "line": 3074,
+      "line": 3085,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6586,7 +6596,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:e7c88fa4ab3aee90:1",
-      "line": 7490,
+      "line": 7501,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6606,7 +6616,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:e81b104f77ac67e8:1",
-      "line": 7365,
+      "line": 7376,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6616,7 +6626,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:e8280268392899e2:1",
-      "line": 7937,
+      "line": 7948,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6626,7 +6636,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:e843128731195f12:1",
-      "line": 4275,
+      "line": 4286,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6646,7 +6656,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:eacf25a18142ef16:1",
-      "line": 7070,
+      "line": 7081,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6656,7 +6666,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:ebc209c454c06c63:1",
-      "line": 7499,
+      "line": 7510,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6666,7 +6676,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:ed0a31bc245a9acd:1",
-      "line": 7396,
+      "line": 7407,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6676,7 +6686,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:ede135bd36398fcb:1",
-      "line": 5823,
+      "line": 5834,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6686,7 +6696,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:ee51e50284b15be3:1",
-      "line": 8629,
+      "line": 8640,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6696,7 +6706,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:eeb4896a2ea3d539:1",
-      "line": 7576,
+      "line": 7587,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6706,7 +6716,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:eebc8cab0a64526b:1",
-      "line": 4601,
+      "line": 4612,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6716,7 +6726,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f12254c9b7a8dd18:1",
-      "line": 8215,
+      "line": 8226,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6726,7 +6736,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f51c669c3bce16fe:1",
-      "line": 7427,
+      "line": 7438,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6736,7 +6746,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f6174ede3633f617:1",
-      "line": 7623,
+      "line": 7634,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6746,7 +6756,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f61c527589604a56:1",
-      "line": 7759,
+      "line": 7770,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6756,7 +6766,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f6ea8cd61d24acda:1",
-      "line": 8573,
+      "line": 8584,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6766,7 +6776,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f72152dd68c5dabf:1",
-      "line": 6848,
+      "line": 6859,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6776,7 +6786,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f72152dd68c5dabf:2",
-      "line": 6863,
+      "line": 6874,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6786,7 +6796,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f72152dd68c5dabf:3",
-      "line": 6880,
+      "line": 6891,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6796,7 +6806,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f72152dd68c5dabf:4",
-      "line": 6890,
+      "line": 6901,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6806,7 +6816,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f72152dd68c5dabf:5",
-      "line": 6900,
+      "line": 6911,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6816,7 +6826,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f72152dd68c5dabf:6",
-      "line": 6910,
+      "line": 6921,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6826,7 +6836,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f72152dd68c5dabf:7",
-      "line": 6920,
+      "line": 6931,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6836,7 +6846,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f72152dd68c5dabf:8",
-      "line": 6930,
+      "line": 6941,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6846,7 +6856,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f72152dd68c5dabf:9",
-      "line": 7074,
+      "line": 7085,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6866,7 +6876,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f7f1a069b7534e08:1",
-      "line": 8391,
+      "line": 8402,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6876,7 +6886,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f9176f9b7c66a92b:1",
-      "line": 7440,
+      "line": 7451,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6896,7 +6906,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:f9ce74c517277c43:1",
-      "line": 3476,
+      "line": 3487,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6906,7 +6916,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:fcc932b6ac279816:1",
-      "line": 3448,
+      "line": 3459,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6916,7 +6926,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:fda829b667d260ea:1",
-      "line": 4493,
+      "line": 4504,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6926,7 +6936,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:fe7dca1f3e4a79ea:1",
-      "line": 8024,
+      "line": 8035,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -6936,7 +6946,7 @@
     },
     {
       "key": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs:fec02991de54bf36:1",
-      "line": 7370,
+      "line": 7381,
       "path": "implementations/rust/sugar-lift-rust-tests/src/bin/rust_test_assertions_rpc.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -20750,11 +20760,11 @@
     "emitter-provenance-guard": 3,
     "grammar-census-prose": 23,
     "instrument-prose": 40,
-    "lift-output-backlog": 1835,
+    "lift-output-backlog": 1836,
     "provenance-oracle-guard": 79,
     "vendor-language-identifier": 1,
     "verifier-verdict-quote": 51,
     "verify-dialect-boundary": 42
   },
-  "total_occurrences": 2074
+  "total_occurrences": 2075
 }
