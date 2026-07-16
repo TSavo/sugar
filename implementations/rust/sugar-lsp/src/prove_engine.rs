@@ -17,6 +17,15 @@
 //      (`verify_consistency_scoped_with_base_index` — zero project FS for
 //      claim facts). NO parallel `mint_project_scratch_proof` feed.
 //
+// #3928 gap-3 door identity (after #3981 deleted the separate `warm_solve`
+// symbol): warmth is derived residency, not a second function.
+//   - LSP face:  `verify_consistency_scoped_with_base_index` (resident base
+//     index + overlay pool already fed)
+//   - Runner face: `sugar_compiler::orchestrate::solve_project_with_pool`
+//     (preloaded multi-speaker pool)
+// Both doors are pool-resident discharge. Process-wide plan residency across
+// CLI invocations remains optional residual (daemon last mile).
+//
 // Mint remains the door for sealed `.proof` publish / vendor cache seal
 // (auto_mode); it is not the LSP solve feed.
 
