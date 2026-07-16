@@ -31,22 +31,23 @@ SUGARBIN_PROFILE ?= debug
 
 ifeq ($(SUGARBIN_PROFILE),release)
 SUGARBIN_PROFILE_ARG := --release
+SUGARBIN_INCREMENTAL := 0
 else ifeq ($(SUGARBIN_PROFILE),debug)
 SUGARBIN_PROFILE_ARG :=
+SUGARBIN_INCREMENTAL := 1
 else
 $(error SUGARBIN_PROFILE must be debug or release)
 endif
 
 .PHONY: sugarbin-build
-sugarbin-build: $(SUGARBIN_OUTPUT)
-
-$(SUGARBIN_OUTPUT):
+sugarbin-build:
 	mkdir -p "$(SUGARBIN_TARGET_DIR)"
 	CARGO_TARGET_DIR="$(SUGARBIN_TARGET_DIR)" \
+	CARGO_INCREMENTAL="$(SUGARBIN_INCREMENTAL)" \
 	SUGAR_BUILD_STAMP="$(SUGARBIN_BUILD_STAMP)" \
 	SUGAR_BUILD_GIT_HEAD="$(SUGARBIN_BUILD_STAMP)" \
 	"$(SUGARBIN_CARGO)" build --locked \
 	  --manifest-path "$(SUGARBIN_MANIFEST)" \
 	  -p "$(SUGARBIN_PACKAGE)" --bin "$(SUGARBIN_BINARY)" \
 	  $(SUGARBIN_PROFILE_ARG)
-	test -x "$@"
+	test -x "$(SUGARBIN_OUTPUT)"
