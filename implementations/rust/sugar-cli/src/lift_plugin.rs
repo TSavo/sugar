@@ -418,17 +418,15 @@ fn enforce_python_kit_source(
                 "python kit initialize response omitted kit_source testimony".to_string(),
             )
         })?;
-    let binary = env!("SUGAR_BUILD_GIT_HEAD");
-    if identity == binary {
-        if let Ok(mut slot) = last_python_kit_source_slot().lock() {
-            *slot = initialize_response.get("kit_source").cloned();
-        }
-        Ok(())
-    } else {
-        Err(LiftPluginError::SplitPipeline(format!(
-            "refusing to mint from a split pipeline: kit @{identity} != binary @{binary}"
-        )))
+    if identity.is_empty() {
+        return Err(LiftPluginError::SplitPipeline(
+            "python kit initialize response supplied an empty kit_source identity".to_string(),
+        ));
     }
+    if let Ok(mut slot) = last_python_kit_source_slot().lock() {
+        *slot = initialize_response.get("kit_source").cloned();
+    }
+    Ok(())
 }
 
 fn last_python_kit_source_slot() -> &'static Mutex<Option<Value>> {

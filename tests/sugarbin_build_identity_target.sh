@@ -50,7 +50,15 @@ printf '%s\\n' 'fresh:$binary'
 EOF
 chmod +x "$target/release/$binary"
 SH
-chmod +x "$tmp/bin/rustc" "$tmp/bin/cargo"
+cat >"$tmp/bin/git" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == *"rev-parse HEAD"* ]]; then
+  printf '%s\n' "${SUGARBIN_FAKE_GIT_HEAD:?}"
+  exit 0
+fi
+exec /usr/bin/git "$@"
+SH
+chmod +x "$tmp/bin/rustc" "$tmp/bin/cargo" "$tmp/bin/git"
 
 export PATH="$tmp/bin:$PATH"
 export SUGARBIN_FAKE_CARGO_LOG="$tmp/cargo.log"
@@ -59,6 +67,7 @@ export SUGAR_BINARY_TARGET_ROOT="$tmp/target"
 export SUGAR_BINARY_CACHE_DIR="$tmp/cache"
 export SUGAR_BINARY_SOURCE_STAMP="blake3-512:$(printf '7%.0s' {1..128})"
 export SUGAR_BINARY_NO_SHELF=1 SUGAR_BINARY_PUBLISH=0
+export SUGARBIN_FAKE_GIT_HEAD="head-before-unrelated-change"
 
 # This is the exact persistent-runner hazard: a stale shared executable is
 # newer than the checked-out source and Cargo could otherwise call it fresh.
@@ -76,5 +85,12 @@ resolved="$("$repo/bin/sugarbin" --bin sugar)"
   echo 'Cargo reused the shared published target instead of an identity cell' >&2; exit 1;
 }
 grep -Fq "$tmp/cache/.build/" "$tmp/cargo.log"
+
+# Repository HEAD is not a build input. With the BLAKE3 source closure fixed,
+# an unrelated commit must reuse the exact artifact without invoking Cargo.
+export SUGARBIN_FAKE_GIT_HEAD="head-after-unrelated-change"
+resolved_again="$("$repo/bin/sugarbin" --bin sugar)"
+[[ "$resolved_again" == "$resolved" ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 1 ]]
 
 echo 'PASS: sugarbin Cargo output is isolated by build identity'
