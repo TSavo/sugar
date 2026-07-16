@@ -6349,6 +6349,46 @@ mod tests {
     }
 
     #[test]
+    fn mint_preserves_execution_witness_evidence_in_durable_contract_member() {
+        let evidence = json!({
+            "kind": "evidence",
+            "proofType": "custom",
+            "certificate": {
+                "tool": "build-witness",
+                "version": "blake3-512:runtime",
+                "formulaHash": "blake3-512:package",
+                "proofData": "{\"codeFiles\":[],\"count\":1,\"kind\":\"witness-package\",\"packageCid\":\"blake3-512:package\",\"passed\":1,\"testFiles\":[]}"
+            }
+        });
+        let ir = vec![json!({
+            "kind": "contract",
+            "name": "build-witness:package::output",
+            "inv": {
+                "kind": "atomic",
+                "name": "=",
+                "args": [
+                    {"kind": "const", "value": "same", "sort": {"kind": "primitive", "name": "String"}},
+                    {"kind": "const", "value": "same", "sort": {"kind": "primitive", "name": "String"}}
+                ]
+            },
+            "evidence": evidence,
+            "proofirProvenance": {
+                "kind": "proofir-provenance",
+                "nodeClass": "WitnessPackage",
+                "warrants": [{"kind": "Derived", "packageCid": "blake3-512:package"}]
+            }
+        })];
+
+        let (bytes, _, _) =
+            mint_from_ir_document(&ir, None, None, None, Path::new("."), Path::new("."), true)
+                .expect("mint build-witness contract");
+        let graph = ProofGraph::read(&bytes).expect("reload durable proof");
+        let header = contract_header(&graph, "build-witness:package::output");
+
+        assert_eq!(header["evidence"], evidence);
+    }
+
+    #[test]
     fn mint_from_ir_document_emits_contract_body_graph_for_loader() {
         let root = temp_workspace("mint_ir_document_contract_body_graph");
         let out_dir = root.join("out");

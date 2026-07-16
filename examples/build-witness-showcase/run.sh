@@ -138,9 +138,15 @@ if expected_rc == "0" and receipt.get("ok") is not True:
 if expected_rc != "0" and receipt.get("ok") is not False:
     raise SystemExit(f"{suite}: expected ok=false")
 witnesses = receipt.get("witnessDimension", {}).get("witnesses", [])
-if len(witnesses) != 1:
-    raise SystemExit(f"{suite}: expected one witnessDimension entry, got {len(witnesses)}")
-w = witnesses[0]
+build_witnesses = [
+    w for w in witnesses
+    if "content-address:recompute" in (w.get("checks") or [])
+]
+if len(build_witnesses) != 1:
+    raise SystemExit(
+        f"{suite}: expected one recomputed build witness, got {build_witnesses}"
+    )
+w = build_witnesses[0]
 if w.get("verdict") != "verified":
     raise SystemExit(f"{suite}: witnessDimension did not verify: {w}")
 if "content-address:recompute" not in (w.get("checks") or []):
@@ -176,12 +182,19 @@ if len(script_rows) != 1 or len(output_rows) != 1:
         f"{suite}: expected one script row and one output row, got "
         f"{len(script_rows)} script and {len(output_rows)} output"
     )
-if script_rows[0].get("status") != "discharged" or output_rows[0].get("status") != "discharged":
-    raise SystemExit(f"{suite}: stale proof equality rows should stay discharged: {build_rows}")
+if script_rows[0].get("status") != "unsatisfied" or output_rows[0].get("status") != "unsatisfied":
+    raise SystemExit(f"{suite}: stale proof witness rows must refuse: {build_rows}")
 witnesses = receipt.get("witnessDimension", {}).get("witnesses", [])
-if len(witnesses) != 1:
-    raise SystemExit(f"{suite}: expected one witnessDimension entry, got {len(witnesses)}")
-w = witnesses[0]
+build_witnesses = [
+    w for w in witnesses
+    if "content-address:recompute" in (w.get("checks") or [])
+    or "witness did not reproduce" in (w.get("reason") or "")
+]
+if len(build_witnesses) != 1:
+    raise SystemExit(
+        f"{suite}: expected one recomputed build witness, got {build_witnesses}"
+    )
+w = build_witnesses[0]
 if w.get("verdict") != "refused":
     raise SystemExit(f"{suite}: expected witness refused, got {w}")
 if "witness did not reproduce" not in (w.get("reason") or ""):
@@ -337,10 +350,10 @@ TXT
 write_lying_discharge
 
 run_suite good discharged discharged
-run_suite bad-script unsatisfied discharged
-run_lying_oracle_regression bad-script unsatisfied discharged
-run_suite bad-output discharged unsatisfied
-run_lying_oracle_regression bad-output discharged unsatisfied
+run_suite bad-script unsatisfied unsatisfied
+run_lying_oracle_regression bad-script unsatisfied unsatisfied
+run_suite bad-output unsatisfied unsatisfied
+run_lying_oracle_regression bad-output unsatisfied unsatisfied
 run_tampered_script_suite
 run_tampered_output_suite
 
