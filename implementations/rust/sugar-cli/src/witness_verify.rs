@@ -833,11 +833,8 @@ mod tests {
             "schemaVersion": "1",
         });
         let member = StoredMember::from_envelope(
-            sugar_proof_envelope::MementoCid::try_parse(format!(
-                "blake3-512:{}",
-                "a".repeat(128)
-            ))
-            .expect("test member cid"),
+            sugar_proof_envelope::MementoCid::try_parse(format!("blake3-512:{}", "a".repeat(128)))
+                .expect("test member cid"),
             &envelope,
         )
         .expect("toolchain self-attestation envelope parses");
