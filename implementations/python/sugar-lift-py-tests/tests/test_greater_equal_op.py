@@ -1,5 +1,5 @@
-"""The `>=` operator (GreaterEqualOpSugar): `a >= b` is `not (a < b)`. Concrete
-numbers fold to the True/False literal -- the boolean IS the type."""
+"""The faithful `>=` operator (GreaterEqualOpSugar). Concrete numbers fold to the
+True/False literal -- the boolean IS the type."""
 
 from __future__ import annotations
 

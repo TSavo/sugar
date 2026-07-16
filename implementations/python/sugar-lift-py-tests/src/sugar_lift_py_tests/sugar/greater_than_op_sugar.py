@@ -11,10 +11,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class GreaterThanOpSugar(Sugar, role=SugarRole.TERM):
-    """The `>` operator. It is `b < a` with the operands swapped: reduce both sides
-    and ask the right whether it is less than the left (the ordering floor), which
-    gives back a True/False literal. Its own sugar, its own type; the value owns
-    the answer, no fork."""
+    """The faithful Python `>` operator, resolved per atom by operand warrants."""
 
     left: SugarBody
     right: SugarBody
@@ -38,8 +35,8 @@ class GreaterThanOpSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        # `>` is `b < a` with the operands swapped: folds concrete operands to the
-        # True/False literal, and the literal picks the if-face. The truthful twin
+        # Concrete operands fold to the True/False literal, and the literal picks
+        # the if-face. The truthful twin
         # rides the face `>` picked, the lying twin asserts the other -- the pair
         # proves the lift discriminates on order.
         prefix = (
@@ -55,7 +52,7 @@ class GreaterThanOpSugar(Sugar, role=SugarRole.TERM):
     def desugar(self, ctx: object = None) -> Outcome:
         return self.left.reduce(ctx).and_then(
             lambda left: self.right.reduce(ctx).and_then(
-                lambda right: right.less_than(left, self.site)
+                lambda right: left.greater_than(right, self.site)
             )
         )
 

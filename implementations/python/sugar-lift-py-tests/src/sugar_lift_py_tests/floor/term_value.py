@@ -113,6 +113,57 @@ class TermValue(FloorValue):
             )
         return super().less_than(other, site)
 
+    def less_equal(self, other, site):
+        if type(other) is TermValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(site=site)
+                if self.value <= other.value
+                else FalseBoolLiteralSugar(site=site)
+            )
+        return super().less_equal(other, site)
+
+    def greater_than(self, other, site):
+        if type(other) is TermValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(site=site)
+                if self.value > other.value
+                else FalseBoolLiteralSugar(site=site)
+            )
+        return super().greater_than(other, site)
+
+    def greater_equal(self, other, site):
+        if type(other) is TermValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(site=site)
+                if self.value >= other.value
+                else FalseBoolLiteralSugar(site=site)
+            )
+        return super().greater_equal(other, site)
+
     def add(self, other, site):
         # Python int/float arithmetic folds while retaining the result's concrete
         # Python type; ProofIR projection later preserves Int versus Real.

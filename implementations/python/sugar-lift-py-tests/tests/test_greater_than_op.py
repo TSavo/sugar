@@ -1,5 +1,4 @@
-"""The `>` operator (GreaterThanOpSugar): a > b IS b < a. Reduce both sides, ask the
-right if it is less than the left (the ordering floor). Concrete numbers fold to the
+"""The faithful `>` operator (GreaterThanOpSugar). Concrete numbers fold to the
 True/False literal -- the boolean IS the type."""
 
 from __future__ import annotations

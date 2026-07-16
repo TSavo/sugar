@@ -1,6 +1,5 @@
-"""The `<=` operator (LessEqualOpSugar): `a <= b` is `not (b < a)` -- the ordering
-floor with operands swapped, then the bool literal negates itself. Concrete
-numbers fold to the True/False literal -- the boolean IS the type."""
+"""The faithful `<=` operator (LessEqualOpSugar). Concrete numbers fold to the
+True/False literal -- the boolean IS the type."""
 
 from __future__ import annotations
 

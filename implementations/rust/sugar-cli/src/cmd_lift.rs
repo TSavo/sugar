@@ -5649,9 +5649,12 @@ const REPORT_PYTHON_OPERATOR_CONSTRUCTORS: &[&str] = &[
     "py.compare:NotIn",
     "py.compare:chain",
     "py.eq",
+    "py.ge",
+    "py.gt",
     "py.implies",
     "py.in",
     "py.invert",
+    "py.le",
     "py.lt",
     "py.neg",
     "py.not",
@@ -16456,6 +16459,12 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             assert!(
                 is_report_python_operator_constructor(symbol),
                 "operator emitter missing from report classifier: {symbol}"
+            );
+        }
+        for symbol in ["py.le", "py.gt", "py.ge"] {
+            assert!(
+                REPORT_PYTHON_OPERATOR_CONSTRUCTORS.contains(&symbol),
+                "comparison-family atom missing from report classifier: {symbol}"
             );
         }
     }

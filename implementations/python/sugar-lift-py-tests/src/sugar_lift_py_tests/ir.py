@@ -334,6 +334,21 @@ def py_lt(a: Term, b: Term) -> Formula:
     return atomic("py.lt", [a, b])
 
 
+def py_le(a: Term, b: Term) -> Formula:
+    """Python `<=` as an operator-indexed atom; the sort universe adjudicates (the operator is faithful to `__le__`)."""
+    return atomic("py.le", [a, b])
+
+
+def py_gt(a: Term, b: Term) -> Formula:
+    """Python `>` as an operator-indexed atom; the sort universe adjudicates (the operator is faithful to `__gt__`)."""
+    return atomic("py.gt", [a, b])
+
+
+def py_ge(a: Term, b: Term) -> Formula:
+    """Python `>=` as an operator-indexed atom; the sort universe adjudicates (the operator is faithful to `__ge__`)."""
+    return atomic("py.ge", [a, b])
+
+
 def py_truthy(a: Term) -> Formula:
     """The Python truth relation as an atom; the sort adjudicates the interpretation."""
     return atomic("py.truthy", [a])

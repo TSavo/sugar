@@ -85,8 +85,7 @@ def test_condition_rides_the_coordinate() -> None:
     """[x for x in xs if x > 0] carries the condition term (not dropped)."""
     value = reduce_value("[x for x in xs if x > 0]", binds=_xs())
     elem = ctor("py.iter_elem", [make_var("xs")])
-    # GreaterThan is b < a with operands swapped: py.lt(0, x).
-    cond = ctor("py.lt", [num(0), elem])
+    cond = ctor("py.gt", [elem, num(0)])
     assert value.term == ctor("py.listcomp", [elem, make_var("xs"), cond])
 
 
