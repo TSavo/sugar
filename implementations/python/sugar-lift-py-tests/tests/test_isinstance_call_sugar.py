@@ -71,7 +71,8 @@ def test_witness_pair_discriminates_on_isinstance_face() -> None:
 
     witness = IsinstanceCallSugar.witnesses()
     assert witness.owner_sugar == "IsinstanceCallSugar"
-    assert "isinstance(1, int)" in witness.truthful.source
-    assert "isinstance(1, str)" in witness.lying.source
+    assert "return isinstance(1, int)" in witness.truthful.source
+    assert "assert A(5) == True" in witness.truthful.source
+    assert "assert A(5) == False" in witness.lying.source
     assert witness.truthful.expected == "sat"
     assert witness.lying.expected == "unsat"

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -50,12 +50,12 @@ class IsinstanceCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
 
     @classmethod
     def witnesses(cls):
-        return _call_pair(
+        return _call_return_pair(
             name="isinstance_predicate",
             owner_sugar="IsinstanceCallSugar",
-            truthful="def test_a():\n    assert isinstance(1, int)\n",
-            lying="def test_a():\n    assert isinstance(1, str)\n",
-            family="assertion",
+            body="isinstance(1, int)",
+            truthful="True",
+            lying="False",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
