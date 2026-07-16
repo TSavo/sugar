@@ -95,11 +95,12 @@ def _run_import_check(
     if proc.returncode == 0:
         return True, "ok"
     err = (proc.stderr or proc.stdout or "").strip()
-    # Keep one diagnostic line.
-    first = next(
-        (ln for ln in err.splitlines() if ln.strip()), f"exit={proc.returncode}"
-    )
-    return False, first
+    # Keep the tail of the traceback — the last lines carry the actual error;
+    # the first line is just "Traceback (most recent call last):".
+    lines = [ln for ln in err.splitlines() if ln.strip()]
+    if not lines:
+        return False, f"exit={proc.returncode}"
+    return False, " | ".join(ln.strip() for ln in lines[-3:])
 
 
 def check_source_pythonpath() -> list[Failure]:
@@ -229,23 +230,39 @@ def check_fresh_editable_install() -> list[Failure]:
     return failures
 
 
+def _kit_pythonpath_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(str(p) for p in SOURCE_PATHS)
+    return env
+
+
 def check_sticky_venvs() -> list[Failure]:
-    """If a showcase sticky venv already exists, it must resolve kit imports."""
+    """Archaeology mode: existing sticky venvs must satisfy the shim contract.
+
+    Showcases never pip-install the sugar kit into the witness venvs — they
+    provide it via PYTHONPATH shims over the repo source trees (see e.g.
+    examples/pandas-source-accounting/good/lift-shim.sh). So the check runs
+    the venv's python with the kit source trees on PYTHONPATH, which also
+    exercises the venv's pip deps — blake3 / cbor2 / pynacl — that the kit
+    imports at module load.
+    """
     failures: list[Failure] = []
+    env = _kit_pythonpath_env()
     for name, path in STICKY_VENVS:
         python = path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         if not python.is_file():
             continue  # not created yet — showcases create on demand
-        ok, detail = _run_import_check(python, REQUIRED_IMPORTS)
+        ok, detail = _run_import_check(python, REQUIRED_IMPORTS, env=env)
         if not ok:
             failures.append(
                 Failure(
                     axis="A1",
                     contract=f"sticky venv {name}",
                     detail=(
-                        f"{detail}; path={path}. "
+                        f"{detail}; path={path} (kit via PYTHONPATH shim). "
                         "Rebuild: remove the venv or re-run the showcase install "
-                        "block so sugar_lift_python_source is editable-installed."
+                        "block so its pip deps (pytest + pynacl + blake3 + cbor2 "
+                        "+ the family package) are present."
                     ),
                 )
             )
