@@ -26,8 +26,9 @@ use crate::{
     closure_body_is_side_effecting, collect_assertion_entries, const_fold_int_term,
     const_fold_u128_term, const_int, const_val_term, count_asserts_in_stmts, loop_body_mutates,
     resolve_index_in_formula, strip_refs_groups, subst_var_in_formula, term_as_int,
-    translate_term_in_scope, AssertionFactKind, BoundedDomain, Desugared, Effect, FloatWidthScope,
-    LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant, SUGAR_SEQ_CAP,
+    translate_term_in_scope, AssertionFactKind, BoundedDomain, Desugared, Disposition, Effect,
+    FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
+    SUGAR_SEQ_CAP,
 };
 
 /// and `try_lift_for_each_forall` (a `.for_each(|var| body)` adaptor): a `for`
@@ -51,7 +52,7 @@ fn lift_bounded_forall(
     // its concrete element in the LITERAL-INT RANGE unroll. Empty -> no index read is
     // resolved (the reads stay the EUF accessor -- the established sound floor).
     literal_arrays: &BTreeMap<String, Vec<Rc<Term>>>,
-) -> Option<(Rc<Formula>, usize)> {
+) -> Option<(Rc<Formula>, usize, Vec<String>)> {
     // Lift the body through the normal collector. Truth-table-or-gutter: every
     // body assert must lift cleanly (none refused, none missing) or we refuse
     // the whole loop.
@@ -106,7 +107,15 @@ fn lift_bounded_forall(
         .filter(|entry| matches!(entry.kind, AssertionFactKind::Warranted))
         .map(|entry| entry.claim_count)
         .sum();
-    if !body_skipped.is_empty() || warranted_assertions != n_body {
+    let inactive_reasons: Vec<String> = body_skipped
+        .iter()
+        .filter(|reason| crate::refusal_disposition(reason) == Disposition::Inactive)
+        .cloned()
+        .collect();
+    let active_source_assertions = n_body.saturating_sub(inactive_reasons.len());
+    if inactive_reasons.len() != body_skipped.len()
+        || warranted_assertions != active_source_assertions
+    {
         debug!(
             target: "sugar_lift_rust_tests::sugar::forall",
             var,
@@ -220,7 +229,7 @@ fn lift_bounded_forall(
             and_(instances)
         }
     };
-    Some((quantified, n_body))
+    Some((quantified, warranted_assertions, inactive_reasons))
 }
 
 fn fold_literal_int_terms_in_formula(formula: &Rc<Formula>) -> Rc<Formula> {
@@ -436,7 +445,7 @@ impl ForAllSugar {
                 forall_gap("runtime forall domain should have returned a runtime effect")
             }
         };
-        let Some((quantified, n_body)) = lift_bounded_forall(
+        let Some((quantified, n_body, inactive_reasons)) = lift_bounded_forall(
             &self.var,
             domain,
             &self.body_stmts,
@@ -461,12 +470,22 @@ impl ForAllSugar {
                 self.var
             )),
         };
-        Ok(Desugared::Constraints {
-            atom: quantified,
-            n: n_body,
-            kind: AssertionFactKind::Warranted,
-            warrant,
-        })
+        if inactive_reasons.is_empty() {
+            Ok(Desugared::Constraints {
+                atom: quantified,
+                n: n_body,
+                kind: AssertionFactKind::Warranted,
+                warrant,
+            })
+        } else {
+            Ok(Desugared::ConstraintsWithInactive {
+                atom: quantified,
+                n: n_body,
+                kind: AssertionFactKind::Warranted,
+                warrant,
+                inactive_reasons,
+            })
+        }
     }
 
     fn runtime_domain_effect(&self, ctx: &SugarCtx) -> Option<Effect> {

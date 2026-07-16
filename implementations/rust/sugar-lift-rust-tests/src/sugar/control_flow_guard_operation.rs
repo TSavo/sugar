@@ -209,6 +209,7 @@ fn desugared_floor_name(desugared: &Desugared) -> &'static str {
         Desugared::Seq(_) => "Seq",
         Desugared::TermSeq(_) => "TermSeq",
         Desugared::Constraints { .. } => "Constraints",
+        Desugared::ConstraintsWithInactive { .. } => "ConstraintsWithInactive",
         Desugared::Term(_) => "Term",
         Desugared::LiteralString(_) => "LiteralString",
         Desugared::LiteralCStr(_) => "LiteralCStr",
