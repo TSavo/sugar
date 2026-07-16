@@ -1930,6 +1930,37 @@ def audit_lift_file(
             suppressed_descendants=suppressed_descendants,
         )
 
+    if not recover_panics:
+        from sugar_lift_py_tests.audit_only.universe_coverage import (
+            universe_absence_reason,
+            universe_coverage_gaps,
+        )
+        from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
+
+        for info in universe_coverage_gaps(
+            payload,
+            module=module,
+            catalog=catalog,
+            filename=filename,
+        ):
+            audit_row = FactoryAuditRow(
+                role=info.requested,
+                status=FactoryAuditStatus.SUGAR_GAP,
+                observed=info.observed,
+                blame=info.blame,
+                selected=None,
+                candidates=[],
+                message=universe_absence_reason(info),
+            )
+            gap = AuditOnlyGap(
+                label=info.blame,
+                info=info.to_json(),
+                audit_row=audit_row,
+                message=audit_row.message,
+            )
+            gaps.append(gap)
+            payload.factory_walk.append(_factory_walk_red_from_gap(gap))
+
     from sugar_lift_py_tests.idd.lift_coverage_census import reconcile_body_owner_loci
 
     conservation_started = time.monotonic()
