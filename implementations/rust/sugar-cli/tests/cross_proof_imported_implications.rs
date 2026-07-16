@@ -509,6 +509,24 @@ fn assert_linked_sum_post_targets_imported_proof(row: &Json, proof_cid: &str) {
     assert_eq!(post["targetProofCid"].as_str(), Some(proof_cid));
     assert!(post["targetContractCid"].as_str().is_some());
     assert_eq!(post["call"]["name"].as_str(), Some("call:sum"));
+    // #3864: Vendor universe is fail-open on linkedPosts[].vendorPost. A sealed
+    // sum join that omits vendorPost (or a renderer that drops vendorUniverseFol)
+    // silently deletes the three-fact middle line. Require both.
+    assert!(
+        post.get("vendorPost").is_some(),
+        "call:sum linked post must carry vendorPost for Vendor universe: {post:#}"
+    );
+    let universe = row["verification"]["vendorUniverseFol"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        !universe.is_empty(),
+        "verification.vendorUniverseFol must be non-empty when sum links (three-fact Vendor universe line): {row:#}"
+    );
+    assert!(
+        universe.starts_with("⊢ ") || universe.contains('=') || universe.contains('∀'),
+        "vendorUniverseFol must be human FOL, got: {universe}"
+    );
     // `df["a"].sum()` is a method call: since #3668 the receiver
     // (`df["a"]`) is prepended as the EUF term's sole arg, so the
     // instantiated post's `call:sum` ctor carries the full receiver chain
