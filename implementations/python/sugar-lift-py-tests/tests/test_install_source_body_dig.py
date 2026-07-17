@@ -418,6 +418,122 @@ def test_sequential_dig_consumes_guarded_faces_join_before_fallback_return() -> 
     )
 
 
+def test_sequential_dig_consumes_joined_faces_with_reduced_support_testimony() -> None:
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.factory.build import default_catalog
+    from sugar_lift_py_tests.floor import (
+        BlockValue,
+        GuardedFaces,
+        GuardedRaise,
+        GuardedScopeRebind,
+        ImportAliasValue,
+        InvValue,
+        ScopeRebind,
+    )
+    from sugar_lift_py_tests.floor.exceptional_exit_value import ExceptionalExitValue
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import atomic, make_var, not_
+    from sugar_lift_py_tests.outcome import Complete
+
+    compression = make_var("compression")
+    raised = RaiseEffect(
+        exception_name="ValueError",
+        blame="pandas/io/common.py:846:20",
+        source_sha256="0" * 64,
+    )
+
+    class _CompressionFaces:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                GuardedFaces(
+                    guard=compression,
+                    entries=(
+                        GuardedRaise((compression,), raised),
+                        GuardedScopeRebind(
+                            (not_(compression),),
+                            "handle",
+                            TermValue("plain"),
+                        ),
+                        ImportAliasValue("bz2", "bz2"),
+                        InvValue(atomic("py.eq", [make_var("mode"), make_var("mode")])),
+                    ),
+                    then_exits=True,
+                    else_exits=False,
+                    joined_bindings=(
+                        ("handle", TermValue("joined")),
+                        ("handles", TermValue("stack")),
+                    ),
+                    can_fall_through=True,
+                    continuation_guard=not_(compression),
+                )
+            )
+
+    class _ReturnHandle:
+        audit_row = None
+
+        def reduce(self, ctx):
+            return Complete(ReturnValue(ctx.temporal.value_if_bound("handle")))
+
+    class _GuardedAssertion:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                GuardedFaces(
+                    guard=not_(compression),
+                    entries=(
+                        InvValue(
+                            atomic("py.eq", [make_var("handles"), make_var("handles")])
+                        ),
+                    ),
+                    then_exits=False,
+                    else_exits=False,
+                )
+            )
+
+    class _ContinuationState:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                BlockValue(
+                    (
+                        ScopeRebind("unit", TermValue("us")),
+                        GuardedScopeRebind(
+                            (not_(compression),),
+                            "periods",
+                            TermValue(3),
+                        ),
+                    )
+                )
+            )
+
+    ctx = FactoryBuildContext(filename="repro.py", catalog=default_catalog())
+    outcome = SequentialDigBody(
+        (
+            _CompressionFaces(),
+            _ContinuationState(),
+            _GuardedAssertion(),
+            _ReturnHandle(),
+        )
+    ).desugar(ctx)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == GuardedValue(
+        compression,
+        ExceptionalExitValue(raised),
+        TermValue("joined"),
+    )
+
+
 def test_sequential_dig_guarded_faces_without_join_stays_loud() -> None:
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
     from sugar_lift_py_tests.factory.build import default_catalog

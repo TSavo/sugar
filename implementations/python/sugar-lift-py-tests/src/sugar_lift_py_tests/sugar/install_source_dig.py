@@ -2053,10 +2053,13 @@ class SequentialDigBody:
         from sugar_lift_py_tests.floor.exceptional_exit_value import (
             ExceptionalExitValue,
         )
+        from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
         from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
+        from sugar_lift_py_tests.floor.inv_value import InvValue
         from sugar_lift_py_tests.floor.return_value import ReturnValue
         from sugar_lift_py_tests.floor.scope_rebind import (
             GuardedScopeRebind,
@@ -2085,16 +2088,49 @@ class SequentialDigBody:
                 for item in contribution
                 if not isinstance(item, (GuardedReturn, GuardedRaise, ReturnValue))
             )
-            joined_rebinds = (
-                isinstance(getattr(outcome, "value", None), GuardedFaces)
+            guarded_faces = isinstance(getattr(outcome, "value", None), GuardedFaces)
+            support_types = (ImportAliasValue, InvValue)
+            # A joined branch composite has already constructed its exact
+            # post-branch values in ``joined_bindings``. Imports and assertions
+            # are reduced support testimony, not another competing result.
+            joined_faces = (
+                guarded_faces
+                and non_returns
+                and all(
+                    type(item)
+                    in (
+                        GuardedScopeRebind,
+                        ScopeRebind,
+                        *support_types,
+                    )
+                    for item in non_returns
+                )
+                and any(type(item) is ScopeRebind for item in non_returns)
+            )
+            support_only_faces = (
+                guarded_faces
+                and non_returns
+                and all(type(item) in support_types for item in non_returns)
+            )
+            # Statements after a guarded exit execute only on its fall-through
+            # path. Exact rebind-only BlockValues can therefore thread that
+            # continuation scope before the final fallback is selected. A
+            # rebind mixed into the *same* guarded-exit outcome remains loud.
+            continuation_rebinds = (
+                bool(guarded_exits)
+                and not guarded
+                and isinstance(getattr(outcome, "value", None), BlockValue)
                 and non_returns
                 and all(
                     type(item) in (GuardedScopeRebind, ScopeRebind)
                     for item in non_returns
                 )
-                and any(type(item) is ScopeRebind for item in non_returns)
             )
-            if (guarded_exits or guarded) and non_returns and not joined_rebinds:
+            if (
+                (guarded_exits or guarded)
+                and non_returns
+                and not (joined_faces or support_only_faces or continuation_rebinds)
+            ):
                 return self._control_flow_gap()
             for item in contribution:
                 # Exact unguarded return only — GuardedReturn is multi-exit.
