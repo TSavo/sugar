@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import ast
 
-import pytest
 from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import ImportAliasValue, ReturnValue
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
@@ -34,14 +32,14 @@ def test_single_plain_from_import_binds_the_imported_address() -> None:
     )
 
 
-def test_star_from_import_partition_stays_loud() -> None:
+def test_star_from_import_partition_is_owned_by_star_sugar() -> None:
     for source in ("from pandas import *",):
-        with pytest.raises(FactoryPanic):
-            build_node(
-                ast.parse(source).body[0],
-                filename="vendor.py",
-                role=SugarRole.STATEMENT,
-            )
+        built = build_node(
+            ast.parse(source).body[0],
+            filename="vendor.py",
+            role=SugarRole.STATEMENT,
+        )
+        assert type(built.sugar).__name__ == "StarImportFromSugar"
 
 
 def test_owner_is_exactly_single_plain_absolute_from_import() -> None:

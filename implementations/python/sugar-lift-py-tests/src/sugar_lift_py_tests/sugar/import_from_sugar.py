@@ -11,7 +11,11 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class ImportFromSugar(Sugar, role=SugarRole.STATEMENT):
-    """Multi-name, aliased, or relative ``from`` import bindings."""
+    """Multi-name, aliased, or relative ``from`` import bindings.
+
+    Star imports are owned by ``StarImportFromSugar``. Single plain absolute
+    names are owned by ``SingleImportFromSugar``.
+    """
 
     module: str
     names: tuple[tuple[str, str | None], ...]
@@ -23,7 +27,7 @@ class ImportFromSugar(Sugar, role=SugarRole.STATEMENT):
             return False
         names = site.importfrom_names()
         if any(name == "*" for name, _alias in names):
-            return False
+            return False  # StarImportFromSugar
         is_single_plain_absolute = (
             site.importfrom_level() == 0
             and site.importfrom_module() is not None

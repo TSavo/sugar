@@ -14,7 +14,8 @@ class SingleImportFromSugar(Sugar, role=SugarRole.STATEMENT):
 
     The source statement warrants exactly one local name-to-import-address
     binding. It does not import or execute the module during lift. Multi-name,
-    aliased, relative, and star imports remain separate loud partitions.
+    aliased, and relative imports are owned by ``ImportFromSugar``; star
+    imports are owned by ``StarImportFromSugar``.
     """
 
     module: str
