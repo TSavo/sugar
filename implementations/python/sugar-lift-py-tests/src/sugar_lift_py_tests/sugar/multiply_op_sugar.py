@@ -135,6 +135,30 @@ class MultiplyOpSugar(Sugar, role=SugarRole.TERM):
                     "    assert A() == 63\n"
                 ),
             ),
+            _call_pair(
+                name="exceptional_exit_multiply",
+                owner_sugar="MultiplyOpSugar",
+                truthful=(
+                    "def fail():\n"
+                    "    raise TypeError()\n\n"
+                    "def A(value):\n"
+                    "    if value < 0:\n"
+                    "        return fail() * 2\n"
+                    "    return value\n\n"
+                    "def test_a():\n"
+                    "    assert A(5) == 5\n"
+                ),
+                lying=(
+                    "def fail():\n"
+                    "    raise TypeError()\n\n"
+                    "def A(value):\n"
+                    "    if value < 0:\n"
+                    "        return fail() * 2\n"
+                    "    return value\n\n"
+                    "def test_a():\n"
+                    "    assert A(5) == 6\n"
+                ),
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

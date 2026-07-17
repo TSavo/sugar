@@ -4,6 +4,8 @@ from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.exceptional_exit_value import ExceptionalExitValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.sugar.multiply_op_sugar import MultiplyOpSugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
@@ -33,6 +35,14 @@ def test_add_propagates_an_already_selected_exceptional_exit() -> None:
     assert outcome == Complete(exceptional)
 
 
+def test_multiply_propagates_an_already_selected_exceptional_exit() -> None:
+    exceptional = _exceptional_exit()
+
+    outcome = exceptional.multiply(TermValue(2), "multiply.py:1")
+
+    assert outcome == Complete(exceptional)
+
+
 def test_subscript_propagates_an_already_selected_exceptional_exit() -> None:
     exceptional = _exceptional_exit()
 
@@ -51,6 +61,12 @@ def test_ground_addition_wrong_twin_remains_an_arithmetic_value() -> None:
     outcome = TermValue(4).add(TermValue(1), "add.py:1")
 
     assert outcome == Complete(TermValue(5))
+
+
+def test_ground_multiplication_wrong_twin_remains_an_arithmetic_value() -> None:
+    outcome = TermValue(4).multiply(TermValue(2), "multiply.py:1")
+
+    assert outcome == Complete(TermValue(8))
 
 
 def test_ground_subscript_wrong_twin_remains_a_sequence_element() -> None:
@@ -99,3 +115,22 @@ def test_exceptional_exit_subtraction_truthful_and_lying_refute(tmp_path) -> Non
     assert lying.verdict == "unsat"
     assert "SubtractOpSugar" in truthful.selected_sugars
     assert "SubtractOpSugar" in lying.selected_sugars
+
+
+def test_exceptional_exit_multiply_truthful_and_lying_refute(tmp_path) -> None:
+    pair = next(
+        witness
+        for witness in MultiplyOpSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "exceptional_exit_multiply"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+    assert "MultiplyOpSugar" in truthful.selected_sugars
+    assert "MultiplyOpSugar" in lying.selected_sugars

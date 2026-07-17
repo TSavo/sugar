@@ -44,6 +44,18 @@ class ExceptionalExitValue(FloorValue):
 
         return Complete(self)
 
+    def multiply(self, other, site):
+        """Keep a selected exceptional path halted across multiplication.
+
+        Python never evaluates the product after the left operand has already
+        raised. Preserve the exact exceptional-exit testimony; this is neither
+        a multiplication result nor a runtime-dependent effect.
+        """
+        del other, site
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self)
+
     def subscript(self, index, site):
         """Keep a selected exceptional path halted across subscripting."""
         del index, site
