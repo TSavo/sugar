@@ -58,7 +58,12 @@ def resolve_equality_atom(
     *,
     owner: str,
 ) -> tuple[Formula, tuple[Formula, ...]]:
-    """Resolve Python equality once, before an atom can enter ProofIR."""
+    """Resolve Python equality once, before an atom can enter ProofIR.
+
+    #4371 ruling (T): per-atom by sort warrant — same-sort → FOL ``=``;
+    Int/Real → ``py.eq`` + explicit ``to_real`` bridge; opaque → ``py.eq``.
+    Sole construction door for equality vocabulary (also chained Eq/NotEq).
+    """
     left_term = left.to_term(owner=owner)
     right_term = right.to_term(owner=owner)
     left_sort = _sort_warrant(left, left_term, owner=owner)

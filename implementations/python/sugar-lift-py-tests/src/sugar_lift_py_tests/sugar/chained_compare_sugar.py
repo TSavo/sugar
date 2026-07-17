@@ -29,17 +29,14 @@ def _op_atom(op: str, left_term, right_term):
         atomic,
         identity,
         not_,
-        py_eq,
         py_ge,
         py_gt,
         py_le,
         py_lt,
     )
 
-    if op == "Eq":
-        return py_eq(left_term, right_term)
-    if op == "NotEq":
-        return not_(py_eq(left_term, right_term))
+    # Eq / NotEq are NOT here: #4371 resolves equality per atom via
+    # resolve_equality_atom (sort warrant → FOL `=` / py.eq / promotion bridge).
     if op == "Lt":
         return py_lt(left_term, right_term)
     if op == "LtE":
@@ -59,47 +56,63 @@ def _op_atom(op: str, left_term, right_term):
     raise AssertionError(f"unsupported chain op {op}")
 
 
-def _guarded_op_atom(op: str, left, right, site):
+def _guarded_op_atom(op: str, left, right, site) -> tuple:
+    """Return ``(formula, derived_bridges)`` for one chain pair.
+
+    Equality bridges (Int/Real promotion) must ride as derived formulas, never
+    as a silent cast inside the stated atom.
+    """
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue
     from sugar_lift_py_tests.ir import and_, implies, not_
 
     if isinstance(left, GuardedValue):
-        return and_(
-            [
-                implies(
-                    left.guard,
-                    _guarded_op_atom(op, left.when_true, right, site),
-                ),
-                implies(
-                    not_(left.guard),
-                    _guarded_op_atom(op, left.when_false, right, site),
-                ),
-            ]
+        true_f, true_b = _guarded_op_atom(op, left.when_true, right, site)
+        false_f, false_b = _guarded_op_atom(op, left.when_false, right, site)
+        return (
+            and_(
+                [
+                    implies(left.guard, true_f),
+                    implies(not_(left.guard), false_f),
+                ]
+            ),
+            (*true_b, *false_b),
         )
     if isinstance(right, GuardedValue):
-        return and_(
-            [
-                implies(
-                    right.guard,
-                    _guarded_op_atom(op, left, right.when_true, site),
-                ),
-                implies(
-                    not_(right.guard),
-                    _guarded_op_atom(op, left, right.when_false, site),
-                ),
-            ]
+        true_f, true_b = _guarded_op_atom(op, left, right.when_true, site)
+        false_f, false_b = _guarded_op_atom(op, left, right.when_false, site)
+        return (
+            and_(
+                [
+                    implies(right.guard, true_f),
+                    implies(not_(right.guard), false_f),
+                ]
+            ),
+            (*true_b, *false_b),
         )
+    if op in {"Eq", "NotEq"}:
+        # #4371: equality vocabulary is resolved once at construction by sort.
+        from sugar_lift_py_tests.floor.equality_atom import resolve_equality_atom
+
+        formula, bridges = resolve_equality_atom(left, right, owner=str(site))
+        if op == "NotEq":
+            formula = not_(formula)
+        return formula, bridges
     if op in {"Lt", "LtE", "Gt", "GtE"}:
         from sugar_lift_py_tests.floor.comparison_atom import resolve_comparison_atom
 
-        return resolve_comparison_atom(
-            {"Lt": "lt", "LtE": "le", "Gt": "gt", "GtE": "ge"}[op],
-            left,
-            right,
-            owner=str(site),
+        return (
+            resolve_comparison_atom(
+                {"Lt": "lt", "LtE": "le", "Gt": "gt", "GtE": "ge"}[op],
+                left,
+                right,
+                owner=str(site),
+            ),
+            (),
         )
-    return _op_atom(op, left.to_term(owner=str(site)), right.to_term(owner=str(site)))
-
+    return (
+        _op_atom(op, left.to_term(owner=str(site)), right.to_term(owner=str(site))),
+        (),
+    )
 
 @dataclass(frozen=True)
 class ChainedCompareSugar(Sugar, role=SugarRole.TERM):
@@ -171,19 +184,22 @@ class ChainedCompareSugar(Sugar, role=SugarRole.TERM):
         from sugar_lift_py_tests.ir import and_
 
         atoms = []
+        bridges: list = []
         callsites = [callsite for value in values for callsite in value.callsites()]
         for i, op in enumerate(self.ops):
             left_v = values[i]
             right_v = values[i + 1]
-            atoms.append(_guarded_op_atom(op, left_v, right_v, self.site))
+            atom, atom_bridges = _guarded_op_atom(op, left_v, right_v, self.site)
+            atoms.append(atom)
+            bridges.extend(atom_bridges)
         formula = and_(atoms) if len(atoms) > 1 else atoms[0]
         return Complete(
             PredicateValue(
                 formula,
                 self.site,
                 operand_callsites=tuple(callsites),
+                derived_formulas=tuple(bridges),
             )
         )
-
     def walk_children(self):
         return (self.left, *self.comparators)
