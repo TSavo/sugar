@@ -8,9 +8,11 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
     DictValue,
+    FunctionCallable,
     TermValue,
     TupleValue,
     UniverseValue,
@@ -250,6 +252,51 @@ def test_nested_callable_binds_single_keyword_expansion_to_var_keyword() -> None
     assert callsite.force_floor(
         ctx, owner="keyword expansion binding", project_callsite=False
     ) == TermValue(5)
+
+
+def test_nested_callable_binds_bodyless_callsite_keyword_expansion() -> None:
+    universe = _root_universe(
+        "def outer(self):\n"
+        "    def inner(result, func, **options):\n"
+        "        return options\n"
+        "    return inner(1, 2, **self.options)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("result", "func", "options")
+    assert callsite.arg_values[:2] == (TermValue(1), TermValue(2))
+    expansion = callsite.arg_values[2]
+    assert isinstance(expansion, CallSiteValue)
+    assert expansion.target_name == "options"
+    assert expansion.body is None
+
+
+def test_nested_callable_body_bearing_callsite_expansion_stays_loud() -> None:
+    site = SourceFragment.from_source(
+        "inner(1, 2, **options)\n", "nested.py"
+    ).statements()[0]
+    expansion = CallSiteValue(
+        target_name="options",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:options", []),
+        body=object(),
+        site=site,
+    )
+    callable_value = FunctionCallable(
+        name="inner",
+        parameters=("result", "func", "options"),
+        parameter_kinds=("positional", "positional", "var-keyword"),
+        body=object(),
+    )
+
+    with pytest.raises(FactoryPanic, match="owner=FunctionCallable"):
+        callable_value.callsite(
+            (TermValue(1), TermValue(2), expansion),
+            ("**",),
+            site,
+        )
 
 
 def test_nested_callable_ground_non_mapping_keyword_expansion_stays_loud() -> None:
