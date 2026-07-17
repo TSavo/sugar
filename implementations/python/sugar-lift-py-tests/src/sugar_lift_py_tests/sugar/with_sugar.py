@@ -78,6 +78,14 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             "    return result\n"
             "\n"
         )
+        source_contextmanager_prefix = (
+            "from pandas import option_context\n"
+            "\n"
+            "def A(z):\n"
+            '    with option_context("display.max_rows", 10):\n'
+            "        return z\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="with_binding_return",
@@ -90,6 +98,21 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                 owner_sugar="WithSugar",
                 truthful=(guarded_prefix + "def test_a():\n    assert A(True) == 1\n"),
                 lying=guarded_prefix + "def test_a():\n    assert A(True) == 2\n",
+            ),
+            _call_pair(
+                name="with_source_contextmanager_contract",
+                owner_sugar="WithSugar",
+                truthful=(
+                    source_contextmanager_prefix
+                    + "def test_a():\n"
+                    + "    assert A(7) == 7\n"
+                ),
+                lying=(
+                    source_contextmanager_prefix
+                    + "def test_a():\n"
+                    + "    assert A(7) == 8\n"
+                ),
+                family="source-contextmanager-contract",
             ),
             typed_red_effect_witness(
                 name="with_runtime_manager_exit",
@@ -173,16 +196,18 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             return _carry_continuing_binding(outcome, binding)
 
         if isinstance(cm, CallSiteValue):
-            # A source-backed producer may expose its complete manager result.
-            # Dig that result structurally so __enter__/__exit__ resolve on the
-            # exact ObjectValue method table; never borrow a same-leaf method
-            # from a resolver or invent a suppression contract.
+            # An exact source-derived exit contract is sufficient when the
+            # statement does not bind ``as``: no entered value is demanded,
+            # and reducing the producer body would construct unrelated result
+            # machinery. Otherwise dig the exact ObjectValue method table.
             manager_effects = []
-            manager = cm._dig_floor_or_none(
-                ctx,
-                owner="WithSugar manager result",
-                incomplete_outcome=manager_effects,
-            )
+            manager = None
+            if as_names or cm.exit_suppression is None:
+                manager = cm._dig_floor_or_none(
+                    ctx,
+                    owner="WithSugar manager result",
+                    incomplete_outcome=manager_effects,
+                )
             if manager_effects:
                 return manager_effects[0]
             if isinstance(manager, ObjectValue):

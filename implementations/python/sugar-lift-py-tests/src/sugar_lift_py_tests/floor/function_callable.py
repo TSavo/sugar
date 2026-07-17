@@ -17,6 +17,7 @@ class FunctionCallable(FloorValue):
     positional_defaults: tuple[FloorValue, ...] = ()
     keyword_only_defaults: tuple[FloorValue | None, ...] = ()
     decorators: tuple[Any, ...] = ()
+    exit_suppression: Any = None
     body: Any = dataclass_field(default=None, compare=False)
 
     def to_term(self, *, owner: str):
@@ -360,5 +361,6 @@ class FunctionCallable(FloorValue):
                 term=term,
                 body=body,
                 site=site,
+                exit_suppression=self.exit_suppression,
             )
         )

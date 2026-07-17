@@ -178,6 +178,9 @@ def test_contextmanager_conditional_handler_is_not_claimed(
     )
 
     assert resolve_contextmanager_exit_contract(target) is None
+    resolved = resolve_install_source_value(target, _ctx())
+    assert isinstance(resolved, FunctionCallable)
+    assert resolved.exit_suppression is None
 
 
 def test_contextmanager_post_yield_return_is_not_claimed(tmp_path, monkeypatch) -> None:
@@ -211,13 +214,18 @@ def test_install_source_function_constructs_minimal_pandas_option_context_shape(
         "@contextmanager\n"
         "def managed(*args) -> None:\n"
         "    old = options\n"
-        "    yield args\n",
+        "    try:\n"
+        "        yield args\n"
+        "    finally:\n"
+        "        options.clear()\n",
     )
 
     resolved = resolve_install_source_value(target, _ctx())
 
     assert isinstance(resolved, FunctionCallable)
     assert isinstance(resolved.decorators[0], ImportAliasValue)
+    assert resolved.exit_suppression is not None
+    assert resolved.exit_suppression.exception_names == frozenset()
 
 
 @pytest.mark.parametrize(

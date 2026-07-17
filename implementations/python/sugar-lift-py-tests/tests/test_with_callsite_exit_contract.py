@@ -59,6 +59,21 @@ class _EffectSugar:
         return Incomplete(self.effect)
 
 
+@dataclass(frozen=True)
+class _PanicIfReducedSugar:
+    def desugar(self, ctx=None):
+        del ctx
+        from sugar_lift_py_tests.factory import factory_panic_gap
+
+        factory_panic_gap(
+            owner="SequentialDigBody",
+            blame="manager.py:1",
+            observed="opaque producer body",
+            requested="manager result",
+            fix="use the exact exit contract when no entered value is demanded",
+        )
+
+
 def _expr_body(expr: str) -> SugarBody:
     ctx = FactoryBuildContext(filename="manager.py", catalog=default_catalog())
     suite = SourceFragment.from_source(expr, "manager.py").statements()[0]
@@ -258,6 +273,63 @@ def test_body_none_raise_keeps_named_exit_floor_loud() -> None:
 
     assert raised.value.info.owner == "WithSugar"
     assert "__exit__" in raised.value.info.requested
+
+
+def test_exact_exit_contract_avoids_unneeded_manager_result_dig() -> None:
+    manager = CallSiteValue(
+        target_name="managed",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:managed", []),
+        body=SugarBody(_PanicIfReducedSugar(), SugarRole.TERM),
+        exit_suppression=ExitSuppressionContract.never_suppresses(),
+    )
+
+    block = compose_block(
+        "    with manager:\n" "        raise ValueError('boom')\n",
+        binds={"manager": manager},
+    )
+
+    assert isinstance(block.statements[0], RaiseValue)
+    assert block.statements[0].effect.exception_name == "ValueError"
+
+
+def test_missing_exit_contract_still_demands_manager_result() -> None:
+    manager = CallSiteValue(
+        target_name="managed",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:managed", []),
+        body=SugarBody(_PanicIfReducedSugar(), SugarRole.TERM),
+        exit_suppression=None,
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    with manager:\n" "        raise ValueError('boom')\n",
+            binds={"manager": manager},
+        )
+
+    assert raised.value.info.owner == "SequentialDigBody"
+
+
+def test_source_contextmanager_contract_witness_truthful_and_lying(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in WithSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "with_source_contextmanager_contract"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
 
 
 def test_proven_named_exit_contract_suppresses_matching_raise() -> None:
