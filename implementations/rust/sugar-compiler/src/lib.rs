@@ -18,10 +18,10 @@ use std::collections::BTreeMap;
 
 /// The kit rendezvous/dispatch engine (`KitRegistry`, `execute_path`,
 /// `PathAlgebra`, `LiftKit`, the resident child-process pool). Moved from
-/// `sugar-cli/src/kit_path/` in SEAM 3b: its imports (`sugar-walk`, which
-/// itself depends on `libsugar`) forbid a home in `libsugar` -- that would
-/// be a literal Cargo cycle (`libsugar -> sugar-walk -> libsugar`), not just
-/// a guard violation. `sugar-compiler` is the legal home the imports force.
+/// `sugar-cli/src/kit_path/` in SEAM 3b. Lives with the `Kit` noun here.
+/// Realize-sidecar strip is membrane law in libsugar (#3855); kit_path itself
+/// has no `sugar-walk` import (instrumented). Residual sugar-compiler→
+/// sugar-walk edges are SourceMemento/resolve paths, not kit_path.
 pub mod kit_path;
 
 /// The kit declaration loader: spawns a kit's declared command and performs

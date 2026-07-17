@@ -527,58 +527,12 @@ pub fn bind_result_payload(
     })
 }
 
-/// Strip realize-sidecar metadata (attr_pre, attr_post, concept_annotation,
-/// operand_bindings, proc_macro_invocations, source_function_name) from a
-/// lift-output `Term::Const`. Used to compute the canonical content CID that
-/// `lift.to` and `bind.from` both target, so adding a comment that shifts
-/// `fn_line` does not invalidate the proof chain.
-pub fn strip_realize_sidecar_from_lift_term(term: Term) -> Term {
-    let Term::Const { mut value, sort } = term else {
-        return term;
-    };
-    if let Some(entries) = value.get_mut("ir").and_then(Json::as_array_mut) {
-        for entry in entries {
-            if let Some(object) = entry.as_object_mut() {
-                object.remove("attr_pre");
-                object.remove("attrPre");
-                object.remove("attr_post");
-                object.remove("attrPost");
-                object.remove("concept_annotation");
-                object.remove("conceptAnnotation");
-                object.remove("operand_bindings");
-                object.remove("operandBindings");
-                object.remove("proc_macro_invocations");
-                object.remove("procMacroInvocations");
-                object.remove("source_function_name");
-                object.remove("sourceFunctionName");
-                object.remove("realize_param_types");
-                object.remove("realizeParamTypes");
-                object.remove("realize_return_type");
-                object.remove("realizeReturnType");
-                object.remove("realize_original_param_types");
-                object.remove("realizeOriginalParamTypes");
-                // #1075/A9 federation: the bind-lift-entry is the cross-language
-                // boundary surface and must hash to the SAME bytes whether
-                // lifted from typed Rust or untyped Python. The Python lifter
-                // emits only {kind, param_names, term_shape, term_shape_cid,
-                // operand_bindings, realize_*, source_function_name, witnesses};
-                // Rust additionally carries visibility/generic_params/doc_lines
-                // for the Java boundary realize path. Those are realize-only
-                // metadata (read off the UN-stripped lift IR by cmd_lower, never
-                // off this hashed term) so they ride CID-invisible here too,
-                // scoped to bind-lift-entry to leave sugar-entry CIDs untouched.
-                if object.get("kind").and_then(Json::as_str) == Some("bind-lift-entry") {
-                    object.remove("visibility");
-                    object.remove("generic_params");
-                    object.remove("genericParams");
-                    object.remove("doc_lines");
-                    object.remove("docLines");
-                }
-            }
-        }
-    }
-    Term::Const { value, sort }
-}
+/// Strip realize-sidecar metadata from a lift-output `Term::Const`.
+///
+/// Owned by the membrane (`libsugar::core::strip_realize_sidecar_from_lift_term`);
+/// re-exported here so bind/kit call sites and historical `sugar_walk::…`
+/// paths keep working after #3855 purification.
+pub use libsugar::core::strip_realize_sidecar_from_lift_term;
 
 pub fn named_term_document_from_bind_payload(
     payload: &Term,
