@@ -16,6 +16,7 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     Bv32Value,
+    ComprehensionValue,
     PredicateValue,
     StringValue,
     SymbolicValue,
@@ -27,6 +28,7 @@ from sugar_lift_py_tests.ir import and_, atomic, ctor, make_var, not_, num, or_
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.outcome import Complete, complete_value
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+from sugar_lift_py_tests.sugar.runtime_bitwise_op_sugar import RuntimeBitwiseOpSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
@@ -220,6 +222,55 @@ def test_bitwise_or_dispatches_bv32_receiver_to_floor_operation():
 
     assert result == Bv32Value(ctor("bv32.or", [make_var("x"), num(3)]))
     assert operation_log == [("BitwiseOpSugar", "bitwise_with", "BitwiseOperation")]
+
+
+def test_set_comprehension_union_constructs_exact_coordinate() -> None:
+    site = SourceFragment.from_source("left | right\n", "t.py").statements()[0]
+    left = ComprehensionValue(
+        ctor(
+            "py.set_difference",
+            [
+                ctor("py.setcomp", [make_var("all_items")]),
+                ctor("py.setcomp", [make_var("excluded_items")]),
+            ],
+        )
+    )
+    right = ComprehensionValue(ctor("py.setcomp", [make_var("new_items")]))
+
+    outcome = left.bitwise_or(right, site)
+
+    assert outcome == Complete(
+        ComprehensionValue(ctor("py.set_union", [left.term, right.term]))
+    )
+
+
+def test_list_comprehension_bitwise_or_stays_loud() -> None:
+    site = SourceFragment.from_source("left | right\n", "t.py").statements()[0]
+    left = ComprehensionValue(ctor("py.listcomp", [make_var("left_items")]))
+    right = ComprehensionValue(ctor("py.listcomp", [make_var("right_items")]))
+
+    with pytest.raises(FactoryPanic, match="owner=bitwise_or"):
+        left.bitwise_or(right, site)
+
+
+def test_set_comprehension_union_truthful_and_lying_twins_refute(tmp_path) -> None:
+    pair = next(
+        pair
+        for pair in RuntimeBitwiseOpSugar.witnesses()
+        if pair.name == "set_comprehension_union"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful-set-union", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying-set-union", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+    assert "RuntimeBitwiseOpSugar" in truthful.selected_sugars
+    assert "RuntimeBitwiseOpSugar" in lying.selected_sugars
 
 
 def test_bitwise_lshift_dispatches_term_receiver_without_python_solving():
