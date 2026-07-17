@@ -5,13 +5,16 @@ import pytest
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.effect import (
+    SequenceRepetitionRuntimeEffect,
     SubscriptStoreRuntimeEffect,
     runtime_effect_witness,
 )
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
+    CallSiteValue,
     ListValue,
     ImportAliasValue,
+    OpaqueOpCallsite,
     StringValue,
     SymbolicValue,
     TermValue,
@@ -99,12 +102,100 @@ def test_imported_list_repetition_count_remains_a_named_loud_gap() -> None:
         receiver.multiply(count, "test_to_datetime.py:3626:17")
 
 
-@pytest.mark.parametrize("source", ("[1, 2] * count", "count * [1, 2]"))
-def test_unknown_symbolic_list_repetition_count_remains_a_named_loud_gap(
-    source: str,
+@pytest.mark.parametrize("reversed_operands", (False, True))
+def test_runtime_list_repetition_count_is_a_named_typed_effect(
+    reversed_operands: bool,
 ) -> None:
+    count = SymbolicValue(make_var("runtime_n"))
+    items = ListValue((TermValue(7),))
+
+    outcome = (
+        count.multiply(items, "runtime_repeat.py:2:11")
+        if reversed_operands
+        else items.multiply(count, "runtime_repeat.py:2:11")
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert "ListValue depends on runtime __index__/length semantics" in outcome.reason
+    assert outcome.effect.witness.operand == make_var("runtime_n")
+    assert outcome.effect.witness.operation == ctor(
+        "py.sequence_repeat", [make_var("runtime_n")]
+    )
+
+
+def test_len_result_is_a_warranted_runtime_list_repetition_count() -> None:
+    count = OpaqueOpCallsite(
+        callee="len",
+        arg=SymbolicValue(make_var("runtime_items")),
+        computed=None,
+    )
+
+    outcome = ListValue((TermValue(7),)).multiply(count, "runtime_repeat.py:2:11")
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert "integer-warranted len(...) result" in outcome.reason
+    assert outcome.effect.witness.operand == ctor(
+        "call:len", [make_var("runtime_items")], symbol_kind="method-coordinate"
+    )
+
+
+def test_opaque_non_index_result_remains_a_loud_list_repetition_gap() -> None:
+    count = OpaqueOpCallsite(
+        callee="str",
+        arg=SymbolicValue(make_var("runtime_value")),
+        computed=None,
+    )
+
     with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
-        reduce_value(source, {"count": SymbolicValue(make_var("count"))})
+        ListValue((TermValue(7),)).multiply(count, "runtime_repeat.py:2:11")
+
+
+@pytest.mark.parametrize(
+    "count",
+    (
+        CallSiteValue(
+            target_name="ndim",
+            arg_values=(SymbolicValue(make_var("array")),),
+            parameters=(),
+            term=ctor("call:ndim", [make_var("array")]),
+            body=None,
+            site="runtime_repeat.py:2:11",
+        ),
+        CallSiteValue(
+            target_name="max",
+            arg_values=(TermValue(0), SymbolicValue(make_var("runtime_n"))),
+            parameters=(),
+            term=ctor("call:max", [num(0), make_var("runtime_n")]),
+            body=None,
+            site="runtime_repeat.py:2:11",
+        ),
+    ),
+)
+def test_integer_warranted_callsite_is_a_runtime_list_repetition_count(
+    count: CallSiteValue,
+) -> None:
+    outcome = ListValue((TermValue(7),)).multiply(count, "runtime_repeat.py:2:11")
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert "integer-warranted callsite" in outcome.reason
+    assert outcome.effect.witness.operand == count.term
+
+
+def test_unwarranted_callsite_remains_a_loud_list_repetition_gap() -> None:
+    count = CallSiteValue(
+        target_name="make_count",
+        arg_values=(SymbolicValue(make_var("value")),),
+        parameters=(),
+        term=ctor("call:make_count", [make_var("value")]),
+        body=None,
+        site="runtime_repeat.py:2:11",
+    )
+
+    with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
+        ListValue((TermValue(7),)).multiply(count, "runtime_repeat.py:2:11")
 
 
 @pytest.mark.parametrize(
