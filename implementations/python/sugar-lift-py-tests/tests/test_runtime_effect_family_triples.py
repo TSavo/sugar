@@ -69,11 +69,13 @@ def test_division_unsupported_sibling_panics() -> None:
 # --- AssertionFailed ---
 
 
-def test_assertion_failed_ground_wrong_twin_panics() -> None:
-    with pytest.raises(FactoryPanic) as caught:
-        compose_block("    assert False\n")
-    assert caught.value.info.owner == "FalseBoolLiteralSugar.stated"
-    assert caught.value.info.requested == "construct ground AssertionError exit"
+def test_assertion_failed_ground_constructs_exact_exceptional_exit() -> None:
+    from sugar_lift_py_tests.floor import RaiseValue
+
+    result = compose_block("    assert False\n")
+
+    assert isinstance(result.statements[0], RaiseValue)
+    assert result.statements[0].effect.exception_name == "AssertionError"
 
 
 def test_assertion_static_true_sibling_constructs() -> None:
