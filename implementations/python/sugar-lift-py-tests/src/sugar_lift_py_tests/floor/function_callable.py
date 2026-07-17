@@ -180,7 +180,6 @@ class FunctionCallable(FloorValue):
                 kind in {"positional", "positional-only"}
                 for kind in self.parameter_kinds[:-1]
             )
-            and len(positional_supplied) == fixed_positional_count
             and (
                 type(keyword_expansion) in (DictValue, SymbolicValue)
                 or (
@@ -190,7 +189,9 @@ class FunctionCallable(FloorValue):
             )
         )
         # A single mapping expansion binds exactly to a callee-owned **kwargs
-        # formal. A body-less callsite remains an opaque mapping coordinate
+        # formal. The ordinary fixed-parameter loop below proves and fills any
+        # preceding declared defaults; missing required parameters still fail
+        # there. A body-less callsite remains an opaque mapping coordinate
         # under the source ``**`` contract; a body-bearing peer must be dug
         # instead. Other expansion shapes remain loud: do not invent keys or
         # confuse missing binder machinery with runtime dependence.
@@ -292,6 +293,22 @@ class FunctionCallable(FloorValue):
                 binding_ok = False
             bound_values = tuple(bound_list) if binding_ok else None
         if bound_values is None:
+            runtime_keyword_expansion = (
+                len(keyword_expansions) == 1
+                and (
+                    type(keyword_expansion) is SymbolicValue
+                    or (
+                        type(keyword_expansion) is CallSiteValue
+                        and keyword_expansion.body is None
+                    )
+                )
+            )
+            if runtime_keyword_expansion:
+                from sugar_lift_py_tests.effect import (
+                    runtime_callable_argument_binding,
+                )
+
+                return runtime_callable_argument_binding(keyword_expansion, site)
             keyword_bindable_names = {
                 name
                 for name, kind in zip(self.parameters, self.parameter_kinds)
