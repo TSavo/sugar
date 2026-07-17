@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import ast
+import json
 
 import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import ObjectValue, TermValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
@@ -77,11 +79,40 @@ def test_assignment_constructor_binds_trailing_positional_default() -> None:
     }
 
 
-def test_inherited_constructor_stays_a_named_runtime_effect() -> None:
+def test_static_inherited_constructor_builds_base_fields() -> None:
+    outcome = _outcome(
+        "class Base:\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n"
+        "\n"
+        "class Child(Base):\n"
+        "    pass\n",
+        "Child(7)",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert outcome.value.class_name == "Child"
+    assert _field_values(outcome.value) == {"value": TermValue(7)}
+
+
+def test_unresolved_inherited_constructor_panics_instead_of_faking_runtime() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class Child(ImportedBase):\n" "    pass\n",
+            "Child(1)",
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "statically resolved inherited constructor"
+    json.dumps(raised.value.info.to_json())
+
+
+def test_runtime_selected_base_keeps_authenticated_constructor_effect() -> None:
     from sugar_lift_py_tests.effect import ConstructorRuntimeEffect
 
     outcome = _outcome(
-        "class Child(Base):\n" "    pass\n",
+        "class Child(select_base()):\n" "    pass\n",
         "Child(1)",
     )
 
@@ -89,6 +120,20 @@ def test_inherited_constructor_stays_a_named_runtime_effect() -> None:
     assert type(outcome.effect) is ConstructorRuntimeEffect
     assert outcome.effect.witness.operation.name == "py.constructor"
     assert outcome.effect.witness.site.filename == "constructor.py"
+    assert "runtime-selected base" in outcome.effect.reason
+
+
+def test_runtime_selected_base_wrong_twin_hits_runtime_operand_door() -> None:
+    from sugar_lift_py_tests.effect import runtime_effect_evidence
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.ir import num
+
+    with pytest.raises(FactoryPanic):
+        runtime_effect_evidence(
+            "py.constructor",
+            num(1),
+            SourceFragment.from_source("Child(1)", "constructor.py"),
+        )
 
 
 def test_effectful_init_stays_a_named_runtime_effect() -> None:

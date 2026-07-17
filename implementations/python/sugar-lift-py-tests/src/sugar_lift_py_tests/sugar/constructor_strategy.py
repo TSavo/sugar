@@ -147,11 +147,18 @@ class RuntimeConstructorStrategy:
     site: SourceFragment
     reason: str
     arity_error: bool = False
+    runtime_operand: SugarBody | None = None
 
     def __post_init__(self) -> None:
         if not all(isinstance(argument, SugarBody) for argument in self.arguments):
             raise TypeError(
                 "RuntimeConstructorStrategy arguments must be factory-built"
+            )
+        if self.runtime_operand is not None and not isinstance(
+            self.runtime_operand, SugarBody
+        ):
+            raise TypeError(
+                "RuntimeConstructorStrategy runtime operand must be factory-built"
             )
 
     def emit(self, sugar, ctx) -> Outcome:
@@ -163,6 +170,12 @@ class RuntimeConstructorStrategy:
                 return outcome
             values.append(
                 complete_value(outcome, owner=f"{self.class_name} constructor argument")
+            )
+        runtime_operand = None
+        if self.runtime_operand is not None:
+            runtime_operand = complete_value(
+                self.runtime_operand.reduce(ctx),
+                owner=f"{self.class_name} runtime constructor selection",
             )
 
         from sugar_lift_py_tests.effect import (
@@ -186,6 +199,10 @@ class RuntimeConstructorStrategy:
         return Incomplete(
             effect_type(
                 self.reason,
-                **runtime_effect_evidence("py.constructor", call_term, self.site),
+                **runtime_effect_evidence(
+                    "py.constructor",
+                    runtime_operand if runtime_operand is not None else call_term,
+                    self.site,
+                ),
             )
         )
