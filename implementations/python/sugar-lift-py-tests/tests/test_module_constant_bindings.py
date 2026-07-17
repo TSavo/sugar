@@ -16,6 +16,37 @@ MODULE_BINDINGS = (
 )
 
 
+def _module_file_post(filename: str) -> dict:
+    source = "def module_path():\n    return __file__\n"
+    payload, gaps = audit_lift_file(source, filename)
+    assert gaps == []
+    return next(row for row in payload.ir if row.name.endswith(".module_path")).post[
+        "args"
+    ][1]
+
+
+def test_module_file_seeds_the_exact_source_filename() -> None:
+    assert _module_file_post("known/module.py") == {
+        "kind": "const",
+        "sort": {"kind": "primitive", "name": "String"},
+        "value": "known/module.py",
+    }
+
+
+def test_module_file_binding_discriminates_source_filenames() -> None:
+    assert _module_file_post("left.py") != _module_file_post("right.py")
+
+
+def test_module_file_assertion_conserves_mass() -> None:
+    source = 'def test_module_file():\n    assert __file__ == "known/module.py"\n'
+    payload, _gaps = audit_lift_file(source, "known/module.py")
+    assertions = account_lift_coverage(
+        census_source(source, file="known/module.py"), payload.to_rpc()
+    ).to_json()["assertions"]
+    assert assertions["stated"] == 1
+    assert assertions["silently_unaccounted"] == 0
+
+
 def test_liftable_module_assignment_seeds_constructed_floor_value() -> None:
     payload, gaps = audit_lift_file(MODULE_BINDINGS, "module_constants.py")
 

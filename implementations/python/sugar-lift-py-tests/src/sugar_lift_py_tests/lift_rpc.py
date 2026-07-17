@@ -1257,7 +1257,12 @@ class _SeedPanicEvidence:
 
 
 def _module_import_temporal(
-    module, catalog, *, recovered_panics=None, assertion_sink=None
+    module,
+    catalog,
+    *,
+    filename=None,
+    recovered_panics=None,
+    assertion_sink=None,
 ) -> "object":
     """Bind constructed module declarations into a TemporalContext.
 
@@ -1282,6 +1287,7 @@ def _module_import_temporal(
         BlockValue,
         ClassValue,
         ImportAliasValue,
+        StringValue,
     )
     from sugar_lift_py_tests.floor.local_exception_class_value import (
         module_class_value,
@@ -1289,7 +1295,9 @@ def _module_import_temporal(
     from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.temporal import TemporalContext
 
-    temporal = TemporalContext.empty()
+    temporal = TemporalContext.empty().bind_value(
+        "__file__", StringValue(filename or module.filename)
+    )
     # Same ClassDef enrollment as audit_context name_resolver: without bare
     # class nodes, module-seed FunctionCallable dig bodies fall ConstructorCallSugar
     # → opaque CallSugar for `Box()`, so dunder bridges never attach method bodies
@@ -1719,6 +1727,7 @@ def _audit_file_context(
     module_temporal = _module_import_temporal(
         module,
         catalog,
+        filename=filename,
         recovered_panics=seed_panics if hold_seed_panics else None,
         assertion_sink=module_assertions,
     )
