@@ -600,8 +600,7 @@ def _native_imported_base_targets(class_site, ctx):
         spec = importlib.util.find_spec(bound.import_target)
         origin = None if spec is None else spec.origin
         if origin is None or not any(
-            origin.endswith(suffix)
-            for suffix in importlib.machinery.EXTENSION_SUFFIXES
+            origin.endswith(suffix) for suffix in importlib.machinery.EXTENSION_SUFFIXES
         ):
             return None
         targets.append(f"{bound.import_target}.{class_name}")

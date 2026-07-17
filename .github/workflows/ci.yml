@@ -70,6 +70,11 @@ jobs:
             python: false
             z3: false
             b3sum: false
+          - name: fleet claim contract
+            target: check-fleet-claim-contract
+            python: false
+            z3: false
+            b3sum: false
           - name: Python format
             target: test-python-format
             python: true

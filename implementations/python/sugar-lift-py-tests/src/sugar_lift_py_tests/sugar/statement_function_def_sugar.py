@@ -99,12 +99,10 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 name="statement_function_def_default_keyword_expansion_return",
                 owner_sugar="StatementFunctionDefSugar",
                 truthful=(
-                    default_expansion_prefix
-                    + "def test_a():\n    assert A() == 9\n"
+                    default_expansion_prefix + "def test_a():\n    assert A() == 9\n"
                 ),
                 lying=(
-                    default_expansion_prefix
-                    + "def test_a():\n    assert A() == 10\n"
+                    default_expansion_prefix + "def test_a():\n    assert A() == 10\n"
                 ),
             ),
             _call_pair(

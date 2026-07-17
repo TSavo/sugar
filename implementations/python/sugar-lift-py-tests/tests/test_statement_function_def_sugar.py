@@ -513,9 +513,7 @@ def test_nested_callable_valid_keyword_still_constructs_callsite() -> None:
 
 
 def test_nested_callable_opaque_expansion_to_fixed_signature_is_runtime() -> None:
-    site = SourceFragment.from_source(
-        "inner(**options)\n", "nested.py"
-    ).statements()[0]
+    site = SourceFragment.from_source("inner(**options)\n", "nested.py").statements()[0]
     callable_value = FunctionCallable(
         name="inner",
         parameters=("value",),
@@ -549,8 +547,7 @@ def test_default_keyword_expansion_witness_truthful_sat_and_lying_unsat(
     witness = next(
         witness
         for witness in StatementFunctionDefSugar.witnesses()
-        if witness.name
-        == "statement_function_def_default_keyword_expansion_return"
+        if witness.name == "statement_function_def_default_keyword_expansion_return"
     )
 
     report = evaluate_seed_witnesses((witness,), tmp_path)

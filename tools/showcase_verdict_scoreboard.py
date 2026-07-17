@@ -104,14 +104,30 @@ PATTERNS: tuple[Pattern, ...] = (
         re.compile(r"SOURCE AUDIT DELTA-EPSILON GATE FAILED"),
         "classify remaining source loci or adjust the showcase refuse surface",
     ),
+    Pattern(
+        "A2/nonzero-exit-unclassified",
+        "A2",
+        re.compile(
+            r"showcase attribution: nonzero exit without classified product line|"
+            r"====\s+\S+:\s+FAIL\s+===="
+        ),
+        "emit a named FAIL/verdict line in the showcase run.sh so attribution sticks",
+    ),
 )
 
-# Accept plain make output and GitHub Actions log lines (timestamp/job prefix).
+# Accept plain make output, sharded CI headers, and GitHub Actions log lines.
+# Sharded form: ==== [showcase shard 0/4] examples/foo/run.sh ====
 SHOWCASE_HEADER = re.compile(
-    r"====\s+(?P<path>examples/\S+/(?:run\.sh|run-logo-receipt\.sh))\s+===="
+    r"====\s+(?:\[showcase shard \d+/\d+\]\s+)?"
+    r"(?P<path>examples/\S+/(?:run\.sh|run-logo-receipt\.sh))\s+===="
 )
 SHOWCASE_FAIL_LINE = re.compile(
     r"====\s+(?P<label>\S+):\s+FAIL\s+====|"
+    r"==== test-showcases FAIL:(?P<list>.+)===="
+)
+# Aggregate runner used to emit only path lists; still classify those so R is
+# never "failed examples: …" with zero failure-level hits.
+SHOWCASE_AGGREGATE_FAIL = re.compile(
     r"==== test-showcases FAIL:(?P<list>.+)===="
 )
 # Strip ANSI + GHA "jobnameUNKNOWN STEPtimestampZ " noise for matching.
@@ -166,25 +182,59 @@ def _normalize_log_line(raw: str) -> str:
 def classify_log(text: str) -> list[Hit]:
     hits: list[Hit] = []
     current = "<unknown>"
+    # Track which showcases got a product (A1/A2) hit so aggregate-only fails
+    # can still attribute residual R per path.
+    attributed: set[str] = set()
     seen: set[tuple[str, str, str]] = set()
+    aggregate_failed: list[str] = []
+
+    def _add(hit: Hit) -> None:
+        key = (hit.axis, hit.shape, hit.showcase)
+        if key in seen:
+            return
+        seen.add(key)
+        hits.append(hit)
+        if hit.axis in ("A1", "A2") and hit.showcase != "<unknown>":
+            attributed.add(hit.showcase)
+
     for raw in text.splitlines():
         line = _normalize_log_line(raw)
         header = SHOWCASE_HEADER.search(line)
         if header:
             current = header.group("path")
             continue
+        agg = SHOWCASE_AGGREGATE_FAIL.search(line)
+        if agg and agg.group("list"):
+            for token in agg.group("list").split():
+                path = token.strip()
+                if path.startswith("examples/"):
+                    aggregate_failed.append(path)
+            continue
         fail_line = SHOWCASE_FAIL_LINE.search(line)
         if fail_line and fail_line.group("list"):
-            # Bulk fail list — per-showcase hits already captured above.
             continue
         hit = classify_line(line, current)
         if hit is None:
             continue
-        key = (hit.axis, hit.shape, hit.showcase)
-        if key in seen:
+        _add(hit)
+
+    # Failure-level attribution: every aggregate-failed path without a product
+    # hit becomes an explicit unattributed residual (never path-list-only).
+    for path in aggregate_failed:
+        if path in attributed:
             continue
-        seen.add(key)
-        hits.append(hit)
+        _add(
+            Hit(
+                shape="A2/aggregate-fail-unattributed",
+                axis="A2",
+                showcase=path,
+                detail=f"test-showcases FAIL list includes {path} with no classified product line",
+                replacement=(
+                    "capture per-showcase log + emit named FAIL/verdict; "
+                    "re-run tools/showcase_verdict_scoreboard.py --from-log"
+                ),
+            )
+        )
     return hits
 
 
@@ -275,6 +325,44 @@ SOURCE AUDIT DELTA-EPSILON GATE FAILED: R=2 unresolved source loci remain
     if missing:
         print(f"FAIL: planted shapes not classified: {missing}", file=sys.stderr)
         return 1
+
+    # Sharded CI header + aggregate-only fail list must still attribute R.
+    sharded = """
+==== [showcase shard 2/4] examples/semver-showcase/run.sh ====
+some noise
+==== [showcase shard 2/4] examples/uuid-showcase/run.sh ====
+FAIL: sugar did not produce the expected verdict.
+==== test-showcases FAIL: examples/semver-showcase/run.sh examples/uuid-showcase/run.sh ====
+"""
+    sh_hits = classify_log(sharded)
+    sh_payload = scoreboard(sh_hits)
+    sh_shapes = {
+        (h.showcase, h.shape)
+        for h in sh_hits
+        if h.axis == "A2"
+    }
+    if (
+        "examples/uuid-showcase/run.sh",
+        "A2/expected-verdict-mismatch",
+    ) not in sh_shapes:
+        print(
+            f"FAIL: sharded header did not classify uuid verdict: {sh_shapes}",
+            file=sys.stderr,
+        )
+        return 1
+    if (
+        "examples/semver-showcase/run.sh",
+        "A2/aggregate-fail-unattributed",
+    ) not in sh_shapes:
+        print(
+            f"FAIL: aggregate path-list-only fail not attributed: {sh_shapes}",
+            file=sys.stderr,
+        )
+        return 1
+    if int(sh_payload["A2"]) < 2:
+        print(f"FAIL: expected A2≥2 for sharded log, got {sh_payload}", file=sys.stderr)
+        return 1
+
     # Clean log → A2=0
     clean = classify_log("==== examples/java-crc32-universe/run.sh ====\nPASS\n")
     if scoreboard(clean)["A2"] != 0:

@@ -77,9 +77,7 @@ class ListValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete, Incomplete
 
             self_term = self.to_term(owner=str(site))
-            if is_lift_time_decidable(self_term) and is_lift_time_decidable(
-                other.term
-            ):
+            if is_lift_time_decidable(self_term) and is_lift_time_decidable(other.term):
                 return Complete(
                     ComprehensionValue(
                         ctor(

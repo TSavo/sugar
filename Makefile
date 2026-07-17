@@ -68,6 +68,7 @@ help:
 	@echo "  make check-lift-manifest-pythonpath  Lane A: lift_rpc PYTHONPATH + bind_rpc --rpc census"
 	@echo "  make wall-progress            Lane B: score partial wall run → progress.json"
 	@echo "  make showcase-verdict-scoreboard  Lane A: classify showcase log → A2 residue"
+	@echo "  make check-fleet-claim-contract   CLAIMED lanes must carry fleet:lane (+ kit set)"
 	@echo "  make showcase-bulk-refuse-class   Lane A: prove/durable vacuity parity instrument"
 	@echo "  make test-python-format       Black check for implementations/python"
 	@echo "  make test-claim-mass-tripwires fast per-corpus source-accounting pins (#4266)"
@@ -222,6 +223,12 @@ showcase-bulk-refuse-class:
 	elif [ -n "$${SHOWCASE_RECEIPT_DIR:-}" ]; then \
 	  $(PYTHON) tools/showcase_bulk_refuse_class.py --from-dir "$$SHOWCASE_RECEIPT_DIR"; \
 	fi
+
+# Dispatch discoverability: CLAIMED fatal-corpus lanes must carry fleet:lane
+# (+ kit:python,idd,north-star). Bare in-progress is illegal for fleet claims.
+.PHONY: check-fleet-claim-contract
+check-fleet-claim-contract:
+	$(PYTHON) tools/check_fleet_claim_contract.py --self-test
 
 .PHONY: numpy-wall
 numpy-wall:
@@ -511,18 +518,43 @@ test-showcases: check-showcase-kit-preflight check-lift-manifest-pythonpath
 	failed=""; \
 	showcase_ordinal=0; \
 	selected=0; \
+	attr_dir="$${SHOWCASE_ATTR_DIR:-$$(mktemp -d -t sugar-showcase-attr.XXXXXX)}"; \
+	mkdir -p "$$attr_dir"; \
 	for s in $(SHOWCASE_RUNS); do \
 		ordinal="$$showcase_ordinal"; showcase_ordinal=$$((showcase_ordinal + 1)); \
 		if [ $$((ordinal % shard_count)) -ne "$$shard_index" ]; then continue; fi; \
 		selected=$$((selected + 1)); \
 		echo ""; \
 		echo "==== [showcase shard $$shard_index/$$shard_count] $$s ===="; \
-		"$$s" || failed="$$failed $$s"; \
+		safe=$$(printf '%s' "$$s" | tr '/ ' '__'); \
+		log="$$attr_dir/$$safe.log"; \
+		# Capture per-showcase output so failure-level attribution is not path-list-only. \
+		# Write then cat (not process-substitution tee) so the showcase exit status is preserved. \
+		if "$$s" >"$$log" 2>&1; then \
+		  cat "$$log"; \
+		else \
+		  cat "$$log"; \
+		  failed="$$failed $$s"; \
+		  echo "==== $$s: FAIL ====" | tee -a "$$log"; \
+		fi; \
 	done; \
 	echo ""; \
 	echo "==== showcase shard $$shard_index/$$shard_count selected=$$selected ===="; \
 	if [ -n "$$failed" ]; then \
 	  echo "==== test-showcases FAIL:$$failed ===="; \
+	  echo "==== showcase failure attribution (shard $$shard_index/$$shard_count) ===="; \
+	  # Concatenate per-showcase logs under the sharded headers the scoreboard reads. \
+	  summary="$$attr_dir/shard-$$shard_index-summary.log"; \
+	  : > "$$summary"; \
+	  for s in $$failed; do \
+	    safe=$$(printf '%s' "$$s" | tr '/ ' '__'); \
+	    echo "==== [showcase shard $$shard_index/$$shard_count] $$s ====" >> "$$summary"; \
+	    if [ -f "$$attr_dir/$$safe.log" ]; then cat "$$attr_dir/$$safe.log" >> "$$summary"; fi; \
+	  done; \
+	  echo "==== test-showcases FAIL:$$failed ====" >> "$$summary"; \
+	  $(PYTHON) tools/showcase_verdict_scoreboard.py --from-log "$$summary" \
+	    --output "$$attr_dir/shard-$$shard_index-scoreboard.json" || true; \
+	  echo "showcase attribution dir: $$attr_dir"; \
 	  exit 1; \
 	fi; \
 	echo "==== test-showcases: PASS ===="
@@ -629,14 +661,14 @@ test-3809-dod-scoreboard:
 # `coretests-source-audit` is the bulk measuring stick (R = unresolved loci);
 # keep it offline/instrument until R is driven to 0 — a permanent R>0 red in
 # default CI is a gate wearing a scoreboard vest (see docs/analysis/ci-whack-a-mole-*).
-ci: check-lift-refusal-vocabulary test-python-format test-claim-mass-tripwires test-showcases self-attest coretests-invariants
+ci: check-lift-refusal-vocabulary check-fleet-claim-contract test-python-format test-claim-mass-tripwires test-showcases self-attest coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
 
 .PHONY: ci-core
 # The non-showcase portion of the acid test. GitHub Actions runs this beside
 # deterministic showcase shards; `ci` remains the one-command local surface.
-ci-core: check-lift-refusal-vocabulary test-python-format test-claim-mass-tripwires self-attest coretests-invariants
+ci-core: check-lift-refusal-vocabulary check-fleet-claim-contract test-python-format test-claim-mass-tripwires self-attest coretests-invariants
 	@echo ""
 	@echo "==== ci-core: PASS ===="
 
