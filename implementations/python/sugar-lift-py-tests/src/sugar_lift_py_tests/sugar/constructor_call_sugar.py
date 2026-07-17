@@ -91,7 +91,7 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
 def _panic(site, observed: str, requested: str, fix: str):
     info = FactoryGapInfo(
         owner="ConstructorCallSugar",
-        blame=site,
+        blame=site.blame,
         observed=observed,
         requested=requested,
         fix=fix,
@@ -169,13 +169,7 @@ def _strategy(
         if generated is not None:
             return generated
         if class_site.class_bases():
-            return _runtime_strategy(
-                site,
-                ctx,
-                target,
-                "inherited constructor runtime boundary: Python must resolve "
-                f"{target}.__new__/__init__ through its base classes",
-            )
+            return _inherited_strategy(site, ctx, target, class_site)
         if site.call_arg_count() != 0:
             return _arity_strategy(site, ctx, target, 0, 0)
         return ConstructorStrategy(
@@ -313,7 +307,7 @@ def _generated_strategy(
 
 
 def _runtime_strategy(
-    site, ctx, target: str, reason: str
+    site, ctx, target: str, reason: str, *, runtime_operand=None
 ) -> RuntimeConstructorStrategy:
     return RuntimeConstructorStrategy(
         class_name=target,
@@ -322,7 +316,66 @@ def _runtime_strategy(
         ),
         site=site,
         reason=reason,
+        runtime_operand=(
+            ctx.build_body(runtime_operand, SugarRole.TERM)
+            if runtime_operand is not None
+            else None
+        ),
     )
+
+
+def _inherited_strategy(site, ctx, target: str, class_site):
+    bases = class_site.class_bases()
+    if len(bases) != 1:
+        _panic(
+            site,
+            f"{target} bases={class_site.class_base_names()}",
+            "statically resolved inherited constructor",
+            f"construct the exact multiple-inheritance MRO for `{target}`",
+        )
+    base = bases[0]
+    base_coordinate = base.dotted_expr_name()
+    if base_coordinate is None:
+        return _runtime_strategy(
+            site,
+            ctx,
+            target,
+            "inherited constructor runtime boundary: runtime-selected base; Python must "
+            f"resolve {target}.__new__/__init__ from that runtime operand",
+            runtime_operand=base,
+        )
+    base_name = base_coordinate
+    resolved = (ctx.name_resolver or {}).get(base_name)
+    if resolved is None:
+        from sugar_lift_py_tests.floor import SymbolicValue
+
+        if base.observed == "Name" and isinstance(
+            ctx.temporal.value_if_bound(base_name), SymbolicValue
+        ):
+            return _runtime_strategy(
+                site,
+                ctx,
+                target,
+                "inherited constructor runtime boundary: runtime-selected base; "
+                f"Python must resolve {target}.__new__/__init__ from `{base_name}`",
+                runtime_operand=base,
+            )
+        _panic(
+            site,
+            f"{target}({base_name})",
+            "statically resolved inherited constructor",
+            f"dig the class definition for `{base_name}` and construct its "
+            f"inherited `__new__`/`__init__`, or leave this call as a loud panic",
+        )
+    resolved_site = SourceFragment.from_node(resolved, ctx.filename)
+    if resolved_site.observed != "ClassDef":
+        _panic(
+            site,
+            f"{target}({base_name})",
+            "statically resolved inherited constructor",
+            f"`{base_name}` must resolve to a ClassDef before `{target}` can construct",
+        )
+    return _strategy(site, ctx, target, resolved_site)
 
 
 def _arity_strategy(
