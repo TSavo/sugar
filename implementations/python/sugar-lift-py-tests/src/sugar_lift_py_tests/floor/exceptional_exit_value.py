@@ -24,6 +24,13 @@ class ExceptionalExitValue(FloorValue):
 
         return _exceptional_exit_term(self.effect)
 
+    def add(self, other, site):
+        """Keep a selected exceptional path halted across addition."""
+        del other, site
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self)
+
     def subtract(self, other, site):
         """Keep a selected exceptional path halted across subtraction.
 
