@@ -474,8 +474,40 @@ def _static_mro_for_named_base(name: str, ctx, stack: frozenset[str]):
     if isinstance(bound, SymbolicValue):
         return None
     if isinstance(bound, ImportAliasValue) and bound.import_target is not None:
-        return (("import", bound.import_target),)
+        return _static_mro_for_import(bound.import_target, stack)
     return None
+
+
+def _static_mro_for_import(import_target: str, stack: frozenset[str]):
+    """Exact C3 MRO for an imported class, derived from its resolved source bases."""
+    if import_target in stack:
+        return None
+    if import_target == "builtins.object":
+        return (("import", import_target),)
+
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        resolve_install_source_class_bases,
+    )
+
+    direct_bases = resolve_install_source_class_bases(import_target)
+    if direct_bases is None:
+        return None
+    next_stack = stack | {import_target}
+    base_mros = []
+    base_heads = []
+    for base in direct_bases:
+        base_mro = _static_mro_for_import(base, next_stack)
+        if base_mro is None:
+            return None
+        base_mros.append(base_mro)
+        base_heads.append(base_mro[0])
+    root = ("import", import_target)
+    if not base_mros:
+        return (root,)
+    merged = _c3_merge([list(mro) for mro in base_mros] + [base_heads])
+    if merged is None:
+        return None
+    return (root, *merged)
 
 
 def _static_constructor_mro(class_name: str, class_site, ctx, *, stack=frozenset()):
@@ -568,6 +600,18 @@ def _multi_base_inherited_strategy(site, ctx, target: str, class_site, methods=(
             site, ctx, target, class_site, methods, entry
         )
         if strategy is not None:
+            if (
+                isinstance(strategy, RuntimeConstructorStrategy)
+                and strategy.runtime_operand is None
+                and not strategy.arity_error
+            ):
+                _panic(
+                    site,
+                    f"{target} MRO selected {entry[1]}.__init__",
+                    "statically constructed inherited constructor body",
+                    f"construct `{entry[1]}.__init__` exactly or leave its "
+                    "decidable body as this loud constructor gap",
+                )
             return strategy
     if site.call_arg_count() != 0:
         return _arity_strategy(site, ctx, target, 0, 0)
