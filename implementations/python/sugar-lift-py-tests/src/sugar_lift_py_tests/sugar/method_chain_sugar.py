@@ -36,29 +36,16 @@ class MethodChainSugar(
 
     @classmethod
     def new(cls, site, ctx) -> "MethodChainSugar":
-        from sugar_lift_py_tests.factory import factory_panic_gap
         from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
         from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 
         receiver_site = site.call_receiver()
-        # The inner Call goes through the ordinary factory below. A plain-name
-        # call is therefore as classified as a builtin or receiver method call:
-        # CallSugar / ConstructorCallSugar owns it and supplies the cited
-        # intermediate coordinate. Only a call whose callee has no factory
-        # spelling (for example a direct lambda call) stays loud here.
-        if receiver_site is None or (
-            receiver_site.call_receiver() is None
-            and receiver_site.call_target_name() is None
-        ):
-            factory_panic_gap(
-                owner=cls.__name__,
-                blame=site,
-                observed="unclassified chained-call receiver",
-                requested="method-call receiver with an ordinary bound self",
-                fix="classify the receiver call before unrolling the method chain",
-            )
-
+        assert receiver_site is not None  # guaranteed by owns
         intermediate_name = f"__sugar_chain_{site.line}_{site.col}"
+        # The ordinary factory owns the receiver call. This includes calls
+        # through another call's result (``factory()().method()``), which are
+        # constructed by CallResultCallSugar. Unsupported callable expressions
+        # remain a loud, named factory gap at their actual owner.
         intermediate = ctx.build_body(receiver_site, SugarRole.TERM)
         positional = tuple(
             ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()
@@ -89,7 +76,7 @@ class MethodChainSugar(
     @classmethod
     def witnesses(cls):
         prefix = (
-            "def A(z):\n" "    sideways = z.replace().utcoffset()\n" "    return 1\n\n"
+            "def A(z):\n" "    sideways = type(z)(z).bit_length()\n" "    return 1\n\n"
         )
         return _call_pair(
             name="method_chain_linear_temporal",
