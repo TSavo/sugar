@@ -333,11 +333,19 @@ pub fn plan_workspace_with_options(
                     error,
                     "component plan failed"
                 );
-                let level = if options.allow_failed_components {
-                    DiagnosticLevel::Warning
-                } else {
-                    DiagnosticLevel::Error
-                };
+                // A missing/unbuilt component binary is "not enrolled", not a
+                // workspace fault. examples-gate builds only sugar +
+                // sugar-ir-smt-lib (#3747): coq/lean/maude manifests still
+                // discover and spawn-fail. Treating that as Error made prove
+                // emit setup-error JSON with zero rows; harnesses read MISSING
+                // consistency rows. Soften unavailable binaries always; other
+                // plan failures still honor --allow-failed-components.
+                let level =
+                    if options.allow_failed_components || component_binary_unavailable(&error) {
+                        DiagnosticLevel::Warning
+                    } else {
+                        DiagnosticLevel::Error
+                    };
                 plan.diagnostics.push(ComponentDiagnostic {
                     level,
                     message: failed_component_message(&component, &error),
@@ -678,6 +686,19 @@ fn failed_component_message(component: &ComponentRegistration, error: &str) -> S
         component.source.display(),
         component.command
     )
+}
+
+/// True when the plan RPC never started because the component binary is not
+/// installed/built. Distinct from a crashed or protocol-broken component: the
+/// contribution is simply absent. Must not hard-fail prove/lift when unused
+/// optional components (e.g. ir-compiler-coq under examples-gate) are missing.
+fn component_binary_unavailable(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("no such file or directory")
+        || lower.contains("os error 2")
+        || lower.contains("the system cannot find the file")
+        || lower.contains("cannot find the path specified")
+        || (lower.contains("spawn ") && lower.contains("not found"))
 }
 
 fn title_case_ascii(value: &str) -> String {
@@ -2818,6 +2839,74 @@ done
                 .any(|plugin| plugin.surface == "fresh-surface"),
             "without a PlanArtifact replay must discover the current component plan: {:?}",
             replayed.plugins
+        );
+    }
+
+    /// #3747 instrument: a missing component binary is not enrolled — Warning,
+    /// never Error — so prove can still emit consistency rows via the compilers
+    /// that *are* built (examples-gate ships only sugar-ir-smt-lib).
+    #[test]
+    fn missing_component_binary_is_warning_not_error() {
+        let project = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let component_dir = root.path().join("ir-compiler-coq");
+        std::fs::create_dir_all(&component_dir).unwrap();
+        // Point at a path that cannot spawn: binary does not exist.
+        std::fs::write(
+            component_dir.join("manifest.toml"),
+            r#"name = "ir-compiler-coq"
+version = "0.1.0"
+protocol_version = "sugar-component/1"
+command = ["./definitely-not-installed-sugar-ir-coq"]
+"#,
+        )
+        .unwrap();
+        let component_path = std::env::join_paths([root.path()]).unwrap();
+
+        let _env_lock = TEST_ENV_LOCK.lock().unwrap();
+        let _home = EnvGuard::set("HOME", project.path().join("home"));
+        let _sugar_home = EnvGuard::remove("SUGAR_HOME");
+        let _component_path = EnvGuard::set("SUGAR_COMPONENT_PATH", component_path);
+        let _timeout = EnvGuard::set("SUGAR_COMPONENT_PLAN_TIMEOUT_SECS", "2");
+
+        let plan = plan_workspace_with_options(
+            project.path(),
+            PlanIntent::Prove,
+            ComponentPlanOptions {
+                allow_failed_components: false,
+            },
+        );
+
+        let coq = plan
+            .diagnostics
+            .iter()
+            .find(|d| d.message.contains("ir-compiler-coq"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected a diagnostic for the missing ir-compiler-coq binary; got {:?}",
+                    plan.diagnostics
+                )
+            });
+        assert_eq!(
+            coq.level,
+            DiagnosticLevel::Warning,
+            "missing optional component binary must soft-skip (Warning), not hard-fail prove: {}",
+            coq.message
+        );
+        assert!(
+            first_error_diagnostic(&plan).is_none(),
+            "prove must not inherit a hard Error from an unbuilt optional component: {:?}",
+            plan.diagnostics
+        );
+        assert!(
+            component_binary_unavailable(
+                "spawn [\"./definitely-not-installed-sugar-ir-coq\"]: No such file or directory (os error 2)"
+            ),
+            "spawn ENOENT classifier must recognize Unix missing-binary text"
+        );
+        assert!(
+            !component_binary_unavailable("component plan RPC timed out after 30s"),
+            "timeout/crash failures stay hard unless --allow-failed-components"
         );
     }
 }

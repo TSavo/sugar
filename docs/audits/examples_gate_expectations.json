@@ -68,9 +68,9 @@
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "failure_shape": "prove-undecidable/java-abs-consistency",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "grounds": "after #3747 missing-row fix, consistency rows are present but z3 returns undecidable (not MISSING); residual product/env for abs BV discharge. work order #3747 residual.",
       "last_observed_rc": 1,
       "last_observed_seconds": 5.378,
       "name": "examples/java-abs-bound/run.sh",
@@ -78,9 +78,9 @@
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "failure_shape": "prove-undecidable/java-abs-consistency",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "grounds": "after #3747 missing-row fix, consistency rows are present but z3 returns undecidable (not MISSING); residual product/env for abs BV discharge. work order #3747 residual.",
       "last_observed_rc": 1,
       "last_observed_seconds": 4.584,
       "name": "examples/java-abs-flagship/run.sh",
@@ -96,69 +96,54 @@
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "failure_shape": "prove-undecidable/java-abs-consistency",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "grounds": "after #3747 missing-row fix, consistency rows are present but z3 returns undecidable (not MISSING); residual product/env for abs BV discharge. work order #3747 residual.",
       "last_observed_rc": 1,
       "last_observed_seconds": 5.981,
       "name": "examples/java-abs-universe/run.sh",
       "work_order_issue": 3747
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "expected": "GREEN",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 5.38,
-      "name": "examples/java-assertion-consistency/run.sh",
-      "work_order_issue": 3747
+      "grounds": "prove-missing/java-kit-consistency-row-absent fixed by soft-skipping unbuilt optional component binaries (#3747); showcase green with consistency rows present",
+      "last_observed_rc": 0,
+      "name": "examples/java-assertion-consistency/run.sh"
+    },
+    {
+      "expected": "GREEN",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "prove-missing/java-kit-consistency-row-absent fixed by soft-skipping unbuilt optional component binaries (#3747); showcase green with consistency rows present",
+      "last_observed_rc": 0,
+      "name": "examples/java-b64-strong/run.sh"
+    },
+    {
+      "expected": "GREEN",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "prove-missing/java-kit-consistency-row-absent fixed by soft-skipping unbuilt optional component binaries (#3747); showcase green with consistency rows present",
+      "last_observed_rc": 0,
+      "name": "examples/java-b64-tails/run.sh"
+    },
+    {
+      "expected": "GREEN",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "prove-missing/java-kit-consistency-row-absent fixed by soft-skipping unbuilt optional component binaries (#3747); showcase green with consistency rows present",
+      "last_observed_rc": 0,
+      "name": "examples/java-bound-federation/run.sh"
+    },
+    {
+      "expected": "GREEN",
+      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
+      "grounds": "prove-missing/java-kit-consistency-row-absent fixed by soft-skipping unbuilt optional component binaries (#3747); showcase green with consistency rows present",
+      "last_observed_rc": 0,
+      "name": "examples/java-callbind-consistency/run.sh"
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "failure_shape": "factory-gap/java-kit-missing-sugar-enumerate",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 5.079,
-      "name": "examples/java-b64-strong/run.sh",
-      "work_order_issue": 3747
-    },
-    {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
-      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 5.479,
-      "name": "examples/java-b64-tails/run.sh",
-      "work_order_issue": 3747
-    },
-    {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
-      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 4.576,
-      "name": "examples/java-bound-federation/run.sh",
-      "work_order_issue": 3747
-    },
-    {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
-      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 4.527,
-      "name": "examples/java-callbind-consistency/run.sh",
-      "work_order_issue": 3747
-    },
-    {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
-      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "grounds": "after #3747 missing-row fix, source-audit path fails: java-test-assertions kit does not advertise sugar.enumerate (unknown method). residual #3747.",
       "last_observed_rc": 1,
       "last_observed_seconds": 6.532,
       "name": "examples/java-codec-universe/run.sh",
@@ -166,29 +151,26 @@
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "failure_shape": "factory-gap/java-kit-missing-sugar-enumerate",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "grounds": "after #3747 missing-row fix, source-audit path fails: java-test-assertions kit does not advertise sugar.enumerate (unknown method). residual #3747.",
       "last_observed_rc": 1,
       "last_observed_seconds": 6.782,
       "name": "examples/java-commons-codec-crc32/run.sh",
       "work_order_issue": 3747
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "expected": "GREEN",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 7.483,
-      "name": "examples/java-crc32-universe/run.sh",
-      "work_order_issue": 3747
+      "grounds": "prove-missing/java-kit-consistency-row-absent fixed by soft-skipping unbuilt optional component binaries (#3747); showcase green with consistency rows present",
+      "last_observed_rc": 0,
+      "name": "examples/java-crc32-universe/run.sh"
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "failure_shape": "unclassified/example-failure",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "grounds": "prove-missing MISSING shape fixed by #3747 soft-skip of unbuilt IR compilers; example still red under residual unclassified failure after fix (timeout/hang or incomplete remeasure). residual #3747.",
       "last_observed_rc": 1,
       "last_observed_seconds": 8.56,
       "name": "examples/java-crc32-valuepin/run.sh",
@@ -196,29 +178,26 @@
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "failure_shape": "unclassified/example-failure",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "grounds": "prove-missing MISSING shape fixed by #3747 soft-skip of unbuilt IR compilers; example still red under residual unclassified failure after fix (timeout/hang or incomplete remeasure). residual #3747.",
       "last_observed_rc": 1,
       "last_observed_seconds": 17.258,
       "name": "examples/java-forall-loop/run.sh",
       "work_order_issue": 3747
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "expected": "GREEN",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 5.178,
-      "name": "examples/java-instance-universe/run.sh",
-      "work_order_issue": 3747
+      "grounds": "prove-missing/java-kit-consistency-row-absent fixed by soft-skipping unbuilt optional component binaries (#3747); showcase green with consistency rows present",
+      "last_observed_rc": 0,
+      "name": "examples/java-instance-universe/run.sh"
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "failure_shape": "unclassified/example-failure",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
+      "grounds": "prove-missing MISSING shape fixed by #3747 soft-skip of unbuilt IR compilers; example still red under residual unclassified failure after fix (timeout/hang or incomplete remeasure). residual #3747.",
       "last_observed_rc": 1,
       "last_observed_seconds": 16.403,
       "name": "examples/java-mt-reference/run.sh",
@@ -243,54 +222,39 @@
       "work_order_issue": 3582
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "expected": "GREEN",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 4.676,
-      "name": "examples/java-pattern-regex/run.sh",
-      "work_order_issue": 3747
+      "grounds": "prove-missing/java-kit-consistency-row-absent fixed by soft-skipping unbuilt optional component binaries (#3747); showcase green with consistency rows present",
+      "last_observed_rc": 0,
+      "name": "examples/java-pattern-regex/run.sh"
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "expected": "GREEN",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 6.985,
-      "name": "examples/java-testng-consistency/run.sh",
-      "work_order_issue": 3747
+      "grounds": "prove-missing/java-kit-consistency-row-absent fixed by soft-skipping unbuilt optional component binaries (#3747); showcase green with consistency rows present",
+      "last_observed_rc": 0,
+      "name": "examples/java-testng-consistency/run.sh"
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "expected": "GREEN",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 6.232,
-      "name": "examples/java-urlsafe-seam/run.sh",
-      "work_order_issue": 3747
+      "grounds": "prove-missing/java-kit-consistency-row-absent fixed by soft-skipping unbuilt optional component binaries (#3747); showcase green with consistency rows present",
+      "last_observed_rc": 0,
+      "name": "examples/java-urlsafe-seam/run.sh"
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "expected": "GREEN",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 5.007,
-      "name": "examples/java-voltron/run.sh",
-      "work_order_issue": 3747
+      "grounds": "prove-missing/java-kit-consistency-row-absent fixed by soft-skipping unbuilt optional component binaries (#3747); showcase green with consistency rows present",
+      "last_observed_rc": 0,
+      "name": "examples/java-voltron/run.sh"
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-missing/java-kit-consistency-row-absent",
+      "expected": "GREEN",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-missing/java-kit-consistency-row-absent in the recensus4 clean sweep; work order #3747. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 7.044,
-      "name": "examples/java-witness-recompute/run.sh",
-      "work_order_issue": 3747
+      "grounds": "prove-missing/java-kit-consistency-row-absent fixed by soft-skipping unbuilt optional component binaries (#3747); showcase green with consistency rows present",
+      "last_observed_rc": 0,
+      "name": "examples/java-witness-recompute/run.sh"
     },
     {
       "expected": "NAMED_RED",
@@ -587,8 +551,8 @@
   "policy": "GREEN rows must remain green. NAMED_RED rows must keep the same failure_shape until a deliberate fixture move records promotion to GREEN. New examples, missing examples, new reds, and changed red shapes fail the gate.",
   "suite": "smoke",
   "summary": {
-    "green": 16,
-    "named_red": 46,
+    "green": 30,
+    "named_red": 32,
     "total": 62,
     "unclassified": 0
   },
