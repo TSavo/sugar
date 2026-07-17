@@ -288,6 +288,13 @@ pub fn run(args: LiftArgs) -> u8 {
                             return EXIT_VERIFY_FAIL;
                         }
                     };
+                if let Err(error) = lift_plugin::refuse_split_pipeline(
+                    &provenance.identity,
+                    env!("SUGAR_BUILD_GIT_HEAD"),
+                ) {
+                    eprintln!("{error}");
+                    return EXIT_VERIFY_FAIL;
+                }
                 Some(provenance)
             } else {
                 None
@@ -7452,7 +7459,10 @@ fn current_report_invocation(report: &LiftSourceReport) -> ReportInvocation {
             .project_root
             .clone()
             .unwrap_or_else(|| PathBuf::from(".")),
-        substrate_commit: env!("SUGAR_BUILD_STAMP").to_string(),
+        // Substrate commit is monorepo HEAD embedded at compile time, not the
+        // package content stamp. Matched single-tree mints show kit source ==
+        // substrate commit (#4577 pins).
+        substrate_commit: env!("SUGAR_BUILD_GIT_HEAD").to_string(),
         kit_source: report.kit_source.clone().or_else(|| {
             lift_plugin::last_python_kit_source()
                 .and_then(|value| serde_json::from_value(value).ok())
@@ -15854,23 +15864,30 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
-    fn independently_content_addressed_kit_is_valid_provenance() {
-        let provenance = KitSourceProvenance {
-            identity: "kit-a".to_string(),
-            kind: "git".to_string(),
-            dirty: false,
-        };
-        assert_eq!(provenance.identity, "kit-a");
+    fn split_pipeline_refusal_names_both_commits() {
+        assert_eq!(
+            lift_plugin::refuse_split_pipeline("kit-a", "binary-b").unwrap_err(),
+            "refusing to mint from a split pipeline: kit @kit-a != binary @binary-b"
+        );
+        assert!(lift_plugin::refuse_split_pipeline("kit-a", "kit-a").is_ok());
     }
 
     #[test]
-    fn dirty_kit_source_is_preserved_as_testimony() {
-        let provenance = KitSourceProvenance {
-            identity: "abc123".to_string(),
-            kind: "git".to_string(),
-            dirty: true,
-        };
-        assert!(provenance.dirty);
+    fn dirty_kit_source_is_loud_but_does_not_change_identity_gate() {
+        // Dirty is testimony on the same base identity; the gate only compares identity.
+        assert!(lift_plugin::refuse_split_pipeline("abc123", "abc123").is_ok());
+        assert_eq!(
+            lift_plugin::refuse_split_pipeline("abc123", "other").unwrap_err(),
+            "refusing to mint from a split pipeline: kit @abc123 != binary @other"
+        );
+    }
+
+    #[test]
+    fn content_addressed_kit_refuses_against_git_binary_head() {
+        assert_eq!(
+            lift_plugin::refuse_split_pipeline("blake3-512:deadbeef", "abc123").unwrap_err(),
+            "refusing to mint from a split pipeline: kit @blake3-512:deadbeef != binary @abc123"
+        );
     }
 
     #[test]
