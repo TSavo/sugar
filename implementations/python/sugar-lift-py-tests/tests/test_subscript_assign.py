@@ -11,16 +11,22 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
+    GuardedValue,
     ListValue,
     ReturnValue,
+    StringValue,
     SymbolicValue,
     TermValue,
 )
-from sugar_lift_py_tests.ir import ctor, make_var
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
+from sugar_lift_py_tests.idd.lift_coverage_census import census_source
+from sugar_lift_py_tests.ir import ctor, make_var, py_truthy
+from sugar_lift_py_tests.lift_rpc import audit_lift_file
+from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -99,6 +105,62 @@ def test_callsite_setitem_arm_does_not_replace_concrete_list_post_state() -> Non
     outcome = receiver.setitem(TermValue(0), TermValue(9), "t.py:1:0")
 
     assert outcome.value == ListValue((TermValue(9), TermValue(2)))
+
+
+def test_guarded_callsite_setitem_rebinds_both_decidable_faces() -> None:
+    site = SourceFragment.from_source("xs[0] = 9\n", "t.py").statements()[0]
+    guard = py_truthy(make_var("condition"))
+    receiver = GuardedValue(
+        guard,
+        CallSiteValue("left", (), (), ctor("call:left", []), None, site),
+        CallSiteValue("right", (), (), ctor("call:right", []), None, site),
+    )
+
+    outcome = receiver.setitem(TermValue(0), TermValue(9), site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, GuardedValue)
+    assert outcome.value.guard == guard
+    for face in (outcome.value.when_true, outcome.value.when_false):
+        assert isinstance(face, CallSiteValue)
+        assert face.target_name == "setitem"
+        assert face.term.name == "py.setitem"
+
+
+def test_guarded_setitem_keeps_an_unsupported_face_loud() -> None:
+    site = SourceFragment.from_source("xs[0] = 9\n", "t.py").statements()[0]
+    receiver = GuardedValue(
+        py_truthy(make_var("condition")),
+        CallSiteValue("left", (), (), ctor("call:left", []), None, site),
+        StringValue("not a mutable container"),
+    )
+
+    with pytest.raises(FactoryPanic, match=r"owner=setitem.*observed=StringValue"):
+        receiver.setitem(TermValue(0), TermValue(9), site)
+
+
+def test_guarded_setitem_source_conserves_without_an_effect() -> None:
+    source = (
+        "def test_guarded_store(flag):\n"
+        "    if flag:\n"
+        "        xs = make_left()\n"
+        "    else:\n"
+        "        xs = make_right()\n"
+        "    xs[0] = 9\n"
+        "    assert True\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "guarded_store.py")
+    rpc = payload.to_rpc()
+    assertions = account_lift_coverage(
+        census_source(source, file="guarded_store.py"), rpc
+    ).to_json()["assertions"]
+
+    assert gaps == []
+    assert rpc["effects"] == []
+    assert assertions["stated"] == 1
+    assert assertions["refused_loud"] == 1
+    assert assertions["silently_unaccounted"] == 0
 
 
 def test_runtime_store_receivers_own_explicit_setitem_arms() -> None:
