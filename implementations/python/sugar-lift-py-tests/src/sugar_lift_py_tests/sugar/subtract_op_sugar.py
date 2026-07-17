@@ -44,6 +44,14 @@ class SubtractOpSugar(Sugar, role=SugarRole.TERM):
             "\n"
         )
         bool_prefix = "def B():\n    return False - 2\n\n"
+        set_comprehension_prefix = (
+            "def C(values, z):\n"
+            "    left = {value for value in values}\n"
+            "    right = {value for value in values}\n"
+            "    left - right\n"
+            "    return z\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="subtract_return",
@@ -56,6 +64,16 @@ class SubtractOpSugar(Sugar, role=SugarRole.TERM):
                 owner_sugar="SubtractOpSugar",
                 truthful=bool_prefix + "def test_b():\n    assert B() == -2\n",
                 lying=bool_prefix + "def test_b():\n    assert B() == -1\n",
+            ),
+            _call_pair(
+                name="set_comprehension_subtract",
+                owner_sugar="SubtractOpSugar",
+                truthful=set_comprehension_prefix
+                + "def test_c():\n"
+                + "    assert C([1, 2], 5) == 5\n",
+                lying=set_comprehension_prefix
+                + "def test_c():\n"
+                + "    assert C([1, 2], 5) == 0\n",
             ),
         )
 
