@@ -53,11 +53,22 @@ class AppendCallSugar(
         # Append rebinds the name; the return face carries z. Truthful/lying
         # twins discriminate on the returned face -- the mutation is just present.
         prefix = "def A(z):\n    xs = [1]\n    xs.append(z)\n    return z\n\n"
-        return _call_pair(
-            name="append_return",
-            owner_sugar="AppendCallSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        length_prefix = (
+            "def A():\n" "    xs = [1]\n" "    xs.append(2)\n" "    return len(xs)\n\n"
+        )
+        return (
+            _call_pair(
+                name="append_return",
+                owner_sugar="AppendCallSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            ),
+            _call_pair(
+                name="append_length_return",
+                owner_sugar="AppendCallSugar",
+                truthful=length_prefix + "def test_a():\n    assert A() == 2\n",
+                lying=length_prefix + "def test_a():\n    assert A() == 1\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

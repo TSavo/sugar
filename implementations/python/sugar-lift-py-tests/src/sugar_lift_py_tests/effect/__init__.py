@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .assertion_failed_runtime_effect import AssertionFailedRuntimeEffect
+from .append_runtime_effect import AppendRuntimeEffect
 from .async_context_manager_runtime_effect import AsyncContextManagerRuntimeEffect
 from .async_iteration_runtime_effect import AsyncIterationRuntimeEffect
 from .attribute_store_runtime_effect import AttributeStoreRuntimeEffect
@@ -36,6 +37,7 @@ from .try_handler_dispatch_runtime_effect import TryHandlerDispatchRuntimeEffect
 
 __all__ = [
     "AssertionFailedRuntimeEffect",
+    "AppendRuntimeEffect",
     "AsyncContextManagerRuntimeEffect",
     "AsyncIterationRuntimeEffect",
     "AttributeStoreRuntimeEffect",

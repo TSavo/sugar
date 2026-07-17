@@ -80,6 +80,22 @@ class SymbolicValue(FloorValue):
             )
         )
 
+    def append_with(self, value, site):
+        from sugar_lift_py_tests.effect import (
+            AppendRuntimeEffect,
+            runtime_effect_witness,
+        )
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            AppendRuntimeEffect(
+                "append runtime boundary: symbolic receiver has no constructed "
+                f"list post-state; value={value.to_term(owner=str(site))!r}; "
+                f"site={site}",
+                witness=runtime_effect_witness("py.append", self, site),
+            )
+        )
+
     def unary_minus(self, site):
         # Symbolic arithmetic negation: emit py.neg(term) (LAW in symbolic_term).
         del site

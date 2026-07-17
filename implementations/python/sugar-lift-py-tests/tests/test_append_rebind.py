@@ -59,6 +59,14 @@ def test_two_appends_compose() -> None:
     )
 
 
+def test_append_sugar_enrolls_mutated_length_witness() -> None:
+    from sugar_lift_py_tests.sugar.append_call_sugar import AppendCallSugar
+
+    assert any(
+        pair.name == "append_length_return" for pair in AppendCallSugar.witnesses()
+    )
+
+
 def test_append_owner_precedes_the_general_method_owner() -> None:
     site = SourceFragment.from_node(
         ast.parse("xs.append(2)", mode="eval").body, "append.py"
