@@ -1,0 +1,15 @@
+{
+  "kind": "recovered-construction-audit",
+  "recoveryOverride": true,
+  "status": "complete",
+  "census": {
+    "kind": "recovered-frontier-census",
+    "sourceFilesEnumerated": 1,
+    "sourceBodiesDemanded": 1,
+    "auditLeavesCompleted": 1
+  },
+  "panics": [],
+  "effects": [],
+  "suppressedDescendants": [],
+  "inventedLane": []
+}

@@ -1,0 +1,9 @@
+{
+  "kind": "recovered-construction-audit",
+  "recoveryOverride": true,
+  "status": "clean",
+  "panics": [],
+  "effects": [],
+  "suppressedDescendants": [],
+  "inventedLane": []
+}
