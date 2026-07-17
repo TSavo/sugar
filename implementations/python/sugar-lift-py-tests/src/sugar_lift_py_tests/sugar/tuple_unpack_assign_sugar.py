@@ -116,11 +116,7 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
                     SugarBody(
                         SubscriptAssignSugar(
                             receiver=ctx.build_body(target_receiver, SugarRole.TERM),
-                            receiver_name=(
-                                target_receiver.name_id()
-                                if target_receiver.observed == "Name"
-                                else None
-                            ),
+                            receiver_coordinate=target_receiver.dotted_expr_name(),
                             index=ctx.build_body(
                                 first.subscript_index(), SugarRole.TERM
                             ),

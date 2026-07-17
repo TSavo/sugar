@@ -126,7 +126,7 @@ def _target_store(target, value, site, ctx) -> SugarBody:
         receiver = target.subscript_receiver()
         store = SubscriptAssignSugar(
             receiver=ctx.build_body(receiver, SugarRole.TERM),
-            receiver_name=(receiver.name_id() if receiver.observed == "Name" else None),
+            receiver_coordinate=receiver.dotted_expr_name(),
             index=ctx.build_body(target.subscript_index(), SugarRole.TERM),
             value=value,
             site=site,

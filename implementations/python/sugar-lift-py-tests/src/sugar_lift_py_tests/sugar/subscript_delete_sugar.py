@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field, replace
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
 from sugar_lift_py_tests.floor import FloorValue, ScopeRebind
-from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
+from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.subscript_store_post_state import (
+    cite_subscript_post_state,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -16,7 +18,7 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
     """One ``del receiver[index]`` routed through the subscript-store floor."""
 
     receiver: SugarBody
-    receiver_name: str | None
+    receiver_coordinate: str | None
     index: SugarBody
     site: object = dataclass_field(compare=False)
 
@@ -33,7 +35,7 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
         receiver = target.subscript_receiver()
         return cls(
             receiver=ctx.build_body(receiver, SugarRole.TERM),
-            receiver_name=receiver.name_id() if receiver.observed == "Name" else None,
+            receiver_coordinate=receiver.dotted_expr_name(),
             index=ctx.build_body(target.subscript_index(), SugarRole.TERM),
             site=site,
         )
@@ -68,22 +70,18 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
         return self.receiver.reduce(ctx).and_then(
             lambda receiver: self.index.reduce(ctx).and_then(
                 lambda index: receiver.delitem(index, self.site).and_then(
-                    lambda updated: self._cite_update(updated)
+                    lambda updated: self._cite_update(receiver, updated)
                 )
             )
         )
 
-    def _cite_update(self, updated) -> Outcome:
-        if self.receiver_name is not None:
-            return Complete(ScopeRebind(self.receiver_name, updated))
-        from sugar_lift_py_tests.effect import runtime_effect_evidence
-
-        return Incomplete(
-            SubscriptStoreRuntimeEffect(
-                "subscript delete completed on a non-name receiver whose post-state "
-                f"cannot be rebound; site={self.site}",
-                **runtime_effect_evidence("py.delitem", updated, self.site),
-            )
+    def _cite_update(self, receiver, updated) -> Outcome:
+        return cite_subscript_post_state(
+            receiver_coordinate=self.receiver_coordinate,
+            receiver=receiver,
+            updated=updated,
+            operation="py.delitem",
+            site=self.site,
         )
 
     def walk_children(self):
@@ -129,9 +127,7 @@ class MultiDeleteSugar(Sugar, role=SugarRole.STATEMENT):
                 SugarBody(
                     SubscriptDeleteSugar(
                         receiver=ctx.build_body(receiver, SugarRole.TERM),
-                        receiver_name=(
-                            receiver.name_id() if receiver.observed == "Name" else None
-                        ),
+                        receiver_coordinate=receiver.dotted_expr_name(),
                         index=ctx.build_body(target.subscript_index(), SugarRole.TERM),
                         site=site,
                     ),

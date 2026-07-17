@@ -62,8 +62,8 @@ def test_symbolic_subscript_assign_rebinds_through_py_setitem() -> None:
     assert returned.value.term.name == "py.setitem"
 
 
-def test_call_result_subscript_assign_is_a_coordinate_carrying_store_effect() -> None:
-    """Non-name receivers still cannot rebind; sugar layer stays Incomplete."""
+def test_call_result_subscript_assign_is_a_receiver_witnessed_store_effect() -> None:
+    """A call-selected receiver is genuinely runtime, and is the operand."""
     outcome = compose_block('    make()["k"] = 9\n')
 
     assert isinstance(outcome, BlockValue)
@@ -71,8 +71,47 @@ def test_call_result_subscript_assign_is_a_coordinate_carrying_store_effect() ->
     incomplete = outcome.statements[0]
     assert isinstance(incomplete, Incomplete)
     assert isinstance(incomplete.effect, SubscriptStoreRuntimeEffect)
-    assert "non-name receiver" in incomplete.effect.reason
+    assert "runtime-selected receiver" in incomplete.effect.reason
     assert incomplete.effect.witness.operation.name == "py.setitem"
+    assert incomplete.effect.witness.operand.name == "call:make"
+
+
+def test_dotted_receiver_subscript_assign_rebinds_the_citable_coordinate() -> None:
+    """A pure dotted receiver is structural, not a runtime-effect operand."""
+    outcome = compose_block(
+        '    box.values["k"] = 9\n' "    return box.values\n",
+        binds={"box.values": SymbolicValue(make_var("box.values"))},
+    )
+
+    assert isinstance(outcome, BlockValue)
+    returned = outcome.statements[-1]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    assert returned.value.target_name == "setitem"
+    assert returned.value.term.name == "py.setitem"
+
+
+@pytest.mark.parametrize(
+    ("statement", "operation"),
+    (
+        ('box.values["k"] += 2', "py.setitem"),
+        ('box.values["k"] *= 2', "py.setitem"),
+        ('del box.values["k"]', "py.delitem"),
+    ),
+)
+def test_every_dotted_subscript_store_owner_rebinds_the_coordinate(
+    statement: str, operation: str
+) -> None:
+    outcome = compose_block(
+        f"    {statement}\n" "    return box.values\n",
+        binds={"box.values": SymbolicValue(make_var("box.values"))},
+    )
+
+    assert isinstance(outcome, BlockValue)
+    returned = outcome.statements[-1]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    assert returned.value.term.name == operation
 
 
 def test_callsite_setitem_rebinds_through_py_setitem() -> None:
