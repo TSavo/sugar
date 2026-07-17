@@ -68,6 +68,9 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
         predicate_invert_prefix = (
             "from time import time\n" "\n" "def test_a():\n" "    value = time()\n"
         )
+        predicate_minus_prefix = (
+            "from time import time\n" "\n" "def test_a():\n" "    value = time()\n"
+        )
         return (
             _call_pair(
                 name="unary_op_return",
@@ -95,6 +98,14 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
                 + "    assert (value != 1) and ~(value == 1)\n",
                 lying=predicate_invert_prefix
                 + "    assert ~(value == 1) and (value == 1)\n",
+            ),
+            _call_pair(
+                name="predicate_unary_minus_return",
+                owner_sugar=cls.__name__,
+                truthful=predicate_minus_prefix
+                + "    assert -(value == 1) and (value != 1)\n",
+                lying=predicate_minus_prefix
+                + "    assert -(value == 1) and (value == 1)\n",
             ),
         )
 
