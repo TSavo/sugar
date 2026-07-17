@@ -8,7 +8,7 @@ from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload, mai
 
 
 def test_normal_lift_stops_at_first_factory_panic() -> None:
-    source = "def first():\n    nonlocal x\n\ndef second():\n    nonlocal y\n"
+    source = "def first():\n    type X = int\n\ndef second():\n    type Y = str\n"
 
     with pytest.raises(FactoryPanic) as raised:
         lift_file_payload(source, "bad_twins.py")
@@ -17,14 +17,14 @@ def test_normal_lift_stops_at_first_factory_panic() -> None:
 
 
 def test_legacy_hold_panic_cannot_return_a_partial_lift_artifact() -> None:
-    source = "def clean():\n    return 1\n\ndef broken():\n    nonlocal x\n"
+    source = "def clean():\n    return 1\n\ndef broken():\n    type X = int\n"
 
     with pytest.raises(TypeError, match="recover_panics=True"):
         audit_lift_file(source, "held.py", hold_panic=True)
 
 
 def test_recovered_audit_records_independent_panics_without_lift_payload() -> None:
-    source = "def first():\n    nonlocal x\n\ndef second():\n    nonlocal y\n"
+    source = "def first():\n    type X = int\n\ndef second():\n    type Y = str\n"
 
     audit = audit_lift_file(source, "bad_twins.py", recover_panics=True)
     wire = audit.to_rpc()

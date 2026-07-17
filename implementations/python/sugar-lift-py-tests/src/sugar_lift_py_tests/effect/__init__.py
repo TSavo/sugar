@@ -15,6 +15,7 @@ from .string_float_conversion_runtime_effect import StringFloatConversionRuntime
 from .coverage_gap_effect import CoverageGapEffect
 from .conditional_expression_runtime_effect import ConditionalExpressionRuntimeEffect
 from .constructor_runtime_effect import ConstructorRuntimeEffect
+from .context_manager_unpack_runtime_effect import ContextManagerUnpackRuntimeEffect
 from .call_result_type_runtime_effect import CallResultTypeRuntimeEffect
 from .division_by_zero_runtime_effect import DivisionByZeroRuntimeEffect
 from .dict_unpack_runtime_effect import DictUnpackRuntimeEffect
@@ -26,6 +27,7 @@ from .index_error_runtime_effect import IndexErrorRuntimeEffect
 from .imported_module_runtime_effect import ImportedModuleRuntimeEffect
 from .key_error_runtime_effect import KeyErrorRuntimeEffect
 from .modulo_by_zero_runtime_effect import ModuloByZeroRuntimeEffect
+from .nonlocal_mutation_runtime_effect import NonlocalMutationRuntimeEffect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .raise_effect import RaiseEffect
 from .runtime_effect import (
@@ -36,6 +38,7 @@ from .runtime_effect import (
     runtime_effect_witness,
 )
 from .sequence_repetition_runtime_effect import SequenceRepetitionRuntimeEffect
+from .sequence_unpack_runtime_effect import SequenceUnpackRuntimeEffect
 from .sequence_concatenation_runtime_effect import SequenceConcatenationRuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
 from .subscript_store_runtime_effect import SubscriptStoreRuntimeEffect
@@ -59,6 +62,7 @@ __all__ = [
     "CoverageGapEffect",
     "ConditionalExpressionRuntimeEffect",
     "ConstructorRuntimeEffect",
+    "ContextManagerUnpackRuntimeEffect",
     "CallResultTypeRuntimeEffect",
     "DivisionByZeroRuntimeEffect",
     "DictUnpackRuntimeEffect",
@@ -70,6 +74,7 @@ __all__ = [
     "ImportedModuleRuntimeEffect",
     "KeyErrorRuntimeEffect",
     "ModuloByZeroRuntimeEffect",
+    "NonlocalMutationRuntimeEffect",
     "OSExitRuntimeEffect",
     "RaiseEffect",
     "RuntimeEffect",
@@ -78,6 +83,7 @@ __all__ = [
     "resolve_runtime_effect_site",
     "runtime_effect_witness",
     "SequenceRepetitionRuntimeEffect",
+    "SequenceUnpackRuntimeEffect",
     "SequenceConcatenationRuntimeEffect",
     "SourceOracleEffect",
     "SubscriptStoreRuntimeEffect",

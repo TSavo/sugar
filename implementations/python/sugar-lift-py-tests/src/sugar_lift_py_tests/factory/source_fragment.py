@@ -1591,6 +1591,14 @@ class SourceFragment:
             return target.id
         return None
 
+    def with_optional_vars(self, index: int = 0) -> "SourceFragment | None":
+        """Return the complete optional ``as`` target for a With item."""
+        self._require(ast.With, ast.AsyncWith)
+        target = self.node.items[index].optional_vars  # type: ignore[attr-defined]
+        if target is None:
+            return None
+        return SourceFragment.from_node(target, self.filename, source=self.source)
+
     def with_optional_vars_observed(self, index: int = 0) -> "str | None":
         """Return the optional-vars AST kind for With/AsyncWith, if present."""
         self._require(ast.With, ast.AsyncWith)

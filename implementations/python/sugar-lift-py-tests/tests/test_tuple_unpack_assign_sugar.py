@@ -11,6 +11,9 @@ from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
+from sugar_lift_py_tests.floor import SymbolicValue
+from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.tuple_unpack_assign_sugar import (
     TupleUnpackAssignSugar,
 )
@@ -24,6 +27,23 @@ def test_flat_tuple_unpack_binds_every_name_to_its_rhs_element() -> None:
     assert compose_block(
         "    dayfrac, days = (0.5, 3)\n    return dayfrac + days\n"
     ) == BlockValue((ReturnValue(TermValue(3.5)),))
+
+
+def test_list_target_with_star_constructs_concrete_bindings() -> None:
+    assert compose_block(
+        "    [head, *middle, tail] = (1, 2, 3, 4)\n"
+        "    return head + middle[0] + middle[1] + tail\n"
+    ) == BlockValue((ReturnValue(TermValue(10)),))
+
+
+def test_star_unpack_runtime_length_is_a_named_effect() -> None:
+    result = compose_block(
+        "    head, *middle, tail = values\n    return head\n",
+        binds={"values": SymbolicValue(make_var("values"))},
+    )
+
+    effect = next(row for row in result.statements if isinstance(row, Incomplete))
+    assert type(effect.effect).__name__ == "SequenceUnpackRuntimeEffect"
 
 
 @pytest.mark.parametrize(

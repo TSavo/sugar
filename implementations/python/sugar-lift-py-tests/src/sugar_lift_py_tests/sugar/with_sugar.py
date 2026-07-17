@@ -13,10 +13,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 class WithSugar(Sugar, role=SugarRole.STATEMENT):
     """`with cm as y: body` -- substitute the manager coordinate into the body.
 
-    Single-item synchronous With only. Multi-item `with a, b:` and
-    AsyncWith stay unowned (loud factory gap) -- this arm does not take
-    the first item and drop the rest. Complex `as` targets (tuple, attr)
-    are also unowned.
+    Synchronous With only; AsyncWith stays on its dedicated runtime boundary.
+    Simple-name and flat tuple/list ``as`` targets are constructed. Attribute
+    and nested targets remain unowned instead of being partly bound.
 
     Reduce the context expression; the entered value is the unary
     coordinate call:__enter__(cm), same head family as method calls.
@@ -25,7 +24,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
     the body's BlockValue, which splices into the enclosing record.
     """
 
-    items: tuple[tuple[SugarBody, str | None], ...]
+    items: tuple[tuple[SugarBody, tuple[str, ...]], ...]
     body: SugarBody
     site: object = dataclass_field(compare=False)
 
@@ -34,8 +33,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         if site.observed != "With":
             return False
         return all(
-            site.with_optional_vars_observed(index) is None
-            or site.with_optional_vars_name(index) is not None
+            _with_target_names(site.with_optional_vars(index)) is not None
             for index in range(site.with_item_count())
         )
 
@@ -47,7 +45,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             items=tuple(
                 (
                     ctx.build_body(site.with_context_expr(index), SugarRole.TERM),
-                    site.with_optional_vars_name(index),
+                    _with_target_names(site.with_optional_vars(index)) or (),
                 )
                 for index in range(site.with_item_count())
             ),
@@ -80,12 +78,12 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
     def _enter_items(self, remaining, ctx) -> Outcome:
         if not remaining:
             return self.body.reduce(ctx)
-        (context, as_name), *rest = remaining
+        (context, as_names), *rest = remaining
         return context.reduce(ctx).and_then(
-            lambda cm: self._enter_one(cm, as_name, tuple(rest), ctx)
+            lambda cm: self._enter_one(cm, as_names, tuple(rest), ctx)
         )
 
-    def _enter_one(self, cm, as_name, remaining, ctx: object) -> Outcome:
+    def _enter_one(self, cm, as_names, remaining, ctx: object) -> Outcome:
         from sugar_lift_py_tests.floor import (
             CallSiteValue,
             ObjectValue,
@@ -118,8 +116,13 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                 entered = cm.linear_method_call("__enter__", (), self.site)
 
             body_ctx = ctx
-            if as_name is not None:
-                body_ctx = ScopeRebind(as_name, entered).extend_scope(ctx)
+            binding = _with_binding(as_names, entered, self.site)
+            if binding is not None:
+                from sugar_lift_py_tests.outcome import Incomplete
+
+                if isinstance(binding, Incomplete):
+                    return binding
+                body_ctx = binding.value.extend_scope(ctx)
             outcome = self._enter_items(remaining, body_ctx)
             if not _carries_raise_effect(outcome):
                 return outcome
@@ -137,8 +140,8 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                     from sugar_lift_py_tests.floor import BlockValue
                     from sugar_lift_py_tests.outcome import Complete
 
-                    if as_name is not None:
-                        return Complete(ScopeRebind(as_name, entered))
+                    if binding is not None:
+                        return binding
                     return Complete(BlockValue(()))
                 return outcome
 
@@ -170,8 +173,8 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                 # Suppression removes the exceptional body contribution and
                 # permits the enclosing block to continue after the with. The
                 # optional-as binding remains live after the with statement.
-                if as_name is not None:
-                    return Complete(ScopeRebind(as_name, entered))
+                if binding is not None:
+                    return binding
                 return Complete(BlockValue(()))
             return outcome
 
@@ -197,7 +200,12 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         ).value
         entered = force_floor(enter, ctx, owner="WithSugar.__enter__")
         body_ctx = ctx
-        if as_name is not None:
+        binding = _with_binding(as_names, entered, self.site)
+        if binding is not None:
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            if isinstance(binding, Incomplete):
+                return binding
 
             class BindValueOperation:
                 pass
@@ -207,7 +215,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                 method_name="bind_with",
                 operation=BindValueOperation(),
             )
-            body_ctx = ScopeRebind(as_name, entered).extend_scope(ctx)
+            body_ctx = binding.value.extend_scope(ctx)
         outcome = self._enter_items(remaining, body_ctx)
         exit_call = cm.call_method_value(
             "__exit__",
@@ -224,7 +232,54 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         return outcome
 
     def walk_children(self):
-        return (*(context for context, _as_name in self.items), self.body)
+        return (*(context for context, _as_names in self.items), self.body)
+
+
+def _with_target_names(target) -> tuple[str, ...] | None:
+    if target is None:
+        return ()
+    if target.observed == "Name":
+        return (target.name_id(),)
+    if target.observed not in {"Tuple", "List"}:
+        return None
+    elements = target.tuple_elts() if target.observed == "Tuple" else target.list_elts()
+    if not elements or any(element.observed != "Name" for element in elements):
+        return None
+    return tuple(element.name_id() for element in elements)
+
+
+def _with_binding(names, entered, site):
+    if not names:
+        return None
+    from sugar_lift_py_tests.effect import (
+        ContextManagerUnpackRuntimeEffect,
+        runtime_effect_witness,
+    )
+    from sugar_lift_py_tests.floor import ListValue, ScopeRebind, TupleValue
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+    from sugar_lift_py_tests.sugar.tuple_unpack_assign_sugar import (
+        SequenceUnpackBindings,
+    )
+
+    if len(names) == 1:
+        return Complete(ScopeRebind(names[0], entered))
+    if isinstance(entered, (ListValue, TupleValue)) and len(entered.elements) == len(
+        names
+    ):
+        return Complete(
+            SequenceUnpackBindings(
+                tuple(
+                    ScopeRebind(name, value)
+                    for name, value in zip(names, entered.elements)
+                )
+            )
+        )
+    return Incomplete(
+        ContextManagerUnpackRuntimeEffect(
+            f"context-manager as-target needs {len(names)} runtime values; site={site}",
+            witness=runtime_effect_witness("py.with.unpack", entered, site),
+        )
+    )
 
 
 def _unresolved_callsite_exit(site) -> None:

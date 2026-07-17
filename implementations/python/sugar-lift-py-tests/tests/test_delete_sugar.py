@@ -86,6 +86,15 @@ def test_subscript_delete_reuses_store_post_state_and_negative_index_floor() -> 
     assert type(built.sugar).__name__ == "SubscriptDeleteSugar"
 
 
+def test_multiple_subscript_deletes_replay_left_to_right() -> None:
+    assert compose_block(
+        "    xs = [1, 2, 3]\n    del xs[1], xs[0]\n    return xs[0]\n"
+    ) == BlockValue((ReturnValue(TermValue(3)),))
+
+    built = _build_statement("del xs[1], xs[0]")
+    assert type(built.sugar).__name__ == "MultiDeleteSugar"
+
+
 def test_full_slice_delete_constructs_the_list_post_state() -> None:
     block = compose_block("    xs = [1, 2, 3]\n    del xs[:]\n    return len(xs)\n")
     returned = block.statements[0]

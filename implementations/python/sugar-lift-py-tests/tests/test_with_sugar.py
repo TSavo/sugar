@@ -163,9 +163,22 @@ def test_unresolved_exit_contract_keeps_raise_carrying_body_loud() -> None:
         )
 
 
-def test_complex_as_target_is_a_loud_factory_gap() -> None:
+def test_complex_as_target_constructs_and_runtime_enter_is_a_named_effect() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse("with cm as (a, b):\n    pass\n").body[0]
-    with pytest.raises(FactoryPanic) as raised:
-        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
-    assert raised.value.info.observed == "With"
+    built = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert type(built.sugar).__name__ == "WithSugar"
+
+    manager = CallSiteValue(
+        target_name="manager",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:manager", []),
+        body=None,
+    )
+    outcome = compose_block(
+        "    with cm as (a, b):\n        return a\n",
+        binds={"cm": manager},
+    )
+    effect = outcome.statements[0]
+    assert type(effect.effect).__name__ == "ContextManagerUnpackRuntimeEffect"
