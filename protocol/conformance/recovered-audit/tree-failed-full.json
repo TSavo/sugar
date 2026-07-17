@@ -1,0 +1,96 @@
+{
+  "kind": "recovered-construction-audit",
+  "recoveryOverride": true,
+  "status": "failed",
+  "census": {
+    "kind": "recovered-frontier-census",
+    "sourceFilesEnumerated": 1,
+    "sourceBodiesDemanded": 1,
+    "auditLeavesCompleted": 1
+  },
+  "panics": [
+    {
+      "kind": "FactoryPanic",
+      "status": "mandatory-panic",
+      "reason": "missing floor",
+      "locus": "numpy/core.py:7:4",
+      "gap": {
+        "blame": "typing.py:9:2",
+        "gap_kind": "Floor",
+        "gap_locus": "typing.py:9:2",
+        "observed": "_LiteralSpecialForm",
+        "requested": "value",
+        "fix": "bind the name"
+      },
+      "demandedSource": "definition:array",
+      "terminalGapLocus": "typing.py:9:2",
+      "demandedBody": {
+        "kind": "source-memento",
+        "file": "numpy/core.py",
+        "function_name": "array",
+        "span": {
+          "start_line": 7,
+          "start_col": 0,
+          "end_line": 12,
+          "end_col": 0
+        },
+        "source_cid": "blake3-512:abc"
+      },
+      "ownerIdentity": {
+        "demandedBody": {
+          "kind": "source-memento",
+          "file": "numpy/core.py",
+          "function_name": "array",
+          "span": {
+            "start_line": 7,
+            "start_col": 0,
+            "end_line": 12,
+            "end_col": 0
+          },
+          "source_cid": "blake3-512:abc"
+        },
+        "demandedSource": "definition:array",
+        "terminalGapLocus": "typing.py:9:2"
+      }
+    }
+  ],
+  "effects": [
+    {
+      "locus": "numpy/core.py:20:4",
+      "effect": "GetattrRuntimeEffect",
+      "category": "RuntimeEffect",
+      "status": "runtime-effect",
+      "reason": "getattr runtime boundary retained as typed effect",
+      "demandedBody": {
+        "kind": "source-memento",
+        "file": "numpy/core.py",
+        "function_name": "array",
+        "span": {
+          "start_line": 7,
+          "start_col": 0,
+          "end_line": 12,
+          "end_col": 0
+        },
+        "source_cid": "blake3-512:abc"
+      }
+    }
+  ],
+  "suppressedDescendants": [
+    {
+      "locus": "numpy/core.py:9:2",
+      "reason": "ancestor FactoryPanic poisoned this source locus",
+      "demandedBody": {
+        "kind": "source-memento",
+        "file": "numpy/core.py",
+        "function_name": "array",
+        "span": {
+          "start_line": 7,
+          "start_col": 0,
+          "end_line": 12,
+          "end_col": 0
+        },
+        "source_cid": "blake3-512:abc"
+      }
+    }
+  ]
+}

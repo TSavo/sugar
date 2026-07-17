@@ -25,8 +25,14 @@ from .plan_atom_dto import PlanAtomDto
 from .recovered_audit_dto import (
     RecoveredAuditDto,
     RecoveredEffectDto,
+    RecoveredEffectTreeDto,
     RecoveredFactoryPanicDto,
+    RecoveredFactoryPanicTreeDto,
+    RecoveredFrontierAuditDto,
+    RecoveredFrontierCensusDto,
+    RecoveredPanicOwnerIdentityDto,
     SuppressedAuditLocusDto,
+    SuppressedAuditLocusTreeDto,
 )
 from .source_memento_dto import SourceMementoDto
 from .source_span_dto import SourceSpanDto
@@ -52,10 +58,16 @@ __all__ = [
     "PlanAtomDto",
     "RecoveredAuditDto",
     "RecoveredEffectDto",
+    "RecoveredEffectTreeDto",
     "RecoveredFactoryPanicDto",
+    "RecoveredFactoryPanicTreeDto",
+    "RecoveredFrontierAuditDto",
+    "RecoveredFrontierCensusDto",
+    "RecoveredPanicOwnerIdentityDto",
     "SourceAuditDto",
     "SourceMementoDto",
     "SourceSpanDto",
     "SuppressedAuditLocusDto",
+    "SuppressedAuditLocusTreeDto",
     "VendorConjoinDto",
 ]

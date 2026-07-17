@@ -10977,6 +10977,48 @@ mod tests {
         assert!(error.contains("census mismatch"), "{error}");
     }
 
+    fn recovered_audit_fixture(name: &str) -> Value {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../protocol/conformance/recovered-audit")
+            .join(name);
+        let raw = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        serde_json::from_str(&raw)
+            .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
+    }
+
+    #[test]
+    fn recovered_audit_tree_goldens_round_trip_without_loss() {
+        for name in [
+            "tree-valid-empty.json",
+            "tree-complete-effects.json",
+            "tree-failed-full.json",
+        ] {
+            let fixture = recovered_audit_fixture(name);
+            let audit: RecoveredAudit = serde_json::from_value(fixture.clone())
+                .unwrap_or_else(|error| panic!("{name} must decode as tree wire: {error}"));
+            validate_recovered_audit(&audit)
+                .unwrap_or_else(|error| panic!("{name} must validate: {error}"));
+            let round_trip = serde_json::to_value(&audit).expect("closed tree wire must serialize");
+            assert_eq!(
+                round_trip, fixture,
+                "{name}: tree schema round-trip must be lossless"
+            );
+        }
+    }
+
+    #[test]
+    fn recovered_audit_tree_golden_rejects_unknown_fields() {
+        let fixture = recovered_audit_fixture("bad-tree-unknown-field.json");
+        let error = serde_json::from_value::<RecoveredAudit>(fixture)
+            .expect_err("unknown tree lane must be rejected");
+        assert!(
+            error.to_string().contains("inventedLane")
+                || error.to_string().contains("unknown field"),
+            "{error}"
+        );
+    }
+
     fn test_memento_cid(label: &str) -> MementoCid {
         MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(label.as_bytes()))
             .expect("test CID must parse")

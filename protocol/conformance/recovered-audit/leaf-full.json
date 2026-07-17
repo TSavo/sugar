@@ -1,0 +1,38 @@
+{
+  "kind": "recovered-construction-audit",
+  "recoveryOverride": true,
+  "status": "failed",
+  "panics": [
+    {
+      "kind": "FactoryPanic",
+      "status": "mandatory-panic",
+      "reason": "missing floor construction",
+      "locus": "pkg.py:1:0",
+      "demandedSource": "definition:broken",
+      "terminalGapLocus": "pkg.py:2:4",
+      "gap": {
+        "blame": "pkg.py:2:4",
+        "gap_kind": "Floor",
+        "gap_locus": "pkg.py:2:4",
+        "observed": "Nonlocal",
+        "requested": "value",
+        "fix": "construct the floor arm"
+      }
+    }
+  ],
+  "effects": [
+    {
+      "locus": "pkg.py:7:0",
+      "effect": "GetattrRuntimeEffect",
+      "category": "RuntimeEffect",
+      "status": "runtime-effect",
+      "reason": "getattr runtime boundary: attribute name expression is runtime"
+    }
+  ],
+  "suppressedDescendants": [
+    {
+      "locus": "pkg.py:3:4",
+      "reason": "ancestor FactoryPanic poisoned this source locus"
+    }
+  ]
+}

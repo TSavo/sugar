@@ -883,7 +883,7 @@ fn enumerate_result_from_response(plugin: &str, response: Value) -> Result<Value
 /// Closed Python producer wire row. Identity supplied by the producer is the
 /// source/body demand owner plus the exact terminal gap coordinate; the Rust
 /// fold adds the demanded SourceMemento and complete owner identity.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RecoveredFactoryPanicWire {
     kind: String,
@@ -895,15 +895,35 @@ struct RecoveredFactoryPanicWire {
     gap: Map<String, Value>,
 }
 
-#[derive(Debug, Deserialize)]
+/// Closed leaf effect row. The Rust fold alone attaches `demandedBody`; the
+/// producer must not invent fold-owned identity fields (#4264).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecoveredEffectLeafWire {
+    locus: String,
+    effect: String,
+    category: String,
+    status: String,
+    reason: String,
+}
+
+/// Closed suppressed-descendant leaf row. Same ownership rule as effects.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SuppressedAuditLocusLeafWire {
+    locus: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RecoveredAuditLeafWire {
     kind: String,
     recovery_override: bool,
     status: String,
     panics: Vec<RecoveredFactoryPanicWire>,
-    effects: Vec<Value>,
-    suppressed_descendants: Vec<Value>,
+    effects: Vec<RecoveredEffectLeafWire>,
+    suppressed_descendants: Vec<SuppressedAuditLocusLeafWire>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1130,20 +1150,22 @@ fn merge_recovered_audit_leaf(
         panics.push(serde_json::to_value(row).expect("closed recovered panic row must serialize"));
     }
     for effect in leaf.effects {
-        let mut effect = effect
+        let mut row = serde_json::to_value(&effect)
+            .expect("closed recovered effect leaf must serialize")
             .as_object()
             .cloned()
-            .ok_or_else(|| malformed("recovered effect row must be an object".to_string()))?;
-        effect.insert("demandedBody".to_string(), demanded_body.clone());
-        effects.push(Value::Object(effect));
+            .expect("closed recovered effect leaf serializes as object");
+        row.insert("demandedBody".to_string(), demanded_body.clone());
+        effects.push(Value::Object(row));
     }
     for locus in leaf.suppressed_descendants {
-        let mut locus = locus
+        let mut row = serde_json::to_value(&locus)
+            .expect("closed suppressed descendant leaf must serialize")
             .as_object()
             .cloned()
-            .ok_or_else(|| malformed("suppressed descendant row must be an object".to_string()))?;
-        locus.insert("demandedBody".to_string(), demanded_body.clone());
-        suppressed.push(Value::Object(locus));
+            .expect("closed suppressed descendant leaf serializes as object");
+        row.insert("demandedBody".to_string(), demanded_body.clone());
+        suppressed.push(Value::Object(row));
     }
     Ok(())
 }
@@ -1783,6 +1805,70 @@ mod tests {
         .expect_err("Rust fold exclusively owns complete demanded-body identity");
 
         assert!(error.to_string().contains("unknown field `demandedBody`"));
+    }
+
+    fn recovered_audit_fixture(name: &str) -> Value {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../protocol/conformance/recovered-audit")
+            .join(name);
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        serde_json::from_str(&raw)
+            .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
+    }
+
+    #[test]
+    fn recovered_audit_leaf_goldens_round_trip_without_loss() {
+        for name in ["leaf-clean.json", "leaf-full.json"] {
+            let fixture = recovered_audit_fixture(name);
+            let leaf: RecoveredAuditLeafWire = serde_json::from_value(fixture.clone())
+                .unwrap_or_else(|error| panic!("{name} must decode as leaf wire: {error}"));
+            let round_trip = serde_json::to_value(&leaf).expect("closed leaf wire must serialize");
+            assert_eq!(
+                round_trip, fixture,
+                "{name}: leaf schema round-trip must be lossless"
+            );
+        }
+    }
+
+    #[test]
+    fn recovered_audit_leaf_golden_rejects_unknown_fields() {
+        let fixture = recovered_audit_fixture("bad-leaf-unknown-field.json");
+        let error = serde_json::from_value::<RecoveredAuditLeafWire>(fixture)
+            .expect_err("unknown leaf lane must be rejected");
+        assert!(
+            error.to_string().contains("inventedLane")
+                || error.to_string().contains("unknown field"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn recovered_audit_leaf_golden_fold_attaches_demanded_body() {
+        let fixture = recovered_audit_fixture("leaf-full.json");
+        let mut panics = Vec::new();
+        let mut effects = Vec::new();
+        let mut suppressed = Vec::new();
+        let owner = recovered_owner("pkg.py", "broken", 1);
+        merge_recovered_audit_leaf(
+            "fixture",
+            &owner,
+            fixture,
+            &mut panics,
+            &mut effects,
+            &mut suppressed,
+        )
+        .expect("leaf-full golden must fold");
+        assert_eq!(panics.len(), 1);
+        assert_eq!(effects.len(), 1);
+        assert_eq!(suppressed.len(), 1);
+        assert_eq!(panics[0]["demandedBody"], owner.to_json());
+        assert_eq!(effects[0]["demandedBody"], owner.to_json());
+        assert_eq!(suppressed[0]["demandedBody"], owner.to_json());
+        assert_eq!(
+            panics[0]["ownerIdentity"]["demandedSource"],
+            json!("definition:broken")
+        );
     }
 
     #[test]

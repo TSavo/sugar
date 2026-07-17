@@ -1,0 +1,34 @@
+{
+  "kind": "recovered-construction-audit",
+  "recoveryOverride": true,
+  "status": "complete",
+  "census": {
+    "kind": "recovered-frontier-census",
+    "sourceFilesEnumerated": 1,
+    "sourceBodiesDemanded": 1,
+    "auditLeavesCompleted": 1
+  },
+  "panics": [],
+  "effects": [
+    {
+      "locus": "pkg.py:7:4",
+      "effect": "GetattrRuntimeEffect",
+      "category": "runtime",
+      "status": "boundary",
+      "reason": "attribute access crosses a runtime boundary",
+      "demandedBody": {
+        "kind": "source-memento",
+        "file": "pkg.py",
+        "function_name": "runtime_getattr",
+        "span": {
+          "start_line": 7,
+          "start_col": 0,
+          "end_line": 8,
+          "end_col": 0
+        },
+        "source_cid": "blake3-512:pkg-runtime-getattr"
+      }
+    }
+  ],
+  "suppressedDescendants": []
+}
