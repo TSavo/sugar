@@ -22,7 +22,7 @@ class DeletedBindings(FloorValue):
 
 @dataclass(frozen=True)
 class DeleteSugar(Sugar, role=SugarRole.STATEMENT):
-    """A ``del`` statement whose targets are all names.
+    """A ``del`` statement whose flat or parenthesized targets are all names.
 
     Name deletion is temporal-scope mutation. Subscript and attribute deletion
     require store-effect dispatch and deliberately remain outside this owner.
@@ -35,19 +35,26 @@ class DeleteSugar(Sugar, role=SugarRole.STATEMENT):
     def owns(cls, site) -> bool:
         if site.observed != "Delete":
             return False
-        targets = site.delete_targets()
-        return bool(targets) and all(target.observed == "Name" for target in targets)
+        return _delete_name_targets(site) is not None
 
     @classmethod
     def new(cls, site, ctx) -> "DeleteSugar":
+        names = _delete_name_targets(site)
+        assert names is not None
         return cls(
-            names=tuple(target.name_id() for target in site.delete_targets()),
+            names=names,
             site=site,
         )
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A():\n    x = 1\n    del x\n    return 2\n\n"
+        prefix = (
+            "def A():\n"
+            "    x = 1\n"
+            "    y = 2\n"
+            "    del (x, y)\n"
+            "    return 2\n\n"
+        )
         return _call_pair(
             name="delete_name_statement",
             owner_sugar="DeleteSugar",
@@ -60,3 +67,14 @@ class DeleteSugar(Sugar, role=SugarRole.STATEMENT):
 
     def walk_children(self):
         return ()
+
+
+def _delete_name_targets(site) -> tuple[str, ...] | None:
+    targets = site.delete_targets()
+    if not targets:
+        return None
+    if len(targets) == 1 and targets[0].observed == "Tuple":
+        targets = targets[0].tuple_elts()
+    if not targets or any(target.observed != "Name" for target in targets):
+        return None
+    return tuple(target.name_id() for target in targets)
