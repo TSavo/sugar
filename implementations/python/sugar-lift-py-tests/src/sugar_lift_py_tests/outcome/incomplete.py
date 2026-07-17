@@ -25,10 +25,16 @@ class Incomplete:
         return self
 
     def follow(self):
-        # An effect halts the run: the rest of the block is unreachable, so it stays
-        # exactly as it is -- unreduced sugar. Never reason about code that never runs.
+        # Default: an effect halts the run; the rest of the block stays unreduced.
+        # Store side-effects are different: the statement completed (typed red),
+        # and Python continues. Halting would drop later bindings (e.g. `res = …`
+        # after `receiver[index][...] = 0`) and panic NameSugar unbound — a false
+        # construction gap. Continuing store effects contribute red and let the
+        # block reduce subsequent statements.
         from sugar_lift_py_tests.outcome.follow_step import FollowStep
 
+        if _effect_continues_control_flow(self.effect):
+            return FollowStep.continue_with()
         return FollowStep.halt(keeps_rest=True)
 
     def contribution(self):
@@ -77,3 +83,26 @@ class Incomplete:
         # never runs.
         del step
         return self
+
+
+def _effect_continues_control_flow(effect) -> bool:
+    """True when the effect is red testimony for a completed non-exiting statement.
+
+    Store mutations do not raise or return: after `xs[i] = v` or `obj.attr = v`
+    the next statement still runs. Incomplete must contribute the red effect and
+    continue so later TemporalContext bindings still construct.
+    """
+    from sugar_lift_py_tests.effect import (
+        AttributeAugAssignRuntimeEffect,
+        AttributeStoreRuntimeEffect,
+        SubscriptStoreRuntimeEffect,
+    )
+
+    return isinstance(
+        effect,
+        (
+            SubscriptStoreRuntimeEffect,
+            AttributeStoreRuntimeEffect,
+            AttributeAugAssignRuntimeEffect,
+        ),
+    )

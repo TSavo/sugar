@@ -504,21 +504,18 @@ def _constructed_truthy(value, site) -> bool:
 
 
 def _carries_raise_effect(outcome) -> bool:
-    from sugar_lift_py_tests.floor import (
-        BlockValue,
-        GuardedRaise,
-        RaiseValue,
-        RaisesWithValue,
-    )
+    from sugar_lift_py_tests.floor import BlockValue, RaiseValue
     from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome.incomplete import _effect_continues_control_flow
 
     if isinstance(outcome, Incomplete):
-        return True
+        # Continuing store side-effects are red testimony, not raises.
+        return not _effect_continues_control_flow(outcome.effect)
     value = getattr(outcome, "value", None)
     if not isinstance(value, BlockValue):
         return False
     return any(
-        isinstance(entry, (Incomplete, GuardedRaise, RaiseValue, RaisesWithValue))
+        type(entry) is RaiseValue or _entry_carries_raise(entry)
         for entry in value.statements
     )
 
@@ -545,5 +542,8 @@ def _raised_exception_names(outcome) -> tuple[str, ...] | None:
 def _entry_carries_raise(entry) -> bool:
     from sugar_lift_py_tests.floor import GuardedRaise, RaisesWithValue
     from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome.incomplete import _effect_continues_control_flow
 
-    return isinstance(entry, (Incomplete, GuardedRaise, RaisesWithValue))
+    if isinstance(entry, Incomplete):
+        return not _effect_continues_control_flow(entry.effect)
+    return isinstance(entry, (GuardedRaise, RaisesWithValue))
