@@ -148,6 +148,68 @@ class InstallSourceValueOracle:
 INSTALL_SOURCE_VALUE_ORACLE = InstallSourceValueOracle()
 
 
+# Dig *body sugar* is a second construction domain: CallSugar/MethodCallSugar
+# desugar asked build_dig_body on every callsite. Same FunctionDef pin must not
+# re-factory its body statements each time. Context (formals/module temporal)
+# is re-wrapped per call; the body sugar structure is the system identity.
+DIG_BODY_CAPACITY = 256
+
+
+class DigBodyOracle:
+    """Sole constructor for diggable body *structure* (wraps source pin).
+
+    Does not extend SourceOracle. Identity is defining file + lineno + name
+    (and bridge when present). Published value is the pre-context SugarBody
+    (bridge body or SequentialDigBody); :func:`build_dig_body` re-wraps
+    :class:`ContextualizedDigBody` with the call-site formal context.
+    """
+
+    __slots__ = ("_capacity", "_table", "construct_count", "hit_count")
+
+    def __init__(self, capacity: int = DIG_BODY_CAPACITY) -> None:
+        from collections import OrderedDict
+
+        self._capacity = max(int(capacity), 1)
+        self._table: OrderedDict[tuple[str, int, str, str], Any] = OrderedDict()
+        self.construct_count = 0
+        self.hit_count = 0
+
+    def identity_key(self, fn_site: Any) -> tuple[str, int, str, str] | None:
+        if fn_site is None or getattr(fn_site, "observed", None) != "FunctionDef":
+            return None
+        node = fn_site.node
+        file = str(getattr(node, "_sugar_file", None) or getattr(fn_site, "blame", "") or "")
+        lineno = int(getattr(node, "lineno", -1) or -1)
+        name = str(fn_site.function_name())
+        bridge = str(getattr(node, "_sugar_bridge_name", None) or name)
+        if not file or lineno < 0:
+            return None
+        return (file, lineno, name, bridge)
+
+    def get(self, key: tuple[str, int, str, str]) -> Any:
+        value = self._table.get(key, _MISSING)
+        if value is _MISSING:
+            return _MISSING
+        self._table.move_to_end(key)
+        self.hit_count += 1
+        return value
+
+    def put(self, key: tuple[str, int, str, str], value: Any) -> None:
+        if key in self._table:
+            self._table.move_to_end(key)
+        self._table[key] = value
+        while len(self._table) > self._capacity:
+            self._table.popitem(last=False)
+
+    def clear(self) -> None:
+        self._table.clear()
+        self.construct_count = 0
+        self.hit_count = 0
+
+
+DIG_BODY_ORACLE = DigBodyOracle()
+
+
 @dataclass(frozen=True)
 class _InstalledDefinition:
     key: str
@@ -1694,7 +1756,12 @@ def _ctx_with_method_module_bindings(fn_site, ctx: Any):
 
 
 def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
-    """Build diggable body for ``fn_site`` FunctionDef, or None on failure."""
+    """Build diggable body for ``fn_site`` FunctionDef, or None on failure.
+
+    Sole constructor for dig body *structure* is :data:`DIG_BODY_ORACLE`. Call
+    sites re-wrap the published body with their formal/module context; they do
+    not re-factory the body statements.
+    """
     if fn_site is None or fn_site.observed != "FunctionDef":
         return None
     if require_attachable and not method_body_is_attachable(fn_site):
@@ -1708,10 +1775,10 @@ def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
         role="dig.build_body",
         site=str(site),
     ):
-        return _build_dig_body_impl(fn_site, ctx, require_attachable=False)
+        return _build_dig_body_impl(fn_site, ctx)
 
 
-def _build_dig_body_impl(fn_site, ctx: Any, *, require_attachable: bool = False):
+def _build_dig_body_impl(fn_site, ctx: Any):
     from dataclasses import replace
 
     from sugar_lift_py_tests.claim import SugarRole
@@ -1726,7 +1793,11 @@ def _build_dig_body_impl(fn_site, ctx: Any, *, require_attachable: bool = False)
     name = fn_site.function_name()
     bridge = getattr(fn_site.node, "_sugar_bridge_name", None) or name
     if name in building or bridge in building:
+        # Cycle: never publish a half-body.
         return None
+
+    from sugar_lift_py_tests.engine_log import reduction_span
+
     try:
         body_ctx = replace(ctx, building=building | {name, bridge})
         body_ctx = _ctx_with_method_module_bindings(fn_site, body_ctx)
@@ -1746,26 +1817,46 @@ def _build_dig_body_impl(fn_site, ctx: Any, *, require_attachable: bool = False)
                 body_ctx = replace(body_ctx, name_resolver=merged)
 
         formal_ctx = _ctx_with_formal_binds(fn_site, body_ctx)
-        frags = fn_site.function_body()
-        # Single return expr → existing bridge body (TERM sugar).
-        if (
-            len(frags) == 1
-            and frags[0].observed == "Return"
-            and frags[0].return_value() is not None
-        ):
-            return _contextualized_dig_body(
-                build_bridge_body(fn_site, body_ctx), formal_ctx
-            )
-
-        # Straight-line Assign* + Return → sequential dig body under formals.
-        statements = tuple(
-            formal_ctx.build_body(stmt, SugarRole.STATEMENT) for stmt in frags
-        )
-        sequential = SugarBody(
-            sugar=SequentialDigBody(statements=statements, fn_site=fn_site),
-            role=SugarRole.TERM,
-        )
-        return _contextualized_dig_body(sequential, formal_ctx)
+        oracle = DIG_BODY_ORACLE
+        key = oracle.identity_key(fn_site)
+        core = oracle.get(key) if key is not None else _MISSING
+        if core is _MISSING:
+            with reduction_span(
+                sugar=str(name),
+                role="dig.build_body.construct",
+                site=str(getattr(fn_site, "blame", None) or name),
+            ):
+                oracle.construct_count += 1
+                frags = fn_site.function_body()
+                # Single return expr → existing bridge body (TERM sugar).
+                if (
+                    len(frags) == 1
+                    and frags[0].observed == "Return"
+                    and frags[0].return_value() is not None
+                ):
+                    core = build_bridge_body(fn_site, body_ctx)
+                else:
+                    # Straight-line Assign* + Return → sequential dig body.
+                    statements = tuple(
+                        formal_ctx.build_body(stmt, SugarRole.STATEMENT)
+                        for stmt in frags
+                    )
+                    core = SugarBody(
+                        sugar=SequentialDigBody(
+                            statements=statements, fn_site=fn_site
+                        ),
+                        role=SugarRole.TERM,
+                    )
+            if key is not None:
+                oracle.put(key, core)
+        else:
+            with reduction_span(
+                sugar=str(name),
+                role="dig.build_body.hit",
+                site=str(getattr(fn_site, "blame", None) or name),
+            ):
+                pass
+        return _contextualized_dig_body(core, formal_ctx)
     except IncompleteFunctionBody:
         # Named dig opacity: body reduction stayed Incomplete. Coordinate-only
         # body=None — not a soft Exception swallow of construction gaps (#4203).
