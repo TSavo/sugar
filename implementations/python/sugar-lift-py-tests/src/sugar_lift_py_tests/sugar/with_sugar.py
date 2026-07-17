@@ -86,6 +86,21 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             "        return z\n"
             "\n"
         )
+        local_contextmanager_value_prefix = (
+            "from contextlib import contextmanager\n"
+            "\n"
+            "@contextmanager\n"
+            "def manager():\n"
+            "    try:\n"
+            "        yield 5\n"
+            "    finally:\n"
+            "        pass\n"
+            "\n"
+            "def A():\n"
+            "    with manager() as entered:\n"
+            "        return entered\n"
+            "\n"
+        )
         nonraising_opaque_manager_prefix = (
             "def A(z):\n"
             "    with z.context():\n"
@@ -120,6 +135,21 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                     + "    assert A(7) == 8\n"
                 ),
                 family="source-contextmanager-contract",
+            ),
+            _call_pair(
+                name="with_local_contextmanager_entered_value",
+                owner_sugar="WithSugar",
+                truthful=(
+                    local_contextmanager_value_prefix
+                    + "def test_a():\n"
+                    + "    assert A() == 5\n"
+                ),
+                lying=(
+                    local_contextmanager_value_prefix
+                    + "def test_a():\n"
+                    + "    assert A() == 6\n"
+                ),
+                family="source-contextmanager-entered-value",
             ),
             _call_pair(
                 name="with_nonraising_opaque_manager",
@@ -243,6 +273,12 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                 entered = force_floor(
                     enter_call, ctx, owner="WithSugar.__enter__", project_callsite=False
                 )
+            elif manager is not None and _has_contextmanager_yield_body(cm):
+                # The authenticated @contextmanager body has already reduced
+                # its single yield operand. For this protocol that operand is
+                # exactly __enter__'s value; do not replace it with an opaque
+                # linear method coordinate.
+                entered = manager
             else:
                 # Coordinate-only managers keep the historical non-raising
                 # rewrite. A raising body below turns this soft coordinate into
@@ -512,6 +548,22 @@ def _attach_source_exit_contract(manager):
     if contract is None:
         return manager
     return replace(manager, exit_suppression=contract)
+
+
+def _has_contextmanager_yield_body(manager) -> bool:
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        ContextualizedDigBody,
+        SequentialDigBody,
+    )
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    body = getattr(manager, "body", None)
+    if not isinstance(body, SugarBody) or not isinstance(
+        body.sugar, ContextualizedDigBody
+    ):
+        return False
+    sequential = getattr(body.sugar.body, "sugar", None)
+    return isinstance(sequential, SequentialDigBody) and sequential.contextmanager_yield
 
 
 def _unresolved_callsite_exit(site) -> None:

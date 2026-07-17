@@ -182,6 +182,7 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
         from sugar_lift_py_tests.sugar.install_source_dig import (
             SequentialDigBody,
             _contextualized_dig_body,
+            contextmanager_exit_contract_for_fragment,
             resolve_contextmanager_exit_contract,
         )
         from sugar_lift_py_tests.factory.sugar_constructors import (
@@ -190,11 +191,16 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
 
         callable_body = self.body
         site = cast(Any, self.site)
+        contextmanager_contract = contextmanager_exit_contract_for_fragment(site)
         if isinstance(self.body.sugar, BlockSugar):
             body_ctx = _ctx_with_module_global_binds(site, ctx)
             callable_body = _contextualized_dig_body(
                 SugarBody(
-                    sugar=SequentialDigBody(self.body.sugar.statements),
+                    sugar=SequentialDigBody(
+                        self.body.sugar.statements,
+                        fn_site=site,
+                        contextmanager_yield=contextmanager_contract is not None,
+                    ),
                     role=SugarRole.TERM,
                 ),
                 body_ctx,
@@ -210,7 +216,7 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 exit_suppression=(
                     resolve_contextmanager_exit_contract(bridge_name)
                     if (bridge_name := getattr(site.node, "_sugar_bridge_name", None))
-                    else None
+                    else contextmanager_contract
                 ),
                 body=callable_body,
             )
