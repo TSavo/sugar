@@ -31,3 +31,19 @@ class ExceptionValue(FloorValue):
             "python:exception",
             [str_const(self.exception_name), *self.argument_terms()],
         )
+
+    def subscript(self, index, site):
+        del index
+        from sugar_lift_py_tests.effect import (
+            TypeErrorRuntimeEffect,
+            runtime_effect_witness,
+        )
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            TypeErrorRuntimeEffect(
+                "exception subscript type boundary: builtin exception instances "
+                f"are not subscriptable; exception={self.exception_name} site={site}",
+                witness=runtime_effect_witness("py.subscript", self, site),
+            )
+        )

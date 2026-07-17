@@ -19,6 +19,8 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ComprehensionValue,
+    ExceptionValue,
+    OpaqueOpCallsite,
     PredicateValue,
     StringValue,
     SymbolicValue,
@@ -84,6 +86,17 @@ def test_comprehension_subscript_keeps_a_proof_bearing_coordinate() -> None:
     )
 
 
+def test_opaque_operator_subscript_keeps_a_proof_bearing_coordinate() -> None:
+    receiver = OpaqueOpCallsite("str", SymbolicValue(make_var("value")))
+
+    value = reduce_value("result[0]", binds={"result": receiver})
+
+    assert type(value) is CallSiteValue
+    assert value.term == ctor(
+        "py.subscript", [ctor("call:str", [make_var("value")]), num(0)]
+    )
+
+
 def test_predicate_subscript_stays_a_named_authenticated_runtime_effect() -> None:
     receiver = PredicateValue(py_eq(make_var("left"), make_var("right")))
 
@@ -94,6 +107,19 @@ def test_predicate_subscript_stays_a_named_authenticated_runtime_effect() -> Non
     assert outcome.effect.witness.operation.name == "py.subscript"
     assert outcome.effect.witness.site.filename == "t.py"
     assert "PredicateValue runtime result shape" in outcome.effect.reason
+
+
+def test_exception_instance_subscript_is_a_witnessed_type_error() -> None:
+    receiver = ExceptionValue("ValueError", (), ast.parse("result[0]").body[0])
+
+    outcome = _outcome("result[0]", binds={"result": receiver})
+
+    from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
+
+    assert type(outcome) is Incomplete
+    assert type(outcome.effect) is TypeErrorRuntimeEffect
+    assert outcome.effect.witness.operation.name == "py.subscript"
+    assert "exception instances are not subscriptable" in outcome.effect.reason
 
 
 def test_callsite_index_rides_the_subscript_coordinate_without_forcing_a_body() -> None:
