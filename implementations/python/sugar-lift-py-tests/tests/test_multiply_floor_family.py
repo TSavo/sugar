@@ -5,6 +5,7 @@ import pytest
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.effect import (
+    SequenceRepetitionRuntimeEffect,
     SubscriptStoreRuntimeEffect,
     runtime_effect_witness,
 )
@@ -12,6 +13,7 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     ListValue,
     ImportAliasValue,
+    OpaqueOpCallsite,
     StringValue,
     SymbolicValue,
     TermValue,
@@ -99,12 +101,53 @@ def test_imported_list_repetition_count_remains_a_named_loud_gap() -> None:
         receiver.multiply(count, "test_to_datetime.py:3626:17")
 
 
-@pytest.mark.parametrize("source", ("[1, 2] * count", "count * [1, 2]"))
-def test_unknown_symbolic_list_repetition_count_remains_a_named_loud_gap(
-    source: str,
+@pytest.mark.parametrize("reversed_operands", (False, True))
+def test_runtime_list_repetition_count_is_a_named_typed_effect(
+    reversed_operands: bool,
 ) -> None:
+    count = SymbolicValue(make_var("runtime_n"))
+    items = ListValue((TermValue(7),))
+
+    outcome = (
+        count.multiply(items, "runtime_repeat.py:2:11")
+        if reversed_operands
+        else items.multiply(count, "runtime_repeat.py:2:11")
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert "ListValue depends on runtime __index__/length semantics" in outcome.reason
+    assert outcome.effect.witness.operand == make_var("runtime_n")
+    assert outcome.effect.witness.operation == ctor(
+        "py.sequence_repeat", [make_var("runtime_n")]
+    )
+
+
+def test_len_result_is_a_warranted_runtime_list_repetition_count() -> None:
+    count = OpaqueOpCallsite(
+        callee="len",
+        arg=SymbolicValue(make_var("runtime_items")),
+        computed=None,
+    )
+
+    outcome = ListValue((TermValue(7),)).multiply(count, "runtime_repeat.py:2:11")
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert outcome.effect.witness.operand == ctor(
+        "call:len", [make_var("runtime_items")], symbol_kind="method-coordinate"
+    )
+
+
+def test_opaque_non_index_result_remains_a_loud_list_repetition_gap() -> None:
+    count = OpaqueOpCallsite(
+        callee="str",
+        arg=SymbolicValue(make_var("runtime_value")),
+        computed=None,
+    )
+
     with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
-        reduce_value(source, {"count": SymbolicValue(make_var("count"))})
+        ListValue((TermValue(7),)).multiply(count, "runtime_repeat.py:2:11")
 
 
 @pytest.mark.parametrize(
