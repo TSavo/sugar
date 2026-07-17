@@ -203,6 +203,34 @@ class CallSiteValue(FloorValue):
             )
         )
 
+    def delitem(self, index, site):
+        """Rebind an opaque mapping/list-shaped callsite after ``del xs[k]``.
+
+        Concrete containers fold post-state. A callsite receiver (for example
+        ``dict_class(...)``) has no element history, but the delete still
+        rebinds the name: carry prior coordinate and index on ``py.delitem``.
+        Do not invent members; do not soft-refuse — silence stays illegal.
+        """
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+
+        index_term = floor_to_term(index, owner="CallSiteValue.delitem index")
+        return Complete(
+            CallSiteValue(
+                target_name="delitem",
+                arg_values=(self, index),
+                parameters=(),
+                term=ctor(
+                    "py.delitem",
+                    [self.to_term(owner=str(site)), index_term],
+                    symbol_kind="method-coordinate",
+                ),
+                body=None,
+                site=site,
+            )
+        )
+
     def callsites(self):
         # A CallSiteValue carries itself -- equals emit collects it so the
         # inv that consumes the term can still project the edge later.
