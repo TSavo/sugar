@@ -142,6 +142,9 @@ Term = Union[_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor]
 _TERM_INTERN_TABLE: ContextVar[dict[Term, Term] | None] = ContextVar(
     "sugar_term_intern_table", default=None
 )
+_FORMULA_INTERN_TABLE: ContextVar[dict["Formula", "Formula"] | None] = ContextVar(
+    "sugar_formula_intern_table", default=None
+)
 _CONSTRUCTOR_SYMBOL_KINDS: ContextVar[dict[str, str] | None] = ContextVar(
     "sugar_constructor_symbol_kinds", default=None
 )
@@ -149,12 +152,20 @@ _CONSTRUCTOR_SYMBOL_KINDS: ContextVar[dict[str, str] | None] = ContextVar(
 
 @contextmanager
 def term_intern_scope() -> Iterator[None]:
+    """Request-scoped hash-cons for terms and formulas.
+
+    One table per lift_file_payload call. Structurally equal terms and formulas
+    share object identity inside the scope; tables are discarded on exit so
+    separate lifts never share identity.
+    """
     intern_token = _TERM_INTERN_TABLE.set({})
+    formula_token = _FORMULA_INTERN_TABLE.set({})
     symbols_token = _CONSTRUCTOR_SYMBOL_KINDS.set({})
     try:
         yield
     finally:
         _CONSTRUCTOR_SYMBOL_KINDS.reset(symbols_token)
+        _FORMULA_INTERN_TABLE.reset(formula_token)
         _TERM_INTERN_TABLE.reset(intern_token)
 
 
@@ -163,6 +174,13 @@ def _intern_term(term: Term) -> Term:
     if table is None:
         return term
     return table.setdefault(term, term)
+
+
+def _intern_formula(formula: "Formula") -> "Formula":
+    table = _FORMULA_INTERN_TABLE.get()
+    if table is None:
+        return formula
+    return table.setdefault(formula, formula)
 
 
 def make_var(name: str) -> Term:
@@ -300,7 +318,7 @@ Formula = Union[_Atomic, _Connective, _Quantifier]
 
 
 def atomic(name: str, args: List[Term]) -> Formula:
-    return _Atomic(name, tuple(args))
+    return _intern_formula(_Atomic(name, tuple(args)))
 
 
 # Atomic predicate names use the Unicode glyphs >=, <=, !=. Cross-language
@@ -391,7 +409,7 @@ def _is_none_ctor(term: Term) -> bool:
 
 
 def connective(kind: str, operands: List[Formula]) -> Formula:
-    return _Connective(kind, tuple(operands))
+    return _intern_formula(_Connective(kind, tuple(operands)))
 
 
 def not_(a: Formula) -> Formula:
@@ -411,11 +429,11 @@ def or_(operands: List[Formula]) -> Formula:
 
 
 def forall(name: str, sort: Sort, body: Formula) -> Formula:
-    return _Quantifier("forall", name, sort, body)
+    return _intern_formula(_Quantifier("forall", name, sort, body))
 
 
 def exists(name: str, sort: Sort, body: Formula) -> Formula:
-    return _Quantifier("exists", name, sort, body)
+    return _intern_formula(_Quantifier("exists", name, sort, body))
 
 
 def formula_term(formula: Formula) -> Term:
@@ -961,20 +979,23 @@ def subst_var_in_term(t: Term, formal: str, actual: Term) -> Term:
 
 def subst_var_in_formula(f: Formula, formal: str, actual: Term) -> Formula:
     if isinstance(f, _Atomic):
-        return _Atomic(
-            f.name, tuple(subst_var_in_term(a, formal, actual) for a in f.args)
+        return atomic(
+            f.name, [subst_var_in_term(a, formal, actual) for a in f.args]
         )
     if isinstance(f, _Connective):
-        return _Connective(
-            f.kind, tuple(subst_var_in_formula(o, formal, actual) for o in f.operands)
+        return connective(
+            f.kind, [subst_var_in_formula(o, formal, actual) for o in f.operands]
         )
     if isinstance(f, _Quantifier):
         # Don't substitute under a shadowing binder.
         if f.name == formal:
             return f
-        return _Quantifier(
-            f.kind, f.name, f.sort, subst_var_in_formula(f.body, formal, actual)
-        )
+        body = subst_var_in_formula(f.body, formal, actual)
+        if f.kind == "forall":
+            return forall(f.name, f.sort, body)
+        if f.kind == "exists":
+            return exists(f.name, f.sort, body)
+        return _intern_formula(_Quantifier(f.kind, f.name, f.sort, body))
     raise TypeError(f"unknown Formula: {type(f)!r}")
 
 
