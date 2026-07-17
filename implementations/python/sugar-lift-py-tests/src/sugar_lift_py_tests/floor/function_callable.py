@@ -40,6 +40,52 @@ class FunctionCallable(FloorValue):
         del formula
         return self
 
+    def call_scope_updates(self, arg_values, ctx, site):
+        """Replay a straight-line local callback and return its caller rebinds."""
+        from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+        from sugar_lift_py_tests.floor.call_site_value import (
+            CallSiteValue,
+            _ctx_with_curried_args,
+        )
+        from sugar_lift_py_tests.outcome import complete_value, Complete
+        from sugar_lift_py_tests.sugar.install_source_dig import ContextualizedDigBody
+        from sugar_lift_py_tests.sugar_body import SugarBody
+
+        callsite = complete_value(
+            self.callsite(arg_values, (), site),
+            owner="FunctionCallable.call_scope_updates",
+        )
+        if not isinstance(callsite, CallSiteValue):
+            factory_panic_gap(
+                owner="FunctionCallable",
+                blame=str(site),
+                observed=type(callsite).__name__,
+                requested="callback CallSiteValue",
+                fix="construct the callback callsite or panic loudly",
+            )
+        body = callsite.body
+        if not isinstance(body, SugarBody) or not isinstance(
+            body.sugar, ContextualizedDigBody
+        ):
+            factory_panic_gap(
+                owner="FunctionCallable",
+                blame=str(site),
+                observed=type(body).__name__,
+                requested="straight-line callback scope updates",
+                fix="carry a contextualized local callback body or panic loudly",
+            )
+        curried = _ctx_with_curried_args(ctx, callsite.parameters, callsite.arg_values)
+        final_ctx = body.sugar.scope_after(curried)
+        caller_names = tuple(binding.name for binding in ctx.temporal.bindings)
+        updates = tuple(
+            (name, final_ctx.temporal.value_for(name))
+            for name in caller_names
+            if final_ctx.temporal.value_for(name) != ctx.temporal.value_for(name)
+        )
+        from .scope_rebind import ScopeRebinds
+
+        return Complete(ScopeRebinds(updates))
+
     def callsite(
         self,
         arg_values,

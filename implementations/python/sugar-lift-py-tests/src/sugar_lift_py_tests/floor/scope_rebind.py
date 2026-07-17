@@ -34,6 +34,27 @@ class ScopeRebind(FloorValue):
 
 
 @dataclass(frozen=True)
+class ScopeRebinds(FloorValue):
+    """Carry several exact callback mutations back into the caller scope."""
+
+    bindings: tuple[tuple[str, FloorValue], ...]
+
+    def contribution(self):
+        return ()
+
+    def extend_scope(self, ctx):
+        temporal = ctx.temporal
+        for name, value in self.bindings:
+            temporal = temporal.bind_value(name, value)
+        return replace(ctx, temporal=temporal)
+
+    def as_expression_statement(self):
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self)
+
+
+@dataclass(frozen=True)
 class GuardedScopeRebind(FloorValue):
     """A branch-local rebind carried in the record under one or more guards.
 

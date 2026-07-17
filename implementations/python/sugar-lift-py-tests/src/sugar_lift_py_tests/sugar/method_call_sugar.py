@@ -122,6 +122,27 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             source_values = accumulated[1:] if self.import_target else accumulated
             source_name = self.import_target or self.method_name
             receiver_floor = accumulated[0] if accumulated else None
+            if (
+                source_name
+                in {
+                    "pandas._config.config.set_option",
+                    "pandas._config.config.reset_option",
+                }
+                and source_values
+            ):
+                from sugar_lift_py_tests.floor import FunctionCallable, StringValue
+                from sugar_lift_py_tests.sugar.keyword_call_sugar import (
+                    _pandas_option_callback_binding,
+                )
+
+                key = source_values[0]
+                if isinstance(key, StringValue):
+                    temporal = getattr(ctx, "temporal")
+                    callback = temporal.value_if_bound(
+                        _pandas_option_callback_binding(key.value)
+                    )
+                    if isinstance(callback, FunctionCallable):
+                        return callback.call_scope_updates((key,), ctx, self.site)
             exit_suppression = _static_exit_suppression_contract(
                 source_name,
                 accumulated[-len(self.args) :] if self.args else (),

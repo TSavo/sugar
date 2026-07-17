@@ -128,6 +128,45 @@ class KeywordCallSugar(
                 _static_exit_suppression_contract,
             )
 
+            if self.import_target == "pandas._config.config.register_option" and (
+                registration_values := pos_values[1:]
+            ):
+                from sugar_lift_py_tests.floor import FunctionCallable, StringValue
+                from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+
+                callback = next(
+                    (value for name, value in kw_pairs if name == "cb"), None
+                )
+                if isinstance(registration_values[0], StringValue) and isinstance(
+                    callback, FunctionCallable
+                ):
+                    return Complete(
+                        ScopeRebind(
+                            _pandas_option_callback_binding(
+                                registration_values[0].value
+                            ),
+                            callback,
+                        )
+                    )
+                if callback is not None:
+                    from sugar_lift_py_tests.factory.factory_gap import (
+                        factory_panic_gap,
+                    )
+
+                    factory_panic_gap(
+                        owner="pandas.option_callback",
+                        blame=str(self.site),
+                        observed=(
+                            f"key={type(registration_values[0]).__name__} "
+                            f"callback={type(callback).__name__}"
+                        ),
+                        requested="exact local callback registration",
+                        fix=(
+                            "construct a static string option key and local "
+                            "FunctionCallable callback or panic loudly"
+                        ),
+                    )
+
             # Exact exception constructors with kwargs still construct
             # ExceptionValue so RaiseSugar can route them — same door as
             # CallSugar for positional exception calls. CallSiteValue alone is
@@ -228,3 +267,7 @@ class KeywordCallSugar(
         kids.extend(self.args)
         kids.extend(body for _, body in self.kwargs)
         return tuple(kids)
+
+
+def _pandas_option_callback_binding(key: str) -> str:
+    return f"__sugar_pandas_option_callback__:{key}"
