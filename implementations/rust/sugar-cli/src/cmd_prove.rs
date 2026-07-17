@@ -285,20 +285,28 @@ pub(crate) fn build_prove_outcome_with_options(
     // prior `sugar mint` + disk `.proof` load. Mint remains the door for
     // sealed `.proof` publish; local project prove is fold + discharge.
     //
-    // Fail-loud (PR #3897 High): if a kit **did** rendezvous, a fold/solve
-    // failure is the prove result — never silent-fallback to disk. Disk
-    // `solve_project` is only for projects with no planned lift kit (or
-    // rendezvous skipped), where the fold path was never the chosen face.
-    let mut proven = if let Some(kit) = try_rendezvous_prove_kit(project_root, &component_plan) {
-        let speaker = sugar_verifier::Speaker::consumer("sugar-cli:prove");
-        sugar_compiler::orchestrate::prove_from_kit(&kit, project_root, speaker, cfg, compilers)
-            .map_err(|error| error.to_string())?
-    } else {
-        // Disk-load face (sugar#3859): no lift kit for this project — prove
-        // over minted `.proof` files. Discharge always runs; dirty link
-        // surface reddens `outcome_class` under #3893.
-        sugar_compiler::orchestrate::solve_project(cfg, compilers)
-            .map_err(|error| error.to_string())?
+    // #3901: disk is reachable only with an explicit [`NoKit`] witness —
+    // silent `None`→disk is unexpressible. Fail-loud (PR #3897 High): once
+    // the face is [`ProveFace::Kit`], a fold/solve failure is the prove
+    // result and cannot map onto disk.
+    let mut proven = match resolve_prove_face(project_root, &component_plan) {
+        ProveFace::Kit(kit) => {
+            let speaker = sugar_verifier::Speaker::consumer("sugar-cli:prove");
+            sugar_compiler::orchestrate::prove_from_kit(&kit, project_root, speaker, cfg, compilers)
+                .map_err(|error| error.to_string())?
+        }
+        ProveFace::Disk(no_kit) => {
+            // Disk-load face (sugar#3859): named reason why fold is not the
+            // face. Discharge always runs; dirty link surface reddens
+            // `outcome_class` under #3893.
+            eprintln!(
+                "{}: prove face is disk `.proof` ({})",
+                "info".yellow().bold(),
+                no_kit
+            );
+            sugar_compiler::orchestrate::solve_project(cfg, compilers)
+                .map_err(|error| error.to_string())?
+        }
     };
     proven.artifact = cli_persist_proof_run(project_root, proven.artifact);
     Ok(proven)
@@ -330,64 +338,121 @@ fn cli_persist_proof_run(project_root: &Path, mut artifact: ProofRunArtifact) ->
     artifact
 }
 
-/// Build a live `Kit` when the plan has exactly one lift surface.
+/// Why the prove face is disk `.proof` rather than fold-from-kit.
 ///
-/// A `Kit` is one enumerate connection.  Selecting the first member of a
-/// multi-surface component plan silently drops every sibling surface (for
-/// example Rust assertions, function contracts, implications, and witness
-/// packages).  Until the fold door accepts the composed plan itself, a
-/// multi-surface project must use the already-composed durable `.proof` face.
-/// Returns `None` for that shape, for no lift surface, or when rendezvous
-/// fails, and the caller falls back to disk `.proof` prove.
-fn try_rendezvous_prove_kit(
-    project_root: &Path,
-    component_plan: &ComponentPlan,
-) -> Option<sugar_compiler::kit::Kit> {
-    use sugar_compiler::kit::LiftManifest;
+/// #3901 residual: disk fallback requires an explicit no-kit witness. A
+/// silent `Option::None`→`solve_project` path is unexpressible — every
+/// disk prove names the reason fold was not chosen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NoKit {
+    /// Zero planned lift surfaces — project is proof-file only.
+    NoLiftSurface,
+    /// Multi-surface plan: one Kit cannot represent the composed plan.
+    MultiSurface { count: usize },
+    /// Single surface but empty command vector.
+    EmptyCommand { surface: String },
+    /// Kit rendezvous failed (handshake / spawn / declaration).
+    RendezvousFailed { surface: String, detail: String },
+    /// Kit lacks `sugar.enumerate` — fold door cannot walk it.
+    NoEnumerate { kit_id: String, surface: String },
+}
 
-    let planned = single_surface_fold_manifest(component_plan)?;
-    if planned.command.is_empty() {
-        return None;
-    }
-    let working_dir =
-        crate::lift_plugin::resolved_working_dir_for(project_root, planned).map(|dir| {
-            // Kit::rendezvous requires absolute working_dir.
-            dir.canonicalize().unwrap_or(dir)
-        });
-    let dialect = match planned.surface.as_str() {
-        "rust" => libsugar::core::Dialect::Rust,
-        "c" => libsugar::core::Dialect::C,
-        "python" => libsugar::core::Dialect::Other("python".into()),
-        other => libsugar::core::Dialect::Other(other.to_string()),
-    };
-    let manifest = LiftManifest::resolved(
-        planned.surface.clone(),
-        planned.name.clone(),
-        dialect,
-        planned.command.clone(),
-        working_dir,
-        planned.method.clone(),
-    );
-    match sugar_compiler::kit::Kit::rendezvous(manifest) {
-        Ok(kit) if kit.supports_rpc_method("sugar.enumerate") => Some(kit),
-        Ok(kit) => {
-            eprintln!(
-                "{}: lift kit {} does not advertise sugar.enumerate; using composed proof files",
-                "warning".yellow().bold(),
-                kit.declaration().kit.id
-            );
-            None
-        }
-        Err(error) => {
-            eprintln!(
-                "{}: lift kit rendezvous for prove skipped ({error})",
-                "warning".yellow().bold()
-            );
-            None
+impl std::fmt::Display for NoKit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NoKit::NoLiftSurface => write!(f, "no planned lift surface"),
+            NoKit::MultiSurface { count } => write!(
+                f,
+                "multi-surface plan ({count} lifts); composed .proof face required"
+            ),
+            NoKit::EmptyCommand { surface } => {
+                write!(f, "empty lift command for surface `{surface}`")
+            }
+            NoKit::RendezvousFailed { surface, detail } => {
+                write!(f, "lift kit rendezvous failed for `{surface}`: {detail}")
+            }
+            NoKit::NoEnumerate { kit_id, surface } => write!(
+                f,
+                "lift kit {kit_id} (surface `{surface}`) does not advertise sugar.enumerate"
+            ),
         }
     }
 }
 
+/// Chosen prove pool face. Exhaustive over kit vs named-disk — no third arm.
+enum ProveFace {
+    /// Live fold path: enumerate → fold → discharge. Fold/solve errors stay
+    /// on this face (never map to disk).
+    Kit(sugar_compiler::kit::Kit),
+    /// Disk `.proof` load; witness names why fold was not chosen.
+    Disk(NoKit),
+}
+
+impl ProveFace {
+    fn face_label(&self) -> String {
+        match self {
+            ProveFace::Kit(_) => "Kit".to_string(),
+            ProveFace::Disk(n) => format!("Disk({n})"),
+        }
+    }
+}
+
+/// Resolve the prove face for a project plan.
+///
+/// A `Kit` is one enumerate connection. Selecting the first member of a
+/// multi-surface component plan would silently drop every sibling surface
+/// (assertions, function contracts, implications, witness packages). Until
+/// the fold door accepts the composed plan itself, multi-surface projects
+/// take the durable `.proof` face under an explicit [`NoKit::MultiSurface`].
+fn resolve_prove_face(project_root: &Path, component_plan: &ComponentPlan) -> ProveFace {
+    use sugar_compiler::kit::LiftManifest;
+
+    match component_plan.lift_manifests.as_slice() {
+        [] => ProveFace::Disk(NoKit::NoLiftSurface),
+        [planned] => {
+            if planned.command.is_empty() {
+                return ProveFace::Disk(NoKit::EmptyCommand {
+                    surface: planned.surface.clone(),
+                });
+            }
+            let working_dir = crate::lift_plugin::resolved_working_dir_for(project_root, planned)
+                .map(|dir| {
+                    // Kit::rendezvous requires absolute working_dir.
+                    dir.canonicalize().unwrap_or(dir)
+                });
+            let dialect = match planned.surface.as_str() {
+                "rust" => libsugar::core::Dialect::Rust,
+                "c" => libsugar::core::Dialect::C,
+                "python" => libsugar::core::Dialect::Other("python".into()),
+                other => libsugar::core::Dialect::Other(other.to_string()),
+            };
+            let manifest = LiftManifest::resolved(
+                planned.surface.clone(),
+                planned.name.clone(),
+                dialect,
+                planned.command.clone(),
+                working_dir,
+                planned.method.clone(),
+            );
+            match sugar_compiler::kit::Kit::rendezvous(manifest) {
+                Ok(kit) if kit.supports_rpc_method("sugar.enumerate") => ProveFace::Kit(kit),
+                Ok(kit) => ProveFace::Disk(NoKit::NoEnumerate {
+                    kit_id: kit.declaration().kit.id.clone(),
+                    surface: planned.surface.clone(),
+                }),
+                Err(error) => ProveFace::Disk(NoKit::RendezvousFailed {
+                    surface: planned.surface.clone(),
+                    detail: error.to_string(),
+                }),
+            }
+        }
+        many => ProveFace::Disk(NoKit::MultiSurface { count: many.len() }),
+    }
+}
+
+/// Single-surface fold candidate, or `None` when the plan is not exactly one
+/// lift (zero or multi). Used by the #3901 instrument and tests that pin
+/// the multi-surface non-drop law without going through rendezvous.
 fn single_surface_fold_manifest(component_plan: &ComponentPlan) -> Option<&PlannedLiftManifest> {
     let [planned] = component_plan.lift_manifests.as_slice() else {
         return None;
@@ -885,6 +950,167 @@ mod tests {
             single_surface_fold_manifest(&plan).map(|manifest| manifest.surface.as_str()),
             Some("python")
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // #3901 NoKit disk-fallback instrument
+    //
+    // Axis: R_silent_disk_fallback — disk prove reachable only via an
+    // explicit [`NoKit`] witness. Silent `Option::None` → solve_project is
+    // the illegal shape; replacement is [`ProveFace::Disk(NoKit)`].
+    // -----------------------------------------------------------------------
+
+    /// Pure plan-shape → NoKit mapping (no rendezvous I/O).
+    fn no_kit_for_plan_shape(plan: &ComponentPlan) -> Option<NoKit> {
+        match plan.lift_manifests.as_slice() {
+            [] => Some(NoKit::NoLiftSurface),
+            [planned] if planned.command.is_empty() => Some(NoKit::EmptyCommand {
+                surface: planned.surface.clone(),
+            }),
+            [_] => None, // single surface with command: needs rendezvous
+            many => Some(NoKit::MultiSurface { count: many.len() }),
+        }
+    }
+
+    #[test]
+    fn r_silent_disk_fallback_empty_plan_is_named_nokit() {
+        let plan = ComponentPlan::default();
+        let witness =
+            no_kit_for_plan_shape(&plan).expect("empty plan must produce NoKit, not silent None");
+        assert_eq!(witness, NoKit::NoLiftSurface);
+        // Live resolver agrees without I/O.
+        match resolve_prove_face(Path::new("."), &plan) {
+            ProveFace::Disk(NoKit::NoLiftSurface) => {}
+            other => panic!(
+                "R_silent_disk_fallback offender: empty plan must be Disk(NoLiftSurface), got {}",
+                other.face_label()
+            ),
+        }
+        eprintln!("R_silent_disk_fallback empty_plan=0 — NoKit::NoLiftSurface");
+    }
+
+    #[test]
+    fn r_silent_disk_fallback_multi_surface_is_named_nokit() {
+        let mut plan = ComponentPlan::default();
+        plan.lift_manifests = vec![
+            PlannedLiftManifest {
+                surface: "a".to_string(),
+                name: "a".to_string(),
+                command: vec!["a-rpc".to_string()],
+                ..Default::default()
+            },
+            PlannedLiftManifest {
+                surface: "b".to_string(),
+                name: "b".to_string(),
+                command: vec!["b-rpc".to_string()],
+                ..Default::default()
+            },
+            PlannedLiftManifest {
+                surface: "c".to_string(),
+                name: "c".to_string(),
+                command: vec!["c-rpc".to_string()],
+                ..Default::default()
+            },
+        ];
+        let witness = no_kit_for_plan_shape(&plan)
+            .expect("multi-surface must produce NoKit, not silent None / first-match Kit");
+        assert_eq!(witness, NoKit::MultiSurface { count: 3 });
+        match resolve_prove_face(Path::new("."), &plan) {
+            ProveFace::Disk(NoKit::MultiSurface { count: 3 }) => {}
+            ProveFace::Kit(_) => panic!(
+                "R_silent_disk_fallback offender: multi-surface must NOT first-match into Kit \
+                 (drops sibling surfaces). Replacement: NoKit::MultiSurface"
+            ),
+            other => panic!(
+                "R_silent_disk_fallback offender: expected Disk(MultiSurface{{count:3}}), got {}",
+                other.face_label()
+            ),
+        }
+        eprintln!("R_silent_disk_fallback multi_surface=0 — NoKit::MultiSurface count=3");
+    }
+
+    #[test]
+    fn r_silent_disk_fallback_empty_command_is_named_nokit() {
+        let mut plan = ComponentPlan::default();
+        plan.lift_manifests.push(PlannedLiftManifest {
+            surface: "rust-test-assertions".to_string(),
+            name: "assertions".to_string(),
+            command: vec![],
+            ..Default::default()
+        });
+        let witness = no_kit_for_plan_shape(&plan)
+            .expect("empty command must produce NoKit, not silent None");
+        assert_eq!(
+            witness,
+            NoKit::EmptyCommand {
+                surface: "rust-test-assertions".to_string(),
+            }
+        );
+        match resolve_prove_face(Path::new("."), &plan) {
+            ProveFace::Disk(NoKit::EmptyCommand { surface }) => {
+                assert_eq!(surface, "rust-test-assertions");
+            }
+            other => panic!(
+                "R_silent_disk_fallback offender: empty command must be Disk(EmptyCommand), got {}",
+                other.face_label()
+            ),
+        }
+        eprintln!(
+            "R_silent_disk_fallback empty_command=0 — NoKit::EmptyCommand surface=rust-test-assertions"
+        );
+    }
+
+    /// Grep membrane: prove path must not re-introduce `Option` kit → disk
+    /// fallback. Disk is only after matching `ProveFace::Disk` / `NoKit`.
+    /// Scans production half only — the test module may name the illegal
+    /// shape in comments without re-introducing it.
+    #[test]
+    fn r_silent_disk_fallback_source_has_no_option_kit_to_disk() {
+        let src = include_str!("cmd_prove.rs");
+        let production = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("cmd_prove has a test module");
+        // Illegal production shapes this instrument forbids:
+        //   Option-returning kit face that maps None → solve_project
+        //   if let Some(kit) = … else { solve_project }
+        let mut offenders: Vec<&'static str> = Vec::new();
+        if production.contains("try_rendezvous_prove_kit") {
+            offenders.push(
+                "legacy Option kit face still present — replace with resolve_prove_face → ProveFace",
+            );
+        }
+        if production.contains("-> Option<sugar_compiler::kit::Kit>")
+            || production.contains("-> Option<Kit>")
+        {
+            offenders
+                .push("Option<Kit> prove face still present — disk must be ProveFace::Disk(NoKit)");
+        }
+        if production.contains("if let Some(kit)") && production.contains("solve_project") {
+            offenders
+                .push("if let Some(kit) … else solve_project still present — use ProveFace match");
+        }
+        if !production.contains("ProveFace::Disk") {
+            offenders.push("production prove path never matches ProveFace::Disk(NoKit)");
+        }
+        if !production.contains("enum NoKit") {
+            offenders.push("NoKit witness type missing from production prove path");
+        }
+        if !production.contains("resolve_prove_face") {
+            offenders.push("resolve_prove_face missing — disk face has no named constructor");
+        }
+        let r = offenders.len();
+        if r > 0 {
+            for o in &offenders {
+                eprintln!("R_silent_disk_fallback offender: {o}");
+            }
+            panic!(
+                "R_silent_disk_fallback={r} — disk fallback requires explicit NoKit witness. \
+                 Replacement: match resolve_prove_face(...) {{ Kit(k) => prove_from_kit, Disk(n) => solve_project }}. \
+                 Silent Option::None → disk is the illegal shape (#3901)."
+            );
+        }
+        eprintln!("R_silent_disk_fallback source_membrane=0 — ProveFace/NoKit only door");
     }
 
     #[test]
