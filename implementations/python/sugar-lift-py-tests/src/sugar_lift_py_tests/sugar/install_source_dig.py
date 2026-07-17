@@ -1328,6 +1328,8 @@ class ContextualizedDigBody:
 
     body: object
     base_context: Any
+    callable_binding: Any = None
+    callable_name_is_parameter: bool = False
 
     def _reduce_context(self, ctx: Any = None):
         reduce_ctx = self.base_context
@@ -1340,6 +1342,15 @@ class ContextualizedDigBody:
                     blame=binding.blame,
                 )
             reduce_ctx = ctx.with_temporal(temporal)
+        callable_binding = self.callable_binding
+        if callable_binding is not None and not self.callable_name_is_parameter:
+            reduce_ctx = reduce_ctx.with_temporal(
+                reduce_ctx.temporal.bind_value(
+                    callable_binding.name,
+                    callable_binding,
+                    blame=f"<function:{callable_binding.name}>",
+                )
+            )
         return reduce_ctx
 
     def desugar(self, ctx: Any = None):

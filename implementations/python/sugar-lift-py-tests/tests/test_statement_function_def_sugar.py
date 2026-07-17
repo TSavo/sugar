@@ -78,6 +78,62 @@ def test_nested_callable_captures_lexical_bindings_and_overlays_actuals() -> Non
     assert dug == TermValue(9)
 
 
+def test_nested_callable_constructs_its_own_deferred_lexical_binding() -> None:
+    universe = _root_universe(
+        "def outer(values):\n"
+        "    def inner(items):\n"
+        "        return tuple(map(inner, items))\n"
+        "    return inner(values)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    from sugar_lift_py_tests.floor.call_site_value import (
+        _ctx_with_curried_args,
+        _reduce_callsite_body,
+    )
+
+    assert isinstance(
+        complete_value(
+            _reduce_callsite_body(
+                callsite.body,
+                _ctx_with_curried_args(ctx, callsite.parameters, callsite.arg_values),
+                blame=callsite.target_name,
+            ),
+            owner="nested callable self binding",
+        ),
+        CallSiteValue,
+    )
+
+
+def test_nested_callable_does_not_bind_a_different_missing_global() -> None:
+    universe = _root_universe(
+        "def outer(values):\n"
+        "    def inner(items):\n"
+        "        return tuple(map(never_defined, items))\n"
+        "    return inner(values)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    from sugar_lift_py_tests.floor.call_site_value import (
+        _ctx_with_curried_args,
+        _reduce_callsite_body,
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        _reduce_callsite_body(
+            callsite.body,
+            _ctx_with_curried_args(ctx, callsite.parameters, callsite.arg_values),
+            blame=callsite.target_name,
+        )
+
+    assert raised.value.info.owner == "TemporalContext"
+    assert raised.value.info.observed == "never_defined"
+
+
 def test_nested_callable_binds_an_omitted_trailing_default_without_rekeying_callsite() -> (
     None
 ):
@@ -330,6 +386,18 @@ def test_keyword_expansion_witness_truthful_sat_and_lying_unsat(tmp_path) -> Non
         witness
         for witness in StatementFunctionDefSugar.witnesses()
         if witness.name == "statement_function_def_keyword_expansion_return"
+    )
+
+    report = evaluate_seed_witnesses((witness,), tmp_path)
+
+    assert report.is_zero
+
+
+def test_callable_self_binding_witness_truthful_sat_and_lying_unsat(tmp_path) -> None:
+    witness = next(
+        witness
+        for witness in StatementFunctionDefSugar.witnesses()
+        if witness.name == "statement_function_def_self_binding_return"
     )
 
     report = evaluate_seed_witnesses((witness,), tmp_path)
