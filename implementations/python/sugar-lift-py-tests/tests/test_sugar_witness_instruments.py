@@ -1001,6 +1001,18 @@ def test_assert_witness_pair_states_one_proof_bearing_callsite(tmp_path: Path) -
     assert report.is_zero
 
 
+def test_tuple_concatenation_witness_discharges_and_refutes(tmp_path: Path) -> None:
+    seed = next(
+        item
+        for item in DEFAULT_SUGAR_WITNESS_SEEDS
+        if item.name == "tuple_concatenation_return"
+    )
+
+    report = evaluate_seed_witnesses((seed,), tmp_path, catalog_count=1)
+
+    assert report.is_zero
+
+
 def test_sugar_witness_seed_triples_hit_real_solver(seed_report) -> None:
     # IDD invariant: seed coverage is a canceling pair, not a pinned magnitude.
     # Every catalog sugar must own a seed case — (catalog - seed-covered) == 0.

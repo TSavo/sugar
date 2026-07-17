@@ -49,6 +49,7 @@ class AddOpSugar(Sugar, role=SugarRole.TERM):
         dig_prefix = (
             "def g(x):\n" "    return x\n" "def A():\n" "    return g(2) + 1\n" "\n"
         )
+        tuple_prefix = "def A():\n    return (1, 2) + (3,)\n\n"
         return (
             _call_pair(
                 name="add_return",
@@ -62,6 +63,12 @@ class AddOpSugar(Sugar, role=SugarRole.TERM):
                 truthful=dig_prefix + "def test_a():\n    assert A() == 3\n",
                 lying=dig_prefix + "def test_a():\n    assert A() == 4\n",
                 family="callsite-binary-dig",
+            ),
+            _call_pair(
+                name="tuple_concatenation_return",
+                owner_sugar="AddOpSugar",
+                truthful=tuple_prefix + "def test_a():\n    assert A() == (1, 2, 3)\n",
+                lying=tuple_prefix + "def test_a():\n    assert A() == (1, 2)\n",
             ),
         )
 

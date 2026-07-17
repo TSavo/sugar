@@ -66,3 +66,6 @@ class BoundVar(FloorValue):
         outcome = self.answer(self.scope)
         value = complete_value(outcome, owner=f"{owner} bound source")
         return value.to_term(owner=owner)
+
+    def add(self, other, site):
+        return self.answer(self.scope).and_then(lambda value: value.add(other, site))

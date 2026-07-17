@@ -13,6 +13,11 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import StringValue
+from sugar_lift_py_tests.effect import SequenceConcatenationRuntimeEffect
+from sugar_lift_py_tests.floor import OpaqueOpCallsite, SymbolicValue
+from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
@@ -52,6 +57,17 @@ def test_add_folds_collapsed_number_float() -> None:
 def test_add_string_concatenates() -> None:
     sugar, ctx = _build_term('"a" + "b"')
     assert sugar.desugar(ctx) == Complete(StringValue("ab"))
+
+
+def test_string_add_runtime_str_is_named() -> None:
+    site = SourceFragment.from_source('"prefix" + str(value)', "t.py")
+
+    outcome = StringValue("prefix").add(
+        OpaqueOpCallsite("str", SymbolicValue(make_var("value"))), site
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceConcatenationRuntimeEffect)
 
 
 def test_add_mixed_number_string_panics() -> None:
