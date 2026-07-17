@@ -123,6 +123,72 @@ class _NoReturnStatement:
         return _NoReturnOutcome()
 
 
+def test_sequential_dig_stops_at_first_unguarded_return() -> None:
+    """#4387: dig must not walk past an early return to a later fall-through.
+
+    ``if cond: return 7`` / ``return 0`` with a taken then-arm previously kept
+    ``last_return = 0``, fabricating Derived EUF ``call:A=0`` that dual-refuted
+    truthful ``assert A(1) == 7``.
+    """
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    class _ReturnStatement:
+        def __init__(self, value: int) -> None:
+            self._value = value
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(ReturnValue(TermValue(self._value)))
+
+    outcome = SequentialDigBody((_ReturnStatement(7), _ReturnStatement(0))).desugar()
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == TermValue(7)
+
+
+def test_sequential_dig_refuses_guarded_multi_exit_as_single_literal() -> None:
+    """Guarded returns are multi-exit: dig stays Incomplete, never last-arm pin."""
+    from sugar_lift_py_tests.effect import ConditionalExpressionRuntimeEffect
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import atomic, num
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+    guard = atomic("py.eq", [num(1), num(1)])
+
+    class _GuardedReturnStatement:
+        def reduce(self, ctx):
+            del ctx
+            return Complete(GuardedReturn(guards=(guard,), value=TermValue(7)))
+
+    class _FallthroughReturn:
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                GuardedReturn(
+                    guards=(atomic("py.eq", [num(0), num(1)]),),
+                    value=TermValue(0),
+                )
+            )
+
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    fn_site = SourceFragment.from_source(
+        "def f(x):\n    if x:\n        return 1\n    return 0\n",
+        "numpy/_core/repro.py",
+    ).statements()[0]
+    outcome = SequentialDigBody(
+        (_GuardedReturnStatement(), _FallthroughReturn()),
+        fn_site=fn_site,
+    ).desugar()
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, ConditionalExpressionRuntimeEffect)
+    assert "runtime control flow" in outcome.reason
+
+
 def test_sequential_dig_runtime_selected_return_is_a_named_effect() -> None:
     from sugar_lift_py_tests.effect import ConditionalExpressionRuntimeEffect
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
