@@ -58,24 +58,22 @@ def test_matrix_multiply_uses_native_operator_coordinate() -> None:
     ) == SymbolicValue(ctor("@", [make_var("x"), make_var("y")]))
 
 
-def test_concrete_number_matrix_multiply_is_typed_type_error() -> None:
-    """Python defines no scalar ``@``; dig of ``2 @ 3`` is TypeError, not panic."""
-    from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
-    from sugar_lift_py_tests.outcome import Incomplete
+def test_concrete_number_matrix_multiply_is_loud_decidable_type_error() -> None:
+    """Concrete scalar ``@`` is decided at lift time, never a RuntimeEffect."""
+    from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 
     node = ast.parse("2 @ 3", mode="eval").body
     site = SourceFragment.from_node(node, "t.py", source="2 @ 3")
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
-    outcome = build_node(
-        site, filename="t.py", role=SugarRole.TERM, ctx=ctx
-    ).sugar.desugar(ctx)
-
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
-    assert "@" in outcome.effect.reason or "matmul" in outcome.effect.reason.lower()
+    with pytest.raises(FactoryPanic, match="genuine runtime-dependent operand"):
+        build_node(site, filename="t.py", role=SugarRole.TERM, ctx=ctx).sugar.desugar(
+            ctx
+        )
 
 
-def test_production_lift_constructs_matrix_multiply_return_without_factory_panic() -> None:
+def test_production_lift_constructs_matrix_multiply_return_without_factory_panic() -> (
+    None
+):
     """#4387 wave-5: ObjectValue.__matmul__ dig body + Derived residue pin."""
     from sugar_lift_py_tests.lift_rpc import audit_lift_file
 
