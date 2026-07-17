@@ -1,0 +1,22 @@
+{
+  "discovery_bound_seconds": 10,
+  "note": "Seed for classify_loud_timeouts.py --files-from ... --skip-discovery. Every timeout remains loud until escalation records a final verdict.",
+  "scanned": 344,
+  "terminal_counts": {
+    "bare-exception": 4,
+    "completed": 223,
+    "factory-construction-panic": 109,
+    "timeout-or-hang": 8
+  },
+  "timeout_count": 8,
+  "timeout_files": [
+    "numpy/_core/tests/test_nditer.py",
+    "numpy/ma/tests/test_core.py",
+    "numpy/random/tests/test_randomstate_regression.py",
+    "pandas/tests/extension/test_arrow.py",
+    "pandas/tests/groupby/test_groupby.py",
+    "pandas/tests/groupby/test_grouping.py",
+    "pandas/tests/reshape/test_melt.py",
+    "pandas/tests/series/test_constructors.py"
+  ]
+}

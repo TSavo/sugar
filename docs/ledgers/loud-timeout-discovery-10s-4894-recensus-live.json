@@ -1,0 +1,34 @@
+{
+  "schema": "sugar.loud-timeout-discovery.v1",
+  "discovery_bound_seconds": 10,
+  "candidates_total": 1032,
+  "shard_count": 3,
+  "timeout_count": 20,
+  "timeout_files": [
+    "numpy/_core/tests/test_nditer.py",
+    "numpy/ma/tests/test_core.py",
+    "numpy/random/tests/test_random.py",
+    "numpy/random/tests/test_randomstate_regression.py",
+    "numpy/random/tests/test_regression.py",
+    "pandas/core/frame.py",
+    "pandas/tests/extension/test_arrow.py",
+    "pandas/tests/frame/test_arithmetic.py",
+    "pandas/tests/frame/test_constructors.py",
+    "pandas/tests/groupby/test_groupby.py",
+    "pandas/tests/groupby/test_grouping.py",
+    "pandas/tests/groupby/test_timegrouper.py",
+    "pandas/tests/indexing/test_loc.py",
+    "pandas/tests/io/excel/test_writers.py",
+    "pandas/tests/io/pytables/test_append.py",
+    "pandas/tests/io/pytables/test_select.py",
+    "pandas/tests/reshape/concat/test_concat.py",
+    "pandas/tests/reshape/test_melt.py",
+    "pandas/tests/series/test_constructors.py",
+    "pandas/tests/strings/test_strings.py"
+  ],
+  "by_package": {
+    "numpy": 5,
+    "pandas": 15
+  },
+  "note": "live 10s rediscovery on current head (3 shards); post construction optimisations"
+}
