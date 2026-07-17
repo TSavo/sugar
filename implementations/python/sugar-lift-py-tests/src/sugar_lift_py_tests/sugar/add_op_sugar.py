@@ -50,6 +50,7 @@ class AddOpSugar(Sugar, role=SugarRole.TERM):
             "def g(x):\n" "    return x\n" "def A():\n" "    return g(2) + 1\n" "\n"
         )
         tuple_prefix = "def A():\n    return (1, 2) + (3,)\n\n"
+        bool_prefix = "def A():\n    return False + 2\n\n"
         return (
             _call_pair(
                 name="add_return",
@@ -69,6 +70,12 @@ class AddOpSugar(Sugar, role=SugarRole.TERM):
                 owner_sugar="AddOpSugar",
                 truthful=tuple_prefix + "def test_a():\n    assert A() == (1, 2, 3)\n",
                 lying=tuple_prefix + "def test_a():\n    assert A() == (1, 2)\n",
+            ),
+            _call_pair(
+                name="bool_add",
+                owner_sugar="AddOpSugar",
+                truthful=bool_prefix + "def test_a():\n    assert A() == 2\n",
+                lying=bool_prefix + "def test_a():\n    assert A() == 3\n",
             ),
             typed_red_effect_witness(
                 name="runtime_comprehension_sequence_concat",

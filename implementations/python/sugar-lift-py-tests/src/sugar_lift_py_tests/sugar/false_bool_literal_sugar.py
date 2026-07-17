@@ -96,6 +96,13 @@ class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
 
         return Complete(TrueBoolLiteralSugar(site=self.site))
 
+    def add(self, other, site):
+        # Python bool is a closed integer subtype: False contributes exactly
+        # zero, then the ordinary numeric floor decides the peer.
+        from sugar_lift_py_tests.floor.term_value import TermValue
+
+        return TermValue(0).add(other, site)
+
     def is_identical(self, other, site):
         # False is a singleton: False is False folds True; False is True folds
         # False. Anything else emits identity (the general case).
