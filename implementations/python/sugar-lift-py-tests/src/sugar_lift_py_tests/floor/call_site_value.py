@@ -320,6 +320,34 @@ class CallSiteValue(FloorValue):
     def multiply(self, other, site):
         return self._dig_or_symbolic_binop(other, site, op="*", floor_method="multiply")
 
+    def power(self, other, site):
+        """Dig a proved return body, otherwise retain runtime ``__pow__`` dispatch."""
+        dug = self._dig_floor_or_none(None, owner="CallSiteValue.power")
+        if dug is not None and dug is not self:
+            return dug.power(other, site)
+
+        from sugar_lift_py_tests.effect import (
+            PowerRuntimeEffect,
+            runtime_effect_witness,
+        )
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        operand = ctor(
+            "**",
+            [
+                self.to_term(owner=str(site)),
+                other.to_term(owner=str(site)),
+            ],
+        )
+        return Incomplete(
+            PowerRuntimeEffect(
+                "power dispatch depends on the runtime call result's __pow__; "
+                f"owner=CallSiteValue.power site={site}",
+                witness=runtime_effect_witness("py.power", operand, site),
+            )
+        )
+
     def divide(self, other, site):
         return self._dig_or_symbolic_binop(other, site, op="/", floor_method="divide")
 
@@ -431,9 +459,7 @@ class CallSiteValue(FloorValue):
                 "call result before Python attribute lookup; keep as typed red "
                 "until a narrower vendor-cited floor owns the call result and "
                 f"attribute. blame={operation.blame}",
-                witness=runtime_effect_witness(
-                    "py.getattr", operation.name, operation
-                ),
+                witness=runtime_effect_witness("py.getattr", operation.name, operation),
             )
         )
 

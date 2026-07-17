@@ -188,6 +188,9 @@ class GuardedValue(FloorValue):
     def multiply(self, other, site):
         return self._map("multiply", other, site)
 
+    def power(self, other, site):
+        return self._map("power", other, site)
+
     def divide(self, other, site):
         return self._map("divide", other, site)
 

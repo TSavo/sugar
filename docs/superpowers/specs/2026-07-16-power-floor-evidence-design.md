@@ -8,8 +8,11 @@ opaque call result as a proven numeric value.
 ## Construction boundary
 
 `TermValue ** OpaqueOpCallsite("len", ...)` has a concrete numeric base and an
-independently warranted integer exponent. It constructs the existing native
-`**` term coordinate and remains available to later equality evidence.
+independently warranted integer exponent. The same is true for a guarded pair
+of integer exponents and for `iter_elem(range(...))` when every range bound is
+itself an integer literal or `len(...)` coordinate. These cases construct the
+existing native `**` term coordinate and remain available to later evidence;
+they never invent the active runtime integer.
 
 `CallSiteValue ** value` has no static numeric or `__pow__` warrant. It returns
 `Incomplete(PowerRuntimeEffect)` authenticated at the real source fragment by
@@ -21,7 +24,8 @@ All other unsupported power shapes retain the existing loud floor panic.
 ## Soundness discriminations
 
 - Concrete powers continue to fold exactly.
-- A concrete base with a `len(...)` exponent constructs the native coordinate.
+- A concrete base with a `len(...)`, guarded-integer, or warranted
+  `iter_elem(range(...))` exponent constructs the native coordinate.
 - An opaque call-result base yields `PowerRuntimeEffect`, never `Complete`.
 - Every runtime power effect carries a genuine source-site witness over both
   operands.

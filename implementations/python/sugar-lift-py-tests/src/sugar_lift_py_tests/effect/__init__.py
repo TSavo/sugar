@@ -29,6 +29,7 @@ from .key_error_runtime_effect import KeyErrorRuntimeEffect
 from .modulo_by_zero_runtime_effect import ModuloByZeroRuntimeEffect
 from .nonlocal_mutation_runtime_effect import NonlocalMutationRuntimeEffect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
+from .power_runtime_effect import PowerRuntimeEffect
 from .raise_effect import RaiseEffect
 from .runtime_effect import (
     RuntimeEffect,
@@ -76,6 +77,7 @@ __all__ = [
     "ModuloByZeroRuntimeEffect",
     "NonlocalMutationRuntimeEffect",
     "OSExitRuntimeEffect",
+    "PowerRuntimeEffect",
     "RaiseEffect",
     "RuntimeEffect",
     "RuntimeEffectWitness",

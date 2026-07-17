@@ -43,7 +43,9 @@
 - Produces: `PowerRuntimeEffect` and an integer-warranted symbolic power term.
 
 - [ ] Define and export `PowerRuntimeEffect(RuntimeEffect)`.
-- [ ] Route only `OpaqueOpCallsite(callee="len")` through the concrete-base native-coordinate arm.
+- [ ] Route only `OpaqueOpCallsite(callee="len")`, guarded integer faces, and
+  `iter_elem(range(...))` with integer-warranted bounds through the
+  concrete-base native-coordinate arm.
 - [ ] Add `CallSiteValue.power`: dig and redispatch when possible; otherwise return a witnessed `PowerRuntimeEffect` whose operand is `ctor("**", [base, exponent])`.
 - [ ] Run focused tests and require both new tests green without changing any existing loud fallback.
 
