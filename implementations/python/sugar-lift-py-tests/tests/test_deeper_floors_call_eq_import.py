@@ -129,6 +129,11 @@ def test_parametrized_test_function_still_testimony() -> None:
     ]
     assert ax["stated"] == 1
     assert ax["silently_unaccounted"] == 0
-    assert ax["lifted_cited"] == 1, ax
+    # The exact literal row now reduces independently.  Its assertion is the
+    # ground tautology ``1 == 1`` and therefore remains on the existing loud
+    # ground-true assertion frontier rather than being overstated as a
+    # symbolic universal fact.
+    assert ax["lifted_cited"] == 0, ax
+    assert ax["refused_loud"] == 1, ax
     names = [i.get("name") for i in (rpc.get("ir") or [])]
-    assert any(n and n.endswith("::assertion") for n in names), names
+    assert not any(n and n.endswith("::assertion") for n in names), names

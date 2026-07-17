@@ -57,6 +57,26 @@ class StringValue(FloorValue):
             else FalseBoolLiteralSugar(site=site)
         )
 
+    def equals(self, other, site):
+        # Exact strings are fully decidable at lift time.  Folding here lets a
+        # literal pytest parameter row select the corresponding branch instead
+        # of fabricating a symbolic unmatched path.
+        if type(other) is StringValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(site=site)
+                if self.value == other.value
+                else FalseBoolLiteralSugar(site=site)
+            )
+        return super().equals(other, site)
+
     def less_than(self, other, site):
         # A string stands on the ordering floor: two strings order by Python's
         # lexicographic rule and fold to the True/False literal. Ground

@@ -25,6 +25,9 @@ from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.sugar.if_sugar import IfSugar
+from sugar_lift_py_tests.sugar.test_function_def_sugar import (
+    TestFunctionDefSugar as FunctionTestimonySugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
@@ -205,6 +208,69 @@ def test_nested_continuing_path_missing_binding_stays_loud() -> None:
     assert raised.value.info.owner == "TemporalContext"
     assert raised.value.info.observed == "result"
     assert raised.value.info.requested == "value"
+
+
+def test_literal_parametrize_rows_make_elif_binding_definite() -> None:
+    source = (
+        "import pytest\n"
+        "def identity(value):\n"
+        "    return value\n"
+        "\n"
+        "@pytest.mark.parametrize(\n"
+        "    ('kind', 'expected'),\n"
+        "    [('first', 1), ('middle', 2), ('last', 3)],\n"
+        ")\n"
+        "def test_choice(kind, expected):\n"
+        "    if kind == 'first':\n"
+        "        result = 1\n"
+        "    elif kind == 'middle':\n"
+        "        result = 2\n"
+        "    elif kind == 'last':\n"
+        "        result = 3\n"
+        "    assert identity(result) == expected\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "parametrize_elif.py")
+
+    assert gaps == []
+    assertions = [row for row in payload.ir if row.inv is not None]
+    assert len(assertions) == 3
+
+
+def test_open_elif_chain_does_not_fabricate_definite_binding() -> None:
+    source = (
+        "def test_choice(kind, expected):\n"
+        "    if kind == 'first':\n"
+        "        result = 1\n"
+        "    elif kind == 'middle':\n"
+        "        result = 2\n"
+        "    elif kind == 'last':\n"
+        "        result = 3\n"
+        "    assert result == expected\n"
+    )
+
+    with pytest.raises(FactoryPanic, match="observed=result requested=value"):
+        audit_lift_file(source, "open_elif.py", hold_panic=False)
+
+
+def test_literal_parametrize_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in FunctionTestimonySugar.witnesses()
+        if witness.name == "test_function_literal_parametrize_rows"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "parametrize-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "parametrize-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_joined_runtime_value_reads_as_its_named_effect_not_temporal_panic() -> None:

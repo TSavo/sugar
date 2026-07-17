@@ -1544,6 +1544,65 @@ class SourceFragment:
             for d in self.node.decorator_list  # type: ignore[attr-defined]
         ]
 
+    def literal_pytest_parametrize_rows(
+        self,
+    ) -> "tuple[tuple[tuple[str, ...], tuple[tuple[object, ...], ...]], ...]":
+        """Return exact literal rows from ``pytest.mark.parametrize`` decorators.
+
+        This accessor recognizes syntax only. Dynamic argument names, factories,
+        ``pytest.param`` calls, keyword expansions, and malformed row arities are
+        deliberately absent: callers must retain their existing symbolic/loud
+        treatment rather than invent parameter values.
+        """
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        recognized = []
+        for decorator in self.node.decorator_list:  # type: ignore[attr-defined]
+            if (
+                not isinstance(decorator, ast.Call)
+                or _dotted_expr_name(decorator.func) != "pytest.mark.parametrize"
+                or len(decorator.args) < 2
+                or decorator.keywords
+            ):
+                continue
+            try:
+                raw_names = ast.literal_eval(decorator.args[0])
+                raw_rows = ast.literal_eval(decorator.args[1])
+            except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+                continue
+
+            if isinstance(raw_names, str):
+                names = tuple(part.strip() for part in raw_names.split(","))
+            elif isinstance(raw_names, (tuple, list)):
+                names = tuple(raw_names)
+            else:
+                continue
+            if not names or any(
+                not isinstance(name, str) or not name for name in names
+            ):
+                continue
+            if not isinstance(raw_rows, (tuple, list)):
+                continue
+
+            rows = []
+            for raw_row in raw_rows:
+                if len(names) == 1:
+                    row = (raw_row,)
+                elif isinstance(raw_row, (tuple, list)):
+                    row = tuple(raw_row)
+                else:
+                    rows = []
+                    break
+                if len(row) != len(names) or any(
+                    type(value) not in (str, int, float, bool, type(None))
+                    for value in row
+                ):
+                    rows = []
+                    break
+                rows.append(row)
+            if rows:
+                recognized.append((names, tuple(rows)))
+        return tuple(recognized)
+
     # --- augmented assignment ----------------------------------------------
 
     def aug_assign_target(self) -> "SourceFragment":
