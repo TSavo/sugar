@@ -55,17 +55,17 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def witnesses(cls):
-        # Coordinate rides inside the with-body; the pair discriminates on
-        # the enclosing return face (no concrete CM fold yet).
+        # The body binding rides past the continuing with-face. The wrong twin
+        # refutes the projected value rather than merely exercising an inner return.
         prefix = (
             "def A(z):\n"
-            "    with z.lock() as g:\n"
-            "        return 1\n"
-            "    return 0\n"
+            "    with z.lock():\n"
+            "        result = 1\n"
+            "    return result\n"
             "\n"
         )
         return _call_pair(
-            name="with_return",
+            name="with_binding_return",
             owner_sugar="WithSugar",
             truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
             lying=prefix + "def test_a():\n    assert A(5) == 0\n",
@@ -77,7 +77,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
 
     def _enter_items(self, remaining, ctx) -> Outcome:
         if not remaining:
-            return self.body.reduce(ctx)
+            return _reduce_continuing_body(self.body, ctx)
         (context, as_names), *rest = remaining
         return context.reduce(ctx).and_then(
             lambda cm: self._enter_one(cm, as_names, tuple(rest), ctx)
@@ -233,6 +233,28 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
 
     def walk_children(self):
         return (*(context for context, _as_names in self.items), self.body)
+
+
+def _reduce_continuing_body(body: SugarBody, ctx: object) -> Outcome:
+    """Project bindings testified by the body's actual continuing outcome."""
+    from sugar_lift_py_tests.floor import BlockValue, ScopeRebind
+    from sugar_lift_py_tests.outcome import Complete
+
+    outcome = body.reduce(ctx)
+    if not isinstance(outcome, Complete):
+        return outcome
+    record = outcome.value
+    if not record.follow_rest().continues:
+        return outcome
+
+    _scoped_record, final_ctx = body.sugar.reduce_with_scope(ctx)
+    before = {binding.name: binding.value for binding in ctx.temporal.bindings}
+    rebinds = tuple(
+        ScopeRebind(binding.name, binding.value)
+        for binding in final_ctx.temporal.bindings
+        if before.get(binding.name) is not binding.value
+    )
+    return Complete(BlockValue((*record.contribution(), *rebinds)))
 
 
 def _with_target_names(target) -> tuple[str, ...] | None:
