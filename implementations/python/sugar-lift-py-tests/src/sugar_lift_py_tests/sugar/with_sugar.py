@@ -86,6 +86,13 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             "        return z\n"
             "\n"
         )
+        nonraising_opaque_manager_prefix = (
+            "def A(z):\n"
+            "    with z.context():\n"
+            "        pass\n"
+            "    return 1\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="with_binding_return",
@@ -113,6 +120,16 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                     + "    assert A(7) == 8\n"
                 ),
                 family="source-contextmanager-contract",
+            ),
+            _call_pair(
+                name="with_nonraising_opaque_manager",
+                owner_sugar="WithSugar",
+                truthful=nonraising_opaque_manager_prefix
+                + "def test_a():\n"
+                + "    assert A(7) == 1\n",
+                lying=nonraising_opaque_manager_prefix
+                + "def test_a():\n"
+                + "    assert A(7) == 2\n",
             ),
             typed_red_effect_witness(
                 name="with_runtime_manager_exit",
@@ -567,10 +584,13 @@ def _raised_exception_names(outcome) -> tuple[str, ...] | None:
 
 
 def _entry_carries_raise(entry) -> bool:
-    from sugar_lift_py_tests.floor import GuardedRaise, RaisesWithValue
+    from sugar_lift_py_tests.floor import GuardedRaise
     from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.outcome.incomplete import _effect_continues_control_flow
 
     if isinstance(entry, Incomplete):
         return not _effect_continues_control_flow(entry.effect)
-    return isinstance(entry, (GuardedRaise, RaisesWithValue))
+    # RaisesWithValue is the completed result of pytest.raises: its exception
+    # is consumed by that inner context manager and cannot reach an enclosing
+    # WithSugar.__exit__.
+    return isinstance(entry, GuardedRaise)

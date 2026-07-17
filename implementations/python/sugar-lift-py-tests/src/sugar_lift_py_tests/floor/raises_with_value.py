@@ -27,8 +27,10 @@ class RaisesWithValue(FloorValue):
 
     def contribution(self):
         # Self rides so extend_scope can rebind as-name into enclosing rest.
-        # Body entries still splice. inv_contribution does not walk self.
-        return (self, *self.body_entries)
+        # The inner body is evidence owned by this consumed-exception wrapper;
+        # splicing its RaiseValue into the enclosing block would falsely make
+        # the exception escape past pytest.raises.
+        return (self,)
 
     def inv_contribution(self):
         formulas = (
