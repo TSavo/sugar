@@ -23,3 +23,16 @@ class ExceptionalExitValue(FloorValue):
         from sugar_lift_py_tests.floor.raise_value import _exceptional_exit_term
 
         return _exceptional_exit_term(self.effect)
+
+    def subtract(self, other, site):
+        """Keep a selected exceptional path halted across subtraction.
+
+        Python never evaluates the arithmetic result after the left operand
+        has already raised. ``ExceptionalExitValue`` is that reduced
+        control-flow testimony, so subtraction preserves it exactly rather
+        than manufacturing a numeric value or runtime effect.
+        """
+        del other, site
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self)
