@@ -115,7 +115,7 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
                 observed=type(value).__name__,
                 requested="constructed exception floor",
                 fix=(
-                    "construct an exact builtin ExceptionValue before raise; "
+                    "construct an exact ExceptionValue before raise; "
                     "do not substitute arbitrary call coordinates"
                 ),
             )

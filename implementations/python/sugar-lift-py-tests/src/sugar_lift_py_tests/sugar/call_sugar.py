@@ -73,6 +73,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
     # `args` (empty when the call is positional-only).
     keyword_names: tuple[str, ...]
     site: object = dataclass_field(compare=False)
+    exact_exception_name: str | None = None
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -93,7 +94,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
         )
 
     @classmethod
-    def new(cls, site, ctx) -> "CallSugar":
+    def new(cls, site, ctx, *, exact_exception_name: str | None = None) -> "CallSugar":
         # Arguments and keyword VALUES are factory-built (audited), never reduced here.
         positional = tuple(
             ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()
@@ -110,6 +111,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             args=(*positional, *keyword_bodies),
             keyword_names=tuple(keyword_names),
             site=site,
+            exact_exception_name=exact_exception_name,
         )
 
     @classmethod
@@ -145,6 +147,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 ExceptionClassValue,
                 ExceptionValue,
                 FunctionCallable,
+                LocalExceptionClassValue,
                 NativeCallableValue,
             )
             from sugar_lift_py_tests.ir import ctor
@@ -154,7 +157,20 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 resolve_call_funcdef,
             )
 
+            if self.exact_exception_name is not None:
+                return Complete(
+                    ExceptionValue(
+                        exception_name=self.exact_exception_name,
+                        arguments=accumulated,
+                        site=self.site,
+                    )
+                )
+
             bound = ctx.temporal.value_if_bound(self.target_name)
+            if bound is None and ctx.module_temporal is not None:
+                module_bound = ctx.module_temporal.value_if_bound(self.target_name)
+                if type(module_bound) is LocalExceptionClassValue:
+                    bound = module_bound
             from sugar_lift_py_tests.floor import ImportAliasValue
 
             if isinstance(bound, ImportAliasValue):
@@ -213,7 +229,11 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     source_arg_values=accumulated,
                 )
 
-            if type(bound) in (BuiltinExceptionClassValue, ExceptionClassValue):
+            if type(bound) in (
+                BuiltinExceptionClassValue,
+                ExceptionClassValue,
+                LocalExceptionClassValue,
+            ):
                 return Complete(
                     ExceptionValue(
                         exception_name=bound.name,

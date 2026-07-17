@@ -681,8 +681,10 @@ def _ctx_with_required_module_bindings(
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.floor import (
         BlockValue,
-        ClassValue,
         ImportAliasValue,
+    )
+    from sugar_lift_py_tests.floor.local_exception_class_value import (
+        module_class_value,
     )
     from sugar_lift_py_tests.outcome import Incomplete, complete_value
     from sugar_lift_py_tests.temporal import TemporalContext
@@ -705,7 +707,10 @@ def _ctx_with_required_module_bindings(
             if isinstance(statement, (ast.Assign, ast.AnnAssign)):
                 needed.update(_loaded_names(statement.value))
             elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                needed.update(_function_definition_dependencies(statement))
+                # The callable defers its body, but its captured module context
+                # must still contain every source declaration that body may
+                # load when the call is later dug.
+                needed.update(_loaded_names(statement))
     selected.reverse()
 
     lexical = TemporalContext.empty()
@@ -742,9 +747,14 @@ def _ctx_with_required_module_bindings(
         if isinstance(statement, ast.ClassDef):
             temporal = module_ctx.temporal.bind_value(
                 statement.name,
-                ClassValue(
+                module_class_value(
                     name=statement.name,
-                    bases=(),
+                    base_names=tuple(
+                        base.id
+                        for base in statement.bases
+                        if isinstance(base, ast.Name)
+                    ),
+                    temporal=module_ctx.temporal,
                     record=BlockValue(()),
                 ),
             )
@@ -830,7 +840,7 @@ def resolve_install_source_value(
         module_ctx = _ctx_with_required_module_bindings(
             defining_tree.body,
             target_index,
-            _function_definition_dependencies(definition),
+            _loaded_names(definition),
             source=defining_source,
             sourcefile=defining_file,
             ctx=ctx,

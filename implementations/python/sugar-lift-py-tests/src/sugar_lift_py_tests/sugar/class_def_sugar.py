@@ -92,7 +92,29 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _class_value(self, bases: tuple, record: object):
-        from sugar_lift_py_tests.floor import ClassValue
+        from sugar_lift_py_tests.floor import (
+            BuiltinExceptionClassValue,
+            ClassValue,
+            ExceptionClassValue,
+            LocalExceptionClassValue,
+        )
+
+        if any(
+            isinstance(
+                base,
+                (
+                    BuiltinExceptionClassValue,
+                    ExceptionClassValue,
+                    LocalExceptionClassValue,
+                ),
+            )
+            for base in bases
+        ):
+            return LocalExceptionClassValue(
+                name=self.name,
+                bases=bases,
+                record=record,
+            )
 
         return ClassValue(name=self.name, bases=bases, record=record)
 
