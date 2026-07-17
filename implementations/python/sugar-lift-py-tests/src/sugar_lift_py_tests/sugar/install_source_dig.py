@@ -624,11 +624,32 @@ def resolve_contextmanager_exit_contract(import_target: str):
         for statement in parsed.body
         if isinstance(statement, ast.FunctionDef) and statement.name == attr
     ]
-    if len(definitions) != 1 or not _is_contextmanager_definition(
-        definitions[0], parsed
-    ):
+    if len(definitions) != 1:
         return None
-    definition = definitions[0]
+    return _contextmanager_exit_contract_from_definition(definitions[0], parsed)
+
+
+def contextmanager_exit_contract_for_fragment(fn_site):
+    """Recognize the same closed contextmanager subset in a local fragment."""
+    if fn_site is None or fn_site.observed != "FunctionDef":
+        return None
+    source = getattr(fn_site, "source", None)
+    filename = getattr(fn_site, "filename", "<contextmanager>")
+    if source is None:
+        return None
+    try:
+        parsed = parsed_tree(source, filename)
+    except SyntaxError:
+        return None
+    definition = getattr(fn_site, "node", None)
+    if not isinstance(definition, ast.FunctionDef):
+        return None
+    return _contextmanager_exit_contract_from_definition(definition, parsed)
+
+
+def _contextmanager_exit_contract_from_definition(definition, parsed):
+    if not _is_contextmanager_definition(definition, parsed):
+        return None
     tries = [
         statement for statement in definition.body if isinstance(statement, ast.Try)
     ]
@@ -2090,6 +2111,10 @@ class SequentialDigBody:
     # The dug FunctionDef's SourceFragment: the terminal-effect witness is
     # constructed from a real fragment, never from a blame string.
     fn_site: Any = None
+    # Issued only when source recognition proves the closed @contextmanager
+    # generator subset. Generic generators cannot project a yielded operand as
+    # an ordinary call result.
+    contextmanager_yield: bool = False
 
     def desugar(self, ctx: Any = None):
         from sugar_lift_py_tests.floor.exceptional_exit_value import (
@@ -2120,6 +2145,10 @@ class SequentialDigBody:
                 return outcome
             cur = outcome.extend_scope(cur)
             contribution = tuple(outcome.contribution())
+            if self.contextmanager_yield:
+                yielded = self._contextmanager_yield_value(contribution)
+                if yielded is not None:
+                    return Complete(yielded)
             guarded = tuple(
                 item
                 for item in contribution
@@ -2209,6 +2238,27 @@ class SequentialDigBody:
         if selected is not None:
             return Complete(selected)
         return self._control_flow_gap()
+
+    @staticmethod
+    def _contextmanager_yield_value(contribution):
+        from sugar_lift_py_tests.effect import GeneratorYieldRuntimeEffect
+        from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.ir import _Ctor
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        if len(contribution) != 1 or not isinstance(contribution[0], Incomplete):
+            return None
+        effect = contribution[0].effect
+        if not isinstance(effect, GeneratorYieldRuntimeEffect):
+            return None
+        operation = effect.witness.operation
+        if (
+            type(operation) is not _Ctor
+            or operation.name != "py.generator_yield"
+            or len(operation.args) != 1
+        ):
+            return None
+        return SymbolicValue(operation.args[0])
 
     @staticmethod
     def _exhaustive_guarded_selection(exits):
@@ -2522,7 +2572,14 @@ def _build_dig_body_impl(fn_site, ctx: Any):
                         for stmt in frags
                     )
                     core = SugarBody(
-                        sugar=SequentialDigBody(statements=statements, fn_site=fn_site),
+                        sugar=SequentialDigBody(
+                            statements=statements,
+                            fn_site=fn_site,
+                            contextmanager_yield=(
+                                contextmanager_exit_contract_for_fragment(fn_site)
+                                is not None
+                            ),
+                        ),
                         role=SugarRole.TERM,
                     )
             if key is not None:

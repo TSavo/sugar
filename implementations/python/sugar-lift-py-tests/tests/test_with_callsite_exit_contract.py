@@ -353,6 +353,25 @@ def test_source_contextmanager_contract_witness_truthful_and_lying(
     assert lying.verdict == "unsat"
 
 
+def test_local_contextmanager_entered_value_witness_truthful_and_lying(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in WithSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "with_local_contextmanager_entered_value"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+
 def test_proven_named_exit_contract_suppresses_matching_raise() -> None:
     block = compose_block(
         "    with manager:\n" "        raise ValueError('boom')\n" "    return 7\n",

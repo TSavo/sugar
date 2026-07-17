@@ -670,6 +670,149 @@ def test_sequential_dig_propagates_a_named_runtime_effect() -> None:
     assert "numpy/_core/repro.py:21:8" in outcome.reason
 
 
+def test_contextmanager_dig_projects_exact_reduced_yield_operand() -> None:
+    from sugar_lift_py_tests.effect import (
+        GeneratorYieldRuntimeEffect,
+        runtime_effect_evidence_from_terms,
+    )
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.floor import BlockValue, SymbolicValue
+    from sugar_lift_py_tests.ir import ctor, make_var, str_const
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+    site = (
+        SourceFragment.from_source(
+            "def manager():\n    yield 'entered'\n",
+            "vendor/pkg/repro.py",
+        )
+        .statements()[0]
+        .statements()[0]
+        .function_body()[0]
+    )
+    yielded = str_const("entered")
+    effect = GeneratorYieldRuntimeEffect(
+        "generator suspension is runtime-dependent",
+        **runtime_effect_evidence_from_terms(
+            ctor("py.generator_yield", [yielded]),
+            make_var("resume"),
+            site,
+        ),
+    )
+
+    class _ReducedTry:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(BlockValue((Incomplete(effect),)))
+
+    outcome = SequentialDigBody(
+        (_ReducedTry(),),
+        contextmanager_yield=True,
+    ).desugar()
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == SymbolicValue(yielded)
+
+
+def test_generic_dig_cannot_project_contextmanager_yield_operand() -> None:
+    from sugar_lift_py_tests.effect import (
+        GeneratorYieldRuntimeEffect,
+        runtime_effect_evidence_from_terms,
+    )
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.floor import BlockValue
+    from sugar_lift_py_tests.ir import ctor, make_var, str_const
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+    site = (
+        SourceFragment.from_source(
+            "def generator():\n    yield 'entered'\n",
+            "vendor/pkg/wrong_twin.py",
+        )
+        .statements()[0]
+        .statements()[0]
+        .function_body()[0]
+    )
+    effect = GeneratorYieldRuntimeEffect(
+        "generator suspension is runtime-dependent",
+        **runtime_effect_evidence_from_terms(
+            ctor("py.generator_yield", [str_const("entered")]),
+            make_var("resume"),
+            site,
+        ),
+    )
+
+    class _ReducedTry:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(BlockValue((Incomplete(effect),)))
+
+    with pytest.raises(FactoryPanic):
+        SequentialDigBody((_ReducedTry(),)).desugar()
+
+
+def test_source_contextmanager_authorizes_yield_projection() -> None:
+    from sugar_lift_py_tests.context import FactoryBuildContext
+    from sugar_lift_py_tests.factory import default_catalog
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        build_dig_body,
+        contextmanager_exit_contract_for_fragment,
+    )
+
+    source = (
+        "from contextlib import contextmanager\n"
+        "\n"
+        "@contextmanager\n"
+        "def managed():\n"
+        "    try:\n"
+        "        yield 'entered'\n"
+        "    finally:\n"
+        "        cleanup()\n"
+    )
+    module = SourceFragment.from_source(source, "vendor/pkg/manager.py")
+    fn_site = module.statements()[0].statements()[1]
+    ctx = FactoryBuildContext(
+        filename="vendor/pkg/manager.py",
+        catalog=default_catalog(),
+    )
+
+    contract = contextmanager_exit_contract_for_fragment(fn_site)
+    body = build_dig_body(fn_site, ctx)
+
+    assert contract is not None
+    assert contract.exception_names == frozenset()
+    assert body.sugar.body.sugar.contextmanager_yield is True
+
+
+def test_multiple_yields_cannot_authorize_contextmanager_projection() -> None:
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        contextmanager_exit_contract_for_fragment,
+    )
+
+    source = (
+        "from contextlib import contextmanager\n"
+        "\n"
+        "@contextmanager\n"
+        "def managed(flag):\n"
+        "    try:\n"
+        "        if flag:\n"
+        "            yield 'first'\n"
+        "        else:\n"
+        "            yield 'second'\n"
+        "    finally:\n"
+        "        cleanup()\n"
+    )
+    module = SourceFragment.from_source(source, "vendor/pkg/wrong_twin.py")
+    fn_site = module.statements()[0].statements()[1]
+
+    assert contextmanager_exit_contract_for_fragment(fn_site) is None
+
+
 def test_install_source_dig_never_constructs_abstract_runtime_effect() -> None:
     import ast
     import inspect
