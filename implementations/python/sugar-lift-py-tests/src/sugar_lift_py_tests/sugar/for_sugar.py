@@ -132,13 +132,23 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _finish_iterable(self, iterable, ctx):
-        from sugar_lift_py_tests.floor import ArrayLiteral, ListValue, TupleValue
+        from sugar_lift_py_tests.floor import (
+            ArrayLiteral,
+            ComprehensionValue,
+            ListValue,
+            TupleValue,
+        )
 
         elements = None
         if type(iterable) in (ListValue, TupleValue):
             elements = iterable.elements
         elif type(iterable) is ArrayLiteral:
             elements = iterable.items
+        elif (
+            type(iterable) is ComprehensionValue
+            and iterable.finite_elements is not None
+        ):
+            elements = iterable.finite_elements
         if elements is not None:
             _enforce_static_unfold_limit(len(elements), self.site)
             return self._unfold_values(elements, ctx)

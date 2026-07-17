@@ -21,9 +21,12 @@ from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
+    ObjectField,
+    ObjectValue,
     ReturnValue,
     StringValue,
     SymbolicValue,
+    TermValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.idd.sugar_witness_instruments import (
@@ -180,6 +183,28 @@ def test_ground_tuple_dynamic_getattr_stays_loud_at_owner() -> None:
 
     assert raised.value.info.owner == "GetattrBuiltinSugar"
     assert raised.value.info.requested == "statically enumerated attribute name"
+
+
+def test_for_consumes_constructed_finite_generator_members() -> None:
+    block = compose_block(
+        "    for value in (getattr(obj, name) for name in ('a', 'b')):\n"
+        "        return value\n",
+        binds={
+            "obj": ObjectValue(
+                class_name="Box",
+                fields=(
+                    ObjectField(name="a", value=TermValue(1)),
+                    ObjectField(name="b", value=TermValue(2)),
+                ),
+            )
+        },
+    )
+
+    assert [
+        statement.value
+        for statement in block.statements
+        if isinstance(statement, ReturnValue)
+    ] == [TermValue(1), TermValue(2)]
 
 
 def test_owns_simple_name_for_not_tuple_while_or_expr() -> None:

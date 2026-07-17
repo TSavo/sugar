@@ -40,14 +40,83 @@ class GeneratorExpSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def witnesses(cls):
         prefix = "def A(z):\n    y = (x for x in z)\n    return 1\n\n"
-        return _call_pair(
-            name="generator_exp_return",
-            owner_sugar="GeneratorExpSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        finite_prefix = (
+            "class Box:\n"
+            "    def __init__(self):\n"
+            "        self.x = 7\n"
+            "\n"
+            "def B():\n"
+            "    for value in (getattr(Box(), name) for name in ('x',)):\n"
+            "        return value\n"
+            "    return 0\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="generator_exp_return",
+                owner_sugar="GeneratorExpSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            _call_pair(
+                name="generator_exp_finite_getattr_return",
+                owner_sugar="GeneratorExpSugar",
+                truthful=finite_prefix + "def test_b():\n    assert B() == 7\n",
+                lying=finite_prefix + "def test_b():\n    assert B() == 8\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        clause = self.clauses[0]
+        if (
+            len(self.clauses) == 1
+            and len(clause.bindings) == 1
+            and clause.bindings[0][1] == ()
+            and not clause.conditions
+        ):
+            return clause.iterable.reduce(ctx).and_then(
+                lambda iterable: self._finite_or_coordinate(iterable, ctx)
+            )
+        return self._coordinate(ctx)
+
+    def _finite_or_coordinate(self, iterable, ctx):
+        from sugar_lift_py_tests.floor import ListValue, TupleValue
+
+        if isinstance(iterable, (ListValue, TupleValue)):
+            return self._collect_finite(iterable, iterable.elements, (), ctx)
+        return self._coordinate(ctx, iterable)
+
+    def _collect_finite(self, iterable, remaining, accumulated, ctx):
+        from sugar_lift_py_tests.floor import ComprehensionValue, ScopeRebind
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        if not remaining:
+            return Complete(
+                ComprehensionValue(
+                    ctor(
+                        "py.genexp.finite",
+                        [
+                            iterable.to_term(owner=str(self.site)),
+                            *(
+                                _floor_as_term(value, owner=str(self.site))
+                                for value in accumulated
+                            ),
+                        ],
+                    ),
+                    accumulated,
+                )
+            )
+        item, *rest = remaining
+        name = self.clauses[0].bindings[0][0]
+        item_ctx = ScopeRebind(name, item).extend_scope(ctx)
+        return self.elt_body.reduce(item_ctx).and_then(
+            lambda value: self._collect_finite(
+                iterable, tuple(rest), (*accumulated, value), ctx
+            )
+        )
+
+    def _coordinate(self, ctx, first_iterable=None) -> Outcome:
         from sugar_lift_py_tests.ir import ctor
 
         return reduce_clauses(
@@ -66,6 +135,7 @@ class GeneratorExpSugar(Sugar, role=SugarRole.TERM):
                     )
                 )
             ),
+            first_iterable=first_iterable,
         )
 
     def walk_children(self):
