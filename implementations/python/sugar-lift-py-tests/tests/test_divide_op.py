@@ -15,9 +15,15 @@ from sugar_lift_py_tests.effect import DivideRuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import CallSiteValue, NativeCallableValue, TermValue
-from sugar_lift_py_tests.ir import ctor
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    NativeCallableValue,
+    StringValue,
+    SymbolicValue,
+    TermValue,
+)
+from sugar_lift_py_tests.ir import ctor, make_var
+from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.divide_op_sugar import DivideOpSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
@@ -69,6 +75,48 @@ def test_divide_by_zero_halts_block_like_os_exit() -> None:
 def test_string_divide_panics_for_free() -> None:
     with pytest.raises(FactoryPanic):
         _term('"a" / "b"')
+
+
+def test_ground_number_divided_by_symbolic_value_retains_coordinate() -> None:
+    site = SourceFragment.from_source("1.0 / scaling\n", "t.py").statements()[0]
+
+    scaling = make_var("scaling")
+    outcome = TermValue(1.0).divide(SymbolicValue(scaling), site)
+
+    assert outcome == Complete(
+        SymbolicValue(ctor("/", [TermValue(1.0).to_term(owner="test"), scaling]))
+    )
+
+
+def test_ground_left_divided_by_callsite_retains_coordinate() -> None:
+    site = SourceFragment.from_source('"A" / Path("root")\n', "t.py").statements()[0]
+    right = CallSiteValue(
+        target_name="Path",
+        arg_values=(StringValue("root"),),
+        parameters=(),
+        term=ctor("call:Path", [StringValue("root").to_term(owner="test")]),
+        body=None,
+        site=site,
+    )
+
+    number_outcome = TermValue(1.0).divide(right, site)
+    string_outcome = StringValue("A").divide(right, site)
+
+    assert number_outcome == Complete(
+        SymbolicValue(
+            ctor(
+                "/", [TermValue(1.0).to_term(owner="test"), right.to_term(owner="test")]
+            )
+        )
+    )
+    assert string_outcome == Complete(
+        SymbolicValue(
+            ctor(
+                "/",
+                [StringValue("A").to_term(owner="test"), right.to_term(owner="test")],
+            )
+        )
+    )
 
 
 def test_native_callable_divide_by_opaque_call_result_is_witnessed() -> None:
