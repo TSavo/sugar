@@ -67,6 +67,14 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
             "        return 5\n"
             "    return inner()\n\n"
         )
+        unexpected_keyword_prefix = (
+            "def A(z):\n"
+            "    def inner(value):\n"
+            "        return value\n"
+            "    if z < 0:\n"
+            "        inner(z, extra=1)\n"
+            "    return z\n\n"
+        )
         return (
             _call_pair(
                 name="statement_function_def_return",
@@ -85,6 +93,16 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 owner_sugar="StatementFunctionDefSugar",
                 truthful=self_binding_prefix + "def test_a():\n    assert A() == 5\n",
                 lying=self_binding_prefix + "def test_a():\n    assert A() == 6\n",
+            ),
+            _call_pair(
+                name="statement_function_def_unexpected_keyword_type_error",
+                owner_sugar="StatementFunctionDefSugar",
+                truthful=(
+                    unexpected_keyword_prefix + "def test_a():\n    assert A(5) == 5\n"
+                ),
+                lying=(
+                    unexpected_keyword_prefix + "def test_a():\n    assert A(5) == 6\n"
+                ),
             ),
         )
 

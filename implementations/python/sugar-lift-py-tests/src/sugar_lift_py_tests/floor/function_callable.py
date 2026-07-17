@@ -291,6 +291,37 @@ class FunctionCallable(FloorValue):
                 binding_ok = False
             bound_values = tuple(bound_list) if binding_ok else None
         if bound_values is None:
+            keyword_bindable_names = {
+                name
+                for name, kind in zip(self.parameters, self.parameter_kinds)
+                if kind in {"positional", "keyword-only"}
+            }
+            unexpected_keywords = tuple(
+                name for name in keyword_map if name not in keyword_bindable_names
+            )
+            if (
+                supported_signature
+                and not has_var_keyword
+                and "**" not in keyword_names
+                and unexpected_keywords
+            ):
+                import hashlib
+
+                from sugar_lift_py_tests.effect import RaiseEffect
+                from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
+
+                source_sha256 = (
+                    hashlib.sha256(site.source.encode()).hexdigest()
+                    if site.source is not None
+                    else None
+                )
+                exception = ExceptionValue("TypeError", (), site)
+                return Complete(
+                    RaiseValue(
+                        RaiseEffect("TypeError", str(site), source_sha256),
+                        exception=exception,
+                    )
+                )
             factory_panic_gap(
                 owner="FunctionCallable",
                 blame=str(site),

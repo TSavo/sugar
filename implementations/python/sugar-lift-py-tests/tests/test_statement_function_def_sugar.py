@@ -13,6 +13,7 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     DictValue,
     FunctionCallable,
+    RaiseValue,
     StringValue,
     TermValue,
     TupleValue,
@@ -387,6 +388,48 @@ def test_nested_callable_ground_non_mapping_keyword_expansion_stays_loud() -> No
     assert raised.value.info.requested == "bind call arguments to a function signature"
 
 
+def test_nested_callable_constructs_static_unexpected_keyword_type_error() -> None:
+    site = SourceFragment.from_source("inner(1, extra=2)\n", "nested.py").statements()[
+        0
+    ]
+    callable_value = FunctionCallable(
+        name="inner",
+        parameters=("value",),
+        parameter_kinds=("positional",),
+        body=object(),
+    )
+
+    outcome = callable_value.callsite(
+        (TermValue(1), TermValue(2)),
+        ("extra",),
+        site,
+    )
+
+    value = complete_value(outcome, owner="unexpected keyword regression")
+    assert isinstance(value, RaiseValue)
+    assert value.effect.exception_name == "TypeError"
+    assert value.exception is not None
+    assert value.exception.exception_name == "TypeError"
+
+
+def test_nested_callable_valid_keyword_still_constructs_callsite() -> None:
+    site = SourceFragment.from_source("inner(value=1)\n", "nested.py").statements()[0]
+    callable_value = FunctionCallable(
+        name="inner",
+        parameters=("value",),
+        parameter_kinds=("positional",),
+        body=object(),
+    )
+
+    value = complete_value(
+        callable_value.callsite((TermValue(1),), ("value",), site),
+        owner="valid keyword discrimination",
+    )
+
+    assert isinstance(value, CallSiteValue)
+    assert value.arg_values == (TermValue(1),)
+
+
 def test_nested_callable_keyword_expansion_without_var_keyword_stays_loud() -> None:
     with pytest.raises(FactoryPanic) as raised:
         _root_universe(
@@ -417,6 +460,20 @@ def test_callable_self_binding_witness_truthful_sat_and_lying_unsat(tmp_path) ->
         witness
         for witness in StatementFunctionDefSugar.witnesses()
         if witness.name == "statement_function_def_self_binding_return"
+    )
+
+    report = evaluate_seed_witnesses((witness,), tmp_path)
+
+    assert report.is_zero
+
+
+def test_unexpected_keyword_type_error_witness_truthful_sat_and_lying_unsat(
+    tmp_path,
+) -> None:
+    witness = next(
+        witness
+        for witness in StatementFunctionDefSugar.witnesses()
+        if witness.name == "statement_function_def_unexpected_keyword_type_error"
     )
 
     report = evaluate_seed_witnesses((witness,), tmp_path)
