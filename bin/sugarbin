@@ -704,12 +704,16 @@ tool_versions() {
 build_identity() {
   local stamp="$1"
   require_b3sum || return 1
-  # sourceStamp is the BLAKE3 closure of this package's actual build inputs.
-  # Repository HEAD is deliberately not an input: unrelated commits are
-  # outside the component's blast radius and must not invalidate its binary.
+  # sourceStamp is the BLAKE3 package-input closure. Monorepo HEAD is also part
+  # of identity so a shelf/cache hit cannot serve a binary whose compile-time
+  # monorepo HEAD disagrees with the live Python kit identity (#4577 split-
+  # pipeline refuse: kit @HEAD != binary @oldHEAD).
   local incremental="0"
   [[ "$profile" != debug ]] || incremental="1"
-  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$package" "$bin_name" "$incremental" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
+  local monorepo_head
+  monorepo_head="$(attestation_git_head)"
+  [[ -n "$monorepo_head" ]] || monorepo_head="unknown"
+  python3 - "$stamp" "$rustc_verbose" "$cargo_verbose" "$(platform_key)" "$target_triple" "$profile" "" "$package" "$bin_name" "$incremental" "$monorepo_head" <<'PY' | b3sum -l 64 --no-names | awk '{print "blake3-512:" $1}'
 import sys
 def emit(label, value):
     label = label.encode(); value = value.encode()
@@ -717,7 +721,7 @@ def emit(label, value):
     sys.stdout.buffer.write(str(len(value)).encode() + b":" + value)
 for label, value in zip(("sourceStamp", "rustcVersionVerbose", "cargoVersionVerbose",
                          "platform", "targetTriple", "profile", "sortedFeatures",
-                         "package", "binary", "incremental"), sys.argv[1:]):
+                         "package", "binary", "incremental", "monorepoHead"), sys.argv[1:]):
     emit(label, value)
 PY
 }
@@ -1106,12 +1110,20 @@ build_from_source() {
   local build_root="$build_base/$(stamp_for_filename "$family_identity")"
   mkdir -p "$build_root"
   local built="$build_root/$profile/$bin_name"
+  # Pin compile-time monorepo HEAD so the #4577 split-pipeline gate compares
+  # kit source to the checkout that produced this binary. Avoid the obsolete
+  # SUGAR_BUILD_* names in this broker; the makefile maps monorepo head into
+  # the cargo rustc-env slot.
+  local monorepo_head
+  monorepo_head="$(attestation_git_head)"
+  [[ -n "$monorepo_head" ]] || monorepo_head="unknown"
   SUGARBIN_OUTPUT="$built" \
     SUGARBIN_TARGET_DIR="$build_root" \
     SUGARBIN_MANIFEST="$rust_workspace/Cargo.toml" \
     SUGARBIN_PACKAGE="$package" \
     SUGARBIN_BINARY="$bin_name" \
     SUGARBIN_BUILD_STAMP="$stamp" \
+    SUGARBIN_MONOREPO_HEAD="$monorepo_head" \
     SUGARBIN_CARGO="$cargo_bin" \
     SUGARBIN_PROFILE="$profile" \
     "$make_bin" --silent --no-print-directory -f "$repo_root/tools/sugarbin-build.mk" sugarbin-build

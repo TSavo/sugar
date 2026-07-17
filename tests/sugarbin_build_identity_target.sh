@@ -93,12 +93,13 @@ resolved_from_make="$("$repo/bin/sugarbin" --bin sugar)"
 [[ "$($resolved_from_make)" == "fresh:sugar" ]]
 [[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]]
 
-# Repository HEAD is not a build input. With the BLAKE3 source closure fixed,
-# an unrelated commit must reuse the exact artifact without invoking Cargo.
+# #4577: monorepo HEAD is a build input so kit @HEAD == binary @HEAD. An
+# unrelated commit must miss the cache and invoke Cargo for a new identity.
 export SUGARBIN_FAKE_GIT_HEAD="head-after-unrelated-change"
 resolved_again="$("$repo/bin/sugarbin" --bin sugar)"
-[[ "$resolved_again" == "$resolved" ]]
-[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]]
+[[ "$resolved_again" == "$tmp/target/release/sugar" ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 3 ]]
+[[ "$($resolved_again)" == "fresh:sugar" ]]
 
 # BX/CI filesystem shelf: a local artifact contributes an atomic cell, then a
 # clean consumer recovers it without GitHub or another Cargo invocation.
@@ -110,7 +111,7 @@ rm "$tmp/target/release/sugar" "$tmp/target/release/sugar.sugarbin.json"
 export SUGAR_BINARY_ALLOW_BUILD=0
 resolved_from_shelf="$("$repo/bin/sugarbin" --bin sugar)"
 [[ "$($resolved_from_shelf)" == "fresh:sugar" ]]
-[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 2 ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 3 ]]
 
 # A real source-closure change misses the artifact shelf and calls Cargo, but
 # reuses the same persistent toolchain/profile target so incremental state is
@@ -119,7 +120,7 @@ export SUGAR_BINARY_SOURCE_STAMP="blake3-512:$(printf '8%.0s' {1..128})"
 export SUGAR_BINARY_NO_SHELF=1 SUGAR_BINARY_PUBLISH=0 SUGAR_BINARY_ALLOW_BUILD=1
 rm "$tmp/target/release/sugar" "$tmp/target/release/sugar.sugarbin.json"
 "$repo/bin/sugarbin" --bin sugar >/dev/null
-[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 3 ]]
+[[ "$(wc -l <"$tmp/cargo.log" | tr -d ' ')" == 4 ]]
 [[ "$(cut -d'|' -f1 "$tmp/cargo.log" | sort -u | wc -l | tr -d ' ')" == 1 ]]
 
 echo 'PASS: sugarbin Cargo output is isolated by build identity'

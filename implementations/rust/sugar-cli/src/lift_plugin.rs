@@ -403,6 +403,20 @@ pub(crate) fn dispatch_lift_path(
     Ok(session)
 }
 
+/// Refuse when kit source identity differs from the binary's compile-time
+/// monorepo HEAD (#4577). Dirty matched trees keep the same base identity and
+/// pass; a content CID cannot equal a git HEAD and therefore refuses rather
+/// than weakening the gate.
+pub(crate) fn refuse_split_pipeline(identity: &str, binary: &str) -> Result<(), String> {
+    if identity == binary {
+        Ok(())
+    } else {
+        Err(format!(
+            "refusing to mint from a split pipeline: kit @{identity} != binary @{binary}"
+        ))
+    }
+}
+
 fn enforce_python_kit_source(
     surface: &str,
     initialize_response: &Value,
@@ -423,6 +437,8 @@ fn enforce_python_kit_source(
             "python kit initialize response supplied an empty kit_source identity".to_string(),
         ));
     }
+    refuse_split_pipeline(identity, env!("SUGAR_BUILD_GIT_HEAD"))
+        .map_err(LiftPluginError::SplitPipeline)?;
     if let Ok(mut slot) = last_python_kit_source_slot().lock() {
         *slot = initialize_response.get("kit_source").cloned();
     }
@@ -1116,6 +1132,23 @@ mod tests {
             }
             other => panic!("expected typed diagnostic, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn split_pipeline_refusal_names_both_commits() {
+        assert_eq!(
+            refuse_split_pipeline("kit-a", "binary-b").unwrap_err(),
+            "refusing to mint from a split pipeline: kit @kit-a != binary @binary-b"
+        );
+        assert!(refuse_split_pipeline("kit-a", "kit-a").is_ok());
+    }
+
+    #[test]
+    fn content_addressed_kit_refuses_against_git_binary_head() {
+        assert_eq!(
+            refuse_split_pipeline("blake3-512:deadbeef", "abc123").unwrap_err(),
+            "refusing to mint from a split pipeline: kit @blake3-512:deadbeef != binary @abc123"
+        );
     }
 }
 #[test]
