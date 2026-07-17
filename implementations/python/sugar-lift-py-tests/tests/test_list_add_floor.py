@@ -5,8 +5,16 @@ import pytest
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.factory import FactoryPanic
-from sugar_lift_py_tests.floor import ListValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.effect import SequenceConcatenationRuntimeEffect
+from sugar_lift_py_tests.floor import (
+    ComprehensionValue,
+    ListValue,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
 
 def test_list_add_concatenates_constructed_elements() -> None:
@@ -32,3 +40,14 @@ def test_statically_invalid_list_addition_remains_loud() -> None:
 
 def test_list_value_declares_its_add_floor_structurally() -> None:
     assert "add" in ListValue.__dict__
+
+
+def test_list_add_runtime_sized_comprehension_is_named() -> None:
+    site = SourceFragment.from_source("[1] + [x for x in xs]", "t.py")
+
+    outcome = ListValue((TermValue(1),)).add(
+        ComprehensionValue(ctor("py.listcomp", [make_var("xs")])), site
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceConcatenationRuntimeEffect)

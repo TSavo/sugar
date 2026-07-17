@@ -50,6 +50,19 @@ class TupleValue(FloorValue):
 
         return Complete(TermValue(len(self.elements)))
 
+    def add(self, other, site):
+        if type(other) is TupleValue:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TupleValue((*self.elements, *other.elements)))
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
+            return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+        return super().add(other, site)
+
     def test_python_type(self, value, site):
         return self._collect_type_tests(value, site, 0, ())
 

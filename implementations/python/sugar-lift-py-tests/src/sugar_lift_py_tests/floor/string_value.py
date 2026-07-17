@@ -164,10 +164,29 @@ class StringValue(FloorValue):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
+        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if isinstance(other, GuardedValue):
             return other.map_from_left("add", self, site)
+        if type(other) is OpaqueOpCallsite and other.callee == "str":
+            if type(other.computed) is StringValue:
+                from sugar_lift_py_tests.outcome import Complete
+
+                return Complete(StringValue(self.value + other.computed.value))
+            from sugar_lift_py_tests.effect import (
+                SequenceConcatenationRuntimeEffect,
+                runtime_effect_witness,
+            )
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            return Incomplete(
+                SequenceConcatenationRuntimeEffect(
+                    "string concatenation depends on runtime str() content; "
+                    f"owner=StringValue.add site={site}",
+                    witness=runtime_effect_witness("py.sequence_concat", other, site),
+                )
+            )
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
         return super().add(other, site)

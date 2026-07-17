@@ -188,12 +188,20 @@ class TermValue(FloorValue):
             )
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
+        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if isinstance(other, GuardedValue):
             return other.map_from_left("add", self, site)
-        if type(other) in (CallSiteValue, PredicateValue, SymbolicValue):
+        if type(other) in (
+            CallSiteValue,
+            ImportAliasValue,
+            OpaqueOpCallsite,
+            PredicateValue,
+            SymbolicValue,
+        ):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
         return super().add(other, site)
 
