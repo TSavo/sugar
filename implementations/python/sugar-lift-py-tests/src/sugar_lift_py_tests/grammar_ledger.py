@@ -310,7 +310,11 @@ _NON_RETURN: dict = {
         "through its own frame; cross-frame interleaving is not pinned by "
         "this body"
     ),
-    "Nonlocal": _membrane("declared shared-scope mutation (see Global)"),
+    "Nonlocal": _debt(
+        "declared enclosing-frame rebinding is structurally decidable "
+        "(#4783): construct shared-scope binding like GlobalRoute, or keep "
+        "the factory None-arm panic — never a RuntimeEffect"
+    ),
     "AsyncWith": _membrane(
         "suspension inside the tail: scheduler interleaving is not pinned "
         "by the body. #4688: symbolic managers typed red "
