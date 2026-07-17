@@ -389,8 +389,13 @@ pub fn run(args: LiftArgs) -> u8 {
                 if let Err(error) =
                     attach_report_implications(&mut report, &project_root, [surface.clone()])
                 {
-                    eprintln!("{}: {error}", "error".red().bold());
-                    return EXIT_USER_ERROR;
+                    // Construction panics during implication enumeration must not
+                    // erase the rest of the visual wall. Loud on stderr; call book
+                    // stays empty until the join path can answer.
+                    eprintln!(
+                        "{}: {error} (continuing report without call book)",
+                        "error".red().bold()
+                    );
                 }
                 trace_lift_source_report("after_source_report_from_lift_response", &report);
                 let prove_with = if args.prove {
@@ -885,8 +890,10 @@ fn run_configured_lift_report_graph(
             project_root,
             plugins.iter().map(|plugin| plugin.surface.clone()),
         ) {
-            eprintln!("{}: {error}", "error".red().bold());
-            return EXIT_USER_ERROR;
+            eprintln!(
+                "{}: {error} (continuing report without call book)",
+                "error".red().bold()
+            );
         }
         // Rebase file paths in source mementos and contract sourceWarrants
         // using workspace_override from plan mementos.  In the proof path
@@ -1025,8 +1032,10 @@ fn run_configured_lift_report_graph(
         project_root,
         plugins.iter().map(|plugin| plugin.surface.clone()),
     ) {
-        eprintln!("{}: {error}", "error".red().bold());
-        return EXIT_USER_ERROR;
+        eprintln!(
+            "{}: {error} (continuing report without call book)",
+            "error".red().bold()
+        );
     }
     trace_lift_source_report("after_source_report_from_lift_response", &report);
 
@@ -1180,8 +1189,10 @@ fn run_configured_lift_report_response(
         project_root,
         plugins.iter().map(|plugin| plugin.surface.clone()),
     ) {
-        eprintln!("{}: {error}", "error".red().bold());
-        return EXIT_USER_ERROR;
+        eprintln!(
+            "{}: {error} (continuing report without call book)",
+            "error".red().bold()
+        );
     }
     trace_lift_source_report("after_source_report_from_lift_response", &report);
 
