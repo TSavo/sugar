@@ -40,14 +40,28 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def witnesses(cls):
-        prefix = (
+        list_prefix = (
             "def A():\n" "    xs = [1, 2, 3]\n" "    del xs[1]\n" "    return xs[1]\n\n"
         )
-        return _call_pair(
-            name="subscript_delete_post_state",
-            owner_sugar="SubscriptDeleteSugar",
-            truthful=prefix + "def test_a():\n    assert A() == 3\n",
-            lying=prefix + "def test_a():\n    assert A() == 2\n",
+        dict_prefix = (
+            "def A():\n"
+            "    d = {'drop': 1, 'keep': 2}\n"
+            "    del d['drop']\n"
+            "    return d['keep']\n\n"
+        )
+        return (
+            _call_pair(
+                name="subscript_delete_post_state",
+                owner_sugar="SubscriptDeleteSugar",
+                truthful=list_prefix + "def test_a():\n    assert A() == 3\n",
+                lying=list_prefix + "def test_a():\n    assert A() == 2\n",
+            ),
+            _call_pair(
+                name="dict_subscript_delete_post_state",
+                owner_sugar="SubscriptDeleteSugar",
+                truthful=dict_prefix + "def test_a():\n    assert A() == 2\n",
+                lying=dict_prefix + "def test_a():\n    assert A() == 1\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

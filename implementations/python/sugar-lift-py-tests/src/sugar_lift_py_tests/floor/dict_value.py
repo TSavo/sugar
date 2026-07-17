@@ -111,3 +111,45 @@ class DictValue(FloorValue):
                 **runtime_effect_evidence("py.setitem", index, site),
             )
         )
+
+    def delitem(self, index, site):
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        if type(index) is StringValue or type(index) is TermValue:
+            for position, (key, _value) in enumerate(self.entries):
+                if type(key) is type(index) and key.value == index.value:
+                    return Complete(
+                        DictValue(
+                            (
+                                *self.entries[:position],
+                                *self.entries[position + 1 :],
+                            )
+                        )
+                    )
+            from sugar_lift_py_tests.effect import (
+                KeyErrorRuntimeEffect,
+                runtime_effect_evidence,
+            )
+
+            return Incomplete(
+                KeyErrorRuntimeEffect(
+                    "dict deletion key missing runtime boundary: "
+                    f"key={index!r}; owner=DictValue.delitem site={site}",
+                    **runtime_effect_evidence("py.delitem", index, site),
+                )
+            )
+
+        from sugar_lift_py_tests.effect import (
+            SubscriptStoreRuntimeEffect,
+            runtime_effect_evidence,
+        )
+
+        return Incomplete(
+            SubscriptStoreRuntimeEffect(
+                "dict subscript delete requires a concrete key; "
+                f"owner=DictValue.delitem site={site}",
+                **runtime_effect_evidence("py.delitem", index, site),
+            )
+        )

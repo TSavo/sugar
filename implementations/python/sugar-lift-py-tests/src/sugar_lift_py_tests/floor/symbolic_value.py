@@ -692,3 +692,31 @@ class SymbolicValue(FloorValue):
                 site=site,
             )
         )
+
+    def delitem(self, index, site):
+        """Rebind a symbolic container after ``del xs[k]``.
+
+        A symbolic receiver has no element history to fold, but deletion still
+        constructs a post-state. Carry that state as the same ``py.delitem``
+        coordinate used for opaque callsite receivers.
+        """
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+
+        index_term = floor_to_term(index, owner="SymbolicValue.delitem index")
+        return Complete(
+            CallSiteValue(
+                target_name="delitem",
+                arg_values=(self, index),
+                parameters=(),
+                term=ctor(
+                    "py.delitem",
+                    [self.to_term(owner=str(site)), index_term],
+                    symbol_kind="method-coordinate",
+                ),
+                body=None,
+                site=site,
+            )
+        )
