@@ -502,6 +502,9 @@ def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
             runtime_operand=base,
         )
     base_name = base_coordinate
+    mro = _static_constructor_mro(target, class_site, ctx)
+    if mro is not None:
+        return _strategy_from_static_mro(site, ctx, target, class_site, methods, mro)
     resolved = (ctx.name_resolver or {}).get(base_name)
     if resolved is None:
         from sugar_lift_py_tests.floor import ImportAliasValue, SymbolicValue
@@ -612,6 +615,10 @@ def _static_mro_for_named_base(name: str, ctx, stack: frozenset[str]):
     from sugar_lift_py_tests.floor import ImportAliasValue, SymbolicValue
 
     if "." in name:
+        head, rest = name.split(".", 1)
+        bound = ctx.temporal.value_if_bound(head)
+        if isinstance(bound, ImportAliasValue) and bound.import_target is not None:
+            return _static_mro_for_import(f"{bound.import_target}.{rest}", stack)
         return None
     bound = ctx.temporal.value_if_bound(name)
     if isinstance(bound, SymbolicValue):
@@ -826,6 +833,11 @@ def _multi_base_inherited_strategy(site, ctx, target: str, class_site, methods=(
             "statically resolved inherited constructor",
             f"construct the exact multiple-inheritance MRO for `{target}`",
         )
+    return _strategy_from_static_mro(site, ctx, target, class_site, methods, mro)
+
+
+def _strategy_from_static_mro(site, ctx, target, class_site, methods, mro):
+    """Select the first constructed initializer from an exact static MRO."""
     for entry in mro[1:]:
         strategy = _constructor_from_mro_entry(
             site, ctx, target, class_site, methods, entry

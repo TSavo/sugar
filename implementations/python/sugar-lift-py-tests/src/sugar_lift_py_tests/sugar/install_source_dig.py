@@ -1835,8 +1835,19 @@ def resolve_install_source_class_bases(
     did not prove every base coordinate. This door never guesses from an
     instance and never turns an unbuilt source shape into runtime dependence.
     """
-    if not qualified_class or "." not in qualified_class:
+    return _resolve_install_source_class_bases(qualified_class, frozenset())
+
+
+def _resolve_install_source_class_bases(
+    qualified_class: str, resolving: frozenset[str]
+) -> tuple[str, ...] | None:
+    if (
+        not qualified_class
+        or "." not in qualified_class
+        or qualified_class in resolving
+    ):
         return None
+    resolving = resolving | {qualified_class}
     module_name, class_name = qualified_class.rsplit(".", 1)
     installed = _installed_source(module_name)
     if installed is None:
@@ -1860,6 +1871,13 @@ def resolve_install_source_class_bases(
         None,
     )
     if class_node is None:
+        reexport = (
+            _definite_unconditional_reexport_target(module_name, class_name, parsed)
+            or _definite_star_reexport_target(module_name, class_name, parsed)
+            or _definite_setup_reexport_target(module_name, class_name, parsed)
+        )
+        if reexport is not None:
+            return _resolve_install_source_class_bases(reexport, resolving)
         # Resolve public source facades without consulting runtime ``__mro__``.
         # Python 3.11's ``collections.abc`` is literally a star re-export of
         # ``_collections_abc``; later releases point inspection at the defining
@@ -1874,7 +1892,9 @@ def resolve_install_source_class_bases(
             )
             if target_module is None:
                 continue
-            bases = resolve_install_source_class_bases(f"{target_module}.{class_name}")
+            bases = _resolve_install_source_class_bases(
+                f"{target_module}.{class_name}", resolving
+            )
             if bases is None:
                 continue
             target_prefix = f"{target_module}."
