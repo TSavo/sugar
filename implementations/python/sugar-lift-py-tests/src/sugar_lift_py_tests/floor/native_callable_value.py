@@ -35,3 +35,12 @@ class NativeCallableValue(FloorValue):
 
             return runtime_subtract(self, other, site)
         return super().subtract(other, site)
+
+    def divide(self, other, site):
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+        if type(other) is CallSiteValue:
+            from sugar_lift_py_tests.effect import runtime_divide
+
+            return runtime_divide(self, other, site)
+        return super().divide(other, site)

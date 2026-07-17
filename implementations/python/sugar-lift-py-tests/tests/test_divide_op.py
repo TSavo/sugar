@@ -11,14 +11,22 @@ from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-from sugar_lift_py_tests.effect import DivisionByZeroRuntimeEffect
+from sugar_lift_py_tests.effect import DivideRuntimeEffect, DivisionByZeroRuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-from sugar_lift_py_tests.floor import BlockValue
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    CallSiteValue,
+    NativeCallableValue,
+    TermValue,
+)
+from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.sugar_body import SugarBody
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _condition(source: str):
@@ -73,3 +81,49 @@ def test_divide_by_zero_halts_block_like_os_exit() -> None:
 def test_string_divide_panics_for_free() -> None:
     with pytest.raises(FactoryPanic):
         _term('"a" / "b"')
+
+
+def test_native_callable_divide_by_opaque_call_result_is_witnessed() -> None:
+    site = SourceFragment.from_source("NaT / td\n", "t.py").statements()[0]
+    left = NativeCallableValue("pandas.NaT", "/native/pandas.so")
+    right = CallSiteValue(
+        target_name="Timedelta",
+        arg_values=(TermValue(10),),
+        parameters=(),
+        term=ctor("call:Timedelta", [TermValue(10).to_term(owner="test")]),
+        body=None,
+        site=site,
+    )
+
+    outcome = left.divide(right, site)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, DivideRuntimeEffect)
+    operand = ctor("/", [left.to_term(owner="test"), right.to_term(owner="test")])
+    assert outcome.effect.witness.operand == operand
+    assert outcome.effect.witness.operation == ctor("py.divide", [operand])
+    assert outcome.effect.witness.locus == "t.py:1:0"
+
+
+def test_native_callable_divide_unsupported_peer_stays_loud() -> None:
+    site = SourceFragment.from_source("NaT / 2\n", "t.py").statements()[0]
+
+    with pytest.raises(FactoryPanic, match="owner=divide"):
+        NativeCallableValue("pandas.NaT", "/native/pandas.so").divide(
+            TermValue(2), site
+        )
+
+
+def test_divide_truthful_and_lying_twins_reach_opposite_verdicts(tmp_path) -> None:
+    prefix = "def A():\n    return 10 / 2\n\n"
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", prefix + "def test_a():\n    assert A() == 5\n"
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying", prefix + "def test_a():\n    assert A() == 4\n"
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+    assert "DivideOpSugar" in truthful.selected_sugars
+    assert "DivideOpSugar" in lying.selected_sugars
