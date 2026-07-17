@@ -28,8 +28,8 @@ def test_class_method_floor_division_and_rebind_construct() -> None:
     assert not any("observed=BinOp" in message for message in messages), messages
     assert not any("observed=AugAssign" in message for message in messages), messages
     assert {row.name for row in payload.ir if row.kind == "function-contract"} >= {
-        "_cmp",
-        "__hash__",
+        "datetime.time._cmp",
+        "datetime.time.__hash__",
     }
 
 

@@ -1528,13 +1528,37 @@ def _installed_module_name_from_filename(filename: str) -> str | None:
     return ".".join(package)
 
 
-def _qualified_callable_spelling(filename: str, callable_name: str) -> str:
-    """Content-independent callable spelling rooted at its Python module."""
+def _module_spelling_from_filename(filename: str) -> str:
+    """Module path spelling for a source file (package parts + stem)."""
     module_parts = list(Path(filename).with_suffix("").parts)
     if module_parts and module_parts[-1] == "__init__":
         module_parts.pop()
-    module = ".".join(part for part in module_parts if part not in ("", "."))
-    if not module or callable_name == module or callable_name.startswith(f"{module}."):
+    return ".".join(part for part in module_parts if part not in ("", "."))
+
+
+def _qualified_callable_spelling(
+    filename: str,
+    callable_name: str,
+    *,
+    relative_to_module: bool = False,
+) -> str:
+    """Content-independent callable spelling rooted at its Python module.
+
+    `relative_to_module=True` means `callable_name` is a path relative to the
+    module (bare def leaf or `Class.method` / `Outer.Inner.method`). The module
+    root is always applied. This is load-bearing when a class stem equals the
+    module stem: class `datetime` in `datetime.py` must become
+    `datetime.datetime._cmp`, never collapse onto module-level `datetime._cmp`
+    via a false "already module-qualified" short-circuit (#4325).
+    """
+    module = _module_spelling_from_filename(filename)
+    if not module:
+        return callable_name
+    if relative_to_module:
+        if not callable_name or callable_name == module:
+            return module
+        return f"{module}.{callable_name}"
+    if callable_name == module or callable_name.startswith(f"{module}."):
         return callable_name
     return f"{module}.{callable_name}"
 
@@ -1899,10 +1923,19 @@ def audit_lift_file(
                 continue
             if isinstance(value, UniverseValue):
                 owner = _definition_class_owner(module, stmt)
+                bare_name = value.name
                 if owner is not None:
-                    value = dataclasses.replace(value, name=f"{owner}.{value.name}")
-                bridge_source_symbol = value.bridge_source_symbol or value.name
-                qualified_name = _qualified_callable_spelling(filename, value.name)
+                    # Class-relative path stays relative to the module. Module
+                    # root is forced below so class stem == module stem cannot
+                    # be mistaken for an already-rooted spelling (#4325).
+                    relative = f"{owner}.{bare_name}"
+                    qualified_name = _qualified_callable_spelling(
+                        filename, relative, relative_to_module=True
+                    )
+                else:
+                    relative = bare_name
+                    qualified_name = _qualified_callable_spelling(filename, relative)
+                bridge_source_symbol = value.bridge_source_symbol or bare_name
                 value = dataclasses.replace(
                     value,
                     name=qualified_name,

@@ -16815,6 +16815,50 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
+    fn universe_identity_keeps_module_and_class_named_like_module_distinct() {
+        // #4325 residual: class datetime in datetime.py must not share the
+        // module-level _cmp identity. Lift emits module-rooted spellings;
+        // the visual groups by those owners + CID.
+        let module_cmp = serde_json::json!({
+            "name": "datetime._cmp",
+            "kind": "function-contract",
+            "post": {"kind": "atom", "name": "=", "args": []},
+            "sourceWarrants": [{
+                "sourceFunctionName": "datetime._cmp",
+                "file": "datetime.py",
+                "span": {"start_line": 26}
+            }]
+        });
+        let class_cmp = serde_json::json!({
+            "name": "datetime.datetime._cmp",
+            "kind": "function-contract",
+            "post": {"kind": "atom", "name": "=", "args": []},
+            "sourceWarrants": [{
+                "sourceFunctionName": "datetime.datetime._cmp",
+                "file": "datetime.py",
+                "span": {"start_line": 2309}
+            }]
+        });
+        let mut report = minimal_source_report();
+        report.contracts = vec![module_cmp.clone(), class_cmp.clone()];
+        let module_id = contract_visual_identity(&report, &module_cmp);
+        let class_id = contract_visual_identity(&report, &class_cmp);
+        assert!(module_id.starts_with("datetime._cmp ["), "{module_id}");
+        assert!(
+            class_id.starts_with("datetime.datetime._cmp ["),
+            "{class_id}"
+        );
+        assert_ne!(module_id, class_id);
+        let groups = group_contracts_for_universe_visual(&report);
+        let group_ids: Vec<&str> = groups.iter().map(|g| g.identity.as_str()).collect();
+        assert_eq!(
+            groups.len(),
+            2,
+            "distinct owners must not collapse: {group_ids:?}"
+        );
+    }
+
+    #[test]
     fn fol_normalization_has_one_negation_and_no_register_or_absolute_root() {
         let rendered = normalize_report_fol(
             "formula:not(call:f(/tmp/work/source.py))",
