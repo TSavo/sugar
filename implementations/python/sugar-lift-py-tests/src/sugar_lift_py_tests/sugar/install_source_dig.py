@@ -982,11 +982,20 @@ def resolve_install_source_value(
 def _construct_install_source_value(
     import_target: str, ctx, *, _resolving: frozenset[str] = frozenset()
 ):
-    """Internal construct body — only :meth:`InstallSourceValueOracle.resolve` calls this."""
+    """Internal construct body — only :meth:`InstallSourceValueOracle.resolve` calls this.
+
+    L4 spans (``dig.construct.*``) bisect first-time construct mass by shape and
+    by function sub-step (deepcopy / seed / factory), not by guessing.
+    """
+    from sugar_lift_py_tests.engine_log import reduction_span
+
     resolving = _resolving | {import_target}
     native = _resolve_qualified_native_callable(import_target, resolving=_resolving)
     if native is not None:
-        return native
+        with reduction_span(
+            sugar=import_target, role="dig.construct.native", site=import_target
+        ):
+            return native
     module_name, attr = import_target.rsplit(".", 1)
     installed = _installed_source(module_name)
     if installed is None:
@@ -1009,46 +1018,72 @@ def _construct_install_source_value(
     ):
         from sugar_lift_py_tests.floor import ExceptionClassValue
 
-        return ExceptionClassValue(import_target)
+        with reduction_span(
+            sugar=import_target, role="dig.construct.exception", site=import_target
+        ):
+            return ExceptionClassValue(import_target)
 
     function = _resolve_qualified_function_fragment(import_target, resolving=_resolving)
     if function is not None:
-        defining_source = function.node._sugar_source  # type: ignore[attr-defined]
-        defining_file = function.node._sugar_file  # type: ignore[attr-defined]
-        defining_tree = copy.deepcopy(parsed_tree(defining_source, defining_file))
-        target_index = next(
-            index
-            for index, statement in enumerate(defining_tree.body)
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and statement.lineno == function.node.lineno
-            and statement.name == function.function_name()
-        )
-        definition = defining_tree.body[target_index]
-        definition._sugar_source = defining_source  # type: ignore[attr-defined]
-        definition._sugar_file = defining_file  # type: ignore[attr-defined]
-        definition._sugar_bridge_name = function.node._sugar_bridge_name  # type: ignore[attr-defined]
-        function = SourceFragment.from_node(
-            definition, defining_file, source=defining_source
-        )
-        module_ctx = _ctx_with_required_module_bindings(
-            defining_tree.body,
-            target_index,
-            # Eager construct faces (decorators/defaults). Body free names are
-            # seeded when dig opens the body — not again for every sibling.
-            _function_definition_dependencies(definition),
-            source=defining_source,
-            sourcefile=defining_file,
-            ctx=ctx,
-            resolving=resolving,
-            defining_module=module_name,
-        )
-        if module_ctx is None:
-            return None
-        body = module_ctx.build_body(function, SugarRole.STATEMENT)
-        outcome = body.reduce(module_ctx)
-        if isinstance(outcome, Incomplete):
-            return None
-        return complete_value(outcome, owner="install-source imported function")
+        with reduction_span(
+            sugar=import_target, role="dig.construct.function", site=import_target
+        ):
+            defining_source = function.node._sugar_source  # type: ignore[attr-defined]
+            defining_file = function.node._sugar_file  # type: ignore[attr-defined]
+            # SourceOracle / parsed_tree owns the immutable module tree. Never
+            # deepcopy the whole module per function (L4: ~majority of first-time
+            # dig construct wall). Copy only the FunctionDef we will tag.
+            defining_tree = parsed_tree(defining_source, defining_file)
+            target_index = next(
+                index
+                for index, statement in enumerate(defining_tree.body)
+                if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and statement.lineno == function.node.lineno
+                and statement.name == function.function_name()
+            )
+            with reduction_span(
+                sugar=import_target,
+                role="dig.construct.function.deepcopy",
+                site=import_target,
+            ):
+                definition = copy.deepcopy(defining_tree.body[target_index])
+            definition._sugar_source = defining_source  # type: ignore[attr-defined]
+            definition._sugar_file = defining_file  # type: ignore[attr-defined]
+            definition._sugar_bridge_name = (
+                function.node._sugar_bridge_name
+            )  # type: ignore[attr-defined]
+            function = SourceFragment.from_node(
+                definition, defining_file, source=defining_source
+            )
+            with reduction_span(
+                sugar=import_target,
+                role="dig.construct.function.seed",
+                site=import_target,
+            ):
+                module_ctx = _ctx_with_required_module_bindings(
+                    defining_tree.body,
+                    target_index,
+                    # Eager construct faces (decorators/defaults). Body free
+                    # names are seeded when dig opens the body.
+                    _function_definition_dependencies(definition),
+                    source=defining_source,
+                    sourcefile=defining_file,
+                    ctx=ctx,
+                    resolving=resolving,
+                    defining_module=module_name,
+                )
+            if module_ctx is None:
+                return None
+            with reduction_span(
+                sugar=import_target,
+                role="dig.construct.function.factory",
+                site=import_target,
+            ):
+                body = module_ctx.build_body(function, SugarRole.STATEMENT)
+                outcome = body.reduce(module_ctx)
+            if isinstance(outcome, Incomplete):
+                return None
+            return complete_value(outcome, owner="install-source imported function")
 
     for target_index, statement in enumerate(parsed.body):
         value_node = None
@@ -1063,26 +1098,29 @@ def _construct_install_source_value(
             ):
                 value_node = statement.value
         if value_node is not None:
-            module_ctx = _ctx_with_required_module_bindings(
-                parsed.body,
-                target_index,
-                _loaded_names(value_node),
-                source=source,
-                sourcefile=sourcefile,
-                ctx=ctx,
-                resolving=resolving,
-                defining_module=module_name,
-            )
-            if module_ctx is None:
-                return None
-            body = module_ctx.build_body(
-                SourceFragment.from_node(value_node, sourcefile, source=source),
-                SugarRole.TERM,
-            )
-            outcome = body.reduce(module_ctx)
-            if isinstance(outcome, Incomplete):
-                return None
-            return complete_value(outcome, owner="install-source imported value")
+            with reduction_span(
+                sugar=import_target, role="dig.construct.assign", site=import_target
+            ):
+                module_ctx = _ctx_with_required_module_bindings(
+                    parsed.body,
+                    target_index,
+                    _loaded_names(value_node),
+                    source=source,
+                    sourcefile=sourcefile,
+                    ctx=ctx,
+                    resolving=resolving,
+                    defining_module=module_name,
+                )
+                if module_ctx is None:
+                    return None
+                body = module_ctx.build_body(
+                    SourceFragment.from_node(value_node, sourcefile, source=source),
+                    SugarRole.TERM,
+                )
+                outcome = body.reduce(module_ctx)
+                if isinstance(outcome, Incomplete):
+                    return None
+                return complete_value(outcome, owner="install-source imported value")
     return None
 
 
