@@ -12,7 +12,10 @@ from sugar_lift_py_tests.factory import (
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import ObjectMethodValue
 from sugar_lift_py_tests.outcome import Outcome
-from sugar_lift_py_tests.sugar.constructor_strategy import ConstructorStrategy
+from sugar_lift_py_tests.sugar.constructor_strategy import (
+    ConstructorStrategy,
+    RuntimeConstructorStrategy,
+)
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
@@ -20,7 +23,7 @@ from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 @dataclass(frozen=True)
 class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
-    strategy: ConstructorStrategy
+    strategy: ConstructorStrategy | RuntimeConstructorStrategy
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -86,7 +89,9 @@ def _panic(site, observed: str, requested: str, fix: str):
     )
 
 
-def _strategy(site, ctx, target: str, class_site) -> ConstructorStrategy:
+def _strategy(
+    site, ctx, target: str, class_site
+) -> ConstructorStrategy | RuntimeConstructorStrategy:
     if site.call_has_keywords():
         _panic(
             site,
@@ -104,13 +109,19 @@ def _strategy(site, ctx, target: str, class_site) -> ConstructorStrategy:
         None,
     )
     if init is None:
-        if site.call_arg_count() != 0:
-            _panic(
+        generated = _generated_strategy(site, ctx, target, class_site, methods)
+        if generated is not None:
+            return generated
+        if class_site.class_bases():
+            return _runtime_strategy(
                 site,
-                f"{target}(...)",
-                "zero-arg constructor",
-                f"add constructor argument binding for `{target}`",
+                ctx,
+                target,
+                "inherited constructor runtime boundary: Python must resolve "
+                f"{target}.__new__/__init__ through its base classes",
             )
+        if site.call_arg_count() != 0:
+            return _arity_strategy(site, ctx, target, 0, 0)
         return ConstructorStrategy(
             class_name=target,
             fields=(),
@@ -126,14 +137,21 @@ def _strategy(site, ctx, target: str, class_site) -> ConstructorStrategy:
             "constructor self parameter",
             f"add self to `{target}.__init__`",
         )
-    constructor_params = params[1:]
-    if len(constructor_params) != site.call_arg_count():
-        _panic(
+    if not init.function_has_simple_positional_params():
+        return _runtime_strategy(
             site,
-            f"{target}(...)",
-            f"{len(constructor_params)} constructor arguments",
-            f"add constructor argument binding for `{target}`",
+            ctx,
+            target,
+            "constructor signature runtime boundary: variadic, positional-only, "
+            f"or keyword-only binding for {target} is not statically constructed",
         )
+    constructor_params = params[1:]
+    min_args, max_args = init.function_positional_arity()
+    min_args -= 1
+    max_args -= 1
+    supplied = site.call_arg_count()
+    if not min_args <= supplied <= max_args:
+        return _arity_strategy(site, ctx, target, min_args, max_args)
     fields = []
     for stmt in init.function_body():
         if (
@@ -154,22 +172,117 @@ def _strategy(site, ctx, target: str, class_site) -> ConstructorStrategy:
                 )
             )
             continue
-        _panic(
-            stmt,
-            f"{target}.__init__:{stmt.observed}",
-            "constructor field assignment",
-            f"write constructor sugar for `{target}.__init__`",
+        return _runtime_strategy(
+            site,
+            ctx,
+            target,
+            "effectful constructor runtime boundary: "
+            f"{target}.__init__ contains {stmt.observed} at {stmt}",
+        )
+    arguments = [ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()]
+    missing = max_args - supplied
+    if missing:
+        defaults = init.function_defaults()
+        arguments.extend(
+            ctx.build_body(default, SugarRole.TERM) for default in defaults[-missing:]
         )
     return ConstructorStrategy(
         class_name=target,
         fields=tuple(fields),
         parameters=constructor_params,
+        arguments=tuple(arguments),
+        methods=methods,
+        class_fields=_class_fields(class_site, ctx),
+        identity=site.blame,
+    )
+
+
+def _generated_strategy(
+    site, ctx, target, class_site, methods
+) -> ConstructorStrategy | RuntimeConstructorStrategy | None:
+    decorators = class_site.class_decorators()
+    exact_dataclass = (
+        len(decorators) == 1
+        and decorators[0].observed == "Name"
+        and decorators[0].name_id() == "dataclass"
+        and not class_site.class_bases()
+    )
+    exact_namedtuple = not decorators and class_site.class_base_names() in (
+        ("NamedTuple",),
+        ("typing.NamedTuple",),
+    )
+    if not exact_dataclass and not exact_namedtuple:
+        return None
+
+    annotated = []
+    for statement in class_site.class_body():
+        if statement.observed == "AnnAssign" and statement.annassign_value() is None:
+            annotated.append(statement)
+            continue
+        if (
+            statement.observed == "Expr"
+            and statement.expr_value().observed == "PrimitiveLiteral"
+            and isinstance(statement.expr_value().literal_value(), str)
+        ):
+            continue
+        return _runtime_strategy(
+            site,
+            ctx,
+            target,
+            "generated constructor runtime boundary: "
+            f"{target} contains non-field statement {statement.observed}",
+        )
+
+    expected = len(annotated)
+    if site.call_arg_count() != expected:
+        return _arity_strategy(site, ctx, target, expected, expected)
+    parameters = tuple(statement.annassign_target_id() for statement in annotated)
+    return ConstructorStrategy(
+        class_name=target,
+        fields=tuple(
+            (
+                name,
+                ctx.build_body(statement.annassign_target(), SugarRole.TERM),
+            )
+            for name, statement in zip(parameters, annotated, strict=True)
+        ),
+        parameters=parameters,
         arguments=tuple(
-            ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()
+            ctx.build_body(argument, SugarRole.TERM) for argument in site.call_args()
         ),
         methods=methods,
         class_fields=_class_fields(class_site, ctx),
         identity=site.blame,
+    )
+
+
+def _runtime_strategy(
+    site, ctx, target: str, reason: str
+) -> RuntimeConstructorStrategy:
+    return RuntimeConstructorStrategy(
+        class_name=target,
+        arguments=tuple(
+            ctx.build_body(argument, SugarRole.TERM) for argument in site.call_args()
+        ),
+        site=site,
+        reason=reason,
+    )
+
+
+def _arity_strategy(
+    site, ctx, target: str, minimum: int, maximum: int
+) -> RuntimeConstructorStrategy:
+    return RuntimeConstructorStrategy(
+        class_name=target,
+        arguments=tuple(
+            ctx.build_body(argument, SugarRole.TERM) for argument in site.call_args()
+        ),
+        site=site,
+        reason=(
+            f"constructor arity type boundary: {target} requires "
+            f"{minimum}..{maximum} positional arguments, got {site.call_arg_count()}"
+        ),
+        arity_error=True,
     )
 
 

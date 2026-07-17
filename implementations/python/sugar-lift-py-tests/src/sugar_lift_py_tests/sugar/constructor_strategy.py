@@ -14,6 +14,7 @@ from sugar_lift_py_tests.floor.call_site_value import _ctx_with_curried_args
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome, complete_value
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
 
 @dataclass(frozen=True)
@@ -137,3 +138,54 @@ class ConstructorStrategy:
                 ),
             )
         return ObjectField(name=name, value=value)
+
+
+@dataclass(frozen=True)
+class RuntimeConstructorStrategy:
+    class_name: str
+    arguments: tuple[SugarBody, ...]
+    site: SourceFragment
+    reason: str
+    arity_error: bool = False
+
+    def __post_init__(self) -> None:
+        if not all(isinstance(argument, SugarBody) for argument in self.arguments):
+            raise TypeError(
+                "RuntimeConstructorStrategy arguments must be factory-built"
+            )
+
+    def emit(self, sugar, ctx) -> Outcome:
+        del sugar
+        values = []
+        for argument in self.arguments:
+            outcome = argument.reduce(ctx)
+            if isinstance(outcome, Incomplete):
+                return outcome
+            values.append(
+                complete_value(outcome, owner=f"{self.class_name} constructor argument")
+            )
+
+        from sugar_lift_py_tests.effect import (
+            ConstructorRuntimeEffect,
+            TypeErrorRuntimeEffect,
+            runtime_effect_witness,
+        )
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+
+        call_term = ctor(
+            "python:constructor_call",
+            [
+                str_const(self.class_name),
+                *(floor_to_term(value, owner=self.class_name) for value in values),
+            ],
+        )
+        effect_type = (
+            TypeErrorRuntimeEffect if self.arity_error else ConstructorRuntimeEffect
+        )
+        return Incomplete(
+            effect_type(
+                self.reason,
+                witness=runtime_effect_witness("py.constructor", call_term, self.site),
+            )
+        )

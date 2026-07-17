@@ -275,6 +275,8 @@ def test_gap_kind_missing_arm_is_a_pyright_error(tmp_path: Path) -> None:
 
 
 def test_constructor_call_effect_carries_structured_kind() -> None:
+    from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
+
     source = """\
 class Box:
     def __init__(self, value):
@@ -284,10 +286,9 @@ class Box:
 
     outcome = body.reduce(ctx)
     assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect)
-
-    assert outcome.effect.requested == "1 constructor arguments"
-    assert outcome.effect.gap_kind is GapKind.CONSTRUCTOR
+    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
+    assert outcome.effect.witness.operation.name == "py.constructor"
+    assert "requires 1..1 positional arguments" in outcome.effect.reason
 
 
 def test_set_name_descriptor_gap_carries_structured_kind() -> None:
