@@ -180,6 +180,10 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     bound = bound.resolved_value
                 elif isinstance(bound.resolved_value, NativeCallableValue):
                     native = bound.resolved_value
+                    from sugar_lift_py_tests.sugar.method_call_sugar import (
+                        _static_exit_suppression_contract,
+                    )
+
                     return Complete(
                         CallSiteValue(
                             target_name=native.qualified_name,
@@ -195,6 +199,9 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                             ),
                             body=None,
                             site=self.site,
+                            exit_suppression=_static_exit_suppression_contract(
+                                native.qualified_name, accumulated
+                            ),
                         )
                     )
                 else:
@@ -204,6 +211,10 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     # must not turn an otherwise valid external call opaque to
                     # the caller into a construction panic.
                     target = bound.import_target or bound.name
+                    from sugar_lift_py_tests.sugar.method_call_sugar import (
+                        _static_exit_suppression_contract,
+                    )
+
                     return Complete(
                         CallSiteValue(
                             target_name=target,
@@ -219,6 +230,9 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                             ),
                             body=None,
                             site=self.site,
+                            exit_suppression=_static_exit_suppression_contract(
+                                target, accumulated
+                            ),
                         )
                     )
             if isinstance(bound, FunctionCallable):
@@ -247,6 +261,11 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             fn = resolve_call_funcdef(self.target_name, ctx)
             body = build_dig_body(fn, ctx) if fn is not None else None
             if body is None:
+                from sugar_lift_py_tests.floor import ClassValue
+                from sugar_lift_py_tests.sugar.method_call_sugar import (
+                    _static_exit_suppression_contract,
+                )
+
                 return Complete(
                     CallSiteValue(
                         target_name=self.target_name,
@@ -266,6 +285,18 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                         ),
                         body=body,
                         site=self.site,
+                        exit_suppression=(
+                            _static_exit_suppression_contract(
+                                self.target_name, accumulated
+                            )
+                            if bound is None
+                            or (
+                                self.target_name == "open"
+                                and type(bound) is ClassValue
+                                and bound.name == "open"
+                            )
+                            else None
+                        ),
                     )
                 )
 

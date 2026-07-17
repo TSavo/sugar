@@ -26,6 +26,7 @@ class KeywordCallSugar(
     """
 
     target_name: str
+    import_target: str | None
     receiver: SugarBody | None
     args: tuple[SugarBody, ...]
     kwargs: tuple[tuple[str, SugarBody], ...]
@@ -59,6 +60,9 @@ class KeywordCallSugar(
         )
         return cls(
             target_name=site.call_target_name(),
+            import_target=site.call_import_target_name(
+                ctx.import_aliases, ctx.from_imports
+            ),
             receiver=receiver,
             args=tuple(ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()),
             kwargs=kwargs,
@@ -120,6 +124,9 @@ class KeywordCallSugar(
                 ImportAliasValue,
             )
             from sugar_lift_py_tests.ir import ctor, str_const
+            from sugar_lift_py_tests.sugar.method_call_sugar import (
+                _static_exit_suppression_contract,
+            )
 
             # Exact exception constructors with kwargs still construct
             # ExceptionValue so RaiseSugar can route them — same door as
@@ -184,7 +191,7 @@ class KeywordCallSugar(
                 )
             return Complete(
                 CallSiteValue(
-                    target_name=self.target_name,
+                    target_name=self.import_target or self.target_name,
                     arg_values=pos_values,
                     parameters=tuple(n for n, _ in kw_pairs),
                     term=ctor(
@@ -198,6 +205,13 @@ class KeywordCallSugar(
                     ),
                     body=None,
                     site=self.site,
+                    exit_suppression=(
+                        _static_exit_suppression_contract(
+                            self.import_target, (*pos_values, *(v for _, v in kw_pairs))
+                        )
+                        if self.import_target is not None
+                        else None
+                    ),
                 )
             )
         (name, body), *rest = remaining
