@@ -229,7 +229,12 @@ class PredicateValue(FloorValue):
                 joined_bindings, joined_effects = self._surviving_bindings(
                     surviving_scope, ctx
                 )
-        elif not then_exits and then_ctx is not None:
+        elif then_exits:
+            # With no explicit else, a terminating true face leaves only the
+            # false face alive.  Its classifier bindings are therefore
+            # definite in the continuation, not guarded possibilities.
+            joined_bindings = self.else_bindings
+        elif then_ctx is not None:
             guarded_bindings, joined_effects = self._guarded_bindings(
                 self.formula, then_scope, then_ctx
             )
