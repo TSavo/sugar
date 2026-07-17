@@ -20,8 +20,8 @@ use std::collections::BTreeMap;
 /// `PathAlgebra`, `LiftKit`, the resident child-process pool). Moved from
 /// `sugar-cli/src/kit_path/` in SEAM 3b. Lives with the `Kit` noun here.
 /// Realize-sidecar strip is membrane law in libsugar (#3855); kit_path itself
-/// has no `sugar-walk` import (instrumented). Residual sugar-compiler→
-/// sugar-walk edges are SourceMemento/resolve paths, not kit_path.
+/// has no `sugar-walk` import (instrumented). SourceMemento/SrcSpan also live
+/// in libsugar — sugar-compiler has no sugar-walk Cargo edge (arch-guard ban).
 pub mod kit_path;
 
 /// The kit declaration loader: spawns a kit's declared command and performs

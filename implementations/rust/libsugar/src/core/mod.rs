@@ -20,6 +20,7 @@
 
 pub mod lift_canonical;
 pub mod primitives;
+pub mod source_memento;
 pub mod stubs;
 pub mod traits;
 pub mod types;
@@ -28,6 +29,7 @@ pub mod walks;
 
 pub use lift_canonical::strip_realize_sidecar_from_lift_term;
 pub use primitives::{address, compose, resolve, sign, verify_sig, ComposeError, SigningKey};
+pub use source_memento::{SourceMemento, SrcSpan};
 pub use stubs::{CKit, FunctionContractDomain, NoopPortfolio, RustKit};
 pub use traits::{
     Canonical, Catalog, ComponentRegistry, CoreError, Domain, DomainError, HashMapCatalog,

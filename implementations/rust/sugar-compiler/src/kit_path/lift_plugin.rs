@@ -12,8 +12,8 @@ use serde_json::{json, Value};
 use sugar_ir_types::{IrFormula, IrTerm, Sort};
 // Membrane law (#3855): strip is content-addressing canonical form, owned by
 // libsugar — not rust-kit knowledge via sugar-walk. kit_path stays language-
-// neutral; residual sugar-compiler→sugar-walk edges (SourceMemento) live
-// outside this module and still block a full crate ban.
+// neutral; SourceMemento also lives in libsugar so sugar-compiler has no
+// sugar-walk Cargo edge (arch-guard ban).
 use libsugar::core::strip_realize_sidecar_from_lift_term;
 use thiserror::Error;
 use tracing::{info, info_span};

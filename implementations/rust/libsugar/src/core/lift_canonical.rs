@@ -12,8 +12,8 @@
 // - sugar-compiler's neutral kit_path engine can strip without importing
 //   sugar-walk (BOUNDARY IMPURITY retired for this path);
 // - sugar-walk BindKit uses the same function without duplication;
-// - a future sugar-compiler→sugar-walk arch-guard ban can proceed once
-//   SourceMemento is also relocated off sugar-walk.
+// - SourceMemento / SrcSpan also live in libsugar so sugar-compiler can drop
+//   its sugar-walk Cargo edge (arch-guard ban; #3855).
 
 use serde_json::Value as Json;
 

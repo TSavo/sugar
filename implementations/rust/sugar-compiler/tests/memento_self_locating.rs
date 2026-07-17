@@ -19,9 +19,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use libsugar::core::SourceMemento;
 use sugar_compiler::kit::{Kit, LiftManifest};
 use sugar_compiler::tree::{memento_locus_display, Sourced};
-use sugar_walk::source_oracle::SourceMemento;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -394,7 +394,7 @@ fn full_descent_every_level_self_locating() {
 
 #[test]
 fn memento_locus_display_on_demand() {
-    use sugar_walk::source_oracle::SrcSpan;
+    use libsugar::core::SrcSpan;
 
     let file_only = SourceMemento {
         file: "a.py".into(),

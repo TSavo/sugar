@@ -37,11 +37,11 @@
 
 use std::path::{Path, PathBuf};
 
+use libsugar::core::{SourceMemento, SrcSpan};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sugar_ir_types::{IrFormula, Sort};
 use sugar_linker::LinkerContract;
-use sugar_walk::source_oracle::{SourceMemento, SrcSpan};
 
 use crate::kit::{Kit, KitError};
 use crate::kit_path::LiftTermTable;

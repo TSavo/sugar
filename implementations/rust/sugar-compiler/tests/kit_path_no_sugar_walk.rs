@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // #3855 instrument: kit_path is the language-neutral kit dispatch engine.
-// Realize-sidecar strip is membrane law in libsugar; this module must not
-// re-import sugar-walk (rust-kit knowledge). Residual sugar-compiler→
-// sugar-walk edges (SourceMemento) live outside kit_path and are tracked
-// separately on #3855.
+// Realize-sidecar strip and SourceMemento live in libsugar; this module must
+// not re-import sugar-walk (rust-kit knowledge). Crate-level ban is
+// sugar-arch-guard `sugar_compiler_never_reaches_sugar_walk`.
 //
 // R axis: kit_path_sugar_walk_imports
-// Green only at stable zero. Replacement: keep strip in libsugar; never
-// reintroduce sugar_walk into kit_path.
+// Green only at stable zero. Replacement: keep strip/locators in libsugar;
+// never reintroduce sugar_walk into kit_path.
 
 use std::fs;
 use std::path::PathBuf;

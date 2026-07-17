@@ -48,8 +48,11 @@
 //
 // Strong `Kit::lift` request (#3855 residual): `lift` takes `LiftRequest`, not
 // free-form `serde_json::Value`. Trybuild `lift_request_is_not_value.rs` pins
-// the type door. Residual axes still open: census move, pool single-owner,
-// SourceMemento relocate / sugar-compiler→sugar-walk ban.
+// the type door.
+//
+// SourceMemento relocate (#3855): locator types live in libsugar; sugar-compiler
+// has no sugar-walk Cargo edge (arch-guard). Residual: census move, pool
+// single-owner.
 
 use std::path::{Path, PathBuf};
 
@@ -67,7 +70,7 @@ use crate::resolve::{
     resolve_source, resolve_testimony, ResolvedSource, SourceRefusal, TestimonyError,
     TestimonyResolution,
 };
-use sugar_walk::source_oracle::SourceMemento;
+use libsugar::core::SourceMemento;
 
 /// The census's resolved answer to "what plugin command answers this
 /// surface." Produced by the CLI's selection policy

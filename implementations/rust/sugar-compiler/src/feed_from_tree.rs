@@ -866,9 +866,9 @@ mod json_to_cvalue_tests {
 #[cfg(test)]
 mod silent_loss_3901_tests {
     use super::*;
+    use libsugar::core::{SourceMemento, SrcSpan};
     use serde_json::json;
     use sugar_proof_envelope::typed_member::Member;
-    use sugar_walk::source_oracle::{SourceMemento, SrcSpan};
 
     fn test_memento(function_name: &str) -> SourceMemento {
         SourceMemento {
