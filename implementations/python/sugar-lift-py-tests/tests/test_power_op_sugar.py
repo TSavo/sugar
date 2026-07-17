@@ -8,7 +8,7 @@ from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-from sugar_lift_py_tests.effect import PowerRuntimeEffect
+from sugar_lift_py_tests.effect import PowerRuntimeEffect, runtime_effect_evidence
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
@@ -90,6 +90,38 @@ def test_opaque_call_result_base_is_a_witnessed_power_runtime_effect() -> None:
     assert outcome.effect.witness.operand == operand
     assert outcome.effect.witness.operation == ctor("py.power", [operand])
     assert outcome.effect.witness.locus == "t.py:1:0"
+
+
+def test_concrete_base_with_opaque_call_exponent_is_a_witnessed_runtime_effect() -> (
+    None
+):
+    site = SourceFragment.from_source(
+        "10 ** runtime_exponent(value)\n", "t.py"
+    ).statements()[0]
+    exponent = CallSiteValue(
+        target_name="runtime_exponent",
+        arg_values=(SymbolicValue(make_var("value")),),
+        parameters=(),
+        term=ctor("call:runtime_exponent", [make_var("value")]),
+        body=None,
+        site=site,
+    )
+
+    outcome = TermValue(10).power(exponent, site)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, PowerRuntimeEffect)
+    operand = ctor("**", [num(10), exponent.term])
+    assert outcome.effect.witness.operand == operand
+    assert outcome.effect.witness.operation == ctor("py.power", [operand])
+    assert outcome.effect.witness.locus == "t.py:1:0"
+
+
+def test_ground_power_expression_cannot_mint_runtime_effect_evidence() -> None:
+    site = SourceFragment.from_source("10 ** 2\n", "t.py").statements()[0]
+
+    with pytest.raises(FactoryPanic, match="genuine runtime-dependent operand"):
+        runtime_effect_evidence("py.power", ctor("**", [num(10), num(2)]), site)
 
 
 def test_power_truthful_and_lying_twins_reach_opposite_verdicts(tmp_path) -> None:

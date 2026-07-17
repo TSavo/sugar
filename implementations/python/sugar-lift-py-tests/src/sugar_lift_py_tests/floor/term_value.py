@@ -285,6 +285,34 @@ class TermValue(FloorValue):
             # bound already carries an integer warrant. Preserve that yielded
             # coordinate; do not pretend to know which iteration is active.
             return SymbolicValue(self.to_term(owner=str(site))).power(other, site)
+        if type(other) is CallSiteValue:
+            dug = other._dig_floor_or_none(
+                None, owner="TermValue.power callsite exponent"
+            )
+            if dug is not None and dug is not other:
+                return self.power(dug, site)
+
+            from sugar_lift_py_tests.effect import (
+                PowerRuntimeEffect,
+                runtime_effect_evidence,
+            )
+            from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            operand = ctor(
+                "**",
+                [
+                    self.to_term(owner=str(site)),
+                    other.to_term(owner=str(site)),
+                ],
+            )
+            return Incomplete(
+                PowerRuntimeEffect(
+                    "power dispatch depends on the runtime call exponent's "
+                    f"__rpow__; owner=TermValue.power site={site}",
+                    **runtime_effect_evidence("py.power", operand, site),
+                )
+            )
         return super().power(other, site)
 
     def divide(self, other, site):
