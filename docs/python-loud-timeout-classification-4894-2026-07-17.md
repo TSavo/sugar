@@ -1,6 +1,6 @@
 # Loud-bounded-timeout classification for #4894 (2026-07-17)
 
-## Battleaxe classification checkpoint
+## Battleaxe post-optimization classification
 
 The classification replay moved from the contended local Mac to battleaxe.
 Three remote shards run concurrently, while every shard remains sequential
@@ -8,24 +8,35 @@ internally.  The committed recensus records 293 timeouts but did not retain
 their filename artifact.  Replaying the documented snapshot
 `b4ee8c01228ba1e9ac1720d701d548fbb2861da6` with the closest available remote
 runtime (CPython 3.14.3; the census used 3.14.4) reproduced 237 timeout
-identities.  The other 56 remain an explicit identity-unavailable residual;
-they are not counted as completed.
+identities.  Three additional original-cohort identities were already
+committed on main, for 240 known identities total.  The other 53 remain an
+explicit identity-unavailable residual; they are not counted as completed.
 
-The append-only ledger currently contains 28 final rows:
+#4941 and #4945 landed during the first remote replay.  That replay was based
+at `1512224bb`, before both optimizations, so its unfinished timing rows were
+discarded.  The branch and remote workspace were rebased to current main, the
+release CLI was rebuilt, and only the 205 identities without an existing
+complete/panic verdict were replayed.  All 205 reached a terminal at 60
+seconds: 109 completed and 96 exposed a typed construction panic.
+
+The 240 known identities now split as follows:
 
 | Verdict | Files |
 |---|---:|
-| `completes-at-bound` | 11 |
-| `completes-with-panic` | 17 |
+| `completes-at-bound` | 120 |
+| `completes-with-panic` | 120 |
 | `bare-exception` | 0 |
 | `hang-at-max-bound` | 0 |
-| **Reconstructed identities pending** | **209** |
-| **Original identities unavailable** | **56** |
+| **Original identities unavailable** | **53** |
 
-The three 60 → 120 → 300 second battleaxe shards remain in progress.  This
-checkpoint is intentionally draft testimony: `28 + 209 + 56 = 293`, so no
-timeout has been silently reclassified or removed from the conservation
-account.
+Before the optimizations, the interrupted replay had finalized 12 completions
+and 18 typed panics, with the remaining reconstructed identities still
+unclassified.  After the optimizations, the unfinished residual is 109
+completions plus 96 typed panics and **zero** 300-second hangs.  One earlier
+completion (`pandas/core/arrays/masked.py`, 124.433 seconds) remains a named
+performance lane.  The corrected genuine-timeout residual is therefore
+**zero among the 240 known identities**; the 53 unavailable identities
+remain explicit conservation debt rather than invented verdicts.
 
 ## Why this pass exists
 
