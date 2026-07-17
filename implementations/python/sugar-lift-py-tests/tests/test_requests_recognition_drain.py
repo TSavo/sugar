@@ -1,7 +1,7 @@
 """Part of #4103: requests recognition residual drain instruments.
 
-Measures lifted_cited ΔR after try continuing-path join, CallSiteValue.delitem,
-relative ExceptionClass import resolution, and exception kwargs construction.
+Measures lifted_cited ΔR after FunctionDef **kwargs body-universe minting,
+symbolic setitem rebind, comprehension truth, and walrus/BoolOp binding.
 No soft refuse: silence stays illegal; remaining package residual is loud.
 """
 
@@ -114,31 +114,53 @@ def test_requests_adapters_asserts_lift() -> None:
     assert [locus["line"] for locus in axis["lifted_loci"]] == [375, 481, 581, 659]
 
 
-def test_requests_sessions_four_of_five_lifts_one_refused_residual() -> None:
-    """send() assert after isinstance(Request) remains refused residual."""
+def test_requests_sessions_all_five_asserts_lift() -> None:
+    """send() with **kwargs now mints body-universe contracts (was L773 refuse)."""
     source = (VENDOR / "sessions.py").read_text(encoding="utf-8")
     axis = _axis(source, "requests/sessions.py")
     assert axis["stated"] == 5
-    assert axis["lifted_cited"] == 4
-    assert axis["refused_loud"] == 1
+    assert axis["lifted_cited"] == 5
+    assert axis["refused_loud"] == 0
     assert axis["silently_unaccounted"] == 0
-    assert [locus["line"] for locus in axis["lifted_loci"]] == [320, 321, 353, 640]
-    assert [locus["line"] for locus in axis["refused_loci"]] == [773]
+    assert [locus["line"] for locus in axis["lifted_loci"]] == [
+        320,
+        321,
+        353,
+        640,
+        773,
+    ]
+
+
+def test_star_kwargs_def_assert_lifts_through_definition_audit() -> None:
+    """Focused instrument: **kwargs alone was the sessions:773 door."""
+    source = (
+        "def _is_prepared(x):\n"
+        "    return True\n"
+        "\n"
+        "class Session:\n"
+        "    def send(self, request, **kwargs):\n"
+        "        assert _is_prepared(request)\n"
+    )
+    axis = _axis(source, "star_kwargs_send.py")
+    assert axis["stated"] == 1
+    assert axis["lifted_cited"] == 1
+    assert axis["refused_loud"] == 0
+    assert axis["silently_unaccounted"] == 0
 
 
 def test_requests_package_key_files_lifted_cited_delta() -> None:
-    """Measurable package R: 15 lifted / 1 refused / 0 silent on key assert files.
+    """Measurable package R: 16 lifted / 0 refused / 0 silent on key assert files.
 
-    Full package still has non-assert residual panics (auth AugAssign, help
-    TemporalContext, structures RecursionError, utils NoneValue.subtract) that
-    do not host the 16 stated assert loci. Leave open for that residual.
+    Full package still has non-assert residual panics (help TemporalContext,
+    structures RecursionError, utils NoneValue.subtract) that do not host the
+    16 stated assert loci. Leave open for that residual under #4016.
     """
     files = {
         "__init__.py": (5, 5, 0),
         "_internal_utils.py": (1, 1, 0),
         "cookies.py": (1, 1, 0),
         "adapters.py": (4, 4, 0),
-        "sessions.py": (5, 4, 1),
+        "sessions.py": (5, 5, 0),
     }
     stated = lifted = refused = silent = 0
     for name, expected in files.items():
@@ -153,7 +175,7 @@ def test_requests_package_key_files_lifted_cited_delta() -> None:
         lifted += axis["lifted_cited"]
         refused += axis["refused_loud"]
         silent += axis["silently_unaccounted"]
-    assert (stated, lifted, refused, silent) == (16, 15, 1, 0)
+    assert (stated, lifted, refused, silent) == (16, 16, 0, 0)
 
 
 def test_keyword_exception_constructor_routes_raise() -> None:

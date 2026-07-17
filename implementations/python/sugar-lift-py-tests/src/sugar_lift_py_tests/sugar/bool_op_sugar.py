@@ -86,17 +86,20 @@ class BoolOpSugar(Sugar, role=SugarRole.TERM):
     def _after_operand(self, value, index: int, ctx: object) -> Outcome:
         # Last operand is always the result once reached.
         if index == len(self.operands) - 1:
-            return Complete(value)
+            return Complete(self._presented(value))
 
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 
+        presented = self._presented(value)
+        scoped = value.extend_scope(ctx)
+
         # A predicate already stands as a condition -- cannot ground-fold; emit.
-        if type(value) is PredicateValue:
-            return self._emit_coordinate_from(value, index, ctx)
+        if type(presented) is PredicateValue:
+            return self._emit_coordinate_from(value, index, scoped)
 
         # Ask the truth floor; True/False literals own the short-circuit faces.
         return value.truth(self.site).and_then(
-            lambda standing: self._on_truth(value, standing, index, ctx)
+            lambda standing: self._on_truth(value, standing, index, scoped)
         )
 
     def _on_truth(self, value, standing, index: int, ctx: object) -> Outcome:
@@ -107,25 +110,27 @@ class BoolOpSugar(Sugar, role=SugarRole.TERM):
             TrueBoolLiteralSugar,
         )
 
+        presented_standing = self._presented(standing)
         if self.kind == "and":
             # Falsy left: result IS left (do not evaluate the rest).
-            if type(standing) is FalseBoolLiteralSugar:
-                return Complete(value)
+            if type(presented_standing) is FalseBoolLiteralSugar:
+                return Complete(self._presented(value))
             # Truthy left: result IS the rest of the chain.
-            if type(standing) is TrueBoolLiteralSugar:
+            if type(presented_standing) is TrueBoolLiteralSugar:
                 return self._reduce_from(index + 1, ctx)
         else:
             # or: truthy left: result IS left; falsy left: continue.
-            if type(standing) is TrueBoolLiteralSugar:
-                return Complete(value)
-            if type(standing) is FalseBoolLiteralSugar:
+            if type(presented_standing) is TrueBoolLiteralSugar:
+                return Complete(self._presented(value))
+            if type(presented_standing) is FalseBoolLiteralSugar:
                 return self._reduce_from(index + 1, ctx)
 
         # Symbolic / non-ground standing: emit the conjunction coordinate.
         return self._emit_coordinate_from(value, index, ctx)
 
     def _emit_coordinate_from(self, first, index: int, ctx: object) -> Outcome:
-        # Reduce the remaining operands, then build py.and / py.or over terms.
+        # Reduce the remaining operands under any walrus binds from earlier
+        # operands, then build py.and / py.or over terms.
         return self._collect_rest(
             self.operands[index + 1 :],
             (first,),
@@ -139,25 +144,53 @@ class BoolOpSugar(Sugar, role=SugarRole.TERM):
             return Complete(self._coordinate(accumulated))
         head, *rest = remaining
         return head.reduce(ctx).and_then(
-            lambda value: self._collect_rest(tuple(rest), (*accumulated, value), ctx)
+            lambda value: self._collect_rest(
+                tuple(rest),
+                (*accumulated, value),
+                value.extend_scope(ctx),
+            )
         )
 
+    @staticmethod
+    def _presented(value):
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            NamedExpressionValue,
+        )
+
+        if isinstance(value, NamedExpressionValue):
+            return value.presented_value
+        return value
+
     def _coordinate(self, values: tuple):
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            NamedExpressionValue,
+        )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import and_, ctor, or_
 
-        # Predicate-shaped operands: FOL conjunction / disjunction.
-        if values and all(type(v) is PredicateValue for v in values):
-            formulas = [v.formula for v in values]
-            formula = and_(formulas) if self.kind == "and" else or_(formulas)
-            callsites = tuple(site for v in values for site in v.operand_callsites)
-            return PredicateValue(formula, self.site, callsites)
+        presented = tuple(self._presented(v) for v in values)
 
-        # Value-shaped: py.and / py.or coordinate over operand terms.
-        name = "py.and" if self.kind == "and" else "py.or"
-        terms = [v.to_term(owner=str(self.site)) for v in values]
-        return SymbolicValue(ctor(name, terms))
+        # Predicate-shaped operands: FOL conjunction / disjunction.
+        if presented and all(type(v) is PredicateValue for v in presented):
+            formulas = [v.formula for v in presented]
+            formula = and_(formulas) if self.kind == "and" else or_(formulas)
+            callsites = tuple(site for v in presented for site in v.operand_callsites)
+            result = PredicateValue(formula, self.site, callsites)
+        else:
+            # Value-shaped: py.and / py.or coordinate over operand terms.
+            name = "py.and" if self.kind == "and" else "py.or"
+            terms = [v.to_term(owner=str(self.site)) for v in presented]
+            result = SymbolicValue(ctor(name, terms))
+
+        # Preserve walrus binds from earlier operands so `if (x := …) and …:`
+        # still extends scope into the then-arm.
+        for value in values:
+            if isinstance(value, NamedExpressionValue):
+                result = NamedExpressionValue.carrying(
+                    value.name, value.assigned_value, result
+                )
+        return result
 
     def walk_children(self):
         return self.operands

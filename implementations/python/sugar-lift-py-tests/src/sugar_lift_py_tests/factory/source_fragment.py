@@ -967,6 +967,16 @@ class SourceFragment:
             and args.kwarg is None
         )
 
+    def function_has_constructible_signature(self) -> bool:
+        """Whether a def's formals can bind as universe variables.
+
+        Defaults, keyword-only names, and ``*args`` / ``**kwargs`` collectors
+        construct the same way LambdaSugar does. Positional-only parameters
+        stay loud until their binding arm exists.
+        """
+        self._require(ast.FunctionDef, ast.AsyncFunctionDef)
+        return not self.node.args.posonlyargs  # type: ignore[attr-defined]
+
     def function_positional_arity(self) -> "tuple[int, int]":
         """Return ``(min_args, max_args)`` for positional parameters (with defaults).
 

@@ -584,36 +584,40 @@ class SymbolicValue(FloorValue):
         )
 
     def setitem_with(self, operation, ctx):
-        del ctx
-        from sugar_lift_py_tests.effect import (
-            SubscriptStoreRuntimeEffect,
-            runtime_effect_witness,
-        )
-        from sugar_lift_py_tests.outcome import Incomplete
+        """Rebind a symbolic mapping/list coordinate after a store.
 
-        return Incomplete(
-            SubscriptStoreRuntimeEffect(
-                "subscript assignment runtime boundary: symbolic receiver "
-                f"`{self.term}` cannot be mutated as source object state. "
-                "Python subscript assignment can invoke __setitem__ and mutate "
-                "runtime state; keep as typed red until a narrower mutation "
-                f"floor owns this shape. blame={operation.blame}",
-                witness=runtime_effect_witness("py.setitem", self.term, operation),
-            )
-        )
+        No element history exists to fold, but a name-bound store still has a
+        post-state: carry prior coordinate, index, and value on ``py.setitem``.
+        """
+        del ctx
+        return self.setitem(operation.index, operation.value, operation.blame)
 
     def setitem(self, index, value, site):
-        del index, value
-        from sugar_lift_py_tests.effect import (
-            SubscriptStoreRuntimeEffect,
-            runtime_effect_witness,
-        )
-        from sugar_lift_py_tests.outcome import Incomplete
+        """Rebind a symbolic container after ``xs[k] = v``.
 
-        return Incomplete(
-            SubscriptStoreRuntimeEffect(
-                "subscript assignment runtime boundary: symbolic receiver "
-                f"`{self.term}` may invoke __setitem__; site={site}",
-                witness=runtime_effect_witness("py.setitem", self.term, site),
+        Concrete containers fold post-state. A symbolic formal (for example
+        ``**kwargs``) has no element history, but the assignment still rebinds
+        the name: carry prior coordinate, index, and value on ``py.setitem``.
+        Do not invent members; do not soft-refuse — silence stays illegal.
+        """
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+
+        index_term = floor_to_term(index, owner="SymbolicValue.setitem index")
+        value_term = floor_to_term(value, owner="SymbolicValue.setitem value")
+        return Complete(
+            CallSiteValue(
+                target_name="setitem",
+                arg_values=(self, index, value),
+                parameters=(),
+                term=ctor(
+                    "py.setitem",
+                    [self.to_term(owner=str(site)), index_term, value_term],
+                    symbol_kind="method-coordinate",
+                ),
+                body=None,
+                site=site,
             )
         )

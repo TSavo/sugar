@@ -149,28 +149,32 @@ class CallSiteValue(FloorValue):
         return self.py_subscript_coordinate(index, site)
 
     def setitem(self, index, value, site):
-        """Record a store into an opaque call result as a typed runtime effect.
+        """Rebind an opaque mapping/list-shaped callsite after ``xs[k] = v``.
 
-        The call, index, and value coordinates are known, but Python owns the
-        mutated post-state. Preserve those coordinates in the effect fact and
-        never fabricate a replacement receiver.
+        Concrete containers fold post-state. A callsite receiver has no element
+        history, but the store still rebinds the name: carry prior coordinate,
+        index, and value on ``py.setitem``. Non-name receivers stay Incomplete
+        at the sugar layer (``SubscriptAssignSugar._cite_update``) because no
+        name exists to rebind. Do not invent members.
         """
-        from sugar_lift_py_tests.effect import (
-            SubscriptStoreRuntimeEffect,
-            runtime_effect_witness,
-        )
-        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
         index_term = floor_to_term(index, owner="CallSiteValue.setitem index")
         value_term = floor_to_term(value, owner="CallSiteValue.setitem value")
-
-        return Incomplete(
-            SubscriptStoreRuntimeEffect(
-                "subscript assignment runtime boundary: callsite receiver "
-                f"`{self.term!r}` may invoke __setitem__; "
-                f"index={index_term!r} value={value_term!r}; site={site}",
-                witness=runtime_effect_witness("py.setitem", index_term, site),
+        return Complete(
+            CallSiteValue(
+                target_name="setitem",
+                arg_values=(self, index, value),
+                parameters=(),
+                term=ctor(
+                    "py.setitem",
+                    [self.to_term(owner=str(site)), index_term, value_term],
+                    symbol_kind="method-coordinate",
+                ),
+                body=None,
+                site=site,
             )
         )
 

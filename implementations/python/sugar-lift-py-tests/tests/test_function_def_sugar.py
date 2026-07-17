@@ -12,7 +12,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.floor import UniverseValue
-from sugar_lift_py_tests.ir import ctor, eq, make_var, num, py_eq
+from sugar_lift_py_tests.ir import atomic, ctor, eq, make_var, num, py_eq
 from sugar_lift_py_tests.outcome import complete_value
 
 
@@ -48,3 +48,25 @@ def test_default_arguments_bind_the_formal_universe() -> None:
     universe = _universe("def A(z=1):\n    return z\n")
     assert universe.formals == ("z",)
     assert universe.post() == eq(make_var("out"), make_var("z"))
+
+
+def test_kwargs_collector_binds_and_body_assert_mints() -> None:
+    """Part of #4103: **kwargs no longer drops the def from DEFINITION audit."""
+    universe = _universe(
+        "def send(self, request, **kwargs):\n"
+        "    assert request\n"
+        "    return request\n"
+    )
+    assert universe.formals == ("self", "request", "kwargs")
+    assert universe.invs() == (atomic("py.truthy", [make_var("request")]),)
+    assert universe.post() == eq(make_var("out"), make_var("request"))
+
+
+def test_vararg_and_kwonly_bind_as_universe_formals() -> None:
+    universe = _universe(
+        "def pack(self, head, *extras, flag=True, **options):\n"
+        "    assert head\n"
+        "    return head\n"
+    )
+    assert universe.formals == ("self", "head", "flag", "extras", "options")
+    assert universe.invs() == (atomic("py.truthy", [make_var("head")]),)
