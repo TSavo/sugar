@@ -159,11 +159,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             )
             record, current_ctx = self.body.sugar.reduce_with_scope(iteration_ctx)
             accumulated.extend(record.contribution())
-        bindings = tuple(
-            ScopeRebind(name, value)
-            for name in self.carried
-            if (value := current_ctx.temporal.value_if_bound(name)) is not None
-        )
+        bindings = _post_loop_bindings(ctx, current_ctx)
         return Complete(BlockValue((*accumulated, *bindings)))
 
     def _unfold_values(self, values, ctx, entries=()):
@@ -177,11 +173,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             )
             record, current_ctx = self.body.sugar.reduce_with_scope(iteration_ctx)
             accumulated.extend(record.contribution())
-        bindings = tuple(
-            ScopeRebind(name, value)
-            for name in self.carried
-            if (value := current_ctx.temporal.value_if_bound(name)) is not None
-        )
+        bindings = _post_loop_bindings(ctx, current_ctx)
         return Complete(BlockValue((*accumulated, *bindings)))
 
     def _bind_and_body(self, iterable, ctx: object) -> Outcome:
@@ -260,6 +252,18 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             self.body,
             *(self.static_elements or ()),
         )
+
+
+def _post_loop_bindings(initial_ctx, final_ctx):
+    """Project exactly the bindings constructed by a non-empty static unfold."""
+    from sugar_lift_py_tests.floor import ScopeRebind
+
+    before = {binding.name: binding.value for binding in initial_ctx.temporal.bindings}
+    return tuple(
+        ScopeRebind(binding.name, binding.value)
+        for binding in final_ctx.temporal.bindings
+        if before.get(binding.name) is not binding.value
+    )
 
 
 def _static_iterable_elements(iterable_site, ctx, loop_site):
