@@ -1317,7 +1317,11 @@ def _construct_install_source_value(
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
-    reexport = _definite_setup_reexport_target(module_name, attr, parsed)
+    reexport = _definite_unconditional_reexport_target(module_name, attr, parsed)
+    if reexport is None:
+        reexport = _definite_star_reexport_target(module_name, attr, parsed)
+    if reexport is None:
+        reexport = _definite_setup_reexport_target(module_name, attr, parsed)
     if reexport is not None and reexport not in resolving:
         resolved = resolve_install_source_value(
             reexport,
@@ -1548,6 +1552,109 @@ def _static_import_targets(module_name: str, parsed: ast.Module) -> dict[str, st
             for alias in statement.names:
                 targets[alias.asname or alias.name.split(".")[0]] = alias.name
     return targets
+
+
+def _definite_unconditional_reexport_target(
+    module_name: str, attr: str, parsed: ast.Module
+) -> str | None:
+    """Return the sole unshadowed top-level ``from`` binding for ``attr``.
+
+    A plain module-level import is executed unconditionally and its source
+    coordinate is therefore decidable.  Multiple bindings or any later
+    declaration of the same name are not a unique construction and stay
+    unresolved.  Conditional imports are deliberately excluded because they
+    are not direct children of the module.
+    """
+
+    targets: list[tuple[int, str]] = []
+    for index, statement in enumerate(parsed.body):
+        if not isinstance(statement, ast.ImportFrom):
+            continue
+        target_module = _absolute_import_from_module(
+            module_name, statement.module, statement.level
+        )
+        if target_module is None:
+            continue
+        for alias in statement.names:
+            if alias.name != "*" and (alias.asname or alias.name) == attr:
+                targets.append((index, f"{target_module}.{alias.name}"))
+    if len(targets) != 1:
+        return None
+    import_index, target = targets[0]
+    if any(
+        (
+            _module_declaration_name(statement) == attr
+            or attr in _module_import_bindings(statement)
+        )
+        for statement in parsed.body[import_index + 1 :]
+    ):
+        return None
+    return target
+
+
+def _definite_star_reexport_target(
+    module_name: str, attr: str, parsed: ast.Module
+) -> str | None:
+    """Return one top-level star source that explicitly exports ``attr``.
+
+    Star imports are only construction-closed when the cited source module
+    names the member in a literal ``__all__``.  Merely finding a declaration is
+    insufficient because a module may deliberately hide it.  Multiple matching
+    stars are ambiguous and stay unresolved.
+    """
+
+    targets: list[tuple[int, str]] = []
+    for index, statement in enumerate(parsed.body):
+        if not isinstance(statement, ast.ImportFrom) or not any(
+            alias.name == "*" for alias in statement.names
+        ):
+            continue
+        target_module = _absolute_import_from_module(
+            module_name, statement.module, statement.level
+        )
+        if target_module is None:
+            continue
+        installed = _installed_source(target_module)
+        if installed is None:
+            continue
+        source, sourcefile = installed
+        try:
+            target_tree = parsed_tree(source, sourcefile)
+        except SyntaxError:
+            continue
+        exported: set[str] = set()
+        for candidate in target_tree.body:
+            if (
+                isinstance(candidate, (ast.Assign, ast.AnnAssign))
+                and any(
+                    isinstance(target, ast.Name) and target.id == "__all__"
+                    for target in (
+                        candidate.targets
+                        if isinstance(candidate, ast.Assign)
+                        else [candidate.target]
+                    )
+                )
+                and isinstance(candidate.value, (ast.List, ast.Tuple))
+                and all(
+                    isinstance(element, ast.Constant) and isinstance(element.value, str)
+                    for element in candidate.value.elts
+                )
+            ):
+                exported.update(element.value for element in candidate.value.elts)
+        if attr in exported:
+            targets.append((index, f"{target_module}.{attr}"))
+    if len(targets) != 1:
+        return None
+    import_index, target = targets[0]
+    if any(
+        (
+            _module_declaration_name(statement) == attr
+            or attr in _module_import_bindings(statement)
+        )
+        for statement in parsed.body[import_index + 1 :]
+    ):
+        return None
+    return target
 
 
 def _definite_setup_reexport_target(
