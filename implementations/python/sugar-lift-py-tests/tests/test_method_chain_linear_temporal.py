@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 import os
 import subprocess
 import sys
@@ -9,12 +10,18 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.effect import GetattrRuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
+from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.floor import StringValue, SymbolicValue
+from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.temporal import TemporalContext
 
 PREFIX = """\
 class Clock:
@@ -67,6 +74,33 @@ def test_plain_call_receiver_method_chain_constructs(expression: str) -> None:
     built = build_node(node, filename="pandas.py", role=SugarRole.TERM)
 
     assert type(built.sugar).__name__ == "MethodChainSugar"
+
+
+def test_call_result_receiver_is_classified_before_method_chain_unrolls() -> None:
+    node = ast.parse(
+        "getattr(frame, method_name)().reset_index(drop=True)", mode="eval"
+    ).body
+
+    built = build_node(node, filename="pandas.py", role=SugarRole.TERM)
+
+    assert type(built.sugar).__name__ == "MethodChainSugar"
+    assert type(built.sugar.intermediate.sugar).__name__ == "CallResultCallSugar"
+
+
+def test_dynamic_getattr_call_result_chain_stays_a_named_runtime_effect() -> None:
+    node = ast.parse("getattr(frame, method_name)().reset_index()", mode="eval").body
+    temporal = (
+        TemporalContext.empty()
+        .bind_value("frame", SymbolicValue(make_var("frame")))
+        .bind_value("method_name", StringValue("sum"))
+    )
+    ctx = FactoryBuildContext(filename="pandas.py", catalog=default_catalog())
+    ctx = replace(ctx, temporal=temporal)
+
+    outcome = ctx.build_body(node, SugarRole.TERM).reduce(ctx)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, GetattrRuntimeEffect)
 
 
 def test_unclassifiable_chained_receiver_stays_loud() -> None:
