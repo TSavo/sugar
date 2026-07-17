@@ -29,6 +29,7 @@ from sugar_lift_py_tests.idd.lift_coverage_accounting import (
 )
 from sugar_lift_py_tests.idd.lift_coverage_census import census_paths
 from sugar_lift_py_tests.kit_rpc import (
+    EffectDto,
     LiftReportPayloadDto,
     RecoveredAuditDto,
     RecoveredEffectDto,
@@ -1922,10 +1923,10 @@ def audit_lift_file(
                     ),
                 },
             )
-            if recover_panics:
-                from sugar_lift_py_tests.outcome import Incomplete
+            from sugar_lift_py_tests.outcome import Incomplete
 
-                if isinstance(outcome, Incomplete):
+            if isinstance(outcome, Incomplete):
+                if recover_panics:
                     # The recovered audit enumerates construction gaps. A typed
                     # runtime effect is already an honest Some => effect arm,
                     # so it contributes no FactoryPanic and cannot be projected
@@ -1946,6 +1947,30 @@ def audit_lift_file(
                         )
                     )
                     continue
+                owner = _definition_class_owner(module, stmt)
+                relative = stmt.function_name()
+                if owner is not None:
+                    relative = f"{owner}.{relative}"
+                qualified_name = _qualified_callable_spelling(
+                    filename, relative, relative_to_module=True
+                )
+                effect_memento = dataclasses.replace(
+                    stmt.memento(),
+                    source_function_name=qualified_name,
+                    role="runtime-effect",
+                )
+                payload.effects.append(
+                    EffectDto(
+                        name=f"{qualified_name}::runtime-effect",
+                        effect=outcome.effect,
+                        source_memento=effect_memento,
+                    )
+                )
+                payload.source_mementos.append(effect_memento)
+                _qualify_factory_walk_owner(
+                    payload.factory_walk, walk_start, qualified_name
+                )
+                continue
             value = complete_value(outcome, owner="lift_file_payload")
             from sugar_lift_py_tests.floor import FunctionCallable, UniverseValue
 
