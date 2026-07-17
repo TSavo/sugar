@@ -9,7 +9,13 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-from sugar_lift_py_tests.floor import FloorValue, FunctionCallable, TermValue
+from sugar_lift_py_tests.floor import (
+    FloorValue,
+    FunctionCallable,
+    ListValue,
+    ScopeRebind,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import bool_const, make_var, num
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
@@ -57,6 +63,21 @@ def test_unprojectable_floor_value_gap_panics() -> None:
 
 def test_named_function_callable_projects_as_its_binding_coordinate() -> None:
     assert FunctionCallable(name="helper").to_term(owner="post") == make_var("helper")
+
+
+def test_scope_rebind_projects_folded_value_to_term() -> None:
+    """#4980: ScopeRebind holds the folded result; history is its nested term.
+
+    Projection must project that value, not soft-fail with RuntimeEffect and not
+    leave the base FloorValue Projection gap loud.
+    """
+    folded = ListValue((TermValue(1), TermValue(2)))
+    rebind = ScopeRebind("xs", folded)
+
+    term = rebind.to_term(owner="test")
+    assert term == folded.to_term(owner="test")
+    assert floor_to_term(rebind, owner="test") == floor_to_term(folded, owner="test")
+    assert term == ListValue((TermValue(1), TermValue(2))).to_term(owner="test")
 
 
 _FLOOR_TYPES = {
