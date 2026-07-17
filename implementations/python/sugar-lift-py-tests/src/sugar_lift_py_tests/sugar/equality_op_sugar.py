@@ -44,7 +44,7 @@ class EqualityOpSugar(Sugar, role=SugarRole.TERM):
         start = len(ctx.module_rewrite_log)
         outcome = self.left.reduce(ctx).and_then(
             lambda left: self.right.reduce(ctx).and_then(
-                lambda right: _equals_with_derived_residue(left, right, self.site, ctx)
+                lambda right: _equals_and_refine(left, right, self.site, ctx)
             )
         )
         rewrites = ctx.module_rewrite_log[start:]
@@ -54,9 +54,7 @@ class EqualityOpSugar(Sugar, role=SugarRole.TERM):
             ground_ctx = replace(ctx, prefer_ground_module_bindings=True)
             outcome = self.left.reduce(ground_ctx).and_then(
                 lambda left: self.right.reduce(ground_ctx).and_then(
-                    lambda right: _equals_with_derived_residue(
-                        left, right, self.site, ground_ctx
-                    )
+                    lambda right: _equals_and_refine(left, right, self.site, ground_ctx)
                 )
             )
             del ctx.module_rewrite_log[rerun_start:]
@@ -74,6 +72,66 @@ class EqualityOpSugar(Sugar, role=SugarRole.TERM):
 
     def walk_children(self):
         return (self.left, self.right)
+
+
+def _finite_equality_face(value, peer, *, matches: bool):
+    """Filter an exact construction-time finite join by a ground equality."""
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+
+    if isinstance(value, GuardedValue):
+        when_true = _finite_equality_face(value.when_true, peer, matches=matches)
+        when_false = _finite_equality_face(value.when_false, peer, matches=matches)
+        if when_true is None:
+            return when_false
+        if when_false is None:
+            return when_true
+        return GuardedValue(value.guard, when_true, when_false)
+    if type(value) not in (StringValue, TermValue) or type(peer) is not type(value):
+        return value
+    equal = value.value == peer.value
+    return value if equal is matches else None
+
+
+def _equals_and_refine(left, right, site, ctx):
+    outcome = _equals_with_derived_residue(left, right, site, ctx)
+    from sugar_lift_py_tests.floor import PredicateValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    if not isinstance(outcome, Complete) or not isinstance(
+        outcome.value, PredicateValue
+    ):
+        return outcome
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+
+    if not isinstance(left, GuardedValue) or type(right) not in (
+        StringValue,
+        TermValue,
+    ):
+        return outcome
+    coordinate = site.compare_left().dotted_expr_name()
+    if not coordinate:
+        return outcome
+    matching = _finite_equality_face(left, right, matches=True)
+    remaining = _finite_equality_face(left, right, matches=False)
+    matching_binding = ((coordinate, matching),) if matching is not None else ()
+    remaining_binding = ((coordinate, remaining),) if remaining is not None else ()
+    return Complete(
+        replace(
+            outcome.value,
+            then_bindings=(
+                *outcome.value.then_bindings,
+                *matching_binding,
+            ),
+            else_bindings=(
+                *outcome.value.else_bindings,
+                *remaining_binding,
+            ),
+        )
+    )
 
 
 def _equals_with_derived_residue(left, right, site, ctx):

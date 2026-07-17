@@ -25,6 +25,7 @@ from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.sugar.if_sugar import IfSugar
+from sugar_lift_py_tests.sugar.not_in_op_sugar import NotInOpSugar
 from sugar_lift_py_tests.sugar.test_function_def_sugar import (
     TestFunctionDefSugar as FunctionTestimonySugar,
 )
@@ -251,6 +252,43 @@ def test_open_elif_chain_does_not_fabricate_definite_binding() -> None:
 
     with pytest.raises(FactoryPanic, match="observed=result requested=value"):
         audit_lift_file(source, "open_elif.py", hold_panic=False)
+
+
+def test_returning_not_in_guard_makes_literal_elif_binding_definite() -> None:
+    source = (
+        "    if kind not in ('first', 'middle', 'last'):\n"
+        "        return 0\n"
+        "    if kind == 'first':\n"
+        "        result = 1\n"
+        "    elif kind == 'middle':\n"
+        "        result = 2\n"
+        "    elif kind == 'last':\n"
+        "        result = 3\n"
+        "    return result\n"
+    )
+
+    block = compose_block(source, {"kind": SymbolicValue(make_var("kind"))})
+    assert any(isinstance(statement, GuardedReturn) for statement in block.statements)
+
+
+def test_not_in_finite_domain_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in NotInOpSugar.witnesses()
+        if witness.name == "not_in_finite_domain_continuation"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "not-in-domain-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "not-in-domain-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_literal_parametrize_witness_truthful_sat_wrong_twin_unsat(
