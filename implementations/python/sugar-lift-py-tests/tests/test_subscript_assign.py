@@ -42,18 +42,22 @@ def test_subscript_assign_rebinds_concrete_dict_post_state() -> None:
     ) == BlockValue((ReturnValue(TermValue(9)),))
 
 
-def test_symbolic_subscript_assign_is_a_typed_store_effect() -> None:
+def test_symbolic_subscript_assign_rebinds_through_py_setitem() -> None:
+    """Part of #4103: name-bound symbolic store rebinds, never Incomplete poison."""
     outcome = compose_block(
-        '    d["k"] = 9\n', binds={"d": SymbolicValue(make_var("d"))}
+        '    d["k"] = 9\n    return d\n', binds={"d": SymbolicValue(make_var("d"))}
     )
 
     assert isinstance(outcome, BlockValue)
-    assert len(outcome.statements) == 1
-    assert isinstance(outcome.statements[0], Incomplete)
-    assert isinstance(outcome.statements[0].effect, SubscriptStoreRuntimeEffect)
+    returned = outcome.statements[-1]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    assert returned.value.target_name == "setitem"
+    assert returned.value.term.name == "py.setitem"
 
 
 def test_call_result_subscript_assign_is_a_coordinate_carrying_store_effect() -> None:
+    """Non-name receivers still cannot rebind; sugar layer stays Incomplete."""
     outcome = compose_block('    make()["k"] = 9\n')
 
     assert isinstance(outcome, BlockValue)
@@ -61,12 +65,11 @@ def test_call_result_subscript_assign_is_a_coordinate_carrying_store_effect() ->
     incomplete = outcome.statements[0]
     assert isinstance(incomplete, Incomplete)
     assert isinstance(incomplete.effect, SubscriptStoreRuntimeEffect)
-    assert "call:make" in incomplete.effect.reason
-    assert "_ConstStr(value='k'" in incomplete.effect.reason
-    assert "_ConstInt(value=9" in incomplete.effect.reason
+    assert "non-name receiver" in incomplete.effect.reason
+    assert incomplete.effect.witness.operation.name == "py.setitem"
 
 
-def test_callsite_store_reason_never_renders_floor_object_graphs() -> None:
+def test_callsite_setitem_rebinds_through_py_setitem() -> None:
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
     class CoordinateOnlyValue(TermValue):
@@ -84,9 +87,10 @@ def test_callsite_store_reason_never_renders_floor_object_graphs() -> None:
 
     outcome = receiver.setitem(CoordinateOnlyValue(1), CoordinateOnlyValue(2), site)
 
-    assert isinstance(outcome, Incomplete)
-    assert "_ConstInt(value=1" in outcome.reason
-    assert "_ConstInt(value=2" in outcome.reason
+    assert outcome.value.target_name == "setitem"
+    assert outcome.value.term.name == "py.setitem"
+    assert "_ConstInt(value=1" in repr(outcome.value.term)
+    assert "_ConstInt(value=2" in repr(outcome.value.term)
 
 
 def test_callsite_setitem_arm_does_not_replace_concrete_list_post_state() -> None:

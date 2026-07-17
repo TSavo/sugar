@@ -20,6 +20,22 @@ class ComprehensionValue(FloorValue):
         del owner
         return self.term
 
+    def truth(self, site):
+        """Opaque comprehensions stand as conditions via ``py.truthy``.
+
+        Finite literal comprehensions fold to concrete collection floors before
+        truth is asked. A residual comprehension keeps its constructor term and
+        emits the same truthy atom as other opaque coordinates — never invent
+        emptiness, never panic for a lawful ``if history:`` face.
+        """
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import py_truthy
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(py_truthy(self.term), site, operand_callsites=())
+        )
+
     def add(self, other, site):
         from sugar_lift_py_tests.effect import (
             SequenceConcatenationRuntimeEffect,

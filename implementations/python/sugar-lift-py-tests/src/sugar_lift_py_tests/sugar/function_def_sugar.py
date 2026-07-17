@@ -15,14 +15,22 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
     binds a SymbolicValue (the universe variable whose sort is the compiler's
     to decide), the body reduces to its record under that scope, and the
     result is a UniverseValue -- name, formals, record. The slots are
-    projections of the record. Ordinary positional parameters may have
-    factory-liftable default expressions. Keyword-only, positional-only,
-    *args/**kwargs, decorators, and unliftable defaults stay loud gaps. Every
-    default is factory-built and reduced, never dropped."""
+    projections of the record.
+
+    Constructible signatures match LambdaSugar: ordinary positionals (with
+    factory-liftable defaults), keyword-only names, and optional ``*args`` /
+    ``**kwargs`` collectors all bind as symbolic formals so body asserts mint.
+    Positional-only parameters and decorators stay loud gaps. Every default is
+    factory-built and reduced, never dropped.
+    """
 
     name: str
     formals: tuple[str, ...]
     defaults: tuple[SugarBody, ...]
+    kwonly_formals: tuple[str, ...]
+    kwonly_defaults: tuple[SugarBody | None, ...]
+    vararg_formal: str | None
+    kwarg_formal: str | None
     body: SugarBody
     site: object = dataclass_field(compare=False)
 
@@ -31,7 +39,7 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
         if site.observed != "FunctionDef":
             return False
         return (
-            site.function_has_simple_positional_params()
+            site.function_has_constructible_signature()
             and not site.function_decorators()
         )
 
@@ -39,13 +47,33 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
     def new(cls, site, ctx) -> "FunctionDefSugar":
         # The body is factory-built as ONE Block (audited), never reduced here.
         formals = list(site.function_params())
+        vararg = site.function_vararg_name()
+        kwarg = site.function_kwarg_name()
+        kwonly = tuple(
+            name
+            for name, kind in site.function_binding_signature()
+            if kind == "keyword-only"
+        )
+        universe_formals = (
+            *formals,
+            *kwonly,
+            *(() if vararg is None else (vararg,)),
+            *(() if kwarg is None else (kwarg,)),
+        )
         return cls(
             name=site.function_name(),
-            formals=tuple(formals),
+            formals=tuple(universe_formals),
             defaults=tuple(
                 ctx.build_body(default, SugarRole.TERM)
                 for default in site.function_defaults()
             ),
+            kwonly_formals=kwonly,
+            kwonly_defaults=tuple(
+                None if default is None else ctx.build_body(default, SugarRole.TERM)
+                for default in site.function_keyword_only_defaults()
+            ),
+            vararg_formal=vararg,
+            kwarg_formal=kwarg,
             body=ctx.build_body(site.function_body_block(), SugarRole.STATEMENT),
             site=site,
         )
@@ -70,14 +98,28 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
     def _reduce_defaults(
         self, remaining: tuple[SugarBody, ...], ctx: object
     ) -> Outcome:
-        from sugar_lift_py_tests.floor import SymbolicValue, UniverseValue
-        from sugar_lift_py_tests.ir import make_var
-
         if remaining:
             head, *rest = remaining
             return head.reduce(ctx).and_then(
                 lambda _value: self._reduce_defaults(tuple(rest), ctx)
             )
+        return self._reduce_kwonly_defaults(self.kwonly_defaults, ctx)
+
+    def _reduce_kwonly_defaults(
+        self, remaining: tuple[SugarBody | None, ...], ctx: object
+    ) -> Outcome:
+        if remaining:
+            head, *rest = remaining
+            if head is None:
+                return self._reduce_kwonly_defaults(tuple(rest), ctx)
+            return head.reduce(ctx).and_then(
+                lambda _value: self._reduce_kwonly_defaults(tuple(rest), ctx)
+            )
+        return self._finish(ctx)
+
+    def _finish(self, ctx: object) -> Outcome:
+        from sugar_lift_py_tests.floor import SymbolicValue, UniverseValue
+        from sugar_lift_py_tests.ir import make_var
 
         temporal = ctx.temporal
         for formal in self.formals:
@@ -90,4 +132,8 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
         )
 
     def walk_children(self):
-        return (*self.defaults, self.body)
+        return (
+            *self.defaults,
+            *(default for default in self.kwonly_defaults if default is not None),
+            self.body,
+        )

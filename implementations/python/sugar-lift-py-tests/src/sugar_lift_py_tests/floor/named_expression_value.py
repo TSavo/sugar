@@ -30,6 +30,12 @@ class NamedExpressionValue(FloorValue):
         )
         return self.presented_value.extend_scope(scoped)
 
+    def as_expression_statement(self):
+        """A bare ``(name := value)`` statement still binds ``name`` afterward."""
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self)
+
     def contribution(self):
         return self.presented_value.contribution()
 
@@ -59,6 +65,12 @@ class NamedExpressionValue(FloorValue):
 
     def negate(self):
         return self.presented_value.negate().and_then(self._carry)
+
+    def is_identical(self, other, site):
+        peer = (
+            other.presented_value if isinstance(other, NamedExpressionValue) else other
+        )
+        return self.presented_value.is_identical(peer, site).and_then(self._carry)
 
     def equals(self, other, site):
         peer = (
