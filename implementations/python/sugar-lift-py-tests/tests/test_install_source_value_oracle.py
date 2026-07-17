@@ -100,3 +100,35 @@ def test_stdlib_typing_literal_second_resolve_is_identity_hit() -> None:
     assert second is first
     assert INSTALL_SOURCE_VALUE_ORACLE.construct_count == n
     assert INSTALL_SOURCE_VALUE_ORACLE.hit_count >= 1
+
+
+def test_same_module_prior_is_sole_constructor_across_sibling_resolves(
+    tmp_path, monkeypatch
+) -> None:
+    """Module seed must not re-factory shared priors outside the value oracle.
+
+    Eager defaults force FLAG into seed for each function; the second function
+    must hit FLAG's construction identity rather than re-factory it.
+    """
+    (tmp_path / "sibling_seed.py").write_text(
+        "FLAG = 40\n"
+        "def left(x=FLAG):\n"
+        "    return x\n"
+        "def right(x=FLAG):\n"
+        "    return x + 2\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    INSTALL_SOURCE_VALUE_ORACLE.clear()
+
+    left = resolve_install_source_value("sibling_seed.left", _ctx())
+    after_left = INSTALL_SOURCE_VALUE_ORACLE.construct_count
+    right = resolve_install_source_value("sibling_seed.right", _ctx())
+    after_right = INSTALL_SOURCE_VALUE_ORACLE.construct_count
+
+    assert left is not None and right is not None
+    # FLAG + left constructed; second seed hits FLAG, only right is new.
+    assert after_left >= 2  # FLAG and left
+    assert after_right == after_left + 1  # only right; FLAG is identity hit
+    assert INSTALL_SOURCE_VALUE_ORACLE.hit_count >= 1

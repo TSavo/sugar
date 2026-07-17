@@ -790,14 +790,16 @@ def _ctx_with_required_module_bindings(
     sourcefile: str,
     ctx: Any,
     resolving: frozenset[str],
+    defining_module: str | None = None,
 ):
     """Construct a target node's lexical module bindings, need-first.
 
     The imported value belongs to its defining module, not to the consumer's
     temporal. Reverse selection finds only prerequisite declarations; forward
-    construction then sends each selected declaration through the ordinary
-    factory. This is the module-value analogue of install-source function-global
-    seeding and deliberately does not execute or fabricate Python constants.
+    construction then sends each selected declaration through the **sole**
+    install-source value constructor (``resolve_install_source_value``) when a
+    defining module is known — same SourceOracle pin, same construction identity.
+    Same-module assigns/functions are never re-factoryed outside that door.
     """
     from sugar_lift_py_tests.engine_log import reduction_span
 
@@ -814,6 +816,7 @@ def _ctx_with_required_module_bindings(
             sourcefile=sourcefile,
             ctx=ctx,
             resolving=resolving,
+            defining_module=defining_module,
         )
 
 
@@ -826,6 +829,7 @@ def _ctx_with_required_module_bindings_impl(
     sourcefile: str,
     ctx: Any,
     resolving: frozenset[str],
+    defining_module: str | None = None,
 ):
     from dataclasses import replace
 
@@ -859,10 +863,11 @@ def _ctx_with_required_module_bindings_impl(
             if isinstance(statement, (ast.Assign, ast.AnnAssign)):
                 needed.update(_loaded_names(statement.value))
             elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                # The callable defers its body, but its captured module context
-                # must still contain every source declaration that body may
-                # load when the call is later dug.
-                needed.update(_loaded_names(statement))
+                # Body is deferred on the callable. Only eager construct faces
+                # (decorators/defaults) expand the seed; body free names are
+                # seeded when that function is itself constructed or dug —
+                # never re-pulled into every sibling seed.
+                needed.update(_function_definition_dependencies(statement))
     selected.reverse()
 
     lexical = TemporalContext.empty()
@@ -910,6 +915,30 @@ def _ctx_with_required_module_bindings_impl(
                     record=BlockValue(()),
                 ),
             )
+            module_ctx = replace(
+                module_ctx, temporal=temporal, module_temporal=temporal
+            )
+            continue
+
+        declaration = _module_declaration_name(statement)
+        # Sole constructor for same-module named values: wrap SourceOracle
+        # identity (defining_module.attr), do not re-factory outside the door.
+        if (
+            defining_module
+            and declaration
+            and isinstance(
+                statement,
+                (ast.Assign, ast.AnnAssign, ast.FunctionDef, ast.AsyncFunctionDef),
+            )
+        ):
+            qualified = f"{defining_module}.{declaration}"
+            constructed = resolve_install_source_value(
+                qualified, module_ctx, _resolving=resolving
+            )
+            if constructed is None:
+                # Same opacity as Incomplete local construct: seed cannot force.
+                return None
+            temporal = module_ctx.temporal.bind_value(declaration, constructed)
             module_ctx = replace(
                 module_ctx, temporal=temporal, module_temporal=temporal
             )
@@ -1004,11 +1033,14 @@ def _construct_install_source_value(
         module_ctx = _ctx_with_required_module_bindings(
             defining_tree.body,
             target_index,
-            _loaded_names(definition),
+            # Eager construct faces (decorators/defaults). Body free names are
+            # seeded when dig opens the body — not again for every sibling.
+            _function_definition_dependencies(definition),
             source=defining_source,
             sourcefile=defining_file,
             ctx=ctx,
             resolving=resolving,
+            defining_module=module_name,
         )
         if module_ctx is None:
             return None
@@ -1039,6 +1071,7 @@ def _construct_install_source_value(
                 sourcefile=sourcefile,
                 ctx=ctx,
                 resolving=resolving,
+                defining_module=module_name,
             )
             if module_ctx is None:
                 return None
@@ -1617,6 +1650,7 @@ def _ctx_with_method_module_bindings(fn_site, ctx: Any):
         sourcefile=sourcefile,
         ctx=ctx,
         resolving=frozenset({bridge}),
+        defining_module=module_name,
     )
     return seeded if seeded is not None else ctx
 
