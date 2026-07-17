@@ -54,11 +54,25 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
             "        return x\n"
             "    return inner(z)\n\n"
         )
-        return _call_pair(
-            name="statement_function_def_return",
-            owner_sugar="StatementFunctionDefSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        expansion_prefix = (
+            "def A():\n"
+            "    def inner(**options):\n"
+            '        return options["value"]\n'
+            '    return inner(**{"value": 5})\n\n'
+        )
+        return (
+            _call_pair(
+                name="statement_function_def_return",
+                owner_sugar="StatementFunctionDefSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            ),
+            _call_pair(
+                name="statement_function_def_keyword_expansion_return",
+                owner_sugar="StatementFunctionDefSugar",
+                truthful=expansion_prefix + "def test_a():\n    assert A() == 5\n",
+                lying=expansion_prefix + "def test_a():\n    assert A() == 6\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

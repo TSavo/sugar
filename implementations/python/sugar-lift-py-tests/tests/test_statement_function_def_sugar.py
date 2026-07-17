@@ -16,7 +16,11 @@ from sugar_lift_py_tests.floor import (
     UniverseValue,
 )
 from sugar_lift_py_tests.ir import ctor, num
+from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar.statement_function_def_sugar import (
+    StatementFunctionDefSugar,
+)
 
 
 def _root_universe(source: str) -> UniverseValue:
@@ -227,6 +231,63 @@ def test_nested_callable_collects_surplus_positionals_in_source_order_without_re
     assert callsite.force_floor(
         ctx, owner="surplus positional binding", project_callsite=False
     ) == TupleValue((TermValue(6), TermValue(7), TermValue(8)))
+
+
+def test_nested_callable_binds_single_keyword_expansion_to_var_keyword() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(**options):\n"
+        '        return options["value"]\n'
+        '    return inner(**{"value": 5})\n'
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("options",)
+    assert len(callsite.arg_values) == 1
+    assert isinstance(callsite.arg_values[0], DictValue)
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="keyword expansion binding", project_callsite=False
+    ) == TermValue(5)
+
+
+def test_nested_callable_ground_non_mapping_keyword_expansion_stays_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _root_universe(
+            "def outer():\n"
+            "    def inner(**options):\n"
+            "        return options\n"
+            "    return inner(**5)\n"
+        )
+
+    assert raised.value.info.owner == "FunctionCallable"
+    assert raised.value.info.requested == "bind call arguments to a function signature"
+
+
+def test_nested_callable_keyword_expansion_without_var_keyword_stays_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _root_universe(
+            "def outer(options):\n"
+            "    def inner(value):\n"
+            "        return value\n"
+            "    return inner(**options)\n"
+        )
+
+    assert raised.value.info.owner == "FunctionCallable"
+    assert raised.value.info.requested == "bind call arguments to a function signature"
+
+
+def test_keyword_expansion_witness_truthful_sat_and_lying_unsat(tmp_path) -> None:
+    witness = next(
+        witness
+        for witness in StatementFunctionDefSugar.witnesses()
+        if witness.name == "statement_function_def_keyword_expansion_return"
+    )
+
+    report = evaluate_seed_witnesses((witness,), tmp_path)
+
+    assert report.is_zero
 
 
 def test_nested_callable_aligns_positional_default_before_collecting_surplus() -> None:
