@@ -180,10 +180,18 @@ class FunctionCallable(FloorValue):
                 for kind in self.parameter_kinds[:-1]
             )
             and len(positional_supplied) == fixed_positional_count
-            and type(keyword_expansion) in (DictValue, SymbolicValue)
+            and (
+                type(keyword_expansion) in (DictValue, SymbolicValue)
+                or (
+                    type(keyword_expansion) is CallSiteValue
+                    and keyword_expansion.body is None
+                )
+            )
         )
         # A single mapping expansion binds exactly to a callee-owned **kwargs
-        # formal. Other expansion shapes remain loud: do not invent keys or
+        # formal. A body-less callsite remains an opaque mapping coordinate
+        # under the source ``**`` contract; a body-bearing peer must be dug
+        # instead. Other expansion shapes remain loud: do not invent keys or
         # confuse missing binder machinery with runtime dependence.
         if (
             keyword_expansions
