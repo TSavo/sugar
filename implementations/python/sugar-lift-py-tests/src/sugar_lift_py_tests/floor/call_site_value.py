@@ -315,6 +315,26 @@ class CallSiteValue(FloorValue):
             site=site,
         )
 
+    def format_data_model(self, spec, site, ctx) -> Any:
+        """Construct ``format(call(), spec)`` at the Python data-model seam.
+
+        A carried body is statically decidable and must reduce (or panic) before
+        dispatch.  A body-less callsite still has an exact receiver coordinate:
+        preserve it as the symbolic ``__format__`` method call without claiming
+        a concrete return value and without manufacturing a RuntimeEffect.
+        """
+        if self.body is not None:
+            floor = force_floor(
+                self,
+                ctx,
+                owner="FormatDunderCallSugar callsite receiver",
+                project_callsite=False,
+            )
+            return floor.format_data_model(spec, site, ctx)
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self.linear_method_call("__format__", (spec,), site))
+
     def add(self, other, site):
         """Addition floor via interface dispatch: dig then redispatch, else EUF +.
 
