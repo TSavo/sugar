@@ -76,15 +76,25 @@ use crate::resolve::{TestimonyError, TestimonyOutcome};
 /// the sealed bytes the instant they're decoded back into a `MementoPool`.
 const SOLVE_SELF_LOAD_SEED: [u8; 32] = [0x53; 32]; // 'S' for solve
 
-/// Orchestration verbs for `ProofGraph`, homed in `sugar-compiler` because
-/// they down-call both `sugar-linker` (beat 1) and `sugar-verifier` (beat 2)
-/// -- arrows the leaf crate is forbidden from making.
+/// Fixture / SEAM-5 discrimination verbs for `ProofGraph`.
+///
+/// **Not the production solve door (sugar#3859).** Production faces must call
+/// [`solve_project`] / [`solve_project_with_pool`] / [`prove_from_kit`] — those
+/// wrap the real `Runner::run_with_proof_run*` report pipeline as
+/// [`ProvenOutcome`]. This trait short-circuits on link failure and discharges
+/// via bare `verify_consistency` (no proof-run stages, no report bytes). It
+/// remains only so two-reds discrimination tests can prove
+/// `Outcome::LinkError` never collapses into a solver verdict.
+///
+/// Homed in `sugar-compiler` because the orphan rule forbids
+/// `sugar-proof-envelope` from implementing methods that call
+/// `sugar-linker` / `sugar-verifier`.
 pub trait Orchestrate {
-    /// Beat 1 (link): bind every call edge in `links` against its
-    /// contracts. Any `UnresolvedSymbol`/`SignatureMismatch` short-circuits
-    /// to `Outcome::LinkError` -- beat 2 never runs. Beat 2 (discharge):
-    /// `verify_consistency` over `self`'s contents, wrapped as
-    /// `Outcome::Verdicts`.
+    /// **Fixture door only.** Beat 1 (link): bind every call edge in `links`.
+    /// Any `UnresolvedSymbol`/`SignatureMismatch` short-circuits to
+    /// `Outcome::LinkError` -- beat 2 never runs. Beat 2: bare
+    /// `verify_consistency` as `Outcome::Verdicts` (not the production report
+    /// pipeline). Production faces: use [`solve_project`] instead.
     fn solve(
         &self,
         links: LinkerInputs,
@@ -94,14 +104,10 @@ pub trait Orchestrate {
         project_root: &Path,
     ) -> Result<Outcome, SolveError>;
 
-    /// Auto variant of [`solve`](Orchestrate::solve): self-loads `self` into
-    /// a `MementoPool` exactly once, derives `LinkerInputs` from THAT pool
-    /// (`crate::linker_inputs::derive_linker_inputs` -- real bridge data,
-    /// sugar#3857), then runs the same two beats over the same pool. Use
-    /// this when the caller has no richer edge source than the graph's own
-    /// contents; use [`solve`](Orchestrate::solve) directly when the caller
-    /// (e.g. a daemon holding a live per-kit stream union) already has
-    /// `LinkerInputs` beat 1 should bind instead.
+    /// **Fixture door only.** Auto variant of [`solve`](Orchestrate::solve):
+    /// self-loads `self` once, derives `LinkerInputs` (sugar#3857), same
+    /// short-circuit two-reds beats. Production faces: use
+    /// [`solve_project_with_pool`] over a real pool instead.
     fn solve_deriving_links(
         &self,
         plan: &SolverPlan,
