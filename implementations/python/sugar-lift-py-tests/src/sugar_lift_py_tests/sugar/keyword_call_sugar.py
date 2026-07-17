@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -237,6 +237,8 @@ class KeywordCallSugar(
                     bound_pos_values = _expand_function_positional_args(
                         pos_values, site=self.site
                     )
+                    if isinstance(bound_pos_values, Incomplete):
+                        return bound_pos_values
                     return bound.callsite(
                         (*bound_pos_values, *(value for _, value in kw_pairs)),
                         tuple(name for name, _ in kw_pairs),

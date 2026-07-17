@@ -5,7 +5,7 @@ import builtins
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -15,7 +15,9 @@ from sugar_lift_py_tests.sugar.install_source_dig import (
 )
 
 
-def _expand_function_positional_args(arg_values: tuple, *, site: object) -> tuple:
+def _expand_function_positional_args(
+    arg_values: tuple, *, site: object
+) -> tuple | Incomplete:
     """Expand only structurally known finite ``*`` operands for a bound function.
 
     ``StarredSugar`` preserves the source spelling as a ``CallSiteValue``. This
@@ -24,7 +26,12 @@ def _expand_function_positional_args(arg_values: tuple, *, site: object) -> tupl
     """
     from sugar_lift_py_tests.factory import factory_panic_gap
     from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
-    from sugar_lift_py_tests.floor import CallSiteValue, ListValue, TupleValue
+    from sugar_lift_py_tests.floor import (
+        CallSiteValue,
+        ListValue,
+        SymbolicValue,
+        TupleValue,
+    )
 
     expanded = []
     for value in arg_values:
@@ -36,6 +43,22 @@ def _expand_function_positional_args(arg_values: tuple, *, site: object) -> tupl
         if type(operand) in (TupleValue, ListValue):
             expanded.extend(operand.elements)
             continue
+
+        if type(operand) is SymbolicValue:
+            from sugar_lift_py_tests.effect import (
+                StarredPositionalRuntimeEffect,
+                runtime_effect_evidence,
+            )
+
+            return Incomplete(
+                StarredPositionalRuntimeEffect(
+                    "starred positional call binding depends on runtime iterable "
+                    f"elements; owner=CallSugar site={site}",
+                    **runtime_effect_evidence(
+                        "py.call.starred_positional", operand, site
+                    ),
+                )
+            )
 
         factory_panic_gap(
             owner="CallSugar",
@@ -127,11 +150,29 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             "    return y\n"
             "\n"
         )
-        return _call_pair(
-            name="call_return",
-            owner_sugar="CallSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
+
+        return (
+            _call_pair(
+                name="call_return",
+                owner_sugar="CallSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            ),
+            typed_red_effect_witness(
+                name="call_starred_positional_runtime_effect",
+                owner_sugar="CallSugar",
+                source=(
+                    "def A(items):\n"
+                    "    def sink(*values):\n"
+                    "        return 1\n"
+                    "    return sink(*items)\n"
+                ),
+                effect_class="StarredPositionalRuntimeEffect",
+                reason_needle="depends on runtime iterable elements",
+                blame_needle="test_witness.py:4:11",
+                wrong_reason_needle="owner=AwaitSugar",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -236,8 +277,11 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                         )
                     )
             if isinstance(bound, FunctionCallable):
+                expanded = _expand_function_positional_args(accumulated, site=self.site)
+                if isinstance(expanded, Incomplete):
+                    return expanded
                 return bound.callsite(
-                    _expand_function_positional_args(accumulated, site=self.site),
+                    expanded,
                     self.keyword_names,
                     self.site,
                     source_arg_values=accumulated,
