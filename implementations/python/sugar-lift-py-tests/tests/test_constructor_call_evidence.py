@@ -109,6 +109,9 @@ def test_requests_cookiejar_source_bases_have_exact_c3_linearization() -> None:
         _static_constructor_mro,
     )
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        resolve_install_source_class_bases,
+    )
 
     source = (
         "class RequestsCookieJar(CookieJar, MutableMapping[str, str]):\n" "    pass\n"
@@ -142,7 +145,12 @@ def test_requests_cookiejar_source_bases_have_exact_c3_linearization() -> None:
 
     mro = _static_constructor_mro("RequestsCookieJar", class_site, ctx)
 
-    assert mro is not None
+    assert mro is not None, {
+        "CookieJar": resolve_install_source_class_bases("http.cookiejar.CookieJar"),
+        "MutableMapping": resolve_install_source_class_bases(
+            "collections.abc.MutableMapping"
+        ),
+    }
     assert tuple(entry[1] for entry in mro) == (
         "RequestsCookieJar",
         "http.cookiejar.CookieJar",
@@ -153,6 +161,48 @@ def test_requests_cookiejar_source_bases_have_exact_c3_linearization() -> None:
         "collections.abc.Iterable",
         "collections.abc.Container",
         "builtins.object",
+    )
+
+
+def test_requests_cookiejar_enters_selected_source_init_before_next_loud_front() -> (
+    None
+):
+    temporal = (
+        TemporalContext.empty()
+        .bind_value(
+            "CookieJar",
+            ImportAliasValue(
+                "CookieJar",
+                "CookieJar",
+                import_target="http.cookiejar.CookieJar",
+            ),
+        )
+        .bind_value(
+            "MutableMapping",
+            ImportAliasValue(
+                "MutableMapping",
+                "MutableMapping",
+                import_target="collections.abc.MutableMapping",
+            ),
+        )
+    )
+
+    outcome = _outcome(
+        "class RequestsCookieJar("
+        "CookieJar, MutableMapping[str, str]"
+        "):\n"
+        "    pass\n",
+        "RequestsCookieJar()",
+        temporal=temporal,
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert outcome.value.class_name == "RequestsCookieJar"
+    assert tuple(_field_values(outcome.value)) == (
+        "_policy",
+        "_cookies_lock",
+        "_cookies",
     )
 
 
@@ -494,6 +544,48 @@ def test_source_backed_imported_constructor_refutes_wrong_twin(tmp_path) -> None
             "class Base:\n"
             "    def __init__(self, value):\n"
             "        self.value = value\n",
+            encoding="utf-8",
+        )
+
+    truthful = run_source_through_real_solver(
+        truthful_dir,
+        prefix + "\ndef test_a():\n    assert A() == 7\n",
+    )
+    lying = run_source_through_real_solver(
+        lying_dir,
+        prefix + "\ndef test_a():\n    assert A() == 8\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+    assert "ConstructorCallSugar" in truthful.selected_sugars
+    assert "ConstructorCallSugar" in lying.selected_sugars
+
+
+def test_source_backed_imported_init_body_refutes_wrong_twin(tmp_path) -> None:
+    prefix = (
+        "from base_mod import Base\n"
+        "from marker_mod import Marker\n"
+        "class Child(Base, Marker):\n"
+        "    pass\n"
+        "\n"
+        "def A():\n"
+        "    return Child().value\n"
+    )
+    truthful_dir = tmp_path / "source-init-truthful"
+    lying_dir = tmp_path / "source-init-lying"
+    for project in (truthful_dir, lying_dir):
+        project.mkdir()
+        (project / "base_mod.py").write_text(
+            "class Base:\n"
+            "    def __init__(self, value=None):\n"
+            "        if value is None:\n"
+            "            value = 7\n"
+            "        self.value = value\n",
+            encoding="utf-8",
+        )
+        (project / "marker_mod.py").write_text(
+            "class Marker:\n" "    pass\n",
             encoding="utf-8",
         )
 

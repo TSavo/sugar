@@ -141,6 +141,77 @@ class ConstructorStrategy:
 
 
 @dataclass(frozen=True)
+class SourceBodyConstructorStrategy:
+    """Execute a source-backed ``__init__`` and recover its exact self rebind."""
+
+    class_name: str
+    body: SugarBody
+    parameters: tuple[str, ...]
+    arguments: tuple[SugarBody, ...]
+    methods: tuple[ObjectMethodValue, ...] = ()
+    identity: str = ""
+
+    def emit(self, sugar, ctx) -> Outcome:
+        del sugar
+        from sugar_lift_py_tests.floor.call_site_value import _ctx_with_curried_args
+        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.sugar.install_source_dig import (
+            ContextualizedDigBody,
+        )
+
+        values = []
+        for argument in self.arguments:
+            outcome = argument.reduce(ctx)
+            if isinstance(outcome, Incomplete):
+                return outcome
+            values.append(
+                complete_value(outcome, owner=f"{self.class_name} constructor argument")
+            )
+        receiver = ObjectValue(
+            class_name=self.class_name,
+            fields=(),
+            methods=self.methods,
+            identity=self.identity,
+        )
+        contextualized = self.body.sugar
+        if not isinstance(contextualized, ContextualizedDigBody):
+            raise TypeError(
+                "SourceBodyConstructorStrategy requires a contextualized source body"
+            )
+        curried = _ctx_with_curried_args(ctx, self.parameters, (receiver, *values))
+        final_ctx = contextualized.scope_after(curried)
+        field_prefix = f"{self.parameters[0]}."
+        fields = tuple(
+            ObjectField(
+                name=binding.name.removeprefix(field_prefix), value=binding.value
+            )
+            for binding in final_ctx.temporal.bindings
+            if binding.name.startswith(field_prefix)
+        )
+        if not fields:
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=self.identity,
+                observed=f"{self.class_name} source initializer",
+                requested="source-constructed object fields",
+                fix=(
+                    f"construct the exact `{self.class_name}.__init__` object "
+                    "state or leave this initializer loud"
+                ),
+            )
+        return Complete(
+            ObjectValue(
+                class_name=self.class_name,
+                fields=fields,
+                methods=self.methods,
+                identity=self.identity,
+            )
+        )
+
+
+@dataclass(frozen=True)
 class RuntimeConstructorStrategy:
     class_name: str
     arguments: tuple[SugarBody, ...]

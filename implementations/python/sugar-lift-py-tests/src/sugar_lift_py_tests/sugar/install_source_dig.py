@@ -1806,6 +1806,25 @@ def _class_base_ast_name(node: ast.expr) -> str | None:
     return _dotted_ast_name(node)
 
 
+def _facade_class_source(module_name: str, class_name: str) -> tuple[str, str] | None:
+    """Resolve the defining source behind a public re-exporting module."""
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError:
+        return None
+    cls = getattr(module, class_name, None)
+    try:
+        sourcefile = inspect.getsourcefile(cls) if inspect.isclass(cls) else None
+    except (TypeError, OSError):
+        return None
+    if not isinstance(sourcefile, str):
+        return None
+    try:
+        return Path(sourcefile).read_text(encoding="utf-8"), sourcefile
+    except (OSError, UnicodeError):
+        return None
+
+
 @functools.lru_cache(maxsize=INSTALL_SOURCE_VALUE_CAPACITY)
 def resolve_install_source_class_bases(
     qualified_class: str,
@@ -1824,20 +1843,10 @@ def resolve_install_source_class_bases(
         # ``collections.abc`` is a public facade whose source file is
         # ``_collections_abc.py``. Resolve that source file from the class
         # coordinate; do not consult its runtime MRO.
-        try:
-            module = importlib.import_module(module_name)
-        except ImportError:
+        installed = _facade_class_source(module_name, class_name)
+        if installed is None:
             return None
-        cls = getattr(module, class_name, None)
-        sourcefile = inspect.getsourcefile(cls) if inspect.isclass(cls) else None
-        if not isinstance(sourcefile, str):
-            return None
-        try:
-            source = Path(sourcefile).read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            return None
-    else:
-        source, sourcefile = installed
+    source, sourcefile = installed
     try:
         parsed = parsed_tree(source, sourcefile)
     except SyntaxError:
@@ -1851,7 +1860,53 @@ def resolve_install_source_class_bases(
         None,
     )
     if class_node is None:
-        return None
+        # Resolve public source facades without consulting runtime ``__mro__``.
+        # Python 3.11's ``collections.abc`` is literally a star re-export of
+        # ``_collections_abc``; later releases point inspection at the defining
+        # file directly. Both spellings denote the same source-proven classes.
+        for statement in parsed.body:
+            if not isinstance(statement, ast.ImportFrom) or not any(
+                alias.name == "*" for alias in statement.names
+            ):
+                continue
+            target_module = _absolute_import_from_module(
+                module_name, statement.module, statement.level
+            )
+            if target_module is None:
+                continue
+            bases = resolve_install_source_class_bases(f"{target_module}.{class_name}")
+            if bases is None:
+                continue
+            target_prefix = f"{target_module}."
+            return tuple(
+                (
+                    f"{module_name}.{base.removeprefix(target_prefix)}"
+                    if base.startswith(target_prefix)
+                    else base
+                )
+                for base in bases
+            )
+        # Some Python releases ship ``collections.abc`` as a thin
+        # ``from _collections_abc import *`` facade. The module source exists,
+        # but the requested class is defined in the re-exported class's source.
+        defining = _facade_class_source(module_name, class_name)
+        if defining is None or defining == installed:
+            return None
+        source, sourcefile = defining
+        try:
+            parsed = parsed_tree(source, sourcefile)
+        except SyntaxError:
+            return None
+        class_node = next(
+            (
+                statement
+                for statement in parsed.body
+                if isinstance(statement, ast.ClassDef) and statement.name == class_name
+            ),
+            None,
+        )
+        if class_node is None:
+            return None
     if not class_node.bases:
         return () if qualified_class == "builtins.object" else ("builtins.object",)
 
