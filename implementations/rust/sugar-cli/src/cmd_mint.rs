@@ -2760,19 +2760,23 @@ fn mint_input_multi(
     let mut plan_path_steps: Vec<Value> = Vec::with_capacity(plugins.len() + 1);
 
     for (idx, plugin) in plugins.iter().enumerate() {
-        let lift_input = Input::Spec(lift_plugin::build_lift_params(
-            project_root,
-            &plugin.surface,
-            LiftPluginOptions {
-                identify_only: false,
-                library_bindings,
-                workspace_override: plugin.workspace_override.clone(),
-                emit: plugin.emit.clone(),
-                layer: plugin.layer.clone(),
-                report_summary: false,
-                contract_bindings: Vec::new(),
-            },
-        ));
+        let lift_input = Input::Spec(
+            lift_plugin::build_lift_params(
+                project_root,
+                &plugin.surface,
+                LiftPluginOptions {
+                    identify_only: false,
+                    library_bindings,
+                    workspace_override: plugin.workspace_override.clone(),
+                    emit: plugin.emit.clone(),
+                    layer: plugin.layer.clone(),
+                    report_summary: false,
+                    contract_bindings: Vec::new(),
+                },
+            )
+            .to_wire_value()
+            .expect("LiftRequest is always JSON-serializable"),
+        );
         let lift_input_cid = address(&lift_input);
         inputs.put(lift_input_cid.clone(), lift_input);
         let lift_step_name = if plugins.len() == 1 {
@@ -6145,7 +6149,9 @@ mod tests {
         // a non-empty array. Sending [] was the bug fixed in issue #166.
         let root = PathBuf::from(".");
         let params =
-            crate::lift_plugin::build_lift_params(&root, "rust", LiftPluginOptions::default());
+            crate::lift_plugin::build_lift_params(&root, "rust", LiftPluginOptions::default())
+                .to_wire_value()
+                .expect("LiftRequest serializes");
         let paths = params["source_paths"]
             .as_array()
             .expect("source_paths must be an array");
@@ -6160,7 +6166,9 @@ mod tests {
     fn dispatch_lift_params_has_surface_and_options() {
         let root = PathBuf::from(".");
         let params =
-            crate::lift_plugin::build_lift_params(&root, "go", LiftPluginOptions::default());
+            crate::lift_plugin::build_lift_params(&root, "go", LiftPluginOptions::default())
+                .to_wire_value()
+                .expect("LiftRequest serializes");
         assert_eq!(params["surface"].as_str(), Some("go"));
         assert_eq!(params["config_path"].as_str(), Some(".sugar/config.toml"));
         assert!(

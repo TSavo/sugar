@@ -11,6 +11,10 @@
 // `LiftManifest` field privacy (#3855): fields are private; the only public
 // builder is `LiftManifest::resolved(...)`. The compile-fail case
 // `lift_manifest_struct_literal.rs` pins that door.
+//
+// Strong `Kit::lift` request (#3855 residual): `lift` takes `LiftRequest`, not
+// `serde_json::Value`. The compile-fail case `lift_request_is_not_value.rs`
+// pins that the free-form blob no longer types at the Kit boundary.
 
 #[test]
 fn kit_has_no_forging_constructor() {

@@ -20,7 +20,9 @@ use serde_json::{json, Value};
 use sugar_ir_types::CompositionBoundaryMemento;
 
 use crate::component_plan::PlannedLiftManifest;
-use sugar_compiler::kit::{Kit, KitError as SugarKitError, LiftManifest, RendezvousError};
+use sugar_compiler::kit::{
+    Kit, KitError as SugarKitError, LiftManifest, LiftRequest, LiftRequestOptions, RendezvousError,
+};
 use sugar_compiler::kit_path::{
     execute_path, KitRegistry, LiftPluginKit, LiftPluginKitError, PathExecutionError,
 };
@@ -294,7 +296,15 @@ pub(crate) fn dispatch_lift(
         kit = kit.with_method(method);
     }
     trace_log(format!("lift kit parse surface={surface}"));
-    let core_session = kit.parse_session(&Input::Spec(lift_params.clone()))?;
+    let lift_wire = lift_params.to_wire_value().map_err(|error| {
+        LiftPluginError::diagnostic(
+            LiftPluginDiagnosticKind::RequestEncoding,
+            "lift.request",
+            format!("encode lift request: {error}"),
+            "Inspect LiftPluginOptions and build_lift_params; every request value must be JSON-serializable before it enters the lift-plugin transport.",
+        )
+    })?;
+    let core_session = kit.parse_session(&Input::Spec(lift_wire))?;
     trace_log(format!(
         "lift kit parsed surface={surface} elapsed={:?}",
         started.elapsed()
@@ -462,7 +472,7 @@ pub(crate) fn last_python_kit_source() -> Option<Value> {
 fn dispatch_lift_path_unregistered(
     surface: &str,
     dialect: Dialect,
-    lift_params: Value,
+    lift_params: LiftRequest,
 ) -> Result<LiftPluginSession, LiftPluginError> {
     let source = Input::Source {
         dialect: dialect.clone(),
@@ -747,7 +757,17 @@ fn surface_from_manifest_path(path: &Path) -> String {
         .to_string()
 }
 
-pub fn build_lift_params(project_root: &Path, surface: &str, options: LiftPluginOptions) -> Value {
+/// Build the strong [`LiftRequest`] the Kit boundary accepts (#3855).
+///
+/// Wire shape is unchanged: `surface`, `workspace_root`, `config_path`,
+/// `source_paths`, nested `options` (camelCase keys), optional
+/// `contract_bindings`. Callers that still need a free-form JSON object for
+/// `Input::Spec` use [`LiftRequest::to_wire_value`].
+pub fn build_lift_params(
+    project_root: &Path,
+    surface: &str,
+    options: LiftPluginOptions,
+) -> LiftRequest {
     // Per-plugin override takes precedence over the project root.
     // Substrate-honest: the plugin receives the workspace_root the
     // project config declared. Relative overrides are anchored at the
@@ -778,16 +798,6 @@ pub fn build_lift_params(project_root: &Path, surface: &str, options: LiftPlugin
     } else {
         "all"
     };
-    let mut options_obj = json!({
-        "layer": layer,
-        "identifyOnly": options.identify_only,
-    });
-    if let Some(emit) = options.emit.as_deref() {
-        options_obj["emit"] = json!(emit);
-    }
-    if options.report_summary {
-        options_obj["reportSummary"] = json!(true);
-    }
     // Preserve the original workspace_override in the request itself,
     // so consumers of the lift_request (like MintKit::transform_session)
     // can distinguish "use the project root" from "this plugin was
@@ -795,20 +805,17 @@ pub fn build_lift_params(project_root: &Path, surface: &str, options: LiftPlugin
     // lookup, which always lives under the project root regardless of
     // where the plugin walks. The actual `workspace_root` field above
     // already encodes the final (post-override) walk root.
-    if let Some(override_path) = options.workspace_override.as_deref() {
-        options_obj["workspaceOverride"] = json!(override_path);
-    }
-    let mut params = json!({
-        "surface": surface,
-        "workspace_root": workspace_root,
-        "config_path": ".sugar/config.toml",
-        "source_paths": ["."],
-        "options": options_obj,
-    });
-    if !options.contract_bindings.is_empty() {
-        params["contract_bindings"] = Value::Array(options.contract_bindings.clone());
-    }
-    params
+    LiftRequest::project(workspace_root, ["."])
+        .with_surface(surface)
+        .with_config_path(".sugar/config.toml")
+        .with_options(LiftRequestOptions::resolved(
+            layer,
+            options.identify_only,
+            options.emit.clone(),
+            options.report_summary,
+            options.workspace_override.clone(),
+        ))
+        .with_contract_bindings(options.contract_bindings.clone())
 }
 
 fn trace_log(message: impl std::fmt::Display) {
@@ -909,7 +916,9 @@ mod tests {
                 library_bindings: true,
                 ..Default::default()
             },
-        );
+        )
+        .to_wire_value()
+        .expect("LiftRequest serializes");
 
         assert_eq!(
             request["options"]["layer"].as_str(),
@@ -927,7 +936,9 @@ mod tests {
                 report_summary: true,
                 ..Default::default()
             },
-        );
+        )
+        .to_wire_value()
+        .expect("LiftRequest serializes");
 
         assert_eq!(request["options"]["reportSummary"].as_bool(), Some(true));
     }
@@ -946,7 +957,9 @@ mod tests {
                 workspace_override: Some("vendor/base64-0.22.1".to_string()),
                 ..Default::default()
             },
-        );
+        )
+        .to_wire_value()
+        .expect("LiftRequest serializes");
 
         assert_eq!(
             request["workspace_root"].as_str(),
@@ -1000,7 +1013,9 @@ mod tests {
                 library_bindings: false,
                 ..Default::default()
             },
-        );
+        )
+        .to_wire_value()
+        .expect("LiftRequest serializes");
 
         let term = Term::Const {
             value: response.clone(),
@@ -1047,7 +1062,9 @@ mod tests {
                 library_bindings: false,
                 ..Default::default()
             },
-        );
+        )
+        .to_wire_value()
+        .expect("LiftRequest serializes");
 
         let term = Term::Const {
             value: response.clone(),
@@ -1095,7 +1112,9 @@ mod tests {
                 library_bindings: false,
                 ..Default::default()
             },
-        );
+        )
+        .to_wire_value()
+        .expect("LiftRequest serializes");
 
         let term = Term::Const {
             value: response,
