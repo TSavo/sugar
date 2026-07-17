@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
-from sugar_lift_py_tests.floor import ScopeRebind
-from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
+from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.subscript_store_post_state import (
+    cite_subscript_post_state,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -21,7 +22,7 @@ class SubscriptAssignSugar(Sugar, role=SugarRole.STATEMENT):
     """
 
     receiver: SugarBody
-    receiver_name: str | None
+    receiver_coordinate: str | None
     index: SugarBody
     value: SugarBody
     site: object = dataclass_field(compare=False)
@@ -39,7 +40,7 @@ class SubscriptAssignSugar(Sugar, role=SugarRole.STATEMENT):
         receiver = target.subscript_receiver()
         return cls(
             receiver=ctx.build_body(receiver, SugarRole.TERM),
-            receiver_name=receiver.name_id() if receiver.observed == "Name" else None,
+            receiver_coordinate=receiver.dotted_expr_name(),
             index=ctx.build_body(target.subscript_index(), SugarRole.TERM),
             value=ctx.build_body(site.assign_value(), SugarRole.TERM),
             site=site,
@@ -60,23 +61,19 @@ class SubscriptAssignSugar(Sugar, role=SugarRole.STATEMENT):
             lambda receiver: self.index.reduce(ctx).and_then(
                 lambda index: self.value.reduce(ctx).and_then(
                     lambda value: receiver.setitem(index, value, self.site).and_then(
-                        lambda updated: self._cite_update(updated)
+                        lambda updated: self._cite_update(receiver, updated)
                     )
                 )
             )
         )
 
-    def _cite_update(self, updated) -> Outcome:
-        if self.receiver_name is not None:
-            return Complete(ScopeRebind(self.receiver_name, updated))
-        from sugar_lift_py_tests.effect import runtime_effect_evidence
-
-        return Incomplete(
-            SubscriptStoreRuntimeEffect(
-                "subscript store completed on a non-name receiver whose post-state "
-                f"cannot be rebound; site={self.site}",
-                **runtime_effect_evidence("py.setitem", updated, self.site),
-            )
+    def _cite_update(self, receiver, updated) -> Outcome:
+        return cite_subscript_post_state(
+            receiver_coordinate=self.receiver_coordinate,
+            receiver=receiver,
+            updated=updated,
+            operation="py.setitem",
+            site=self.site,
         )
 
     def walk_children(self):

@@ -472,6 +472,10 @@ class SourceFragment:
         self._require(ast.Name)
         return self.node.id  # type: ignore[attr-defined]
 
+    def dotted_expr_name(self) -> str | None:
+        """Return the coordinate for a pure name/attribute expression."""
+        return _dotted_expr_name(self.node)
+
     def literal_value(self):
         """Return the Python value (int|str|bool|None) for a Constant/PrimitiveLiteral node."""
         self._require(ast.Constant)
