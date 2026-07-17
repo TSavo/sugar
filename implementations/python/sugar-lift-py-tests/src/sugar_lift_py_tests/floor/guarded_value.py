@@ -166,6 +166,10 @@ class GuardedValue(FloorValue):
         """Rebind both statically known receiver faces after a subscript store."""
         return self._map("setitem", index, value, site)
 
+    def delitem(self, index, site):
+        """Rebind both statically known receiver faces after a subscript delete."""
+        return self._map("delitem", index, site)
+
     def add(self, other, site):
         return self._map("add", other, site)
 
