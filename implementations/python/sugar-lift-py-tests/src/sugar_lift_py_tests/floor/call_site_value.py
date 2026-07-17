@@ -174,6 +174,35 @@ class CallSiteValue(FloorValue):
             )
         )
 
+    def append_with(self, value, site):
+        """Rebind an opaque list-shaped callsite after ``.append(v)``.
+
+        Concrete ``ListValue`` folds element history. A callsite (for example
+        ``s.split(".")[:3]``) has no element history to fold, but the append
+        statement still rebinds the name: carry the prior list coordinate and
+        the appended value on ``py.list_append`` so later statements keep a
+        FloorValue. Do not invent members; the coordinate is the post-state.
+        """
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+
+        value_term = floor_to_term(value, owner="CallSiteValue.append_with value")
+        return Complete(
+            CallSiteValue(
+                target_name="list.append",
+                arg_values=(self, value),
+                parameters=(),
+                term=ctor(
+                    "py.list_append",
+                    [self.to_term(owner=str(site)), value_term],
+                    symbol_kind="method-coordinate",
+                ),
+                body=None,
+                site=site,
+            )
+        )
+
     def callsites(self):
         # A CallSiteValue carries itself -- equals emit collects it so the
         # inv that consumes the term can still project the edge later.

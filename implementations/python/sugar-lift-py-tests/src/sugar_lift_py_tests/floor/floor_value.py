@@ -176,8 +176,8 @@ class FloorValue:
     def append_with(self, value, site):
         # Default: this value does not stand on the append floor -- it cannot answer
         # what appending another value yields. The None arm: a value that CAN
-        # implements append_with (ListValue folds the history); absence here is the
-        # honest "no". Symbolic append is out of scope this tranche.
+        # implements append_with (ListValue folds the history; CallSiteValue
+        # rebinds through py.list_append). Absence here is the honest "no".
         del value
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow,
