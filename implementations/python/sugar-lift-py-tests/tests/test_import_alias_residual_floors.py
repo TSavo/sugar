@@ -23,6 +23,7 @@ from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.install_source_dig import resolve_install_source_value
 from sugar_lift_py_tests.sugar.getattr_builtin_sugar import GetattrBuiltinSugar
+from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
@@ -249,6 +250,135 @@ def test_setup_sentinel_false_branch_reexport_digs_exact_function(
 
     assert isinstance(resolved, FunctionCallable)
     assert resolved.name == "witnessed_reexport.core.selected"
+
+
+def test_unconditional_reexport_digs_exact_constructed_value(
+    tmp_path, monkeypatch
+) -> None:
+    package = tmp_path / "witnessed_value_reexport"
+    package.mkdir()
+    (package / "__init__.py").write_text("from .constants import FLAG\n")
+    (package / "constants.py").write_text("FLAG = False\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    resolved = resolve_install_source_value("witnessed_value_reexport.FLAG", ctx)
+
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+
+    assert isinstance(resolved, FalseBoolLiteralSugar)
+
+
+def test_shadowed_unconditional_reexport_stays_unresolved(
+    tmp_path, monkeypatch
+) -> None:
+    package = tmp_path / "shadowed_value_reexport"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from .constants import FLAG\n" "FLAG = choose_at_runtime()\n"
+    )
+    (package / "constants.py").write_text("FLAG = False\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    resolved = resolve_install_source_value("shadowed_value_reexport.FLAG", ctx)
+
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    assert isinstance(resolved, CallSiteValue)
+    assert resolved.target_name == "choose_at_runtime"
+
+
+def test_literal_all_star_reexport_digs_exact_constructed_value(
+    tmp_path, monkeypatch
+) -> None:
+    package = tmp_path / "witnessed_star_reexport"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "# literal star export\n" "from .constants import *\n"
+    )
+    (package / "constants.py").write_text("__all__ = ['FLAG']\n" "FLAG = False\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    resolved = resolve_install_source_value("witnessed_star_reexport.FLAG", ctx)
+
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+
+    assert isinstance(resolved, FalseBoolLiteralSugar)
+
+
+def test_star_reexport_without_literal_all_stays_unresolved(
+    tmp_path, monkeypatch
+) -> None:
+    package = tmp_path / "opaque_star_reexport"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "# opaque star export\n" "from .constants import *\n"
+    )
+    (package / "constants.py").write_text(
+        "__all__ = exported_at_runtime()\n" "FLAG = False\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    assert resolve_install_source_value("opaque_star_reexport.FLAG", ctx) is None
+
+
+def test_shadowed_literal_all_star_reexport_uses_later_binding(
+    tmp_path, monkeypatch
+) -> None:
+    package = tmp_path / "shadowed_star_reexport"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from .constants import *\n" "FLAG = choose_at_runtime()\n"
+    )
+    (package / "constants.py").write_text("__all__ = ['FLAG']\n" "FLAG = False\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    resolved = resolve_install_source_value("shadowed_star_reexport.FLAG", ctx)
+
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    assert isinstance(resolved, CallSiteValue)
+    assert resolved.target_name == "choose_at_runtime"
+
+
+def test_pandas_compat_reexport_constructs_underlying_predicate() -> None:
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    resolved = resolve_install_source_value("pandas.compat.IS64", ctx)
+
+    from sugar_lift_py_tests.floor import PredicateValue
+
+    assert isinstance(resolved, PredicateValue)
+    assert resolved.formula.name == "py.gt"
+
+
+def test_unconditional_reexport_truth_witness_refutes_wrong_twin(tmp_path) -> None:
+    prefix = (
+        "from pip._vendor.urllib3.util import IS_PYOPENSSL\n\n"
+        "def A():\n"
+        "    return not IS_PYOPENSSL\n\n"
+    )
+    witness = _call_pair(
+        name="unconditional_reexport_truth",
+        owner_sugar="UnaryOpSugar",
+        truthful=prefix + "def test_a():\n    assert A() == True\n",
+        lying=prefix + "def test_a():\n    assert A() == False\n",
+    )
+
+    assert evaluate_seed_witnesses((witness,), tmp_path).is_zero
 
 
 def test_numpy_setup_reexport_getattr_constructs_exact_import_coordinate() -> None:
