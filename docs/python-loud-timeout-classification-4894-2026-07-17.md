@@ -1,5 +1,14 @@
 # Loud-bounded-timeout classification for #4894 (2026-07-17)
 
+## Recovery complete
+
+The 53 identity-unavailable rows below were subsequently recovered and
+replayed.  The canonical ledger now contains all 293 rows: 146
+`completes-at-bound`, 146 `completes-with-panic`, one `bare-exception`, and
+zero `hang-at-max-bound`.  See
+`docs/python-loud-timeout-recovery-4894-2026-07-17.md` for the recovered
+filenames, recovery testimony, and dispatchable hidden-panic ranking.
+
 ## Battleaxe post-optimization classification
 
 The classification replay moved from the contended local Mac to battleaxe.
