@@ -293,7 +293,7 @@ def _fits_numpy_int64(value: int) -> bool:
 
 
 def _static_exit_suppression_contract(source_name: str, values: tuple):
-    """Construct stdlib manager evidence only from exact static operands."""
+    """Construct known manager evidence only from exact static operands."""
     from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 
     if source_name in {
@@ -305,6 +305,7 @@ def _static_exit_suppression_contract(source_name: str, values: tuple):
         "pandas.HDFStore",
         "pandas._testing.raises_chained_assignment_error",
         "pandas.option_context",
+        "pytest.warns",
     }:
         return ExitSuppressionContract.never_suppresses()
     if source_name != "contextlib.suppress" or not values:

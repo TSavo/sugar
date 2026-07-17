@@ -249,6 +249,7 @@ def test_contextlib_suppress_constructs_named_static_contract() -> None:
         "pandas.HDFStore",
         "pandas._testing.raises_chained_assignment_error",
         "pandas.option_context",
+        "pytest.warns",
     ),
 )
 def test_exact_non_suppressing_manager_coordinates_construct_contract(
@@ -269,6 +270,7 @@ def test_exact_non_suppressing_manager_coordinates_construct_contract(
         "project.raises_chained_assignment_error",
         "project.errstate",
         "project.nditer",
+        "project.warns",
         "numpy.unknown",
     ),
 )
