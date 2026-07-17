@@ -103,6 +103,17 @@ class ComprehensionValue(FloorValue):
     def subtract(self, other, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
+        if (
+            type(other) is ComprehensionValue
+            and getattr(self.term, "name", None) == "py.setcomp"
+            and getattr(other.term, "name", None) == "py.setcomp"
+        ):
+            from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                ComprehensionValue(ctor("py.set_difference", [self.term, other.term]))
+            )
         if type(other) is CallSiteValue:
             from sugar_lift_py_tests.effect import runtime_subtract
 

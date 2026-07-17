@@ -265,6 +265,27 @@ def test_concrete_set_difference_constructs_exact_members() -> None:
     assert outcome == Complete(SetValue((TermValue(1), TermValue(3))))
 
 
+def test_set_comprehension_difference_constructs_exact_coordinate() -> None:
+    site = SourceFragment.from_source("left - right\n", "t.py").statements()[0]
+    left = ComprehensionValue(ctor("py.setcomp", [make_var("left_items")]))
+    right = ComprehensionValue(ctor("py.setcomp", [make_var("right_items")]))
+
+    outcome = left.subtract(right, site)
+
+    assert outcome == Complete(
+        ComprehensionValue(ctor("py.set_difference", [left.term, right.term]))
+    )
+
+
+def test_list_comprehension_subtraction_stays_loud() -> None:
+    site = SourceFragment.from_source("left - right\n", "t.py").statements()[0]
+    left = ComprehensionValue(ctor("py.listcomp", [make_var("left_items")]))
+    right = ComprehensionValue(ctor("py.listcomp", [make_var("right_items")]))
+
+    with pytest.raises(FactoryPanic, match="owner=subtract"):
+        left.subtract(right, site)
+
+
 @pytest.mark.parametrize(
     "left",
     (
@@ -307,5 +328,25 @@ def test_subtract_truthful_and_lying_twins_reach_opposite_verdicts(tmp_path) -> 
 
     assert truthful.verdict == "sat"
     assert lying.verdict == "unsat"
+    assert "SubtractOpSugar" in truthful.selected_sugars
+    assert "SubtractOpSugar" in lying.selected_sugars
+
+
+def test_set_comprehension_subtract_truthful_and_lying_twins_refute(tmp_path) -> None:
+    pair = next(
+        pair
+        for pair in SubtractOpSugar.witnesses()
+        if pair.name == "set_comprehension_subtract"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful-set-comprehension", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying-set-comprehension", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
     assert "SubtractOpSugar" in truthful.selected_sugars
     assert "SubtractOpSugar" in lying.selected_sugars
