@@ -8,6 +8,7 @@ import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
+from sugar_lift_py_tests.effect import GetattrRuntimeEffect, runtime_effect_evidence
 from sugar_lift_py_tests.factory import FactoryPanic, SourceFragment
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
@@ -47,6 +48,15 @@ class _StaticValueSugar:
         if self.events is not None:
             self.events.append(self.label)
         return Complete(self.value)
+
+
+@dataclass(frozen=True)
+class _EffectSugar:
+    effect: object
+
+    def desugar(self, ctx=None):
+        del ctx
+        return Incomplete(self.effect)
 
 
 def _expr_body(expr: str) -> SugarBody:
@@ -392,6 +402,33 @@ def test_symbolic_receiver_manager_exit_is_a_runtime_operand() -> None:
     )
     assert outcome.statements[0].effect.witness.operand == receiver.to_term(
         owner="test"
+    )
+
+
+def test_source_backed_manager_propagates_its_genuine_runtime_effect() -> None:
+    site = SourceFragment.from_source("manager()", "manager.py")
+    receiver = SymbolicValue(make_var("runtime_manager_input"))
+    effect = GetattrRuntimeEffect(
+        "manager result depends on a genuine runtime operand",
+        **runtime_effect_evidence("py.manager.result", receiver, site),
+    )
+    manager = CallSiteValue(
+        target_name="manager",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:manager", []),
+        body=SugarBody(_EffectSugar(effect), SugarRole.TERM),
+    )
+
+    outcome = compose_block(
+        "    with manager:\n" "        raise ValueError('boom')\n",
+        binds={"manager": manager},
+    )
+
+    assert isinstance(outcome.statements[0], Incomplete)
+    assert outcome.statements[0].effect is effect
+    assert outcome.statements[0].effect.witness.operand == make_var(
+        "runtime_manager_input"
     )
 
 

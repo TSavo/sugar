@@ -621,6 +621,7 @@ class CallSiteValue(FloorValue):
         ctx: Any,
         *,
         owner: str,
+        incomplete_outcome: list | None = None,
         seen: frozenset[str] = frozenset(),
         depth: int = 0,
         budget: int = _FORCE_FLOOR_BUDGET,
@@ -669,6 +670,8 @@ class CallSiteValue(FloorValue):
                 return None
             raise
         if isinstance(outcome, Incomplete):
+            if incomplete_outcome is not None:
+                incomplete_outcome.append(outcome)
             return None
         value = complete_value(outcome, owner=owner)
         if isinstance(value, CallSiteValue):
