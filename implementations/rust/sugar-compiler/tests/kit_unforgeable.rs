@@ -7,6 +7,10 @@
 // get one via `Default`/`Deserialize`. If a future edit adds a public
 // field, a `Kit::new`, or a derived `Default`/`Deserialize`, these
 // compile-fail cases start compiling and this test goes red.
+//
+// `LiftManifest` field privacy (#3855): fields are private; the only public
+// builder is `LiftManifest::resolved(...)`. The compile-fail case
+// `lift_manifest_struct_literal.rs` pins that door.
 
 #[test]
 fn kit_has_no_forging_constructor() {

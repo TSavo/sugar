@@ -31,14 +31,14 @@ for line in sys.stdin:
         p.set_mode(0o755);
         fs::set_permissions(&script, p).unwrap();
     }
-    LiftManifest {
-        surface: "native".into(),
-        name: "native-producer".into(),
-        dialect: Dialect::Other("native".into()),
-        command: vec![script.display().to_string()],
-        working_dir: None,
-        method: None,
-    }
+    LiftManifest::resolved(
+        "native".into(),
+        "native-producer".into(),
+        Dialect::Other("native".into()),
+        vec![script.display().to_string()],
+        None,
+        None,
+    )
 }
 
 #[test]

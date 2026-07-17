@@ -269,14 +269,14 @@ pub(crate) fn dispatch_lift(
     }
 
     let initialize_response = if surface == "python" {
-        let rendezvous = Kit::rendezvous(LiftManifest {
-            surface: surface.to_string(),
-            name: manifest.name.clone(),
-            dialect: dialect_for_surface(surface),
-            command: manifest.command.clone(),
-            working_dir: resolved_absolute_working_dir(project_root, &manifest),
-            method: manifest.method.clone(),
-        })
+        let rendezvous = Kit::rendezvous(LiftManifest::resolved(
+            surface.to_string(),
+            manifest.name.clone(),
+            dialect_for_surface(surface),
+            manifest.command.clone(),
+            resolved_absolute_working_dir(project_root, &manifest),
+            manifest.method.clone(),
+        ))
         .map_err(lift_error_from_rendezvous)?;
         enforce_python_kit_source(surface, rendezvous.initialize_response())?;
         Some(rendezvous.initialize_response().clone())
@@ -368,14 +368,14 @@ pub(crate) fn dispatch_lift_path(
     let Ok(manifest) = manifest else {
         return dispatch_lift_path_unregistered(surface, dialect, lift_params);
     };
-    let lift_manifest = LiftManifest {
-        surface: surface.to_string(),
-        name: manifest.name.clone(),
+    let lift_manifest = LiftManifest::resolved(
+        surface.to_string(),
+        manifest.name.clone(),
         dialect,
-        command: manifest.command.clone(),
-        working_dir: resolved_absolute_working_dir(project_root, &manifest),
-        method: manifest.method.clone(),
-    };
+        manifest.command.clone(),
+        resolved_absolute_working_dir(project_root, &manifest),
+        manifest.method.clone(),
+    );
 
     trace_log(format!("lift path rendezvous surface={surface}"));
     let kit = Kit::rendezvous(lift_manifest).map_err(lift_error_from_rendezvous)?;

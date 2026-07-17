@@ -360,14 +360,14 @@ fn try_rendezvous_prove_kit(
         "python" => libsugar::core::Dialect::Other("python".into()),
         other => libsugar::core::Dialect::Other(other.to_string()),
     };
-    let manifest = LiftManifest {
-        surface: planned.surface.clone(),
-        name: planned.name.clone(),
+    let manifest = LiftManifest::resolved(
+        planned.surface.clone(),
+        planned.name.clone(),
         dialect,
-        command: planned.command.clone(),
+        planned.command.clone(),
         working_dir,
-        method: planned.method.clone(),
-    };
+        planned.method.clone(),
+    );
     match sugar_compiler::kit::Kit::rendezvous(manifest) {
         Ok(kit) if kit.supports_rpc_method("sugar.enumerate") => Some(kit),
         Ok(kit) => {

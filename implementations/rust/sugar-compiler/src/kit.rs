@@ -40,6 +40,11 @@
 // itself only exists once the CLI's census has run and resolved a real
 // plugin command. The full component_plan.rs mechanism move into libsugar
 // (SEAM 3b-i in the brief) is NOT done in this pass -- flagged, not hidden.
+//
+// `LiftManifest` field privacy (#3855): fields are private; the only public
+// builder is `LiftManifest::resolved(...)`. Live handshake still refuses
+// non-kits; privacy narrows the syntactic forgery surface so casual
+// `LiftManifest { .. }` construction is a compile error (trybuild).
 
 use std::path::{Path, PathBuf};
 
@@ -64,18 +69,76 @@ use sugar_walk::source_oracle::SourceMemento;
 /// and handed to `Kit::rendezvous` by value, so rendezvous can never
 /// silently re-resolve a different manifest than the one the caller
 /// already settled on.
+///
+/// Fields are private. The only public construction door is
+/// [`LiftManifest::resolved`] — census/selection mints through that door so
+/// manifest forgery is deliberate (`resolved(...)` call) rather than casual
+/// field assignment. Trybuild pins the private-fields invariant.
 #[derive(Debug, Clone)]
 pub struct LiftManifest {
-    pub surface: String,
-    pub name: String,
-    pub dialect: Dialect,
-    pub command: Vec<String>,
-    pub working_dir: Option<PathBuf>,
+    surface: String,
+    name: String,
+    dialect: Dialect,
+    command: Vec<String>,
+    working_dir: Option<PathBuf>,
     /// Optional JSON-RPC method override (manifest.toml's `method = "..."`),
     /// e.g. consumer surfaces such as `rust-implications` that answer
     /// `sugar.plugin.lift_implications` instead of the default `lift`.
     /// `None` keeps the transport's default method.
-    pub method: Option<String>,
+    method: Option<String>,
+}
+
+impl LiftManifest {
+    /// The only public builder for a resolved lift manifest.
+    ///
+    /// Callers (CLI census, LSP selection, focused tests) assemble the
+    /// already-resolved plugin command + absolute working_dir here. Relative
+    /// working_dir and empty command remain rendezvous-stage refusals — this
+    /// constructor is the syntactic door, not a second validation layer.
+    pub fn resolved(
+        surface: impl Into<String>,
+        name: impl Into<String>,
+        dialect: Dialect,
+        command: Vec<String>,
+        working_dir: Option<PathBuf>,
+        method: Option<String>,
+    ) -> Self {
+        Self {
+            surface: surface.into(),
+            name: name.into(),
+            dialect,
+            command,
+            working_dir,
+            method,
+        }
+    }
+
+    /// Plugin display name from the census (manifest.toml `name`), distinct
+    /// from `surface` (the selection key). Exposed deliberately via accessor
+    /// rather than a public field — same privacy door as construction.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn surface(&self) -> &str {
+        &self.surface
+    }
+
+    pub fn dialect(&self) -> &Dialect {
+        &self.dialect
+    }
+
+    pub fn command(&self) -> &[String] {
+        &self.command
+    }
+
+    pub fn working_dir(&self) -> Option<&Path> {
+        self.working_dir.as_deref()
+    }
+
+    pub fn method(&self) -> Option<&str> {
+        self.method.as_deref()
+    }
 }
 
 /// Failure to mint a `Kit`. Every arm names a concrete rendezvous-stage
@@ -337,14 +400,14 @@ mod rendezvous_tests {
     /// holding a Kit proves a real kit process answered its declaration RPC.
     #[test]
     fn rendezvous_refuses_a_forged_manifest_to_a_non_kit() {
-        let forged = LiftManifest {
-            surface: "forged".to_string(),
-            name: "forged".to_string(),
-            dialect: Dialect::Rust,
-            command: vec!["/bin/false".to_string()],
-            working_dir: None,
-            method: None,
-        };
+        let forged = LiftManifest::resolved(
+            "forged",
+            "forged",
+            Dialect::Rust,
+            vec!["/bin/false".to_string()],
+            None,
+            None,
+        );
         match Kit::rendezvous(forged) {
             Err(RendezvousError::Handshake { surface, .. }) => {
                 assert_eq!(surface, "forged");
@@ -359,14 +422,14 @@ mod rendezvous_tests {
     /// silently run the kit in this process's CWD instead of the project).
     #[test]
     fn rendezvous_refuses_a_relative_working_dir() {
-        let forged = LiftManifest {
-            surface: "relative".to_string(),
-            name: "relative".to_string(),
-            dialect: Dialect::Rust,
-            command: vec!["/bin/false".to_string()],
-            working_dir: Some(PathBuf::from(".")),
-            method: None,
-        };
+        let forged = LiftManifest::resolved(
+            "relative",
+            "relative",
+            Dialect::Rust,
+            vec!["/bin/false".to_string()],
+            Some(PathBuf::from(".")),
+            None,
+        );
         assert!(matches!(
             Kit::rendezvous(forged),
             Err(RendezvousError::RelativeWorkingDir { .. })
@@ -376,14 +439,7 @@ mod rendezvous_tests {
     /// Empty command refuses before spawning anything.
     #[test]
     fn rendezvous_refuses_an_empty_command() {
-        let forged = LiftManifest {
-            surface: "empty".to_string(),
-            name: "empty".to_string(),
-            dialect: Dialect::Rust,
-            command: vec![],
-            working_dir: None,
-            method: None,
-        };
+        let forged = LiftManifest::resolved("empty", "empty", Dialect::Rust, vec![], None, None);
         assert!(matches!(
             Kit::rendezvous(forged),
             Err(RendezvousError::EmptyCommand(_))

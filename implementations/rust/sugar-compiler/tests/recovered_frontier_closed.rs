@@ -54,14 +54,14 @@ fn python_kit(dir: &Path) -> Kit {
             py_source_src.display()
         ),
     );
-    Kit::rendezvous(LiftManifest {
-        surface: "python".to_string(),
-        name: "python-lift".to_string(),
-        dialect: Dialect::Other("python".to_string()),
-        command: vec![script.display().to_string()],
-        working_dir: None,
-        method: None,
-    })
+    Kit::rendezvous(LiftManifest::resolved(
+        "python".to_string(),
+        "python-lift".to_string(),
+        Dialect::Other("python".to_string()),
+        vec![script.display().to_string()],
+        None,
+        None,
+    ))
     .expect("rendezvous")
 }
 

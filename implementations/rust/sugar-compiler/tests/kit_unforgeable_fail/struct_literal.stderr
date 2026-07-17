@@ -20,4 +20,4 @@ error: cannot construct `sugar_compiler::kit::Kit` with struct literal syntax du
 11 |         kit_name: "forged".to_string(),
    |         ------------------------------ private field
    |
-   = note: ...and other private field `declaration` that was not provided
+   = note: ...and other private fields `declaration` and `initialize_response` that were not provided
