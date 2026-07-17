@@ -8,7 +8,11 @@ import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
-from sugar_lift_py_tests.effect import GetattrRuntimeEffect, runtime_effect_evidence
+from sugar_lift_py_tests.effect import (
+    GetattrRuntimeEffect,
+    ModuloRuntimeEffect,
+    runtime_effect_evidence,
+)
 from sugar_lift_py_tests.factory import FactoryPanic, SourceFragment
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
@@ -27,7 +31,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
-from sugar_lift_py_tests.ir import atomic, ctor, make_var, py_raises
+from sugar_lift_py_tests.ir import atomic, ctor, make_var, num, py_raises
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -623,6 +627,28 @@ def test_source_backed_manager_propagates_its_genuine_runtime_effect() -> None:
     assert outcome.statements[0].effect is effect
     assert outcome.statements[0].effect.witness.operand == make_var(
         "runtime_manager_input"
+    )
+
+
+def test_runtime_body_effect_is_not_misclassified_as_an_escaping_raise() -> None:
+    payload = lift_file_payload(
+        "from numpy.testing import assert_raises_regex\n"
+        "import numpy as np\n"
+        "class TestOperations:\n"
+        "    def A(self):\n"
+        "        return np.array([['abc']]).view(np.char.chararray)\n"
+        "    def test_rmod(self):\n"
+        "        A = self.A()\n"
+        "        for ob in [42, object()]:\n"
+        "            with assert_raises_regex(TypeError, 'unsupported'):\n"
+        "                ob % A\n",
+        "test_numpy_raises_runtime.py",
+    )
+
+    assert [type(row.effect) for row in payload.effects] == [ModuloRuntimeEffect]
+    assert payload.effects[0].effect.witness.operand == ctor(
+        "%",
+        [num(42), ctor("call:A", [make_var("self")])],
     )
 
 
