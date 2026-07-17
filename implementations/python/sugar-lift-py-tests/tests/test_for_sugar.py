@@ -13,7 +13,8 @@ import pytest
 from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
+from sugar_lift_py_tests.effect import GetattrRuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
@@ -21,13 +22,16 @@ from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
     ReturnValue,
+    StringValue,
     SymbolicValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.idd.sugar_witness_instruments import (
     DEFAULT_SUGAR_WITNESS_SEEDS,
 )
+from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar.for_sugar import ForSugar
+from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
@@ -68,6 +72,42 @@ def test_iterable_discriminates_the_iter_elem_coordinate() -> None:
     assert term_z == ctor("py.iter_elem", [make_var("z")])
     assert term_w == ctor("py.iter_elem", [make_var("w")])
     assert term_z != term_w
+
+
+def test_bound_finite_list_unfolds_its_constructed_elements() -> None:
+    block = compose_block(
+        "    names = ['x']\n" "    for name in names:\n" "        return name\n"
+    )
+
+    returned = next(
+        statement
+        for statement in block.statements
+        if isinstance(statement, ReturnValue)
+    )
+    assert returned.value == StringValue("x")
+
+
+def test_symbolic_iterable_dynamic_getattr_remains_authenticated_runtime() -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    body = ctx.build_body(
+        ast.parse("for name in names:\n" "    return getattr(1, name)\n").body[0],
+        SugarRole.STATEMENT,
+    )
+    reduce_ctx = ReduceContext(
+        temporal=TemporalContext.empty().bind_value(
+            "names", SymbolicValue(make_var("names"))
+        )
+    )
+
+    outcome = body.reduce(reduce_ctx)
+
+    assert isinstance(outcome, Complete)
+    effect_statement = outcome.value.statements[0]
+    assert isinstance(effect_statement, Incomplete)
+    assert isinstance(effect_statement.effect, GetattrRuntimeEffect)
+    assert effect_statement.effect.witness.operand == ctor(
+        "py.iter_elem", [make_var("names")]
+    )
 
 
 def test_owns_simple_name_for_not_tuple_while_or_expr() -> None:
@@ -165,6 +205,28 @@ def test_for_iteration_local_witness_refutes_wrong_twin(tmp_path: Path) -> None:
     assert "ForSugar" in truthful.selected_sugars
     assert truthful.verdict == "sat"
     assert "ForSugar" in lying.selected_sugars
+    assert lying.verdict == "unsat"
+
+
+def test_bound_finite_getattr_witness_refutes_wrong_twin(tmp_path: Path) -> None:
+    seed = next(
+        item
+        for item in DEFAULT_SUGAR_WITNESS_SEEDS
+        if item.name == "for_bound_finite_getattr_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "bound-finite-getattr-truthful", seed.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "bound-finite-getattr-lying", seed.lying.source
+    )
+
+    assert "ForSugar" in truthful.selected_sugars
+    assert "GetattrBuiltinSugar" in truthful.selected_sugars
+    assert truthful.verdict == "sat"
+    assert "ForSugar" in lying.selected_sugars
+    assert "GetattrBuiltinSugar" in lying.selected_sugars
     assert lying.verdict == "unsat"
 
 
