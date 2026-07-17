@@ -49,7 +49,7 @@ class ComprehensionValue(FloorValue):
                 SequenceConcatenationRuntimeEffect(
                     "sequence concatenation depends on runtime comprehension "
                     f"members; owner=ComprehensionValue.add site={site}",
-                    **runtime_effect_evidence("py.sequence_concat", other, site),
+                    **runtime_effect_evidence("py.sequence_concat", self, site),
                 )
             )
         return super().add(other, site)
