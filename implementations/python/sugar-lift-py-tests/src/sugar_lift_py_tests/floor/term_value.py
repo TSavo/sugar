@@ -239,9 +239,36 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(self.value**other.value))
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
+        if isinstance(other, GuardedValue):
+            return other.map_from_left("power", self, site)
         if type(other) is SymbolicValue:
+            return SymbolicValue(self.to_term(owner=str(site))).power(other, site)
+        if type(other) is OpaqueOpCallsite and other.callee == "len":
+            # len(...) has an independently constructed integer result contract.
+            # Preserve its call coordinate as the exponent; do not collapse the
+            # runtime length to an invented concrete value.
+            return SymbolicValue(self.to_term(owner=str(site))).power(other, site)
+        if (
+            type(other) is CallSiteValue
+            and other.target_name == "iter_elem"
+            and len(other.arg_values) == 1
+            and type(other.arg_values[0]) is CallSiteValue
+            and other.arg_values[0].target_name == "range"
+            and 1 <= len(other.arg_values[0].arg_values) <= 3
+            and all(
+                (type(arg) is TermValue and type(arg.value) is int)
+                or (type(arg) is OpaqueOpCallsite and arg.callee == "len")
+                for arg in other.arg_values[0].arg_values
+            )
+        ):
+            # A value yielded by range(...) is an integer when every range
+            # bound already carries an integer warrant. Preserve that yielded
+            # coordinate; do not pretend to know which iteration is active.
             return SymbolicValue(self.to_term(owner=str(site))).power(other, site)
         return super().power(other, site)
 
