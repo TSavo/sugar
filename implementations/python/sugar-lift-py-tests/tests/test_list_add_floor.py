@@ -17,7 +17,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.ir import ctor, make_var, num
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
 
@@ -71,14 +71,58 @@ def test_runtime_sized_comprehension_is_the_sequence_concat_operand() -> None:
     assert outcome.effect.witness.operand == comprehension.term
 
 
-def test_ground_comprehension_wrong_twin_cannot_mint_sequence_concat() -> None:
+def test_ground_comprehension_concat_constructs_the_exact_coordinate() -> None:
     site = SourceFragment.from_source("[1] + ['tail']", "wrong_twin.py")
+    comprehension = ComprehensionValue(ctor("py.listcomp", [num(1)]))
 
-    with pytest.raises(FactoryPanic, match="genuine runtime-dependent operand"):
-        ComprehensionValue(ctor("py.listcomp", [num(1)])).add(
-            ListValue((StringValue("tail"),)),
-            site,
+    value = complete_value(
+        comprehension.add(ListValue((StringValue("tail"),)), site),
+        owner="ground comprehension concat",
+    )
+
+    assert value == ComprehensionValue(
+        ctor(
+            "+",
+            [
+                comprehension.term,
+                ctor("array", [StringValue("tail").to_term(owner="test")]),
+            ],
         )
+    )
+
+
+def test_constructed_list_plus_ground_comprehension_constructs_exact_coordinate() -> (
+    None
+):
+    site = SourceFragment.from_source("['head'] + [1]", "left-list.py")
+    left = ListValue((StringValue("head"),))
+    comprehension = ComprehensionValue(ctor("py.listcomp", [num(1)]))
+
+    value = complete_value(
+        left.add(comprehension, site),
+        owner="list plus ground comprehension",
+    )
+
+    assert value == ComprehensionValue(
+        ctor("+", [left.to_term(owner="test"), comprehension.term])
+    )
+
+
+def test_ground_comprehension_prefix_cites_only_runtime_right_operand() -> None:
+    site = SourceFragment.from_source(
+        "[1] + [x for x in range(2)]", "mixed-concat.py"
+    )
+    ground = ComprehensionValue(ctor("py.listcomp", [num(1)]))
+    runtime = ComprehensionValue(
+        ctor("py.listcomp", [ctor("call:range", [num(2)])])
+    )
+
+    outcome = ground.add(runtime, site)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceConcatenationRuntimeEffect)
+    assert outcome.effect.runtime_operand.term == runtime.term
+    assert outcome.effect.witness.operand == runtime.term
 
 
 def test_runtime_sequence_concat_conserves_assertion_mass() -> None:
