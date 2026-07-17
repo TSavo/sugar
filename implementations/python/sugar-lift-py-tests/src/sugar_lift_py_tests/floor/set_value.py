@@ -47,3 +47,18 @@ class SetValue(FloorValue):
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(TermValue(len(self.elements)))
+
+    def subtract(self, other, site):
+        if type(other) is SetValue:
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                SetValue(
+                    tuple(
+                        element
+                        for element in self.elements
+                        if element not in other.elements
+                    )
+                )
+            )
+        return super().subtract(other, site)

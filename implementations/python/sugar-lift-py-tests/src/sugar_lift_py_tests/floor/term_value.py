@@ -211,6 +211,15 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(TermValue(self.value - other.value))
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(other) is SymbolicValue:
+            return SymbolicValue(self.to_term(owner=str(site))).subtract(other, site)
+        if type(other) is CallSiteValue:
+            from sugar_lift_py_tests.effect import runtime_subtract
+
+            return runtime_subtract(self, other, site)
         return super().subtract(other, site)
 
     def multiply(self, other, site):
