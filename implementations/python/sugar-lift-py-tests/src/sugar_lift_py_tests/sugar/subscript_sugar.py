@@ -13,9 +13,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 @dataclass(frozen=True)
 class SubscriptSugar(Sugar, role=SugarRole.TERM):
     """`x[i]` subscript. Reduce the receiver and the index, and ask the receiver
-    to subscript by the index. Concrete containers fold; out-of-range / missing
-    key is a named runtime effect; symbolic sides stay the py.subscript
-    coordinate. Slice indexes remain behind the narrower
+    to subscript by the index. Concrete containers fold; decidable out-of-range
+    indexes and missing keys stay loud until their exact exceptional exits are
+    constructed. Symbolic sides stay the py.subscript coordinate. Slice indexes remain behind the narrower
     ``SliceSubscriptSugar`` gate; ``SliceSugar`` owns the Slice node without
     widening this parent's receiver evaluation semantics."""
 

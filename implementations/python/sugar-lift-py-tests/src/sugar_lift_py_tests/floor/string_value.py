@@ -160,17 +160,16 @@ class StringValue(FloorValue):
             n = len(self.value)
             if -n <= i < n:
                 return Complete(StringValue(self.value[i]))
-            from sugar_lift_py_tests.effect import (
-                IndexErrorRuntimeEffect,
-                runtime_effect_evidence,
+            from sugar_lift_py_tests.floor.ground_index_error import (
+                ground_index_error,
             )
 
-            return Incomplete(
-                IndexErrorRuntimeEffect(
-                    f"string index out of range runtime boundary: "
-                    f"index={i} length={n}; owner=StringValue.subscript site={site}",
-                    **runtime_effect_evidence("py.subscript", index, site),
-                )
+            ground_index_error(
+                owner="StringValue.subscript",
+                operation="string subscript",
+                index=i,
+                length=n,
+                site=site,
             )
         return self.py_subscript_coordinate(index, site)
 
