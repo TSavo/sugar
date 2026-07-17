@@ -1,0 +1,307 @@
+{
+  "R_classified": 20,
+  "R_live_factory_panic_files": 9,
+  "R_pending": 0,
+  "R_recensus_timeout_blob": 293,
+  "R_recensus_unclassified": 273,
+  "R_residual": 0,
+  "R_residual_axes": {
+    "hang_at_max_bound_D": 0,
+    "recensus_unclassified": 273,
+    "unclassified_timeout_blob": 0
+  },
+  "R_seeded_or_scanned_pool": 20,
+  "R_timeout_blob_classified": 20,
+  "R_unclassified_timeout_blob": 0,
+  "bare_exception_count": 0,
+  "bare_exceptions": [],
+  "cause_class_counts": {
+    "A": 11,
+    "B": 9,
+    "C": 0,
+    "D": 0,
+    "E": 0
+  },
+  "cause_class_files": {
+    "A": [
+      "numpy/random/tests/test_random.py",
+      "numpy/random/tests/test_regression.py",
+      "pandas/tests/frame/test_arithmetic.py",
+      "pandas/tests/groupby/test_groupby.py",
+      "pandas/tests/groupby/test_grouping.py",
+      "pandas/tests/groupby/test_timegrouper.py",
+      "pandas/tests/io/pytables/test_append.py",
+      "pandas/tests/io/pytables/test_select.py",
+      "pandas/tests/reshape/concat/test_concat.py",
+      "pandas/tests/reshape/test_melt.py",
+      "pandas/tests/strings/test_strings.py"
+    ],
+    "B": [
+      "numpy/_core/tests/test_nditer.py",
+      "numpy/ma/tests/test_core.py",
+      "numpy/random/tests/test_randomstate_regression.py",
+      "pandas/core/frame.py",
+      "pandas/tests/extension/test_arrow.py",
+      "pandas/tests/frame/test_constructors.py",
+      "pandas/tests/indexing/test_loc.py",
+      "pandas/tests/io/excel/test_writers.py",
+      "pandas/tests/series/test_constructors.py"
+    ]
+  },
+  "cause_class_labels": {
+    "A": "bound-tight",
+    "B": "hidden-panic",
+    "C": "perf-complete",
+    "D": "hang",
+    "E": "bare"
+  },
+  "classified_this_run": 20,
+  "completes_by_bound": {
+    "60": 20
+  },
+  "factory_panic_fronts": [
+    {
+      "count": 2,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "WithSugar / Floor / Construction / raise-carrying callsite with-body / dig manager().__exit__ exception suppression contract",
+      "observed": "raise-carrying callsite with-body",
+      "owner": "WithSugar",
+      "representative_files": [
+        "numpy/random/tests/test_randomstate_regression.py",
+        "pandas/tests/io/excel/test_writers.py"
+      ],
+      "requested": "dig manager().__exit__ exception suppression contract"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / RuntimeEffect operand=_Ctor(name='py.truthy', args=(_Ctor(name='python:import_alias', args=(_ConstStr(value='HAS_PYARROW', sort=PrimitiveSort(name='String')), _ConstStr(value='HAS_PYARROW', sort=PrimitiveSort(name='String')))),)) / genuine runtime-dependent operand",
+      "observed": "RuntimeEffect operand=_Ctor(name='py.truthy', args=(_Ctor(name='python:import_alias', args=(_ConstStr(value='HAS_PYARROW', sort=PrimitiveSort(name='String')), _ConstStr(value='HAS_PYARROW', sort=PrimitiveSort(name='String')))),))",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/series/test_constructors.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "SequentialDigBody / Floor / Construction / If / reduced guarded returns with an unguarded fallback",
+      "observed": "If",
+      "owner": "SequentialDigBody",
+      "representative_files": [
+        "pandas/tests/frame/test_constructors.py"
+      ],
+      "requested": "reduced guarded returns with an unguarded fallback"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "SequentialDigBody / Floor / Construction / Return / reduced guarded returns with an unguarded fallback",
+      "observed": "Return",
+      "owner": "SequentialDigBody",
+      "representative_files": [
+        "pandas/tests/extension/test_arrow.py"
+      ],
+      "requested": "reduced guarded returns with an unguarded fallback"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "SequentialDigBody / Floor / Construction / Try / reduced guarded returns with an unguarded fallback",
+      "observed": "Try",
+      "owner": "SequentialDigBody",
+      "representative_files": [
+        "numpy/ma/tests/test_core.py"
+      ],
+      "requested": "reduced guarded returns with an unguarded fallback"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / codecs / value",
+      "observed": "codecs",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/core/frame.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / res / value",
+      "observed": "res",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "numpy/_core/tests/test_nditer.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Projection",
+      "label": "pandas/tests/indexing/test_loc.py:2227:19 / Floor / Projection / ScopeRebind / project this floor value to a term",
+      "observed": "ScopeRebind",
+      "owner": "pandas/tests/indexing/test_loc.py:2227:19",
+      "representative_files": [
+        "pandas/tests/indexing/test_loc.py"
+      ],
+      "requested": "project this floor value to a term"
+    }
+  ],
+  "hang_at_max_bound_count": 0,
+  "hang_files": [],
+  "ledger": "docs/ledgers/loud-timeout-live20-escalation-4894.jsonl",
+  "other": [],
+  "other_count": 0,
+  "owner_families": [
+    {
+      "count": 3,
+      "owner": "SequentialDigBody",
+      "representative_files": [
+        "numpy/ma/tests/test_core.py",
+        "pandas/tests/extension/test_arrow.py",
+        "pandas/tests/frame/test_constructors.py"
+      ]
+    },
+    {
+      "count": 2,
+      "owner": "TemporalContext",
+      "representative_files": [
+        "numpy/_core/tests/test_nditer.py",
+        "pandas/core/frame.py"
+      ]
+    },
+    {
+      "count": 2,
+      "owner": "WithSugar",
+      "representative_files": [
+        "numpy/random/tests/test_randomstate_regression.py",
+        "pandas/tests/io/excel/test_writers.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "pandas/tests/indexing/test_loc.py:2227:19",
+      "representative_files": [
+        "pandas/tests/indexing/test_loc.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/series/test_constructors.py"
+      ]
+    }
+  ],
+  "owner_family_count": 5,
+  "owners": {
+    "RuntimeEffect": 1,
+    "SequentialDigBody": 3,
+    "TemporalContext": 2,
+    "WithSugar": 2,
+    "pandas/tests/indexing/test_loc.py:2227:19": 1
+  },
+  "package_versions": {
+    "numpy": "2.5.1",
+    "pandas": "3.0.3"
+  },
+  "perf_candidate_count": 0,
+  "perf_candidates": [],
+  "ranked_B_owners": [
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 3,
+      "owner": "SequentialDigBody",
+      "rank": 1
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 2,
+      "owner": "TemporalContext",
+      "rank": 2
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 2,
+      "owner": "WithSugar",
+      "rank": 3
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "RuntimeEffect",
+      "rank": 4
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "pandas/tests/indexing/test_loc.py:2227:19",
+      "rank": 5
+    }
+  ],
+  "scanned_this_run": 20,
+  "skipped_not_timeout_this_run": 0,
+  "timeout_sugar_hotspots": [
+    {
+      "file_count": 11,
+      "sugar": "MethodCallSugar"
+    },
+    {
+      "file_count": 2,
+      "sugar": "KeywordCallSugar"
+    },
+    {
+      "file_count": 1,
+      "sugar": "BlockSugar"
+    },
+    {
+      "file_count": 1,
+      "sugar": "Name"
+    },
+    {
+      "file_count": 1,
+      "sugar": "ListLiteralSugar"
+    },
+    {
+      "file_count": 1,
+      "sugar": "DictLiteralSugar"
+    },
+    {
+      "file_count": 1,
+      "sugar": "Assign"
+    },
+    {
+      "file_count": 1,
+      "sugar": "ExprSugar"
+    },
+    {
+      "file_count": 1,
+      "sugar": "Call"
+    }
+  ],
+  "verdict_counts": {
+    "completes-at-bound": 11,
+    "completes-with-panic": 9
+  }
+}
