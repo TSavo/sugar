@@ -47,11 +47,31 @@ class RuntimeBitwiseOpSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def witnesses(cls):
         prefix = "def A():\n    return 6 & 3\n\n"
-        return _call_pair(
-            name="runtime_bitwise_and_return",
-            owner_sugar="RuntimeBitwiseOpSugar",
-            truthful=prefix + "def test_a():\n    assert A() == 2\n",
-            lying=prefix + "def test_a():\n    assert A() == 3\n",
+        set_union_prefix = (
+            "def B(values, z):\n"
+            "    left = {value for value in values}\n"
+            "    right = {value for value in values}\n"
+            "    left | right\n"
+            "    return z\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="runtime_bitwise_and_return",
+                owner_sugar="RuntimeBitwiseOpSugar",
+                truthful=prefix + "def test_a():\n    assert A() == 2\n",
+                lying=prefix + "def test_a():\n    assert A() == 3\n",
+            ),
+            _call_pair(
+                name="set_comprehension_union",
+                owner_sugar="RuntimeBitwiseOpSugar",
+                truthful=set_union_prefix
+                + "def test_b():\n"
+                + "    assert B([1, 2], 5) == 5\n",
+                lying=set_union_prefix
+                + "def test_b():\n"
+                + "    assert B([1, 2], 5) == 0\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

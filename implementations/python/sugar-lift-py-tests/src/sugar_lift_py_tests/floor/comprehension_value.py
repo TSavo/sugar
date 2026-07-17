@@ -5,6 +5,14 @@ from dataclasses import dataclass
 from .floor_value import FloorValue
 
 
+def _is_set_coordinate(term) -> bool:
+    return getattr(term, "name", None) in {
+        "py.setcomp",
+        "py.set_difference",
+        "py.set_union",
+    }
+
+
 @dataclass(frozen=True)
 class ComprehensionValue(FloorValue):
     """A native comprehension coordinate with no invented cardinality.
@@ -105,8 +113,8 @@ class ComprehensionValue(FloorValue):
 
         if (
             type(other) is ComprehensionValue
-            and getattr(self.term, "name", None) == "py.setcomp"
-            and getattr(other.term, "name", None) == "py.setcomp"
+            and _is_set_coordinate(self.term)
+            and _is_set_coordinate(other.term)
         ):
             from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.outcome import Complete
@@ -119,6 +127,20 @@ class ComprehensionValue(FloorValue):
 
             return runtime_subtract(self, other, site)
         return super().subtract(other, site)
+
+    def bitwise_or(self, other, site):
+        if (
+            type(other) is ComprehensionValue
+            and _is_set_coordinate(self.term)
+            and _is_set_coordinate(other.term)
+        ):
+            from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                ComprehensionValue(ctor("py.set_union", [self.term, other.term]))
+            )
+        return super().bitwise_or(other, site)
 
     def multiply(self, other, site):
         """Preserve repetition when the count is a constructed Python integer."""
