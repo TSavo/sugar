@@ -600,13 +600,12 @@ def _constructed_truthy(value, site) -> bool:
 
 
 def _carries_raise_effect(outcome) -> bool:
+    from sugar_lift_py_tests.effect import RaiseEffect
     from sugar_lift_py_tests.floor import BlockValue, RaiseValue
     from sugar_lift_py_tests.outcome import Incomplete
-    from sugar_lift_py_tests.outcome.incomplete import _effect_continues_control_flow
 
     if isinstance(outcome, Incomplete):
-        # Continuing store side-effects are red testimony, not raises.
-        return not _effect_continues_control_flow(outcome.effect)
+        return isinstance(outcome.effect, RaiseEffect)
     value = getattr(outcome, "value", None)
     if not isinstance(value, BlockValue):
         return False
@@ -636,12 +635,12 @@ def _raised_exception_names(outcome) -> tuple[str, ...] | None:
 
 
 def _entry_carries_raise(entry) -> bool:
+    from sugar_lift_py_tests.effect import RaiseEffect
     from sugar_lift_py_tests.floor import GuardedRaise
     from sugar_lift_py_tests.outcome import Incomplete
-    from sugar_lift_py_tests.outcome.incomplete import _effect_continues_control_flow
 
     if isinstance(entry, Incomplete):
-        return not _effect_continues_control_flow(entry.effect)
+        return isinstance(entry.effect, RaiseEffect)
     # RaisesWithValue is the completed result of pytest.raises: its exception
     # is consumed by that inner context manager and cannot reach an enclosing
     # WithSugar.__exit__.
