@@ -168,6 +168,49 @@ def test_recovered_audit_keeps_typed_effects_out_of_construction_gaps() -> None:
     ]
 
 
+def test_normal_lift_routes_runtime_definition_effect_into_payload() -> None:
+    source = (
+        'names = ["x"]\n'
+        "\n"
+        "def marker(value):\n"
+        "    return value\n"
+        "\n"
+        "@marker([getattr(1, name) for name in names])\n"
+        "def runtime_getattr():\n"
+        "    return 1\n"
+        "\n"
+        "def independent():\n"
+        "    return 1\n"
+    )
+
+    wire = lift_file_payload(source, "effects.py").to_rpc()
+
+    assert wire["effects"] == [
+        {
+            "kind": "effect",
+            "name": "effects.runtime_getattr::runtime-effect",
+            "status": "runtime-effect",
+            "reason": (
+                "getattr runtime boundary: attribute name expression `Name` "
+                "is runtime; blame=effects.py:6:9"
+            ),
+            "sourceMemento": {
+                **next(
+                    item
+                    for item in wire["sourceMementos"]
+                    if item["sourceFunctionName"] == "effects.runtime_getattr"
+                ),
+                "role": "runtime-effect",
+            },
+        }
+    ]
+    assert any(
+        row["name"] == "effects.independent"
+        for row in wire["ir"]
+        if row["kind"] == "function-contract"
+    )
+
+
 def test_legacy_audit_only_is_not_a_recovery_backdoor() -> None:
     with pytest.raises(SystemExit, match="allowed-broken-components"):
         main(["--audit-only"])
