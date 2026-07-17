@@ -164,14 +164,16 @@ class ListValue(FloorValue):
             n = len(self.elements)
             if -n <= i < n:
                 return Complete(self.elements[i])
-            from sugar_lift_py_tests.effect import IndexErrorRuntimeEffect
+            from sugar_lift_py_tests.floor.ground_index_error import (
+                ground_index_error,
+            )
 
-            return Incomplete(
-                IndexErrorRuntimeEffect(
-                    f"list index out of range runtime boundary: "
-                    f"index={i} length={n}; owner=ListValue.subscript site={site}",
-                    **runtime_effect_evidence("py.subscript", index, site),
-                )
+            ground_index_error(
+                owner="ListValue.subscript",
+                operation="list subscript",
+                index=i,
+                length=n,
+                site=site,
             )
         return self.py_subscript_coordinate(index, site)
 
@@ -190,14 +192,16 @@ class ListValue(FloorValue):
                     *self.elements[resolved + 1 :],
                 )
                 return Complete(ListValue(updated))
-            from sugar_lift_py_tests.effect import IndexErrorRuntimeEffect
+            from sugar_lift_py_tests.floor.ground_index_error import (
+                ground_index_error,
+            )
 
-            return Incomplete(
-                IndexErrorRuntimeEffect(
-                    "list assignment index out of range runtime boundary: "
-                    f"index={i} length={n}; owner=ListValue.setitem site={site}",
-                    **runtime_effect_evidence("py.setitem", index, site),
-                )
+            ground_index_error(
+                owner="ListValue.setitem",
+                operation="list assignment",
+                index=i,
+                length=n,
+                site=site,
             )
         from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
 
@@ -254,14 +258,16 @@ class ListValue(FloorValue):
                         (*self.elements[:resolved], *self.elements[resolved + 1 :])
                     )
                 )
-            from sugar_lift_py_tests.effect import IndexErrorRuntimeEffect
+            from sugar_lift_py_tests.floor.ground_index_error import (
+                ground_index_error,
+            )
 
-            return Incomplete(
-                IndexErrorRuntimeEffect(
-                    "list deletion index out of range runtime boundary: "
-                    f"index={i} length={n}; owner=ListValue.delitem site={site}",
-                    **runtime_effect_evidence("py.delitem", index, site),
-                )
+            ground_index_error(
+                owner="ListValue.delitem",
+                operation="list deletion",
+                index=i,
+                length=n,
+                site=site,
             )
         from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
 

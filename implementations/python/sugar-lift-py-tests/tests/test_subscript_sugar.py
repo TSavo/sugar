@@ -12,15 +12,18 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.effect import SubscriptResultRuntimeEffect
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ComprehensionValue,
     ExceptionValue,
+    ListValue,
     OpaqueOpCallsite,
     PredicateValue,
     StringValue,
     SymbolicValue,
     TermValue,
+    TupleValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var, num, py_eq
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
@@ -51,8 +54,38 @@ def test_string_subscript_folds_to_one_char() -> None:
 
 
 def test_list_subscript_out_of_range_ground_wrong_twin_panics() -> None:
-    with pytest.raises(FactoryPanic):
+    with pytest.raises(FactoryPanic) as caught:
         _outcome("[1,2][5]")
+    assert caught.value.info.owner == "ListValue.subscript"
+
+
+@pytest.mark.parametrize(
+    ("operation", "owner"),
+    (
+        (
+            lambda site: TupleValue(()).subscript(TermValue(0), site),
+            "TupleValue.subscript",
+        ),
+        (
+            lambda site: StringValue("").subscript(TermValue(0), site),
+            "StringValue.subscript",
+        ),
+        (
+            lambda site: ListValue(()).setitem(TermValue(0), TermValue(1), site),
+            "ListValue.setitem",
+        ),
+        (lambda site: ListValue(()).delitem(TermValue(0), site), "ListValue.delitem"),
+    ),
+)
+def test_ground_out_of_range_sequence_operation_panics_under_floor_owner(
+    operation, owner: str
+) -> None:
+    site = SourceFragment.from_source("values[0]\n", "t.py").statements()[0]
+
+    with pytest.raises(FactoryPanic) as caught:
+        operation(site)
+
+    assert caught.value.info.owner == owner
 
 
 def test_dict_subscript_folds_to_value() -> None:
