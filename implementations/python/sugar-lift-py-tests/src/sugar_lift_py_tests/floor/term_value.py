@@ -232,11 +232,14 @@ class TermValue(FloorValue):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
         from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
+            return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
+        if type(other) is OpaqueOpCallsite and other.callee == "len":
             return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
         if type(other) in (ListValue, StringValue, TupleValue):
             if type(self.value) is int:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from factory_reduce import reduce_value
@@ -13,6 +15,7 @@ from sugar_lift_py_tests.effect import (
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
+    ComprehensionValue,
     ListValue,
     ImportAliasValue,
     OpaqueOpCallsite,
@@ -22,6 +25,9 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.ir import atomic, ctor, make_var, num
 from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.sugar.multiply_op_sugar import MultiplyOpSugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 _SITE = SourceFragment.from_source("xs * n\n", "runtime_repeat.py").statements()[0]
 
@@ -92,6 +98,88 @@ def test_non_list_symbolic_multiplier_uses_native_operator_coordinate(
     value = reduce_value(source, {"count": SymbolicValue(make_var("count"))})
 
     assert value == SymbolicValue(expected)
+
+
+def test_comprehension_repetition_by_concrete_int_preserves_native_coordinate() -> None:
+    items = SymbolicValue(make_var("items"))
+    element = ctor("py.iter_elem", [make_var("items")])
+
+    value = reduce_value("[item for item in items] * 2", {"items": items})
+
+    assert value == SymbolicValue(
+        ctor(
+            "*",
+            [
+                ctor("py.listcomp", [element, make_var("items")]),
+                num(2),
+            ],
+        )
+    )
+
+
+def test_term_times_len_coordinate_preserves_integer_multiplication() -> None:
+    kinds = SymbolicValue(make_var("kinds"))
+
+    value = reduce_value("4 * len(kinds)", {"kinds": kinds})
+
+    assert value == SymbolicValue(
+        ctor(
+            "*",
+            [
+                num(4),
+                ctor(
+                    "call:len",
+                    [make_var("kinds")],
+                    symbol_kind="method-coordinate",
+                ),
+            ],
+        )
+    )
+
+
+def test_comprehension_repetition_by_non_int_stays_loud() -> None:
+    value = ComprehensionValue(ctor("py.listcomp", [make_var("items")]))
+
+    with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
+        value.multiply(StringValue("2"), _SITE)
+
+
+@pytest.mark.parametrize("coordinate", ("py.setcomp", "py.dictcomp"))
+def test_non_list_comprehension_times_int_stays_loud(coordinate: str) -> None:
+    value = ComprehensionValue(ctor(coordinate, [make_var("items")]))
+
+    with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
+        value.multiply(TermValue(2), _SITE)
+
+
+def test_term_times_unwarranted_opaque_coordinate_stays_loud() -> None:
+    value = OpaqueOpCallsite(
+        callee="str",
+        arg=SymbolicValue(make_var("runtime_value")),
+        computed=None,
+    )
+
+    with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
+        TermValue(4).multiply(value, _SITE)
+
+
+def test_term_times_len_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in MultiplyOpSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "term_times_len_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_imported_list_repetition_count_remains_a_named_loud_gap() -> None:
