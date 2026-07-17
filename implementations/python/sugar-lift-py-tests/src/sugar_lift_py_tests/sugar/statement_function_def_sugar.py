@@ -165,6 +165,7 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
         from sugar_lift_py_tests.sugar.install_source_dig import (
             SequentialDigBody,
             _contextualized_dig_body,
+            resolve_contextmanager_exit_contract,
         )
 
         callable_body = self.body
@@ -184,6 +185,15 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 positional_defaults=positional_defaults,
                 keyword_only_defaults=keyword_only_defaults,
                 decorators=decorators,
+                exit_suppression=(
+                    resolve_contextmanager_exit_contract(bridge_name)
+                    if (
+                        bridge_name := getattr(
+                            self.site.node, "_sugar_bridge_name", None
+                        )
+                    )
+                    else None
+                ),
                 body=callable_body,
             )
         )
