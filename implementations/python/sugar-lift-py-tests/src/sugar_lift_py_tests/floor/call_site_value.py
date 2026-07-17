@@ -76,6 +76,20 @@ class CallSiteValue(FloorValue):
 
     def truth(self, site):
         # A callsite EMITS py.truthy over its term, carrying itself as an operand.
+        from sugar_lift_py_tests.effect import is_lift_time_decidable
+        from sugar_lift_py_tests.factory import factory_panic_gap
+
+        if is_lift_time_decidable(self.term):
+            factory_panic_gap(
+                owner="CallSiteValue.truth",
+                blame=site,
+                observed=f"ground callsite term {self.term!r}",
+                requested="constructed lift-time truth value",
+                fix=(
+                    "construct the concrete callsite/comprehension result before "
+                    "truth(); a ground coordinate cannot mint RuntimeEffect authority"
+                ),
+            )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
         from sugar_lift_py_tests.outcome import Complete
