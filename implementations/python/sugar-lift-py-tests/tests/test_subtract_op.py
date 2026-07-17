@@ -19,11 +19,16 @@ from sugar_lift_py_tests.floor import (
     ComprehensionValue,
     NativeCallableValue,
     SetValue,
+    StringValue,
     SymbolicValue,
     TermValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
+from sugar_lift_py_tests.idd.lift_coverage_census import census_source
+from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
@@ -65,6 +70,69 @@ def test_string_subtract_panics_on_the_floor() -> None:
     sugar, ctx = _build_term('"a" - "b"')
     with pytest.raises(FactoryPanic, match="write more Floor"):
         sugar.desugar(ctx)
+
+
+def test_string_minus_opaque_call_result_is_a_witnessed_runtime_effect() -> None:
+    site = SourceFragment.from_source('"1" - runtime_right()\n', "t.py").statements()[
+        0
+    ]
+    right = CallSiteValue(
+        target_name="runtime_right",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:runtime_right", []),
+        body=None,
+        site=site,
+    )
+
+    outcome = StringValue("1").subtract(right, site)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SubtractRuntimeEffect)
+    operand = ctor("-", [StringValue("1").to_term(owner="test"), right.term])
+    assert outcome.effect.witness.operand == operand
+    assert outcome.effect.witness.operation == ctor("py.subtract", [operand])
+
+
+def test_string_minus_decidable_call_result_wrong_twin_panics() -> None:
+    site = SourceFragment.from_source('"1" - known_right()\n', "t.py").statements()[0]
+    known_body, _ = _build_term("1")
+    right = CallSiteValue(
+        target_name="known_right",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:known_right", []),
+        body=SugarBody(sugar=known_body, role=SugarRole.TERM),
+        site=site,
+    )
+
+    with pytest.raises(FactoryPanic, match="write more Floor"):
+        StringValue("1").subtract(right, site)
+
+
+def test_string_minus_opaque_native_result_conserves_the_assertion() -> None:
+    source = (
+        "from pandas import Timedelta\n"
+        "\n"
+        "def test_a():\n"
+        '    item = "1"\n'
+        '    td = Timedelta("1 day")\n'
+        "    assert item - td == 0\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "representative.py")
+    rpc = payload.to_rpc()
+    assertions = account_lift_coverage(
+        census_source(source, file="representative.py"), rpc
+    ).to_json()["assertions"]
+
+    assert gaps == []
+    assert assertions["stated"] == 1
+    assert assertions["lifted_cited"] == 1
+    assert assertions["refused_loud"] == 0
+    assert assertions["silently_unaccounted"] == 0
+    assert [effect["kind"] for effect in rpc["effects"]] == ["effect"]
+    assert "runtime __sub__/__rsub__ dispatch" in rpc["effects"][0]["reason"]
 
 
 def test_numeric_symbolic_subtraction_uses_native_coordinate() -> None:
