@@ -8196,6 +8196,8 @@ fn read_unaccounted_source_lines(
 fn render_source_report_human(report: &LiftSourceReport) -> String {
     trace_lift_source_report("render_source_report_human.start", report);
     let mut out = String::new();
+    // #4424: subject prologue before plan roll call — who/where/what/when, then components.
+    out.push_str(&render_report_prologue(report));
     out.push_str(&render_report_plan_roll_call(report));
     // #4319: dual-axis accounting after census, before factory greens.
     if let Some(coverage) = &report.lift_coverage {
@@ -12492,8 +12494,9 @@ mod tests {
     }
 
     #[test]
-    fn full_report_renders_plan_roll_call_first() {
+    fn full_report_renders_subject_prologue_before_plan_roll_call() {
         let mut report = minimal_source_report();
+        report.project_root = Some(PathBuf::from("/workspace"));
         report.assertion_surface_audits = vec![serde_json::json!({
             "contract": "src/lib.rs::tests::encode_base64_len",
             "facts": ["call:encodeBase64(bytes) = out"]
@@ -12518,7 +12521,8 @@ mod tests {
             "kind": "source-memento",
             "role": "rust-source-universe",
             "contractName": "encode_len",
-            "file": "vendor/base64-0.22.1/src/encode.rs"
+            "file": "vendor/base64-0.22.1/src/encode.rs",
+            "sourceCid": "blake3-512:source-encode"
         })];
         report.plan_mementos = vec![serde_json::json!({
             "kind": "component-plan",
@@ -12572,11 +12576,30 @@ mod tests {
         })];
 
         let human = render_source_report_human(&report);
+        // #4424 pin: subject prologue precedes component plan on every report surface.
         assert!(
-            human.starts_with(
-                "plan: component-discovery\nThis report was assembled with the use of:\n"
-            ),
-            "{human}"
+            human.starts_with("sugar v"),
+            "human report must open with tool identity prologue, not plan roll call:\n{human}"
+        );
+        for expected in [
+            "workspace root: /workspace",
+            "vendor/base64-0.22.1/src/encode.rs source blake3-512:source-encode",
+            "substrate commit:",
+            "mint timestamp:",
+            "plan: component-discovery\nThis report was assembled with the use of:\n",
+            "same binary as rust-fn-contracts-lift",
+        ] {
+            assert!(human.contains(expected), "missing {expected}:\n{human}");
+        }
+        let subject = human
+            .find("workspace root:")
+            .expect("workspace root in human prologue");
+        let plan = human
+            .find("plan: component-discovery")
+            .expect("plan roll call in human report");
+        assert!(
+            subject < plan,
+            "subject must precede plan roll call:\n{human}"
         );
         assert!(
             human.contains("unit test assertions: rust-test-assertions-lift"),
@@ -12616,16 +12639,31 @@ mod tests {
 
         let visual = render_report_visual(&report, None);
         assert!(
-            visual.contains(
-                "plan: component-discovery\nThis report was assembled with the use of:\n"
-            ),
-            "{visual}"
+            visual.starts_with("sugar v"),
+            "visual report must open with tool identity prologue, not plan roll call:\n{visual}"
         );
+        for expected in [
+            "workspace root: /workspace",
+            "vendor/base64-0.22.1/src/encode.rs source blake3-512:source-encode",
+            "substrate commit:",
+            "mint timestamp:",
+            "plan: component-discovery\nThis report was assembled with the use of:\n",
+            "same binary as rust-fn-contracts-lift",
+            "unit test assertions: rust-test-assertions-lift",
+            "universe visual:",
+        ] {
+            assert!(visual.contains(expected), "missing {expected}:\n{visual}");
+        }
+        let subject = visual
+            .find("workspace root:")
+            .expect("workspace root in visual prologue");
+        let plan = visual
+            .find("plan: component-discovery")
+            .expect("plan roll call in visual report");
         assert!(
-            visual.contains("unit test assertions: rust-test-assertions-lift"),
-            "{visual}"
+            subject < plan,
+            "subject must precede plan roll call:\n{visual}"
         );
-        assert!(visual.contains("universe visual:"), "{visual}");
     }
 
     #[test]
@@ -16011,6 +16049,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
     #[test]
     fn visual_report_prologue_identifies_invocation_sources_and_same_binary_seats() {
+        // #4424 pin: rendered header carries workspace, each lifted source+CID,
+        // substrate commit, mint timestamp, and same-binary dual-seat testimony.
         let mut report = minimal_source_report();
         report.implication_walk_ran = true;
         report.source_mementos = vec![serde_json::json!({
@@ -16048,6 +16088,10 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             render_report_prologue_with(&report, &invocation),
             render_report_plan_roll_call(&report)
         );
+        assert!(
+            rendered.starts_with("sugar v1.2.3 (bin blake3-512:bin)\n"),
+            "prologue must open the document:\n{rendered}"
+        );
         for expected in [
             "sugar v1.2.3 (bin blake3-512:bin)",
             "execution directory: /execution",
@@ -16065,6 +16109,14 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
                 "missing {expected}:\n{rendered}"
             );
         }
+        let subject = rendered
+            .find("workspace root: /workspace")
+            .expect("workspace root");
+        let plan = rendered.find("plan: fixture").expect("plan roll call");
+        assert!(
+            subject < plan,
+            "subject pins must precede plan roll call:\n{rendered}"
+        );
     }
 
     #[test]
