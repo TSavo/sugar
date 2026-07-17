@@ -113,6 +113,36 @@ class SymbolicValue(FloorValue):
 
         return Complete(PredicateValue(py_truthy(self.term), site))
 
+    def is_identical(self, other, site):
+        from sugar_lift_py_tests.ir import _ConstStr, _Ctor
+
+        left = self.term
+        right = other.term if type(other) is SymbolicValue else None
+        if (
+            type(left) is _Ctor
+            and left.name == "python:type"
+            and len(left.args) == 1
+            and type(left.args[0]) is _ConstStr
+            and type(right) is _Ctor
+            and right.name == "python:type"
+            and len(right.args) == 1
+            and type(right.args[0]) is _ConstStr
+        ):
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return Complete(
+                TrueBoolLiteralSugar(site=site)
+                if left.args[0].value == right.args[0].value
+                else FalseBoolLiteralSugar(site=site)
+            )
+        return super().is_identical(other, site)
+
     def length(self, site):
         # A symbolic length stays the call:len coordinate -- the vendor's stated address.
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue

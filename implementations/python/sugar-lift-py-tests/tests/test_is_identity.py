@@ -11,7 +11,12 @@ from factory_reduce import reduce_value
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.floor import PredicateValue, SymbolicValue, UniverseValue
+from sugar_lift_py_tests.floor import (
+    PredicateValue,
+    SymbolicValue,
+    TermValue,
+    UniverseValue,
+)
 from sugar_lift_py_tests.ir import (
     and_,
     ctor,
@@ -44,6 +49,23 @@ def test_none_is_none_folds_true() -> None:
 def test_none_is_not_none_folds_false() -> None:
     value = reduce_value("None is not None")
     assert isinstance(value, FalseBoolLiteralSugar)
+
+
+def test_constructed_tuple_is_not_none_folds_true() -> None:
+    value = reduce_value("(5, 3, 3) is not None")
+    assert isinstance(value, TrueBoolLiteralSugar)
+
+
+def test_exact_builtin_type_identity_folds_by_type_coordinate() -> None:
+    assert isinstance(reduce_value("bool is bool"), TrueBoolLiteralSugar)
+    assert isinstance(reduce_value("bool is int"), FalseBoolLiteralSugar)
+
+
+def test_ifexp_selects_from_decidable_identity_conditions() -> None:
+    tuple_selected = reduce_value("1 if (5, 3, 3) is not None else 0")
+    type_selected = reduce_value("1 if bool is bool else 0")
+    assert tuple_selected == TermValue(1)
+    assert type_selected == TermValue(1)
 
 
 def test_symbolic_is_none_emits_identity() -> None:
