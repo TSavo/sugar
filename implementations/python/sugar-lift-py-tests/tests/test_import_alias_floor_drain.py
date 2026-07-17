@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import ast
 
-import pytest
 from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import build_node, default_catalog
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     BlockValue,
@@ -16,7 +14,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import make_var, py_truthy
-from sugar_lift_py_tests.outcome import Complete, complete_value
+from sugar_lift_py_tests.outcome import complete_value
 
 
 def _statement(source: str) -> SourceFragment:
@@ -48,13 +46,19 @@ def test_importfrom_statement_constructs_aliases_and_relative_coordinates() -> N
     )
 
 
-def test_importfrom_star_remains_a_loud_construction_gap() -> None:
-    with pytest.raises(FactoryPanic, match="None => panic"):
-        build_node(
-            ast.parse("from pandas import *").body[0],
-            filename="imports.py",
-            role=SugarRole.STATEMENT,
+def test_importfrom_star_is_owned_by_star_importfrom_sugar() -> None:
+    built = build_node(
+        ast.parse("from pandas import *").body[0],
+        filename="imports.py",
+        role=SugarRole.STATEMENT,
+    )
+    assert type(built.sugar).__name__ == "StarImportFromSugar"
+    assert [
+        candidate.name
+        for candidate in default_catalog().candidates_for(
+            SugarRole.STATEMENT, _statement("from pandas import *")
         )
+    ] == ["StarImportFromSugar"]
 
 
 def test_import_alias_subscript_projects_its_import_coordinate() -> None:
@@ -96,6 +100,9 @@ def test_import_statement_owner_is_structural_and_star_is_excluded() -> None:
             SugarRole.STATEMENT, _statement("from pandas import Series as S")
         )
     ] == ["ImportFromSugar"]
-    assert not list(
-        catalog.candidates_for(SugarRole.STATEMENT, _statement("from pandas import *"))
-    )
+    assert [
+        candidate.name
+        for candidate in catalog.candidates_for(
+            SugarRole.STATEMENT, _statement("from pandas import *")
+        )
+    ] == ["StarImportFromSugar"]
