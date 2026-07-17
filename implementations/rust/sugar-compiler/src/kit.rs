@@ -51,8 +51,13 @@
 // the type door.
 //
 // SourceMemento relocate (#3855): locator types live in libsugar; sugar-compiler
-// has no sugar-walk Cargo edge (arch-guard). Residual: census move, pool
-// single-owner.
+// has no sugar-walk Cargo edge (arch-guard).
+//
+// Pool single-owner (#3855): `Kit` holds one `LiftPluginKit` connection. Lift
+// path-algebra registration and `enumerate_conn` clone that connection (shared
+// Drop-scoped `ResidentSlot`) rather than minting a second resident. Residual:
+// census/discovery move; `resolve_source`/`resolve_testimony` still one-shot
+// spawn outside the owned connection.
 
 use std::path::{Path, PathBuf};
 
@@ -342,15 +347,20 @@ impl LiftRequest {
 /// The unforgeable frontend handle. Private fields; the only minter is
 /// `Kit::rendezvous`.
 ///
-/// The enumeration connection owns its resident child and canonical-question
-/// cache. Their validity window is the handle's lifetime: CLI keeps one for a
-/// command, LSP keeps one for an analysis, and dropping the last clone closes
-/// the child and discards all cached answers coherently. There is no global
-/// resident pool and no entry-level invalidation path.
+/// Single-owner connection: this handle owns one `LiftPluginKit` whose
+/// Drop-scoped resident child and canonical-question cache live for the
+/// handle's lifetime. CLI keeps one Kit for a command, LSP for an analysis;
+/// dropping the last clone of the connection Arc closes the child and
+/// discards cached answers coherently. There is no global resident pool and
+/// no entry-level invalidation path. Enumeration reuses this connection
+/// (method override only); it does not mint a second resident.
 pub struct Kit {
     manifest: LiftManifest,
     declaration: KitDeclaration,
     initialize_response: Value,
+    /// Drop-scoped lift-plugin connection. Lift registration and enumeration
+    /// clone this handle so they share one resident child.
+    connection: crate::kit_path::LiftPluginKit,
     registry: KitRegistry,
     kit_name: String,
 }
@@ -395,16 +405,18 @@ impl Kit {
                 })?;
         let declaration = handshake.declaration;
         let kit_name = format!("lift-{}", manifest.surface);
-        let mut registry = KitRegistry::default();
-        let mut lift_kit = LiftKit::new(
-            manifest.dialect.clone(),
+        // One connection, owned by the Kit. Registry + enumeration clone it
+        // (shared ResidentSlot Arc); Drop of the last clone shuts the child.
+        let mut connection = crate::kit_path::LiftPluginKit::new(
             manifest.surface.clone(),
             manifest.command.clone(),
             manifest.working_dir.clone(),
         );
         if let Some(method) = manifest.method.as_deref() {
-            lift_kit = lift_kit.with_method(method);
+            connection = connection.with_method(method);
         }
+        let lift_kit = LiftKit::from_transport(manifest.dialect.clone(), connection.clone());
+        let mut registry = KitRegistry::default();
         registry.register(
             kit_name.clone(),
             lift_kit,
@@ -416,6 +428,7 @@ impl Kit {
             manifest,
             declaration,
             initialize_response: handshake.initialize_response,
+            connection,
             registry,
             kit_name,
         })
@@ -468,9 +481,10 @@ impl Kit {
         &self.manifest.surface
     }
 
-    /// Part 6: build the `tree::KitConn` an enumeration RPC needs to reach
-    /// THIS kit's manifest command again for `workspace_root`. Crate-private
-    /// -- `tree.rs`'s `impl Kit` block is the only external caller.
+    /// Part 6: build the `tree::KitConn` an enumeration RPC needs for
+    /// `workspace_root`. Reuses this Kit's owned connection with method
+    /// `sugar.enumerate` (#3855 pool single-owner) — not a second resident.
+    /// Crate-private; `tree.rs`'s `impl Kit` block is the only external caller.
     pub(crate) fn enumerate_conn(&self, workspace_root: &Path) -> crate::tree::KitConn {
         crate::tree::KitConn {
             surface: self.manifest.surface.clone(),
@@ -479,12 +493,7 @@ impl Kit {
             workspace_root: workspace_root.to_path_buf(),
             audit_frontier: false,
             allowed_broken_components: Vec::new(),
-            transport: crate::kit_path::LiftPluginKit::new(
-                self.manifest.surface.clone(),
-                self.manifest.command.clone(),
-                self.manifest.working_dir.clone(),
-            )
-            .with_method("sugar.enumerate"),
+            transport: self.connection.clone().with_method("sugar.enumerate"),
         }
     }
 
