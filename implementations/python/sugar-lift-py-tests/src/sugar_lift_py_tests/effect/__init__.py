@@ -65,6 +65,7 @@ from .subscript_result_runtime_effect import SubscriptResultRuntimeEffect
 from .subtract_runtime_effect import SubtractRuntimeEffect, runtime_subtract
 from .type_error_runtime_effect import TypeErrorRuntimeEffect
 from .try_handler_dispatch_runtime_effect import TryHandlerDispatchRuntimeEffect
+from .unary_plus_runtime_effect import UnaryPlusRuntimeEffect, runtime_unary_plus
 
 __all__ = [
     "AssertionFailedRuntimeEffect",
@@ -128,6 +129,8 @@ __all__ = [
     "SubtractRuntimeEffect",
     "runtime_subtract",
     "TypeErrorRuntimeEffect",
+    "UnaryPlusRuntimeEffect",
+    "runtime_unary_plus",
     "TryHandlerDispatchRuntimeEffect",
     "effect_kind",
     "effect_reason",
