@@ -20,7 +20,7 @@ from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.floor import StringValue, SymbolicValue
-from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.temporal import TemporalContext
 
 PREFIX = """\
@@ -87,7 +87,7 @@ def test_call_result_receiver_is_classified_before_method_chain_unrolls() -> Non
     assert type(built.sugar.intermediate.sugar).__name__ == "CallResultCallSugar"
 
 
-def test_dynamic_getattr_call_result_chain_stays_a_named_runtime_effect() -> None:
+def test_reduced_static_getattr_name_dispatches_the_runtime_receiver() -> None:
     node = ast.parse("getattr(frame, method_name)().reset_index()", mode="eval").body
     temporal = (
         TemporalContext.empty()
@@ -101,6 +101,9 @@ def test_dynamic_getattr_call_result_chain_stays_a_named_runtime_effect() -> Non
 
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, GetattrRuntimeEffect)
+    assert outcome.effect.witness.operation == ctor(
+        "py.getattr.receiver", [outcome.effect.witness.operand]
+    )
 
 
 def test_unclassifiable_chained_receiver_stays_loud() -> None:
