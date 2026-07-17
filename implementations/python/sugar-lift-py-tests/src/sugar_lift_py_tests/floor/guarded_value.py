@@ -217,6 +217,9 @@ class GuardedValue(FloorValue):
     def bitwise_or(self, other, site):
         return self._map("bitwise_or", other, site)
 
+    def bitwise_invert(self, site):
+        return self._map("bitwise_invert", site)
+
     def unary_minus(self, site):
         return self._map("unary_minus", site)
 

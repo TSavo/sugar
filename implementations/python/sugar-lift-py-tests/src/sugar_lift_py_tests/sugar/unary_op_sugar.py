@@ -65,6 +65,9 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
             "    return 0\n"
             "\n"
         )
+        predicate_invert_prefix = (
+            "from time import time\n" "\n" "def test_a():\n" "    value = time()\n"
+        )
         return (
             _call_pair(
                 name="unary_op_return",
@@ -84,6 +87,14 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
                     source=not_prefix + "def test_a():\n    assert A(5) == 0\n",
                     expected="unsat",
                 ),
+            ),
+            _call_pair(
+                name="predicate_bitwise_invert_return",
+                owner_sugar=cls.__name__,
+                truthful=predicate_invert_prefix
+                + "    assert (value != 1) and ~(value == 1)\n",
+                lying=predicate_invert_prefix
+                + "    assert ~(value == 1) and (value == 1)\n",
             ),
         )
 

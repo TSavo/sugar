@@ -113,6 +113,11 @@ class PredicateValue(FloorValue):
             )
         )
 
+    def bitwise_invert(self, site):
+        """Boolean bitwise invert is the standing predicate's negation."""
+        del site
+        return self.negate()
+
     def stated(self, site):
         # A symbolic predicate states an inv: the fact the record emits. Operand
         # callsites ride into the InvValue so edges project later.
