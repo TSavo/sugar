@@ -113,6 +113,55 @@ def check_functions(func_names_and_expected):
     assert all(panic.gap["observed"] != "For" for panic in recovered.panics)
 
 
+def _nditer_cleanup_source(*, extent: int) -> str:
+    return f"""
+import numpy as np
+
+def rewrite():
+    arr = np.arange({extent}).astype(">i,O")
+    mask = np.random.randint(0, 2, size={extent}).astype(bool)
+    it = np.nditer(
+        [arr, mask],
+        ["buffered", "refs_ok"],
+        [["readwrite", "writemasked"], ["readonly", "arraymask"]],
+        op_dtypes=["<i,O", "?"],
+    )
+    for buf, mask_buf in it:
+        buf[...] = (3, object())
+    del buf, mask_buf, it
+    return 1
+"""
+
+
+def test_proven_nonempty_nditer_tuple_targets_survive_for_cleanup() -> None:
+    recovered = audit_lift_file(
+        _nditer_cleanup_source(extent=3),
+        "numpy/_core/tests/test_nditer.py",
+        recover_panics=True,
+    )
+
+    assert all(
+        not (
+            panic.gap["owner"] == "TemporalContext"
+            and panic.gap["observed"] in {"buf", "mask_buf"}
+        )
+        for panic in recovered.panics
+    )
+
+
+def test_empty_nditer_does_not_invent_post_loop_tuple_bindings() -> None:
+    recovered = audit_lift_file(
+        _nditer_cleanup_source(extent=0),
+        "numpy/_core/tests/test_nditer.py",
+        recover_panics=True,
+    )
+
+    assert any(
+        panic.gap["owner"] == "TemporalContext" and panic.gap["observed"] == "buf"
+        for panic in recovered.panics
+    )
+
+
 @pytest.mark.parametrize(
     ("target", "returned", "path"),
     [
