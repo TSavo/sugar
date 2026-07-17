@@ -398,6 +398,88 @@ def test_integer_warranted_residual_callsite_is_runtime_sequence_count(
     assert outcome.effect.witness.operand == count.term
 
 
+def _pyarrow_list_max_as_py_count() -> CallSiteValue:
+    pyarrow = ImportAliasValue(name="pyarrow", bound_name="pa")
+    compute = CallSiteValue(
+        target_name="compute",
+        arg_values=(pyarrow,),
+        parameters=(),
+        term=ctor("call:compute", [pyarrow.to_term(owner="test")]),
+        body=None,
+        site=_SITE,
+    )
+    lengths = CallSiteValue(
+        target_name="list_value_length",
+        arg_values=(compute, SymbolicValue(make_var("arrow_array"))),
+        parameters=(),
+        term=ctor(
+            "call:list_value_length",
+            [compute.term, make_var("arrow_array")],
+        ),
+        body=None,
+        site=_SITE,
+        runtime_dispatch_receiver=compute,
+    )
+    maximum = CallSiteValue(
+        target_name="max",
+        arg_values=(compute, lengths),
+        parameters=(),
+        term=ctor("call:max", [compute.term, lengths.term]),
+        body=None,
+        site=_SITE,
+        runtime_dispatch_receiver=compute,
+    )
+    return CallSiteValue(
+        target_name="as_py",
+        arg_values=(maximum,),
+        parameters=(),
+        term=ctor("call:as_py", [maximum.term]),
+        body=None,
+        site=_SITE,
+        runtime_dispatch_receiver=maximum,
+    )
+
+
+def test_pyarrow_list_length_max_as_py_is_warranted_runtime_sequence_count() -> None:
+    count = _pyarrow_list_max_as_py_count()
+
+    outcome = ListValue((TermValue(None),)).multiply(count, _SITE)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert "pyarrow list-length maximum" in outcome.reason
+    assert outcome.effect.witness.operand == count.term
+    assert outcome.effect.witness.operation == ctor(
+        "py.sequence_repeat", [count.term]
+    )
+    with pytest.raises(FactoryPanic, match="genuine runtime-dependent operand"):
+        runtime_effect_evidence("py.sequence_repeat", TermValue(4), _SITE)
+
+
+def test_unproven_as_py_result_stays_loud_on_list_repetition_floor() -> None:
+    count = _pyarrow_list_max_as_py_count()
+    lookalike = CallSiteValue(
+        target_name="as_py",
+        arg_values=(
+            CallSiteValue(
+                target_name="sum",
+                arg_values=count.arg_values[0].arg_values,
+                parameters=(),
+                term=ctor("call:sum", [make_var("runtime_values")]),
+                body=None,
+                site=_SITE,
+            ),
+        ),
+        parameters=(),
+        term=ctor("call:as_py", [make_var("runtime_scalar")]),
+        body=None,
+        site=_SITE,
+    )
+
+    with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
+        ListValue((TermValue(None),)).multiply(lookalike, _SITE)
+
+
 def test_pandas_box_expected_array_result_uses_native_multiply_coordinate() -> None:
     boxed = CallSiteValue(
         target_name="pandas._testing.box_expected",
