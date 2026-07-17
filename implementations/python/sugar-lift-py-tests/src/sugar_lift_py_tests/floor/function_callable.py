@@ -306,13 +306,28 @@ class FunctionCallable(FloorValue):
                 [value.to_term(owner=str(site)) for value in source_arg_values],
                 symbol_kind="contract-target",
             )
+        body = self.body
+        from sugar_lift_py_tests.sugar.install_source_dig import ContextualizedDigBody
+        from sugar_lift_py_tests.sugar_body import SugarBody
+
+        if isinstance(body, SugarBody) and isinstance(
+            body.sugar, ContextualizedDigBody
+        ):
+            body = replace(
+                body,
+                sugar=replace(
+                    body.sugar,
+                    callable_binding=self,
+                    callable_name_is_parameter=self.name in self.parameters,
+                ),
+            )
         return Complete(
             CallSiteValue(
                 target_name=self.name,
                 arg_values=bound_values,
                 parameters=self.parameters,
                 term=term,
-                body=self.body,
+                body=body,
                 site=site,
             )
         )

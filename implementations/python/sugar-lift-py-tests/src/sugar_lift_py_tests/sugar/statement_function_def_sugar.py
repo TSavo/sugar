@@ -60,6 +60,13 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
             '        return options["value"]\n'
             '    return inner(**{"value": 5})\n\n'
         )
+        self_binding_prefix = (
+            "def A():\n"
+            "    def inner():\n"
+            "        callback = inner\n"
+            "        return 5\n"
+            "    return inner()\n\n"
+        )
         return (
             _call_pair(
                 name="statement_function_def_return",
@@ -72,6 +79,12 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 owner_sugar="StatementFunctionDefSugar",
                 truthful=expansion_prefix + "def test_a():\n    assert A() == 5\n",
                 lying=expansion_prefix + "def test_a():\n    assert A() == 6\n",
+            ),
+            _call_pair(
+                name="statement_function_def_self_binding_return",
+                owner_sugar="StatementFunctionDefSugar",
+                truthful=self_binding_prefix + "def test_a():\n    assert A() == 5\n",
+                lying=self_binding_prefix + "def test_a():\n    assert A() == 6\n",
             ),
         )
 
