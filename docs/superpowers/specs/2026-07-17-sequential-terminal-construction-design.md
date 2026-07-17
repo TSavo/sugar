@@ -59,8 +59,9 @@ Alternatives rejected:
   `GuardedValue(guard, early, fallback)` from one guarded and one unguarded
   reduced return.
 - A no-fallback bad twin remains `FactoryPanic`.
-- A truthful symbolic early-return witness is `sat`; its lying twin is
-  `unsat`.
+- The existing verdict-bearing `if_return` early-return witness stays truthful
+  `sat` and lying `unsat`; the focused reduced-outcome discrimination is what
+  pins the symbolic fold itself.
 - The RuntimeEffect constructor/evidence census remains zero failures.
 - Bounded replay moves the representative away from the line-940
   `RuntimeEffect` terminal to completion or a distinct loud named owner, with

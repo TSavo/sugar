@@ -50,8 +50,9 @@ incomplete control-flow shapes remain loud.
   `implementations/python/sugar-lift-py-tests/tests/test_install_source_body_dig.py`
 
 **Interfaces:**
-- Consumes: real-solver witness source with a symbolic early return.
-- Produces: truthful `sat`, lying `unsat`.
+- Consumes: the existing verdict-bearing `if_return` early-return witness.
+- Produces: truthful `sat`, lying `unsat`, alongside the focused symbolic fold
+  discrimination.
 
 - [ ] Add and run the truthful/lying witness.
 - [ ] Run the RuntimeEffect constructor/evidence census and require zero

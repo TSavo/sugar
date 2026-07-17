@@ -1245,31 +1245,44 @@ class SequentialDigBody:
 
     def desugar(self, ctx: Any = None):
         from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.return_value import ReturnValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.ir import and_
+        from sugar_lift_py_tests.outcome import Complete
 
         cur = ctx
-        saw_guarded_exit = False
+        guarded_returns = []
         for stmt in self.statements:
-            if saw_guarded_exit:
-                # A prior face already posted a GuardedReturn. Later statements
-                # ride under branch polarity (e.g. fall-through after
-                # ``if z in xs: return 1`` / ``return 0``). Dig must not pin the
-                # fall-through as an unguarded literal Derived residue.
-                return self._control_flow_incomplete()
             outcome = stmt.reduce(cur)
             from sugar_lift_py_tests.outcome import Incomplete as _Inc
 
             if isinstance(outcome, _Inc):
                 return outcome
             cur = outcome.extend_scope(cur)
-            for item in outcome.contribution():
+            contribution = tuple(outcome.contribution())
+            guarded = tuple(
+                item for item in contribution if isinstance(item, GuardedReturn)
+            )
+            non_returns = tuple(
+                item
+                for item in contribution
+                if not isinstance(item, (GuardedReturn, ReturnValue))
+            )
+            if (guarded_returns or guarded) and non_returns:
+                return self._control_flow_gap()
+            for item in contribution:
                 # Exact unguarded return only — GuardedReturn is multi-exit.
                 if type(item) is ReturnValue:
-                    # Dig wants the returned floor, not the ReturnValue wrapper.
-                    return Complete(item.value)
-                if isinstance(item, GuardedReturn):
-                    saw_guarded_exit = True
+                    value = item.value
+                    for prior in reversed(guarded_returns):
+                        guard = (
+                            prior.guards[0]
+                            if len(prior.guards) == 1
+                            else and_(list(prior.guards))
+                        )
+                        value = GuardedValue(guard, prior.value, value)
+                    return Complete(value)
+            guarded_returns.extend(guarded)
             follow = getattr(outcome, "follow", None)
             if callable(follow):
                 step = follow()
@@ -1277,59 +1290,29 @@ class SequentialDigBody:
                     # Nested block already halted (e.g. BlockValue with return).
                     # Do not reduce later statements; no unguarded dig pin.
                     break
-                if step.transform is not None:
-                    # Continuation is polarity-guarded; dig cannot pin one arm.
-                    return self._control_flow_incomplete()
+                if step.transform is not None and not guarded:
+                    return self._control_flow_gap()
         # No unguarded ReturnValue: either multi-exit (GuardedReturn) or no
         # return at all. Dig stays opaque so Derived residue cannot invent a
         # single fall-through literal across control flow.
-        return self._control_flow_incomplete()
+        return self._control_flow_gap()
 
-    def _control_flow_incomplete(self):
-        from sugar_lift_py_tests.effect import (
-            ConditionalExpressionRuntimeEffect,
-            runtime_effect_evidence_from_terms,
-        )
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.outcome import Incomplete
-
+    def _control_flow_gap(self):
         terminal = self.statements[-1] if self.statements else None
         audit_row = getattr(terminal, "audit_row", None)
         blame = getattr(audit_row, "blame", "<install-source-dig>")
         observed = getattr(audit_row, "observed", "SequentialDigBody")
-        # The witness is constructed from the real fragment: the terminal
-        # statement's own site when its sugar carries one, else the dug
-        # FunctionDef fragment threaded in at construction. The audit-row
-        # blame string stays in the reason prose only.
-        site = getattr(getattr(terminal, "sugar", None), "site", None) or self.fn_site
-        if site is None:
-            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+        from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
 
-            factory_panic_gap(
-                owner="SequentialDigBody",
-                blame=str(blame),
-                observed=str(observed),
-                requested="SourceFragment for terminal dig runtime effect",
-                fix=(
-                    "thread the dug FunctionDef fragment into SequentialDigBody "
-                    "(build_dig_body does this); do not mint a RuntimeEffect "
-                    "without a real site"
-                ),
-            )
-        terminal_selection = ctor(
-            "py.sequential_terminal",
-            [str_const(str(blame)), str_const(str(observed))],
-        )
-        return Incomplete(
-            ConditionalExpressionRuntimeEffect(
-                f"{blame}: {observed} leaves the sequential dig return value "
-                "dependent on runtime control flow",
-                **runtime_effect_evidence_from_terms(
-                    ctor("py.conditional_select", [terminal_selection]),
-                    terminal_selection,
-                    site,
-                ),
-            )
+        factory_panic_gap(
+            owner="SequentialDigBody",
+            blame=str(blame),
+            observed=str(observed),
+            requested="reduced guarded returns with an unguarded fallback",
+            fix=(
+                "construct the exact reduced return selection; unimplemented "
+                "control-flow machinery must panic, never mint RuntimeEffect"
+            ),
         )
 
 
