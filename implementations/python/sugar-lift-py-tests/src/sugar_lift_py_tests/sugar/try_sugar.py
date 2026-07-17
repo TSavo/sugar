@@ -332,7 +332,11 @@ def _except_arm_contributions(entries: tuple, arm: "TryExceptArm") -> tuple:
             # Bare ``raise`` inside ``except Type`` re-raises the active
             # exception: classify from the handler's source-cited type names
             # so the exceptional-exit coordinate is never unclassified.
-            if entry.effect.exception_name is None and arm.type_names:
+            if (
+                entry.effect.exception_name is None
+                and entry.effect.exception_type_coordinate is None
+                and arm.type_names
+            ):
                 from sugar_lift_py_tests.effect import RaiseEffect
 
                 classified = RaiseValue(
