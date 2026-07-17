@@ -100,18 +100,15 @@ class ListValue(FloorValue):
         # warrant needed to reach that same effect. Other opaque/import results
         # have not proved Python's __index__ contract and stay a construction gap.
         if type(other) is TermValue and type(other.value) is int:
-            from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
-            from sugar_lift_py_tests.outcome import Complete, Incomplete
+            from sugar_lift_py_tests.floor.ground_sequence_repetition_value import (
+                GroundSequenceRepetitionValue,
+            )
+            from sugar_lift_py_tests.outcome import Complete
 
             repeated = len(self.elements) * max(other.value, 0)
             if repeated > 65520:
-                return Incomplete(
-                    SequenceRepetitionRuntimeEffect(
-                        "sequence repetition construction boundary: ListValue "
-                        f"would materialize {repeated} literal floor items; "
-                        f"site={site}",
-                        **runtime_effect_evidence("py.sequence_repeat", other, site),
-                    )
+                return Complete(
+                    GroundSequenceRepetitionValue("array", self.elements, other.value)
                 )
             return Complete(ListValue(self.elements * other.value))
         runtime_count_kind = None

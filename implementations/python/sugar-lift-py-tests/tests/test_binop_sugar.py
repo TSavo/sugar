@@ -213,13 +213,16 @@ def test_reversed_sequence_multiplication_repeats_literal_sequence():
     assert fol(reduce_term("3 * [1]")) == fol(ctor("array", [num(1), num(1), num(1)]))
 
 
-def test_large_sequence_repetition_is_typed_runtime_boundary():
+def test_large_ground_list_repetition_is_compact_construction():
     outcome, operation_log = _reduce_outcome_with_log("[1] * 65521")
 
-    assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect).__name__ == "SequenceRepetitionRuntimeEffect"
-    assert "sequence repetition construction boundary" in outcome.reason
-    assert "65521 literal floor items" in outcome.reason
+    value = complete_value(outcome, owner="large ground list repetition")
+    assert fol(value.to_term(owner="test")) == fol(
+        ctor("*", [ctor("array", [num(1)]), num(65521)])
+    )
+    assert complete_value(value.length("t.py:1:0"), owner="repetition length") == (
+        TermValue(65521)
+    )
     assert operation_log == []
 
 
@@ -240,15 +243,31 @@ def test_tuple_repetition_by_symbolic_count_is_typed_runtime_effect():
     assert operation_log == []
 
 
-def test_large_tuple_repetition_carries_the_concrete_count_witness():
+def test_large_ground_tuple_repetition_is_compact_construction():
     outcome, operation_log = _reduce_outcome_with_log("(1,) * 65521")
 
-    assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect).__name__ == "SequenceRepetitionRuntimeEffect"
-    assert outcome.effect.witness is not None
-    assert outcome.effect.witness.operand == num(65521)
-    assert outcome.effect.witness.operation == ctor("py.sequence_repeat", [num(65521)])
+    value = complete_value(outcome, owner="large ground tuple repetition")
+    assert fol(value.to_term(owner="test")) == fol(
+        ctor("*", [ctor("tuple", [num(1)]), num(65521)])
+    )
+    assert complete_value(value.length("t.py:1:0"), owner="repetition length") == (
+        TermValue(65521)
+    )
     assert operation_log == []
+
+
+def test_large_ground_array_literal_repetition_is_compact_construction():
+    value = ArrayLiteral((TermValue(1),))
+
+    outcome = value.multiply(TermValue(65521), "t.py:1:0")
+
+    repeated = complete_value(outcome, owner="large ground array repetition")
+    assert fol(repeated.to_term(owner="test")) == fol(
+        ctor("*", [ctor("array", [num(1)]), num(65521)])
+    )
+    assert complete_value(
+        repeated.length("t.py:1:0"), owner="repetition length"
+    ) == TermValue(65521)
 
 
 def test_list_repetition_by_symbolic_count_is_typed_runtime_effect():

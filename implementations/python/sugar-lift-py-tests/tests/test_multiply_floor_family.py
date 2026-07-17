@@ -182,6 +182,27 @@ def test_term_times_len_witness_truthful_sat_lying_unsat(
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_large_ground_list_repetition_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in MultiplyOpSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "large_list_repetition_length_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "large-repeat-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "large-repeat-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_imported_list_repetition_count_remains_a_named_loud_gap() -> None:
     count = ImportAliasValue("start_caching_at", "start_caching_at")
     receiver = ListValue((StringValue("2024-01-01"),))

@@ -148,21 +148,15 @@ class TupleValue(FloorValue):
         from sugar_lift_py_tests.floor.term_value import TermValue
 
         if type(other) is TermValue and type(other.value) is int:
-            from sugar_lift_py_tests.effect import (
-                SequenceRepetitionRuntimeEffect,
-                runtime_effect_evidence,
+            from sugar_lift_py_tests.floor.ground_sequence_repetition_value import (
+                GroundSequenceRepetitionValue,
             )
-            from sugar_lift_py_tests.outcome import Complete, Incomplete
+            from sugar_lift_py_tests.outcome import Complete
 
             repeated = len(self.elements) * max(other.value, 0)
             if repeated > 65520:
-                return Incomplete(
-                    SequenceRepetitionRuntimeEffect(
-                        "sequence repetition construction boundary: TupleValue "
-                        f"would materialize {repeated} literal floor items; "
-                        f"site={site}",
-                        **runtime_effect_evidence("py.sequence_repeat", other, site),
-                    )
+                return Complete(
+                    GroundSequenceRepetitionValue("tuple", self.elements, other.value)
                 )
             return Complete(TupleValue(self.elements * other.value))
         if type(other) is SymbolicValue:

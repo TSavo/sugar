@@ -68,6 +68,22 @@ class MultiplyOpSugar(Sugar, role=SugarRole.TERM):
                 ),
             ),
             _call_pair(
+                name="large_list_repetition_length_return",
+                owner_sugar="MultiplyOpSugar",
+                truthful=(
+                    "def A():\n"
+                    "    return len([7] * 65521)\n\n"
+                    "def test_a():\n"
+                    "    assert A() == 65521\n"
+                ),
+                lying=(
+                    "def A():\n"
+                    "    return len([7] * 65521)\n\n"
+                    "def test_a():\n"
+                    "    assert A() == 65520\n"
+                ),
+            ),
+            _call_pair(
                 name="term_times_len_return",
                 owner_sugar="MultiplyOpSugar",
                 truthful=(

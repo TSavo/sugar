@@ -35,6 +35,7 @@ from .guarded_loop_control import GuardedLoopControl
 from .guarded_faces import GuardedFaces
 from .guarded_value import GuardedValue
 from .guarded_return import GuardedReturn
+from .ground_sequence_repetition_value import GroundSequenceRepetitionValue
 from .import_alias_value import ImportAliasValue
 from .lambda_callable import LambdaCallable
 from .list_value import ListValue
@@ -90,6 +91,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     GuardedFaces,
     GuardedValue,
     GuardedReturn,
+    GroundSequenceRepetitionValue,
     GuardedScopeRebind,
     ImportAliasValue,
     LambdaCallable,
@@ -157,6 +159,7 @@ __all__ = [
     "GuardedFaces",
     "GuardedValue",
     "GuardedReturn",
+    "GroundSequenceRepetitionValue",
     "GuardedScopeRebind",
     "ImportAliasValue",
     "LambdaCallable",
