@@ -365,6 +365,71 @@ def test_pandas_compat_reexport_constructs_underlying_predicate() -> None:
     assert resolved.formula.name == "py.gt"
 
 
+def test_try_except_module_binding_constructs_guarded_value(
+    tmp_path, monkeypatch
+) -> None:
+    (tmp_path / "try_selected_value.py").write_text(
+        "try:\n"
+        "    import optional_dependency\n"
+        "    FLAG = True\n"
+        "except ImportError:\n"
+        "    FLAG = False\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    resolved = resolve_install_source_value("try_selected_value.FLAG", ctx)
+
+    from sugar_lift_py_tests.floor import GuardedValue
+    from sugar_lift_py_tests.ir import atomic, not_, str_const
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    assert isinstance(resolved, GuardedValue)
+    assert resolved.guard == not_(atomic("py.except", [str_const("ImportError")]))
+    assert isinstance(resolved.when_true, TrueBoolLiteralSugar)
+    assert isinstance(resolved.when_false, FalseBoolLiteralSugar)
+
+
+def test_try_except_module_binding_missing_from_one_path_stays_unresolved(
+    tmp_path, monkeypatch
+) -> None:
+    (tmp_path / "partial_try_selected_value.py").write_text(
+        "try:\n"
+        "    import optional_dependency\n"
+        "    FLAG = True\n"
+        "except ImportError:\n"
+        "    pass\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    assert resolve_install_source_value("partial_try_selected_value.FLAG", ctx) is None
+
+
+def test_pandas_pyarrow_flag_constructs_guarded_predicate() -> None:
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    resolved = resolve_install_source_value(
+        "pandas.compat.pyarrow.HAS_PYARROW",
+        ctx,
+    )
+
+    from sugar_lift_py_tests.floor import GuardedValue, PredicateValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+
+    assert isinstance(resolved, GuardedValue)
+    assert isinstance(resolved.when_true, PredicateValue)
+    assert resolved.when_true.formula.name == "py.ge"
+    assert isinstance(resolved.when_false, FalseBoolLiteralSugar)
+
+
 def test_unconditional_reexport_truth_witness_refutes_wrong_twin(tmp_path) -> None:
     prefix = (
         "from pip._vendor.urllib3.util import IS_PYOPENSSL\n\n"
