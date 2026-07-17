@@ -42,6 +42,18 @@ class TupleValue(FloorValue):
             else FalseBoolLiteralSugar(site=site)
         )
 
+    def is_identical(self, other, site):
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+
+        if type(other) is NoneValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+
+            return Complete(FalseBoolLiteralSugar(site=site))
+        return super().is_identical(other, site)
+
     def length(self, site):
         # A tuple knows its length: the count of reduced elements.
         del site
