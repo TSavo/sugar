@@ -4958,6 +4958,9 @@ struct VisualSubtreeMeta {
 }
 
 enum VisualRenderPlan {
+    /// Full render. `Some(cid)` marks the first definition of a shareable
+    /// subtree so callers can tag `[shared cid=…]` and later references can
+    /// collapse to `<as above, cid=…>` when the width gate says sharing wins.
     Full(Option<String>),
     Reference(String),
     Elided(String),
@@ -5144,34 +5147,43 @@ impl<'a> VisualFormulaRenderer<'a> {
             ));
         }
         if self.repeats.get(&meta.fingerprint).copied().unwrap_or(0) > 1 {
-            // DAG law: first encounter defines, later encounters reference —
-            // even while a shared parent is mid-definition. Never suppress
-            // nested sharing (#4404). CID is cached by fingerprint so a
-            // second expanded clone does not re-canonicalize the tree.
-            if !self.seen.insert(meta.fingerprint) {
-                self.reference_returns += 1;
-                if self.shared_definition_depth > 0 {
-                    self.shareable_nested_references += 1;
+            // Width gate (#4586/#4589): only treat a repeat as shareable when
+            // the unshared inline form is longer than the CID reference. A
+            // short `normalize(source(x))` must stay inline — collapsing it
+            // lengthens the page and is silent dishonesty.
+            let provisional_cid = if let Some(cid) = self.shared_cids.get(&meta.fingerprint) {
+                cid.clone()
+            } else {
+                self.cid_computations += 1;
+                let cid = sugar_canonicalizer::jcs_cid_of_json(value);
+                self.shared_cids.insert(meta.fingerprint, cid.clone());
+                cid
+            };
+            let reference = format!("<as above, cid={provisional_cid}>");
+            let worth_sharing = self
+                .value_term_unshared_bounded(value, visible_width(&reference))
+                .is_none();
+            if worth_sharing {
+                // DAG law: first encounter defines, later encounters reference —
+                // even while a shared parent is mid-definition. Never suppress
+                // nested sharing (#4404). CID is cached by fingerprint so a
+                // second expanded clone does not re-canonicalize the tree.
+                if !self.seen.insert(meta.fingerprint) {
+                    self.reference_returns += 1;
+                    if self.shared_definition_depth > 0 {
+                        self.shareable_nested_references += 1;
+                    }
+                    if self.shared_cids.contains_key(&meta.fingerprint) {
+                        self.cid_cache_hits += 1;
+                    }
+                    return VisualRenderPlan::Reference(reference);
                 }
-                let cid = if let Some(cid) = self.shared_cids.get(&meta.fingerprint) {
-                    self.cid_cache_hits += 1;
-                    cid.clone()
-                } else {
-                    self.cid_computations += 1;
-                    let cid = sugar_canonicalizer::jcs_cid_of_json(value);
-                    self.shared_cids.insert(meta.fingerprint, cid.clone());
-                    cid
-                };
-                return VisualRenderPlan::Reference(format!("<as above, cid={cid}>"));
+                self.shareable_definitions += 1;
+                if self.shared_definition_depth > 0 {
+                    self.shareable_nested_definitions += 1;
+                }
+                return VisualRenderPlan::Full(Some(provisional_cid));
             }
-            self.cid_computations += 1;
-            let cid = sugar_canonicalizer::jcs_cid_of_json(value);
-            self.shared_cids.insert(meta.fingerprint, cid.clone());
-            self.shareable_definitions += 1;
-            if self.shared_definition_depth > 0 {
-                self.shareable_nested_definitions += 1;
-            }
-            return VisualRenderPlan::Full(Some(cid));
         }
         // Formula shapes always open: an `and`/`atomic` wrapping a large shared
         // tower must still dispatch so terms can DAG-share. Size elision is a
@@ -5470,6 +5482,85 @@ impl<'a> VisualFormulaRenderer<'a> {
                 }
             }
         }
+    }
+
+    /// Render a decoded JSON term without sharing, aborting once it cannot
+    /// beat `max_width`. Same width gate as `term_node_unshared_bounded` so
+    /// Value-path and term-table path agree on when `<as above>` is legal.
+    fn value_term_unshared_bounded(&self, term: &Value, max_width: usize) -> Option<String> {
+        let within_budget =
+            |rendered: String| (visible_width(&rendered) <= max_width).then_some(rendered);
+        if let Some(name) = term.get("var").and_then(Value::as_str).or_else(|| {
+            matches!(
+                term.get("kind").and_then(Value::as_str),
+                Some("var" | "Var")
+            )
+            .then(|| term.get("name").and_then(Value::as_str))
+            .flatten()
+        }) {
+            let register = if name == "out" {
+                FolRegister::Out
+            } else {
+                FolRegister::Variable
+            };
+            return within_budget(fol_paint(name, register, self.color));
+        }
+        if matches!(
+            term.get("kind").and_then(Value::as_str),
+            Some("const" | "Const")
+        ) {
+            let value = term.get("value").unwrap_or(&Value::Null);
+            return within_budget(fol_paint(
+                &scalar_value_to_fol(value),
+                FolRegister::Literal,
+                self.color,
+            ));
+        }
+        if matches!(
+            term.get("kind").and_then(Value::as_str),
+            Some("ctor" | "Ctor")
+        ) {
+            let name = term.get("name").and_then(Value::as_str).unwrap_or("?");
+            let raw_args = term
+                .get("args")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            if let Some(symbolic) = format_symbolic_ctor(name, raw_args) {
+                return within_budget(fol_paint(&symbolic, FolRegister::Literal, self.color));
+            }
+            let mut rendered_args = Vec::new();
+            let mut known_width = 0usize;
+            for arg in raw_args {
+                let remaining = max_width.saturating_sub(known_width);
+                let rendered = self.value_term_unshared_bounded(arg, remaining)?;
+                known_width = known_width
+                    .saturating_add(visible_width(&rendered))
+                    .saturating_add(2);
+                if known_width > max_width {
+                    return None;
+                }
+                rendered_args.push(rendered);
+            }
+            if let Some(symbol) = visual_symbolic_ctor(name, &rendered_args) {
+                return within_budget(fol_paint(&symbol, FolRegister::Literal, self.color));
+            }
+            let display = name.strip_prefix("call:").unwrap_or(name);
+            let rendered = if rendered_args.is_empty() && !name.starts_with("call:") {
+                fol_paint(display, FolRegister::Literal, self.color)
+            } else {
+                format_visual_application(
+                    &fol_paint(display, FolRegister::Callee, self.color),
+                    &rendered_args,
+                )
+            };
+            return within_budget(rendered);
+        }
+        within_budget(fol_paint(
+            &proofir_term_to_fol(term),
+            FolRegister::Literal,
+            self.color,
+        ))
     }
 
     /// Render only while the unshared form can still beat the CID reference.
@@ -16445,7 +16536,10 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
-    fn visual_fol_repeated_subterm_is_named_once_then_referenced() {
+    fn visual_fol_short_repeated_subterm_stays_inline_not_as_above() {
+        // Value-path residual of #4586/#4589: `normalize(source(x))` is far
+        // shorter than `<as above, cid=…>`. Collapsing it is lengthening
+        // dishonesty — both occurrences must stay inline, no reference.
         let shared = serde_json::json!({
             "kind": "ctor", "name": "call:normalize", "args": [
                 {"kind": "ctor", "name": "call:source", "args": [
@@ -16468,15 +16562,53 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
         assert_eq!(
             rendered.matches("normalize(source(x))").count(),
+            2,
+            "short composite must render inline twice:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("as above"),
+            "short composite must not collapse to a longer reference:\n{rendered}"
+        );
+        assert_visual_elisions_testify(&rendered);
+    }
+
+    #[test]
+    fn visual_fol_long_repeated_subterm_is_named_once_then_referenced() {
+        // Build a composite whose unshared inline form is longer than the
+        // CID reference, so sharing still shortens the page and testifies.
+        let mut shared = serde_json::json!({"kind": "var", "name": "seed"});
+        for depth in 0..16 {
+            shared = serde_json::json!({
+                "kind": "ctor",
+                "name": format!("call:calendar_layer_{depth}"),
+                "args": [shared]
+            });
+        }
+        let formula = serde_json::json!({
+            "kind": "and", "operands": [
+                {"kind": "atomic", "name": "=", "args": [
+                    {"kind": "var", "name": "left"}, shared.clone()
+                ]},
+                {"kind": "atomic", "name": "=", "args": [
+                    {"kind": "var", "name": "right"}, shared
+                ]}
+            ]
+        });
+
+        let rendered = pretty_visual_formula(&formula, false);
+
+        assert_eq!(
+            rendered.matches("calendar_layer_15(").count(),
             1,
-            "{rendered}"
+            "long composite is named once:\n{rendered}"
         );
         assert_eq!(
             rendered.matches("as above, cid=blake3-512:").count(),
             1,
-            "{rendered}"
+            "second long occurrence collapses with a CID receipt:\n{rendered}"
         );
         assert!(rendered.contains("shared cid=blake3-512:"), "{rendered}");
+        assert_visual_elisions_testify(&rendered);
     }
 
     #[test]
@@ -16625,15 +16757,16 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
     #[test]
     fn visual_fol_nested_shared_subterms_stay_a_dag_inside_shared_parent() {
-        let rung = serde_json::json!({
-            "kind": "ctor", "name": "call:normalize", "args": [{
-                "kind": "ctor", "name": "call:source", "args": [{
-                    "kind": "ctor", "name": "call:transform", "args": [{
-                        "kind": "var", "name": "x"
-                    }]
-                }]
-            }]
-        });
+        // Deep enough that unshared form loses to the CID reference; short
+        // rungs would stay inline under the #4589 shorter-than-reference law.
+        let mut rung = serde_json::json!({"kind": "var", "name": "x"});
+        for depth in 0..16 {
+            rung = serde_json::json!({
+                "kind": "ctor",
+                "name": format!("call:transform_layer_{depth}"),
+                "args": [rung]
+            });
+        }
         let tower = serde_json::json!({
             "kind": "ctor", "name": "call:combine", "args": [
                 rung.clone(), rung
@@ -16654,7 +16787,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let rendered = &metrics.rendered;
 
         assert_eq!(
-            rendered.matches("transform(x)").count(),
+            rendered.matches("transform_layer_15(").count(),
             1,
             "the inner rung must be defined once even inside a shared parent:\n{rendered}"
         );
@@ -16674,6 +16807,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             metrics.cid_cache_hits >= 1,
             "references must reuse the definition CID, not re-canonicalize clones: {metrics:?}"
         );
+        assert_visual_elisions_testify(rendered);
     }
 
     #[test]
@@ -16684,19 +16818,28 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         // re-expand every nested shared rung as a tree. Size elision must not
         // fire before shareable repeats either — it is only for unique mass.
         const DEPTH: usize = 8;
+        // Long pad names so the unshared leaf spelling exceeds the full
+        // `<as above, cid=blake3-512:…>` reference (~155 chars). Under #4589
+        // the width gate only shares when the reference shortens the page.
         let mut term = serde_json::json!({
-            "kind": "ctor", "name": "call:leaf_pad_0", "args": [{
-                "kind": "ctor", "name": "call:leaf_pad_1", "args": [{
-                    "kind": "ctor", "name": "call:leaf_pad_2", "args": [{
-                        "kind": "var", "name": "x"
-                    }]
+            "kind": "ctor",
+            "name": "call:leaf_pad_with_extended_identity_marker_and_more_padding_0",
+            "args": [{
+                "kind": "ctor",
+                "name": "call:leaf_pad_with_extended_identity_marker_and_more_padding_1",
+                "args": [{
+                    "kind": "ctor",
+                    "name": "call:leaf_pad_with_extended_identity_marker_and_more_padding_2",
+                    "args": [{"kind": "var", "name": "x"}]
                 }]
             }]
         });
         for depth in 0..DEPTH {
             term = serde_json::json!({
                 "kind": "ctor",
-                "name": format!("call:rung_{depth}"),
+                "name": format!(
+                    "call:rung_with_extended_identity_marker_and_more_padding_{depth}"
+                ),
                 "args": [term.clone(), term]
             });
         }
@@ -16717,13 +16860,19 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let rendered = &metrics.rendered;
 
         assert_eq!(
-            rendered.matches("leaf_pad_0(").count(),
+            rendered
+                .matches("leaf_pad_with_extended_identity_marker_and_more_padding_0(")
+                .count(),
             1,
             "the leaf must be defined once, not 2^{DEPTH} times:\n{rendered}"
         );
         for depth in 0..DEPTH {
             assert_eq!(
-                rendered.matches(&format!("rung_{depth}(")).count(),
+                rendered
+                    .matches(&format!(
+                        "rung_with_extended_identity_marker_and_more_padding_{depth}("
+                    ))
+                    .count(),
                 1,
                 "rung_{depth} must be defined once:\n{rendered}"
             );
@@ -16766,6 +16915,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             metrics.elided_returns == 0,
             "shareable towers must DAG-share, not size-elide: {metrics:?}\n{rendered}"
         );
+        assert_visual_elisions_testify(rendered);
     }
 
     #[test]
