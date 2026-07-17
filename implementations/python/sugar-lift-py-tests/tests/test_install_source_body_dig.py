@@ -185,6 +185,90 @@ def test_sequential_dig_refuses_guarded_multi_exit_as_single_literal() -> None:
         ).desugar()
 
 
+def test_sequential_dig_constructs_guarded_early_return_with_fallback() -> None:
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import atomic, make_var, num
+    from sugar_lift_py_tests.outcome import Complete
+
+    guard = atomic("py.eq", [make_var("z"), num(1)])
+
+    class _GuardedReturnStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(GuardedReturn(guards=(guard,), value=TermValue(7)))
+
+    class _FallbackReturnStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(ReturnValue(TermValue(0)))
+
+    fn_site = SourceFragment.from_source(
+        "def f(z):\n    if z == 1:\n        return 7\n    return 0\n",
+        "numpy/f2py/symbolic.py",
+    ).statements()[0]
+    outcome = SequentialDigBody(
+        (_GuardedReturnStatement(), _FallbackReturnStatement()),
+        fn_site=fn_site,
+    ).desugar()
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == GuardedValue(guard, TermValue(7), TermValue(0))
+
+
+def test_sequential_dig_mixed_guarded_exit_and_state_stays_loud() -> None:
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import atomic, make_var, num
+    from sugar_lift_py_tests.outcome import Complete
+
+    guard = atomic("py.eq", [make_var("z"), num(1)])
+
+    class _MixedOutcome:
+        def contribution(self):
+            return (
+                GuardedReturn(guards=(guard,), value=TermValue(7)),
+                ScopeRebind("state", TermValue(9)),
+            )
+
+        def extend_scope(self, ctx):
+            return ctx
+
+    class _MixedStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return _MixedOutcome()
+
+    class _FallbackReturnStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(ReturnValue(TermValue(0)))
+
+    fn_site = SourceFragment.from_source(
+        "def f(z):\n    if z == 1:\n        return 7\n    return 0\n",
+        "numpy/f2py/symbolic.py",
+    ).statements()[0]
+    with pytest.raises(FactoryPanic):
+        SequentialDigBody(
+            (_MixedStatement(), _FallbackReturnStatement()),
+            fn_site=fn_site,
+        ).desugar()
+
+
 def test_sequential_dig_gap_prose_wrong_twin_panics() -> None:
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
