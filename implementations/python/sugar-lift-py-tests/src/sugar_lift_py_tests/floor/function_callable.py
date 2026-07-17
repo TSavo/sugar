@@ -167,11 +167,26 @@ class FunctionCallable(FloorValue):
         has_var_positional = "var-positional" in self.parameter_kinds
         has_var_keyword = "var-keyword" in self.parameter_kinds
         from .dict_value import DictValue
+        from .string_value import StringValue
         from .symbolic_value import SymbolicValue
 
         keyword_expansion = (
             keyword_expansions[0] if len(keyword_expansions) == 1 else None
         )
+        if type(keyword_expansion) is DictValue:
+            expanded_keywords: dict[str, FloorValue] = {}
+            for key, value in keyword_expansion.entries:
+                if (
+                    type(key) is not StringValue
+                    or key.value in keyword_map
+                    or key.value in expanded_keywords
+                ):
+                    break
+                expanded_keywords[key.value] = value
+            else:
+                keyword_map.update(expanded_keywords)
+                keyword_expansions = ()
+                keyword_expansion = None
         binds_keyword_expansion_exactly = (
             keyword_names == ("**",)
             and self.parameter_kinds
@@ -207,7 +222,6 @@ class FunctionCallable(FloorValue):
         elif not supported_signature:
             bound_values = None
         else:
-            from .string_value import StringValue
             from .tuple_value import TupleValue
 
             bound_list: list[FloorValue] = []
