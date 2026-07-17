@@ -61,15 +61,21 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
         if self.static_name is None:
             assert self.dynamic_name is not None
             return self.dynamic_name.reduce(ctx).and_then(
-                lambda name: Incomplete(
-                    GetattrRuntimeEffect(
-                        f"getattr runtime boundary: attribute name expression `{self.dynamic_observed}` is runtime; blame={self.site}",
-                        **runtime_effect_evidence(
-                            "py.getattr.dynamic_name", name, self.site
-                        ),
-                    )
-                )
+                lambda name: self._finish_name(receiver, name, ctx)
             )
+        return self._finish_static(receiver, self.static_name, ctx)
+
+    def _finish_name(self, receiver, name, ctx):
+        if isinstance(name, StringValue):
+            return self._finish_static(receiver, name.value, ctx)
+        return Incomplete(
+            GetattrRuntimeEffect(
+                f"getattr runtime boundary: attribute name expression `{self.dynamic_observed}` is runtime; blame={self.site}",
+                **runtime_effect_evidence("py.getattr.dynamic_name", name, self.site),
+            )
+        )
+
+    def _finish_static(self, receiver, name: str, ctx):
         if not isinstance(receiver, ObjectValue):
             return Incomplete(
                 GetattrRuntimeEffect(
@@ -79,7 +85,7 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
                     ),
                 )
             )
-        return project_object_attribute(receiver, self.static_name, self.site, ctx)
+        return project_object_attribute(receiver, name, self.site, ctx)
 
     def walk_children(self):
         return (self.receiver,)
