@@ -1,5 +1,8 @@
 # Python corpus fatal-file triage for #4684 (2026-07-16)
 
+> Historical baseline. The refreshed suppression-aware map is
+> [python-corpus-fatal-recensus-4775-2026-07-17.md](python-corpus-fatal-recensus-4775-2026-07-17.md).
+
 ## Measurement boundary
 
 - Sugar source: `45e2bdee21dccc25fd1f04b3db768cbca85a82e5`
