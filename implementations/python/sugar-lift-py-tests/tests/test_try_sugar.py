@@ -188,6 +188,35 @@ def test_try_threads_binding_from_only_reduced_continuing_path() -> None:
     assert block.statements[-1].value == TermValue(5)
 
 
+def test_try_threads_body_binding_past_terminal_pytest_fail_handler() -> None:
+    block = compose_block(
+        "    try:\n"
+        "        result = 5\n"
+        "    except ValueError:\n"
+        "        pytest.fail('missing signature')\n"
+        "    return result\n"
+    )
+
+    assert isinstance(block, BlockValue)
+    assert isinstance(block.statements[-1], ReturnValue)
+    assert block.statements[-1].value == TermValue(5)
+
+
+def test_nonterminal_pytest_method_does_not_grant_body_binding() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    try:\n"
+            "        result = 5\n"
+            "    except ValueError:\n"
+            "        pytest.warns(UserWarning)\n"
+            "    return result\n"
+        )
+
+    assert raised.value.info.owner == "TemporalContext"
+    assert raised.value.info.observed == "result"
+    assert raised.value.info.requested == "value"
+
+
 def test_try_does_not_bind_name_missing_from_a_continuing_handler_path() -> None:
     with pytest.raises(FactoryPanic) as raised:
         compose_block(
