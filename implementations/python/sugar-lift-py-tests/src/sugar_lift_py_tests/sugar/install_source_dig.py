@@ -2003,9 +2003,68 @@ class SequentialDigBody:
                 if step.transform is not None and not guarded:
                     return self._control_flow_gap()
         # No unguarded ReturnValue: either multi-exit (GuardedReturn) or no
-        # return at all. Dig stays opaque so Derived residue cannot invent a
-        # single fall-through literal across control flow.
+        # return at all. An exhaustive guarded partition still denotes one
+        # exact return selection; incomplete or overlapping partitions stay
+        # opaque so Derived residue cannot invent a fall-through literal.
+        selected = self._exhaustive_guarded_selection(tuple(guarded_exits))
+        if selected is not None:
+            return Complete(selected)
         return self._control_flow_gap()
+
+    @staticmethod
+    def _exhaustive_guarded_selection(exits):
+        from sugar_lift_py_tests.floor.exceptional_exit_value import (
+            ExceptionalExitValue,
+        )
+        from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
+        from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+        from sugar_lift_py_tests.ir import not_
+
+        rows = tuple(
+            (
+                tuple(exit_value.guards),
+                (
+                    exit_value.value
+                    if isinstance(exit_value, GuardedReturn)
+                    else ExceptionalExitValue(exit_value.effect)
+                ),
+            )
+            for exit_value in exits
+            if isinstance(exit_value, (GuardedReturn, GuardedRaise))
+        )
+        if len(rows) != len(exits) or not rows:
+            return None
+
+        def select(partition):
+            terminal = tuple(value for guards, value in partition if not guards)
+            if terminal:
+                return terminal[0] if len(partition) == len(terminal) == 1 else None
+
+            guard = partition[0][0][0]
+            opposite = not_(guard)
+            when_true = []
+            when_false = []
+            for guards, value in partition:
+                if guard in guards:
+                    remaining = list(guards)
+                    remaining.remove(guard)
+                    when_true.append((tuple(remaining), value))
+                elif opposite in guards:
+                    remaining = list(guards)
+                    remaining.remove(opposite)
+                    when_false.append((tuple(remaining), value))
+                else:
+                    return None
+            if not when_true or not when_false:
+                return None
+            true_value = select(tuple(when_true))
+            false_value = select(tuple(when_false))
+            if true_value is None or false_value is None:
+                return None
+            return GuardedValue(guard, true_value, false_value)
+
+        return select(rows)
 
     def _control_flow_gap(self):
         terminal = self.statements[-1] if self.statements else None
