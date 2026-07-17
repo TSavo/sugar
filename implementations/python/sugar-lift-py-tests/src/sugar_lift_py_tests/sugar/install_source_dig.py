@@ -1013,6 +1013,7 @@ def resolve_install_source_class_method(qualified_class: str, method_name: str):
         f"{class_name}.{method_name}"
     )
     if node is not None:
+        node._sugar_defining_module = module_name  # type: ignore[attr-defined]
         return SourceFragment.from_node(
             node, getattr(node, "_sugar_file", f"<{module_name}>")
         )
@@ -1027,6 +1028,7 @@ def resolve_install_source_class_method(qualified_class: str, method_name: str):
             obj = getattr(cls, method_name, None)
         if obj is None or not callable(obj):
             return None
+        defining_module = getattr(obj, "__module__", None) or module_name
         source = textwrap.dedent(inspect.getsource(obj))
         sourcefile = inspect.getsourcefile(obj) or f"<{module_name}>"
     except (ImportError, AttributeError, OSError, TypeError):
@@ -1041,6 +1043,7 @@ def resolve_install_source_class_method(qualified_class: str, method_name: str):
             child.node._sugar_source = source  # type: ignore[attr-defined]
             child.node._sugar_file = sourcefile  # type: ignore[attr-defined]
             child.node._sugar_bridge_name = f"{qualified_class}.{method_name}"  # type: ignore[attr-defined]
+            child.node._sugar_defining_module = defining_module  # type: ignore[attr-defined]
             return child
     return None
 
@@ -1345,6 +1348,76 @@ def _contextualized_dig_body(body, base_context):
     )
 
 
+def _ctx_with_method_module_bindings(fn_site, ctx: Any):
+    """Construct globals loaded by an installed class method from its module.
+
+    ``inspect.getsource`` gives ``resolve_install_source_class_method`` a
+    dedented method fragment, which is enough to build the body but contains no
+    preceding imports. Recover only the defining module declarations that the
+    method actually loads and send them through the ordinary module
+    prerequisite constructor. Runtime-selected prerequisites remain
+    unresolved; a demanded missing name therefore still raises its normal
+    ``TemporalContext`` panic.
+    """
+    module_name = getattr(fn_site.node, "_sugar_defining_module", None)
+    if not isinstance(module_name, str) or not module_name:
+        return ctx
+    installed = _installed_source(module_name)
+    if installed is None:
+        return ctx
+    source, sourcefile = installed
+    try:
+        parsed = parsed_tree(source, sourcefile)
+    except SyntaxError:
+        return ctx
+
+    bridge = str(getattr(fn_site.node, "_sugar_bridge_name", "") or "")
+    parts = bridge.split(".")
+    if len(parts) < 3:
+        return ctx
+    class_name = parts[-2]
+    target_index = next(
+        (
+            index
+            for index, statement in enumerate(parsed.body)
+            if isinstance(statement, ast.ClassDef) and statement.name == class_name
+        ),
+        None,
+    )
+    if target_index is None:
+        method_name = fn_site.function_name()
+        containing_classes = [
+            index
+            for index, statement in enumerate(parsed.body)
+            if isinstance(statement, ast.ClassDef)
+            and any(
+                isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and member.name == method_name
+                for member in statement.body
+            )
+        ]
+        if len(containing_classes) == 1:
+            # Re-exported or inherited methods may be requested through a
+            # public class coordinate while their globals belong to the class
+            # that actually defined the callable.
+            target_index = containing_classes[0]
+    if target_index is None:
+        return ctx
+    needed = _function_definition_dependencies(fn_site.node)
+    for statement in fn_site.node.body:
+        needed.update(_loaded_names(statement))
+    seeded = _ctx_with_required_module_bindings(
+        parsed.body,
+        target_index,
+        needed,
+        source=source,
+        sourcefile=sourcefile,
+        ctx=ctx,
+        resolving=frozenset({bridge}),
+    )
+    return seeded if seeded is not None else ctx
+
+
 def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
     """Build diggable body for ``fn_site`` FunctionDef, or None on failure."""
     if fn_site is None or fn_site.observed != "FunctionDef":
@@ -1367,6 +1440,7 @@ def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
         from dataclasses import replace
 
         body_ctx = replace(ctx, building=building | {name, bridge})
+        body_ctx = _ctx_with_method_module_bindings(fn_site, body_ctx)
         mod = getattr(fn_site.node, "_sugar_bridge_name", "") or ""
         if "." in str(mod):
             parts = str(mod).split(".")
@@ -1444,14 +1518,15 @@ def bind_positional_defaults(fn_site, arg_values: tuple, ctx: Any):
         return Complete((formals, arg_values))
     defaults = tuple(fn_site.function_defaults())
     selected = defaults[len(defaults) - missing :]
+    default_ctx = _ctx_with_method_module_bindings(fn_site, ctx)
 
     def collect(remaining: tuple, accumulated: tuple):
         if not remaining:
             return Complete((formals, (*arg_values, *accumulated)))
         head, *rest = remaining
         return (
-            ctx.build_body(head, SugarRole.TERM)
-            .reduce(ctx)
+            default_ctx.build_body(head, SugarRole.TERM)
+            .reduce(default_ctx)
             .and_then(lambda value: collect(tuple(rest), (*accumulated, value)))
         )
 
