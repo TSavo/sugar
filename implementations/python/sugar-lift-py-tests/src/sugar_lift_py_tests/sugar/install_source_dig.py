@@ -32,6 +32,121 @@ from sugar_lift_python_source.source_tables import parsed_tree
 
 INSTALLED_SOURCE_INDEX_CAPACITY = 64
 
+# Construction identity for install-source *values*. SourceOracle is not
+# extended: it remains the interface for source text. This wraps its CID so
+# construction is correctness — once a name is built from pinned source, that
+# floor value *is* the system and is never rebuilt for the same identity.
+# Capacity is resident ownership only (eviction recomputes; not invalidation).
+INSTALL_SOURCE_VALUE_CAPACITY = 256
+_MISSING = object()
+
+
+class InstallSourceValueOracle:
+    """The one constructor for source-backed named floor values.
+
+    **Does not extend SourceOracle.** SourceOracle
+    (``installed_module_source``) is the sole interface for source text. This
+    type *wraps* that pin and is the sole constructor for the floor value of a
+    cited ``module.attr``.
+
+    Construction is correctness because no other constructor exists: dig, seed,
+    and import-alias resolution must enter through :meth:`resolve`. Same
+    SourceOracle CID + name is one identity; the published floor value *is* the
+    system for that identity.
+
+    Publishing rules:
+      - Complete construct (value or proven absence) is published under the key.
+      - Cycle breaks (``_resolving``) return None without publishing.
+      - FactoryPanic propagates and never publishes.
+    """
+
+    __slots__ = ("_capacity", "_table", "construct_count", "hit_count")
+
+    def __init__(self, capacity: int = INSTALL_SOURCE_VALUE_CAPACITY) -> None:
+        from collections import OrderedDict
+
+        self._capacity = max(int(capacity), 1)
+        self._table: OrderedDict[tuple[str, str], Any] = OrderedDict()
+        self.construct_count = 0
+        self.hit_count = 0
+
+    def identity_key(self, import_target: str) -> tuple[str, str] | None:
+        """Construction identity: SourceOracle content CID + name.
+
+        Wraps SourceOracle — does not re-discover or re-parse modules.
+        """
+        if "." not in import_target:
+            return None
+        module_name, attr = import_target.rsplit(".", 1)
+        installed = installed_module_source(module_name)
+        if installed is not None:
+            _source, _sourcefile, source_cid = installed
+            return (str(source_cid), attr)
+        # Native extension / absent module: stabilize on the qualified name only.
+        return ("target", import_target)
+
+    def resolve(
+        self,
+        import_target: str,
+        ctx: Any,
+        *,
+        _resolving: frozenset[str] = frozenset(),
+    ) -> Any:
+        """Sole construction entry for install-source named values."""
+        if "." not in import_target or import_target in _resolving:
+            # Cycle break or ill-formed name: never publish.
+            return None
+        key = self.identity_key(import_target)
+        from sugar_lift_py_tests.engine_log import reduction_span
+
+        if key is not None:
+            known = self._lookup(key)
+            if known is not _MISSING:
+                with reduction_span(
+                    sugar=import_target,
+                    role="dig.resolve_value.hit",
+                    site=import_target,
+                ):
+                    return known
+
+        with reduction_span(
+            sugar=import_target,
+            role="dig.resolve_value",
+            site=import_target,
+        ):
+            self.construct_count += 1
+            value = _construct_install_source_value(
+                import_target, ctx, _resolving=_resolving
+            )
+        # Publish completed answers only. FactoryPanic never reaches here.
+        if key is not None:
+            self._publish(key, value)
+        return value
+
+    def _lookup(self, key: tuple[str, str]) -> Any:
+        value = self._table.get(key, _MISSING)
+        if value is _MISSING:
+            return _MISSING
+        self._table.move_to_end(key)
+        self.hit_count += 1
+        return value
+
+    def _publish(self, key: tuple[str, str], value: Any) -> None:
+        if key in self._table:
+            self._table.move_to_end(key)
+        self._table[key] = value
+        while len(self._table) > self._capacity:
+            self._table.popitem(last=False)
+
+    def clear(self) -> None:
+        self._table.clear()
+        self.construct_count = 0
+        self.hit_count = 0
+
+
+# Process-lifetime sole constructor (wraps SourceOracle; never a second door).
+INSTALL_SOURCE_VALUE_ORACLE = InstallSourceValueOracle()
+
 
 @dataclass(frozen=True)
 class _InstalledDefinition:
@@ -675,14 +790,16 @@ def _ctx_with_required_module_bindings(
     sourcefile: str,
     ctx: Any,
     resolving: frozenset[str],
+    defining_module: str | None = None,
 ):
     """Construct a target node's lexical module bindings, need-first.
 
     The imported value belongs to its defining module, not to the consumer's
     temporal. Reverse selection finds only prerequisite declarations; forward
-    construction then sends each selected declaration through the ordinary
-    factory. This is the module-value analogue of install-source function-global
-    seeding and deliberately does not execute or fabricate Python constants.
+    construction then sends each selected declaration through the **sole**
+    install-source value constructor (``resolve_install_source_value``) when a
+    defining module is known — same SourceOracle pin, same construction identity.
+    Same-module assigns/functions are never re-factoryed outside that door.
     """
     from sugar_lift_py_tests.engine_log import reduction_span
 
@@ -699,6 +816,7 @@ def _ctx_with_required_module_bindings(
             sourcefile=sourcefile,
             ctx=ctx,
             resolving=resolving,
+            defining_module=defining_module,
         )
 
 
@@ -711,6 +829,7 @@ def _ctx_with_required_module_bindings_impl(
     sourcefile: str,
     ctx: Any,
     resolving: frozenset[str],
+    defining_module: str | None = None,
 ):
     from dataclasses import replace
 
@@ -744,10 +863,11 @@ def _ctx_with_required_module_bindings_impl(
             if isinstance(statement, (ast.Assign, ast.AnnAssign)):
                 needed.update(_loaded_names(statement.value))
             elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                # The callable defers its body, but its captured module context
-                # must still contain every source declaration that body may
-                # load when the call is later dug.
-                needed.update(_loaded_names(statement))
+                # Body is deferred on the callable. Only eager construct faces
+                # (decorators/defaults) expand the seed; body free names are
+                # seeded when that function is itself constructed or dug —
+                # never re-pulled into every sibling seed.
+                needed.update(_function_definition_dependencies(statement))
     selected.reverse()
 
     lexical = TemporalContext.empty()
@@ -800,6 +920,30 @@ def _ctx_with_required_module_bindings_impl(
             )
             continue
 
+        declaration = _module_declaration_name(statement)
+        # Sole constructor for same-module named values: wrap SourceOracle
+        # identity (defining_module.attr), do not re-factory outside the door.
+        if (
+            defining_module
+            and declaration
+            and isinstance(
+                statement,
+                (ast.Assign, ast.AnnAssign, ast.FunctionDef, ast.AsyncFunctionDef),
+            )
+        ):
+            qualified = f"{defining_module}.{declaration}"
+            constructed = resolve_install_source_value(
+                qualified, module_ctx, _resolving=resolving
+            )
+            if constructed is None:
+                # Same opacity as Incomplete local construct: seed cannot force.
+                return None
+            temporal = module_ctx.temporal.bind_value(declaration, constructed)
+            module_ctx = replace(
+                module_ctx, temporal=temporal, module_temporal=temporal
+            )
+            continue
+
         fragment = SourceFragment.from_node(statement, sourcefile, source=source)
         outcome = module_ctx.build_body(fragment, SugarRole.STATEMENT).reduce(
             module_ctx
@@ -818,30 +962,27 @@ def _ctx_with_required_module_bindings_impl(
 def resolve_install_source_value(
     import_target: str, ctx, *, _resolving: frozenset[str] = frozenset()
 ):
-    """Construct a cited module-level imported name from its Python source.
+    """Public door: the sole constructor for install-source named floor values.
 
     A source-backed import is statically knowable. Find the defining statement,
     construct the module globals its RHS needs, and send all values through the
     ordinary factory. Any missing Sugar or floor arm propagates its FactoryPanic;
     this function never converts a dig gap into a runtime effect.
+
+    Construction is correctness: SourceOracle is the only source constructor;
+    :class:`InstallSourceValueOracle` is the only floor constructor for cited
+    install-source names. Callers must not factory-build ``module.attr`` outside
+    this door.
     """
-    if "." not in import_target or import_target in _resolving:
-        return None
-    from sugar_lift_py_tests.engine_log import reduction_span
-
-    with reduction_span(
-        sugar=import_target,
-        role="dig.resolve_value",
-        site=import_target,
-    ):
-        return _resolve_install_source_value_impl(
-            import_target, ctx, _resolving=_resolving
-        )
+    return INSTALL_SOURCE_VALUE_ORACLE.resolve(
+        import_target, ctx, _resolving=_resolving
+    )
 
 
-def _resolve_install_source_value_impl(
+def _construct_install_source_value(
     import_target: str, ctx, *, _resolving: frozenset[str] = frozenset()
 ):
+    """Internal construct body — only :meth:`InstallSourceValueOracle.resolve` calls this."""
     resolving = _resolving | {import_target}
     native = _resolve_qualified_native_callable(import_target, resolving=_resolving)
     if native is not None:
@@ -892,11 +1033,14 @@ def _resolve_install_source_value_impl(
         module_ctx = _ctx_with_required_module_bindings(
             defining_tree.body,
             target_index,
-            _loaded_names(definition),
+            # Eager construct faces (decorators/defaults). Body free names are
+            # seeded when dig opens the body — not again for every sibling.
+            _function_definition_dependencies(definition),
             source=defining_source,
             sourcefile=defining_file,
             ctx=ctx,
             resolving=resolving,
+            defining_module=module_name,
         )
         if module_ctx is None:
             return None
@@ -927,6 +1071,7 @@ def _resolve_install_source_value_impl(
                 sourcefile=sourcefile,
                 ctx=ctx,
                 resolving=resolving,
+                defining_module=module_name,
             )
             if module_ctx is None:
                 return None
@@ -1505,6 +1650,7 @@ def _ctx_with_method_module_bindings(fn_site, ctx: Any):
         sourcefile=sourcefile,
         ctx=ctx,
         resolving=frozenset({bridge}),
+        defining_module=module_name,
     )
     return seeded if seeded is not None else ctx
 
