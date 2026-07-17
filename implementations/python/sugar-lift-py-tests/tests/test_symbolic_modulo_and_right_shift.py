@@ -4,7 +4,6 @@ import pytest
 
 from factory_reduce import reduce_value
 
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import ctor, make_var, num
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
@@ -28,15 +27,15 @@ def test_concrete_right_shift_folds_on_numeric_floor() -> None:
     assert reduce_value("82 >> 5") == TermValue(2)
 
 
-def test_unowned_matrix_multiply_still_reaches_loud_none_arm() -> None:
-    with pytest.raises(FactoryPanic, match="observed=BinOp"):
-        reduce_value(
-            "left @ right",
-            binds={
-                "left": SymbolicValue(make_var("left")),
-                "right": SymbolicValue(make_var("right")),
-            },
-        )
+def test_matrix_multiply_constructs_native_at_coordinate() -> None:
+    """#4387: symbolic ``@`` is the native operator coordinate, not a panic."""
+    assert reduce_value(
+        "left @ right",
+        binds={
+            "left": SymbolicValue(make_var("left")),
+            "right": SymbolicValue(make_var("right")),
+        },
+    ) == SymbolicValue(ctor("@", [make_var("left"), make_var("right")]))
 
 
 def test_shift_and_modulo_are_native_structural_terms_not_euf_aliases() -> None:

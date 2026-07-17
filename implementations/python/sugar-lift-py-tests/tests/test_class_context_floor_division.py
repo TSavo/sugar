@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
@@ -33,11 +32,14 @@ def test_class_method_floor_division_and_rebind_construct() -> None:
     }
 
 
-def test_matrix_multiply_remains_unowned_and_panics() -> None:
+def test_matrix_multiply_constructs_free_symbolic_body() -> None:
+    """#4387: free ``x @ y`` is MatrixMultiplyOpSugar → SymbolicValue ``@``."""
     source = "def f(x, y):\n    return x @ y\n"
 
-    with pytest.raises(FactoryPanic, match="observed=BinOp"):
-        audit_lift_file(source, "unowned.py", hold_panic=False)
+    payload, gaps = audit_lift_file(source, "matmul_free.py", hold_panic=False)
+
+    assert gaps == []
+    assert payload.to_rpc().get("ir")
 
 
 def test_floor_division_selects_distinct_term_and_statement_sugars() -> None:
