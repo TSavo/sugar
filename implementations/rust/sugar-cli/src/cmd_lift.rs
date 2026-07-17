@@ -4342,24 +4342,31 @@ fn group_contracts_for_universe_visual_with_identities<'a>(
     }
     // Reader order is evidentiary, not declaration order: vendor facts lead,
     // then warranted body universes, with warrant-less machinery last.
-    groups.sort_by_key(|group| {
-        if group
-            .members
-            .iter()
-            .any(|member| contract_inv_is_observed_fact(member))
-        {
-            0_u8
-        } else if group
-            .members
-            .iter()
-            .any(|member| !contract_source_warrants(member).is_empty())
-        {
-            1_u8
-        } else {
-            2_u8
-        }
-    });
+    // (#4321) The report leads with what is proven and stated.
+    groups.sort_by_key(universe_visual_evidentiary_rank);
     groups
+}
+
+/// Evidentiary rank for universe visual emission (#4321).
+/// 0 = vendor FACT universes (assertion / observed fact rows)
+/// 1 = body universes carrying source warrants
+/// 2 = warrant-less machinery last
+fn universe_visual_evidentiary_rank(group: &VisualUniverseGroup<'_>) -> u8 {
+    if group
+        .members
+        .iter()
+        .any(|member| contract_inv_is_observed_fact(member))
+    {
+        0
+    } else if group
+        .members
+        .iter()
+        .any(|member| !contract_source_warrants(member).is_empty())
+    {
+        1
+    } else {
+        2
+    }
 }
 
 #[cfg(test)]
@@ -15645,32 +15652,102 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
     #[test]
     fn universe_visual_orders_vendor_facts_before_warrantless_universes() {
+        // #4321 three-tier law: declaration order is reverse of reader order so
+        // a silent declaration-order renderer would fail this instrument.
+        //   2 warrant-less body  → last
+        //   1 warranted body     → middle
+        //   0 vendor FACT        → first
         let contracts = vec![
             serde_json::json!({
-                "kind": "function-contract", "name": "body", "formals": [],
+                "kind": "function-contract", "name": "warrantless_body", "formals": [],
                 "post": {"kind": "atomic", "name": "py.truthy", "args": [{"kind": "var", "name": "x"}]}
             }),
             serde_json::json!({
-                "kind": "contract", "name": "vendor::assertion",
+                "kind": "function-contract", "name": "warranted_body", "formals": [],
+                "post": {"kind": "atomic", "name": "py.truthy", "args": [{"kind": "var", "name": "y"}]},
+                "sourceWarrants": [{
+                    "kind": "source-memento", "file": "body.py",
+                    "sourceFunctionName": "warranted_body",
+                    "span": {"start_line": 10, "end_line": 12}
+                }]
+            }),
+            serde_json::json!({
+                "kind": "contract", "name": "vendor.py::<module>::assertion",
                 "inv": {"kind": "atomic", "name": "=", "args": [
                     {"kind": "const", "value": 1, "sort": {"name": "Int"}},
                     {"kind": "const", "value": 1, "sort": {"name": "Int"}}
                 ]},
                 "sourceWarrants": [{
-                    "kind": "source-memento", "file": "vendor.py",
-                    "sourceFunctionName": "check", "span": {"start_line": 1, "end_line": 1}
+                    "kind": "source-memento", "file": "vendor.py", "role": "assertion",
+                    "sourceFunctionName": "<module>",
+                    "span": {"start_line": 1, "end_line": 1}
                 }]
             }),
         ];
 
         let mut grouping_report = minimal_source_report();
-        grouping_report.contracts = contracts;
+        grouping_report.contracts = contracts.clone();
         let groups = group_contracts_for_universe_visual(&grouping_report);
+        assert_eq!(groups.len(), 3, "three distinct universe groups");
+        assert_eq!(
+            groups
+                .iter()
+                .map(universe_visual_evidentiary_rank)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2],
+            "evidentiary ranks must be fact → warranted → warrant-less"
+        );
         assert_eq!(
             contract_value_name(groups[0].anchor),
-            Some("vendor::assertion")
+            Some("vendor.py::<module>::assertion"),
+            "vendor FACT universe emits first"
         );
-        assert_eq!(contract_value_name(groups[1].anchor), Some("body"));
+        assert_eq!(
+            contract_value_name(groups[1].anchor),
+            Some("warranted_body"),
+            "warranted body universe follows vendor facts"
+        );
+        assert_eq!(
+            contract_value_name(groups[2].anchor),
+            Some("warrantless_body"),
+            "warrant-less machinery last"
+        );
+
+        // Rendered visual follows the group law: vendor FACT header before any
+        // body `universe` block, and warranted FOL before warrant-less FOL.
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::write(root.path().join("vendor.py"), "assert 1 == 1\n").expect("fixture");
+        let mut report = minimal_source_report();
+        report.project_root = Some(root.path().to_path_buf());
+        report.contracts = contracts;
+        let visual = without_ansi(&render_universe_visual_report(
+            &report,
+            VisualSourceLookup {
+                project_root: report.project_root.as_deref(),
+            },
+        ));
+        let fact_pos = visual
+            .find("vendor assertion (module level)")
+            .unwrap_or_else(|| {
+                panic!("vendor assertion header missing:\n{visual}");
+            });
+        let first_universe_pos = visual.find("  universe ").unwrap_or_else(|| {
+            panic!("body universe header missing:\n{visual}");
+        });
+        assert!(
+            fact_pos < first_universe_pos,
+            "vendor FACT must emit before body universes:\n{visual}"
+        );
+        let warranted_fol = visual.find("py.truthy(y)").unwrap_or_else(|| {
+            panic!("warranted body FOL missing:\n{visual}");
+        });
+        let warrantless_fol = visual.find("py.truthy(x)").unwrap_or_else(|| {
+            panic!("warrant-less body FOL missing:\n{visual}");
+        });
+        assert!(
+            warranted_fol < warrantless_fol,
+            "warranted body must emit before warrant-less machinery:\n{visual}"
+        );
     }
 
     #[test]
