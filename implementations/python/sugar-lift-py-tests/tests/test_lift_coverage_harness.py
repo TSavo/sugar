@@ -17,7 +17,6 @@ import os
 import subprocess
 import sys
 import tempfile
-from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -27,6 +26,11 @@ from sugar_lift_py_tests.idd.collect_panic_audit import (
     _prepare_audit_workspace,
     _resolve_audit_sugar_bin,
     _resolve_installed_package_path,
+)
+from sugar_lift_py_tests.idd.factory_panic_fronts import (
+    fingerprint_from_panic_info,
+    fingerprint_label,
+    rank_factory_panic_fronts,
 )
 from sugar_lift_py_tests.idd.lift_coverage_accounting import (
     account_lift_coverage,
@@ -721,6 +725,7 @@ def _factory_engaged_empty_report() -> dict:
 
 
 def _panic_owner(message: str) -> str:
+    """Fallback owner parse when structured gap is unavailable."""
     if "owner=" not in message:
         return "unknown"
     return message.split("owner=", 1)[1].split()[0]
@@ -734,6 +739,10 @@ def _live_per_file_isolation_conservation(
     Completed files feed the real lift payload into ``account_lift_coverage``.
     FactoryPanic / other hard fails engage refuse-loud for that file's on-disk
     asserts (panic is loud, not silent). Aggregate delta must be 0.
+
+    Panic residual is ranked by structured FactoryGapInfo fingerprints
+    (same axes as ``corpus_fatal_triage``) so fatal recensus and floor drain
+    share one owner map: owner families + exact fronts.
     """
     from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
     from sugar_lift_py_tests.lift_rpc import lift_file_payload
@@ -764,11 +773,16 @@ def _live_per_file_isolation_conservation(
         except FactoryPanic as panic:
             body = account_lift_coverage(disk, engaged).to_json()
             status = "factory_panic"
+            gap = panic.info.to_json() if getattr(panic, "info", None) is not None else {}
+            fingerprint = fingerprint_from_panic_info(getattr(panic, "info", None))
             panic_rows.append(
                 {
                     "file": rel,
                     "onDisk": file_on_disk,
-                    "owner": _panic_owner(str(panic)),
+                    "owner": gap.get("owner") or _panic_owner(str(panic)),
+                    "gap": gap,
+                    "fingerprint": list(fingerprint),
+                    "front": fingerprint_label(fingerprint),
                     "message": str(panic).splitlines()[0][:200],
                 }
             )
@@ -810,7 +824,7 @@ def _live_per_file_isolation_conservation(
                 flush=True,
             )
 
-    owners = Counter(row["owner"] for row in panic_rows)
+    ranking = rank_factory_panic_fronts(panic_rows)
     result = {
         "package": package,
         "assert_files": len(files),
@@ -820,18 +834,27 @@ def _live_per_file_isolation_conservation(
         "onDisk": on_disk_total,
         "accounted": accounted_total,
         "delta": on_disk_total - accounted_total,
-        "owners": dict(owners.most_common()),
+        # Prior instrument shape + structured ranking for fatal recensus.
+        "owners": ranking["owners"],
+        "owner_families": ranking["owner_families"],
+        "exact_fronts": ranking["exact_fronts"],
+        "owner_family_count": ranking["owner_family_count"],
+        "exact_front_count": ranking["exact_front_count"],
         "panic_rows": panic_rows,
         "other_rows": other_rows,
         "perFile": per_file,
     }
+    top_fronts = [
+        f"{row['count']}×{row['label']}" for row in ranking["exact_fronts"][:8]
+    ]
     print(
         f"R[{package}-live-isolation]: onDisk={on_disk_total} "
         f"accounted={accounted_total} delta={result['delta']} "
         f"assert_files={len(files)} completed={completed} "
         f"R_live_factory_panic_files={len(panic_rows)} "
         f"R_other_fail_files={len(other_rows)} "
-        f"owners={dict(owners.most_common(12))}"
+        f"owner_families={ranking['owners']} "
+        f"exact_fronts={top_fronts}"
     )
     return result
 
@@ -1120,6 +1143,20 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
     # while R_live_factory_panic_files > 0 (production floors).
     assert "factory_panic_files" in result
     assert result["factory_panic_files"] >= 0
+    # Structured owner ranking feeds fatal recensus (same fingerprint axes).
+    assert "owner_families" in result
+    assert "exact_fronts" in result
+    assert result["owner_family_count"] == len(result["owner_families"])
+    assert result["exact_front_count"] == len(result["exact_fronts"])
+    assert sum(row["count"] for row in result["owner_families"]) == result[
+        "factory_panic_files"
+    ]
+    assert sum(row["count"] for row in result["exact_fronts"]) == result[
+        "factory_panic_files"
+    ]
+    for row in result["panic_rows"]:
+        assert "gap" in row and "fingerprint" in row and "front" in row
+        assert len(row["fingerprint"]) == 5
 
 
 def test_heavy_vendor_live_isolation_opt_in_pandas() -> None:

@@ -14,6 +14,11 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from sugar_lift_py_tests.idd.factory_panic_fronts import (
+    fingerprint_from_gap,
+    rank_factory_panic_fronts,
+)
+
 PACKAGES = ("numpy", "pandas")
 DEFAULT_FILE_TIMEOUT_SECONDS = 30
 TRANSPORT_MARKERS = (
@@ -145,12 +150,10 @@ def _classify_child(
 
 
 def _factory_fingerprint(row: dict[str, Any]) -> tuple[str, ...]:
+    """Exact-front identity; shared with live isolation ranking."""
     testimony = row.get("testimony") or {}
     gap = testimony.get("gap") or {}
-    return tuple(
-        str(gap.get(field) or "")
-        for field in ("owner", "gap_kind", "gap_locus", "observed", "requested")
-    )
+    return fingerprint_from_gap(gap if isinstance(gap, dict) else {})
 
 
 def _run_parent(args: argparse.Namespace) -> int:
@@ -171,8 +174,7 @@ def _run_parent(args: argparse.Namespace) -> int:
     assertion_counts: Counter[str] = Counter()
     terminal_rows: list[dict[str, Any]] = []
     representatives: dict[str, list[str]] = defaultdict(list)
-    factory_front_counts: Counter[tuple[str, ...]] = Counter()
-    factory_front_examples: dict[tuple[str, ...], list[str]] = defaultdict(list)
+    factory_panic_rows: list[dict[str, Any]] = []
     script = Path(__file__).resolve()
 
     for index, (package, root, path) in enumerate(paths, start=1):
@@ -230,26 +232,22 @@ def _run_parent(args: argparse.Namespace) -> int:
             terminal_rows.append(row)
         if category == "factory-construction-panic":
             fingerprint = _factory_fingerprint(row)
-            factory_front_counts[fingerprint] += 1
-            if len(factory_front_examples[fingerprint]) < 5:
-                factory_front_examples[fingerprint].append(rel)
+            testimony = row.get("testimony") or {}
+            gap = testimony.get("gap") if isinstance(testimony, dict) else {}
+            factory_panic_rows.append(
+                {
+                    "file": rel,
+                    "owner": fingerprint[0] or "unknown",
+                    "gap": gap if isinstance(gap, dict) else {},
+                    "fingerprint": list(fingerprint),
+                }
+            )
         if index % 25 == 0:
             print(f"triaged {index}/{len(paths)} files", file=sys.stderr)
 
-    factory_fronts = [
-        {
-            "owner": fingerprint[0],
-            "gap_kind": fingerprint[1],
-            "gap_locus": fingerprint[2],
-            "observed": fingerprint[3],
-            "requested": fingerprint[4],
-            "count": count,
-            "representative_files": factory_front_examples[fingerprint],
-        }
-        for fingerprint, count in sorted(
-            factory_front_counts.items(), key=lambda item: (-item[1], item[0])
-        )
-    ]
+    ranking = rank_factory_panic_fronts(factory_panic_rows)
+    factory_fronts = ranking["exact_fronts"]
+    owner_families = ranking["owner_families"]
     report: dict[str, Any] = {
         "package_versions": versions,
         "shard": {"index": args.shard_index, "count": args.shard_count},
@@ -260,6 +258,14 @@ def _run_parent(args: argparse.Namespace) -> int:
         "factory_panic_fronts": (
             factory_fronts[: args.front_limit] if args.compact else factory_fronts
         ),
+        # Structured owner ranking — same payload live isolation emits so
+        # fatal recensus (#4775) can merge isolation + triage without re-parsing.
+        "R_live_factory_panic_files": ranking["R_live_factory_panic_files"],
+        "owner_family_count": ranking["owner_family_count"],
+        "owner_families": (
+            owner_families[: args.front_limit] if args.compact else owner_families
+        ),
+        "owners": ranking["owners"],
     }
     if not args.compact:
         report["terminal_rows"] = terminal_rows
