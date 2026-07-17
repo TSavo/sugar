@@ -49,6 +49,7 @@ Alternatives rejected:
   `unsat` arms.
 - Bounded replay moves the representative from `owner=delitem` to completion
   or a distinct loud named owner, with silent zero.
-- Because no effect constructor site is added, the RuntimeEffect constructor
-  census is unchanged; focused existing effect tests protect the genuine
-  runtime arms.
+- The concrete-dict floor's non-ground key is a genuine runtime operand through
+  the existing evidence door; its ground missing-key wrong twin must refute via
+  `FactoryPanic`, and the RuntimeEffect constructor census must remain at zero
+  failures.

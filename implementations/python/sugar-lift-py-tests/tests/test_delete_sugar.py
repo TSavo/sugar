@@ -15,6 +15,7 @@ from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
 from sugar_lift_py_tests.floor import (
     BlockValue,
+    CallSiteValue,
     OpaqueOpCallsite,
     ReturnValue,
     SymbolicValue,
@@ -24,7 +25,11 @@ from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
+from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
+from sugar_lift_py_tests.sugar.subscript_delete_sugar import SubscriptDeleteSugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _site(source: str) -> SourceFragment:
@@ -84,6 +89,77 @@ def test_subscript_delete_reuses_store_post_state_and_negative_index_floor() -> 
 
     built = _build_statement("del xs[-1]")
     assert type(built.sugar).__name__ == "SubscriptDeleteSugar"
+
+
+def test_symbolic_subscript_delete_rebinds_through_py_delitem() -> None:
+    block = compose_block(
+        '    del d["k"]\n    return d\n',
+        binds={"d": SymbolicValue(make_var("d"))},
+    )
+
+    returned = block.statements[-1]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    assert returned.value.target_name == "delitem"
+    assert returned.value.term.name == "py.delitem"
+
+
+def test_concrete_dict_delete_constructs_post_state() -> None:
+    block = compose_block(
+        '    d = {"drop": 1, "keep": 2}\n'
+        '    del d["drop"]\n'
+        '    return d["keep"]\n'
+    )
+
+    assert block.statements == (ReturnValue(TermValue(2)),)
+
+
+def test_ground_non_container_subscript_delete_stays_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block('    value = "abc"\n    del value[0]\n')
+
+    assert raised.value.info.owner == "delitem"
+    assert raised.value.info.observed == "StringValue"
+
+
+def test_symbolic_dict_delete_key_is_genuine_runtime_effect() -> None:
+    block = compose_block(
+        '    d = {"known": 1}\n    del d[key]\n',
+        binds={"key": SymbolicValue(make_var("key"))},
+    )
+
+    effect = next(
+        statement for statement in block.statements if isinstance(statement, Incomplete)
+    )
+    assert isinstance(effect.effect, SubscriptStoreRuntimeEffect)
+    assert "requires a concrete key" in effect.reason
+
+
+def test_ground_missing_dict_delete_key_refutes_effect_authority() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block('    d = {"known": 1}\n    del d["missing"]\n')
+
+    assert raised.value.info.owner == "RuntimeEffect"
+    assert raised.value.info.requested == "genuine runtime-dependent operand"
+
+
+def test_dict_delete_witness_truthful_sat_lying_unsat(tmp_path: Path) -> None:
+    witnesses = SubscriptDeleteSugar.witnesses()
+    assert isinstance(witnesses, tuple)
+    pair = next(
+        witness
+        for witness in witnesses
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "dict_subscript_delete_post_state"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_multiple_subscript_deletes_replay_left_to_right() -> None:
