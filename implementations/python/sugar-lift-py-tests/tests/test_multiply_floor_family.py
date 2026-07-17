@@ -11,6 +11,7 @@ from sugar_lift_py_tests.effect import (
 )
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
+    CallSiteValue,
     ListValue,
     ImportAliasValue,
     OpaqueOpCallsite,
@@ -134,6 +135,7 @@ def test_len_result_is_a_warranted_runtime_list_repetition_count() -> None:
 
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert "integer-warranted len(...) result" in outcome.reason
     assert outcome.effect.witness.operand == ctor(
         "call:len", [make_var("runtime_items")], symbol_kind="method-coordinate"
     )
@@ -144,6 +146,52 @@ def test_opaque_non_index_result_remains_a_loud_list_repetition_gap() -> None:
         callee="str",
         arg=SymbolicValue(make_var("runtime_value")),
         computed=None,
+    )
+
+    with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
+        ListValue((TermValue(7),)).multiply(count, "runtime_repeat.py:2:11")
+
+
+@pytest.mark.parametrize(
+    "count",
+    (
+        CallSiteValue(
+            target_name="ndim",
+            arg_values=(SymbolicValue(make_var("array")),),
+            parameters=(),
+            term=ctor("call:ndim", [make_var("array")]),
+            body=None,
+            site="runtime_repeat.py:2:11",
+        ),
+        CallSiteValue(
+            target_name="max",
+            arg_values=(TermValue(0), SymbolicValue(make_var("runtime_n"))),
+            parameters=(),
+            term=ctor("call:max", [num(0), make_var("runtime_n")]),
+            body=None,
+            site="runtime_repeat.py:2:11",
+        ),
+    ),
+)
+def test_integer_warranted_callsite_is_a_runtime_list_repetition_count(
+    count: CallSiteValue,
+) -> None:
+    outcome = ListValue((TermValue(7),)).multiply(count, "runtime_repeat.py:2:11")
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert "integer-warranted callsite" in outcome.reason
+    assert outcome.effect.witness.operand == count.term
+
+
+def test_unwarranted_callsite_remains_a_loud_list_repetition_gap() -> None:
+    count = CallSiteValue(
+        target_name="make_count",
+        arg_values=(SymbolicValue(make_var("value")),),
+        parameters=(),
+        term=ctor("call:make_count", [make_var("value")]),
+        body=None,
+        site="runtime_repeat.py:2:11",
     )
 
     with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
