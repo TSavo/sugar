@@ -23,9 +23,7 @@ def test_build_dig_body_constructs_structure_once_per_function_pin(
 ) -> None:
     """Second dig of the same FunctionDef hits body identity; does not re-factory."""
     (tmp_path / "dig_once.py").write_text(
-        "def helper(x):\n"
-        "    y = x + 1\n"
-        "    return y\n",
+        "def helper(x):\n" "    y = x + 1\n" "    return y\n",
         encoding="utf-8",
     )
     monkeypatch.syspath_prepend(str(tmp_path))

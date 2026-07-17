@@ -103,7 +103,9 @@ def live_per_file_isolation_conservation(
         except FactoryPanic as panic:
             body = account_lift_coverage(disk, engaged).to_json()
             status = "factory_panic"
-            gap = panic.info.to_json() if getattr(panic, "info", None) is not None else {}
+            gap = (
+                panic.info.to_json() if getattr(panic, "info", None) is not None else {}
+            )
             fingerprint = fingerprint_from_panic_info(getattr(panic, "info", None))
             panic_rows.append(
                 {
@@ -147,7 +149,9 @@ def live_per_file_isolation_conservation(
                 f"status={status}; onDisk={totals['onDisk']} accounted={accounted} "
                 f"delta={delta}"
             )
-        if progress_every > 0 and (index % progress_every == 0 or index == len(file_list)):
+        if progress_every > 0 and (
+            index % progress_every == 0 or index == len(file_list)
+        ):
             print(
                 f"  [{package}-live-isolation] {index}/{len(file_list)} "
                 f"completed={completed} panic={len(panic_rows)} "
@@ -197,7 +201,9 @@ def write_isolation_receipt(result: dict[str, Any], path: Path | str) -> Path:
     """Write ranked isolation result JSON (orientation receipt for recensus)."""
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    out.write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return out
 
 

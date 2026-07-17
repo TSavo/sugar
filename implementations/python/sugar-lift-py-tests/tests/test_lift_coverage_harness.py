@@ -44,9 +44,7 @@ from sugar_lift_py_tests.idd.live_factory_panic_isolation import (
 ROOT = Path(__file__).resolve().parents[4]
 
 
-def _run_lift_report_json(
-    workspace: Path, *, require_success: bool = True
-) -> dict:
+def _run_lift_report_json(workspace: Path, *, require_success: bool = True) -> dict:
     """Run ``sugar lift --report --json`` and parse the report object.
 
     When ``require_success`` is False, a non-zero exit is tolerated if the
@@ -700,9 +698,7 @@ _HEAVY_CONSERVATION_VENDORS = (
 #   top owners: TemporalContext 21, RuntimeEffect 10, CallSugar 5, ...
 # Re-run: scripts/live_factory_panic_isolation.py --package numpy --out PATH
 # or pytest + SUGAR_4013_ISOLATION_OUT=PATH (writes ranked receipt).
-_HEAVY_LIVE_ISOLATION_VENDORS = (
-    "numpy",
-)
+_HEAVY_LIVE_ISOLATION_VENDORS = ("numpy",)
 
 # Multi-file live sugar --report paths denser than single-module statistics.
 _SHOWCASE_CONSERVATION_TARGETS = (
@@ -886,9 +882,9 @@ def test_stdlib_vendor_conservation_delta_is_zero(package: str) -> None:
         files = [path]
         root = path.parent
     else:
-        files = sorted(
-            p for p in path.rglob("*.py") if "__pycache__" not in p.parts
-        )[:40]
+        files = sorted(p for p in path.rglob("*.py") if "__pycache__" not in p.parts)[
+            :40
+        ]
         root = path
         if not files:
             pytest.skip(f"{package}: no .py files under {path}")
@@ -920,9 +916,7 @@ def test_heavy_vendor_full_tree_conservation_delta_is_zero(package: str) -> None
         files = [path]
         root = path.parent
     else:
-        files = sorted(
-            p for p in path.rglob("*.py") if "__pycache__" not in p.parts
-        )
+        files = sorted(p for p in path.rglob("*.py") if "__pycache__" not in p.parts)
         root = path
         if not files:
             pytest.skip(f"{package}: no .py files under {path}")
@@ -974,14 +968,12 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
     if not files:
         pytest.skip(f"{package}: no assert-bearing .py files under {path}")
 
-    result = _live_per_file_isolation_conservation(
-        files, root=root, package=package
-    )
+    result = _live_per_file_isolation_conservation(files, root=root, package=package)
     # Optional durable receipt for recensus / wave re-measure (env path).
     maybe_write_isolation_receipt_from_env(result)
-    assert result["delta"] == 0, (
-        f"{package} live isolation conservation delta must be 0; R={result}"
-    )
+    assert (
+        result["delta"] == 0
+    ), f"{package} live isolation conservation delta must be 0; R={result}"
     assert result["R_live_factory_panic_files"] == result["factory_panic_files"]
     assert result["onDisk"] == result["accounted"]
     assert result["onDisk"] > 0, f"{package}: vacuous live isolation (no asserts)"
@@ -1003,12 +995,14 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
     assert "exact_fronts" in result
     assert result["owner_family_count"] == len(result["owner_families"])
     assert result["exact_front_count"] == len(result["exact_fronts"])
-    assert sum(row["count"] for row in result["owner_families"]) == result[
-        "factory_panic_files"
-    ]
-    assert sum(row["count"] for row in result["exact_fronts"]) == result[
-        "factory_panic_files"
-    ]
+    assert (
+        sum(row["count"] for row in result["owner_families"])
+        == result["factory_panic_files"]
+    )
+    assert (
+        sum(row["count"] for row in result["exact_fronts"])
+        == result["factory_panic_files"]
+    )
     for row in result["panic_rows"]:
         assert "gap" in row and "fingerprint" in row and "front" in row
         assert len(row["fingerprint"]) == 5
@@ -1053,9 +1047,7 @@ def test_showcase_live_report_conservation_delta_is_zero(relative: str) -> None:
             cov, label=f"{target.name}-live", require_per_file=True
         )
         # Independent recompute must agree with the live report triple.
-        files = sorted(
-            p for p in ws.rglob("*.py") if "__pycache__" not in p.parts
-        )
+        files = sorted(p for p in ws.rglob("*.py") if "__pycache__" not in p.parts)
         disk = census_paths(files, root=ws)
         recomputed = account_lift_coverage(disk, report).to_json()
         assert int(recomputed["totals"]["delta"]) == 0

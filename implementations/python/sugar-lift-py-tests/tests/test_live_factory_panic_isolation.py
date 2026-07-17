@@ -33,9 +33,7 @@ def test_assert_bearing_py_files_finds_only_assert_sources(tmp_path: Path) -> No
 def test_panic_owner_fallback_and_engaged_report_shape() -> None:
     assert panic_owner_from_message("no owner here") == "unknown"
     assert (
-        panic_owner_from_message(
-            "FactoryPanic: owner=TemporalContext observed=result"
-        )
+        panic_owner_from_message("FactoryPanic: owner=TemporalContext observed=result")
         == "TemporalContext"
     )
     engaged = factory_engaged_empty_report()
@@ -43,9 +41,7 @@ def test_panic_owner_fallback_and_engaged_report_shape() -> None:
     assert engaged["auditOnlyGaps"] == []
 
 
-def test_write_isolation_receipt_and_env_gate(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_write_isolation_receipt_and_env_gate(tmp_path: Path, monkeypatch) -> None:
     payload = {
         "package": "numpy",
         "R_live_factory_panic_files": 2,

@@ -128,12 +128,10 @@ class TestFunctionDefSugar(
                 name="test_function_partial_literal_parametrize_columns",
                 owner_sugar="TestFunctionDefSugar",
                 truthful=(
-                    mixed_parametrized
-                    + "    assert identity(result) == expected\n"
+                    mixed_parametrized + "    assert identity(result) == expected\n"
                 ),
                 lying=(
-                    mixed_parametrized
-                    + "    assert identity(result) == expected + 1\n"
+                    mixed_parametrized + "    assert identity(result) == expected + 1\n"
                 ),
                 family="literal-parametrize",
             ),

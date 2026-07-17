@@ -114,6 +114,7 @@ def _guarded_op_atom(op: str, left, right, site) -> tuple:
         (),
     )
 
+
 @dataclass(frozen=True)
 class ChainedCompareSugar(Sugar, role=SugarRole.TERM):
     """Chained comparisons: ``a < b < c`` → conjunction of pairwise atoms.
@@ -201,5 +202,6 @@ class ChainedCompareSugar(Sugar, role=SugarRole.TERM):
                 derived_formulas=tuple(bridges),
             )
         )
+
     def walk_children(self):
         return (self.left, *self.comparators)
