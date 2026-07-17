@@ -12,10 +12,22 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.floor import Bv32Value, TermValue
-from sugar_lift_py_tests.ir import ctor, make_var, num
-from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+from sugar_lift_py_tests.floor import (
+    Bv32Value,
+    PredicateValue,
+    StringValue,
+    SymbolicValue,
+    TermValue,
+)
+from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
+from sugar_lift_py_tests.idd.lift_coverage_census import census_source
+from sugar_lift_py_tests.ir import and_, atomic, ctor, make_var, num
+from sugar_lift_py_tests.lift_rpc import audit_lift_file
+from sugar_lift_py_tests.outcome import Complete, complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _x():
@@ -26,6 +38,70 @@ def test_bitwise_and_reduces_to_bv32_and():
     assert fol(reduce_term("x & 15", _x())) == fol(
         ctor("bv32.and", [make_var("x"), num(15)])
     )
+
+
+def test_predicate_bitwise_and_constructs_formula_conjunction() -> None:
+    site = SourceFragment.from_source("left & right\n", "t.py").statements()[0]
+    left = PredicateValue(atomic("left", []), site)
+    right = PredicateValue(atomic("right", []), site)
+
+    outcome = left.bitwise_and(right, site)
+
+    assert outcome == Complete(
+        PredicateValue(and_([left.formula, right.formula]), site)
+    )
+
+
+def test_predicate_bitwise_and_nonpredicate_wrong_twin_stays_loud() -> None:
+    site = SourceFragment.from_source("left & right\n", "t.py").statements()[0]
+    left = PredicateValue(atomic("left", []), site)
+
+    with pytest.raises(FactoryPanic, match=r"owner=bitwise_and.*PredicateValue"):
+        left.bitwise_and(StringValue("right"), site)
+
+
+def test_predicate_bitwise_and_symbolic_rhs_keeps_exact_coordinate() -> None:
+    site = SourceFragment.from_source("left & right\n", "t.py").statements()[0]
+    left = PredicateValue(atomic("left", []), site)
+    right = SymbolicValue(make_var("right"))
+
+    outcome = left.bitwise_and(right, site)
+
+    assert outcome == Complete(
+        SymbolicValue(ctor("&", [left.to_term(owner="test"), right.term]))
+    )
+
+
+def test_predicate_bitwise_and_conserves_assertion_without_an_effect() -> None:
+    source = "def test_a(x):\n    assert (x == 1) & (x == 2)\n"
+
+    payload, gaps = audit_lift_file(source, "predicate_and.py")
+    rpc = payload.to_rpc()
+    assertions = account_lift_coverage(
+        census_source(source, file="predicate_and.py"), rpc
+    ).to_json()["assertions"]
+
+    assert gaps == []
+    assert rpc["effects"] == []
+    assert assertions["stated"] == 1
+    assert assertions["lifted_cited"] == 1
+    assert assertions["silently_unaccounted"] == 0
+
+
+def test_predicate_bitwise_and_truthful_and_lying_twins_refute(tmp_path) -> None:
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful",
+        "def test_a(x):\n    assert (x == 1) & (x == 1)\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying",
+        "def test_a(x):\n    assert (x == 1) & (not (x == 1))\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+    assert "RuntimeBitwiseOpSugar" in truthful.selected_sugars
+    assert "RuntimeBitwiseOpSugar" in lying.selected_sugars
 
 
 def test_bitwise_rshift_reduces_to_bv32_lshr():

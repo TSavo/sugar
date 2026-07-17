@@ -93,6 +93,26 @@ class PredicateValue(FloorValue):
 
         return Complete(PredicateValue(or_([self.formula, other.formula])))
 
+    def bitwise_and(self, other, site):
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(other) is SymbolicValue:
+            return SymbolicValue(self.to_term(owner=str(site))).bitwise_and(other, site)
+        if type(other) is not PredicateValue:
+            return super().bitwise_and(other, site)
+        from sugar_lift_py_tests.ir import and_
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                and_([self.formula, other.formula]),
+                site,
+                (*self.operand_callsites, *other.operand_callsites),
+                (*self.derived_formulas, *other.derived_formulas),
+                (*self.rewrite_chains, *other.rewrite_chains),
+            )
+        )
+
     def stated(self, site):
         # A symbolic predicate states an inv: the fact the record emits. Operand
         # callsites ride into the InvValue so edges project later.
