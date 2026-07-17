@@ -15,6 +15,7 @@ from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.constructor_strategy import (
     ConstructorStrategy,
     RuntimeConstructorStrategy,
+    SourceBodyConstructorStrategy,
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
@@ -23,7 +24,9 @@ from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 @dataclass(frozen=True)
 class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
-    strategy: ConstructorStrategy | RuntimeConstructorStrategy
+    strategy: (
+        ConstructorStrategy | RuntimeConstructorStrategy | SourceBodyConstructorStrategy
+    )
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -147,7 +150,7 @@ def _has_exact_exception_ancestry(class_site, ctx, seen: frozenset[str] = frozen
 
 def _strategy(
     site, ctx, target: str, class_site
-) -> ConstructorStrategy | RuntimeConstructorStrategy:
+) -> ConstructorStrategy | RuntimeConstructorStrategy | SourceBodyConstructorStrategy:
     if site.call_has_keywords():
         _panic(
             site,
@@ -570,15 +573,65 @@ def _constructor_from_mro_entry(site, ctx, target: str, class_site, methods, ent
         init = resolve_install_source_class_method(import_target, "__init__")
         if init is None:
             return None
-        return _strategy_from_init(
+        class_fields = _class_fields(class_site, ctx)
+        strategy = _strategy_from_init(
             site,
             ctx,
             target,
             init,
             methods=methods,
-            class_fields=_class_fields(class_site, ctx),
+            class_fields=class_fields,
         )
+        if (
+            isinstance(strategy, RuntimeConstructorStrategy)
+            and strategy.runtime_operand is None
+            and not strategy.arity_error
+        ):
+            source_strategy = _source_body_constructor_strategy(
+                site, ctx, target, init, methods, class_fields
+            )
+            if source_strategy is not None:
+                return source_strategy
+        return strategy
     return None
+
+
+def _source_body_constructor_strategy(
+    site, ctx, target: str, init, methods, class_fields
+):
+    """Construct an imported initializer through the ordinary statement door."""
+    if class_fields or not init.function_has_simple_positional_params():
+        return None
+    params = tuple(init.function_params())
+    if not params:
+        return None
+    min_args, max_args = init.function_positional_arity()
+    min_args -= 1
+    max_args -= 1
+    supplied = site.call_arg_count()
+    if not min_args <= supplied <= max_args:
+        return None
+
+    from sugar_lift_py_tests.sugar.install_source_dig import build_dig_body
+
+    body = build_dig_body(init, ctx)
+    if body is None:
+        return None
+    arguments = [ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()]
+    missing = max_args - supplied
+    if missing:
+        defaults = init.function_defaults()
+        arguments.extend(
+            ctx.build_body(default, SugarRole.TERM) for default in defaults[-missing:]
+        )
+    return SourceBodyConstructorStrategy(
+        class_name=target,
+        body=body,
+        parameters=params,
+        arguments=tuple(arguments),
+        methods=methods,
+        identity=site.blame,
+    )
 
 
 def _native_imported_base_targets(class_site, ctx):
