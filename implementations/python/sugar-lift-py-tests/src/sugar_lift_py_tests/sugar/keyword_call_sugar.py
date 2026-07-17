@@ -116,6 +116,7 @@ class KeywordCallSugar(
                 CallSiteValue,
                 ExceptionClassValue,
                 ExceptionValue,
+                FunctionCallable,
                 ImportAliasValue,
             )
             from sugar_lift_py_tests.ir import ctor, str_const
@@ -141,8 +142,41 @@ class KeywordCallSugar(
                             site=self.site,
                         )
                     )
+                if isinstance(bound, ImportAliasValue) and isinstance(
+                    bound.resolved_value, FunctionCallable
+                ):
+                    bound = bound.resolved_value
+                # term: call:name(pos..., kw:k=v, ...) — keyword spelling is the
+                # source coordinate even when dig binds defaults under the body.
+                term_args = [
+                    value.to_term(owner=str(self.site)) for value in pos_values
+                ]
+                for name, value in kw_pairs:
+                    term_args.append(
+                        ctor(
+                            "kw",
+                            [str_const(name), value.to_term(owner=str(self.site))],
+                        )
+                    )
+                keyword_term = ctor(
+                    f"call:{self.target_name}",
+                    term_args,
+                    symbol_kind="contract-target",
+                )
+                if isinstance(bound, FunctionCallable):
+                    # Bind pos + kwargs + defaults and attach dig body so
+                    # Derived EUF residue can pin ground posts (#4387
+                    # keyword_call_return). Do not soft-refuse — unbindable
+                    # signatures stay loud at FunctionCallable.callsite.
+                    return bound.callsite(
+                        (*pos_values, *(value for _, value in kw_pairs)),
+                        tuple(name for name, _ in kw_pairs),
+                        self.site,
+                        source_arg_values=pos_values,
+                        term=keyword_term,
+                    )
 
-            # term: call:name(pos..., kw:k=v, ...)
+            # Opaque / method-receiver keyword coordinate when no bound callable.
             term_args = [value.to_term(owner=str(self.site)) for value in pos_values]
             for name, value in kw_pairs:
                 term_args.append(

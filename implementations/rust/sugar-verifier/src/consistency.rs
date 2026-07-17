@@ -1014,6 +1014,12 @@ fn is_ground_data_ctor_name(name: &str) -> bool {
             | "None"
             | "py.complex"
             | "py.ellipsis"
+            // Module / type coordinates are structural identities (BuiltinModuleName /
+            // BuiltinTypeName floors), not operators — dual faces
+            // `call:A()=python:module("pytest")` vs `call:A()=None` must refuse
+            // (#4387 builtin_module_name_truthy).
+            | "python:module"
+            | "python:type"
             | "python:dict"
             | "python:dict_entry"
             | "python:set"

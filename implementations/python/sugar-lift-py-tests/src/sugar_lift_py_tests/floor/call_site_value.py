@@ -796,6 +796,8 @@ _GROUND_DATA_CTOR_NAMES = frozenset(
         "None",
         "py.complex",
         "py.ellipsis",
+        "python:module",
+        "python:type",
         "python:dict",
         "python:dict_entry",
         "python:set",

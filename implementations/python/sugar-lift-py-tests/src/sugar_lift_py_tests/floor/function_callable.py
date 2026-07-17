@@ -40,7 +40,15 @@ class FunctionCallable(FloorValue):
         del formula
         return self
 
-    def callsite(self, arg_values, keyword_names, site, *, source_arg_values=None):
+    def callsite(
+        self,
+        arg_values,
+        keyword_names,
+        site,
+        *,
+        source_arg_values=None,
+        term=None,
+    ):
         from sugar_lift_py_tests.factory import factory_panic_gap
         from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
         from sugar_lift_py_tests.floor import CallSiteValue
@@ -60,7 +68,32 @@ class FunctionCallable(FloorValue):
                 gap_kind=GapKind.FLOOR,
                 gap_locus=GapLocus.CONSTRUCTION,
             )
-        supplied_count = len(arg_values)
+        # CallSugar / KeywordCallSugar trail keyword values after positionals and
+        # list their names in keyword_names (source order). Empty keyword_names is
+        # the pure-positional path.
+        n_keywords = len(keyword_names)
+        if n_keywords:
+            if n_keywords > len(arg_values):
+                factory_panic_gap(
+                    owner="FunctionCallable",
+                    blame=str(site),
+                    observed=(len(arg_values), keyword_names),
+                    requested="keyword values aligned with keyword_names",
+                    fix="pass positional then keyword values in source order",
+                    gap_kind=GapKind.FLOOR,
+                    gap_locus=GapLocus.CONSTRUCTION,
+                )
+            positional_supplied = arg_values[: len(arg_values) - n_keywords]
+            keyword_map = {
+                name: value
+                for name, value in zip(
+                    keyword_names, arg_values[len(arg_values) - n_keywords :]
+                )
+            }
+        else:
+            positional_supplied = arg_values
+            keyword_map = {}
+
         fixed_positional_count = sum(
             kind in {"positional", "positional-only"} for kind in self.parameter_kinds
         )
@@ -77,75 +110,121 @@ class FunctionCallable(FloorValue):
             for kind in self.parameter_kinds
         )
         has_var_positional = "var-positional" in self.parameter_kinds
-        required_count = fixed_positional_count - len(self.positional_defaults)
-        valid_positional_arity = required_count <= supplied_count and (
-            has_var_positional or supplied_count <= fixed_positional_count
-        )
-        keyword_only_values = tuple(
-            default for default in self.keyword_only_defaults if default is not None
-        )
-        aligned_keyword_only_defaults = (
-            len(self.keyword_only_defaults) == keyword_only_count
-            and len(keyword_only_values) == keyword_only_count
-        )
-        if (
-            supported_signature
-            and not keyword_names
-            and valid_positional_arity
-            and aligned_keyword_only_defaults
+        has_var_keyword = "var-keyword" in self.parameter_kinds
+        # Reject ** / * expansion spellings that this binder does not yet own.
+        if any(name == "**" for name in keyword_names) or any(
+            isinstance(value, CallSiteValue) and value.target_name == "*"
+            for value in positional_supplied
         ):
+            bound_values = None
+        elif not supported_signature:
+            bound_values = None
+        else:
             from .dict_value import DictValue
+            from .string_value import StringValue
             from .tuple_value import TupleValue
 
-            supplied_fixed_count = min(supplied_count, fixed_positional_count)
-            missing_fixed_count = fixed_positional_count - supplied_fixed_count
-            fixed_values = (
-                *arg_values[:supplied_fixed_count],
-                *self.positional_defaults[
-                    len(self.positional_defaults) - missing_fixed_count :
-                ],
-            )
-            positional = iter(fixed_values)
-            keyword_only = iter(keyword_only_values)
-            surplus = arg_values[fixed_positional_count:]
-            bound_values = tuple(
-                (
-                    next(positional)
-                    if kind in {"positional", "positional-only"}
-                    else (
-                        TupleValue(surplus)
-                        if kind == "var-positional"
-                        else (
-                            next(keyword_only)
-                            if kind == "keyword-only"
-                            else DictValue(())
+            bound_list: list[FloorValue] = []
+            pos_iter = iter(positional_supplied)
+            # positional_defaults align with the trailing fixed positionals that
+            # have defaults: index 0 is the first defaulted fixed param.
+            default_start = fixed_positional_count - len(self.positional_defaults)
+            keyword_only_defaults_by_name: dict[str, FloorValue] = {}
+            keyword_only_names = [
+                name
+                for name, kind in zip(self.parameters, self.parameter_kinds)
+                if kind == "keyword-only"
+            ]
+            if len(self.keyword_only_defaults) == keyword_only_count:
+                for name, default in zip(
+                    keyword_only_names, self.keyword_only_defaults
+                ):
+                    if default is not None:
+                        keyword_only_defaults_by_name[name] = default
+            remaining_keywords = dict(keyword_map)
+            binding_ok = True
+            fixed_seen = 0
+            for name, kind in zip(self.parameters, self.parameter_kinds):
+                if kind in {"positional", "positional-only"}:
+                    if name in remaining_keywords:
+                        bound_list.append(remaining_keywords.pop(name))
+                        fixed_seen += 1
+                        continue
+                    try:
+                        bound_list.append(next(pos_iter))
+                        fixed_seen += 1
+                    except StopIteration:
+                        default_index = fixed_seen - default_start
+                        if 0 <= default_index < len(self.positional_defaults):
+                            bound_list.append(self.positional_defaults[default_index])
+                            fixed_seen += 1
+                        else:
+                            binding_ok = False
+                            break
+                elif kind == "var-positional":
+                    bound_list.append(TupleValue(tuple(pos_iter)))
+                elif kind == "keyword-only":
+                    if name in remaining_keywords:
+                        bound_list.append(remaining_keywords.pop(name))
+                    elif name in keyword_only_defaults_by_name:
+                        bound_list.append(keyword_only_defaults_by_name[name])
+                    else:
+                        binding_ok = False
+                        break
+                elif kind == "var-keyword":
+                    bound_list.append(
+                        DictValue(
+                            tuple(
+                                (StringValue(key), value)
+                                for key, value in remaining_keywords.items()
+                            )
                         )
+                        if remaining_keywords
+                        else DictValue(())
                     )
-                )
-                for kind in self.parameter_kinds
-            )
-        else:
-            bound_values = None
+                    remaining_keywords.clear()
+            # Leftover positionals only lawful with *args.
+            try:
+                next(pos_iter)
+                leftover_pos = True
+            except StopIteration:
+                leftover_pos = False
+            if leftover_pos and not has_var_positional:
+                binding_ok = False
+            if remaining_keywords and not has_var_keyword:
+                binding_ok = False
+            # Pure-positional path still requires keyword-only defaults complete
+            # when the signature has keyword-only params and none were supplied.
+            if (
+                binding_ok
+                and not keyword_names
+                and keyword_only_count
+                and len(keyword_only_defaults_by_name) != keyword_only_count
+            ):
+                binding_ok = False
+            bound_values = tuple(bound_list) if binding_ok else None
         if bound_values is None:
             factory_panic_gap(
                 owner="FunctionCallable",
                 blame=str(site),
-                observed=self.parameter_kinds,
+                observed=(self.parameter_kinds, keyword_names),
                 requested="bind call arguments to a function signature",
                 fix="write the callable argument-binding floor for this signature",
                 gap_kind=GapKind.FLOOR,
                 gap_locus=GapLocus.CONSTRUCTION,
+            )
+        if term is None:
+            term = ctor(
+                f"call:{self.name}",
+                [value.to_term(owner=str(site)) for value in source_arg_values],
+                symbol_kind="contract-target",
             )
         return Complete(
             CallSiteValue(
                 target_name=self.name,
                 arg_values=bound_values,
                 parameters=self.parameters,
-                term=ctor(
-                    f"call:{self.name}",
-                    [value.to_term(owner=str(site)) for value in source_arg_values],
-                    symbol_kind="contract-target",
-                ),
+                term=term,
                 body=self.body,
                 site=site,
             )

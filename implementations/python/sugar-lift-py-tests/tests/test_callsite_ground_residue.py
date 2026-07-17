@@ -26,6 +26,9 @@ def test_ground_value_term_accepts_verifier_data_ctors() -> None:
     )
     assert _is_ground_value_term(ctor("tuple", [num(1), num(2)]))
     assert _is_ground_value_term(ctor("python:bytes", [num(97), num(98)]))
+    # Module / type coordinates are structural identities for residue duals.
+    assert _is_ground_value_term(ctor("python:module", [str_const("pytest")]))
+    assert _is_ground_value_term(ctor("python:type", [str_const("bytes")]))
 
 
 def test_ground_value_term_rejects_operator_and_call_ctors() -> None:

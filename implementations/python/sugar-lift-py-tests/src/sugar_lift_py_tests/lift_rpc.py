@@ -1285,11 +1285,33 @@ def _module_import_temporal(
     from sugar_lift_py_tests.temporal import TemporalContext
 
     temporal = TemporalContext.empty()
-    module_function_resolver = {
+    # Same ClassDef enrollment as audit_context name_resolver: without bare
+    # class nodes, module-seed FunctionCallable dig bodies fall ConstructorCallSugar
+    # → opaque CallSugar for `Box()`, so dunder bridges never attach method bodies
+    # and Derived EUF residue soft-SATs (#4387 builtin_dunder_hash / divmod).
+    module_function_resolver: dict[str, Any] = {
         stmt.function_name(): stmt.node
         for stmt in module.statements()
         if stmt.observed == "FunctionDef"
     }
+    for stmt in module.statements():
+        if stmt.observed != "ClassDef":
+            continue
+        cname = stmt.class_name()
+        module_function_resolver[cname] = stmt.node
+        for body_stmt in stmt.class_body():
+            if body_stmt.observed == "FunctionDef":
+                module_function_resolver[f"{cname}.{body_stmt.function_name()}"] = (
+                    body_stmt.node
+                )
+            elif body_stmt.observed == "ClassDef":
+                nested = body_stmt.class_name()
+                module_function_resolver[nested] = body_stmt.node
+                for nested_stmt in body_stmt.class_body():
+                    if nested_stmt.observed == "FunctionDef":
+                        module_function_resolver[
+                            f"{nested}.{nested_stmt.function_name()}"
+                        ] = nested_stmt.node
     for stmt in module.statements():
         observed = stmt.observed
         if observed == "Import":
