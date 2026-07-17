@@ -1398,9 +1398,11 @@ def test_boolop_literal_residue_lie_lowers_to_concrete_false_operand(
 # #4398 / #4387: grounded primitive / control-flow / data-ctor vendor posts must
 # refute lies (truthful SAT / lying UNSAT). SequentialDigBody must not pin a
 # fall-through return past a taken early return. CallSiteValue.derived residue
-# must pin ground data ctors (None / py.ellipsis / py.complex) so EUF duals
-# fire. Residual corpus seeds stay under #4387 (keyword_call_return, dunder
-# hash, module/type names, construction panics, …).
+# must pin ground data ctors (None / py.ellipsis / py.complex / python:module)
+# so EUF duals fire. Wave-4 residual cluster: keyword binding dig, module-seed
+# ClassDef enrollment for dunder method dig, isinstance ground fold.
+# Still residual under #4387: format_dunder_return, matrix_multiply_return,
+# async termination-gated bridge, …
 _GROUNDED_PRIMITIVE_REFUTE_SEEDS = (
     "abs_return",
     "bare_return_none",
@@ -1411,6 +1413,11 @@ _GROUNDED_PRIMITIVE_REFUTE_SEEDS = (
     "chained_compare_return",
     "not_in_return",
     "ellipsis_literal_return",
+    "keyword_call_return",
+    "builtin_dunder_hash",
+    "divmod_dunder_return",
+    "builtin_module_name_truthy",
+    "builtin_type_name_isinstance",
 )
 
 
