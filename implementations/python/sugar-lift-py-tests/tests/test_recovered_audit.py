@@ -60,14 +60,20 @@ def test_module_seed_panics_are_recovered_as_immutable_evidence(
     assert wire["panics"][0]["gap"]["observed"] == observed
 
 
-def test_recovered_audit_does_not_mark_unsupported_async_definition_clean() -> None:
+def test_recovered_audit_does_not_mark_async_definition_with_body_gap_clean() -> None:
+    """AsyncFunctionDef itself constructs (#4745); a body FactoryPanic still fails.
+
+    #4783 restored ``nonlocal`` as a None-arm construction gap (not a
+    RuntimeEffect). An async def whose body hits that gap must not report clean.
+    """
     source = "async def omitted():\n    nonlocal missing\n"
 
     wire = audit_lift_file(source, "async_gap.py", recover_panics=True).to_rpc()
 
     assert wire["status"] == "failed"
     assert [item["locus"] for item in wire["panics"]] == ["async_gap.py:1:0"]
-    assert wire["panics"][0]["gap"]["observed"] == "AsyncFunctionDef"
+    assert wire["panics"][0]["gap"]["observed"] == "Nonlocal"
+    assert wire["panics"][0]["terminalGapLocus"] == "async_gap.py:2:4"
 
 
 def test_recovered_audit_preserves_conservation_producer_gaps() -> None:
