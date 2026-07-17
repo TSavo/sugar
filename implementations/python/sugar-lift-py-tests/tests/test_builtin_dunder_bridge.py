@@ -7,10 +7,16 @@ from factory_reduce import fol
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
-from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.effect import ImportedModuleRuntimeEffect, RuntimeEffect
 from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    ImportAliasValue,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.outcome import complete_value
@@ -181,6 +187,37 @@ def test_getattr_builtin_opaque_receiver_is_typed_runtime_effect() -> None:
     assert witness is not None
     assert witness.operand == make_var("obj")
     assert witness.operation == ctor("py.getattr.receiver", [make_var("obj")])
+
+
+def test_getattr_builtin_source_import_alias_stays_loud_at_import_floor() -> None:
+    receiver = ImportAliasValue(
+        "sugar_lift_py_tests",
+        "kit",
+        import_target="sugar_lift_py_tests",
+    )
+
+    with pytest.raises(FactoryPanic) as caught:
+        _reduce_outcome("", "getattr(kit, 'effect')", binds={"kit": receiver})
+
+    assert caught.value.info.owner == "ImportAliasValue"
+    assert caught.value.info.requested == (
+        "dig installed import source before applying floor operation"
+    )
+
+
+def test_getattr_builtin_builtin_import_alias_uses_runtime_module_operand() -> None:
+    receiver = ImportAliasValue("sys", "sys", import_target="sys")
+
+    outcome = _reduce_outcome("", "getattr(sys, 'version')", binds={"sys": receiver})
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, ImportedModuleRuntimeEffect)
+    witness = outcome.effect.witness
+    assert witness.operand == ctor(
+        "call:import_module",
+        [ctor("python:import_alias", [str_const("sys"), str_const("sys")])],
+    )
+    assert witness.operation.name == "python:import_floor_operation"
 
 
 def test_getattr_builtin_as_callee_propagates_runtime_effect() -> None:
