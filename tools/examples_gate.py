@@ -181,12 +181,33 @@ FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
     # conversion (#3696/#3709) -- "MISSING" is not a verdict, it is the
     # absence of a row the mint step should have produced. Distinct from
     # prove-refused/*, which requires an actual row with a refused status.
+    # #3747 root cause: unbuilt optional component binaries (coq/lean/maude)
+    # hard-failed prove with setup-error JSON (zero rows). Soft-skip landed;
+    # keep this pattern so a MISSING regression stays loud.
     FailurePattern(
         "prove-missing/java-kit-consistency-row-absent",
         re.compile(
             r"no consistency rows(?: found)?|missing consistency rows|"
             r"expected consistency unsatisfied, got: MISSING|"
             r"expected witness discharge, got MISSING"
+        ),
+    ),
+    # #3747 residual: abs family now emits consistency rows but z3 returns
+    # undecidable instead of discharged/unsatisfied.
+    FailurePattern(
+        "prove-undecidable/java-abs-consistency",
+        re.compile(
+            r"expected (?:all discharged|consistency (?:discharged|unsatisfied)), got:?\s*"
+            r"(?:\['undecidable'(?:,\s*'undecidable')*\]|undecidable)"
+        ),
+    ),
+    # #3747 residual: source-audit `sugar lift --report` path requires
+    # sugar.enumerate; JavaTestAssertionsRpc does not advertise it.
+    FailurePattern(
+        "factory-gap/java-kit-missing-sugar-enumerate",
+        re.compile(
+            r"unknown method:\s*sugar\.enumerate|"
+            r"enumeration kit `java-test-assertions` unavailable"
         ),
     ),
     # The predicted vacuity family: prove discharges the witness-package but
