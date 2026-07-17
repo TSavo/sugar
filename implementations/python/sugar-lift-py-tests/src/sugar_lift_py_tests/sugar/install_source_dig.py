@@ -1188,11 +1188,10 @@ def _return_expr_attachable(rv) -> bool:
         return recv is not None and recv.observed == "Name"
     if obs == "BinOp":
         # Recurse both sides so value + self.sep + call is fine.
-        try:
-            left = rv.binop_left()
-            right = rv.binop_right()
-        except Exception:
-            return True
+        # #4203: BinOp arms are total once observed==BinOp; soft Exception
+        # continue was a fail-open attachability lie.
+        left = rv.binop_left()
+        right = rv.binop_right()
         return _return_expr_attachable(left) and _return_expr_attachable(right)
     if obs == "Call":
         return True

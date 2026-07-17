@@ -235,7 +235,7 @@ def lift_pydantic_model_witnesses(
         return []
     try:
         annotations = get_type_hints(model_cls, include_extras=True)
-    except Exception:
+    except (NameError, TypeError, AttributeError):
         annotations = getattr(model_cls, "__annotations__", {})
 
     witnesses: List[Dict[str, Any]] = []

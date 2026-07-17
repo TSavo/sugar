@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 
 from nacl.signing import SigningKey, VerifyKey
 from nacl.exceptions import BadSignatureError
@@ -84,7 +85,7 @@ def ed25519_verify_string(pubkey_string: str, sig_string: str, message: bytes) -
     try:
         pk_bytes = base64.b64decode(pubkey_string[len(ED25519_KEY_PREFIX) :])
         sig_bytes = base64.b64decode(sig_string[len(ED25519_SIG_PREFIX) :])
-    except Exception:
+    except (ValueError, binascii.Error):
         return False
     if len(pk_bytes) != 32 or len(sig_bytes) != 64:
         return False
@@ -94,7 +95,7 @@ def ed25519_verify_string(pubkey_string: str, sig_string: str, message: bytes) -
         return True
     except BadSignatureError:
         return False
-    except Exception:
+    except (TypeError, ValueError):
         return False
 
 

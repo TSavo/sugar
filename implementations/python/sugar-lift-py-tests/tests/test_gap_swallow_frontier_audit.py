@@ -14,32 +14,12 @@ ROOT = Path(__file__).resolve().parents[4]
 # Drain a site -> delete its row here in the same PR. Add a swallow -> this
 # test fails and CI stays red until you either panic or record loudly.
 #
-# #4203 residual: reduce-adjacent continues and Exception defaults still soft-
-# swallow construction failures. Replacement: re-raise / FactoryPanic, or gate
-# behind the explicit recovered-audit sink (recover_panics / recovered_panics).
-# FactoryPanic silent continues are not permitted on this list — they must be
-# deleted, not ratcheted.
+# #4203 residual: install-source dig still soft-returns None on open vendor
+# import/getsource TypeError and whole-body dig Exception. Replacement: typed
+# DigRefusal / Incomplete dig outcome (not silent None), or FactoryPanic when
+# the dig path is on a construction critical path. FactoryPanic silent continues
+# are not permitted on this list — they must be deleted, not ratcheted.
 EXPECTED_FRONTIER: tuple[tuple[str, int, str, str], ...] = (
-    (
-        "factory/sugar_constructors.py",
-        441,
-        "(TypeError, ValueError, AssertionError)",
-        "continues",
-    ),
-    ("factory/sugar_constructors.py", 447, "Exception", "continues"),
-    ("lift/pydantic.py", 238, "Exception", "passes"),
-    ("lift_rpc.py", 331, "Exception", "returns-default"),
-    (
-        "lift_rpc.py",
-        1428,
-        "(TypeError, ValueError, AssertionError)",
-        "continues",
-    ),
-    ("lift_rpc.py", 1454, "Exception", "continues"),
-    ("proof_envelope.py", 138, "Exception", "returns-default"),
-    ("proof_envelope.py", 168, "Exception", "returns-default"),
-    ("signing.py", 87, "Exception", "returns-default"),
-    ("signing.py", 97, "Exception", "returns-default"),
     (
         "sugar/install_source_dig.py",
         275,
@@ -48,18 +28,11 @@ EXPECTED_FRONTIER: tuple[tuple[str, int, str, str], ...] = (
     ),
     (
         "sugar/install_source_dig.py",
-        1022,
+        1032,
         "(ImportError, AttributeError, OSError, TypeError)",
         "returns-default",
     ),
-    ("sugar/install_source_dig.py", 1184, "Exception", "returns-default"),
-    ("sugar/install_source_dig.py", 1397, "Exception", "returns-default"),
-    (
-        "witness_oracle.py",
-        119,
-        "(BadSignatureError, ValueError, Exception)",
-        "returns-default",
-    ),
+    ("sugar/install_source_dig.py", 1406, "Exception", "returns-default"),
 )
 
 

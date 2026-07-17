@@ -135,7 +135,7 @@ def verify_proof(proof_bytes: bytes, expected_cid: str, signer_pubkey: bytes) ->
     # Check 2: decode + shape
     try:
         catalog = cbor2.loads(proof_bytes)
-    except Exception:
+    except (cbor2.CBORDecodeError, ValueError, TypeError):
         return False
     if not isinstance(catalog, dict):
         return False
@@ -165,7 +165,7 @@ def verify_proof(proof_bytes: bytes, expected_cid: str, signer_pubkey: bytes) ->
         return True
     except BadSignatureError:
         return False
-    except Exception:
+    except (TypeError, ValueError):
         return False
 
 
