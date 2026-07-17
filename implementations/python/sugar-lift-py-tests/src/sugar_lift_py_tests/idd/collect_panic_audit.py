@@ -180,6 +180,7 @@ def _run_command(command: List[str], cwd: Path) -> CommandResult:
                 command[0],
                 "lift",
                 "--audit-frontier",
+                "--continue-on-construction-gaps",
                 "--allowed-broken-components",
                 "python",
                 "-o",

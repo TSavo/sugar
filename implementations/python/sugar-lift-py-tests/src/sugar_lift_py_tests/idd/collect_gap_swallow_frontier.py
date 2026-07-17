@@ -6,7 +6,10 @@ from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
 from .gap_swallow_vector import GapSwallowReport, GapSwallowSite
 
-_LOUD_BASES = {"FactoryGap", "RuntimeError", "Exception"}
+# FactoryPanic is BaseException on purpose (#4203): a normal `except Exception`
+# cannot hold it. The auditor must still see bare `except FactoryPanic: pass`
+# as a silent continue past a construction gap.
+_LOUD_BASES = {"FactoryGap", "FactoryPanic", "RuntimeError", "Exception"}
 _REDUCE_ADJACENT = {"TypeError", "ValueError", "AttributeError", "KeyError"}
 _SANCTIONED_RECORDERS = {
     "record_gap",
@@ -15,8 +18,20 @@ _SANCTIONED_RECORDERS = {
     "_send",
     "_record_dig_refusal",
     "_panic_no_sugar",
+    "factory_panic",
+    "factory_panic_gap",
     "_truthy_degraded_reason",
     "_truthy_type_degraded_reason",
+}
+# Process-terminal converters: calling these IS the loud break, not a swallow.
+_LOUD_TERMINALS = {"factory_panic", "factory_panic_gap", "_panic_no_sugar"}
+# Explicit #4203 recovery sinks. Continuing past FactoryPanic is legal only when
+# the handler first re-raises if the sink is absent.
+_RECOVERY_SINK_NAMES = {
+    "recovered_panics",
+    "recover_panics",
+    "recovery_allowed",
+    "hold_seed_panics",
 }
 _REDUCTION_CALLS = {
     "reduce",
@@ -27,6 +42,7 @@ _REDUCTION_CALLS = {
     "constraint_formula_steps",
     "getsource",
     "getsourcefile",
+    "force_floor",
 }
 
 
@@ -51,6 +67,10 @@ def collect_gap_swallow_frontier(root: str | Path) -> GapSwallowReport:
                 if not (loud or adjacent):
                     continue
                 if _handler_reraises_all_paths(handler):
+                    continue
+                if _handler_ends_in_loud_terminal(handler):
+                    continue
+                if _handler_is_recovery_gated(handler):
                     continue
                 if _handler_records_the_gap(handler):
                     continue
@@ -121,8 +141,60 @@ def _handler_reraises_all_paths(handler: SourceFragment) -> bool:
     )
 
 
+def _handler_ends_in_loud_terminal(handler: SourceFragment) -> bool:
+    """factory_panic(...) is process-terminal; treat it as a re-raise."""
+    statements = handler.except_handler_body().statements()
+    if not statements:
+        return False
+    if any(stmt.observed in {"Return", "Continue", "Break", "Pass"} for stmt in statements):
+        return False
+    return any(
+        fragment.observed == "Call" and _call_name(fragment) in _LOUD_TERMINALS
+        for fragment in handler.walk()
+    )
+
+
+def _handler_is_recovery_gated(handler: SourceFragment) -> bool:
+    """#4203: continue/record only after an explicit recovery-sink absence check.
+
+    Lawful shape:
+        except FactoryPanic as panic:
+            if recovered_panics is None:
+                raise
+            recovered_panics.append(...)
+            continue
+    """
+    has_sink_guard = False
+    for stmt in handler.except_handler_body().statements():
+        if stmt.observed != "If":
+            continue
+        test = stmt.if_test()
+        test_names = {
+            fragment.name_id()
+            for fragment in test.walk()
+            if fragment.observed == "Name" and fragment.name_id() is not None
+        }
+        if not (test_names & _RECOVERY_SINK_NAMES):
+            continue
+        body = stmt.if_body()
+        if any(item.observed == "Raise" for item in body):
+            has_sink_guard = True
+            break
+    if not has_sink_guard:
+        return False
+    # After the guard, recovery may continue or record; bare pass is still illegal.
+    disposition = _disposition(handler)
+    if disposition == "passes" and not _handler_records_the_gap(handler):
+        # Only allow pass when every path still raises (handled elsewhere).
+        return _handler_reraises_all_paths(handler)
+    return disposition in {"continues", "returns-default"} or _handler_records_the_gap(
+        handler
+    )
+
+
 def _handler_records_the_gap(handler: SourceFragment) -> bool:
     gap_name = handler.except_handler_name()
+    # Unnamed handlers cannot prove they recorded the gap.
     if gap_name is None:
         return False
     for fragment in handler.walk():
@@ -130,6 +202,12 @@ def _handler_records_the_gap(handler: SourceFragment) -> bool:
             fragment.observed == "Call"
             and _call_name(fragment) in _SANCTIONED_RECORDERS
             and _call_references_name(fragment, gap_name)
+        ):
+            return True
+        if (
+            fragment.observed == "Call"
+            and _call_name(fragment) in _LOUD_TERMINALS
+            and _handler_references_name(handler, gap_name)
         ):
             return True
     return _handler_returns_runtime_effect(handler) and _handler_references_name(

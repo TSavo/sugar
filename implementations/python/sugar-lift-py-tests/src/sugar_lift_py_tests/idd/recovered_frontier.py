@@ -165,6 +165,7 @@ def mint_recovered_frontier(
             os.fspath(sugar_bin),
             "lift",
             "--audit-frontier",
+            "--continue-on-construction-gaps",
             "--allowed-broken-components",
             "python",
             "-o",

@@ -173,6 +173,17 @@ def test_legacy_audit_only_is_not_a_recovery_backdoor() -> None:
         main(["--audit-only"])
 
 
+def test_name_sugar_never_swallows_force_floor_factory_panic() -> None:
+    """#4203: optional module-binding ground must not catch FactoryPanic."""
+    import inspect
+
+    from sugar_lift_py_tests.sugar import name_sugar as name_sugar_mod
+
+    source = inspect.getsource(name_sugar_mod.NameSugar.desugar)
+    assert "except FactoryPanic" not in source
+    assert "prefer_ground_module_bindings" in source
+
+
 def test_good_twin_constructs_normally() -> None:
     payload = lift_file_payload("def implemented():\n    return 1\n", "good.py")
 
