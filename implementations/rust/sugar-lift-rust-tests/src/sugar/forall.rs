@@ -38,8 +38,8 @@ use crate::{
 /// refuse (mutation, body not point-wise, or count mismatch).
 #[allow(clippy::too_many_arguments)]
 fn lift_bounded_forall(
-    var: &str,
-    domain: BoundedDomain,
+    binding: &ForAllBinding,
+    domain: ForAllLiftDomain,
     body_stmts: &[Stmt],
     scope: &TemporalScope,
     options: &LiftOptions,
@@ -53,6 +53,7 @@ fn lift_bounded_forall(
     // resolved (the reads stay the EUF accessor -- the established sound floor).
     literal_arrays: &BTreeMap<String, Vec<Rc<Term>>>,
 ) -> Option<(Rc<Formula>, usize, Vec<String>)> {
+    let var = binding.label();
     // Lift the body through the normal collector. Truth-table-or-gutter: every
     // body assert must lift cleanly (none refused, none missing) or we refuse
     // the whole loop.
@@ -60,7 +61,7 @@ fn lift_bounded_forall(
     if n_body == 0 {
         debug!(
             target: "sugar_lift_rust_tests::sugar::forall",
-            var,
+            var = var.as_str(),
             "forall declined: body has no assertion macros"
         );
         return None;
@@ -73,7 +74,7 @@ fn lift_bounded_forall(
     if loop_body_mutates(body_stmts) {
         debug!(
             target: "sugar_lift_rust_tests::sugar::forall",
-            var,
+            var = var.as_str(),
             n_body,
             "forall declined: body mutates state"
         );
@@ -118,7 +119,7 @@ fn lift_bounded_forall(
     {
         debug!(
             target: "sugar_lift_rust_tests::sugar::forall",
-            var,
+            var = var.as_str(),
             n_body,
             warranted_assertions,
             skipped = ?body_skipped,
@@ -129,11 +130,11 @@ fn lift_bounded_forall(
     let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
 
     let quantified = match domain {
-        BoundedDomain::Range {
+        ForAllLiftDomain::Bounded(BoundedDomain::Range {
             start,
             end,
             inclusive,
-        } => {
+        }) => {
             // LITERAL-INT RANGE UNROLL (the value-in-scope complete). When BOTH endpoints
             // are literal int constants, the iteration domain is the FINITE set of
             // concrete positions {start, start+1, ..} -- a literal in scope, exactly
@@ -174,7 +175,7 @@ fn lift_bounded_forall(
                     // below is in range.
                     let mut instances = Vec::with_capacity((hi - lo) as usize);
                     for k in lo..hi {
-                        let mut inst = subst_var_in_formula(&body_conj, var, &num(k));
+                        let mut inst = subst_var_in_formula(&body_conj, &var, &num(k));
                         inst = fold_literal_int_terms_in_formula(&inst);
                         if !literal_arrays.is_empty() {
                             inst = resolve_index_in_formula(&inst, literal_arrays);
@@ -191,7 +192,7 @@ fn lift_bounded_forall(
                 // guarded universal it states, body free in `var`.
                 // forall x:Int. ( start <= x (< | <=) end ) => body[var := x]
                 _ => {
-                    let bound_var = var.to_string();
+                    let bound_var = var.clone();
                     forall(Sort::int(), move |x| {
                         let lower = lte(start.clone(), x.clone());
                         let upper = if inclusive {
@@ -211,11 +212,11 @@ fn lift_bounded_forall(
         // element terms, every instance concrete (full point-wise teeth). This is
         // the construction axiom directly: the domain is allocated at formation, so
         // `∀x ∈ {e_i}. body` IS the finite conjunction, no quantifier needed.
-        BoundedDomain::Array(elems) => {
+        ForAllLiftDomain::Bounded(BoundedDomain::Array(elems)) => {
             let instances = elems
                 .iter()
                 .map(|e| {
-                    let mut inst = subst_var_in_formula(&body_conj, var, e);
+                    let mut inst = subst_var_in_formula(&body_conj, &var, e);
                     inst = fold_literal_int_terms_in_formula(&inst);
                     // Resolve a body `index(arr, <const>)` read whose index const-folds
                     // to a literal (e.g. the element `e` is itself a literal position).
@@ -228,6 +229,18 @@ fn lift_bounded_forall(
                 .collect();
             and_(instances)
         }
+        ForAllLiftDomain::Bindings(binding_sets) => and_(
+            binding_sets
+                .iter()
+                .map(|bindings| {
+                    let mut inst = body_conj.clone();
+                    for (name, term) in bindings {
+                        inst = subst_var_in_formula(&inst, name, term);
+                    }
+                    fold_literal_int_terms_in_formula(&inst)
+                })
+                .collect(),
+        ),
     };
     Some((quantified, warranted_assertions, inactive_reasons))
 }
@@ -291,7 +304,7 @@ fn fold_literal_int_term(term: &Rc<Term>) -> Rc<Term> {
 /// core). `desugar` reduces to that conjunction or bails (mutation / non-point-wise
 /// body / count mismatch). `kind` only flavors the warrant name (`for_each`/`loop`).
 pub(crate) struct ForAllSugar {
-    var: String,
+    binding: ForAllBinding,
     domain: ForAllDomain,
     body_stmts: Vec<Stmt>,
     /// The warrant-name flavor: `"for_each"` (adaptor) or `"loop"` (for-loop).
@@ -317,10 +330,39 @@ pub(crate) struct ForAllSugar {
     closure_body: Option<Expr>,
 }
 
+#[derive(Clone)]
+enum ForAllBinding {
+    Ident(String),
+    Wild,
+    Tuple(Vec<ForAllBinding>),
+}
+
+impl ForAllBinding {
+    fn label(&self) -> String {
+        match self {
+            Self::Ident(name) => name.clone(),
+            Self::Wild => "_".to_string(),
+            Self::Tuple(parts) => format!(
+                "({})",
+                parts.iter().map(Self::label).collect::<Vec<_>>().join(",")
+            ),
+        }
+    }
+
+    fn is_single(&self) -> bool {
+        matches!(self, Self::Ident(_) | Self::Wild)
+    }
+}
+
 enum ForAllDomain {
     Bounded(BoundedDomain),
     Sequence(SugarBody<CompositeFloor>),
     Runtime(ForAllRuntimeDomain),
+}
+
+enum ForAllLiftDomain {
+    Bounded(BoundedDomain),
+    Bindings(Vec<BTreeMap<String, Rc<Term>>>),
 }
 
 #[derive(Clone, Copy)]
@@ -405,48 +447,48 @@ impl ForAllSugar {
                 if bounded_domain_is_static_empty(domain) {
                     return Ok(self.empty_loop_no_panic(ctx));
                 }
-                domain.clone()
+                ForAllLiftDomain::Bounded(domain.clone())
             }
             ForAllDomain::Sequence(receiver) => {
-                let elems = match receiver.reduce(ctx) {
-                    Outcome::Complete(d) => sequence_domain_terms(d, ctx),
+                let domain = match receiver.reduce(ctx) {
+                    Outcome::Complete(d) => sequence_domain_bindings(d, &self.binding, ctx),
                     Outcome::Incomplete(effect) => {
                         return Err(Outcome::Incomplete(effect));
                     }
                 };
-                if elems.is_empty() {
+                let len = bounded_domain_len(&domain);
+                if len == 0 {
                     return Ok(self.empty_loop_no_panic(ctx));
                 }
-                if elems.len() > SUGAR_SEQ_CAP as usize {
+                if len > SUGAR_SEQ_CAP as usize {
                     debug!(
                         target: "sugar_lift_rust_tests::sugar::forall",
-                        var = self.var.as_str(),
-                        len = elems.len(),
+                        binding = self.binding.label(),
+                        len,
                         cap = SUGAR_SEQ_CAP,
                         "forall sequence domain declined: empty or over cap"
                     );
                     return Err(Outcome::Incomplete(Effect::LiteralDomain {
                         reason: format!(
                             "forall sequence domain length {} exceeds sugar cap {}",
-                            elems.len(),
-                            SUGAR_SEQ_CAP
+                            len, SUGAR_SEQ_CAP
                         ),
                     }));
                 }
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::forall",
-                    var = self.var.as_str(),
-                    len = elems.len(),
+                    binding = self.binding.label(),
+                    len,
                     "forall sequence domain materialized"
                 );
-                BoundedDomain::Array(elems)
+                domain
             }
             ForAllDomain::Runtime(_) => {
                 forall_gap("runtime forall domain should have returned a runtime effect")
             }
         };
         let Some((quantified, n_body, inactive_reasons)) = lift_bounded_forall(
-            &self.var,
+            &self.binding,
             domain,
             &self.body_stmts,
             ctx.scope,
@@ -467,7 +509,7 @@ impl ForAllSugar {
                 "{}::{}::{}",
                 ctx.scope.local_scope(),
                 self.kind,
-                self.var
+                self.binding.label()
             )),
         };
         if inactive_reasons.is_empty() {
@@ -519,7 +561,7 @@ impl ForAllSugar {
             "{}::{}::{}::empty-domain",
             ctx.scope.local_scope(),
             self.kind,
-            self.var
+            self.binding.label()
         ));
         Desugared::Constraints {
             atom: not_(atomic_("panic", vec![subject])),
@@ -530,34 +572,91 @@ impl ForAllSugar {
                     "{}::{}::{}::empty-domain",
                     ctx.scope.local_scope(),
                     self.kind,
-                    self.var
+                    self.binding.label()
                 )),
             },
         }
     }
 }
 
-fn sequence_domain_terms(desugared: Desugared, ctx: &SugarCtx) -> Vec<Rc<Term>> {
+fn sequence_domain_bindings(
+    desugared: Desugared,
+    binding: &ForAllBinding,
+    ctx: &SugarCtx,
+) -> ForAllLiftDomain {
     match desugared {
-        Desugared::Seq(seq) => seq
-            .into_iter()
-            .map(|elem| {
-                elem.value
-                    .as_ref()
-                    .and_then(const_val_term)
-                    .or_else(|| translate_term_in_scope(&elem.expr, ctx.scope).ok())
-                    .unwrap_or_else(|| {
-                        debug!(
-                            target: "sugar_lift_rust_tests::sugar::forall",
-                            elem = %crate::token_key(&elem.expr),
-                            "forall sequence domain declined: element did not translate to term"
-                        );
-                        forall_gap("sequence element did not translate to term")
+        Desugared::Seq(seq) if binding.is_single() => {
+            ForAllLiftDomain::Bounded(BoundedDomain::Array(
+                seq.into_iter()
+                    .map(|elem| {
+                        elem.value
+                        .as_ref()
+                        .and_then(const_val_term)
+                        .or_else(|| translate_term_in_scope(&elem.expr, ctx.scope).ok())
+                        .unwrap_or_else(|| {
+                            debug!(
+                                target: "sugar_lift_rust_tests::sugar::forall",
+                                elem = %crate::token_key(&elem.expr),
+                                "forall sequence domain declined: element did not translate to term"
+                            );
+                            forall_gap("sequence element did not translate to term")
+                        })
                     })
-            })
-            .collect(),
-        Desugared::TermSeq(terms) => terms,
+                    .collect(),
+            ))
+        }
+        Desugared::Seq(seq) => ForAllLiftDomain::Bindings(
+            seq.into_iter()
+                .map(|elem| {
+                    let mut bindings = BTreeMap::new();
+                    if !bind_forall_pattern(binding, &elem.expr, ctx.scope, &mut bindings) {
+                        forall_gap("sequence element did not match tuple binding pattern");
+                    }
+                    bindings
+                })
+                .collect(),
+        ),
+        Desugared::TermSeq(terms) if binding.is_single() => {
+            ForAllLiftDomain::Bounded(BoundedDomain::Array(terms))
+        }
+        Desugared::TermSeq(_) => {
+            forall_gap("tuple binding requires source-shaped sequence elements")
+        }
         _ => forall_gap("sequence domain reduced to non-sequence"),
+    }
+}
+
+fn bind_forall_pattern(
+    binding: &ForAllBinding,
+    value: &Expr,
+    scope: &TemporalScope,
+    out: &mut BTreeMap<String, Rc<Term>>,
+) -> bool {
+    match binding {
+        ForAllBinding::Ident(name) => translate_term_in_scope(value, scope)
+            .map(|term| out.insert(name.clone(), term))
+            .is_ok(),
+        ForAllBinding::Wild => true,
+        ForAllBinding::Tuple(parts) => {
+            let Expr::Tuple(tuple) = strip_refs_groups(value) else {
+                return false;
+            };
+            parts.len() == tuple.elems.len()
+                && parts
+                    .iter()
+                    .zip(&tuple.elems)
+                    .all(|(part, elem)| bind_forall_pattern(part, elem, scope, out))
+        }
+    }
+}
+
+fn bounded_domain_len(domain: &ForAllLiftDomain) -> usize {
+    match domain {
+        ForAllLiftDomain::Bounded(BoundedDomain::Array(elems)) => elems.len(),
+        ForAllLiftDomain::Bindings(bindings) => bindings.len(),
+        ForAllLiftDomain::Bounded(BoundedDomain::Range { .. }) => {
+            forall_gap("sequence reduced to a range domain")
+        }
     }
 }
 
@@ -619,7 +718,7 @@ pub(crate) fn decompose_for_each(
         other => vec![Stmt::Expr(other.clone(), None)],
     };
     Some(ForAllSugar {
-        var,
+        binding: ForAllBinding::Ident(var),
         domain: ForAllDomain::Sequence(SugarBody::from_node(build_composite(&call.receiver, fcx))),
         body_stmts,
         kind: "for_each",
@@ -639,8 +738,12 @@ pub(crate) fn decompose_for_loop(
     let_inits: &BTreeMap<String, &Expr>,
     fcx: &SugarBuildCtx,
 ) -> Option<ForAllSugar> {
-    let var = for_loop_pat_ident(&f.pat)?;
-    let domain = if let Some(domain) = bounded_domain_from_expr(&f.expr, scope) {
+    let binding = for_loop_binding(&f.pat)?;
+    let bounded = binding
+        .is_single()
+        .then(|| bounded_domain_from_expr(&f.expr, scope))
+        .flatten();
+    let domain = if let Some(domain) = bounded {
         ForAllDomain::Bounded(domain)
     } else if has_composite(&f.expr, fcx) {
         ForAllDomain::Sequence(SugarBody::from_node(build_composite(&f.expr, fcx)))
@@ -650,7 +753,7 @@ pub(crate) fn decompose_for_loop(
         return None;
     };
     Some(ForAllSugar {
-        var,
+        binding,
         domain_expr: (*f.expr).clone(),
         domain,
         body_stmts: f.body.stmts.clone(),
@@ -821,13 +924,22 @@ pub(crate) fn decompose_for_loop_frag(
     decompose_for_loop(f, scope, let_inits, fcx)
 }
 
-fn for_loop_pat_ident(pat: &Pat) -> Option<String> {
+fn for_loop_binding(pat: &Pat) -> Option<ForAllBinding> {
     match pat {
-        Pat::Ident(p) if p.subpat.is_none() => Some(p.ident.to_string()),
-        Pat::Wild(_) => Some("_".to_string()),
-        Pat::Reference(r) if r.mutability.is_none() => for_loop_pat_ident(&r.pat),
-        Pat::Paren(paren) => for_loop_pat_ident(&paren.pat),
-        Pat::Type(ty) => for_loop_pat_ident(&ty.pat),
+        Pat::Ident(p) if p.subpat.is_none() && p.by_ref.is_none() => {
+            Some(ForAllBinding::Ident(p.ident.to_string()))
+        }
+        Pat::Wild(_) => Some(ForAllBinding::Wild),
+        Pat::Tuple(tuple) if !tuple.elems.is_empty() => Some(ForAllBinding::Tuple(
+            tuple
+                .elems
+                .iter()
+                .map(for_loop_binding)
+                .collect::<Option<Vec<_>>>()?,
+        )),
+        Pat::Reference(r) if r.mutability.is_none() => for_loop_binding(&r.pat),
+        Pat::Paren(paren) => for_loop_binding(&paren.pat),
+        Pat::Type(ty) => for_loop_binding(&ty.pat),
         _ => None,
     }
 }
