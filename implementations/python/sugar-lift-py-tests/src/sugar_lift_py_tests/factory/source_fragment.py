@@ -1555,8 +1555,9 @@ class SourceFragment:
 
         This accessor recognizes syntax only. Dynamic argument names, factories,
         ``pytest.param`` calls, keyword expansions, and malformed row arities are
-        deliberately absent: callers must retain their existing symbolic/loud
-        treatment rather than invent parameter values.
+        deliberately absent. In otherwise literal rows, columns whose values are
+        not ground scalar floors are omitted while decidable sibling columns are
+        retained; callers keep those omitted formals symbolic.
         """
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
         recognized = []
@@ -1596,15 +1597,29 @@ class SourceFragment:
                 else:
                     rows = []
                     break
-                if len(row) != len(names) or any(
-                    type(value) not in (str, int, float, bool, type(None))
-                    for value in row
-                ):
+                if len(row) != len(names):
                     rows = []
                     break
                 rows.append(row)
             if rows:
-                recognized.append((names, tuple(rows)))
+                decidable_indexes = tuple(
+                    index
+                    for index in range(len(names))
+                    if all(
+                        type(row[index]) in (str, int, float, bool, type(None))
+                        for row in rows
+                    )
+                )
+                if decidable_indexes:
+                    recognized.append(
+                        (
+                            tuple(names[index] for index in decidable_indexes),
+                            tuple(
+                                tuple(row[index] for index in decidable_indexes)
+                                for row in rows
+                            ),
+                        )
+                    )
         return tuple(recognized)
 
     # --- augmented assignment ----------------------------------------------

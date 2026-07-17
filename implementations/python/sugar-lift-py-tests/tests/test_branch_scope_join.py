@@ -273,6 +273,26 @@ def test_literal_parametrize_witness_truthful_sat_wrong_twin_unsat(
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_partial_literal_parametrize_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in FunctionTestimonySugar.witnesses()
+        if witness.name == "test_function_partial_literal_parametrize_columns"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "partial-parametrize-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "partial-parametrize-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_joined_runtime_value_reads_as_its_named_effect_not_temporal_panic() -> None:
     block = compose_block(
         "    if outer:\n"

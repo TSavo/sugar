@@ -95,6 +95,21 @@ class TestFunctionDefSugar(
             "    elif kind == 'last':\n"
             "        result = 3\n"
         )
+        mixed_parametrized = (
+            "import pytest\n"
+            "def identity(value):\n"
+            "    return value\n"
+            "\n"
+            "@pytest.mark.parametrize(\n"
+            "    'kind, options, expected',\n"
+            "    [('left', {}, 1), ('right', {'ignored': 1}, 2)],\n"
+            ")\n"
+            "def test_choice(kind, options, expected):\n"
+            "    if kind == 'left':\n"
+            "        result = 1\n"
+            "    else:\n"
+            "        result = 2\n"
+        )
         return (
             _call_pair(
                 name="test_function_def_return",
@@ -107,6 +122,19 @@ class TestFunctionDefSugar(
                 owner_sugar="TestFunctionDefSugar",
                 truthful=parametrized + "    assert identity(result) == expected\n",
                 lying=parametrized + "    assert identity(result) == expected + 1\n",
+                family="literal-parametrize",
+            ),
+            _call_pair(
+                name="test_function_partial_literal_parametrize_columns",
+                owner_sugar="TestFunctionDefSugar",
+                truthful=(
+                    mixed_parametrized
+                    + "    assert identity(result) == expected\n"
+                ),
+                lying=(
+                    mixed_parametrized
+                    + "    assert identity(result) == expected + 1\n"
+                ),
                 family="literal-parametrize",
             ),
         )
