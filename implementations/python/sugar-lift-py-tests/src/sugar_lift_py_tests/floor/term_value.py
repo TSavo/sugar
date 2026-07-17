@@ -304,6 +304,11 @@ class TermValue(FloorValue):
                     )
                 )
             return Complete(TermValue(self.value / other.value))
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(other) in (CallSiteValue, SymbolicValue):
+            return SymbolicValue(self.to_term(owner=str(site))).divide(other, site)
         return super().divide(other, site)
 
     def modulo(self, other, site):

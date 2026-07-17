@@ -241,6 +241,14 @@ class StringValue(FloorValue):
             return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
         return super().multiply(other, site)
 
+    def divide(self, other, site):
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(other) is CallSiteValue:
+            return SymbolicValue(self.to_term(owner=str(site))).divide(other, site)
+        return super().divide(other, site)
+
     def modulo(self, other, site):
         """Apply Python's printf-style string formatting floor.
 
