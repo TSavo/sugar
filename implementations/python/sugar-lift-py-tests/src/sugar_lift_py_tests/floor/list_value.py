@@ -74,6 +74,7 @@ class ListValue(FloorValue):
         return super().add(other, site)
 
     def multiply(self, other, site):
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.term_value import TermValue
@@ -99,15 +100,33 @@ class ListValue(FloorValue):
                     )
                 )
             return Complete(ListValue(self.elements * other.value))
-        if type(other) is SymbolicValue or (
-            type(other) is OpaqueOpCallsite and other.callee == "len"
+        runtime_count_kind = None
+        if type(other) is SymbolicValue:
+            runtime_count_kind = "symbolic count"
+        elif type(other) is OpaqueOpCallsite and other.callee == "len":
+            runtime_count_kind = "integer-warranted len(...) result"
+        elif type(other) is CallSiteValue and other.target_name == "ndim":
+            runtime_count_kind = "integer-warranted callsite ndim"
+        elif (
+            type(other) is CallSiteValue
+            and other.target_name == "max"
+            and other.arg_values
+            and all(
+                type(value) is SymbolicValue
+                or (type(value) is TermValue and type(value.value) is int)
+                for value in other.arg_values
+            )
         ):
+            # max preserves one of its operands. When every operand already
+            # carries the runtime-integer/count shape, its result carries it too.
+            runtime_count_kind = "integer-warranted callsite max"
+        if runtime_count_kind is not None:
             from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
             from sugar_lift_py_tests.outcome import Incomplete
 
             return Incomplete(
                 SequenceRepetitionRuntimeEffect(
-                    "sequence repetition by symbolic count: ListValue depends "
+                    f"sequence repetition by {runtime_count_kind}: ListValue depends "
                     f"on runtime __index__/length semantics; site={site}",
                     witness=runtime_effect_witness("py.sequence_repeat", other, site),
                 )
