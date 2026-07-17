@@ -13,6 +13,7 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
+    CallSiteValue,
     NativeCallableValue,
     StringValue,
     SymbolicValue,
@@ -100,6 +101,35 @@ def test_native_nat_addition_without_tdlike_evidence_stays_loud() -> None:
         NativeCallableValue("pandas._libs.tslibs.nattype.NaT", "/native/pandas.so").add(
             SymbolicValue(make_var("obj")), site
         )
+
+
+def test_native_callable_addition_preserves_exact_callsite_coordinate() -> None:
+    site = SourceFragment.from_source("NaT + make_offset(kind)\n", "t.py").statements()[
+        0
+    ]
+    left = NativeCallableValue(
+        "pandas._libs.tslibs.nattype.NaT", "/native/pandas.so"
+    )
+    right = CallSiteValue(
+        target_name="make_offset",
+        arg_values=(SymbolicValue(make_var("kind")),),
+        parameters=("kind",),
+        term=ctor("call:make_offset", [make_var("kind")]),
+        body=None,
+        site=site,
+    )
+
+    assert left.add(right, site) == Complete(
+        SymbolicValue(
+            ctor(
+                "+",
+                [
+                    left.to_term(owner="test"),
+                    right.to_term(owner="test"),
+                ],
+            )
+        )
+    )
 
 
 def test_bool_addition_truthful_and_lying_twins_refute(tmp_path) -> None:
