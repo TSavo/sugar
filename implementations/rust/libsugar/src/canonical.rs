@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::Value as Json;
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, encode_jcs, json_to_value, Value as CValue};
 
 use crate::{Result, SugarError};
 
@@ -56,39 +56,12 @@ pub fn is_blake3_512_cid(value: &str) -> bool {
     sugar_canonicalizer::is_blake3_512_cid(value)
 }
 
+/// #3901: shared refuse door — same membrane as feed / claim-envelope mint.
 fn json_to_cvalue(value: &Json) -> Result<Arc<CValue>> {
-    Ok(match value {
-        Json::Null => CValue::null(),
-        Json::Bool(b) => CValue::boolean(*b),
-        Json::Number(n) => {
-            // i64/u64 widen losslessly into the i128 carrier; only a float
-            // (the remaining non-integer shape) is rejected.
-            let i = n
-                .as_i64()
-                .map(i128::from)
-                .or_else(|| n.as_u64().map(i128::from))
-                .ok_or_else(|| {
-                    SugarError::Message(format!(
-                        "non-integer JSON number cannot be canonicalized: {n}"
-                    ))
-                })?;
-            CValue::integer(i)
-        }
-        Json::String(s) => CValue::string(s.clone()),
-        Json::Array(items) => {
-            let mut out = Vec::with_capacity(items.len());
-            for item in items {
-                out.push(json_to_cvalue(item)?);
-            }
-            CValue::array(out)
-        }
-        Json::Object(map) => {
-            let mut entries = Vec::with_capacity(map.len());
-            for (key, item) in map {
-                entries.push((key.clone(), json_to_cvalue(item)?));
-            }
-            CValue::object(entries)
-        }
+    json_to_value(value).map_err(|err| {
+        SugarError::Message(format!(
+            "non-integer JSON number cannot be canonicalized: {err}"
+        ))
     })
 }
 

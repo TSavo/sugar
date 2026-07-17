@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
+use sugar_canonicalizer::{blake3_512_of, encode_jcs, json_to_value, Value};
 use sugar_proof_envelope::{
     ed25519_pubkey_string, ed25519_sign_string, AuthorityMementoRef, ContractMementoRef,
     Ed25519Seed,
@@ -769,34 +769,20 @@ pub fn mint_authority(args: &MintAuthorityArgs) -> Result<MintedEnvelope, ClaimE
 /// also available directly without minting via this public function.
 ///
 /// Per spec naming convention (`contract_cid(decl)` for Rust).
-/// JSON -> canonical `Value` (mirror of the verifier's `serde_to_canonical`).
+/// JSON → canonical `Value` via the single protocol door (#3901).
+///
+/// Previously fail-open: floats became strings / null, so mint CIDs could
+/// diverge from feed/libsugar (which refuse). Illegal non-integer numbers
+/// now panic with the canonicalizer path — same membrane as `jcs_cid_of_json`.
 fn json_to_cvalue(v: &JsonValue) -> Arc<Value> {
-    match v {
-        JsonValue::Null => Value::null(),
-        JsonValue::Bool(b) => Value::boolean(*b),
-        JsonValue::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Value::integer(i128::from(i))
-            } else if let Some(u) = n.as_u64() {
-                Value::integer(i128::from(u))
-            } else if let Some(f) = n.as_f64() {
-                if f == (f as i64 as f64) {
-                    Value::integer(i128::from(f as i64))
-                } else {
-                    Value::string(f.to_string())
-                }
-            } else {
-                Value::null()
-            }
-        }
-        JsonValue::String(s) => Value::string(s.clone()),
-        JsonValue::Array(arr) => Value::array(arr.iter().map(json_to_cvalue).collect()),
-        JsonValue::Object(map) => Value::object(
-            map.iter()
-                .map(|(k, val)| (k.as_str(), json_to_cvalue(val)))
-                .collect::<Vec<_>>(),
-        ),
-    }
+    json_to_value(v).unwrap_or_else(|err| {
+        panic!(
+            "claim-envelope json_to_cvalue: {err} — \
+             replacement: refuse non-integer JSON numbers at the authoring \
+             boundary; do not reintroduce a local Number→Value arm \
+             (sugar_canonicalizer::json_to_value is the only door)"
+        )
+    })
 }
 
 /// Canonicalize a contract formula slot (pre/post/inv) to the alpha + pure-let
@@ -2435,5 +2421,35 @@ mod tests {
         ]);
         // canon_formula_value must hand back the very same bytes.
         assert_eq!(encode_jcs(&canon_formula_value(&pre)), encode_jcs(&pre));
+    }
+
+    /// #3901: claim-envelope must refuse non-integer JSON numbers (shared door),
+    /// not fail-open to string/null. Before: float→string forged mint CIDs that
+    /// could diverge from feed's refuse path.
+    #[test]
+    fn json_to_cvalue_refuses_float_via_shared_door() {
+        let float = serde_json::json!({"value": 3.14});
+        let panic = std::panic::catch_unwind(|| {
+            let _ = json_to_cvalue(&float);
+        })
+        .expect_err("claim-envelope must refuse non-integer JSON numbers");
+        let msg = if let Some(s) = panic.downcast_ref::<String>() {
+            s.clone()
+        } else if let Some(s) = panic.downcast_ref::<&'static str>() {
+            (*s).to_string()
+        } else {
+            "<non-string panic>".into()
+        };
+        assert!(
+            msg.contains("non-integer") || msg.contains("json_to_cvalue"),
+            "expected shared-door refuse panic, got: {msg}"
+        );
+        // Integer trees still convert (mint path stays live).
+        let ok = json_to_cvalue(&serde_json::json!({"n": 7}));
+        assert_eq!(
+            encode_jcs(ok.as_ref()),
+            encode_jcs(Value::object([("n", Value::integer(7))]).as_ref())
+        );
+        eprintln!("R_claim_envelope_failopen_number=0 — float panics; int converts");
     }
 }

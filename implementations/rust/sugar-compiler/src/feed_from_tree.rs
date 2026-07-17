@@ -17,7 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{encode_jcs, Value as CValue};
+use sugar_canonicalizer::{encode_jcs, json_to_value, Value as CValue};
 use sugar_claim_envelope::{
     body_discharge_policy_from_fields_with_default, mint_bridge, mint_contract_with_body_cid,
     Authoring, MintBridgeArgs, MintContractArgs,
@@ -57,45 +57,17 @@ pub enum FeedError {
 
 /// serde_json → canonical Value for content-addressed feed members.
 ///
-/// Integer numbers widen losslessly into the i128 carrier (`i64` / `u64`).
-/// Floats and other non-integer JSON numbers are a **typed refusal** — never
-/// `unwrap_or(0)`. Collapsing `3.14` / `u64::MAX+` into integer(0) would
-/// forge a different formula, collide member CIDs, and green fold==blob only
-/// because fixtures used small ints (PR #3897 review blocker).
+/// #3901: ONE door shared with mint / claim-envelope / libsugar::canonical —
+/// `sugar_canonicalizer::json_to_value`. Integer numbers widen losslessly;
+/// non-integers are a typed `FeedError::Incomplete` refusal. Never a local
+/// Number arm (`unwrap_or(0)`, float→string, float→null).
 fn json_to_cvalue(j: &Json) -> Result<Arc<CValue>, FeedError> {
-    Ok(match j {
-        Json::Null => CValue::null(),
-        Json::Bool(b) => CValue::boolean(*b),
-        Json::Number(n) => {
-            // Mirror libsugar::canonical: i64/u64 widen; only non-integers refuse.
-            let i = n
-                .as_i64()
-                .map(i128::from)
-                .or_else(|| n.as_u64().map(i128::from))
-                .ok_or_else(|| FeedError::Incomplete {
-                    what: "json_to_cvalue",
-                    detail: format!(
-                        "non-integer JSON number cannot enter a content-addressed \
-                         feed atom (refusing silent zero): {n}"
-                    ),
-                })?;
-            CValue::integer(i)
-        }
-        Json::String(s) => CValue::string(s.clone()),
-        Json::Array(items) => {
-            let mut out = Vec::with_capacity(items.len());
-            for item in items {
-                out.push(json_to_cvalue(item)?);
-            }
-            CValue::array(out)
-        }
-        Json::Object(map) => {
-            let mut entries = Vec::with_capacity(map.len());
-            for (key, item) in map {
-                entries.push((key.clone(), json_to_cvalue(item)?));
-            }
-            CValue::object(entries)
-        }
+    json_to_value(j).map_err(|err| FeedError::Incomplete {
+        what: "json_to_cvalue",
+        detail: format!(
+            "{err} — non-integer JSON number cannot enter a content-addressed \
+             feed atom (refusing silent zero); use sugar_canonicalizer::json_to_value"
+        ),
     })
 }
 
@@ -887,6 +859,10 @@ mod json_to_cvalue_tests {
 ///   R_formal_sorts_dropped — IR formalSorts must reach the claim member
 ///   R_universe_empty_warrants — bare / warrant-less IR must not mint empty
 ///     provenance (fall back to self-locating memento)
+///   R_claim_envelope_failopen_number — mint/feed share refuse door
+///     (`sugar_canonicalizer::json_to_value`); claim-envelope must not
+///     float→string / float→null while feed refuses (see also
+///     sugar-canonicalizer dual_number_encoder_3901_tests)
 #[cfg(test)]
 mod silent_loss_3901_tests {
     use super::*;
@@ -1036,6 +1012,49 @@ mod silent_loss_3901_tests {
             "R_universe_empty_warrants=0 (shell) — name={} warrants={}",
             c.contract_name,
             warrants.len()
+        );
+    }
+
+    /// R_claim_envelope_failopen_number: feed and the shared door must agree
+    /// on integer trees and both refuse floats (mint uses the same door).
+    #[test]
+    fn feed_and_shared_door_agree_on_integers_and_refuse_floats() {
+        let tree = json!({
+            "kind": "atomic",
+            "name": "eq",
+            "args": [
+                {"kind": "const", "value": 42},
+                {"kind": "const", "value": 0}
+            ]
+        });
+        let feed = json_to_cvalue(&tree).expect("feed integers");
+        let door = json_to_value(&tree).expect("shared door integers");
+        assert_eq!(
+            encode_jcs(feed.as_ref()),
+            encode_jcs(door.as_ref()),
+            "R_claim_envelope_failopen_number: feed must byte-match \
+             sugar_canonicalizer::json_to_value on integer trees"
+        );
+
+        let float = json!({"value": 1.5});
+        let feed_err = json_to_cvalue(&float).expect_err("feed float");
+        assert!(
+            matches!(
+                feed_err,
+                FeedError::Incomplete {
+                    what: "json_to_cvalue",
+                    ..
+                }
+            ),
+            "feed must refuse float: {feed_err}"
+        );
+        let door_err = json_to_value(&float).expect_err("door float");
+        assert!(
+            door_err.to_string().contains("non-integer"),
+            "shared door must refuse float: {door_err}"
+        );
+        eprintln!(
+            "R_claim_envelope_failopen_number=0 — feed≡json_to_value on ints; both refuse float"
         );
     }
 }

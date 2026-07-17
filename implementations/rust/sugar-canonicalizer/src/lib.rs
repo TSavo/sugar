@@ -27,7 +27,7 @@ pub mod value;
 
 pub use hash::{blake3_512_hex, blake3_512_of, cid_hex, is_blake3_512_cid, BLAKE3_512_PREFIX};
 pub use jcs::encode_jcs;
-pub use json::jcs_cid_of_json;
+pub use json::{jcs_cid_of_json, json_to_value, json_to_value_at};
 pub use value::{Value, ValueKind};
 
 #[derive(Debug, thiserror::Error)]
