@@ -38,11 +38,24 @@ class FormatDunderCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar
     @classmethod
     def witnesses(cls):
         prefix = "class Box:\n    def __format__(self, spec):\n        return spec\n\ndef A():\n    return format(Box(), 'x')\n\n"
-        return _call_pair(
-            name="format_dunder_return",
-            owner_sugar=cls.__name__,
-            truthful=prefix + "def test_a():\n    assert A() == 'x'\n",
-            lying=prefix + "def test_a():\n    assert A() == 'y'\n",
+        opaque = "def A():\n    return format(external_box(), 'brief')\n\n"
+        return (
+            _call_pair(
+                name="format_dunder_return",
+                owner_sugar=cls.__name__,
+                truthful=prefix + "def test_a():\n    assert A() == 'x'\n",
+                lying=prefix + "def test_a():\n    assert A() == 'y'\n",
+            ),
+            _call_pair(
+                name="callsite_format_coordinate",
+                owner_sugar=cls.__name__,
+                truthful=opaque + "def test_a():\n    assert A() == 'rendered'\n",
+                lying=opaque
+                + "def test_a():\n"
+                + "    assert A() == 'rendered'\n"
+                + "    assert A() == 'different'\n",
+                family="callsite-format-coordinate",
+            ),
         )
 
     def desugar(self, ctx=None) -> Outcome:

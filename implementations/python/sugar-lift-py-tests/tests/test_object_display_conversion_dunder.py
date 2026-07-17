@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import ast
 
+import pytest
+
 from factory_reduce import fol
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import CallSiteValue, StringValue, SymbolicValue
 from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar.format_dunder_call_sugar import FormatDunderCallSugar
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _ctx_for_module(source: str) -> FactoryBuildContext:
@@ -118,7 +124,66 @@ class Box:
     assert force_floor(value, ctx, owner="format dunder bridge") == StringValue("")
 
 
-def test_production_lift_constructs_format_dunder_return_without_factory_panic() -> None:
+def test_format_builtin_constructs_opaque_callsite_dunder_coordinate() -> None:
+    source = """\
+def build_box():
+    return external_box()
+"""
+
+    receiver, ctx = _reduce_expr(source, "external_box()")
+    value, _ = _reduce_expr(source, 'format(external_box(), "brief")')
+
+    assert isinstance(receiver, CallSiteValue)
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == "__format__"
+    assert value.arg_values == (receiver, StringValue("brief"))
+    assert fol(floor_to_term(value, owner="callsite format bridge")) == fol(
+        ctor(
+            "call:__format__",
+            [
+                receiver.to_term(owner="callsite format bridge"),
+                str_const("brief"),
+            ],
+            symbol_kind="method-coordinate",
+        )
+    )
+
+
+def test_format_callsite_body_construction_gap_stays_loud() -> None:
+    source = """\
+def build():
+    return format([1], "inner")
+"""
+
+    with pytest.raises(FactoryPanic, match="owner=FormatDunderCallSugar"):
+        _reduce_expr(source, 'format(build(), "outer")')
+
+
+def test_callsite_format_coordinate_wrong_twin_refutes(tmp_path) -> None:
+    witnesses = FormatDunderCallSugar.witnesses()
+    pair = next(
+        witness
+        for witness in witnesses
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "callsite_format_coordinate"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "format-callsite-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "format-callsite-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+    assert "FormatDunderCallSugar" in truthful.selected_sugars
+    assert "FormatDunderCallSugar" in lying.selected_sugars
+
+
+def test_production_lift_constructs_format_dunder_return_without_factory_panic() -> (
+    None
+):
     """#4400: bare ClassDef must enroll so format(Box()) is ObjectValue, not transport death.
 
     The witness seed rides the production audit door. Without bare class nodes in
