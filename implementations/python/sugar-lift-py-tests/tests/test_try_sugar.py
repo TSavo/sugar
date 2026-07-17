@@ -172,3 +172,32 @@ def test_runtime_selected_handler_type_is_a_named_effect() -> None:
     assert len(outcome.statements) == 1
     assert isinstance(outcome.statements[0], Incomplete)
     assert isinstance(outcome.statements[0].effect, TryHandlerDispatchRuntimeEffect)
+
+
+def test_try_threads_binding_from_only_reduced_continuing_path() -> None:
+    block = compose_block(
+        "    try:\n"
+        "        result = 5\n"
+        "    except ValueError:\n"
+        "        return 0\n"
+        "    return result\n"
+    )
+
+    assert isinstance(block, BlockValue)
+    assert isinstance(block.statements[-1], ReturnValue)
+    assert block.statements[-1].value == TermValue(5)
+
+
+def test_try_does_not_bind_name_missing_from_a_continuing_handler_path() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    try:\n"
+            "        result = 5\n"
+            "    except ValueError:\n"
+            "        pass\n"
+            "    return result\n"
+        )
+
+    assert raised.value.info.owner == "TemporalContext"
+    assert raised.value.info.observed == "result"
+    assert raised.value.info.requested == "value"
