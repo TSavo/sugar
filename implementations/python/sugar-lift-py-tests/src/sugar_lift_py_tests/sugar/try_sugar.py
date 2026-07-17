@@ -164,80 +164,98 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             return self._desugar_else(ctx).and_then(
                 lambda value: self._sequence_finally(value, ctx)
             )
-        # Thread try body, then each guarded handler into one spliced BlockValue.
-        return (
-            self.body.reduce(ctx)
-            .and_then(
-                lambda body_val: self._collect_handlers(
-                    tuple(body_val.contribution()), 0, ctx
-                )
-            )
-            .and_then(lambda value: self._sequence_finally(value, ctx))
+        # Thread try body + handlers, then project definite post-try bindings
+        # the way if/else projects surviving/joined faces (#4190).
+        return self._desugar_handlers(ctx).and_then(
+            lambda value: self._sequence_finally(value, ctx)
         )
 
-    def _collect_handlers(self, accumulated: tuple, index: int, ctx: object) -> Outcome:
+    def _desugar_handlers(self, ctx: object) -> Outcome:
+        """Reduce try body and handlers; project definite bindings past the try.
+
+        Assignment in the try body is support (ScopeRebind contribution is empty),
+        so splicing ``body.contribution()`` alone drops names for the enclosing
+        block. Mirror PredicateValue's branch join: when every handler exits and
+        the body does not, the body's new bindings survive; when neither face
+        exits, names present on every surviving face join; when only handlers
+        survive, take the handler face bindings.
+        """
         from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, ScopeRebind
         from sugar_lift_py_tests.ir import ctor, str_const
 
-        if index >= len(self.handlers):
-            return Complete(BlockValue(accumulated))
+        body_value, body_scope = _reduce_with_scope(self.body, ctx)
+        entries = list(body_value.contribution())
+        body_exits = _face_exits(entries)
 
-        arm = self.handlers[index]
-        # Caught type rides as a recognition coordinate -- not dropped.
-        catch = CallSiteValue(
-            target_name="except",
-            arg_values=(),
-            parameters=(),
-            term=ctor(
-                "py.except",
-                [str_const(n) for n in arm.type_names or ()],
-            ),
-            body=None,
-            site=self.site,
-        )
-        body_ctx = _handler_scope(accumulated, arm, ctx)
-        if arm.as_name is not None:
-            body_ctx = ScopeRebind(arm.as_name, catch).extend_scope(body_ctx)
-
-        return arm.body.reduce(body_ctx).and_then(
-            lambda hblock: self._collect_handlers(
-                (
-                    *accumulated,
-                    *_except_arm_contributions(hblock.contribution(), arm),
+        handler_scopes: list[object] = []
+        handler_exit_flags: list[bool] = []
+        for arm in self.handlers:
+            catch = CallSiteValue(
+                target_name="except",
+                arg_values=(),
+                parameters=(),
+                term=ctor(
+                    "py.except",
+                    [str_const(n) for n in arm.type_names or ()],
                 ),
-                index + 1,
-                ctx,
+                body=None,
+                site=self.site,
             )
+            body_ctx = _handler_scope(tuple(entries), arm, ctx)
+            if arm.as_name is not None:
+                body_ctx = ScopeRebind(arm.as_name, catch).extend_scope(body_ctx)
+            handler_value, handler_scope = _reduce_with_scope(arm.body, body_ctx)
+            handler_entries = tuple(handler_value.contribution())
+            handler_exit_flags.append(_face_exits(handler_entries))
+            handler_scopes.append(handler_scope)
+            entries.extend(_except_arm_contributions(handler_entries, arm))
+
+        rebinds = _post_try_rebinds(
+            body_scope=body_scope,
+            body_exits=body_exits,
+            handler_scopes=tuple(handler_scopes),
+            handler_exit_flags=tuple(handler_exit_flags),
+            before_ctx=ctx,
         )
+        return Complete(BlockValue((*entries, *rebinds)))
 
     def _desugar_else(self, ctx: object) -> Outcome:
         """Reduce every face once and guard handler/else contributions."""
         from sugar_lift_py_tests.floor import BlockValue
         from sugar_lift_py_tests.ir import not_, or_
-        from sugar_lift_py_tests.outcome import complete_value
 
-        body_value, body_scope = self.body.sugar.reduce_with_scope(ctx)
+        body_value, body_scope = _reduce_with_scope(self.body, ctx)
         entries = list(body_value.contribution())
+        body_exits = _face_exits(entries)
         guards = []
+        handler_scopes: list[object] = []
+        handler_exit_flags: list[bool] = []
         for arm in self.handlers:
             guard = _except_guard(arm)
             guards.append(guard)
             handler_ctx = _handler_scope(tuple(entries), arm, ctx)
-            handler_value = complete_value(
-                arm.body.reduce(handler_ctx), owner="try except handler"
-            )
-            entries.extend(
-                entry.guarded(guard) for entry in handler_value.contribution()
-            )
-        else_value = complete_value(
-            self.else_body.reduce(body_scope), owner="try else body"
-        )
+            handler_value, handler_scope = _reduce_with_scope(arm.body, handler_ctx)
+            handler_entries = tuple(handler_value.contribution())
+            handler_exit_flags.append(_face_exits(handler_entries))
+            handler_scopes.append(handler_scope)
+            entries.extend(entry.guarded(guard) for entry in handler_entries)
+        else_value, else_scope = _reduce_with_scope(self.else_body, body_scope)
+        else_entries = tuple(else_value.contribution())
+        else_exits = _face_exits(else_entries)
         exception_guard = guards[0] if len(guards) == 1 else or_(guards)
         no_exception = not_(exception_guard)
-        entries.extend(
-            entry.guarded(no_exception) for entry in else_value.contribution()
+        entries.extend(entry.guarded(no_exception) for entry in else_entries)
+        # Success face is try-body scope extended by else; handler faces are the
+        # exception arms. Project definite post-try bindings across those faces.
+        success_exits = body_exits or else_exits
+        rebinds = _post_try_rebinds(
+            body_scope=else_scope,
+            body_exits=success_exits,
+            handler_scopes=tuple(handler_scopes),
+            handler_exit_flags=tuple(handler_exit_flags),
+            before_ctx=ctx,
         )
-        return Complete(BlockValue(tuple(entries)))
+        return Complete(BlockValue((*entries, *rebinds)))
 
     def _sequence_finally(self, value, ctx: object) -> Outcome:
         from sugar_lift_py_tests.floor import BlockValue
@@ -314,3 +332,125 @@ def _handler_scope(accumulated: tuple, arm: TryExceptArm, fallback):
         if entry.scope is not None:
             return entry.scope
     return fallback
+
+
+def _reduce_with_scope(body: SugarBody, ctx: object):
+    """Reduce a statement body once, returning the record and terminal context."""
+    from sugar_lift_py_tests.outcome import complete_value
+
+    sugar = body.sugar
+    if hasattr(sugar, "reduce_with_scope"):
+        return sugar.reduce_with_scope(ctx)
+    outcome = body.reduce(ctx)
+    value = complete_value(outcome, owner="try face")
+    return value, outcome.extend_scope(ctx)
+
+
+def _face_exits(entries: tuple) -> bool:
+    return any(entry.post_contribution() for entry in entries)
+
+
+def _post_try_rebinds(
+    *,
+    body_scope: object,
+    body_exits: bool,
+    handler_scopes: tuple,
+    handler_exit_flags: tuple[bool, ...],
+    before_ctx: object,
+) -> tuple:
+    """ScopeRebind entries that must ride past the try for the enclosing block.
+
+    Matches if/else definite-assignment geometry (PredicateValue branch join):
+    - every handler exits and body falls through -> body's new bindings survive
+    - body exits and no handler exits -> handler face bindings survive
+    - neither side fully exits -> names present on every surviving face join
+    """
+    if not handler_scopes:
+        if body_exits:
+            return ()
+        return _surviving_rebinds(body_scope, before_ctx)
+
+    all_handlers_exit = all(handler_exit_flags)
+    any_handler_exits = any(handler_exit_flags)
+
+    if not body_exits and all_handlers_exit:
+        return _surviving_rebinds(body_scope, before_ctx)
+
+    if body_exits and not any_handler_exits:
+        if len(handler_scopes) == 1:
+            return _surviving_rebinds(handler_scopes[0], before_ctx)
+        return _join_rebinds(handler_scopes, before_ctx)
+
+    if not body_exits and not any_handler_exits:
+        return _join_rebinds((body_scope, *handler_scopes), before_ctx)
+
+    # Mixed handler exits with a non-exiting body: only names still definite on
+    # the body face and every non-exiting handler face survive.
+    surviving_handler_scopes = tuple(
+        scope
+        for scope, exits in zip(handler_scopes, handler_exit_flags)
+        if not exits
+    )
+    if not body_exits and surviving_handler_scopes:
+        return _join_rebinds((body_scope, *surviving_handler_scopes), before_ctx)
+    return ()
+
+
+def _surviving_rebinds(surviving_scope: object, before_ctx: object) -> tuple:
+    from sugar_lift_py_tests.floor import ScopeRebind
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+    before = {binding.name: binding.value for binding in before_ctx.temporal.bindings}
+    surviving = {
+        binding.name: binding.value for binding in surviving_scope.temporal.bindings
+    }
+    rebinds = []
+    for name, binding in sorted(surviving.items()):
+        if before.get(name) is binding:
+            continue
+        answer = binding.answer(surviving_scope)
+        if isinstance(answer, Incomplete):
+            continue
+        assert isinstance(answer, Complete)
+        rebinds.append(ScopeRebind(name, answer.value))
+    return tuple(rebinds)
+
+
+def _join_rebinds(scopes: tuple, before_ctx: object) -> tuple:
+    from sugar_lift_py_tests.floor import ScopeRebind
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+    if not scopes:
+        return ()
+    if len(scopes) == 1:
+        return _surviving_rebinds(scopes[0], before_ctx)
+
+    before = {binding.name: binding.value for binding in before_ctx.temporal.bindings}
+    face_maps = [
+        {binding.name: binding.value for binding in scope.temporal.bindings}
+        for scope in scopes
+    ]
+    common = set(face_maps[0])
+    for face in face_maps[1:]:
+        common &= set(face)
+    rebinds = []
+    for name in sorted(common):
+        face_bindings = [face[name] for face in face_maps]
+        if all(before.get(name) is binding for binding in face_bindings):
+            continue
+        answers = []
+        incomplete = False
+        for scope, binding in zip(scopes, face_bindings):
+            answer = binding.answer(scope)
+            if isinstance(answer, Incomplete):
+                incomplete = True
+                break
+            assert isinstance(answer, Complete)
+            answers.append(answer.value)
+        if incomplete:
+            continue
+        # Every surviving face bound the name. Prefer the first face (try body /
+        # first handler) as the post-try coordinate; branch-local record entries
+        # already carry polarity under py.except guards.
+        rebinds.append(ScopeRebind(name, answers[0]))
+    return tuple(rebinds)

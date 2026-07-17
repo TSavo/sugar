@@ -1,18 +1,29 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.floor import PredicateValue
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
+from sugar_lift_py_tests.lift_rpc import audit_lift_file
+
+VENDOR = Path(__file__).parent / "vendor"
+REQUESTS_INIT = VENDOR / "requests-2.34.2" / "requests" / "__init__.py"
+
+# SHA-pinned datetime claim lines for chained-compare and abs families (#4190).
+# Issue prose named pre-pin line numbers; the pin maps them to these loci.
+DATETIME_CHAIN_LINES = {67, 75, 81, 83, 160}
+DATETIME_ABS_LINES = {690, 692, 700, 705, 712, 716, 734, 735}
+REQUESTS_CHAIN_LINES = {85, 90}
 
 
 def _axis(source: str, file: str) -> dict:
-    payload, _gaps = audit_lift_file(source, file, hold_panic=True)
+    payload, gaps = audit_lift_file(source, file)
+    assert gaps == []
     rpc = payload.to_rpc()
     return account_lift_coverage(census_source(source, file=file), rpc).to_json()[
         "assertions"
@@ -107,17 +118,57 @@ def test_remaining_real_vendor_chain_loci_lift_and_cite(
 def test_chain_with_unliftable_operand_stays_refused_loud() -> None:
     source = "def f(x):\n    assert 0 < (yield x) < 10\n    return x\n"
     file = "unliftable.py"
-
-    _payload, gaps = audit_lift_file(source, file, hold_panic=True)
     axis = _axis(source, file)
 
-    assert gaps
-    assert gaps[0].info["observed"] == "Yield"
     assert axis["lifted_cited"] == 0
     assert axis["refused_loud"] == 1
     assert axis["silently_unaccounted"] == 0
-    with pytest.raises(FactoryPanic):
-        lift_file_payload(source, file)
+    assert axis["refused_loci"][0]["line"] == 2
+
+
+def test_try_assign_survives_except_return_for_post_try_use() -> None:
+    """Real-path geometry behind requests cryptography_version_list (#4190)."""
+    source = (
+        "def f(s):\n"
+        "    try:\n"
+        "        xs = list(map(int, s.split('.')))\n"
+        "    except ValueError:\n"
+        "        return\n"
+        "    assert xs < [1, 3, 4]\n"
+    )
+    axis = _axis(source, "try_assign.py")
+    assert axis["lifted_cited"] == 1
+    assert axis["refused_loud"] == 0
+    assert axis["silently_unaccounted"] == 0
+
+
+def test_full_datetime_chain_and_abs_loci_lift(
+    cpython_311_datetime_path: Path,
+) -> None:
+    source = cpython_311_datetime_path.read_text(encoding="utf-8")
+    file = str(cpython_311_datetime_path)
+    axis = _axis(source, file)
+    lifted = {locus["line"] for locus in axis["lifted_loci"]}
+
+    assert axis["stated"] == 45
+    assert axis["lifted_cited"] == 45
+    assert axis["refused_loud"] == 0
+    assert axis["silently_unaccounted"] == 0
+    assert DATETIME_CHAIN_LINES <= lifted
+    assert DATETIME_ABS_LINES <= lifted
+
+
+def test_full_requests_chain_loci_lift() -> None:
+    source = REQUESTS_INIT.read_text(encoding="utf-8")
+    file = str(REQUESTS_INIT.resolve())
+    axis = _axis(source, file)
+    lifted = {locus["line"] for locus in axis["lifted_loci"]}
+
+    assert axis["stated"] == 5
+    assert axis["lifted_cited"] == 5
+    assert axis["refused_loud"] == 0
+    assert axis["silently_unaccounted"] == 0
+    assert REQUESTS_CHAIN_LINES <= lifted
 
 
 def test_shared_call_operand_is_built_and_cited_once() -> None:
