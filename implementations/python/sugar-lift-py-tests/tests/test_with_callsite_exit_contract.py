@@ -17,22 +17,24 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     FloorValue,
     GuardedValue,
+    InvValue,
     ObjectMethodValue,
     ObjectValue,
     RaiseValue,
+    RaisesWithValue,
     ReturnValue,
     SymbolicValue,
     TermValue,
 )
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
-from sugar_lift_py_tests.ir import atomic, ctor, make_var
+from sugar_lift_py_tests.ir import atomic, ctor, make_var, py_raises
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.sugar.method_call_sugar import (
     _static_exit_suppression_contract,
 )
-from sugar_lift_py_tests.sugar.with_sugar import WithSugar
+from sugar_lift_py_tests.sugar.with_sugar import WithSugar, _entry_carries_raise
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -210,6 +212,25 @@ def test_guarded_manager_witness_truthful_sat_lying_unsat(tmp_path: Path) -> Non
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_nonraising_opaque_manager_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in WithSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "with_nonraising_opaque_manager"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_truthy_exact_exit_suppresses_raise_from_attached_manager_body() -> None:
     block = compose_block(
         "    with manager as entered:\n"
@@ -368,6 +389,29 @@ def test_unproven_exit_contract_keeps_named_floor_loud() -> None:
 
     assert raised.value.info.owner == "WithSugar"
     assert "__exit__" in raised.value.info.requested
+
+
+def test_nested_pytest_raises_does_not_escape_to_outer_manager() -> None:
+    block = compose_block(
+        "    with manager:\n"
+        "        with pytest.raises(ValueError):\n"
+        "            raise ValueError('boom')\n"
+        "    return 1\n",
+        binds={"manager": _opaque_manager_callsite(None)},
+    )
+
+    assert block.statements[-1] == ReturnValue(TermValue(1))
+
+
+def test_raises_with_value_is_a_consumed_raise_not_a_propagating_raise() -> None:
+    entry = RaisesWithValue(
+        raises_inv=InvValue(py_raises(ctor("python:type", [])), "inner.py:1"),
+        body_entries=(),
+        as_name=None,
+        as_value=None,
+    )
+
+    assert _entry_carries_raise(entry) is False
 
 
 def test_contextlib_suppress_constructs_named_static_contract() -> None:
