@@ -103,6 +103,11 @@ class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
 
         return TermValue(0).add(other, site)
 
+    def subtract(self, other, site):
+        from sugar_lift_py_tests.floor.term_value import TermValue
+
+        return TermValue(0).subtract(other, site)
+
     def is_identical(self, other, site):
         # False is a singleton: False is False folds True; False is True folds
         # False. Anything else emits identity (the general case).

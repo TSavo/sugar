@@ -31,6 +31,7 @@ from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+from sugar_lift_py_tests.sugar.subtract_op_sugar import SubtractOpSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -71,6 +72,33 @@ def test_string_subtract_panics_on_the_floor() -> None:
     sugar, ctx = _build_term('"a" - "b"')
     with pytest.raises(FactoryPanic, match="write more Floor"):
         sugar.desugar(ctx)
+
+
+def test_bool_subtraction_uses_python_integer_coordinates() -> None:
+    site = SourceFragment.from_source("False - value\n", "t.py").statements()[0]
+    value = SymbolicValue(make_var("value"))
+
+    assert FalseBoolLiteralSugar(site).subtract(value, site) == Complete(
+        SymbolicValue(ctor("-", [num(0), make_var("value")]))
+    )
+    assert TrueBoolLiteralSugar(site).subtract(TermValue(2), site) == Complete(
+        TermValue(-1)
+    )
+
+
+def test_bool_subtraction_truthful_and_lying_twins_refute(tmp_path) -> None:
+    pair = next(
+        pair for pair in SubtractOpSugar.witnesses() if pair.name == "bool_subtract"
+    )
+    truthful = run_source_through_real_solver(
+        tmp_path / "bool-subtract-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "bool-subtract-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_none_subtract_is_a_witnessed_type_error_boundary() -> None:
@@ -157,9 +185,7 @@ def test_requests_super_len_none_face_subtract_does_not_panic() -> None:
 
 
 def test_string_minus_opaque_call_result_is_a_witnessed_runtime_effect() -> None:
-    site = SourceFragment.from_source('"1" - runtime_right()\n', "t.py").statements()[
-        0
-    ]
+    site = SourceFragment.from_source('"1" - runtime_right()\n', "t.py").statements()[0]
     right = CallSiteValue(
         target_name="runtime_right",
         arg_values=(),
