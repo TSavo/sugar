@@ -125,8 +125,7 @@ def test_source_backed_imported_inherited_constructor_builds_base_fields(
     )
 
     outcome = _outcome(
-        "class Child(Base):\n"
-        "    pass\n",
+        "class Child(Base):\n" "    pass\n",
         "Child(7)",
         temporal=temporal,
     )
@@ -146,6 +145,120 @@ def test_unresolved_inherited_constructor_panics_instead_of_faking_runtime() -> 
 
     assert raised.value.info.owner == "ConstructorCallSugar"
     assert raised.value.info.requested == "statically resolved inherited constructor"
+    json.dumps(raised.value.info.to_json())
+
+
+def test_static_multiple_inheritance_mro_uses_left_base_init() -> None:
+    """RequestsCookieJar shape: class C(A, B) with A defining __init__."""
+    outcome = _outcome(
+        "class CookieJar:\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n"
+        "\n"
+        "class MutableMapping:\n"
+        "    pass\n"
+        "\n"
+        "class RequestsCookieJar(CookieJar, MutableMapping):\n"
+        "    pass\n",
+        "RequestsCookieJar(7)",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert outcome.value.class_name == "RequestsCookieJar"
+    assert _field_values(outcome.value) == {"value": TermValue(7)}
+
+
+def test_static_multiple_inheritance_mro_peels_generic_alias_bases() -> None:
+    """Exact requests spelling: MutableMapping[str, str | None] still MRO-heads."""
+    outcome = _outcome(
+        "class CookieJar:\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n"
+        "\n"
+        "class MutableMapping:\n"
+        "    pass\n"
+        "\n"
+        "class RequestsCookieJar(CookieJar, MutableMapping[str, str | None]):\n"
+        "    pass\n",
+        "RequestsCookieJar(9)",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert outcome.value.class_name == "RequestsCookieJar"
+    assert _field_values(outcome.value) == {"value": TermValue(9)}
+
+
+def test_static_diamond_mro_finds_shared_base_init() -> None:
+    outcome = _outcome(
+        "class A:\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n"
+        "\n"
+        "class B(A):\n"
+        "    pass\n"
+        "\n"
+        "class C(A):\n"
+        "    pass\n"
+        "\n"
+        "class D(B, C):\n"
+        "    pass\n",
+        "D(11)",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert outcome.value.class_name == "D"
+    assert _field_values(outcome.value) == {"value": TermValue(11)}
+
+
+def test_source_backed_multiple_inheritance_mro_uses_imported_left_init(
+    tmp_path, monkeypatch
+) -> None:
+    (tmp_path / "cookiejar_mod.py").write_text(
+        "class CookieJar:\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    temporal = TemporalContext.empty().bind_value(
+        "CookieJar",
+        ImportAliasValue(
+            "CookieJar",
+            "CookieJar",
+            import_target="cookiejar_mod.CookieJar",
+        ),
+    )
+
+    outcome = _outcome(
+        "class MutableMapping:\n"
+        "    pass\n"
+        "\n"
+        "class RequestsCookieJar(CookieJar, MutableMapping):\n"
+        "    pass\n",
+        "RequestsCookieJar(13)",
+        temporal=temporal,
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert outcome.value.class_name == "RequestsCookieJar"
+    assert _field_values(outcome.value) == {"value": TermValue(13)}
+
+
+def test_unresolved_multiple_inheritance_mro_stays_loud_construction_panic() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class Child(Left, Right):\n" "    pass\n",
+            "Child(1)",
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "statically resolved inherited constructor"
+    assert "multiple-inheritance MRO" in raised.value.info.fix
     json.dumps(raised.value.info.to_json())
 
 
