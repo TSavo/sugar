@@ -652,6 +652,193 @@ def resolve_contextmanager_exit_contract(import_target: str):
     return ExitSuppressionContract.suppresses((exception_name,))
 
 
+def resolve_source_exit_contract(
+    import_target: str, *, _stack: frozenset[str] = frozenset()
+):
+    """Dig a source-backed exit suppression contract for one qualified target.
+
+    Proven subset beyond the static coordinate table and ``@contextmanager``
+    generator shapes:
+
+    - A class whose exact ``__exit__`` body cannot return a truthy value proves
+      non-suppression (implicit ``None``, bare ``return``, ``return False`` /
+      ``return None`` only).
+    - A function whose only value-bearing ``return`` is a call to a target that
+      itself has a proven contract inherits that contract.
+    - A function whose return annotation names only local classes whose
+      ``__exit__`` methods prove the same disposition inherits that disposition.
+
+    Every other shape remains ``None`` so WithSugar stays loud. Never invent
+    non-suppression from missing evidence.
+    """
+    if not import_target or "." not in import_target or import_target in _stack:
+        return None
+    contract = resolve_contextmanager_exit_contract(import_target)
+    if contract is not None:
+        return contract
+    contract = resolve_class_exit_contract(import_target)
+    if contract is not None:
+        return contract
+    return resolve_function_return_exit_contract(
+        import_target, _stack=_stack | {import_target}
+    )
+
+
+def resolve_class_exit_contract(qualified_class: str):
+    """Prove exit disposition from an installed class's exact ``__exit__`` body."""
+    exit_fn = resolve_install_source_class_method(qualified_class, "__exit__")
+    if exit_fn is None or not isinstance(exit_fn.node, ast.FunctionDef):
+        return None
+    return _exit_method_suppression_contract(exit_fn.node)
+
+
+def resolve_function_return_exit_contract(
+    import_target: str, *, _stack: frozenset[str] = frozenset()
+):
+    """Inherit a proven exit contract from a function's source returns/annotation."""
+    fn = resolve_install_source_funcdef(import_target)
+    if fn is None or not isinstance(fn.node, ast.FunctionDef):
+        return None
+    definition = fn.node
+    module_name = (
+        getattr(definition, "_sugar_defining_module", None)
+        or import_target.rsplit(".", 1)[0]
+    )
+    return_contracts = []
+    returns_unproved = False
+    for node in _direct_method_returns(definition):
+        if node.value is None:
+            continue
+        if not isinstance(node.value, ast.Call):
+            returns_unproved = True
+            break
+        target = _qualified_call_func_name(node.value.func, module_name, definition)
+        if target is None:
+            returns_unproved = True
+            break
+        contract = resolve_source_exit_contract(target, _stack=_stack)
+        if contract is None:
+            returns_unproved = True
+            break
+        return_contracts.append(contract)
+    if return_contracts and not returns_unproved:
+        head = return_contracts[0]
+        if all(contract == head for contract in return_contracts):
+            return head
+    # Call-return proof failed or was empty: annotation may still name the
+    # constructed manager class whose digged ``__exit__`` is decidable.
+    return _annotation_class_exit_contract(definition, module_name, _stack=_stack)
+
+
+def _exit_method_suppression_contract(definition: ast.FunctionDef):
+    """Prove non-suppression when ``__exit__`` cannot return a truthy value.
+
+    A truthy ``return`` (including ``return True`` and every non-constant
+    expression) stays unproved: suppression would require reducing the exact
+    method body, not this static disposition contract. Nested function/class
+    bodies are ignored — only the method's own control flow decides exit.
+    """
+    from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
+
+    for node in _direct_method_returns(definition):
+        if node.value is None:
+            continue
+        if isinstance(node.value, ast.Constant) and node.value.value in (False, None):
+            continue
+        if isinstance(node.value, ast.Name) and node.value.id in {"False", "None"}:
+            continue
+        return None
+    return ExitSuppressionContract.never_suppresses()
+
+
+def _direct_method_returns(definition: ast.FunctionDef):
+    """Yield ``return`` nodes owned by ``definition``, not nested defs/classes."""
+
+    def walk(node: ast.AST):
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            return
+        if isinstance(node, ast.Return):
+            yield node
+            return
+        for child in ast.iter_child_nodes(node):
+            if isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+            ):
+                continue
+            yield from walk(child)
+
+    for statement in definition.body:
+        yield from walk(statement)
+
+
+def _annotation_class_exit_contract(
+    definition: ast.FunctionDef,
+    module_name: str,
+    *,
+    _stack: frozenset[str],
+):
+    if definition.returns is None:
+        return None
+    names = _annotation_class_names(definition.returns)
+    if not names:
+        return None
+    contracts = []
+    for name in names:
+        if name in {"Any", "None", "NoneType"}:
+            continue
+        contract = resolve_class_exit_contract(f"{module_name}.{name}")
+        if contract is None:
+            return None
+        contracts.append(contract)
+    if not contracts:
+        return None
+    head = contracts[0]
+    if all(contract == head for contract in contracts):
+        return head
+    return None
+
+
+def _annotation_class_names(node: ast.expr) -> tuple[str, ...] | None:
+    if isinstance(node, ast.Name):
+        return (node.id,)
+    if isinstance(node, ast.Attribute):
+        dotted = _dotted_ast_name(node)
+        return (dotted,) if dotted is not None else None
+    if isinstance(node, ast.Constant) and node.value is None:
+        return ("None",)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        left = _annotation_class_names(node.left)
+        right = _annotation_class_names(node.right)
+        if left is None or right is None:
+            return None
+        return (*left, *right)
+    if isinstance(node, ast.Subscript):
+        return _annotation_class_names(node.value)
+    return None
+
+
+def _qualified_call_func_name(
+    func: ast.expr, module_name: str, definition: ast.FunctionDef
+) -> str | None:
+    """Resolve a returned call's callee to a module-qualified source target."""
+    del definition
+    if isinstance(func, ast.Name):
+        return f"{module_name}.{func.id}"
+    if isinstance(func, ast.Attribute):
+        dotted = _dotted_ast_name(func)
+        if dotted is None:
+            return None
+        # ``mod.attr`` where ``mod`` is this defining package alias stays as-is
+        # when already dotted; bare ``pkg.fn`` is already qualified enough for
+        # install-source resolution.
+        if "." in dotted:
+            return dotted
+        return f"{module_name}.{dotted}"
+    return None
+
+
 def _is_contextmanager_definition(
     definition: ast.FunctionDef, module: ast.Module
 ) -> bool:
