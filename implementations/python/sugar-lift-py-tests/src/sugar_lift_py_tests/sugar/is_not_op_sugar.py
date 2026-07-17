@@ -43,11 +43,26 @@ class IsNotOpSugar(Sugar, role=SugarRole.TERM):
             "    return 0\n"
             "\n"
         )
-        return _call_pair(
-            name="is_not_return",
-            owner_sugar="IsNotOpSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        ground_string_prefix = (
+            "def A():\n" "    return 1 if 'label' is not None else 2\n" "\n"
+        )
+        return (
+            _call_pair(
+                name="is_not_return",
+                owner_sugar="IsNotOpSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            _call_pair(
+                name="ground_string_is_not_none",
+                owner_sugar="IsNotOpSugar",
+                truthful=ground_string_prefix
+                + "def test_a():\n"
+                + "    assert A() == 1\n",
+                lying=ground_string_prefix
+                + "def test_a():\n"
+                + "    assert A() == 2\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

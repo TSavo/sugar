@@ -5,6 +5,7 @@ singletons (None, True, False); symbolic cases emit ir.identity."""
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 
 from factory_reduce import reduce_value
 
@@ -29,7 +30,10 @@ from sugar_lift_py_tests.ir import (
 )
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+from sugar_lift_py_tests.sugar.is_not_op_sugar import IsNotOpSugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _universe(source: str) -> UniverseValue:
@@ -54,6 +58,33 @@ def test_none_is_not_none_folds_false() -> None:
 def test_constructed_tuple_is_not_none_folds_true() -> None:
     value = reduce_value("(5, 3, 3) is not None")
     assert isinstance(value, TrueBoolLiteralSugar)
+
+
+def test_constructed_string_identity_against_none_is_decidable() -> None:
+    assert isinstance(reduce_value("'label' is None"), FalseBoolLiteralSugar)
+    assert isinstance(reduce_value("'label' is not None"), TrueBoolLiteralSugar)
+
+
+def test_ifexp_selects_from_constructed_string_identity() -> None:
+    assert reduce_value("1 if 'label' is not None else 2") == TermValue(1)
+
+
+def test_ground_string_is_not_none_witness_refutes_wrong_twin(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in IsNotOpSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "ground_string_is_not_none"
+    )
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_exact_builtin_type_identity_folds_by_type_coordinate() -> None:
