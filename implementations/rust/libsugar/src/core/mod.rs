@@ -18,6 +18,7 @@
 //! composition obligations. `commit` is `compose(parent, change)` followed by
 //! `sign`.
 
+pub mod lift_canonical;
 pub mod primitives;
 pub mod stubs;
 pub mod traits;
@@ -25,6 +26,7 @@ pub mod types;
 pub mod verbs;
 pub mod walks;
 
+pub use lift_canonical::strip_realize_sidecar_from_lift_term;
 pub use primitives::{address, compose, resolve, sign, verify_sig, ComposeError, SigningKey};
 pub use stubs::{CKit, FunctionContractDomain, NoopPortfolio, RustKit};
 pub use traits::{
