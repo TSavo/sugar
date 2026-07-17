@@ -12,15 +12,22 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-from sugar_lift_py_tests.floor import StringValue
+from sugar_lift_py_tests.floor import (
+    NativeCallableValue,
+    StringValue,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.effect import SequenceConcatenationRuntimeEffect
-from sugar_lift_py_tests.floor import OpaqueOpCallsite, SymbolicValue
-from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.floor import OpaqueOpCallsite
+from sugar_lift_py_tests.ir import ctor, make_var, num
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+from sugar_lift_py_tests.sugar.add_op_sugar import AddOpSugar
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _condition(source: str):
@@ -74,3 +81,38 @@ def test_add_mixed_number_string_panics() -> None:
     sugar, ctx = _build_term('3 + "a"')
     with pytest.raises(FactoryPanic):
         sugar.desugar(ctx)
+
+
+def test_bool_addition_uses_python_integer_coordinates() -> None:
+    site = SourceFragment.from_source("False + value\n", "t.py").statements()[0]
+    value = SymbolicValue(make_var("value"))
+
+    assert FalseBoolLiteralSugar(site).add(value, site) == Complete(
+        SymbolicValue(ctor("+", [num(0), make_var("value")]))
+    )
+    assert TrueBoolLiteralSugar(site).add(TermValue(2), site) == Complete(TermValue(3))
+
+
+def test_native_nat_addition_without_tdlike_evidence_stays_loud() -> None:
+    site = SourceFragment.from_source("NaT + obj\n", "t.py").statements()[0]
+
+    with pytest.raises(FactoryPanic, match="owner=add"):
+        NativeCallableValue("pandas._libs.tslibs.nattype.NaT", "/native/pandas.so").add(
+            SymbolicValue(make_var("obj")), site
+        )
+
+
+def test_bool_addition_truthful_and_lying_twins_refute(tmp_path) -> None:
+    pair = next(pair for pair in AddOpSugar.witnesses() if pair.name == "bool_add")
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "bool-add-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "bool-add-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+    assert "AddOpSugar" in truthful.selected_sugars
+    assert "AddOpSugar" in lying.selected_sugars
