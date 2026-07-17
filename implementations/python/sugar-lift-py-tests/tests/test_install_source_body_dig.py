@@ -2,6 +2,7 @@
 """Install-source body dig: CallSugar attaches body when resolve succeeds."""
 
 from __future__ import annotations
+from pathlib import Path
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 import pytest
@@ -299,6 +300,76 @@ def test_sequential_dig_constructs_guarded_raise_with_fallback() -> None:
     assert outcome.value.guard == guard
     assert "py.exceptional_exit" in repr(outcome.value.when_true.to_term(owner="test"))
     assert outcome.value.when_false == TermValue(7)
+
+
+def test_sequential_dig_constructs_terminal_raise_fallback() -> None:
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.floor import BlockValue, GuardedReturn, RaiseValue
+    from sugar_lift_py_tests.floor.exception_value import ExceptionValue
+    from sugar_lift_py_tests.floor.exceptional_exit_value import ExceptionalExitValue
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import atomic, make_var, num
+    from sugar_lift_py_tests.outcome import Complete
+
+    guard = atomic("py.eq", [make_var("kind"), num(1)])
+    raised = RaiseEffect("AssertionError", "vendor/repro.py:4:4", "0" * 64)
+
+    class _GuardedReturnStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                BlockValue((GuardedReturn(guards=(guard,), value=TermValue(7)),))
+            )
+
+    class _TerminalRaiseStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                RaiseValue(
+                    raised,
+                    exception=ExceptionValue("AssertionError", (), "vendor/repro.py"),
+                )
+            )
+
+    outcome = SequentialDigBody(
+        (_GuardedReturnStatement(), _TerminalRaiseStatement())
+    ).desugar()
+
+    assert outcome.value == GuardedValue(
+        guard,
+        TermValue(7),
+        ExceptionalExitValue(raised),
+    )
+
+
+def test_sequential_dig_terminal_raise_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+
+    prefix = (
+        "def A(z):\n"
+        "    if z == 0:\n"
+        "        return 7\n"
+        "    raise ValueError('bad')\n"
+        "\n"
+    )
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful",
+        prefix + "def test_a():\n    assert A(0) == 7\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying",
+        prefix + "def test_a():\n    assert A(0) == 8\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
 
 
 def test_sequential_dig_guarded_raise_with_state_stays_loud() -> None:
