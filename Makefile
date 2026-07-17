@@ -70,6 +70,7 @@ help:
 	@echo "  make showcase-verdict-scoreboard  Lane A: classify showcase log → A2 residue"
 	@echo "  make showcase-bulk-refuse-class   Lane A: prove/durable vacuity parity instrument"
 	@echo "  make test-python-format       Black check for implementations/python"
+	@echo "  make test-claim-mass-tripwires fast per-corpus source-accounting pins (#4266)"
 	@echo "  make test-<lang>              csharp / php / c"
 	@echo "  make test-compiler-warning-de compiler-warning delta-epsilon instrument"
 	@echo ""
@@ -334,6 +335,19 @@ test-python-format:
 	$(PYTHON_KIT_PIP) install --quiet --upgrade pip
 	$(PYTHON_KIT_PIP) install --quiet --no-cache-dir -e implementations/python/sugar-lift-py-tests[test]
 	$(PYTHON_KIT) -m black --check $(PYTHON_FORMAT_PATHS)
+
+# Fast claim-mass tripwires (#4266): datetime, itsdangerous, pandas slice,
+# numpy slice, requests recognition slice. Seconds, not wall-scale. Silent
+# must stay 0; lifted loci cannot disappear without a loud pin update.
+.PHONY: test-claim-mass-tripwires
+test-claim-mass-tripwires:
+	$(PYTHON) -m venv $(PYTHON_KIT_VENV)
+	$(PYTHON_KIT_PIP) install --quiet --upgrade pip
+	$(PYTHON_KIT_PIP) install --quiet --no-cache-dir \
+		-e implementations/python/sugar-lift-python-source \
+		-e implementations/python/sugar-lift-py-tests[test]
+	cd implementations/python/sugar-lift-py-tests && \
+		$(abspath $(PYTHON_KIT)) -m pytest -q tests/test_claim_mass_tripwires.py
 
 .PHONY: test-php
 test-php:
@@ -615,14 +629,14 @@ test-3809-dod-scoreboard:
 # `coretests-source-audit` is the bulk measuring stick (R = unresolved loci);
 # keep it offline/instrument until R is driven to 0 — a permanent R>0 red in
 # default CI is a gate wearing a scoreboard vest (see docs/analysis/ci-whack-a-mole-*).
-ci: check-lift-refusal-vocabulary test-python-format test-showcases self-attest coretests-invariants
+ci: check-lift-refusal-vocabulary test-python-format test-claim-mass-tripwires test-showcases self-attest coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
 
 .PHONY: ci-core
 # The non-showcase portion of the acid test. GitHub Actions runs this beside
 # deterministic showcase shards; `ci` remains the one-command local surface.
-ci-core: check-lift-refusal-vocabulary test-python-format self-attest coretests-invariants
+ci-core: check-lift-refusal-vocabulary test-python-format test-claim-mass-tripwires self-attest coretests-invariants
 	@echo ""
 	@echo "==== ci-core: PASS ===="
 
