@@ -43,3 +43,10 @@ class ExceptionalExitValue(FloorValue):
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(self)
+
+    def subscript(self, index, site):
+        """Keep a selected exceptional path halted across subscripting."""
+        del index, site
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(self)

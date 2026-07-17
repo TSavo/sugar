@@ -33,6 +33,14 @@ def test_add_propagates_an_already_selected_exceptional_exit() -> None:
     assert outcome == Complete(exceptional)
 
 
+def test_subscript_propagates_an_already_selected_exceptional_exit() -> None:
+    exceptional = _exceptional_exit()
+
+    outcome = exceptional.subscript(TermValue(0), "subscript.py:1")
+
+    assert outcome == Complete(exceptional)
+
+
 def test_ground_subtraction_wrong_twin_remains_an_arithmetic_value() -> None:
     outcome = TermValue(4).subtract(TermValue(1), "subtract.py:1")
 
@@ -43,6 +51,14 @@ def test_ground_addition_wrong_twin_remains_an_arithmetic_value() -> None:
     outcome = TermValue(4).add(TermValue(1), "add.py:1")
 
     assert outcome == Complete(TermValue(5))
+
+
+def test_ground_subscript_wrong_twin_remains_a_sequence_element() -> None:
+    from sugar_lift_py_tests.floor import ListValue
+
+    outcome = ListValue((TermValue(4),)).subscript(TermValue(0), "subscript.py:1")
+
+    assert outcome == Complete(TermValue(4))
 
 
 def test_exceptional_exit_addition_truthful_and_lying_refute(tmp_path) -> None:
