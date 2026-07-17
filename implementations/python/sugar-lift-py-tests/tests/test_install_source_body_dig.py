@@ -223,6 +223,43 @@ def test_sequential_dig_constructs_guarded_early_return_with_fallback() -> None:
     assert outcome.value == GuardedValue(guard, TermValue(7), TermValue(0))
 
 
+def test_sequential_dig_constructs_exhaustive_nested_guarded_returns() -> None:
+    from sugar_lift_py_tests.floor import BlockValue
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import make_var, not_
+    from sugar_lift_py_tests.outcome import Complete
+
+    outer = make_var("is_frame")
+    inner = make_var("is_empty")
+
+    class _ExhaustiveNestedReturnStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                BlockValue(
+                    (
+                        GuardedReturn((outer, inner), TermValue(1)),
+                        GuardedReturn((outer, not_(inner)), TermValue(2)),
+                        GuardedReturn((not_(outer),), TermValue(3)),
+                    ),
+                    can_fall_through=False,
+                )
+            )
+
+    outcome = SequentialDigBody((_ExhaustiveNestedReturnStatement(),)).desugar()
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == GuardedValue(
+        outer,
+        GuardedValue(inner, TermValue(1), TermValue(2)),
+        TermValue(3),
+    )
+
+
 def test_sequential_dig_constructs_guarded_raise_with_fallback() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
     from sugar_lift_py_tests.floor import BlockValue, GuardedRaise
