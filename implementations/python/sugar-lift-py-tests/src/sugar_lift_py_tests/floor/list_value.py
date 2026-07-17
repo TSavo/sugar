@@ -118,6 +118,25 @@ class ListValue(FloorValue):
             runtime_count_kind = "integer-warranted len(...) result"
         elif type(other) is CallSiteValue and other.target_name == "ndim":
             runtime_count_kind = "integer-warranted callsite ndim"
+        elif type(other) is CallSiteValue and other.target_name == "nlevels":
+            # pandas Index.nlevels is an integer-valued data-model property.
+            # Its value depends on the runtime index, but its __index__ warrant
+            # does not.
+            runtime_count_kind = "integer-warranted callsite nlevels"
+        elif (
+            type(other) is CallSiteValue
+            and other.target_name == "min"
+            and len(other.arg_values) == 2
+            and type(other.arg_values[0]) is CallSiteValue
+            and other.arg_values[0].target_name == "abs"
+            and len(other.arg_values[0].arg_values) == 1
+            and type(other.arg_values[1]) is OpaqueOpCallsite
+            and other.arg_values[1].callee == "len"
+        ):
+            # min(abs(periods), len(...)) is the pandas shift-count shape:
+            # both arms are integer-valued, while the selected count remains
+            # genuinely runtime-dependent.
+            runtime_count_kind = "integer-warranted callsite min"
         elif (
             type(other) is CallSiteValue
             and other.target_name == "max"
@@ -140,6 +159,30 @@ class ListValue(FloorValue):
                     f"sequence repetition by {runtime_count_kind}: ListValue depends "
                     f"on runtime __index__/length semantics; site={site}",
                     **runtime_effect_evidence("py.sequence_repeat", other, site),
+                )
+            )
+        if (
+            type(other) is CallSiteValue
+            and other.target_name == "pandas._testing.box_expected"
+            and len(other.arg_values) == 2
+            and type(other.arg_values[0]) is CallSiteValue
+            and other.arg_values[0].target_name == "numpy.array"
+        ):
+            # box_expected(array, box) selects an ndarray/Index/Series face.
+            # Every face owns native elementwise multiplication; this is not
+            # Python sequence repetition by an unproved count.
+            from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                SymbolicValue(
+                    ctor(
+                        "*",
+                        [
+                            self.to_term(owner=str(site)),
+                            other.to_term(owner=str(site)),
+                        ],
+                    )
                 )
             )
         return super().multiply(other, site)

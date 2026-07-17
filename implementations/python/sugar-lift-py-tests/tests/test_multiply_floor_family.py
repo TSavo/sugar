@@ -23,9 +23,11 @@ from sugar_lift_py_tests.floor import (
     StringValue,
     SymbolicValue,
     TermValue,
+    TupleValue,
 )
+from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.ir import atomic, ctor, make_var, num
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar.multiply_op_sugar import MultiplyOpSugar
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
@@ -343,6 +345,162 @@ def test_integer_warranted_callsite_is_a_runtime_list_repetition_count(
     assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
     assert "integer-warranted callsite" in outcome.reason
     assert outcome.effect.witness.operand == count.term
+
+
+@pytest.mark.parametrize(
+    "count",
+    (
+        CallSiteValue(
+            target_name="nlevels",
+            arg_values=(SymbolicValue(make_var("index")),),
+            parameters=(),
+            term=ctor("call:nlevels", [make_var("index")]),
+            body=None,
+            site=_SITE,
+        ),
+        CallSiteValue(
+            target_name="min",
+            arg_values=(
+                CallSiteValue(
+                    target_name="abs",
+                    arg_values=(SymbolicValue(make_var("periods")),),
+                    parameters=(),
+                    term=ctor("call:abs", [make_var("periods")]),
+                    body=None,
+                    site=_SITE,
+                ),
+                OpaqueOpCallsite(
+                    callee="len",
+                    arg=SymbolicValue(make_var("items")),
+                    computed=None,
+                ),
+            ),
+            parameters=(),
+            term=ctor(
+                "call:min",
+                [
+                    ctor("call:abs", [make_var("periods")]),
+                    ctor("call:len", [make_var("items")]),
+                ],
+            ),
+            body=None,
+            site=_SITE,
+        ),
+    ),
+)
+def test_integer_warranted_residual_callsite_is_runtime_sequence_count(
+    count: CallSiteValue,
+) -> None:
+    outcome = ListValue((TermValue(7),)).multiply(count, _SITE)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert outcome.effect.witness.operand == count.term
+
+
+def test_pandas_box_expected_array_result_uses_native_multiply_coordinate() -> None:
+    boxed = CallSiteValue(
+        target_name="pandas._testing.box_expected",
+        arg_values=(
+            CallSiteValue(
+                target_name="numpy.array",
+                arg_values=(ListValue((TermValue(3), TermValue(4))),),
+                parameters=(),
+                term=ctor("call:numpy.array", [ctor("array", [num(3), num(4)])]),
+                body=None,
+                site=_SITE,
+            ),
+            SymbolicValue(make_var("box_with_array")),
+        ),
+        parameters=(),
+        term=ctor(
+            "call:pandas._testing.box_expected", [make_var("array"), make_var("box")]
+        ),
+        body=None,
+        site=_SITE,
+    )
+
+    outcome = ListValue((TermValue(1), TermValue(2))).multiply(boxed, _SITE)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == SymbolicValue(
+        ctor(
+            "*",
+            [
+                ctor("array", [num(1), num(2)]),
+                boxed.term,
+            ],
+        )
+    )
+
+
+def test_numeric_multiply_distributes_over_guarded_receiver() -> None:
+    guarded = GuardedValue(
+        atomic("is_range_index", []),
+        SymbolicValue(make_var("range_index")),
+        SymbolicValue(make_var("index")),
+    )
+
+    outcome = TermValue(3.2).multiply(guarded, _SITE)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, GuardedValue)
+
+
+def test_numpy_maxdims_is_a_static_tuple_repetition_count() -> None:
+    module = ImportAliasValue(
+        name="numpy._core._multiarray_umath",
+        bound_name="ncu",
+    )
+    count = CallSiteValue(
+        target_name="MAXDIMS",
+        arg_values=(module,),
+        parameters=(),
+        term=ctor("call:MAXDIMS", [module.to_term(owner="test")]),
+        body=None,
+        site=_SITE,
+    )
+
+    outcome = TupleValue((TermValue(1),)).multiply(count, _SITE)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == TupleValue((TermValue(1),) * 64)
+
+
+def test_unrelated_maxdims_coordinate_stays_a_loud_tuple_gap() -> None:
+    module = ImportAliasValue(name="vendor.runtime", bound_name="vendor")
+    count = CallSiteValue(
+        target_name="MAXDIMS",
+        arg_values=(module,),
+        parameters=(),
+        term=ctor("call:MAXDIMS", [module.to_term(owner="test")]),
+        body=None,
+        site=_SITE,
+    )
+
+    with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
+        TupleValue((TermValue(1),)).multiply(count, _SITE)
+
+
+def test_numpy_maxdims_tuple_repetition_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in MultiplyOpSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "numpy_maxdims_tuple_repetition_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "numpy-maxdims-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "numpy-maxdims-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_unwarranted_callsite_remains_a_loud_list_repetition_gap() -> None:

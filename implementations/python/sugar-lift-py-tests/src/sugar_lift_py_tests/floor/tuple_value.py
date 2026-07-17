@@ -144,9 +144,24 @@ class TupleValue(FloorValue):
         )
 
     def multiply(self, other, site):
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.term_value import TermValue
 
+        if (
+            type(other) is CallSiteValue
+            and other.target_name == "MAXDIMS"
+            and len(other.arg_values) == 1
+            and type(other.arg_values[0]) is ImportAliasValue
+            and (
+                other.arg_values[0].name == "numpy._core._multiarray_umath"
+                or other.arg_values[0].import_target == "numpy._core._multiarray_umath"
+            )
+        ):
+            # NumPy 2.x publishes NPY_MAXDIMS as the source-owned MAXDIMS
+            # module constant. This is a static vendor pin, not a runtime count.
+            other = TermValue(64)
         if type(other) is TermValue and type(other.value) is int:
             from sugar_lift_py_tests.floor.ground_sequence_repetition_value import (
                 GroundSequenceRepetitionValue,
