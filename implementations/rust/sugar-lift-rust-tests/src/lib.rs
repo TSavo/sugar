@@ -25937,6 +25937,55 @@ fn t() {
     }
 
     #[test]
+    fn forall_binds_nested_tuple_pattern_over_copied_sequence() {
+        let src = r#"
+            #[test]
+            fn nested_tuple_loop() {
+                for ((left, right), expected) in
+                    [((1_i64, 2_i64), 3_i64), ((4_i64, 5_i64), 9_i64)]
+                        .iter()
+                        .copied()
+                {
+                    assert_eq!(left + right, expected);
+                }
+            }
+        "#;
+
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the forall owner must bind every nested tuple leaf over the materialized sequence: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons.is_empty(),
+            "a fully matched tuple construction must not leave a gap: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn forall_tuple_rest_pattern_still_reaches_factory_backstop() {
+        let result = std::panic::catch_unwind(|| {
+            lift_src(
+                r#"
+                    #[test]
+                    fn tuple_rest_loop() {
+                        for (head, ..) in [(1_i64, 2_i64, 3_i64)] {
+                            assert_eq!(head, 1_i64);
+                        }
+                    }
+                "#,
+            )
+        });
+
+        assert!(
+            result.is_err(),
+            "an unclassified tuple-rest binding is factory work and must remain loud"
+        );
+    }
+
+    #[test]
     fn for_replay_const_if_local_drains_simple_loop_shape() {
         let src = r#"
             #[test]
