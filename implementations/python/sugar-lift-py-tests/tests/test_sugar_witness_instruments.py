@@ -1395,10 +1395,12 @@ def test_boolop_literal_residue_lie_lowers_to_concrete_false_operand(
     assert _formula_contains_eq_value(assertion["inv"], False, True)
 
 
-# #4398 / #4387 residual: grounded primitive / control-flow vendor posts must
+# #4398 / #4387: grounded primitive / control-flow / data-ctor vendor posts must
 # refute lies (truthful SAT / lying UNSAT). SequentialDigBody must not pin a
-# fall-through return past a taken early return (#4387). Residual corpus seeds
-# stay under #4387 siblings (keyword_call_return, dunder hash, etc.).
+# fall-through return past a taken early return. CallSiteValue.derived residue
+# must pin ground data ctors (None / py.ellipsis / py.complex) so EUF duals
+# fire. Residual corpus seeds stay under #4387 (keyword_call_return, dunder
+# hash, module/type names, construction panics, …).
 _GROUNDED_PRIMITIVE_REFUTE_SEEDS = (
     "abs_return",
     "bare_return_none",

@@ -214,9 +214,16 @@ class CallSiteValue(FloorValue):
         The function universe already owns the body post.  Equality testimony
         additionally needs the callsite-keyed residue so the stated assertion
         and the derived value remain independently visible at the EUF join.
-        Only a single ``out = literal`` post is a derived value pin; opaque,
-        effectful, symbolic, and multi-exit bodies stay absent and therefore
-        loud at the existing refusal/gap boundary.
+        Only a single ``out = ground-value`` post is a derived value pin;
+        opaque, effectful, symbolic, and multi-exit bodies stay absent and
+        therefore loud at the existing refusal/gap boundary.
+
+        Ground values are primitive consts *and* data constructors the
+        verifier treats as structural values (``None``, ``py.ellipsis``,
+        ``py.complex``, tuples/arrays/… — see ``_is_ground_value_term``).
+        That parity is load-bearing: without a callsite-keyed Derived dual,
+        ``assert A() == None`` against a body that returns ``...`` soft-SATs
+        (#4387 ellipsis E2E residue).
         """
         floor = self._dig_floor_or_none(
             ctx,
@@ -228,15 +235,10 @@ class CallSiteValue(FloorValue):
 
         from sugar_lift_py_tests.ir import (
             _Atomic,
-            _ConstBool,
-            _ConstInt,
-            _ConstReal,
-            _ConstStr,
             _Var,
             eq,
         )
 
-        literal_types = (_ConstBool, _ConstInt, _ConstReal, _ConstStr)
         if not posts:
             rhs = floor.to_term(owner="CallSiteValue.derived_equality_residue")
         elif len(posts) == 1:
@@ -252,7 +254,7 @@ class CallSiteValue(FloorValue):
             rhs = post.args[1]
         else:
             return None
-        if not isinstance(rhs, literal_types):
+        if not _is_ground_value_term(rhs):
             return None
         return eq(self.term, rhs)
 
@@ -724,6 +726,53 @@ def _project_callsite_floor(
     # Currying is already recorded by curry_temporal. Projection contributes
     # proof/callsite state but must not fabricate a second operation event.
     del floor, ctx, owner, target_name, arg_values
+
+
+# Data constructors the verifier treats as structural *values* (not operators /
+# callsites). Must stay aligned with sugar-verifier `is_ground_data_ctor_name`
+# so Derived residue duals refuse the same ground faces structurally.
+_GROUND_DATA_CTOR_NAMES = frozenset(
+    {
+        "tuple",
+        "array",
+        "None",
+        "py.complex",
+        "py.ellipsis",
+        "python:dict",
+        "python:dict_entry",
+        "python:set",
+        "python:frozenset",
+        "python:bytes",
+        "python:bytearray",
+        "python:list",
+        "python:tuple",
+    }
+)
+
+
+def _is_ground_value_term(term) -> bool:
+    """True when ``term`` is a structural ground value for Derived EUF residue.
+
+    Mirrors sugar-verifier ``is_const_value``: primitive consts, plus ground
+    data constructors whose args are themselves ground. Operator/callsite
+    ctors (``+``, ``call:…``, ``py.attr``, …) stay out so dig residue cannot
+    invent a dual that structural consistency would not refuse.
+    """
+    from sugar_lift_py_tests.ir import (
+        _ConstBool,
+        _ConstInt,
+        _ConstReal,
+        _ConstStr,
+        _Ctor,
+    )
+
+    if isinstance(term, (_ConstBool, _ConstInt, _ConstReal, _ConstStr)):
+        return True
+    if not isinstance(term, _Ctor):
+        return False
+    if term.name not in _GROUND_DATA_CTOR_NAMES:
+        return False
+    return all(_is_ground_value_term(arg) for arg in term.args)
 
 
 def _force_floor_gap(
