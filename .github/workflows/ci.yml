@@ -41,6 +41,9 @@ jobs:
         with:
           mode: seed
 
+      - name: Check apt installed-package fast path
+        run: tools/test-ci-apt-install.sh
+
       - name: Install sugarbin hashing dependency
         run: tools/ci-apt-install.sh b3sum
 
