@@ -93,6 +93,16 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
             "        return 7\n"
             "\n"
         )
+        source_body_prefix = (
+            "class IndexType:\n"
+            "    def __init__(self, dtype):\n"
+            "        name = f'index({dtype})'\n"
+            "        self.name = name\n"
+            "\n"
+            "def D():\n"
+            "    return IndexType('int64').name\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="constructor_field_return",
@@ -125,6 +135,17 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
                 + "def test_inherited():\n"
                 + "    assert RandomReader(b'seeded').marker() == 8\n",
                 family="source-native-base-constructor",
+            ),
+            _call_pair(
+                name="source_body_constructor_local_assignment",
+                owner_sugar=cls.__name__,
+                truthful=source_body_prefix
+                + "def test_source_body():\n"
+                + "    assert D() == 'index(int64)'\n",
+                lying=source_body_prefix
+                + "def test_source_body():\n"
+                + "    assert D() == 'index(float64)'\n",
+                family="source-body-constructor",
             ),
         )
 
@@ -282,6 +303,12 @@ def _strategy_from_init(
     )
     if bytesio is not None:
         return bytesio
+    if _source_initializer_needs_statement_door(init, params[0]):
+        source_strategy = _source_body_constructor_strategy(
+            site, ctx, target, init, methods, class_fields
+        )
+        if source_strategy is not None:
+            return source_strategy
     fields = []
     for stmt in init.function_body():
         if (
@@ -333,6 +360,53 @@ def _strategy_from_init(
         class_fields=class_fields,
         identity=site.blame,
     )
+
+
+def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
+    """Admit the exact ordinary-statement initializer subset.
+
+    The field-only fast path cannot carry a local assignment into a later
+    ``self`` assignment. Route that decidable data flow through the existing
+    source-body constructor. The only expression admitted is the exact
+    zero-argument ``super().__init__(...)`` tail; arbitrary calls stay loud.
+    """
+
+    saw_local_assignment = False
+    for statement in init.function_body():
+        node = statement.node
+        if (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            continue
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name):
+                saw_local_assignment = True
+                continue
+            if (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == receiver_name
+            ):
+                continue
+            return False
+        if (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and not node.value.keywords
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "__init__"
+            and isinstance(node.value.func.value, ast.Call)
+            and isinstance(node.value.func.value.func, ast.Name)
+            and node.value.func.value.func.id == "super"
+            and not node.value.func.value.args
+            and not node.value.func.value.keywords
+        ):
+            continue
+        return False
+    return saw_local_assignment
 
 
 def _source_bytesio_strategy(

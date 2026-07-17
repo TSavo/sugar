@@ -95,6 +95,43 @@ def test_assignment_constructor_binds_trailing_positional_default() -> None:
     }
 
 
+def test_source_initializer_threads_local_assignment_into_self_fields() -> None:
+    outcome = _outcome(
+        "class IndexType:\n"
+        "    def __init__(self, dtype, layout, pyclass):\n"
+        "        self.pyclass = pyclass\n"
+        "        name = f'index({dtype}, {layout})'\n"
+        "        self.name = name\n"
+        "        self.dtype = dtype\n"
+        "        self.layout = layout\n",
+        "IndexType('int64', 'C', 'Index')",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert _field_values(outcome.value) == {
+        "pyclass": StringValue("Index"),
+        "name": StringValue("index(int64, C)"),
+        "dtype": StringValue("int64"),
+        "layout": StringValue("C"),
+    }
+
+
+def test_source_initializer_with_arbitrary_expression_stays_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class IndexType:\n"
+            "    def __init__(self, dtype):\n"
+            "        name = f'index({dtype})'\n"
+            "        self.name = name\n"
+            "        unknown(self)\n",
+            "IndexType('int64')",
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "constructed source initializer"
+
+
 def test_static_inherited_constructor_builds_base_fields() -> None:
     outcome = _outcome(
         "class Base:\n"
