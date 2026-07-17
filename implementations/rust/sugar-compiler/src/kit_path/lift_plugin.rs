@@ -193,6 +193,10 @@ impl LiftPluginKit {
     /// method remains `lift`; multi-surface kits can expose a second route
     /// such as `sugar.plugin.lift_implications` while keeping the same
     /// transport.
+    ///
+    /// Cloning then changing method keeps the same Drop-scoped resident
+    /// child (`shares_resident_with`): lift and `sugar.enumerate` are two
+    /// methods on one connection, not two pools.
     pub fn with_method(mut self, method: impl Into<String>) -> Self {
         let method = method.into();
         self.lift_method = if method.is_empty() {
@@ -201,6 +205,14 @@ impl LiftPluginKit {
             method
         };
         self
+    }
+
+    /// True when both handles share the same Drop-scoped resident slot.
+    ///
+    /// #3855 pool single-owner: `Kit` owns one connection; enumeration clones
+    /// it with a different method rather than minting a second resident.
+    pub fn shares_resident_with(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.resident, &other.resident)
     }
 
     /// Run the plugin transport and retain protocol metadata.
@@ -800,6 +812,13 @@ impl LiftKit {
             dialect,
             transport: LiftPluginKit::new(surface, command, working_dir),
         }
+    }
+
+    /// Wrap an existing transport. Used by `Kit::rendezvous` so the frontend
+    /// handle and the path-algebra registry share one Drop-scoped resident
+    /// (#3855 pool single-owner): register a clone, keep the owner on `Kit`.
+    pub fn from_transport(dialect: Dialect, transport: LiftPluginKit) -> Self {
+        Self { dialect, transport }
     }
 
     /// Override the JSON-RPC method used for the lift request, forwarding to
@@ -1465,6 +1484,31 @@ for line in sys.stdin:
         assert_eq!(resident_max_requests_from(Some("UNLIMITED")), usize::MAX);
         assert_eq!(resident_max_requests_from(Some("0")), 64);
         assert_eq!(resident_max_requests_from(Some("not-a-number")), 64);
+    }
+
+    /// #3855 pool single-owner: clone + method override shares the Drop-scoped
+    /// resident. Kit::enumerate_conn relies on this (not LiftPluginKit::new).
+    #[test]
+    fn clone_with_method_shares_resident_slot() {
+        let lift = LiftPluginKit::new("surface", vec!["true".to_string()], None);
+        let enumerate = lift.clone().with_method("sugar.enumerate");
+        assert!(
+            lift.shares_resident_with(&enumerate),
+            "clone().with_method must keep one ResidentSlot (single-owner connection)"
+        );
+        let other = LiftPluginKit::new("surface", vec!["true".to_string()], None);
+        assert!(
+            !lift.shares_resident_with(&other),
+            "a fresh LiftPluginKit::new must mint a distinct resident (duality offender shape)"
+        );
+        // from_transport consumes a clone of the same Arc; registry registration
+        // in Kit::rendezvous uses this door so LiftKit does not mint a second slot.
+        let shared = lift.clone();
+        let _registered = LiftKit::from_transport(Dialect::Rust, shared.clone());
+        assert!(
+            lift.shares_resident_with(&shared),
+            "LiftKit::from_transport must wrap a clone of the Kit-owned connection"
+        );
     }
 
     #[test]

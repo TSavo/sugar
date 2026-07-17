@@ -121,14 +121,13 @@ impl Level {
     }
 }
 
-/// Everything an enumeration RPC needs to reach the SAME kit again: the
-/// manifest's command/working_dir (mirroring `resolve_source`'s
-/// `plugin_name`/`command`/`working_dir` triple) plus the project root
-/// being enumerated. `Kit` does not keep a persistent child alive across
-/// calls today (see `kit.rs`'s POOL DUALITY note) -- enumeration spawns
-/// fresh per call against the same manifest, exactly as `resolve_testimony`
-/// and `resolve_source` already do; this is the SAME membrane, not a
-/// second one.
+/// Everything an enumeration RPC needs to reach the SAME kit connection:
+/// surface/command/working_dir identity plus the project root being
+/// enumerated. `Kit::enumerate_conn` clones the Kit-owned `LiftPluginKit`
+/// with method `sugar.enumerate` (#3855 pool single-owner) so lift and
+/// enumerate share one Drop-scoped resident. Distinct from
+/// `resolve_source`/`resolve_testimony`, which still one-shot spawn outside
+/// that connection (residual outside this membrane).
 #[derive(Debug, Clone)]
 pub struct KitConn {
     pub surface: String,
