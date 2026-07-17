@@ -190,17 +190,15 @@ def test_full_datetime_module_globals_survive_same_module_dig(
 ) -> None:
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
-    payload, gaps = audit_lift_file(source, str(path), hold_panic=True)
+    payload, gaps = audit_lift_file(source, str(path))
     assertions = account_lift_coverage(
         census_source(source, file=str(path)), payload.to_rpc()
     ).to_json()["assertions"]
     messages = [gap.message for gap in gaps]
 
-    assert assertions["lifted_cited"] == 14
-    assert assertions["refused_loud"] == 31
+    assert assertions["stated"] == 45
+    assert assertions["lifted_cited"] == 45
+    assert assertions["refused_loud"] == 0
     assert assertions["silently_unaccounted"] == 0
+    assert gaps == []
     assert not any("observed=_DAYS_BEFORE_MONTH" in message for message in messages)
-    assert any(
-        ":175:4" in message and "observed=Try requested=statement" in message
-        for message in messages
-    )

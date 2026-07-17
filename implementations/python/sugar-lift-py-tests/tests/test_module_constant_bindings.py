@@ -50,29 +50,24 @@ def test_full_datetime_module_constants_expose_target_assertions(
 ) -> None:
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
-    payload, gaps = audit_lift_file(source, str(path), hold_panic=True)
+    payload, gaps = audit_lift_file(source, str(path))
     assertions = account_lift_coverage(
         census_source(source, file=str(path)), payload.to_rpc()
     ).to_json()["assertions"]
 
+    assert assertions["stated"] == 45
+    assert assertions["lifted_cited"] == 45
+    assert assertions["refused_loud"] == 0
     assert assertions["silently_unaccounted"] == 0
-    assert assertions["lifted_cited"] == 14
-    assert assertions["refused_loud"] == 31
+    # Module/helper range + ord calendar asserts (SHA-pinned artifact loci).
     assert {
         locus["line"]
         for locus in assertions["lifted_loci"]
-        if locus["line"] in {53, 60, 144}
-    } == {53, 60, 144}
+        if locus["line"] in {67, 75, 160}
+    } == {67, 75, 160}
     assert {
         locus["line"]
         for locus in assertions["lifted_loci"]
-        if locus["line"] in {131, 137}
-    } == {131, 137}
-    assert not any(
-        gap.label.endswith(suffix)
-        for gap in gaps
-        for suffix in (":51:0", ":58:0", ":88:0")
-    )
-    assert not any(gap.label.endswith(":156:0") for gap in gaps)
-    next_gap = next(gap for gap in gaps if gap.label.endswith(":161:0"))
-    assert "observed=Try requested=statement" in next_gap.message
+        if locus["line"] in {147, 153}
+    } == {147, 153}
+    assert gaps == []

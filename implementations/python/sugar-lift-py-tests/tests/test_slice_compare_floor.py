@@ -59,22 +59,22 @@ def test_full_datetime_artifact_accounts_slice_assertions_and_named_blockers(
 ) -> None:
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
-    assert len(source.splitlines()) == 2635
+    assert len(source.splitlines()) == 2882
 
-    payload, gaps = audit_lift_file(source, str(path), hold_panic=True)
+    payload, gaps = audit_lift_file(source, str(path))
     payload = payload.to_rpc()
     assertions = account_lift_coverage(
         census_source(source, file=str(path)), payload
     ).to_json()["assertions"]
-    lifted_target_lines = {1507, 1510, 2044, 2047}
+    # time.__repr__ + datetime.__repr__ slice asserts on the SHA-pinned artifact.
+    lifted_target_lines = {1610, 1613, 2212, 2215}
 
     assert assertions["stated"] == 45
-    assert assertions["lifted_cited"] == 14
+    assert assertions["lifted_cited"] == 45
+    assert assertions["refused_loud"] == 0
+    assert assertions["silently_unaccounted"] == 0
     assert lifted_target_lines <= {locus["line"] for locus in assertions["lifted_loci"]}
-    assert any(
-        gap.label.endswith(":182:0") and gap.info.get("observed") == "GuardedValue"
-        for gap in gaps
-    )
+    assert gaps == []
 
 
 @pytest.mark.parametrize(
