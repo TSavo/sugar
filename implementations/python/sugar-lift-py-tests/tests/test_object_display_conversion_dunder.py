@@ -159,6 +159,24 @@ def build():
         _reduce_expr(source, 'format(build(), "outer")')
 
 
+def test_format_callsite_body_preserves_nested_opaque_receiver_coordinate() -> None:
+    source = """\
+def wrap_external():
+    return external_box()
+"""
+
+    receiver, _ = _reduce_expr(source, "wrap_external()")
+    value, _ = _reduce_expr(source, 'format(wrap_external(), "brief")')
+
+    assert isinstance(receiver, CallSiteValue)
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == "__format__"
+    assert isinstance(value.arg_values[0], CallSiteValue)
+    assert value.arg_values[0].target_name == "wrap_external"
+    assert value.arg_values[0].term == receiver.term
+    assert value.arg_values[1] == StringValue("brief")
+
+
 def test_callsite_format_coordinate_wrong_twin_refutes(tmp_path) -> None:
     witnesses = FormatDunderCallSugar.witnesses()
     pair = next(
@@ -173,6 +191,27 @@ def test_callsite_format_coordinate_wrong_twin_refutes(tmp_path) -> None:
     )
     lying = run_source_through_real_solver(
         tmp_path / "format-callsite-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+    assert "FormatDunderCallSugar" in truthful.selected_sugars
+    assert "FormatDunderCallSugar" in lying.selected_sugars
+
+
+def test_nested_callsite_format_coordinate_wrong_twin_refutes(tmp_path) -> None:
+    pair = next(
+        witness
+        for witness in FormatDunderCallSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "nested_callsite_format_coordinate"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "nested-format-callsite-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "nested-format-callsite-lying", pair.lying.source
     )
 
     assert truthful.verdict == pair.truthful.expected == "sat"

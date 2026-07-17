@@ -335,12 +335,14 @@ class CallSiteValue(FloorValue):
         a concrete return value and without manufacturing a RuntimeEffect.
         """
         if self.body is not None:
-            floor = force_floor(
-                self,
+            floor = self._dig_floor_or_none(
                 ctx,
                 owner="FormatDunderCallSugar callsite receiver",
-                project_callsite=False,
             )
+            if floor is None:
+                from sugar_lift_py_tests.outcome import Complete
+
+                return Complete(self.linear_method_call("__format__", (spec,), site))
             return floor.format_data_model(spec, site, ctx)
         from sugar_lift_py_tests.outcome import Complete
 
