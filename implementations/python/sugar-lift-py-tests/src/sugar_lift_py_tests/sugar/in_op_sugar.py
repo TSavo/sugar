@@ -49,11 +49,13 @@ class InOpSugar(Sugar, role=SugarRole.TERM):
             "    return 0\n"
             "\n"
         )
-        return _call_pair(
-            name="in_return",
-            owner_sugar="InOpSugar",
-            truthful=prefix + "def test_a():\n    assert A(2) == 1\n",
-            lying=prefix + "def test_a():\n    assert A(2) == 0\n",
+        return (
+            _call_pair(
+                name="in_return",
+                owner_sugar="InOpSugar",
+                truthful=prefix + "def test_a():\n    assert A(2) == 1\n",
+                lying=prefix + "def test_a():\n    assert A(2) == 0\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -64,6 +66,9 @@ class InOpSugar(Sugar, role=SugarRole.TERM):
         )
 
     def _predicate(self, left, right):
+        ground = _ground_membership(left, right, self.site)
+        if ground is not None:
+            return ground
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
         from sugar_lift_py_tests.outcome import Complete
@@ -127,3 +132,50 @@ def _membership_face(value, needle, *, present: bool):
         for key, _entry_value in value.entries
     )
     return value if contains is present else None
+
+
+def _ground_membership(needle, container, site):
+    """Fold membership only when every equality comparison is concrete."""
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.floor.set_value import SetValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    if type(container) not in (ListValue, SetValue, TupleValue):
+        return None
+    elements = container.elements
+    values = [_ground_primitive_value(value) for value in (needle, *elements)]
+    if any(value is _NOT_GROUND for value in values):
+        return None
+    present = any(values[0] == value for value in values[1:])
+    return Complete(
+        TrueBoolLiteralSugar(site) if present else FalseBoolLiteralSugar(site)
+    )
+
+
+_NOT_GROUND = object()
+
+
+def _ground_primitive_value(value):
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    if type(value) in (StringValue, TermValue):
+        return value.value
+    if type(value) is TrueBoolLiteralSugar:
+        return True
+    if type(value) is FalseBoolLiteralSugar:
+        return False
+    return _NOT_GROUND
