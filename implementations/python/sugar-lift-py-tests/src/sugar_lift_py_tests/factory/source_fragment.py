@@ -360,6 +360,15 @@ class SourceFragment:
                 SourceFragment.from_node(stmt, self.filename, source=self.source)
                 for stmt in node.body
             ]
+        # Assert.msg is diagnostic provenance only (#4593 / #4594), never a
+        # tower child. CPython evaluates the message only on the failing path
+        # to build AssertionError args; effects there are unobserved by the
+        # claim membrane and must not become conditional py.* effects. The
+        # spelling still rides assertMessage on the source memento.
+        if isinstance(node, ast.Assert):
+            return [
+                SourceFragment.from_node(node.test, self.filename, source=self.source)
+            ]
         children: List[SourceFragment] = []
         for _field, value in ast.iter_fields(node):
             if _is_suite(value):

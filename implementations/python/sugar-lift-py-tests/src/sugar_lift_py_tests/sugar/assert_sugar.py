@@ -11,12 +11,22 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class AssertSugar(Sugar, role=SugarRole.STATEMENT):
-    """`assert <condition>`. It reduces the condition, and the result states
-    itself: a symbolic predicate states an inv (the fact the record emits --
-    first encounter a fact to discharge, a later consumer meets it as a
-    warrant, a constraint; that duality is protocol position, never this
-    sugar's), ground True states nothing, ground False is the named halt.
-    The sugar owns no distinction; the value answers."""
+    """`assert <condition>[, <message>]`. It reduces the condition, and the
+    result states itself: a symbolic predicate states an inv (the fact the
+    record emits -- first encounter a fact to discharge, a later consumer
+    meets it as a warrant, a constraint; that duality is protocol position,
+    never this sugar's), ground True states nothing, ground False is the
+    named halt. The sugar owns no distinction; the value answers.
+
+    Message disposition (#4593 / #4594): the optional second operand is
+    diagnostic packaging for AssertionError, not part of the proposition.
+    CPython evaluates it only on the failing path. Even when the message is
+    a runtime expression (`assert x, f(y)`), any effects of that evaluation
+    are unobserved by the claim membrane (paper 26: unsworn effects are
+    silence). The lift MUST NOT invent a conditional py.* effect gated on
+    ¬condition. Spelling rides `assertMessage` provenance on the source
+    memento; AssertSugar never builds or reduces the message operand.
+    """
 
     condition: SugarBody
     site: object = dataclass_field(compare=False)
@@ -28,6 +38,7 @@ class AssertSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def new(cls, site, ctx) -> "AssertSugar":
         # The condition is factory-built (audited), never reduced here.
+        # Message is never a tower child (#4594): provenance only.
         return cls(
             condition=ctx.build_body(site.assert_test(), SugarRole.TERM),
             site=site,

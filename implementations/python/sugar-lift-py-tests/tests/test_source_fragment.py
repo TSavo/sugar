@@ -77,6 +77,27 @@ def test_assert_source_memento_preserves_message_spelling_as_provenance() -> Non
     ]
 
 
+def test_assert_runtime_expression_message_is_provenance_not_tower_child() -> None:
+    """#4594 nature ruling: `assert x, f(y)` message is diagnostic-only.
+
+    Spelling rides assertMessage provenance. The Call is NOT a factory
+    fragment / term of the Assert (would tempt a conditional py.* effect on
+    the failing path). The proposition child is the condition alone.
+    """
+    assertion = (
+        SourceFragment.from_source("assert x, f(y)\n", "t.py")
+        .fragments()[0]
+        .statements()[0]
+    )
+
+    assert assertion.memento().to_rpc().get("assertMessage") == "f(y)"
+    assert assertion.assert_has_message() is True
+    assert [t.observed for t in assertion.terms()] == ["Name"]
+    assert [f.observed for f in assertion.fragments()] == ["Name"]
+    assert assertion.assert_test().observed == "Name"
+    assert assertion.assert_test().name_id() == "x"
+
+
 # ------------------------------------------------------------------
 # Accessor tests
 # ------------------------------------------------------------------
