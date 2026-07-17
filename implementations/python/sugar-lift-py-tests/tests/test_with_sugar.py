@@ -234,6 +234,35 @@ def test_continuing_with_body_projects_constructed_binding() -> None:
     assert block.statements[-1].value == TermValue(5)
 
 
+def test_continuing_with_body_binds_after_nested_subscript_store_effect() -> None:
+    """#4978: nested `receiver[i][...] = v` is red store testimony, not a halt.
+
+    Live locus: numpy test_nditer assigns `res` after `nditer.operands[-1][...] = 0`
+    inside with; NameSugar must see `res` after the with exits.
+    """
+    manager = CallSiteValue(
+        target_name="manager",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:manager", []),
+        body=None,
+    )
+
+    block = compose_block(
+        "    with manager:\n"
+        "        manager.operands[-1][...] = 0\n"
+        "        res = 5\n"
+        "    return res\n",
+        binds={"manager": manager},
+    )
+
+    assert isinstance(block.statements[-1], ReturnValue)
+    assert block.statements[-1].value == TermValue(5)
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    assert any(isinstance(entry, Incomplete) for entry in block.statements)
+
+
 def test_continuing_with_body_does_not_invent_missing_binding() -> None:
     manager = CallSiteValue(
         target_name="manager",

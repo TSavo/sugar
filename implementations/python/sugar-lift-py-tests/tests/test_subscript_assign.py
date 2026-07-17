@@ -111,6 +111,28 @@ def test_call_result_subscript_assign_is_a_receiver_witnessed_store_effect() -> 
     assert incomplete.effect.witness.operand.name == "call:make"
 
 
+def test_nested_subscript_store_effect_continues_so_later_name_binds() -> None:
+    """#4978: store Incomplete must not drop later NameSugar bindings.
+
+    `xs[i][...] = v` has no dotted receiver coordinate, so the store is a
+    SubscriptStoreRuntimeEffect. Control flow still continues: `res = 1`
+    must bind before a later use of `res`.
+    """
+    outcome = compose_block(
+        "    xs = make()\n" "    xs[0][...] = 0\n" "    res = 1\n" "    return res\n"
+    )
+
+    assert isinstance(outcome, BlockValue)
+    assert any(
+        isinstance(entry, Incomplete)
+        and isinstance(entry.effect, SubscriptStoreRuntimeEffect)
+        for entry in outcome.statements
+    )
+    returned = outcome.statements[-1]
+    assert isinstance(returned, ReturnValue)
+    assert returned.value == TermValue(1)
+
+
 def test_dotted_receiver_subscript_assign_rebinds_the_citable_coordinate() -> None:
     """A pure dotted receiver is structural, not a runtime-effect operand."""
     outcome = compose_block(
