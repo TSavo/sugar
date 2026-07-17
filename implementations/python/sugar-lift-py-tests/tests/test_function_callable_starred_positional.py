@@ -140,6 +140,45 @@ def test_unknown_symbolic_star_is_a_named_runtime_effect() -> None:
     assert outcome.effect.witness.locus == "symbolic-star.py:1:0"
 
 
+def test_bodyless_callsite_star_is_a_named_runtime_effect() -> None:
+    site = SourceFragment.from_source(
+        "inner(*items)\n", "callsite-star.py"
+    ).statements()[0]
+    items = CallSiteValue(
+        target_name="items",
+        arg_values=(),
+        parameters=(),
+        term=make_var("items"),
+        body=None,
+    )
+
+    outcome = _expand_function_positional_args((_star(items),), site=site)
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "StarredPositionalRuntimeEffect"
+    assert outcome.effect.runtime_operand.term == make_var("items")
+    assert outcome.effect.witness.locus == "callsite-star.py:1:0"
+
+
+def test_ground_bodyless_callsite_star_cannot_mint_runtime_authority() -> None:
+    site = SourceFragment.from_source(
+        "inner(*items)\n", "ground-callsite-star.py"
+    ).statements()[0]
+    ground_items = CallSiteValue(
+        target_name="items",
+        arg_values=(),
+        parameters=(),
+        term=ctor("python:module", []),
+        body=None,
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        _expand_function_positional_args((_star(ground_items),), site=site)
+
+    assert raised.value.info.owner == "RuntimeEffect"
+    assert raised.value.info.requested == "genuine runtime-dependent operand"
+
+
 @pytest.mark.parametrize(
     "value",
     [TermValue(7), DictValue(((TermValue(0), TermValue(1)),))],
