@@ -1455,7 +1455,7 @@ def _iter_liftable_function_defs(module):
                 continue
 
 
-def _module_import_maps(module) -> "tuple[dict, dict]":
+def _module_import_maps(module, filename: str | None = None) -> "tuple[dict, dict]":
     """Return (import_aliases, from_imports) for FactoryBuildContext.
 
     Vendor dig: CallSugar / MethodCallSugar / dig resolve need the same maps
@@ -1476,12 +1476,56 @@ def _module_import_maps(module) -> "tuple[dict, dict]":
                     import_aliases[name.split(".")[0]] = name.split(".")[0]
         elif observed == "ImportFrom":
             mod = stmt.importfrom_module() or ""
+            level = stmt.importfrom_level()
+            if level and filename is not None:
+                defining_module = _installed_module_name_from_filename(filename)
+                if defining_module is not None:
+                    from sugar_lift_py_tests.sugar.install_source_dig import (
+                        _absolute_import_from_module,
+                    )
+
+                    mod = (
+                        _absolute_import_from_module(
+                            defining_module, mod or None, level
+                        )
+                        or mod
+                    )
             for name, asname in stmt.importfrom_names():
                 if name == "*":
                     continue
                 bound = asname or name
                 from_imports[bound] = (mod, name)
     return import_aliases, from_imports
+
+
+def _installed_module_name_from_filename(filename: str) -> str | None:
+    """Derive a dotted module only when package boundaries are evidenced."""
+    path = Path(filename)
+    parts = path.with_suffix("").parts
+    if not path.is_absolute() and len(parts) > 1:
+        relative = list(parts)
+        if relative[-1] == "__init__":
+            relative.pop()
+        return ".".join(relative) or None
+    for marker in ("site-packages", "dist-packages"):
+        if marker in parts:
+            suffix = list(parts[parts.index(marker) + 1 :])
+            if suffix and suffix[-1] == "__init__":
+                suffix.pop()
+            return ".".join(suffix) or None
+
+    # Local exact sources can prove their package chain with __init__.py files.
+    package: list[str] = []
+    parent = path.parent
+    while (parent / "__init__.py").is_file():
+        package.append(parent.name)
+        parent = parent.parent
+    if not package:
+        return None
+    package.reverse()
+    if path.stem != "__init__":
+        package.append(path.stem)
+    return ".".join(package)
 
 
 def _qualified_callable_spelling(filename: str, callable_name: str) -> str:
@@ -1568,7 +1612,7 @@ def _audit_file_context(
         recovered_panics=seed_panics if hold_seed_panics else None,
         assertion_sink=module_assertions,
     )
-    import_aliases, from_imports = _module_import_maps(module)
+    import_aliases, from_imports = _module_import_maps(module, filename)
     definitions = tuple(_iter_liftable_function_defs(module))
     definitions_by_cid = {
         to_rpc_value(definition.memento())["source_cid"]: definition

@@ -124,6 +124,24 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             if not _carries_raise_effect(outcome):
                 return outcome
 
+            if cm.exit_suppression is not None:
+                if not cm.exit_suppression.exception_names:
+                    return outcome
+                exception_names = _raised_exception_names(outcome)
+                if exception_names is None:
+                    _unresolved_callsite_exit(self.site)
+                if exception_names and all(
+                    cm.exit_suppression.suppresses_exception(name)
+                    for name in exception_names
+                ):
+                    from sugar_lift_py_tests.floor import BlockValue
+                    from sugar_lift_py_tests.outcome import Complete
+
+                    if as_name is not None:
+                        return Complete(ScopeRebind(as_name, entered))
+                    return Complete(BlockValue(()))
+                return outcome
+
             if not isinstance(manager, ObjectValue):
                 if cm.body is None:
                     _unresolved_callsite_exit(self.site)
@@ -250,3 +268,29 @@ def _carries_raise_effect(outcome) -> bool:
         isinstance(entry, (Incomplete, GuardedRaise, RaiseValue, RaisesWithValue))
         for entry in value.statements
     )
+
+
+def _raised_exception_names(outcome) -> tuple[str, ...] | None:
+    """Return every statically named raise carried by a completed block."""
+    from sugar_lift_py_tests.floor import BlockValue, RaiseValue
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    if isinstance(outcome, Incomplete):
+        return None
+    value = getattr(outcome, "value", None)
+    if not isinstance(value, BlockValue):
+        return ()
+    names: list[str] = []
+    for entry in value.statements:
+        if isinstance(entry, RaiseValue) and entry.effect.exception_name is not None:
+            names.append(entry.effect.exception_name)
+        elif _entry_carries_raise(entry):
+            return None
+    return tuple(names)
+
+
+def _entry_carries_raise(entry) -> bool:
+    from sugar_lift_py_tests.floor import GuardedRaise, RaisesWithValue
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    return isinstance(entry, (Incomplete, GuardedRaise, RaisesWithValue))

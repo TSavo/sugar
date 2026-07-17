@@ -11,6 +11,7 @@ from sugar_lift_py_tests.factory import FactoryPanic, SourceFragment
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
     BlockValue,
+    BuiltinExceptionClassValue,
     CallSiteValue,
     FloorValue,
     ObjectMethodValue,
@@ -20,9 +21,13 @@ from sugar_lift_py_tests.floor import (
     SymbolicValue,
     TermValue,
 )
+from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar_body import SugarBody
+from sugar_lift_py_tests.sugar.method_call_sugar import (
+    _static_exit_suppression_contract,
+)
 
 
 @dataclass(frozen=True)
@@ -50,6 +55,7 @@ def _manager_callsite(
     exit_value: FloorValue | None = None,
     class_name: str = "Manager",
     events: list[str] | None = None,
+    exit_contract: ExitSuppressionContract | None = None,
 ) -> CallSiteValue:
     enter_body = _expr_body("1")
     if events is not None:
@@ -97,6 +103,20 @@ def _manager_callsite(
         body=SugarBody(
             _StaticValueSugar(result, events, f"manager:{class_name}"), SugarRole.TERM
         ),
+        exit_suppression=exit_contract,
+    )
+
+
+def _opaque_manager_callsite(
+    exit_contract: ExitSuppressionContract | None,
+) -> CallSiteValue:
+    return CallSiteValue(
+        target_name="managed",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:managed", []),
+        body=None,
+        exit_suppression=exit_contract,
     )
 
 
@@ -163,6 +183,72 @@ def test_body_none_raise_keeps_named_exit_floor_loud() -> None:
 
     assert raised.value.info.owner == "WithSugar"
     assert "__exit__" in raised.value.info.requested
+
+
+def test_proven_named_exit_contract_suppresses_matching_raise() -> None:
+    block = compose_block(
+        "    with manager:\n" "        raise ValueError('boom')\n" "    return 7\n",
+        binds={
+            "manager": _opaque_manager_callsite(
+                ExitSuppressionContract.suppresses(("ValueError",))
+            )
+        },
+    )
+
+    assert block.statements == (ReturnValue(TermValue(7)),)
+
+
+def test_proven_non_suppressing_exit_contract_preserves_raise() -> None:
+    block = compose_block(
+        "    with manager:\n" "        raise ValueError('boom')\n",
+        binds={
+            "manager": _opaque_manager_callsite(
+                ExitSuppressionContract.never_suppresses()
+            )
+        },
+    )
+
+    assert isinstance(block.statements[0], RaiseValue)
+    assert block.statements[0].effect.exception_name == "ValueError"
+
+
+def test_unproven_exit_contract_keeps_named_floor_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    with manager:\n" "        raise ValueError('boom')\n",
+            binds={"manager": _opaque_manager_callsite(None)},
+        )
+
+    assert raised.value.info.owner == "WithSugar"
+    assert "__exit__" in raised.value.info.requested
+
+
+def test_contextlib_suppress_constructs_named_static_contract() -> None:
+    contract = _static_exit_suppression_contract(
+        "contextlib.suppress",
+        (
+            BuiltinExceptionClassValue(
+                name="ValueError", bases=(), record=BlockValue(())
+            ),
+        ),
+    )
+
+    assert contract is not None
+    assert contract.exception_names == frozenset({"ValueError"})
+
+
+def test_contextlib_suppress_does_not_hide_unlisted_exception() -> None:
+    block = compose_block(
+        "    with manager:\n" "        raise ValueError('boom')\n",
+        binds={
+            "manager": _opaque_manager_callsite(
+                ExitSuppressionContract.suppresses(("TypeError",))
+            )
+        },
+    )
+
+    assert isinstance(block.statements[-1], RaiseValue)
+    assert block.statements[-1].effect.exception_name == "ValueError"
 
 
 def test_same_leaf_unrelated_exit_cannot_substitute_for_manager_method() -> None:

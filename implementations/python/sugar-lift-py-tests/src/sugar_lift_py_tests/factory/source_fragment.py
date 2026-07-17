@@ -502,6 +502,11 @@ class SourceFragment:
             module = import_aliases.get(head)
             if module is not None:
                 return f"{module}.{rest}"
+            imported_head = from_imports.get(head)
+            if imported_head is not None:
+                module, attr = imported_head
+                imported_target = f"{module}.{attr}" if module else attr
+                return f"{imported_target}.{rest}"
         imported = from_imports.get(target)
         if imported is not None:
             module, attr = imported
