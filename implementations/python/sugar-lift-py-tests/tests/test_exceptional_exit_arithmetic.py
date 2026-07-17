@@ -25,10 +25,44 @@ def test_subtract_propagates_an_already_selected_exceptional_exit() -> None:
     assert outcome == Complete(exceptional)
 
 
+def test_add_propagates_an_already_selected_exceptional_exit() -> None:
+    exceptional = _exceptional_exit()
+
+    outcome = exceptional.add(TermValue(1), "add.py:1")
+
+    assert outcome == Complete(exceptional)
+
+
 def test_ground_subtraction_wrong_twin_remains_an_arithmetic_value() -> None:
     outcome = TermValue(4).subtract(TermValue(1), "subtract.py:1")
 
     assert outcome == Complete(TermValue(3))
+
+
+def test_ground_addition_wrong_twin_remains_an_arithmetic_value() -> None:
+    outcome = TermValue(4).add(TermValue(1), "add.py:1")
+
+    assert outcome == Complete(TermValue(5))
+
+
+def test_exceptional_exit_addition_truthful_and_lying_refute(tmp_path) -> None:
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful",
+        "def test_add(value):\n"
+        "    assert ((value + 1) == (value + 1))"
+        " & (value == 4) & (value == 4)\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying",
+        "def test_add(value):\n"
+        "    assert ((value + 1) == (value + 1))"
+        " & (value == 4) & (not (value == 4))\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+    assert "AddOpSugar" in truthful.selected_sugars
+    assert "AddOpSugar" in lying.selected_sugars
 
 
 def test_exceptional_exit_subtraction_truthful_and_lying_refute(tmp_path) -> None:
