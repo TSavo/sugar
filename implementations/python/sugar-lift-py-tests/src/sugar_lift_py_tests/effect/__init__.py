@@ -28,6 +28,10 @@ from .constructor_runtime_effect import ConstructorRuntimeEffect
 from .context_manager_unpack_runtime_effect import ContextManagerUnpackRuntimeEffect
 from .context_manager_exit_runtime_effect import ContextManagerExitRuntimeEffect
 from .call_result_type_runtime_effect import CallResultTypeRuntimeEffect
+from .callable_argument_binding_runtime_effect import (
+    CallableArgumentBindingRuntimeEffect,
+    runtime_callable_argument_binding,
+)
 from .divide_runtime_effect import DivideRuntimeEffect, runtime_divide
 from .division_by_zero_runtime_effect import DivisionByZeroRuntimeEffect
 from .dict_unpack_runtime_effect import DictUnpackRuntimeEffect
@@ -92,6 +96,8 @@ __all__ = [
     "ContextManagerUnpackRuntimeEffect",
     "ContextManagerExitRuntimeEffect",
     "CallResultTypeRuntimeEffect",
+    "CallableArgumentBindingRuntimeEffect",
+    "runtime_callable_argument_binding",
     "DivideRuntimeEffect",
     "runtime_divide",
     "DivisionByZeroRuntimeEffect",
