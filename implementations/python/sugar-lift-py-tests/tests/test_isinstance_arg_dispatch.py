@@ -110,14 +110,44 @@ def test_arbitrary_call_result_type_is_a_named_runtime_effect() -> None:
 
 
 def test_tuple_with_uncitable_element_stays_loud() -> None:
-    with pytest.raises(FactoryPanic, match="identified python:type coordinate"):
-        reduce_value(
-            "isinstance(x, (int, unknown_type))",
-            {
-                "x": SymbolicValue(make_var("x")),
-                "unknown_type": SymbolicValue(make_var("unknown_type")),
-            },
-        )
+    node = ast.parse("isinstance(x, (int, unknown_type))", mode="eval").body
+    temporal = (
+        TemporalContext.empty()
+        .bind_value("x", SymbolicValue(make_var("x")))
+        .bind_value("unknown_type", SymbolicValue(make_var("unknown_type")))
+    )
+    ctx = FactoryBuildContext(
+        filename="t.py", catalog=default_catalog(), temporal=temporal
+    )
+
+    outcome = ctx.build_body(node, SugarRole.TERM).reduce(ctx)
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "DynamicTypeOperandRuntimeEffect"
+    assert "unknown_type" in outcome.reason
+
+
+def test_symbolic_type_operand_is_a_named_runtime_effect() -> None:
+    node = ast.parse("isinstance(x, expected)", mode="eval").body
+    temporal = (
+        TemporalContext.empty()
+        .bind_value("x", SymbolicValue(make_var("x")))
+        .bind_value("expected", SymbolicValue(make_var("expected")))
+    )
+    ctx = FactoryBuildContext(
+        filename="t.py", catalog=default_catalog(), temporal=temporal
+    )
+
+    outcome = ctx.build_body(node, SugarRole.TERM).reduce(ctx)
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "DynamicTypeOperandRuntimeEffect"
+    assert "dynamic isinstance type operand" in outcome.reason
+    assert outcome.effect.witness.operation.name == "adt.is_python_type"
+    assert outcome.effect.witness.operation.args == (
+        make_var("x"),
+        make_var("expected"),
+    )
 
 
 def test_dispatch_receivers_declare_explicit_type_tester_arms() -> None:
