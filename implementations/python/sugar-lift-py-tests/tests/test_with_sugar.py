@@ -24,6 +24,9 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var
+from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
+from sugar_lift_py_tests.idd.lift_coverage_census import census_source
+from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.sugar.with_sugar import WithSugar
 
 
@@ -147,6 +150,70 @@ def test_enter_result_twin_cannot_inherit_bare_manager_coordinate() -> None:
     cursor = block.statements[0].value
     assert cursor.term == ctor("call:__enter__", [manager.term])
     assert cursor.term != manager.term
+
+
+def test_with_as_binding_survives_into_the_continuing_scope() -> None:
+    manager = CallSiteValue(
+        target_name="manager",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:manager", []),
+        body=None,
+    )
+
+    block = compose_block(
+        "    with manager as entered:\n" "        pass\n" "    return entered\n",
+        binds={"manager": manager},
+    )
+
+    returned = block.statements[-1]
+    assert isinstance(returned, ReturnValue)
+    assert returned.value.target_name == "__enter__"
+    assert returned.value.term == ctor("call:__enter__", [manager.term])
+
+
+def test_with_body_rebind_wins_over_the_entered_value_after_exit() -> None:
+    manager = CallSiteValue(
+        target_name="manager",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:manager", []),
+        body=None,
+    )
+
+    block = compose_block(
+        "    with manager as entered:\n" "        entered = 9\n" "    return entered\n",
+        binds={"manager": manager},
+    )
+
+    returned = block.statements[-1]
+    assert isinstance(returned, ReturnValue)
+    assert returned.value == TermValue(9)
+
+
+def test_continuing_with_as_binding_conserves_assertion_mass() -> None:
+    source = (
+        "def A(z):\n"
+        "    with z.lock() as entered:\n"
+        "        pass\n"
+        "    entered\n"
+        "    return 1\n"
+        "\n"
+        "def test_a():\n"
+        "    assert A(5) == 1\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "with_binding.py")
+    rpc = payload.to_rpc()
+    assertions = account_lift_coverage(
+        census_source(source, file="with_binding.py"), rpc
+    ).to_json()["assertions"]
+
+    assert gaps == []
+    assert rpc["effects"] == []
+    assert assertions["stated"] == 1
+    assert assertions["lifted_cited"] == 1
+    assert assertions["silently_unaccounted"] == 0
 
 
 def test_continuing_with_body_projects_constructed_binding() -> None:

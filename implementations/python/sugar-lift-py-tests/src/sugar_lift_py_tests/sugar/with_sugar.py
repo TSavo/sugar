@@ -59,9 +59,10 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         # refutes the projected value rather than merely exercising an inner return.
         prefix = (
             "def A(z):\n"
-            "    with z.lock():\n"
-            "        result = 1\n"
-            "    return result\n"
+            "    with z.lock() as entered:\n"
+            "        pass\n"
+            "    entered\n"
+            "    return 1\n"
             "\n"
         )
         guarded_prefix = (
@@ -169,7 +170,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                         "and propagating outcomes"
                     ),
                 )
-            return outcome
+            return _carry_continuing_binding(outcome, binding)
 
         if isinstance(cm, CallSiteValue):
             # A source-backed producer may expose its complete manager result.
@@ -204,7 +205,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                 body_ctx = binding.value.extend_scope(ctx)
             outcome = self._enter_items(remaining, body_ctx)
             if not _carries_raise_effect(outcome):
-                return outcome
+                return _carry_continuing_binding(outcome, binding)
 
             if cm.exit_suppression is not None:
                 if not cm.exit_suppression.exception_names:
@@ -222,7 +223,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                     if binding is not None:
                         return binding
                     return Complete(BlockValue(()))
-                return outcome
+                return _carry_continuing_binding(outcome, binding)
 
             if not isinstance(manager, ObjectValue):
                 if cm.body is None:
@@ -275,7 +276,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                 if binding is not None:
                     return binding
                 return Complete(BlockValue(()))
-            return outcome
+            return _carry_continuing_binding(outcome, binding)
 
         if not isinstance(cm, ObjectValue):
             return cm._floor_gap(
@@ -328,7 +329,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         )
         if isinstance(exit_value, TermValue) and bool(exit_value.value):
             force_floor(exit_call, ctx, owner="WithSugar.__exit__")
-        return outcome
+        return _carry_continuing_binding(outcome, binding)
 
     def _enter_callsite(self, cm, ctx):
         """Construct one guarded callsite manager's exact ``__enter__`` face."""
@@ -375,6 +376,19 @@ def _reduce_continuing_body(body: SugarBody, ctx: object) -> Outcome:
         if before.get(binding.name) is not binding.value
     )
     return Complete(BlockValue((*record.contribution(), *rebinds)))
+
+
+def _carry_continuing_binding(outcome: Outcome, binding: Outcome | None) -> Outcome:
+    """Keep a successful ``with ... as`` target live after a continuing body."""
+    from sugar_lift_py_tests.floor import BlockValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    if not isinstance(outcome, Complete) or not isinstance(binding, Complete):
+        return outcome
+    record = outcome.value
+    if not isinstance(record, BlockValue) or not record.follow_rest().continues:
+        return outcome
+    return Complete(BlockValue((binding.value, *record.contribution())))
 
 
 def _with_target_names(target) -> tuple[str, ...] | None:
