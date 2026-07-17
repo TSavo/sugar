@@ -104,3 +104,50 @@ def test_imported_ordinary_class_wrong_twin_stays_named_raise_gap(
     assert raised.value.info.owner == "RaiseSugar"
     assert raised.value.info.observed == "CallSiteValue"
     assert raised.value.info.requested == "constructed exception floor"
+
+
+def test_native_extension_exception_class_constructs_routeable_raise() -> None:
+    target = "_csv.Error"
+    resolved = resolve_install_source_value(target, _ctx())
+
+    assert resolved == ExceptionClassValue(target)
+
+    block = compose_block(
+        "    raise Error('bad')\n",
+        binds={
+            "Error": ImportAliasValue(
+                "Error",
+                "Error",
+                import_target=target,
+                resolved_value=resolved,
+            )
+        },
+    )
+
+    raised = block.statements[0]
+    assert isinstance(raised, RaiseValue)
+    assert isinstance(raised.exception, ExceptionValue)
+    assert raised.effect.exception_name == target
+
+
+def test_native_extension_ordinary_class_wrong_twin_stays_named_raise_gap() -> None:
+    target = "_csv.Dialect"
+    resolved = resolve_install_source_value(target, _ctx())
+
+    assert not isinstance(resolved, ExceptionClassValue)
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    raise Dialect()\n",
+            binds={
+                "Dialect": ImportAliasValue(
+                    "Dialect",
+                    "Dialect",
+                    import_target=target,
+                    resolved_value=resolved,
+                )
+            },
+        )
+
+    assert raised.value.info.owner == "RaiseSugar"
+    assert raised.value.info.observed == "CallSiteValue"
+    assert raised.value.info.requested == "constructed exception floor"

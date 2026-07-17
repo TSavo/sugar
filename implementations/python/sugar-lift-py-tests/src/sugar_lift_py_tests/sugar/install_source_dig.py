@@ -361,14 +361,31 @@ def _absolute_import_from_module(
 def _resolve_qualified_native_callable(
     import_target: str, *, resolving: frozenset[str] = frozenset()
 ):
-    """Follow one static re-export route to an installed extension symbol."""
+    """Follow one static re-export route to an installed extension symbol.
+
+    A native module spec proves where the symbol is loaded from, but not what
+    kind of value that export denotes. Inspect the exact loaded export before
+    assigning callable authority: native exception classes carry stronger,
+    statically decidable evidence and must reach RaiseSugar as
+    ExceptionClassValue.
+    """
     if "." not in import_target or import_target in resolving:
         return None
     resolving = resolving | {import_target}
     module_name, attr = import_target.rsplit(".", 1)
     origin = _installed_native_extension(module_name)
     if origin is not None:
-        from sugar_lift_py_tests.floor import NativeCallableValue
+        from sugar_lift_py_tests.floor import (
+            ExceptionClassValue,
+            NativeCallableValue,
+        )
+
+        try:
+            exported = getattr(importlib.import_module(module_name), attr)
+        except (AttributeError, ImportError, ModuleNotFoundError, OSError):
+            return None
+        if isinstance(exported, type) and issubclass(exported, BaseException):
+            return ExceptionClassValue(import_target)
 
         return NativeCallableValue(
             qualified_name=import_target,

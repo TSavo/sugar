@@ -59,9 +59,11 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def witnesses(cls):
         prefix = (
+            "from _csv import Error\n"
+            "\n"
             "def A(z):\n"
             "    if z < 0:\n"
-            '        raise ValueError("neg") from TypeError("cause")\n'
+            '        raise Error("neg") from TypeError("cause")\n'
             "    return z\n"
             "\n"
         )
