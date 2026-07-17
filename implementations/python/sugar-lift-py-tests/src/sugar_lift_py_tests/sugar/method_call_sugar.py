@@ -303,6 +303,7 @@ def _static_exit_suppression_contract(source_name: str, values: tuple):
         "numpy.errstate",
         "numpy.nditer",
         "pandas.HDFStore",
+        "pandas._testing.assert_produces_warning",
         "pandas._testing.raises_chained_assignment_error",
         "pandas.option_context",
         "pytest.warns",
