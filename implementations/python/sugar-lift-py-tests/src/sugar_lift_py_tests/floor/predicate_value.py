@@ -60,6 +60,30 @@ class PredicateValue(FloorValue):
 
         return Complete(self)
 
+    def subscript(self, index, site):
+        """Keep unknown scalar-versus-array predicate results visibly red.
+
+        ``PredicateValue`` carries a formula, not enough Python type/shape
+        evidence to decide whether indexing yields an element or raises.  The
+        runtime effect is authenticated by the receiver formula and source
+        site, so presence cannot masquerade as a verified result.
+        """
+        from sugar_lift_py_tests.effect import (
+            SubscriptResultRuntimeEffect,
+            runtime_effect_witness,
+        )
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            SubscriptResultRuntimeEffect(
+                "predicate subscript runtime boundary: PredicateValue runtime "
+                "result shape may be a scalar boolean or an indexable array; "
+                "keep as typed red until the producing operation carries "
+                f"container shape evidence. site={site}",
+                witness=runtime_effect_witness("py.subscript", self, site),
+            )
+        )
+
     def bitwise_or(self, other, site):
         if type(other) is not PredicateValue:
             return super().bitwise_or(other, site)

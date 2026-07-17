@@ -37,3 +37,10 @@ class ComprehensionValue(FloorValue):
                 )
             )
         return super().add(other, site)
+
+    def subscript(self, index, site):
+        # A runtime comprehension still has Python collection semantics, but
+        # neither its members nor its cardinality are available at lift time.
+        # Preserve the real lookup as a proof-bearing coordinate; do not invent
+        # an element or silently assume the lookup succeeds.
+        return self.py_subscript_coordinate(index, site)

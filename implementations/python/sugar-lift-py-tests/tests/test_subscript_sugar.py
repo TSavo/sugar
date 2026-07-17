@@ -9,16 +9,22 @@ from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-from sugar_lift_py_tests.effect import IndexErrorRuntimeEffect, KeyErrorRuntimeEffect
+from sugar_lift_py_tests.effect import (
+    IndexErrorRuntimeEffect,
+    KeyErrorRuntimeEffect,
+    SubscriptResultRuntimeEffect,
+)
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
+    ComprehensionValue,
+    PredicateValue,
     StringValue,
     SymbolicValue,
     TermValue,
 )
-from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.ir import ctor, make_var, num, py_eq
 from sugar_lift_py_tests.outcome import Incomplete
 
 
@@ -65,6 +71,29 @@ def test_symbolic_receiver_is_py_subscript_coordinate() -> None:
     value = reduce_value("z[0]", binds={"z": SymbolicValue(make_var("z"))})
     assert type(value) is CallSiteValue
     assert value.term == ctor("py.subscript", [make_var("z"), num(0)])
+
+
+def test_comprehension_subscript_keeps_a_proof_bearing_coordinate() -> None:
+    receiver = ComprehensionValue(ctor("py.list_comp", [make_var("items")]))
+
+    value = reduce_value("values[0]", binds={"values": receiver})
+
+    assert type(value) is CallSiteValue
+    assert value.term == ctor(
+        "py.subscript", [ctor("py.list_comp", [make_var("items")]), num(0)]
+    )
+
+
+def test_predicate_subscript_stays_a_named_authenticated_runtime_effect() -> None:
+    receiver = PredicateValue(py_eq(make_var("left"), make_var("right")))
+
+    outcome = _outcome("result[0]", binds={"result": receiver})
+
+    assert type(outcome) is Incomplete
+    assert type(outcome.effect) is SubscriptResultRuntimeEffect
+    assert outcome.effect.witness.operation.name == "py.subscript"
+    assert outcome.effect.witness.site.filename == "t.py"
+    assert "PredicateValue runtime result shape" in outcome.effect.reason
 
 
 def test_callsite_index_rides_the_subscript_coordinate_without_forcing_a_body() -> None:
