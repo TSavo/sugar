@@ -1,0 +1,261 @@
+{
+  "R_classified": 8,
+  "R_live_factory_panic_files": 8,
+  "R_pending": 285,
+  "R_recensus_timeout_blob": 293,
+  "R_recensus_unclassified": 285,
+  "R_residual": 285,
+  "R_residual_axes": {
+    "hang_at_max_bound_D": 0,
+    "recensus_unclassified": 285,
+    "unclassified_timeout_blob": 285
+  },
+  "R_timeout_blob_classified": 8,
+  "R_unclassified_timeout_blob": 285,
+  "bare_exception_count": 0,
+  "bare_exceptions": [],
+  "cause_class_counts": {
+    "A": 0,
+    "B": 8,
+    "C": 0,
+    "D": 0,
+    "E": 0
+  },
+  "cause_class_files": {
+    "B": [
+      "numpy/ma/tests/test_core.py",
+      "pandas/tests/extension/test_arrow.py",
+      "pandas/tests/frame/test_constructors.py",
+      "pandas/tests/indexing/test_loc.py",
+      "pandas/tests/io/test_sql.py",
+      "pandas/tests/reshape/merge/test_merge.py",
+      "pandas/tests/reshape/merge/test_merge_asof.py",
+      "pandas/tests/tools/test_to_datetime.py"
+    ]
+  },
+  "cause_class_labels": {
+    "A": "bound-tight",
+    "B": "hidden-panic",
+    "C": "perf-complete",
+    "D": "hang",
+    "E": "bare"
+  },
+  "completes_by_bound": {
+    "60": 5,
+    "120": 1,
+    "300": 2
+  },
+  "factory_panic_fronts": [
+    {
+      "count": 1,
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "label": "ConstructorCallSugar / Constructor / AST / OldArrowExtensionArray(ArrowExtensionArray) / statically resolved inherited constructor",
+      "observed": "OldArrowExtensionArray(ArrowExtensionArray)",
+      "owner": "ConstructorCallSugar",
+      "representative_files": [
+        "pandas/tests/extension/test_arrow.py"
+      ],
+      "requested": "statically resolved inherited constructor"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Projection",
+      "label": "FormatDunderCallSugar callsite receiver / Floor / Projection / missing callsite body / force callsite floor",
+      "observed": "missing callsite body",
+      "owner": "FormatDunderCallSugar callsite receiver",
+      "representative_files": [
+        "numpy/ma/tests/test_core.py"
+      ],
+      "requested": "force callsite floor"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / RuntimeEffect operand=_Ctor(name='python:import_alias', args=(_ConstStr(value='PY314', sort=PrimitiveSort(name='String')), _ConstStr(value='PY314', sort=PrimitiveSort(name='String')))) / genuine runtime-dependent operand",
+      "observed": "RuntimeEffect operand=_Ctor(name='python:import_alias', args=(_ConstStr(value='PY314', sort=PrimitiveSort(name='String')), _ConstStr(value='PY314', sort=PrimitiveSort(name='String'))))",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/reshape/merge/test_merge.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / py.sequence_repeat operand=TermValue(value=100000) / genuine runtime-dependent operand",
+      "observed": "py.sequence_repeat operand=TermValue(value=100000)",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/indexing/test_loc.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "SequentialDigBody / Floor / Construction / Return / reduced guarded returns with an unguarded fallback",
+      "observed": "Return",
+      "owner": "SequentialDigBody",
+      "representative_files": [
+        "pandas/tests/tools/test_to_datetime.py"
+      ],
+      "requested": "reduced guarded returns with an unguarded fallback"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "SequentialDigBody / Floor / Construction / Try / reduced guarded returns with an unguarded fallback",
+      "observed": "Try",
+      "owner": "SequentialDigBody",
+      "representative_files": [
+        "pandas/tests/reshape/merge/test_merge_asof.py"
+      ],
+      "requested": "reduced guarded returns with an unguarded fallback"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / dtype / value",
+      "observed": "dtype",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/tests/frame/test_constructors.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Projection",
+      "label": "WithSugar manager result / Floor / Projection / Incomplete / force callsite floor",
+      "observed": "Incomplete",
+      "owner": "WithSugar manager result",
+      "representative_files": [
+        "pandas/tests/io/test_sql.py"
+      ],
+      "requested": "force callsite floor"
+    }
+  ],
+  "hang_at_max_bound_count": 0,
+  "hang_files": [],
+  "ledger": "docs/ledgers/loud-timeout-classification-4894.jsonl",
+  "other": [],
+  "other_count": 0,
+  "owner_families": [
+    {
+      "count": 2,
+      "owner": "SequentialDigBody",
+      "representative_files": [
+        "pandas/tests/tools/test_to_datetime.py",
+        "pandas/tests/reshape/merge/test_merge_asof.py"
+      ]
+    },
+    {
+      "count": 2,
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/indexing/test_loc.py",
+        "pandas/tests/reshape/merge/test_merge.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "FormatDunderCallSugar callsite receiver",
+      "representative_files": [
+        "numpy/ma/tests/test_core.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "WithSugar manager result",
+      "representative_files": [
+        "pandas/tests/io/test_sql.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "ConstructorCallSugar",
+      "representative_files": [
+        "pandas/tests/extension/test_arrow.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/tests/frame/test_constructors.py"
+      ]
+    }
+  ],
+  "owner_family_count": 6,
+  "owners": {
+    "ConstructorCallSugar": 1,
+    "FormatDunderCallSugar callsite receiver": 1,
+    "RuntimeEffect": 2,
+    "SequentialDigBody": 2,
+    "TemporalContext": 1,
+    "WithSugar manager result": 1
+  },
+  "perf_candidate_count": 0,
+  "perf_candidates": [],
+  "ranked_B_owners": [
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 2,
+      "owner": "RuntimeEffect",
+      "rank": 1
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 2,
+      "owner": "SequentialDigBody",
+      "rank": 2
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "ConstructorCallSugar",
+      "rank": 3
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "FormatDunderCallSugar callsite receiver",
+      "rank": 4
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "TemporalContext",
+      "rank": 5
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "WithSugar manager result",
+      "rank": 6
+    }
+  ],
+  "verdict_counts": {
+    "completes-with-panic": 8
+  }
+}
