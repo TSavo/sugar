@@ -107,9 +107,13 @@ class BuiltinModuleNameSugar(
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        del ctx
-        if self.bound_value is not None:
-            return Complete(self.bound_value)
+        bound_value = (
+            ctx.temporal.value_if_bound(self.name)
+            if ctx is not None
+            else self.bound_value
+        )
+        if bound_value is not None:
+            return bound_value.answer(ctx)
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor, str_const
 

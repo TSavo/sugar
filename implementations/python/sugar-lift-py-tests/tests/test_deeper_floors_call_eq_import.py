@@ -3,12 +3,16 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def test_call_eq_name_via_assign_lifts() -> None:
@@ -60,6 +64,69 @@ def test_bare_pytest_module_name_without_import() -> None:
         for r in ((rpc.get("factoryAuditSummary") or {}).get("unresolvedSites") or [])
     )
     assert "bind `pytest`" not in reasons, reasons
+
+
+def test_parameter_shadows_builtin_module_fallback() -> None:
+    src = (
+        "def choose(copy):\n"
+        "    return 1 if copy else 2\n"
+        "\n"
+        "def test_true():\n"
+        "    assert choose(True) == 1\n"
+        "\n"
+        "def test_false():\n"
+        "    assert choose(False) == 2\n"
+    )
+
+    rpc = lift_file_payload(src, "t.py").to_rpc()
+    axis = account_lift_coverage(census_source(src, file="t.py"), rpc).to_json()[
+        "assertions"
+    ]
+
+    assert axis["lifted_cited"] == 2
+    assert axis["refused_loud"] == 0
+    assert axis["silently_unaccounted"] == 0
+    assert "python:module" not in repr(rpc["ir"])
+
+
+def test_parameter_shadowing_builtin_module_bad_twin_refutes(
+    tmp_path: Path,
+) -> None:
+    truthful = run_source_through_real_solver(
+        tmp_path / "module-shadow-truthful",
+        "def A(copy):\n"
+        "    return copy\n"
+        "\n"
+        "def test_a():\n"
+        "    assert A(5) == 5\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "module-shadow-lying",
+        "def A(copy):\n"
+        "    return copy\n"
+        "\n"
+        "def test_a():\n"
+        "    assert A(5) == 6\n",
+    )
+    print(
+        json.dumps(
+            {
+                "truthful": truthful.prove_doc,
+                "lying": lying.prove_doc,
+                "selected": {
+                    "truthful": truthful.selected_sugars,
+                    "lying": lying.selected_sugars,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+    assert "BuiltinModuleNameSugar" in truthful.selected_sugars
+    assert "BuiltinModuleNameSugar" in lying.selected_sugars
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
 
 
 def test_from_import_binds_name() -> None:
