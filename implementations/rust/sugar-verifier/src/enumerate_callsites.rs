@@ -860,7 +860,50 @@ fn walk_term(
     if !t.is_object() {
         return;
     }
-    if t.get("kind").and_then(|v| v.as_str()) != Some("ctor") {
+    let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or_default();
+    // Surface `let ch = 'a'; ch.to_digit(16)` lifts to
+    // `result = let ch = 97 in method:to_digit(ch, 16)`. The method ctor lives
+    // under the IR `let` body, not at the top of the equality. Descend so
+    // bodyguard-precondition seams enumerate (#3751); without this, formalActuals
+    // bridges mint fine and self-post is reflexive, but callsites=0.
+    if kind == "let" {
+        if let Some(bindings) = t.get("bindings").and_then(|v| v.as_array()) {
+            for binding in bindings {
+                if let Some(bound) = binding
+                    .get("boundTerm")
+                    .or_else(|| binding.get("bound"))
+                    .or_else(|| binding.get("value"))
+                {
+                    walk_term(
+                        bound,
+                        property_name,
+                        property_cid,
+                        pool,
+                        containing_atomic,
+                        path_cond,
+                        callsite_bundle_cid,
+                        panic_loci,
+                        out,
+                    );
+                }
+            }
+        }
+        if let Some(body) = t.get("body") {
+            walk_term(
+                body,
+                property_name,
+                property_cid,
+                pool,
+                containing_atomic,
+                path_cond,
+                callsite_bundle_cid,
+                panic_loci,
+                out,
+            );
+        }
+        return;
+    }
+    if kind != "ctor" {
         return;
     }
     let name = t
@@ -1513,6 +1556,126 @@ mod guard_propagation_tests {
         assert_eq!(
             call.formal_actuals.as_ref().and_then(|v| v.get("self")),
             Some(&int_const(97))
+        );
+    }
+
+    /// #3751: bodyguard posts lift as
+    /// `result = let ch = 97 in method:to_digit(ch, 16)`. Without descending
+    /// IR `let`, formula walk reports callsites=0 while the implication
+    /// bridge and formalActuals still mint — MISSING edge in the showcase.
+    #[test]
+    fn formula_walk_descends_let_to_enumerate_method_to_digit() {
+        let mut pool = MementoPool::default();
+        let bundle = test_cid("caller-bundle");
+        let caller = test_cid("caller");
+        let target = test_cid_string("to-digit-contract");
+        let int_const = |value: i64| json!({"kind": "const", "sort": {"kind": "primitive", "name": "Int"}, "value": value});
+        let let_wrapped_call = json!({
+            "kind": "let",
+            "bindings": [{
+                "name": "ch",
+                "boundTerm": int_const(97),
+            }],
+            "body": {
+                "kind": "ctor",
+                "name": "method:to_digit",
+                "args": [
+                    {"kind": "var", "name": "ch"},
+                    int_const(16),
+                ],
+            },
+        });
+        let caller_bridge = json!({
+            "envelope": true,
+            "header": {
+                "kind": "bridge",
+                "sourceSymbol": "method:to_digit",
+                "targetContractCid": target.clone(),
+                "sourceLayer": "rust",
+                "targetLayer": "rust-tests",
+                "callsite": {
+                    "file": "src/lib.rs",
+                    "start_line": 3,
+                    "panicSite": false,
+                    "formalActuals": {
+                        "self": int_const(97),
+                        "radix": int_const(16),
+                    }
+                }
+            }
+        });
+        pool.insert_unanchored_for_tests(
+            test_cid(&target),
+            json!({
+                "envelope": true,
+                "header": {
+                    "kind": "contract",
+                    "contractName": "char::to_digit",
+                    "formals": ["self", "radix"],
+                    "pre": {
+                        "kind": "and",
+                        "operands": [
+                            {"kind": "atomic", "name": ">=", "args": [
+                                {"kind": "var", "name": "radix"}, int_const(2)
+                            ]},
+                            {"kind": "atomic", "name": "<=", "args": [
+                                {"kind": "var", "name": "radix"}, int_const(36)
+                            ]},
+                        ]
+                    }
+                }
+            }),
+        );
+        pool.insert_bridge_by_symbol(
+            "method:to_digit",
+            test_cid("caller-to-digit-bridge"),
+            caller_bridge.clone(),
+        );
+        pool.insert_bridge_by_callsite(
+            scoped_callsite_key(&bundle, "src/lib.rs", 3, "method:to_digit").expect("scoped key"),
+            test_cid("caller-to-digit-bridge"),
+            caller_bridge,
+        );
+        pool.bundle_members
+            .entry(bundle)
+            .or_default()
+            .insert(caller.clone());
+        pool.insert_unanchored_for_tests(
+            caller,
+            json!({
+                "envelope": true,
+                "header": {
+                    "kind": "contract",
+                    "contractName": "bodyguard_edge",
+                    "post": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [{"kind": "var", "name": "result"}, let_wrapped_call],
+                    }
+                }
+            }),
+        );
+
+        let sites = run(&pool);
+        let call = sites
+            .iter()
+            .find(|cs| cs.bridge_ir_name == "method:to_digit")
+            .unwrap_or_else(|| {
+                panic!(
+                    "let-wrapped method:to_digit must enumerate; got {} sites: {:?}",
+                    sites.len(),
+                    sites
+                        .iter()
+                        .map(|s| s.bridge_ir_name.as_str())
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(call.file.as_deref(), Some("src/lib.rs"));
+        assert_eq!(call.line, Some(3));
+        assert_eq!(
+            call.formal_actuals.as_ref().and_then(|v| v.get("radix")),
+            Some(&int_const(16)),
+            "formalActuals from the bodyguard bridge must ride the enumerated site"
         );
     }
 

@@ -646,11 +646,14 @@ impl MementoPool {
         &mut self,
         source_symbol: impl Into<String>,
         bridge_cid: MementoCid,
-        _bridge_env: Json,
+        bridge_env: Json,
     ) {
-        #[cfg(test)]
+        // Always materialize the bridge memento when missing. `cfg(test)` is
+        // package-local: sugar-verifier tests compile this crate without
+        // `cfg(test)`, so a gated insert left bridges_by_symbol pointing at
+        // absent mementos and formula-walk tests saw callsites=0.
         if !self.mementos.contains_key(&bridge_cid) {
-            self.insert_unanchored_for_tests(bridge_cid.clone(), _bridge_env.clone());
+            self.insert_unanchored_for_tests(bridge_cid.clone(), bridge_env);
         }
         self.bridges_by_symbol
             .insert(source_symbol.into(), bridge_cid);
@@ -661,11 +664,10 @@ impl MementoPool {
         &mut self,
         key: BundleScopedCallsiteKey,
         bridge_cid: MementoCid,
-        _bridge_env: Json,
+        bridge_env: Json,
     ) {
-        #[cfg(test)]
         if !self.mementos.contains_key(&bridge_cid) {
-            self.insert_unanchored_for_tests(bridge_cid.clone(), _bridge_env.clone());
+            self.insert_unanchored_for_tests(bridge_cid.clone(), bridge_env);
         }
         self.bridges_by_callsite.insert(key, bridge_cid);
     }

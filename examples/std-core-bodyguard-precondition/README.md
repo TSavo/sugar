@@ -2,7 +2,9 @@
 
 This showcase proves effects-free precondition seams from real Rust `core`
 source. It harvests the already-proven Slice B mechanism across five direct
-flat body guards in pinned `rust-src` 1.96.0.
+flat body guards in pinned `rust-src` 1.96.0. Producer methods are extracted
+verbatim into minimal `impl` wrappers (not full-file symlinks), so ambient
+std surface such as `is_digit → to_digit` does not mint extra claims.
 
 The producer contracts are lifted from these real bodies:
 

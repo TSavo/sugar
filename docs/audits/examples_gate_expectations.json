@@ -498,14 +498,12 @@
       "name": "examples/sklearn-showcase/run.sh"
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-red/bodyguard-claims-failed-or-undecided",
-      "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-red/bodyguard-claims-failed-or-undecided in the recensus4 clean sweep; work order #3751. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 131.205,
-      "name": "examples/std-core-bodyguard-precondition/run.sh",
-      "work_order_issue": 3751
+      "expected": "GREEN",
+      "first_seen": "2026-07-16 #3751: let-descent enumerates bodyguard method:to_digit; extract-only std producers",
+      "grounds": "showcase self-check passed: good bodyguard edges discharged, bad edges unsatisfied/refused, vendor should_panic witnesses ok. Work order #3751 closed.",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 540.0,
+      "name": "examples/std-core-bodyguard-precondition/run.sh"
     },
     {
       "expected": "NAMED_RED",
