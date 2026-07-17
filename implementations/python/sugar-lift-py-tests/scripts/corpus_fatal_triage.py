@@ -42,8 +42,28 @@ def python_files(root: Path) -> list[Path]:
     )
 
 
+def _progress_logging_enabled() -> bool:
+    """Macro hotspot progress is opt-in via SUGAR_ENGINE_LOG or SUGAR_ENGINE_PROGRESS=1.
+
+    Default corpus triage stays quiet (logging disabled). Timeout classification
+    sets SUGAR_ENGINE_LOG so heartbeats name the live sugar/site stack on kill.
+    """
+    if os.environ.get("SUGAR_ENGINE_LOG"):
+        return True
+    flag = (os.environ.get("SUGAR_ENGINE_PROGRESS") or "").strip().lower()
+    return flag in {"1", "true", "yes", "on"}
+
+
 def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
-    logging.disable(logging.CRITICAL)
+    progress = _progress_logging_enabled()
+    if not progress:
+        logging.disable(logging.CRITICAL)
+    else:
+        # Re-enable in case parent left logging disabled; attach live JSONL sink.
+        logging.disable(logging.NOTSET)
+        from sugar_lift_py_tests.engine_log import configure_live_log, reduction_span
+
+        configure_live_log()
     try:
         from sugar_lift_py_tests.effect import effect_reason, effect_status
         from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
@@ -53,7 +73,11 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
             source = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             source = path.read_text(encoding="utf-8", errors="replace")
-        payload = lift_file_payload(source, rel)
+        if progress:
+            with reduction_span(sugar="lift_file_payload", role="file", site=rel):
+                payload = lift_file_payload(source, rel)
+        else:
+            payload = lift_file_payload(source, rel)
     except KeyboardInterrupt:
         raise
     except BaseException as error:

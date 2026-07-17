@@ -684,6 +684,34 @@ def _ctx_with_required_module_bindings(
     factory. This is the module-value analogue of install-source function-global
     seeding and deliberately does not execute or fabricate Python constants.
     """
+    from sugar_lift_py_tests.engine_log import reduction_span
+
+    with reduction_span(
+        sugar="module_seed",
+        role="dig.module_seed",
+        site=f"{sourcefile}:{target_index}",
+    ):
+        return _ctx_with_required_module_bindings_impl(
+            statements,
+            target_index,
+            needed,
+            source=source,
+            sourcefile=sourcefile,
+            ctx=ctx,
+            resolving=resolving,
+        )
+
+
+def _ctx_with_required_module_bindings_impl(
+    statements: list[ast.stmt],
+    target_index: int,
+    needed: set[str],
+    *,
+    source: str,
+    sourcefile: str,
+    ctx: Any,
+    resolving: frozenset[str],
+):
     from dataclasses import replace
 
     from sugar_lift_py_tests.claim import SugarRole
@@ -799,6 +827,21 @@ def resolve_install_source_value(
     """
     if "." not in import_target or import_target in _resolving:
         return None
+    from sugar_lift_py_tests.engine_log import reduction_span
+
+    with reduction_span(
+        sugar=import_target,
+        role="dig.resolve_value",
+        site=import_target,
+    ):
+        return _resolve_install_source_value_impl(
+            import_target, ctx, _resolving=_resolving
+        )
+
+
+def _resolve_install_source_value_impl(
+    import_target: str, ctx, *, _resolving: frozenset[str] = frozenset()
+):
     resolving = _resolving | {import_target}
     native = _resolve_qualified_native_callable(import_target, resolving=_resolving)
     if native is not None:
@@ -1472,6 +1515,19 @@ def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
         return None
     if require_attachable and not method_body_is_attachable(fn_site):
         return None
+    name = fn_site.function_name()
+    site = getattr(fn_site, "blame", None) or name
+    from sugar_lift_py_tests.engine_log import reduction_span
+
+    with reduction_span(
+        sugar=str(name),
+        role="dig.build_body",
+        site=str(site),
+    ):
+        return _build_dig_body_impl(fn_site, ctx, require_attachable=False)
+
+
+def _build_dig_body_impl(fn_site, ctx: Any, *, require_attachable: bool = False):
     from dataclasses import replace
 
     from sugar_lift_py_tests.claim import SugarRole

@@ -388,3 +388,157 @@ def test_load_file_list_txt_and_json(tmp_path: Path) -> None:
     js = tmp_path / "files.json"
     js.write_text(json.dumps({"timeout_files": ["numpy/c.py"]}), encoding="utf-8")
     assert mod.load_file_list(js) == ["numpy/c.py"]
+
+
+def test_extract_progress_from_engine_log_ranks_sugar_hotspots(tmp_path: Path) -> None:
+    """Macro hotspots: heartbeats name the stuck sugar without profiling guesswork."""
+    log = tmp_path / "engine.jsonl"
+    rows = [
+        {
+            "schema": "sugar.engine.log.v1",
+            "event": "enter",
+            "sugar": "ForSugar",
+            "role": "statement",
+            "site": "a.py:1",
+            "fingerprint": "ForSugar|statement|a.py:1",
+            "sequence": 1,
+        },
+        {
+            "schema": "sugar.engine.log.v1",
+            "event": "exit",
+            "sugar": "ForSugar",
+            "role": "factory.new.statement",
+            "site": "a.py:1",
+            "fingerprint": "ForSugar|factory.new.statement|a.py:1",
+            "sequence": 1,
+            "elapsed_ms": 100.0,
+        },
+        {
+            "schema": "sugar.engine.log.v1",
+            "event": "exit",
+            "sugar": "numpy.ma.core.array",
+            "role": "dig.resolve_value",
+            "site": "numpy.ma.core.array",
+            "fingerprint": "numpy.ma.core.array|dig.resolve_value|numpy.ma.core.array",
+            "sequence": 2,
+            "elapsed_ms": 400.0,
+        },
+        {
+            "schema": "sugar.engine.log.v1",
+            "event": "exit",
+            "sugar": "module_seed",
+            "role": "dig.module_seed",
+            "site": "core.py:10",
+            "fingerprint": "module_seed|dig.module_seed|core.py:10",
+            "sequence": 3,
+            "elapsed_ms": 200.0,
+        },
+        {
+            "schema": "sugar.engine.log.v1",
+            "event": "heartbeat",
+            "sugar": "ForSugar",
+            "role": "statement",
+            "site": "a.py:1",
+            "fingerprint": "ForSugar|statement|a.py:1",
+            "sequence": 1,
+            "oldest_elapsed_ms": 5000,
+            "active_stack": ["ForSugar|statement|a.py:1"],
+        },
+        {
+            "schema": "sugar.engine.log.v1",
+            "event": "heartbeat",
+            "sugar": "ForSugar",
+            "role": "statement",
+            "site": "a.py:1",
+            "fingerprint": "ForSugar|statement|a.py:1",
+            "sequence": 1,
+            "oldest_elapsed_ms": 10000,
+            "active_stack": ["ForSugar|statement|a.py:1", "NameSugar|term|a.py:2"],
+        },
+        {
+            "schema": "sugar.engine.log.v1",
+            "event": "heartbeat",
+            "sugar": "TemporalContext",
+            "role": "term",
+            "site": "a.py:3",
+            "fingerprint": "TemporalContext|term|a.py:3",
+            "sequence": 2,
+            "oldest_elapsed_ms": 12000,
+            "active_stack": ["TemporalContext|term|a.py:3"],
+        },
+    ]
+    log.write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    progress = mod.extract_progress_from_engine_log(log)
+    assert progress is not None
+    assert progress["heartbeat_count"] == 3
+    assert progress["sugar_hotspots"][0]["sugar"] == "ForSugar"
+    assert progress["sugar_hotspots"][0]["heartbeat_count"] == 2
+    assert progress["last_heartbeat"]["sugar"] == "TemporalContext"
+    assert progress["last_heartbeat"]["active_stack"] == [
+        "TemporalContext|term|a.py:3"
+    ]
+    # Second-cut phases: dig vs factory_new vs reduce (from exit elapsed_ms).
+    assert progress["phase_share"]["dig"] > progress["phase_share"]["factory_new"]
+    assert progress["dig_target_ms"][0]["target"] == "numpy.ma.core.array"
+    assert "dig.resolve_value" in progress["role_ms"]
+
+
+def test_phase_from_role_bisects_factory_and_dig() -> None:
+    assert mod._phase_from_role("dig.resolve_value") == "dig"
+    assert mod._phase_from_role("dig.module_seed") == "dig"
+    assert mod._phase_from_role("dig.build_body") == "dig"
+    assert mod._phase_from_role("factory.select") == "factory_select"
+    assert mod._phase_from_role("factory.new.statement") == "factory_new"
+    assert mod._phase_from_role("statement") == "reduce"
+    assert mod._phase_from_role("file") == "file"
+
+
+def test_run_child_timeout_attaches_last_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On kill, ledger must carry last_progress — not only stopwatch reason."""
+    import subprocess
+
+    log_dir = tmp_path / "engine-logs"
+
+    def fake_run(*args, **kwargs):  # noqa: ANN001, ANN002
+        env = kwargs.get("env") or {}
+        log_path = Path(env["SUGAR_ENGINE_LOG"])
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(
+            json.dumps(
+                {
+                    "schema": "sugar.engine.log.v1",
+                    "event": "heartbeat",
+                    "sugar": "SequentialDigBody",
+                    "role": "body",
+                    "site": "slow.py:10",
+                    "fingerprint": "SequentialDigBody|body|slow.py:10",
+                    "sequence": 9,
+                    "oldest_elapsed_ms": 9000,
+                    "active_stack": ["SequentialDigBody|body|slow.py:10"],
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get("timeout", 10))
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    row = mod.run_child_at_bound(
+        script=Path("corpus_fatal_triage.py"),
+        path=Path("slow.py"),
+        rel="numpy/slow.py",
+        timeout_seconds=10,
+        engine_log_dir=log_dir,
+    )
+    assert row["category"] == "timeout-or-hang"
+    assert row["timeout_hotspot"] == "SequentialDigBody"
+    assert row["timeout_last_sugar"] == "SequentialDigBody"
+    assert row["timeout_last_site"] == "slow.py:10"
+    assert row["last_progress"]["heartbeat_count"] == 1
+    assert row["last_progress"]["sugar_hotspots"][0]["sugar"] == "SequentialDigBody"
