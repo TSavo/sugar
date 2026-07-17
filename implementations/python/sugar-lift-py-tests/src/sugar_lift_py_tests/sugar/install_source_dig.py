@@ -1300,6 +1300,86 @@ def _dotted_ast_name(node: ast.expr) -> str | None:
     return None
 
 
+def _class_base_ast_name(node: ast.expr) -> str | None:
+    """Static class-base coordinate, ignoring a type-parameter subscription."""
+    if isinstance(node, ast.Subscript):
+        node = node.value
+    return _dotted_ast_name(node)
+
+
+@functools.lru_cache(maxsize=INSTALL_SOURCE_VALUE_CAPACITY)
+def resolve_install_source_class_bases(
+    qualified_class: str,
+) -> tuple[str, ...] | None:
+    """Resolve one installed class's direct source bases.
+
+    ``None`` is deliberately loud at the constructor consumer: it means source
+    did not prove every base coordinate. This door never guesses from an
+    instance and never turns an unbuilt source shape into runtime dependence.
+    """
+    if not qualified_class or "." not in qualified_class:
+        return None
+    module_name, class_name = qualified_class.rsplit(".", 1)
+    installed = _installed_source(module_name)
+    if installed is None:
+        # ``collections.abc`` is a public facade whose source file is
+        # ``_collections_abc.py``. Resolve that source file from the class
+        # coordinate; do not consult its runtime MRO.
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            return None
+        cls = getattr(module, class_name, None)
+        sourcefile = inspect.getsourcefile(cls) if inspect.isclass(cls) else None
+        if not isinstance(sourcefile, str):
+            return None
+        try:
+            source = Path(sourcefile).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return None
+    else:
+        source, sourcefile = installed
+    try:
+        parsed = parsed_tree(source, sourcefile)
+    except SyntaxError:
+        return None
+    class_node = next(
+        (
+            statement
+            for statement in parsed.body
+            if isinstance(statement, ast.ClassDef) and statement.name == class_name
+        ),
+        None,
+    )
+    if class_node is None:
+        return None
+    if not class_node.bases:
+        return () if qualified_class == "builtins.object" else ("builtins.object",)
+
+    imports = _static_import_targets(module_name, parsed)
+    local_classes = {
+        statement.name
+        for statement in parsed.body
+        if isinstance(statement, ast.ClassDef)
+    }
+    resolved: list[str] = []
+    for base in class_node.bases:
+        coordinate = _class_base_ast_name(base)
+        if coordinate is None:
+            return None
+        head, separator, rest = coordinate.partition(".")
+        imported = imports.get(head)
+        if imported is not None:
+            resolved.append(f"{imported}.{rest}" if separator else imported)
+        elif not separator and coordinate in local_classes:
+            resolved.append(f"{module_name}.{coordinate}")
+        elif not separator and coordinate == "object":
+            resolved.append("builtins.object")
+        else:
+            return None
+    return tuple(resolved)
+
+
 def resolve_install_source_class_method(qualified_class: str, method_name: str):
     """Resolve ``module.Class.method`` to a FunctionDef SourceFragment, or None."""
     if not qualified_class or not method_name or "." not in qualified_class:

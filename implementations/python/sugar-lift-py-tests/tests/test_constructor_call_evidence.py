@@ -104,6 +104,58 @@ def test_static_inherited_constructor_builds_base_fields() -> None:
     assert _field_values(outcome.value) == {"value": TermValue(7)}
 
 
+def test_requests_cookiejar_source_bases_have_exact_c3_linearization() -> None:
+    from sugar_lift_py_tests.sugar.constructor_call_sugar import (
+        _static_constructor_mro,
+    )
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    source = (
+        "class RequestsCookieJar(CookieJar, MutableMapping[str, str]):\n" "    pass\n"
+    )
+    class_site = SourceFragment.from_node(ast.parse(source).body[0], "cookies.py")
+    temporal = (
+        TemporalContext.empty()
+        .bind_value(
+            "CookieJar",
+            ImportAliasValue(
+                "CookieJar",
+                "CookieJar",
+                import_target="http.cookiejar.CookieJar",
+            ),
+        )
+        .bind_value(
+            "MutableMapping",
+            ImportAliasValue(
+                "MutableMapping",
+                "MutableMapping",
+                import_target="collections.abc.MutableMapping",
+            ),
+        )
+    )
+    ctx = FactoryBuildContext(
+        filename="cookies.py",
+        catalog=default_catalog(),
+        name_resolver={"RequestsCookieJar": class_site.node},
+        temporal=temporal,
+    )
+
+    mro = _static_constructor_mro("RequestsCookieJar", class_site, ctx)
+
+    assert mro is not None
+    assert tuple(entry[1] for entry in mro) == (
+        "RequestsCookieJar",
+        "http.cookiejar.CookieJar",
+        "collections.abc.MutableMapping",
+        "collections.abc.Mapping",
+        "collections.abc.Collection",
+        "collections.abc.Sized",
+        "collections.abc.Iterable",
+        "collections.abc.Container",
+        "builtins.object",
+    )
+
+
 def test_source_backed_imported_inherited_constructor_builds_base_fields(
     tmp_path, monkeypatch
 ) -> None:
@@ -409,3 +461,36 @@ def test_source_backed_imported_constructor_refutes_wrong_twin(tmp_path) -> None
     assert lying.verdict == "unsat"
     assert "ConstructorCallSugar" in truthful.selected_sugars
     assert "ConstructorCallSugar" in lying.selected_sugars
+
+
+def test_multiple_inheritance_constructor_refutes_wrong_linearization_twin(
+    tmp_path,
+) -> None:
+    prefix = (
+        "class Left:\n"
+        "    def __init__(self):\n"
+        "        self.selected = 1\n"
+        "\n"
+        "class Right:\n"
+        "    def __init__(self):\n"
+        "        self.selected = 2\n"
+        "\n"
+        "class Child(Left, Right):\n"
+        "    pass\n"
+        "\n"
+        "def A():\n"
+        "    return Child().selected\n"
+    )
+    truthful = run_source_through_real_solver(
+        tmp_path / "multiple-inheritance-truthful",
+        prefix + "\ndef test_a():\n    assert A() == 1\n",
+    )
+    wrong_linearization = run_source_through_real_solver(
+        tmp_path / "multiple-inheritance-wrong-order",
+        prefix + "\ndef test_a():\n    assert A() == 2\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert wrong_linearization.verdict == "unsat"
+    assert "ConstructorCallSugar" in truthful.selected_sugars
+    assert "ConstructorCallSugar" in wrong_linearization.selected_sugars
