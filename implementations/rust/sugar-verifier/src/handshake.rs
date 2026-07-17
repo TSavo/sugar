@@ -28,7 +28,7 @@ use std::path::Path;
 
 use serde_json::Value as Json;
 
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
+use sugar_canonicalizer::{blake3_512_of, encode_jcs, jcs_cid_of_json, json_to_value, Value};
 use sugar_proof_envelope::{ed25519_verify_string, Signature};
 use tracing::debug;
 
@@ -69,10 +69,10 @@ impl HandshakeOutcome {
 /// Return JCS-canonical BLAKE3-512 of an IR formula expressed as a
 /// `serde_json::Value`. Used both for Tier 1 equality checks and for
 /// keying implication-memento cache lookups.
+///
+/// #3901: ONE door with mint/feed — `jcs_cid_of_json` refuses non-integers.
 pub fn formula_hash(formula: &Json) -> String {
-    let v = serde_to_canonical(formula);
-    let bytes = encode_jcs(&v);
-    blake3_512_of(bytes.as_bytes())
+    jcs_cid_of_json(formula)
 }
 
 /// Property hash an implication memento covers, derived from the
@@ -83,35 +83,14 @@ pub fn implication_property_hash(antecedent_hash: &str, consequent_hash: &str) -
 }
 
 /// Serialize a `serde_json::Value` into the canonical-form `Value`
-/// the JCS encoder operates on. Mirrors the encoder used by the
-/// claim-envelope minter so byte-by-byte hashes line up.
+/// the JCS encoder operates on. #3901 shared refuse door with mint/feed.
 fn serde_to_canonical(v: &Json) -> std::sync::Arc<Value> {
-    match v {
-        Json::Null => Value::null(),
-        Json::Bool(b) => Value::boolean(*b),
-        Json::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Value::integer(i128::from(i))
-            } else if let Some(u) = n.as_u64() {
-                Value::integer(i128::from(u))
-            } else if let Some(f) = n.as_f64() {
-                if f == (f as i64 as f64) {
-                    Value::integer(f as i128)
-                } else {
-                    Value::string(f.to_string())
-                }
-            } else {
-                Value::null()
-            }
-        }
-        Json::String(s) => Value::string(s.clone()),
-        Json::Array(arr) => Value::array(arr.iter().map(serde_to_canonical).collect()),
-        Json::Object(map) => Value::object(
-            map.iter()
-                .map(|(k, val)| (k.as_str(), serde_to_canonical(val)))
-                .collect::<Vec<_>>(),
-        ),
-    }
+    json_to_value(v).unwrap_or_else(|err| {
+        panic!(
+            "handshake serde_to_canonical: {err} — non-integer JSON number cannot \
+             enter a content-addressed formula hash; use sugar_canonicalizer::json_to_value"
+        )
+    })
 }
 
 /// Locate the producer (post) contract memento that the callsite's

@@ -6,8 +6,7 @@
 #![deny(unreachable_patterns)]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
-use sugar_canonicalizer::{blake3_512_of, cid_hex, encode_jcs, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, jcs_cid_of_json};
 use sugar_ir_compiler::{CompileError, CompiledFormula, FreeVar, OpacityEntry, OpacityManifest};
 use sugar_ir_types::*;
 
@@ -1820,33 +1819,11 @@ fn smt_atomic_name(name: &str) -> &str {
 }
 
 /// Compute the positionCid for an IR subterm.
+///
+/// #3901: ONE door with mint/feed — `jcs_cid_of_json` refuses non-integers
+/// rather than float→string / null fail-open.
 fn position_cid_of(value: &serde_json::Value) -> String {
-    let cv = to_cvalue(value);
-    let jcs = encode_jcs(&cv);
-    blake3_512_of(jcs.as_bytes())
-}
-
-fn to_cvalue(v: &serde_json::Value) -> Arc<CValue> {
-    match v {
-        serde_json::Value::Null => CValue::null(),
-        serde_json::Value::Bool(b) => CValue::boolean(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                CValue::integer(i128::from(i))
-            } else if let Some(u) = n.as_u64() {
-                CValue::integer(i128::from(u))
-            } else if let Some(f) = n.as_f64() {
-                CValue::string(format!("{}", f))
-            } else {
-                CValue::null()
-            }
-        }
-        serde_json::Value::String(s) => CValue::string(s.clone()),
-        serde_json::Value::Array(arr) => CValue::array(arr.iter().map(to_cvalue).collect()),
-        serde_json::Value::Object(obj) => {
-            CValue::object(obj.iter().map(|(k, v)| (k.clone(), to_cvalue(v))))
-        }
-    }
+    jcs_cid_of_json(value)
 }
 
 /// Walk a formula collecting opacity entries for sorts the SMT-LIB
