@@ -408,6 +408,17 @@ class CallSiteValue(FloorValue):
             other, site, op="&", floor_method="bitwise_and"
         )
 
+    def bitwise_xor(self, other, site):
+        dug = self._dig_floor_or_none(None, owner="CallSiteValue.bitwise_xor")
+        if dug is not None and dug is not self:
+            return dug.bitwise_xor(other, site)
+        if self.body is not None:
+            return super().bitwise_xor(other, site)
+
+        from sugar_lift_py_tests.effect import runtime_bitwise_xor
+
+        return runtime_bitwise_xor(self, other, site)
+
     def bitwise_or(self, other, site):
         return self._dig_or_symbolic_binop(
             other, site, op="|", floor_method="bitwise_or"
