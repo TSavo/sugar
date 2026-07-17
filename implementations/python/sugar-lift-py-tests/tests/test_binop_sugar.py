@@ -226,6 +226,51 @@ def test_large_ground_list_repetition_is_compact_construction():
     assert operation_log == []
 
 
+def test_test_loc_ground_sequence_repeat_100000_constructs_not_runtime_effect():
+    """#4922 ledger fingerprint: py.sequence_repeat operand=TermValue(100000).
+
+    pandas/tests/indexing/test_loc.py:1064 binds ``l2=100000`` via literal
+    parametrize into ``index=[0] * l2``. Ground counts construct a compact
+    floor value; they must not mint SequenceRepetitionRuntimeEffect.
+    """
+    from sugar_lift_py_tests.floor.ground_sequence_repetition_value import (
+        GroundSequenceRepetitionValue,
+    )
+
+    site = "pandas/tests/indexing/test_loc.py:1064:61"
+    # Literal ground count (decidable at lift).
+    outcome, operation_log = _reduce_outcome_with_log("[0] * 100000")
+    value = complete_value(outcome, owner="test_loc ground sequence_repeat")
+    assert isinstance(value, GroundSequenceRepetitionValue)
+    assert value.repetitions == 100000
+    assert complete_value(value.length(site), owner="test_loc length") == TermValue(
+        100000
+    )
+    assert operation_log == []
+
+    # Parametrize-bound name reduces to the same ground TermValue(100000).
+    bound, bound_log = _reduce_outcome_with_log(
+        "[0] * l2",
+        {"l2": TermValue(100000)},
+    )
+    bound_value = complete_value(bound, owner="test_loc parametrize l2=100000")
+    assert isinstance(bound_value, GroundSequenceRepetitionValue)
+    assert bound_value.repetitions == 100000
+    assert complete_value(bound_value.length(site), owner="bound length") == TermValue(
+        100000
+    )
+    assert bound_log == []
+
+    # Reverse operand order stays constructed.
+    reversed_outcome, reversed_log = _reduce_outcome_with_log("100000 * [0]")
+    reversed_value = complete_value(
+        reversed_outcome, owner="test_loc reverse ground sequence_repeat"
+    )
+    assert isinstance(reversed_value, GroundSequenceRepetitionValue)
+    assert reversed_value.repetitions == 100000
+    assert reversed_log == []
+
+
 def test_tuple_repetition_by_symbolic_count_is_typed_runtime_effect():
     outcome, operation_log = _reduce_outcome_with_log(
         "(1,) * count",
