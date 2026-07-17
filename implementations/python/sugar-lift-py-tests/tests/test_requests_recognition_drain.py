@@ -151,8 +151,9 @@ def test_star_kwargs_def_assert_lifts_through_definition_audit() -> None:
 def test_requests_package_key_files_lifted_cited_delta() -> None:
     """Measurable package R: 16 lifted / 0 refused / 0 silent on key assert files.
 
-    Full package still has non-assert residual panics (help TemporalContext,
-    structures RecursionError, utils NoneValue.subtract) that do not host the
+    help.py module-level try/import joins are constructed (TemporalContext
+    residual drained). Full package still has non-assert residual panics
+    (structures RecursionError, utils NoneValue.subtract) that do not host the
     16 stated assert loci. Leave open for that residual under #4016.
     """
     files = {
@@ -176,6 +177,34 @@ def test_requests_package_key_files_lifted_cited_delta() -> None:
         refused += axis["refused_loud"]
         silent += axis["silently_unaccounted"]
     assert (stated, lifted, refused, silent) == (16, 16, 0, 0)
+
+
+def test_module_try_import_join_binds_optional_name() -> None:
+    """try/import + except Assign=None must seed GuardedValue, not TemporalContext gap."""
+    source = (
+        "try:\n"
+        "    import charset_normalizer\n"
+        "except ImportError:\n"
+        "    charset_normalizer = None\n"
+        "\n"
+        "def info():\n"
+        "    charset_normalizer_info = {'version': None}\n"
+        "    if charset_normalizer:\n"
+        "        charset_normalizer_info = {'version': charset_normalizer.__version__}\n"
+        "    return charset_normalizer_info\n"
+    )
+    payload, gaps = audit_lift_file(source, "try_optional_import.py")
+    assert gaps == []
+    assert payload.ir  # definition constructed
+
+
+def test_requests_help_audits_without_temporal_context_panic() -> None:
+    """help.py residual: module try/import joins seed charset_normalizer/chardet/OpenSSL."""
+    source = (VENDOR / "help.py").read_text(encoding="utf-8")
+    payload, gaps = audit_lift_file(source, "requests/help.py")
+    assert gaps == []
+    # Three function defs (_implementation, info, main) construct.
+    assert len(payload.ir) == 3
 
 
 def test_keyword_exception_constructor_routes_raise() -> None:

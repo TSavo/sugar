@@ -320,6 +320,9 @@ def _module_level_declarations_before(
                 declarations.append(statement)
         elif statement.observed in ("Import", "ImportFrom"):
             declarations.append(statement)
+        elif statement.observed == "Try":
+            # Optional imports and try/except/else name joins (e.g. requests/help).
+            declarations.append(statement)
     # Never attach declarations when the preserved tree does not contain this
     # exact function coordinate: that is stale or mismatched provenance.
     return []
@@ -346,7 +349,24 @@ def _module_declaration_bound_names(statement: SourceFragment) -> set[str]:
             for imported, alias in statement.importfrom_names()
             if imported != "*"
         }
+    if statement.observed == "Try":
+        return _try_module_bound_names(statement)
     return set()
+
+
+def _try_module_bound_names(statement: SourceFragment) -> set[str]:
+    """Names a module-level Try may join into the continuing lexical frame."""
+    names: set[str] = set()
+    suites: list[SourceFragment] = [statement.try_body()]
+    for handler in statement.try_handlers():
+        suites.append(handler.except_handler_body())
+    orelse = statement.try_orelse()
+    if orelse is not None:
+        suites.append(orelse)
+    for suite in suites:
+        for child in suite.statements():
+            names.update(_module_declaration_bound_names(child))
+    return names
 
 
 def _ctx_with_module_global_binds(site: SourceFragment, ctx):

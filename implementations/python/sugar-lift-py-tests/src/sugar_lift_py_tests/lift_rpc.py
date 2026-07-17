@@ -1269,6 +1269,11 @@ def _module_import_temporal(
     ``BoundVar`` representation as ``_ctx_with_module_global_binds``. Each
     assignment is independent: an unowned or runtime-effect RHS stays unbound
     without poisoning siblings. Annotation-only declarations bind nothing.
+
+    Module-level ``try`` / ``except`` declarations (optional imports that bind
+    the same name on both faces) reduce through ordinary TrySugar so continuing
+    path joins seed ``GuardedValue`` bindings. Skipping Try left names like
+    ``charset_normalizer`` unbound and panicked later NameSugar reductions.
     """
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
@@ -1402,6 +1407,33 @@ def _module_import_temporal(
                     record=BlockValue(()),
                 ),
             )
+        elif observed == "Try":
+            # Optional-import / continuing-path joins: reduce TrySugar and
+            # extend temporal with ScopeRebind faces (often GuardedValue).
+            # Construct-or-panic — never invent a None-only or import-only face.
+            ctx = FactoryBuildContext(
+                filename=stmt.filename,
+                catalog=catalog,
+                temporal=temporal,
+                module_temporal=temporal,
+                name_resolver=module_function_resolver,
+            )
+            try:
+                outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
+            except FactoryPanic as panic:
+                if recovered_panics is None:
+                    raise
+                recovered_panics.append(
+                    _SeedPanicEvidence(
+                        locus=f"{stmt.filename}:{stmt.line}:{stmt.col}",
+                        demanded_source=f"try:{stmt.line}:{stmt.col}",
+                        info=panic.info,
+                    )
+                )
+                continue
+            if isinstance(outcome, Incomplete):
+                continue
+            temporal = outcome.extend_scope(ctx).temporal
         elif observed == "FunctionDef":
             ctx = FactoryBuildContext(
                 filename=stmt.filename,
