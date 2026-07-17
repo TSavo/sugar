@@ -6,6 +6,7 @@ Empty-orelse While only. Non-empty else: and For stay loud gaps / other arms.
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 
 import pytest
 
@@ -25,6 +26,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.sugar.for_sugar import ForSugar
 from sugar_lift_py_tests.sugar.while_sugar import WhileSugar
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _site(source: str):
@@ -137,3 +139,72 @@ def test_for_is_not_owned_by_while_sugar() -> None:
     node = ast.parse("for x in y:\n    pass\n").body[0]
     result = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
     assert result.audit_row.selected == "ForSugar"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "while unit != 'pt':\n"
+            "    unit, mul = conversions[unit]\n"
+            "    val *= mul\n"
+            "    continue\n",
+            ("unit", "val"),
+        ),
+        (
+            "while getattr(val, 'ndim', True):\n"
+            "    res0 = has_infs(val)\n"
+            "    assert res0\n"
+            "    val = take(val)\n"
+            "    break\n",
+            ("val",),
+        ),
+    ],
+)
+def test_loop_carried_names_exclude_iteration_temporaries(
+    source: str, expected: tuple[str, ...]
+) -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    node = ast.parse(source).body[0]
+    built = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+
+    assert isinstance(built.sugar, WhileSugar)
+    assert built.sugar.carried == expected
+
+
+def test_while_test_read_makes_a_stored_name_loop_carried() -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    node = ast.parse("while active:\n    active = False\n    continue\n").body[0]
+    built = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+
+    assert isinstance(built.sugar, WhileSugar)
+    assert built.sugar.carried == ("active",)
+
+
+def test_unbound_prior_value_stays_a_loud_while_gap() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block("    while ready:\n        total += 1\n        break\n")
+
+    assert raised.value.info.owner == "WhileSugar"
+    assert raised.value.info.observed == ("total",)
+    assert raised.value.info.requested == "statically bound loop-carried locals"
+
+
+def test_while_loop_carried_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        pair for pair in WhileSugar.witnesses() if pair.name == "while_loop_carried"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "while-carried-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "while-carried-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+    assert "WhileSugar" in truthful.selected_sugars
+    assert "WhileSugar" in lying.selected_sugars
