@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.effect import RaiseEffect
 
 from .exception_value import ExceptionValue
+from .exception_cause_value import ExceptionCauseValue
 from .floor_value import FloorValue
 
 
@@ -19,6 +20,7 @@ class RaiseValue(FloorValue):
     effect: RaiseEffect
     scope: object = None
     exception: ExceptionValue | None = None
+    cause: ExceptionCauseValue | None = None
 
     def follow_rest(self):
         # Code after an unguarded raise never runs and is not part of the
@@ -30,7 +32,12 @@ class RaiseValue(FloorValue):
     def guarded(self, formula):
         from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
 
-        return GuardedRaise(guards=(formula,), effect=self.effect, scope=self.scope)
+        return GuardedRaise(
+            guards=(formula,),
+            effect=self.effect,
+            scope=self.scope,
+            cause=self.cause,
+        )
 
     def post_contribution(self):
         return (_exceptional_exit_formula(self.effect),)
