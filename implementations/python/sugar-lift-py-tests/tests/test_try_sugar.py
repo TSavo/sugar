@@ -202,6 +202,20 @@ def test_try_threads_body_binding_past_terminal_pytest_fail_handler() -> None:
     assert block.statements[-1].value == TermValue(5)
 
 
+def test_try_threads_body_binding_past_terminal_pytest_skip_handler() -> None:
+    block = compose_block(
+        "    try:\n"
+        "        result = 5\n"
+        "    except ValueError:\n"
+        "        pytest.skip('unsupported input')\n"
+        "    return result\n"
+    )
+
+    assert isinstance(block, BlockValue)
+    assert isinstance(block.statements[-1], ReturnValue)
+    assert block.statements[-1].value == TermValue(5)
+
+
 def test_nonterminal_pytest_method_does_not_grant_body_binding() -> None:
     with pytest.raises(FactoryPanic) as raised:
         compose_block(
