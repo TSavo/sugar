@@ -168,7 +168,11 @@ def test_native_callable_divide_diggable_call_peer_is_not_a_runtime_effect() -> 
 
 
 def test_divide_truthful_and_lying_twins_reach_opposite_verdicts(tmp_path) -> None:
-    witness = DivideOpSugar.witnesses()
+    witness = next(
+        witness
+        for witness in DivideOpSugar.witnesses()
+        if witness.name == "divide_return"
+    )
     truthful = run_source_through_real_solver(
         tmp_path / "truthful", witness.truthful.source
     )
