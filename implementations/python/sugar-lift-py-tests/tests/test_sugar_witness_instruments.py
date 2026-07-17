@@ -1401,7 +1401,9 @@ def test_boolop_literal_residue_lie_lowers_to_concrete_false_operand(
 # must pin ground data ctors (None / py.ellipsis / py.complex / python:module)
 # so EUF duals fire. Wave-5: ObjectValue.__matmul__ + format dunder construction
 # (format already enrolled; matrix_multiply_return retargeted to diggable
-# Box.__matmul__). Still residual under #4387: async termination-gated bridge.
+# Box.__matmul__). Wave-6: NestedTupleFor empty ListValue/TupleValue skips body
+# so fall-through return digs (nested_tuple_for_return). Still residual under
+# #4387: async termination-gated bridge; nested_attribute_assign identity skip.
 _GROUNDED_PRIMITIVE_REFUTE_SEEDS = (
     "abs_return",
     "bare_return_none",
@@ -1419,6 +1421,7 @@ _GROUNDED_PRIMITIVE_REFUTE_SEEDS = (
     "builtin_type_name_isinstance",
     "format_dunder_return",
     "matrix_multiply_return",
+    "nested_tuple_for_return",
 )
 
 

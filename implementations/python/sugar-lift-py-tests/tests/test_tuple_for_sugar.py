@@ -145,3 +145,46 @@ def test_nested_tuple_owner_excludes_starred_and_for_else() -> None:
     assert not NestedTupleForSugar.owns(
         _site("for i, (x, y) in rows:\n    pass\nelse:\n    pass\n")
     )
+
+
+def test_nested_tuple_empty_list_skips_body_so_fallthrough_digs() -> None:
+    """#4387 nested residual: empty ListValue must not invent py.subscript returns.
+
+    The catalog witness is ``A([])`` with fall-through ``return 0``. Dig must
+    surface TermValue(0) so Derived EUF dual-refutes the lying arm.
+    """
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor import FunctionCallable, ListValue, TermValue
+    from sugar_lift_py_tests.floor.call_site_value import force_floor
+    from sugar_lift_py_tests.outcome import complete_value
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    source = (
+        "def A(rows):\n"
+        "    for i, (label, size) in rows:\n"
+        "        return size\n"
+        "    return 0\n"
+    )
+    module = ast.parse(source)
+    fn = module.body[0]
+    ctx = FactoryBuildContext(
+        filename="t.py",
+        catalog=default_catalog(),
+        name_resolver={"A": fn},
+    )
+    built = build_node(fn, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    fn_val = complete_value(
+        built.sugar.desugar(ReduceContext(temporal=TemporalContext.empty())),
+        owner="nested-tuple-empty-def",
+    )
+    assert isinstance(fn_val, FunctionCallable)
+    callsite = complete_value(
+        fn_val.callsite((ListValue(()),), (), "site"),
+        owner="nested-tuple-empty-call",
+    )
+    floor = force_floor(
+        callsite,
+        ReduceContext(temporal=TemporalContext.empty()),
+        owner="nested-tuple-empty-dig",
+    )
+    assert floor == TermValue(0)

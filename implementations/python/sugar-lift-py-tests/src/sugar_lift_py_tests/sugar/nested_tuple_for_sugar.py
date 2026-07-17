@@ -56,8 +56,19 @@ class NestedTupleForSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _bind_and_reduce(self, iterable, ctx) -> Outcome:
-        from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, ListValue, TupleValue
         from sugar_lift_py_tests.ir import ctor, num
+        from sugar_lift_py_tests.outcome import Complete
+
+        # Empty concrete sequences do zero iterations. Running the body under
+        # opaque py.subscript projections would fabricate a return face and
+        # soft-SAT the enrolled nested_tuple_for_return empty-list fall-through
+        # (#4387 nested residual). Skip the body so the enclosing fall-through
+        # return digs (Derived EUF pins call:A(array()) = 0).
+        if type(iterable) is ListValue and not iterable.elements:
+            return Complete(BlockValue(()))
+        if type(iterable) is TupleValue and not iterable.elements:
+            return Complete(BlockValue(()))
 
         element = CallSiteValue(
             target_name="iter_elem",
