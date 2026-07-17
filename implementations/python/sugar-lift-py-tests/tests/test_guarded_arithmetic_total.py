@@ -4,6 +4,7 @@ import pytest
 
 from sugar_lift_py_tests.floor import GuardedValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import atomic, ctor, make_var, num
+from sugar_lift_py_tests.outcome import Complete
 
 
 @pytest.mark.parametrize(
@@ -50,6 +51,30 @@ def test_guarded_unary_minus_distributes_to_both_faces() -> None:
     )
 
 
+def test_guarded_bitwise_or_distributes_exact_set_union_to_both_faces() -> None:
+    from sugar_lift_py_tests.floor import SetValue
+
+    guard = atomic("choose", [])
+    value = GuardedValue(
+        guard,
+        SetValue((TermValue(1),)),
+        SetValue((TermValue(2),)),
+    )
+
+    outcome = value.bitwise_or(
+        SetValue((TermValue(3),)),
+        "t.py:1",
+    )
+
+    assert outcome == Complete(
+        GuardedValue(
+            guard,
+            SetValue((TermValue(1), TermValue(3))),
+            SetValue((TermValue(2), TermValue(3))),
+        )
+    )
+
+
 def test_guarded_value_declares_full_arithmetic_surface() -> None:
     expected = {
         "add",
@@ -60,6 +85,7 @@ def test_guarded_value_declares_full_arithmetic_surface() -> None:
         "modulo",
         "left_shift",
         "right_shift",
+        "bitwise_or",
         "unary_minus",
     }
     assert expected <= GuardedValue.__dict__.keys()

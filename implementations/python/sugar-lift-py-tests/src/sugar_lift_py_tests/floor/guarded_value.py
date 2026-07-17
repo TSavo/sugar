@@ -206,6 +206,9 @@ class GuardedValue(FloorValue):
     def right_shift(self, other, site):
         return self._map("right_shift", other, site)
 
+    def bitwise_or(self, other, site):
+        return self._map("bitwise_or", other, site)
+
     def unary_minus(self, site):
         return self._map("unary_minus", site)
 
