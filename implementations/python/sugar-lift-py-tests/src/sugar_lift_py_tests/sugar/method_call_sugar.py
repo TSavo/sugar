@@ -115,12 +115,19 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             from sugar_lift_py_tests.sugar.install_source_dig import (
                 build_dig_body,
                 bind_positional_defaults,
+                resolve_contextmanager_exit_contract,
                 resolve_method_funcdef,
             )
 
             source_values = accumulated[1:] if self.import_target else accumulated
             source_name = self.import_target or self.method_name
             receiver_floor = accumulated[0] if accumulated else None
+            exit_suppression = _static_exit_suppression_contract(
+                source_name,
+                accumulated[-len(self.args) :] if self.args else (),
+            )
+            if exit_suppression is None and self.import_target is not None:
+                exit_suppression = resolve_contextmanager_exit_contract(source_name)
             if (
                 self.import_target == "operator.index"
                 and source_values
@@ -162,6 +169,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                         ),
                         body=body,
                         site=self.site,
+                        exit_suppression=exit_suppression,
                     )
                 )
 
@@ -179,6 +187,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                         term=source_term,
                         body=body,
                         site=self.site,
+                        exit_suppression=exit_suppression,
                     )
                 )
             )
@@ -275,3 +284,15 @@ def _numpy_literal_result(callee: str, left, right):
 
 def _fits_numpy_int64(value: int) -> bool:
     return _NUMPY_INT64_MIN <= value <= _NUMPY_INT64_MAX
+
+
+def _static_exit_suppression_contract(source_name: str, values: tuple):
+    """Construct stdlib manager evidence only from exact static operands."""
+    if source_name != "contextlib.suppress" or not values:
+        return None
+    from sugar_lift_py_tests.floor import BuiltinExceptionClassValue
+    from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
+
+    if not all(isinstance(value, BuiltinExceptionClassValue) for value in values):
+        return None
+    return ExitSuppressionContract.suppresses(tuple(value.name for value in values))

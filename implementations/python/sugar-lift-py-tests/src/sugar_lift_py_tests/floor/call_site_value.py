@@ -14,6 +14,31 @@ _FORCE_FLOOR_BUDGET = 64
 
 
 @dataclass(frozen=True)
+class ExitSuppressionContract:
+    """Static evidence for one context manager's exceptional exit.
+
+    An empty exception set proves propagation.  A non-empty set proves that
+    exactly those named exception classes are suppressed.  Runtime-dependent
+    exits carry no contract at all and therefore remain loud in WithSugar.
+    """
+
+    exception_names: frozenset[str]
+
+    @classmethod
+    def never_suppresses(cls) -> "ExitSuppressionContract":
+        return cls(frozenset())
+
+    @classmethod
+    def suppresses(cls, exception_names: tuple[str, ...]) -> "ExitSuppressionContract":
+        if not exception_names:
+            raise ValueError("a suppressing exit contract must name an exception")
+        return cls(frozenset(exception_names))
+
+    def suppresses_exception(self, exception_name: str) -> bool:
+        return exception_name in self.exception_names
+
+
+@dataclass(frozen=True)
 class CallSiteValue(FloorValue):
     """A callsite as two things at once.
 
@@ -36,6 +61,9 @@ class CallSiteValue(FloorValue):
     # Absent that citation, Python must execute the call to know whether its
     # result is a valid isinstance type operand.
     python_type_coordinate: Term | None = dataclass_field(default=None, compare=False)
+    # Source-authenticated context-manager evidence.  None means undecidable,
+    # never "does not suppress".
+    exit_suppression: ExitSuppressionContract | None = None
 
     def to_term(self, *, owner: str):
         del owner

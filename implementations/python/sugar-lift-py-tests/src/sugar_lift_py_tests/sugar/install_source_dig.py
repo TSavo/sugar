@@ -359,6 +359,125 @@ def resolve_install_source_funcdef(import_target: str):
     return _resolve_qualified_function_fragment(import_target)
 
 
+def resolve_contextmanager_exit_contract(import_target: str):
+    """Prove the closed static subset of ``@contextmanager`` exits.
+
+    This deliberately returns ``None`` for every shape whose exception
+    disposition depends on runtime control flow.  Absence is consumed by
+    WithSugar as its existing named gap, never as non-suppression.
+    """
+    if "." not in import_target:
+        return None
+    module_name, attr = import_target.rsplit(".", 1)
+    index = _installed_source_index(module_name)
+    if index is None:
+        return None
+    try:
+        parsed = parsed_tree(index.source, index.sourcefile)
+    except SyntaxError:
+        return None
+    definitions = [
+        statement
+        for statement in parsed.body
+        if isinstance(statement, ast.FunctionDef) and statement.name == attr
+    ]
+    if len(definitions) != 1 or not _is_contextmanager_definition(
+        definitions[0], parsed
+    ):
+        return None
+    definition = definitions[0]
+    tries = [
+        statement for statement in definition.body if isinstance(statement, ast.Try)
+    ]
+    if len(tries) != 1:
+        return None
+    protected = tries[0]
+    if definition.body[-1] is not protected or any(
+        isinstance(node, ast.Return) for node in ast.walk(definition)
+    ):
+        return None
+    yields = [node for node in ast.walk(definition) if isinstance(node, ast.Yield)]
+    if len(yields) != 1 or not any(
+        node is yields[0]
+        for statement in protected.body
+        for node in ast.walk(statement)
+    ):
+        return None
+    if protected.orelse:
+        return None
+
+    from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
+
+    if not protected.handlers:
+        if _contains_exit_override(protected.finalbody):
+            return None
+        return ExitSuppressionContract.never_suppresses()
+
+    if len(protected.handlers) != 1 or protected.finalbody:
+        return None
+    handler = protected.handlers[0]
+    exception_name = _static_exception_name(handler.type)
+    if (
+        exception_name is None
+        or not handler.body
+        or any(not isinstance(statement, ast.Pass) for statement in handler.body)
+    ):
+        return None
+    return ExitSuppressionContract.suppresses((exception_name,))
+
+
+def _is_contextmanager_definition(
+    definition: ast.FunctionDef, module: ast.Module
+) -> bool:
+    imported_names = {
+        alias.asname or alias.name: f"{statement.module}.{alias.name}"
+        for statement in module.body
+        if isinstance(statement, ast.ImportFrom) and statement.module
+        for alias in statement.names
+    }
+    module_aliases = {
+        alias.asname or alias.name: alias.name
+        for statement in module.body
+        if isinstance(statement, ast.Import)
+        for alias in statement.names
+    }
+    for decorator in definition.decorator_list:
+        if isinstance(decorator, ast.Name):
+            if imported_names.get(decorator.id) == "contextlib.contextmanager":
+                return True
+        elif (
+            isinstance(decorator, ast.Attribute)
+            and decorator.attr == "contextmanager"
+            and isinstance(decorator.value, ast.Name)
+            and module_aliases.get(decorator.value.id) == "contextlib"
+        ):
+            return True
+    return False
+
+
+def _contains_exit_override(statements: list[ast.stmt]) -> bool:
+    return any(
+        isinstance(node, (ast.Return, ast.Raise, ast.Yield, ast.YieldFrom))
+        for statement in statements
+        for node in ast.walk(statement)
+    )
+
+
+def _static_exception_name(node: ast.expr | None) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parts: list[str] = [node.attr]
+        value = node.value
+        while isinstance(value, ast.Attribute):
+            parts.append(value.attr)
+            value = value.value
+        if isinstance(value, ast.Name):
+            parts.append(value.id)
+            return ".".join(reversed(parts))
+    return None
+
+
 def _is_overload_declaration(
     definition: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> bool:

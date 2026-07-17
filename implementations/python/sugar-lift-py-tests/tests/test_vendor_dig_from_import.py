@@ -50,6 +50,28 @@ def test_module_import_maps_from_import() -> None:
     assert aliases.get("pytest") == "pytest"
 
 
+def test_module_import_maps_qualifies_relative_package_import(tmp_path) -> None:
+    package = tmp_path / "pkg" / "tests"
+    package.mkdir(parents=True)
+    (tmp_path / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    filename = package / "test_case.py"
+    src = "from . import util\n"
+    mod = SourceFragment.from_source(src, str(filename)).statements()[0]
+
+    _aliases, from_imports = _module_import_maps(mod, str(filename))
+
+    assert from_imports["util"] == ("pkg.tests", "util")
+
+    call = (
+        SourceFragment.from_source("util.managed()", str(filename))
+        .statements()[0]
+        .statements()[0]
+        .expr_value()
+    )
+    assert call.call_import_target_name({}, from_imports) == "pkg.tests.util.managed"
+
+
 def test_audit_ctx_carries_from_imports() -> None:
     """FactoryBuildContext must receive from_imports (not temporal alone)."""
     src = (
