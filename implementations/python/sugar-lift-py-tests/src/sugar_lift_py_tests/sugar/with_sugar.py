@@ -64,12 +64,31 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             "    return result\n"
             "\n"
         )
+        guarded_prefix = (
+            "import contextlib\n"
+            "\n"
+            "def A(p):\n"
+            "    if p:\n"
+            "        manager = contextlib.suppress(Exception)\n"
+            "    else:\n"
+            "        manager = contextlib.nullcontext()\n"
+            "    with manager:\n"
+            "        result = 1\n"
+            "    return result\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="with_binding_return",
                 owner_sugar="WithSugar",
                 truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
                 lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            _call_pair(
+                name="with_guarded_manager_enter",
+                owner_sugar="WithSugar",
+                truthful=(guarded_prefix + "def test_a():\n    assert A(True) == 1\n"),
+                lying=guarded_prefix + "def test_a():\n    assert A(True) == 2\n",
             ),
             typed_red_effect_witness(
                 name="with_runtime_manager_exit",
@@ -101,11 +120,56 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
     def _enter_one(self, cm, as_names, remaining, ctx: object) -> Outcome:
         from sugar_lift_py_tests.floor import (
             CallSiteValue,
+            GuardedValue,
             ObjectValue,
             ScopeRebind,
             TermValue,
         )
         from sugar_lift_py_tests.floor.call_site_value import force_floor
+
+        if isinstance(cm, GuardedValue):
+            from sugar_lift_py_tests.ir import not_
+
+            entered_faces = []
+            for guard, face in (
+                (cm.guard, cm.when_true),
+                (not_(cm.guard), cm.when_false),
+            ):
+                if not isinstance(face, CallSiteValue):
+                    return face._floor_gap(
+                        owner=type(self).__name__,
+                        blame=self.site,
+                        observed=type(face).__name__,
+                        requested="context manager data-model methods",
+                        fix="construct __enter__ and __exit__",
+                    )
+                face_ctx = ctx.with_temporal(ctx.temporal.activate_guard(guard))
+                entered_faces.append(self._enter_callsite(face, face_ctx)[0])
+
+            entered = GuardedValue(cm.guard, *entered_faces)
+            body_ctx = ctx
+            binding = _with_binding(as_names, entered, self.site)
+            if binding is not None:
+                from sugar_lift_py_tests.outcome import Incomplete
+
+                if isinstance(binding, Incomplete):
+                    return binding
+                body_ctx = binding.value.extend_scope(ctx)
+            outcome = self._enter_items(remaining, body_ctx)
+            if _carries_raise_effect(outcome):
+                from sugar_lift_py_tests.factory import factory_panic_gap
+
+                factory_panic_gap(
+                    owner=type(self).__name__,
+                    blame=self.site,
+                    observed="GuardedValue raise-carrying with-body",
+                    requested="branch-sensitive __exit__ suppression join",
+                    fix=(
+                        "construct each guarded manager exit and join suppressed "
+                        "and propagating outcomes"
+                    ),
+                )
+            return outcome
 
         if isinstance(cm, CallSiteValue):
             # A source-backed producer may expose its complete manager result.
@@ -265,6 +329,27 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         if isinstance(exit_value, TermValue) and bool(exit_value.value):
             force_floor(exit_call, ctx, owner="WithSugar.__exit__")
         return outcome
+
+    def _enter_callsite(self, cm, ctx):
+        """Construct one guarded callsite manager's exact ``__enter__`` face."""
+        from sugar_lift_py_tests.floor import ObjectValue
+        from sugar_lift_py_tests.floor.call_site_value import force_floor
+
+        manager = cm._dig_floor_or_none(ctx, owner="WithSugar manager result")
+        if isinstance(manager, ObjectValue):
+            enter_call = manager.call_method_value(
+                "__enter__",
+                (),
+                owner=type(self).__name__,
+                blame=self.site,
+                ctx=ctx,
+            ).value
+            entered = force_floor(
+                enter_call, ctx, owner="WithSugar.__enter__", project_callsite=False
+            )
+        else:
+            entered = cm.linear_method_call("__enter__", (), self.site)
+        return entered, manager
 
     def walk_children(self):
         return (*(context for context, _as_names in self.items), self.body)

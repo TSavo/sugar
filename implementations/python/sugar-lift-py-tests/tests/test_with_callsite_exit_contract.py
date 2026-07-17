@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from factory_reduce import compose_block
 import pytest
@@ -14,6 +15,7 @@ from sugar_lift_py_tests.floor import (
     BuiltinExceptionClassValue,
     CallSiteValue,
     FloorValue,
+    GuardedValue,
     ObjectMethodValue,
     ObjectValue,
     RaiseValue,
@@ -22,13 +24,16 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
-from sugar_lift_py_tests.ir import ctor, make_var
+from sugar_lift_py_tests.ir import atomic, ctor, make_var
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.sugar.method_call_sugar import (
     _static_exit_suppression_contract,
 )
+from sugar_lift_py_tests.sugar.with_sugar import WithSugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 @dataclass(frozen=True)
@@ -53,12 +58,13 @@ def _expr_body(expr: str) -> SugarBody:
 def _manager_callsite(
     *,
     exit_expr: str | None,
+    enter_expr: str = "1",
     exit_value: FloorValue | None = None,
     class_name: str = "Manager",
     events: list[str] | None = None,
     exit_contract: ExitSuppressionContract | None = None,
 ) -> CallSiteValue:
-    enter_body = _expr_body("1")
+    enter_body = _expr_body(enter_expr)
     if events is not None:
         enter_body = SugarBody(
             _StaticValueSugar(TermValue(1), events, f"enter:{class_name}"),
@@ -119,6 +125,64 @@ def _opaque_manager_callsite(
         body=None,
         exit_suppression=exit_contract,
     )
+
+
+def test_guarded_callsite_managers_join_entered_values_before_body() -> None:
+    guard = atomic("manager-choice", [])
+    block = compose_block(
+        "    with manager as entered:\n" "        return entered\n",
+        binds={
+            "manager": GuardedValue(
+                guard,
+                _manager_callsite(exit_expr="False", class_name="Left"),
+                _manager_callsite(
+                    exit_expr="False", enter_expr="2", class_name="Right"
+                ),
+            )
+        },
+    )
+
+    assert block.statements == (
+        ReturnValue(GuardedValue(guard, TermValue(1), TermValue(2))),
+    )
+
+
+def test_guarded_manager_with_unconstructed_face_stays_loud() -> None:
+    guard = atomic("manager-choice", [])
+
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    with manager:\n" "        return 1\n",
+            binds={
+                "manager": GuardedValue(
+                    guard,
+                    _manager_callsite(exit_expr="False"),
+                    TermValue(0),
+                )
+            },
+        )
+
+    assert raised.value.info.owner == "WithSugar"
+    assert raised.value.info.observed == "TermValue"
+    assert raised.value.info.requested == "context manager data-model methods"
+
+
+def test_guarded_manager_witness_truthful_sat_lying_unsat(tmp_path: Path) -> None:
+    witnesses = WithSugar.witnesses()
+    pair = next(
+        witness
+        for witness in witnesses
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "with_guarded_manager_enter"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_truthy_exact_exit_suppresses_raise_from_attached_manager_body() -> None:
