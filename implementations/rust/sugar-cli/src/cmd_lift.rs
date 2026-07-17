@@ -11443,6 +11443,7 @@ mod tests {
             contract: None,
             allow_failed_components: false,
             audit_frontier: false,
+            continue_on_construction_gaps: false,
             allowed_broken_components: vec![],
             out: OutputFlags::default(),
         };

@@ -3874,7 +3874,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     if "--audit-only" in argv:
         raise SystemExit(
             "--audit-only no longer enables construction-gap recovery; "
-            "use sugar lift --audit-frontier --allowed-broken-components python"
+            "use sugar lift --audit-frontier --continue-on-construction-gaps "
+            "--allowed-broken-components python"
         )
     _serve()
 

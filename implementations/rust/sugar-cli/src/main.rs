@@ -286,8 +286,21 @@ pub struct LiftArgs {
     #[arg(long = "allow-failed-components")]
     pub allow_failed_components: bool,
     /// Emit only a recovered construction-panic frontier, never ProofIR or a lift report.
-    #[arg(long, requires = "allowed_broken_components", conflicts_with_all = ["report", "identify_only", "library_bindings", "prove", "report_summary", "visual", "contract"])]
+    /// Requires the explicit #4203 override and the kit allow-list; never on by default.
+    #[arg(
+        long,
+        requires_all = ["allowed_broken_components", "continue_on_construction_gaps"],
+        conflicts_with_all = ["report", "identify_only", "library_bindings", "prove", "report_summary", "visual", "contract"]
+    )]
     pub audit_frontier: bool,
+    /// Explicit #4203 runtime override: inventory mandatory construction panics
+    /// past the first. Never enabled by environment, config, report mode, wall, or CI alone.
+    #[arg(
+        long,
+        requires = "audit_frontier",
+        conflicts_with_all = ["report", "identify_only", "library_bindings", "prove", "report_summary", "visual", "contract"]
+    )]
+    pub continue_on_construction_gaps: bool,
     /// Component ids whose FactoryPanics may be held at the single audit boundary.
     #[arg(long, value_delimiter = ',', num_args = 1.., requires = "audit_frontier")]
     pub allowed_broken_components: Vec<String>,

@@ -64,19 +64,20 @@ class NameSugar(Sugar, role=SugarRole.TERM):
             return outcome
         source_site = getattr(getattr(binding.source, "sugar", None), "site", None)
         replacement = source_site.unparse() if source_site is not None else self.name
+        # #4203: never catch FactoryPanic. force_floor is process-terminal on a
+        # construction gap; optional ground probes must not invent a silent
+        # continue. Only demand ground when the caller explicitly opted in via
+        # prefer_ground_module_bindings — then the panic is mandatory and loud.
         ground = None
-        if isinstance(outcome.value, CallSiteValue):
-            from sugar_lift_py_tests.factory import FactoryPanic
-
-            try:
-                ground = force_floor(
-                    outcome.value,
-                    binding.scope,
-                    owner=f"module binding {self.name}",
-                    project_callsite=False,
-                )
-            except FactoryPanic:
-                pass
+        if isinstance(outcome.value, CallSiteValue) and getattr(
+            ctx, "prefer_ground_module_bindings", False
+        ):
+            ground = force_floor(
+                outcome.value,
+                binding.scope,
+                owner=f"module binding {self.name}",
+                project_callsite=False,
+            )
         ctx.module_rewrite_log.append(
             (
                 self.name,
