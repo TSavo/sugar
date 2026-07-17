@@ -18,6 +18,7 @@ from .dict_literal_value import DictLiteralValue
 
 from .dict_value import DictValue
 from .encoded_string_value import EncodedStringValue
+from .exception_cause_value import ExceptionCauseValue
 from .exception_value import ExceptionValue
 from .exception_class_value import ExceptionClassValue
 from .local_exception_class_value import LocalExceptionClassValue
@@ -79,6 +80,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     DictLiteralValue,
     DictValue,
     EncodedStringValue,
+    ExceptionCauseValue,
     ExceptionValue,
     ExceptionClassValue,
     LocalExceptionClassValue,
@@ -142,6 +144,7 @@ __all__ = [
     "DictLiteralValue",
     "DictValue",
     "EncodedStringValue",
+    "ExceptionCauseValue",
     "ExceptionValue",
     "ExceptionClassValue",
     "LocalExceptionClassValue",

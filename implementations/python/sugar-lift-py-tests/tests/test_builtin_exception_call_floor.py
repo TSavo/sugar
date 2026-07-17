@@ -12,7 +12,9 @@ from sugar_lift_py_tests.factory import FactoryPanic
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
+    ExceptionCauseValue,
     ExceptionValue,
+    GuardedRaise,
     RaiseValue,
     ReturnValue,
     StringValue,
@@ -23,6 +25,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 @pytest.mark.parametrize(
@@ -187,13 +190,57 @@ def test_exception_arguments_reduce_once_in_order_and_preserve_memento() -> None
     assert [body.calls for body in bodies] == [1, 1, 1]
 
 
-def test_raise_from_stays_loud_until_cause_semantics_are_constructed() -> None:
+def test_raise_from_constructs_and_carries_explicit_exception_cause() -> None:
+    block = compose_block("    raise ValueError('bad') from TypeError('cause')\n")
+
+    raised = block.statements[0]
+    assert isinstance(raised, RaiseValue)
+    assert isinstance(raised.cause, ExceptionCauseValue)
+    assert isinstance(raised.cause.value, ExceptionValue)
+    assert raised.cause.value.exception_name == "TypeError"
+    assert raised.cause.value.arguments == (StringValue("cause"),)
+
+
+def test_ground_non_exception_raise_cause_stays_loud() -> None:
     with pytest.raises(FactoryPanic) as raised:
-        compose_block("    raise ValueError('bad') from TypeError('cause')\n")
+        compose_block("    raise ValueError('bad') from 7\n")
 
     assert raised.value.info.owner == "RaiseSugar"
-    assert raised.value.info.observed == "raise ... from ..."
-    assert raised.value.info.requested == "an explicit exception-cause floor"
+    assert raised.value.info.observed == "TermValue"
+    assert raised.value.info.requested == "constructed exception-cause floor"
+
+
+def test_caught_exception_coordinate_is_preserved_as_explicit_cause() -> None:
+    block = compose_block(
+        "    try:\n"
+        "        raise TypeError('original')\n"
+        "    except TypeError as err:\n"
+        "        raise ValueError('wrapped') from err\n"
+    )
+
+    wrapped = next(
+        statement
+        for statement in block.statements
+        if isinstance(statement, GuardedRaise)
+        and statement.effect.exception_name == "ValueError"
+    )
+    assert isinstance(wrapped.cause, ExceptionCauseValue)
+    assert isinstance(wrapped.cause.value, CallSiteValue)
+    assert wrapped.cause.value.target_name == "except"
+
+
+def test_raise_from_truthful_and_lying_witnesses_discriminate(tmp_path) -> None:
+    from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
+
+    witness = RaiseSugar.witnesses()
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", witness.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", witness.lying.source)
+
+    assert "RaiseSugar" in truthful.selected_sugars
+    assert truthful.verdict == witness.truthful.expected == "sat"
+    assert lying.verdict == witness.lying.expected == "unsat"
 
 
 def test_bare_raise_keeps_preexisting_unclassified_raise_path() -> None:
