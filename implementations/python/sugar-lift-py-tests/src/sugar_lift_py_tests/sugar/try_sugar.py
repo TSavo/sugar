@@ -43,7 +43,7 @@ class _ReducedPath:
 
     @property
     def continues(self) -> bool:
-        return self.record.follow_rest().continues
+        return _record_can_fall_through(self.record)
 
 
 @dataclass(frozen=True)
@@ -185,7 +185,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
 
         body_record, body_scope = _reduce_path(self.body, ctx)
         entries = list(body_record.contribution())
-        if not body_record.follow_rest().continues:
+        if not _record_can_fall_through(body_record):
             return self._collect_terminal_handlers(tuple(entries), 0, ctx)
         normal_guard = None
         guards = tuple(_except_guard(arm) for arm in self.handlers)
@@ -255,7 +255,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             guarded = _except_arm_contributions(record.contribution(), arm)
             entries.extend(guarded)
             scope_source = (*scope_source, *guarded)
-            if record.follow_rest().continues:
+            if _record_can_fall_through(record):
                 paths.append(_ReducedPath(record, final_scope, _except_guard(arm)))
         return tuple(entries), tuple(paths)
 
@@ -276,7 +276,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             entries.extend(
                 entry.guarded(guard) for entry in handler_value.contribution()
             )
-            if handler_value.follow_rest().continues:
+            if _record_can_fall_through(handler_value):
                 paths.append(_ReducedPath(handler_value, handler_scope, guard))
         else_value, else_scope = _reduce_path(self.else_body, body_scope)
         exception_guard = guards[0] if len(guards) == 1 else or_(guards)
@@ -284,7 +284,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         entries.extend(
             entry.guarded(no_exception) for entry in else_value.contribution()
         )
-        if else_value.follow_rest().continues:
+        if _record_can_fall_through(else_value):
             paths.append(_ReducedPath(else_value, else_scope, no_exception))
         scope_entries = _join_continuing_path_scopes(tuple(paths), ctx, self.site)
         return Complete(BlockValue((*entries, *scope_entries)))
@@ -368,9 +368,54 @@ def _reduce_path(body: SugarBody, ctx: object):
     outcome = body.reduce(ctx)
     assert isinstance(outcome, Complete)
     record = outcome.value
-    if not record.follow_rest().continues:
+    if not _record_can_fall_through(record):
         return record, ctx
     return body.sugar.reduce_with_scope(ctx)
+
+
+def _record_can_fall_through(record) -> bool:
+    """Whether a reduced path can reach code after the try/except.
+
+    ``follow_rest`` alone is insufficient: a chain of ``if cond: raise`` ends
+    with only ``GuardedRaise`` entries, so ``follow_rest`` still continues even
+    though every residual path raises. A path falls through only when follow
+    continues *and* some non-exit residual remains (or the record is empty /
+    pure support).
+    """
+    if not record.follow_rest().continues:
+        return False
+    from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
+    from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.raise_value import RaiseValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+    from sugar_lift_py_tests.floor.support_value import SupportValue
+
+    exit_types = (ReturnValue, RaiseValue, GuardedReturn, GuardedRaise)
+    support_types = (ScopeRebind, SupportValue)
+
+    def flatten(entries: tuple) -> list:
+        flat: list = []
+        for entry in entries:
+            if type(entry) is GuardedFaces:
+                flat.extend(flatten(entry.entries))
+            else:
+                flat.append(entry)
+        return flat
+
+    if hasattr(record, "statements"):
+        entries = tuple(record.statements)
+    else:
+        entries = tuple(record.contribution())
+    residual = [
+        entry for entry in flatten(entries) if type(entry) not in support_types
+    ]
+    if not residual:
+        return True
+    if all(type(entry) in exit_types for entry in residual):
+        return False
+    return True
 
 
 def _except_guard(arm: TryExceptArm):
