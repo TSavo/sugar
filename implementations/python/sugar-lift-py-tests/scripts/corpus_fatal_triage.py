@@ -45,6 +45,7 @@ def python_files(root: Path) -> list[Path]:
 def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
     logging.disable(logging.CRITICAL)
     try:
+        from sugar_lift_py_tests.effect import effect_reason, effect_status
         from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
         from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
@@ -71,6 +72,15 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
         "file": rel,
         "facts": len(payload.ir),
         "factory_walk_rows": len(payload.factory_walk),
+        "effects": [
+            {
+                "effect": type(row.effect).__name__,
+                "name": row.name,
+                "status": effect_status(row.effect),
+                "reason": effect_reason(row.effect),
+            }
+            for row in payload.effects
+        ],
     }, 0
 
 
@@ -175,6 +185,10 @@ def _run_parent(args: argparse.Namespace) -> int:
     terminal_rows: list[dict[str, Any]] = []
     representatives: dict[str, list[str]] = defaultdict(list)
     factory_panic_rows: list[dict[str, Any]] = []
+    effect_occurrence_counts: Counter[str] = Counter()
+    effect_file_counts: Counter[str] = Counter()
+    effect_examples: dict[str, list[str]] = defaultdict(list)
+    effect_reason_examples: dict[str, list[str]] = defaultdict(list)
     script = Path(__file__).resolve()
 
     for index, (package, root, path) in enumerate(paths, start=1):
@@ -242,12 +256,44 @@ def _run_parent(args: argparse.Namespace) -> int:
                     "fingerprint": list(fingerprint),
                 }
             )
+        if category == "completed":
+            effects = (row.get("testimony") or {}).get("effects") or []
+            seen_effects: set[str] = set()
+            for effect in effects:
+                effect_class = str(effect.get("effect") or "")
+                if not effect_class:
+                    continue
+                effect_occurrence_counts[effect_class] += 1
+                reason = str(effect.get("reason") or "")
+                if (
+                    reason
+                    and reason not in effect_reason_examples[effect_class]
+                    and len(effect_reason_examples[effect_class]) < 5
+                ):
+                    effect_reason_examples[effect_class].append(reason)
+                seen_effects.add(effect_class)
+            for effect_class in seen_effects:
+                effect_file_counts[effect_class] += 1
+                if len(effect_examples[effect_class]) < 5:
+                    effect_examples[effect_class].append(rel)
         if index % 25 == 0:
             print(f"triaged {index}/{len(paths)} files", file=sys.stderr)
 
     ranking = rank_factory_panic_fronts(factory_panic_rows)
     factory_fronts = ranking["exact_fronts"]
     owner_families = ranking["owner_families"]
+    completed_effect_fronts = [
+        {
+            "effect": effect_class,
+            "file_count": effect_file_counts[effect_class],
+            "occurrence_count": occurrence_count,
+            "representative_files": effect_examples[effect_class],
+            "reason_examples": effect_reason_examples[effect_class],
+        }
+        for effect_class, occurrence_count in sorted(
+            effect_occurrence_counts.items(), key=lambda item: (-item[1], item[0])
+        )
+    ]
     report: dict[str, Any] = {
         "package_versions": versions,
         "shard": {"index": args.shard_index, "count": args.shard_count},
@@ -266,6 +312,8 @@ def _run_parent(args: argparse.Namespace) -> int:
             owner_families[: args.front_limit] if args.compact else owner_families
         ),
         "owners": ranking["owners"],
+        "completed_effect_front_count": len(completed_effect_fronts),
+        "completed_effect_fronts": completed_effect_fronts,
     }
     if not args.compact:
         report["terminal_rows"] = terminal_rows
