@@ -8164,6 +8164,47 @@ mod tests {
         }
     }
 
+    /// #3754 / serde-json-showcase bad suite: a cargo-test package whose sole
+    /// committed outcome is `failed` must stay not-green. package_outcome
+    /// seals failed=count-passed from the body; seal_witness_package_outcome
+    /// maps failed>0 to Unsatisfied. Never discharge a suite that ran wrong.
+    #[test]
+    fn cargo_test_all_failed_package_is_unsatisfied_never_discharged() {
+        let package_bytes = br#"{"outcome":"failed","test":"tests::test_write_bool_contradiction"}
+"#;
+        let package_cid = blake3_512_of(package_bytes);
+        let project = unique_temp_dir("cargo-test-all-failed");
+        write_resolver_manifest(&project, package_bytes);
+
+        let typed = typed_ctx_for_project(&project);
+        let _guard = WitnessCtxGuard::enter(&typed);
+        // proofData count=1 passed=0 matches the single failed body line.
+        let body = package_contract("cargo-test", &package_cid, 1, 0);
+        let result = try_witness_discharge(
+            &body,
+            "blake3-512:serde-bad".into(),
+            "witness-package".into(),
+        )
+        .expect("custom cargo-test evidence must settle via package path");
+        assert_eq!(
+            result.verdict,
+            ObligationVerdict::Unsatisfied,
+            "all-failed cargo-test package must be unsatisfied, not discharged: {result:?}"
+        );
+        assert!(
+            !result.witnessed,
+            "a failing cargo-test package is not a witnessed discharge"
+        );
+        assert!(
+            result.reason.contains("1/1 outcomes failed")
+                || result.reason.contains("outcomes failed"),
+            "reason must cite package-body failure counts (not kit stdout): {result:?}"
+        );
+
+        drop(_guard);
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
     #[test]
     fn all_passed_package_discharges_from_body_not_stdout() {
         let package_bytes =
