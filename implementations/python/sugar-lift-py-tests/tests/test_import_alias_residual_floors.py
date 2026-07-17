@@ -9,6 +9,7 @@ import pytest
 from sugar_lift_py_tests.effect import ImportedModuleRuntimeEffect
 from sugar_lift_py_tests.factory import FactoryPanic
 from sugar_lift_py_tests.floor import (
+    FunctionCallable,
     ImportAliasValue,
     StringValue,
     SymbolicValue,
@@ -21,6 +22,8 @@ from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.install_source_dig import resolve_install_source_value
+from sugar_lift_py_tests.sugar.getattr_builtin_sugar import GetattrBuiltinSugar
+from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
 _SITE = SourceFragment.from_source("np + 1\n", "alias.py").statements()[0]
@@ -220,6 +223,94 @@ def test_python_source_constant_digs_and_constructs_through_floor_op(
     outcome = alias.add(TermValue(2), _CONSUMER)
 
     assert complete_value(outcome, owner="test") == TermValue(42)
+
+
+def test_setup_sentinel_false_branch_reexport_digs_exact_function(
+    tmp_path, monkeypatch
+) -> None:
+    package = tmp_path / "witnessed_reexport"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "try:\n"
+        "    __WITNESSED_SETUP__\n"
+        "except NameError:\n"
+        "    __WITNESSED_SETUP__ = False\n"
+        "if __WITNESSED_SETUP__:\n"
+        "    pass\n"
+        "else:\n"
+        "    from .core import selected\n"
+    )
+    (package / "core.py").write_text("def selected(value):\n" "    return value\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    resolved = resolve_install_source_value("witnessed_reexport.selected", ctx)
+
+    assert isinstance(resolved, FunctionCallable)
+    assert resolved.name == "witnessed_reexport.core.selected"
+
+
+def test_numpy_setup_reexport_getattr_constructs_exact_import_coordinate() -> None:
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+    alias = ImportAliasValue("numpy", "np", import_target="numpy")
+    sugar = GetattrBuiltinSugar(None, "sum", None, None, _SITE)  # type: ignore[arg-type]
+
+    outcome = sugar._finish_static(alias, "sum", ctx)
+    resolved = complete_value(outcome, owner="numpy setup reexport")
+
+    assert isinstance(resolved, ImportAliasValue)
+    assert resolved.import_target == "numpy._core.sum"
+
+
+def test_imported_source_getattr_witness_truthful_sat_and_lying_unsat(
+    tmp_path,
+) -> None:
+    witness = next(
+        pair
+        for pair in GetattrBuiltinSugar.witnesses()
+        if pair.name == "getattr_imported_source_function_return"
+    )
+
+    assert evaluate_seed_witnesses((witness,), tmp_path).is_zero
+
+
+def test_runtime_selected_reexport_branch_stays_loud(tmp_path, monkeypatch) -> None:
+    package = tmp_path / "runtime_reexport"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "if choose_at_runtime():\n" "    from .core import selected\n"
+    )
+    (package / "core.py").write_text("def selected(value):\n" "    return value\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    assert resolve_install_source_value("runtime_reexport.selected", ctx) is None
+
+
+def test_prebound_setup_sentinel_does_not_claim_false_branch(
+    tmp_path, monkeypatch
+) -> None:
+    package = tmp_path / "prebound_reexport"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "__SETUP__ = True\n"
+        "try:\n"
+        "    __SETUP__\n"
+        "except NameError:\n"
+        "    __SETUP__ = False\n"
+        "if __SETUP__:\n"
+        "    pass\n"
+        "else:\n"
+        "    from .core import selected\n"
+    )
+    (package / "core.py").write_text("def selected(value):\n" "    return value\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+
+    assert resolve_install_source_value("prebound_reexport.selected", ctx) is None
 
 
 def test_python_source_dig_gap_panics_instead_of_becoming_effect(
