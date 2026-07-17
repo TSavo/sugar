@@ -100,9 +100,12 @@ class LenCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
         # than the otherwise useful opaque builtin coordinate. Keep every other
         # receiver on its existing bridge: attributes, calls, symbolic values,
         # and objects without an owned __len__ have no truthful cardinality here.
-        from sugar_lift_py_tests.floor import ListValue
+        from sugar_lift_py_tests.floor import (
+            GroundSequenceRepetitionValue,
+            ListValue,
+        )
 
-        if type(value) is ListValue:
+        if type(value) in (GroundSequenceRepetitionValue, ListValue):
             return value.length(self.site)
 
         computed = (
