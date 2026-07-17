@@ -80,25 +80,13 @@ class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
         return Complete(BlockValue((*record.contribution(), *rebound)))
 
     def stated(self, site):
-        # Ground False is decided at lift time. Until AssertionError is carried
-        # as a constructed exceptional exit, this arm must stay loudly absent;
-        # a concrete contradiction cannot mint RuntimeEffect authority.
-        from sugar_lift_py_tests.factory import factory_panic_gap
-        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
-
-        factory_panic_gap(
-            owner="FalseBoolLiteralSugar.stated",
-            blame=site,
-            observed="ground False assertion",
-            requested="construct ground AssertionError exit",
-            fix=(
-                "construct AssertionError as an exceptional exit and halt the "
-                "continuation; never route a decidable false assertion through "
-                "RuntimeEffect"
-            ),
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
+        # Ground False is decided at lift time and Python raises AssertionError.
+        # This is exact control flow, never RuntimeEffect authority.
+        from sugar_lift_py_tests.floor.ground_assertion_error import (
+            ground_assertion_error,
         )
+
+        return ground_assertion_error(site=site)
 
     def negate(self) -> Outcome:
         # False negates to True -- the literal knows its opposite, no fork.

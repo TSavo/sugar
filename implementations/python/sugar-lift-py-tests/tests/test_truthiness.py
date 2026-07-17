@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +19,7 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     BlockValue,
     FloorValue,
+    RaiseValue,
     ReturnValue,
     SymbolicValue,
     TermValue,
@@ -26,6 +28,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
 from sugar_lift_py_tests.ir import and_, eq, implies, make_var, not_, num, py_truthy
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _universe(source: str) -> UniverseValue:
@@ -61,10 +64,64 @@ def test_assert_nonzero_folds_true_to_support() -> None:
     )
 
 
-def test_assert_zero_is_the_named_halt() -> None:
-    with pytest.raises(FactoryPanic) as caught:
-        compose_block("    assert 0\n    return 2\n")
-    assert caught.value.info.owner == "FalseBoolLiteralSugar.stated"
+def test_assert_zero_constructs_assertionerror_and_halts() -> None:
+    block = compose_block("    assert 0\n    return 2\n")
+
+    assert isinstance(block, BlockValue)
+    assert len(block.statements) == 1
+    raised = block.statements[0]
+    assert isinstance(raised, RaiseValue)
+    assert raised.effect.exception_name == "AssertionError"
+    assert raised.exception is not None
+    assert raised.exception.exception_name == "AssertionError"
+
+
+def test_ground_false_assertion_routes_only_to_assertionerror_handler() -> None:
+    matching = compose_block(
+        "    try:\n"
+        "        assert 0\n"
+        "    except AssertionError:\n"
+        "        return 7\n"
+    )
+    wrong = compose_block(
+        "    try:\n"
+        "        assert 0\n"
+        "    except ValueError:\n"
+        "        return 7\n"
+    )
+
+    assert "py.except" in repr(matching)
+    assert "_ConstStr(value='AssertionError'" in repr(matching)
+    assert "RaiseEffect(exception_name='AssertionError'" in repr(wrong)
+    assert "_ConstStr(value='ValueError'" in repr(wrong)
+
+
+def test_ground_false_assertion_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful",
+        "def A(z):\n"
+        "    if z < 0:\n"
+        "        assert 0\n"
+        "    return z\n"
+        "\n"
+        "def test_assertion_exit():\n"
+        "    assert A(5) == 5\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying",
+        "def A(z):\n"
+        "    if z < 0:\n"
+        "        assert 0\n"
+        "    return z\n"
+        "\n"
+        "def test_assertion_exit():\n"
+        "    assert A(5) == 6\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
 
 
 def test_symbolic_condition_emits_py_truthy_guard() -> None:
@@ -80,7 +137,7 @@ def test_symbolic_condition_emits_py_truthy_guard() -> None:
     )
 
 
-def test_symbolic_condition_with_ground_false_assert_stays_loud() -> None:
+def test_symbolic_condition_guards_ground_assertionerror_exit() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     ctx = replace(
         ctx,
@@ -89,9 +146,12 @@ def test_symbolic_condition_with_ground_false_assert_stays_loud() -> None:
     node = ast.parse("if z:\n    assert 0\n").body[0]
     result = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
 
-    with pytest.raises(FactoryPanic) as caught:
-        result.sugar.desugar(ctx)
-    assert caught.value.info.owner == "FalseBoolLiteralSugar.stated"
+    outcome = result.sugar.desugar(ctx)
+
+    rendered = repr(outcome)
+    assert "GuardedRaise" in rendered
+    assert "AssertionError" in rendered
+    assert "py.truthy" in rendered
 
 
 def test_floor_value_default_truth_panics() -> None:
