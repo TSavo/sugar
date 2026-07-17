@@ -133,11 +133,31 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             "        return 0\n"
             "\n"
         )
-        return _call_pair(
-            name="try_return",
-            owner_sugar="TrySugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        target_prefix = (
+            "def B(z):\n"
+            "    try:\n"
+            "        return 7\n"
+            "    except ValueError as err:\n"
+            "        captured = err\n"
+            "        return 0\n"
+            "    else:\n"
+            "        return 7\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="try_return",
+                owner_sugar="TrySugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            _call_pair(
+                name="try_else_except_target",
+                owner_sugar="TrySugar",
+                truthful=target_prefix + "def test_b():\n    assert B(5) == 7\n",
+                lying=target_prefix + "def test_b():\n    assert B(5) == 8\n",
+                family="try-else-except-target",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -201,23 +221,12 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         self, accumulated: tuple, index: int, ctx: object
     ) -> Outcome:
         """Preserve the established byte path when the try body cannot continue."""
-        from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, ScopeRebind
-        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.floor import BlockValue
 
         if index >= len(self.handlers):
             return Complete(BlockValue(accumulated))
         arm = self.handlers[index]
-        catch = CallSiteValue(
-            target_name="except",
-            arg_values=(),
-            parameters=(),
-            term=ctor("py.except", [str_const(n) for n in arm.type_names or ()]),
-            body=None,
-            site=self.site,
-        )
-        body_ctx = _handler_scope(accumulated, arm, ctx)
-        if arm.as_name is not None:
-            body_ctx = ScopeRebind(arm.as_name, catch).extend_scope(body_ctx)
+        body_ctx = _handler_context(accumulated, arm, ctx, self.site)
         return arm.body.reduce(body_ctx).and_then(
             lambda hblock: self._collect_terminal_handlers(
                 (
@@ -230,27 +239,11 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _reduce_handlers(self, accumulated: tuple, ctx: object):
-        from sugar_lift_py_tests.floor import CallSiteValue, ScopeRebind
-        from sugar_lift_py_tests.ir import ctor, str_const
-
         entries: list[object] = []
         paths: list[_ReducedPath] = []
         scope_source = accumulated
         for arm in self.handlers:
-            catch = CallSiteValue(
-                target_name="except",
-                arg_values=(),
-                parameters=(),
-                term=ctor(
-                    "py.except",
-                    [str_const(n) for n in arm.type_names or ()],
-                ),
-                body=None,
-                site=self.site,
-            )
-            body_ctx = _handler_scope(scope_source, arm, ctx)
-            if arm.as_name is not None:
-                body_ctx = ScopeRebind(arm.as_name, catch).extend_scope(body_ctx)
+            body_ctx = _handler_context(scope_source, arm, ctx, self.site)
             record, final_scope = _reduce_path(arm.body, body_ctx)
             guarded = _except_arm_contributions(record.contribution(), arm)
             entries.extend(guarded)
@@ -271,7 +264,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         for arm in self.handlers:
             guard = _except_guard(arm)
             guards.append(guard)
-            handler_ctx = _handler_scope(tuple(entries), arm, ctx)
+            handler_ctx = _handler_context(tuple(entries), arm, ctx, self.site)
             handler_value, handler_scope = _reduce_path(arm.body, handler_ctx)
             entries.extend(
                 entry.guarded(guard) for entry in handler_value.contribution()
@@ -443,6 +436,25 @@ def _handler_scope(accumulated: tuple, arm: TryExceptArm, fallback):
         if entry.scope is not None:
             return entry.scope
     return fallback
+
+
+def _handler_context(accumulated: tuple, arm: TryExceptArm, fallback, site):
+    """Construct the exact temporal context visible on handler entry."""
+    from sugar_lift_py_tests.floor import CallSiteValue, ScopeRebind
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    context = _handler_scope(accumulated, arm, fallback)
+    if arm.as_name is None:
+        return context
+    caught = CallSiteValue(
+        target_name="except",
+        arg_values=(),
+        parameters=(),
+        term=ctor("py.except", [str_const(name) for name in arm.type_names or ()]),
+        body=None,
+        site=site,
+    )
+    return ScopeRebind(arm.as_name, caught).extend_scope(context)
 
 
 def _join_continuing_path_scopes(

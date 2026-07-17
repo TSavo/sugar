@@ -229,6 +229,60 @@ def test_caught_exception_coordinate_is_preserved_as_explicit_cause() -> None:
     assert wrapped.cause.value.target_name == "except"
 
 
+def test_try_else_handler_binds_caught_exception_coordinate() -> None:
+    block = compose_block(
+        "    try:\n"
+        "        raise TypeError('original')\n"
+        "    except TypeError as err:\n"
+        "        raise ValueError('wrapped') from err\n"
+        "    else:\n"
+        "        pass\n"
+    )
+
+    wrapped = next(
+        statement
+        for statement in block.statements
+        if isinstance(statement, GuardedRaise)
+        and statement.effect.exception_name == "ValueError"
+    )
+    assert isinstance(wrapped.cause, ExceptionCauseValue)
+    assert isinstance(wrapped.cause.value, CallSiteValue)
+    assert wrapped.cause.value.target_name == "except"
+
+
+def test_try_else_unnamed_handler_does_not_invent_exception_target() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    try:\n"
+            "        raise TypeError('original')\n"
+            "    except TypeError:\n"
+            "        raise ValueError('wrapped') from err\n"
+            "    else:\n"
+            "        pass\n"
+        )
+
+    assert raised.value.info.owner == "TemporalContext"
+    assert raised.value.info.observed == "err"
+
+
+def test_try_else_exception_target_truthful_and_lying_witnesses_discriminate(
+    tmp_path,
+) -> None:
+    from sugar_lift_py_tests.sugar.try_sugar import TrySugar
+
+    witness = next(
+        pair for pair in TrySugar.witnesses() if pair.name == "try_else_except_target"
+    )
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", witness.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", witness.lying.source)
+
+    assert "TrySugar" in truthful.selected_sugars
+    assert truthful.verdict == witness.truthful.expected == "sat"
+    assert lying.verdict == witness.lying.expected == "unsat"
+
+
 def test_raise_from_truthful_and_lying_witnesses_discriminate(tmp_path) -> None:
     from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
 
