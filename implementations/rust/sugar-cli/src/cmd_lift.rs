@@ -7866,10 +7866,14 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
             }
         }
     }
+    // #4320 standing law: never cut to N; no `(+N more)` elision markers in the
+    // dual-axis coverage report. Silent residue, Minority bodies, and Crime 2
+    // forged warrants each list every locus. Size compression may cluster by
+    // family later, but every body/locus must still appear.
     if silent_n > 0 || delta > 0 {
         out.push_str("  silent residue (RED — lifter walked past these asserts):\n");
         if let Some(silent) = assertions.get("silent_loci").and_then(Value::as_array) {
-            for locus in silent.iter().take(32) {
+            for locus in silent {
                 append_unaccounted_source_block(
                     &mut out,
                     project_root,
@@ -7877,9 +7881,6 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
                     VisualTone::Red,
                     /*body=*/ false,
                 );
-            }
-            if silent.len() > 32 {
-                out.push_str(&format!("    (+{} more)\n", silent.len() - 32));
             }
         }
     }
@@ -7926,7 +7927,7 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
         if c2_forged > 0 {
             out.push_str("  forged warrants (RED — dig floor with no warranting assertion):\n");
             if let Some(forged) = crime2.get("forged_loci").and_then(Value::as_array) {
-                for locus in forged.iter().take(32) {
+                for locus in forged {
                     append_unaccounted_source_block(
                         &mut out,
                         project_root,
@@ -7934,9 +7935,6 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
                         VisualTone::Red,
                         /*body=*/ false,
                     );
-                }
-                if forged.len() > 32 {
-                    out.push_str(&format!("    (+{} more)\n", forged.len() - 32));
                 }
             }
         }
@@ -16414,6 +16412,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
     #[test]
     fn minority_report_renders_every_locus_without_elision() {
+        // #4320: datetime-scale minority (137 un-asserted) must never sample to N
+        // or hide the remainder behind `(+N more)`.
         let loci = (0..137)
             .map(|index| {
                 serde_json::json!({
@@ -16431,6 +16431,98 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         assert_eq!(rendered.matches("t.py:").count(), 137, "{rendered}");
         assert!(!rendered.contains(" more)"), "{rendered}");
         assert!(rendered.contains("body_0") && rendered.contains("body_136"));
+        let minority = rendered
+            .split_once("Minority Report\n")
+            .map(|(_, rest)| rest)
+            .expect("Minority Report section");
+        assert!(
+            !minority.contains(" more)"),
+            "Minority section elided:\n{minority}"
+        );
+        assert_eq!(minority.matches("body_").count(), 137, "{minority}");
+    }
+
+    #[test]
+    fn minority_report_renders_full_unasserted_body_without_line_cap() {
+        // #4320 residual of #4324: body dump must not hard-cap mid-suite.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("big.py");
+        let mut source = String::from("def orphan():\n");
+        for i in 0..80 {
+            source.push_str(&format!("    x{i} = {i}\n"));
+        }
+        source.push_str("    return x79\n");
+        std::fs::write(&path, &source).expect("write");
+        let coverage = serde_json::json!({
+            "totals": {
+                "stated": 0, "accounted": 0, "silently_unaccounted": 0,
+                "minority_present": 1, "minority_dug": 0, "minority_un_asserted": 1
+            },
+            "minority": {
+                "present": 1, "dug": 0, "un_asserted": 1,
+                "un_asserted_loci": [{
+                    "file": path.to_string_lossy(),
+                    "line": 1,
+                    "name": "orphan",
+                    "qualname": "orphan"
+                }]
+            }
+        });
+        let rendered = render_lift_coverage_human(&coverage, Some(dir.path()));
+        assert!(rendered.contains("def orphan():"), "{rendered}");
+        assert!(
+            rendered.contains("x0 = 0") && rendered.contains("x79 = 79"),
+            "must render first and last suite lines past any historical 64-line cap:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("return x79"),
+            "must render terminal suite line:\n{rendered}"
+        );
+        assert!(!rendered.contains(" more)"), "{rendered}");
+    }
+
+    #[test]
+    fn dual_axis_coverage_report_renders_every_silent_and_forged_locus() {
+        // Standing law from #4320: no `(+N more)` elision anywhere in the dual-axis
+        // coverage human report — silent residue and Crime 2 included.
+        let silent = (0..40)
+            .map(|index| {
+                serde_json::json!({
+                    "file": "s.py", "line": index + 1, "preview": format!("assert not s{index}")
+                })
+            })
+            .collect::<Vec<_>>();
+        let forged = (0..40)
+            .map(|index| {
+                serde_json::json!({
+                    "file": "f.py", "line": index + 1, "name": format!("forged_{index}")
+                })
+            })
+            .collect::<Vec<_>>();
+        let coverage = serde_json::json!({
+            "totals": {
+                "stated": 40, "accounted": 0, "silently_unaccounted": 40,
+                "minority_present": 0, "minority_dug": 0, "minority_un_asserted": 0,
+                "crime2_dig_floors": 40, "crime2_warranted": 0, "crime2_forged_warrant": 40
+            },
+            "assertions": {
+                "stated": 40, "lifted_cited": 0, "silently_unaccounted": 40,
+                "silent_loci": silent
+            },
+            "crime2": {
+                "dig_floors": 40, "warranted": 0, "forged_warrant": 40,
+                "forged_loci": forged
+            }
+        });
+        let rendered = render_lift_coverage_human(&coverage, None);
+        assert_eq!(rendered.matches("s.py:").count(), 40, "{rendered}");
+        assert_eq!(rendered.matches("f.py:").count(), 40, "{rendered}");
+        assert!(rendered.contains("assert not s0") && rendered.contains("assert not s39"));
+        assert!(rendered.contains("forged_0") && rendered.contains("forged_39"));
+        assert!(
+            !rendered.contains(" more)"),
+            "dual-axis coverage must not emit elision markers:\n{rendered}"
+        );
     }
 
     #[test]

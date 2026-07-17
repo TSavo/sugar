@@ -9,7 +9,7 @@ for un_asserted bodies — not the source.
 1. Wire `render_lift_coverage_human` into `render_visual_source_report` after the plan roll call.
 2. Load unaccounted loci from disk and print numbered source lines:
    - silent asserts: the assert line (RED)
-   - un_asserted bodies: def + indented suite (indent walk, cap 64 lines)
+   - un_asserted bodies: def + indented suite (full indent walk; no line-count cap — #4320/#4324)
 3. Preview only as last-resort when file unreadable.
 
 ## Verify
