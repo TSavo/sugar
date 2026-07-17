@@ -346,12 +346,7 @@ def _runtime_strategy(
 def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
     bases = class_site.class_bases()
     if len(bases) != 1:
-        _panic(
-            site,
-            f"{target} bases={class_site.class_base_names()}",
-            "statically resolved inherited constructor",
-            f"construct the exact multiple-inheritance MRO for `{target}`",
-        )
+        return _multi_base_inherited_strategy(site, ctx, target, class_site, methods)
     base = bases[0]
     base_coordinate = base.dotted_expr_name()
     if base_coordinate is None:
@@ -369,9 +364,7 @@ def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
         from sugar_lift_py_tests.floor import ImportAliasValue, SymbolicValue
 
         bound = (
-            ctx.temporal.value_if_bound(base_name)
-            if base.observed == "Name"
-            else None
+            ctx.temporal.value_if_bound(base_name) if base.observed == "Name" else None
         )
         if isinstance(bound, SymbolicValue):
             return _runtime_strategy(
@@ -387,9 +380,7 @@ def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
                 resolve_install_source_class_method,
             )
 
-            init = resolve_install_source_class_method(
-                bound.import_target, "__init__"
-            )
+            init = resolve_install_source_class_method(bound.import_target, "__init__")
             if init is not None:
                 return _strategy_from_init(
                     site,
@@ -415,6 +406,178 @@ def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
             f"`{base_name}` must resolve to a ClassDef before `{target}` can construct",
         )
     return _strategy(site, ctx, target, resolved_site)
+
+
+def _base_type_coordinate(base):
+    """Static type coordinate for a class base, peeling GenericAlias subscripts.
+
+    ``MutableMapping[str, T]`` is the same MRO head as ``MutableMapping``;
+    only the origin type participates in C3. Runtime-selected bases return None.
+    """
+    current = base
+    while current.observed == "Subscript":
+        current = current.subscript_receiver()
+    return current.dotted_expr_name()
+
+
+def _mro_entry_key(entry):
+    kind = entry[0]
+    if kind == "local":
+        return ("local", entry[1])
+    return ("import", entry[1])
+
+
+def _c3_merge(sequences):
+    """C3 linearization merge. Returns a list of entries, or None if inconsistent."""
+    seqs = [list(sequence) for sequence in sequences]
+    result = []
+    while True:
+        nonempty = [seq for seq in seqs if seq]
+        if not nonempty:
+            return result
+        candidate = None
+        for seq in nonempty:
+            head = seq[0]
+            head_key = _mro_entry_key(head)
+            if any(
+                _mro_entry_key(item) == head_key
+                for other in nonempty
+                for item in other[1:]
+            ):
+                continue
+            candidate = head
+            break
+        if candidate is None:
+            return None
+        result.append(candidate)
+        candidate_key = _mro_entry_key(candidate)
+        for seq in seqs:
+            if seq and _mro_entry_key(seq[0]) == candidate_key:
+                del seq[0]
+
+
+def _static_mro_for_named_base(name: str, ctx, stack: frozenset[str]):
+    """Resolve one base name to its static MRO entry list, or None if undecidable."""
+    if name in stack:
+        return None
+    resolved = (ctx.name_resolver or {}).get(name)
+    if resolved is not None:
+        resolved_site = SourceFragment.from_node(resolved, ctx.filename)
+        if resolved_site.observed == "ClassDef":
+            return _static_constructor_mro(name, resolved_site, ctx, stack=stack)
+
+    from sugar_lift_py_tests.floor import ImportAliasValue, SymbolicValue
+
+    if "." in name:
+        return None
+    bound = ctx.temporal.value_if_bound(name)
+    if isinstance(bound, SymbolicValue):
+        return None
+    if isinstance(bound, ImportAliasValue) and bound.import_target is not None:
+        return (("import", bound.import_target),)
+    return None
+
+
+def _static_constructor_mro(class_name: str, class_site, ctx, *, stack=frozenset()):
+    """Exact C3 MRO for a ClassDef when every base is a static type coordinate.
+
+    Each entry is either ``("local", name, class_site)`` or ``("import", import_target)``.
+    Returns None when any base is undecidable or the linearization is inconsistent.
+    """
+    if class_name in stack:
+        return None
+    next_stack = stack | {class_name}
+    base_mros = []
+    base_heads = []
+    for base in class_site.class_bases():
+        coordinate = _base_type_coordinate(base)
+        if coordinate is None:
+            return None
+        base_mro = _static_mro_for_named_base(coordinate, ctx, next_stack)
+        if base_mro is None:
+            return None
+        base_mros.append(base_mro)
+        base_heads.append(base_mro[0])
+    root = ("local", class_name, class_site)
+    if not base_mros:
+        return (root,)
+    merged = _c3_merge([list(mro) for mro in base_mros] + [base_heads])
+    if merged is None:
+        return None
+    return (root, *merged)
+
+
+def _constructor_from_mro_entry(site, ctx, target: str, class_site, methods, entry):
+    """If this MRO class defines ``__init__``, build its strategy; else None to continue."""
+    if entry[0] == "local":
+        _kind, _name, entry_site = entry
+        init = next(
+            (
+                stmt
+                for stmt in entry_site.class_body()
+                if stmt.observed == "FunctionDef" and stmt.function_name() == "__init__"
+            ),
+            None,
+        )
+        if init is None:
+            return None
+        return _strategy_from_init(
+            site,
+            ctx,
+            target,
+            init,
+            methods=methods,
+            class_fields=_class_fields(class_site, ctx),
+        )
+    if entry[0] == "import":
+        from sugar_lift_py_tests.sugar.install_source_dig import (
+            resolve_install_source_class_method,
+        )
+
+        _kind, import_target = entry
+        init = resolve_install_source_class_method(import_target, "__init__")
+        if init is None:
+            return None
+        return _strategy_from_init(
+            site,
+            ctx,
+            target,
+            init,
+            methods=methods,
+            class_fields=_class_fields(class_site, ctx),
+        )
+    return None
+
+
+def _multi_base_inherited_strategy(site, ctx, target: str, class_site, methods=()):
+    """Construct the exact multiple-inheritance MRO and take the first ``__init__``.
+
+    Undecidable bases (runtime-selected, unresolved, symbolic) stay a loud
+    construction panic — never a RuntimeEffect weakening of the gap.
+    """
+    mro = _static_constructor_mro(target, class_site, ctx)
+    if mro is None:
+        _panic(
+            site,
+            f"{target} bases={class_site.class_base_names()}",
+            "statically resolved inherited constructor",
+            f"construct the exact multiple-inheritance MRO for `{target}`",
+        )
+    for entry in mro[1:]:
+        strategy = _constructor_from_mro_entry(
+            site, ctx, target, class_site, methods, entry
+        )
+        if strategy is not None:
+            return strategy
+    if site.call_arg_count() != 0:
+        return _arity_strategy(site, ctx, target, 0, 0)
+    return ConstructorStrategy(
+        class_name=target,
+        fields=(),
+        methods=methods,
+        class_fields=_class_fields(class_site, ctx),
+        identity=site.blame,
+    )
 
 
 def _arity_strategy(
