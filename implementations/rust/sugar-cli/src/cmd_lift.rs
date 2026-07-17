@@ -4865,32 +4865,88 @@ fn pretty_visual_formula_with_terms(
     color: bool,
     term_table: Option<&LiftTermTable>,
 ) -> String {
+    pretty_visual_formula_metrics(formula, color, term_table).rendered
+}
+
+#[derive(Debug, Clone)]
+struct VisualFormulaMetrics {
+    rendered: String,
+    inventory_visits: usize,
+    unique_fingerprints: usize,
+    revisit_count: usize,
+    root_nodes: usize,
+    root_bytes: usize,
+    shareable_repeated_fingerprints: usize,
+    plan_calls: usize,
+    cid_computations: usize,
+    cid_cache_hits: usize,
+    reference_returns: usize,
+    elided_returns: usize,
+    /// Shareable Full definitions entered while another shared parent is open.
+    /// Pre-#4404 this class was suppressed and nested rungs re-expanded as a tree.
+    shareable_nested_definitions: usize,
+    /// Shareable references taken while a shared parent is open (DAG edges).
+    shareable_nested_references: usize,
+    shareable_definitions: usize,
+    rendered_bytes: usize,
+    elapsed: Duration,
+}
+
+fn pretty_visual_formula_metrics(
+    formula: &Value,
+    color: bool,
+    term_table: Option<&LiftTermTable>,
+) -> VisualFormulaMetrics {
     let started = Instant::now();
     let mut renderer = VisualFormulaRenderer::new(formula, color, term_table);
     let rendered = renderer.formula(formula, 0);
-    tracing::info!(
-        stage = "visual_formula.complete",
-        elapsed_ms = started.elapsed().as_millis(),
-        inventory_visits = renderer.inventory_visits,
-        unique_fingerprints = renderer.unique_fingerprints.len(),
-        revisit_count = renderer
+    let elapsed = started.elapsed();
+    let metrics = VisualFormulaMetrics {
+        inventory_visits: renderer.inventory_visits,
+        unique_fingerprints: renderer.unique_fingerprints.len(),
+        revisit_count: renderer
             .inventory_visits
             .saturating_sub(renderer.unique_fingerprints.len()),
-        root_nodes = renderer.root_meta.nodes,
-        root_bytes = renderer.root_meta.bytes,
-        shareable_repeated_fingerprints = renderer
+        root_nodes: renderer.root_meta.nodes,
+        root_bytes: renderer.root_meta.bytes,
+        shareable_repeated_fingerprints: renderer
             .repeats
             .values()
             .filter(|count| **count > 1)
             .count(),
-        plan_calls = renderer.plan_calls,
-        cid_computations = renderer.cid_computations,
-        reference_returns = renderer.reference_returns,
-        elided_returns = renderer.elided_returns,
-        rendered_bytes = rendered.len(),
+        plan_calls: renderer.plan_calls,
+        cid_computations: renderer.cid_computations,
+        cid_cache_hits: renderer.cid_cache_hits,
+        reference_returns: renderer.reference_returns,
+        elided_returns: renderer.elided_returns,
+        shareable_nested_definitions: renderer.shareable_nested_definitions,
+        shareable_nested_references: renderer.shareable_nested_references,
+        shareable_definitions: renderer.shareable_definitions,
+        rendered_bytes: rendered.len(),
+        elapsed,
+        rendered,
+    };
+    tracing::info!(
+        stage = "visual_formula.complete",
+        elapsed_ms = metrics.elapsed.as_millis(),
+        inventory_visits = metrics.inventory_visits,
+        unique_fingerprints = metrics.unique_fingerprints,
+        revisit_count = metrics.revisit_count,
+        root_nodes = metrics.root_nodes,
+        root_bytes = metrics.root_bytes,
+        shareable_repeated_fingerprints = metrics.shareable_repeated_fingerprints,
+        plan_calls = metrics.plan_calls,
+        cid_computations = metrics.cid_computations,
+        cid_cache_hits = metrics.cid_cache_hits,
+        reference_returns = metrics.reference_returns,
+        elided_returns = metrics.elided_returns,
+        shareable_definitions = metrics.shareable_definitions,
+        shareable_nested_definitions = metrics.shareable_nested_definitions,
+        shareable_nested_references = metrics.shareable_nested_references,
+        rendered_bytes = metrics.rendered_bytes,
         "visual formula traversal microscope"
     );
-    rendered
+    metrics
 }
 
 const VISUAL_FORMULA_MAX_DEPTH: usize = 24;
@@ -4920,13 +4976,23 @@ struct VisualFormulaRenderer<'a> {
     meta: HashMap<usize, VisualSubtreeMeta>,
     repeats: HashMap<[u8; 32], usize>,
     seen: HashSet<[u8; 32]>,
+    /// Content-addressed CIDs for shareable fingerprints. References reuse the
+    /// first definition's CID so later expanded clones never re-canonicalize.
+    shared_cids: HashMap<[u8; 32], String>,
+    /// Depth of open shared Full definitions. Nested shareable children must
+    /// still be allowed to define/reference (#4404); this depth only meters.
+    shared_definition_depth: usize,
     inventory_visits: usize,
     unique_fingerprints: HashSet<[u8; 32]>,
     root_meta: VisualSubtreeMeta,
     plan_calls: usize,
     cid_computations: usize,
+    cid_cache_hits: usize,
     reference_returns: usize,
     elided_returns: usize,
+    shareable_definitions: usize,
+    shareable_nested_definitions: usize,
+    shareable_nested_references: usize,
 }
 
 impl<'a> VisualFormulaRenderer<'a> {
@@ -4939,6 +5005,8 @@ impl<'a> VisualFormulaRenderer<'a> {
             meta: HashMap::new(),
             repeats: HashMap::new(),
             seen: HashSet::new(),
+            shared_cids: HashMap::new(),
+            shared_definition_depth: 0,
             inventory_visits: 0,
             unique_fingerprints: HashSet::new(),
             root_meta: VisualSubtreeMeta {
@@ -4948,8 +5016,12 @@ impl<'a> VisualFormulaRenderer<'a> {
             },
             plan_calls: 0,
             cid_computations: 0,
+            cid_cache_hits: 0,
             reference_returns: 0,
             elided_returns: 0,
+            shareable_definitions: 0,
+            shareable_nested_definitions: 0,
+            shareable_nested_references: 0,
         };
         renderer.root_meta = renderer.inventory(root);
         renderer.inventory_term_repeats(root);
@@ -5062,11 +5134,10 @@ impl<'a> VisualFormulaRenderer<'a> {
     fn plan(&mut self, value: &Value, depth: usize) -> VisualRenderPlan {
         self.plan_calls += 1;
         let meta = self.meta[&(value as *const Value as usize)];
-        if depth >= VISUAL_FORMULA_MAX_DEPTH
-            || ((depth > 0 || !is_visual_formula_shape(value))
-                && (meta.nodes > VISUAL_FORMULA_MAX_SUBTREE_NODES
-                    || meta.bytes > VISUAL_FORMULA_MAX_SUBTREE_BYTES))
-        {
+        // Depth remains a universal rail: a pure spine of unique nodes can
+        // still runaway. Size elision is only for genuinely unique subtrees;
+        // shareable repeats must become definitions/references first (#4404).
+        if depth >= VISUAL_FORMULA_MAX_DEPTH {
             self.cid_computations += 1;
             self.elided_returns += 1;
             return VisualRenderPlan::Elided(format!(
@@ -5076,13 +5147,49 @@ impl<'a> VisualFormulaRenderer<'a> {
             ));
         }
         if self.repeats.get(&meta.fingerprint).copied().unwrap_or(0) > 1 {
-            self.cid_computations += 1;
-            let cid = sugar_canonicalizer::jcs_cid_of_json(value);
+            // DAG law: first encounter defines, later encounters reference —
+            // even while a shared parent is mid-definition. Never suppress
+            // nested sharing (#4404). CID is cached by fingerprint so a
+            // second expanded clone does not re-canonicalize the tree.
             if !self.seen.insert(meta.fingerprint) {
                 self.reference_returns += 1;
+                if self.shared_definition_depth > 0 {
+                    self.shareable_nested_references += 1;
+                }
+                let cid = if let Some(cid) = self.shared_cids.get(&meta.fingerprint) {
+                    self.cid_cache_hits += 1;
+                    cid.clone()
+                } else {
+                    self.cid_computations += 1;
+                    let cid = sugar_canonicalizer::jcs_cid_of_json(value);
+                    self.shared_cids.insert(meta.fingerprint, cid.clone());
+                    cid
+                };
                 return VisualRenderPlan::Reference(format!("<as above, cid={cid}>"));
             }
+            self.cid_computations += 1;
+            let cid = sugar_canonicalizer::jcs_cid_of_json(value);
+            self.shared_cids.insert(meta.fingerprint, cid.clone());
+            self.shareable_definitions += 1;
+            if self.shared_definition_depth > 0 {
+                self.shareable_nested_definitions += 1;
+            }
             return VisualRenderPlan::Full(Some(cid));
+        }
+        // Formula shapes always open: an `and`/`atomic` wrapping a large shared
+        // tower must still dispatch so terms can DAG-share. Size elision is a
+        // term/rail for unique mass, not a formula-connective backstop.
+        if !is_visual_formula_shape(value)
+            && (meta.nodes > VISUAL_FORMULA_MAX_SUBTREE_NODES
+                || meta.bytes > VISUAL_FORMULA_MAX_SUBTREE_BYTES)
+        {
+            self.cid_computations += 1;
+            self.elided_returns += 1;
+            return VisualRenderPlan::Elided(format!(
+                "<subtree elided, cid={}, nodes={}, see mementos>",
+                sugar_canonicalizer::jcs_cid_of_json(value),
+                meta.nodes
+            ));
         }
         VisualRenderPlan::Full(None)
     }
@@ -5094,7 +5201,14 @@ impl<'a> VisualFormulaRenderer<'a> {
             }
             VisualRenderPlan::Full(cid) => cid,
         };
+        let defining_shared = shared_cid.is_some();
+        if defining_shared {
+            self.shared_definition_depth += 1;
+        }
         let rendered = self.formula_full(formula, depth);
+        if defining_shared {
+            self.shared_definition_depth = self.shared_definition_depth.saturating_sub(1);
+        }
         match shared_cid {
             Some(cid) => format!("{rendered} [shared cid={cid}]"),
             None => rendered,
@@ -5249,7 +5363,14 @@ impl<'a> VisualFormulaRenderer<'a> {
             }
             VisualRenderPlan::Full(cid) => cid,
         };
+        let defining_shared = shared_cid.is_some();
+        if defining_shared {
+            self.shared_definition_depth += 1;
+        }
         let rendered = self.term_full(term, depth);
+        if defining_shared {
+            self.shared_definition_depth = self.shared_definition_depth.saturating_sub(1);
+        }
         match shared_cid {
             Some(cid) => format!("{rendered} [shared cid={cid}]"),
             None => rendered,
@@ -16529,7 +16650,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             ]
         });
 
-        let rendered = pretty_visual_formula(&formula, false);
+        let metrics = pretty_visual_formula_metrics(&formula, false, None);
+        let rendered = &metrics.rendered;
 
         assert_eq!(
             rendered.matches("transform(x)").count(),
@@ -16539,6 +16661,110 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         assert!(
             rendered.matches("as above, cid=blake3-512:").count() >= 2,
             "the nested rungs and their shared parent need references:\n{rendered}"
+        );
+        assert!(
+            metrics.shareable_nested_definitions >= 1,
+            "nested shareable rungs must define while a shared parent is open: {metrics:?}\n{rendered}"
+        );
+        assert!(
+            metrics.shareable_nested_references >= 1,
+            "nested shareable rungs must reference while a shared parent is open: {metrics:?}\n{rendered}"
+        );
+        assert!(
+            metrics.cid_cache_hits >= 1,
+            "references must reuse the definition CID, not re-canonicalize clones: {metrics:?}"
+        );
+    }
+
+    #[test]
+    fn visual_fol_shared_binary_tower_output_scales_with_unique_nodes() {
+        // #4404 instrument: a binary shared tower expands to O(2^D) JSON nodes
+        // but the visual page must stay O(unique DAG nodes + references).
+        // Pre-fix, sharing_suppressed forced the first outer definition to
+        // re-expand every nested shared rung as a tree. Size elision must not
+        // fire before shareable repeats either — it is only for unique mass.
+        const DEPTH: usize = 8;
+        let mut term = serde_json::json!({
+            "kind": "ctor", "name": "call:leaf_pad_0", "args": [{
+                "kind": "ctor", "name": "call:leaf_pad_1", "args": [{
+                    "kind": "ctor", "name": "call:leaf_pad_2", "args": [{
+                        "kind": "var", "name": "x"
+                    }]
+                }]
+            }]
+        });
+        for depth in 0..DEPTH {
+            term = serde_json::json!({
+                "kind": "ctor",
+                "name": format!("call:rung_{depth}"),
+                "args": [term.clone(), term]
+            });
+        }
+        // Two top-level uses make the outer tower shareable so plan takes the
+        // DAG path instead of unique-subtree size elision.
+        let formula = serde_json::json!({
+            "kind": "and", "operands": [
+                {"kind": "atomic", "name": "=", "args": [
+                    {"kind": "var", "name": "left"}, term.clone()
+                ]},
+                {"kind": "atomic", "name": "=", "args": [
+                    {"kind": "var", "name": "right"}, term
+                ]}
+            ]
+        });
+
+        let metrics = pretty_visual_formula_metrics(&formula, false, None);
+        let rendered = &metrics.rendered;
+
+        assert_eq!(
+            rendered.matches("leaf_pad_0(").count(),
+            1,
+            "the leaf must be defined once, not 2^{DEPTH} times:\n{rendered}"
+        );
+        for depth in 0..DEPTH {
+            assert_eq!(
+                rendered.matches(&format!("rung_{depth}(")).count(),
+                1,
+                "rung_{depth} must be defined once:\n{rendered}"
+            );
+        }
+        let tree_lower_bound = 1usize << DEPTH;
+        assert!(
+            metrics.root_nodes > tree_lower_bound,
+            "fixture must expand on the wire so the instrument sees the tree: root_nodes={} bound={tree_lower_bound}",
+            metrics.root_nodes
+        );
+        assert!(
+            metrics.revisit_count > tree_lower_bound / 2,
+            "inventory must observe structural revisits of shared rungs: {metrics:?}"
+        );
+        // Unique constructors: DEPTH rungs + 3 pads. Each definition/reference
+        // is a few dozen bytes; a tree render is Θ(2^D).
+        let linear_ceiling = (DEPTH + 4) * 500;
+        assert!(
+            metrics.rendered_bytes < linear_ceiling,
+            "rendered page must stay linear in unique rungs (bytes={} ceiling={linear_ceiling}): {metrics:?}\n{rendered}",
+            metrics.rendered_bytes
+        );
+        assert!(
+            metrics.shareable_nested_references >= DEPTH,
+            "each tower level needs a nested DAG reference: {metrics:?}\n{rendered}"
+        );
+        assert!(
+            metrics.cid_cache_hits >= DEPTH,
+            "nested references must hit the fingerprint→CID cache: {metrics:?}"
+        );
+        assert!(
+            metrics.cid_computations <= metrics.shareable_definitions + metrics.elided_returns + 2,
+            "CID work must not re-walk every expanded clone: {metrics:?}"
+        );
+        assert!(
+            metrics.reference_returns >= DEPTH + 1,
+            "expected sibling references per level plus the second outer tower: {metrics:?}\n{rendered}"
+        );
+        assert!(
+            metrics.elided_returns == 0,
+            "shareable towers must DAG-share, not size-elide: {metrics:?}\n{rendered}"
         );
     }
 
