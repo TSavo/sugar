@@ -79,11 +79,27 @@ class KeywordCallSugar(
             "    return y\n"
             "\n"
         )
-        return _call_pair(
-            name="keyword_call_return",
-            owner_sugar="KeywordCallSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        starred = (
+            "def A():\n"
+            "    def inner(*args, **options):\n"
+            "        return args[1]\n"
+            "    return inner(*(4, 5), flag=6)\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="keyword_call_return",
+                owner_sugar="KeywordCallSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            ),
+            _call_pair(
+                name="keyword_call_constructed_starred_return",
+                owner_sugar="KeywordCallSugar",
+                truthful=starred + "def test_a():\n    assert A() == 5\n",
+                lying=starred + "def test_a():\n    assert A() == 6\n",
+                family="constructed-starred-keyword-call",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -214,8 +230,15 @@ class KeywordCallSugar(
                     # Derived EUF residue can pin ground posts (#4387
                     # keyword_call_return). Do not soft-refuse — unbindable
                     # signatures stay loud at FunctionCallable.callsite.
+                    from sugar_lift_py_tests.sugar.call_sugar import (
+                        _expand_function_positional_args,
+                    )
+
+                    bound_pos_values = _expand_function_positional_args(
+                        pos_values, site=self.site
+                    )
                     return bound.callsite(
-                        (*pos_values, *(value for _, value in kw_pairs)),
+                        (*bound_pos_values, *(value for _, value in kw_pairs)),
                         tuple(name for name, _ in kw_pairs),
                         self.site,
                         source_arg_values=pos_values,
