@@ -237,6 +237,52 @@ def test_contextlib_suppress_constructs_named_static_contract() -> None:
     assert contract.exception_names == frozenset({"ValueError"})
 
 
+@pytest.mark.parametrize(
+    "coordinate",
+    ("open", "builtins.open", "numpy.errstate", "numpy.nditer"),
+)
+def test_exact_non_suppressing_manager_coordinates_construct_contract(
+    coordinate: str,
+) -> None:
+    contract = _static_exit_suppression_contract(coordinate, ())
+
+    assert contract == ExitSuppressionContract.never_suppresses()
+
+
+@pytest.mark.parametrize(
+    "coordinate",
+    ("project.open", "project.errstate", "project.nditer", "numpy.unknown"),
+)
+def test_similar_non_manager_coordinates_do_not_gain_exit_contract(
+    coordinate: str,
+) -> None:
+    assert _static_exit_suppression_contract(coordinate, ()) is None
+
+
+def test_exact_builtin_open_proves_exception_propagation() -> None:
+    block = compose_block(
+        "    with open(path, 'rb'):\n" "        raise ValueError('boom')\n",
+        binds={"path": SymbolicValue(ctor("path", []))},
+    )
+
+    assert isinstance(block.statements[0], RaiseValue)
+    assert block.statements[0].effect.exception_name == "ValueError"
+
+
+def test_shadowed_open_keeps_unknown_exit_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    with open(path, 'rb'):\n" "        raise ValueError('boom')\n",
+            binds={
+                "path": SymbolicValue(ctor("path", [])),
+                "open": SymbolicValue(ctor("shadowed-open", [])),
+            },
+        )
+
+    assert raised.value.info.owner == "WithSugar"
+    assert "__exit__" in raised.value.info.requested
+
+
 def test_contextlib_suppress_does_not_hide_unlisted_exception() -> None:
     block = compose_block(
         "    with manager:\n" "        raise ValueError('boom')\n",
