@@ -413,11 +413,37 @@ def test_list_literal_shape_has_one_verdict_bearing_owner(
     truthful_result = run_source_through_real_solver(tmp_path / "list-truth", truthful)
     lying_result = run_source_through_real_solver(tmp_path / "list-lie", lying)
 
+    # #4384: truthful arm must discharge, never soft-refuse with totalCallsites=0.
     assert truthful_result.verdict == "sat"
     assert lying_result.verdict == "unsat"
-    ctor_names = _ctor_names(truthful_result.lift_doc["ir"])
-    assert "array" in ctor_names
-    assert "call:len" in ctor_names
+    assert all(
+        row.get("status") != "refused"
+        for row in truthful_result.prove_doc.get("rows", [])
+    )
+    assert all(
+        row.get("status") != "refused"
+        for row in lying_result.prove_doc.get("rows", [])
+    )
+    # One list owner (ListLiteralSugar), not a dual Array path. Concrete
+    # len([1,2,3]) folds to Int 3 — residual call:len/array constructors are not
+    # the testimony shape after ListValue cardinality reduction.
+    assert "ListLiteralSugar" in truthful_result.selected_sugars
+    assert "LenCallSugar" in truthful_result.selected_sugars
+    assert "ArrayLiteralSugar" not in truthful_result.selected_sugars
+    term_table = truthful_result.lift_doc.get("termTable") or {}
+    function_contract = next(
+        row
+        for row in truthful_result.lift_doc["ir"]
+        if isinstance(row, dict) and row.get("kind") == "function-contract"
+    )
+    post_rhs = function_contract["post"]["args"][1]
+    if post_rhs.get("kind") == "term-ref":
+        post_rhs = term_table[post_rhs["cid"]]
+    assert post_rhs == {
+        "kind": "const",
+        "sort": {"kind": "primitive", "name": "Int"},
+        "value": 3,
+    }
 
 
 def test_dict_literal_entry_equality_discharges_and_refutes(tmp_path: Path) -> None:
