@@ -30,6 +30,7 @@ from .effect import Effect, effect_kind, effect_reason, effect_status, require_e
 from .index_error_runtime_effect import IndexErrorRuntimeEffect
 from .imported_module_runtime_effect import ImportedModuleRuntimeEffect
 from .key_error_runtime_effect import KeyErrorRuntimeEffect
+from .modulo_runtime_effect import ModuloRuntimeEffect, runtime_modulo
 from .modulo_by_zero_runtime_effect import ModuloByZeroRuntimeEffect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .power_runtime_effect import PowerRuntimeEffect
@@ -87,6 +88,8 @@ __all__ = [
     "IndexErrorRuntimeEffect",
     "ImportedModuleRuntimeEffect",
     "KeyErrorRuntimeEffect",
+    "ModuloRuntimeEffect",
+    "runtime_modulo",
     "ModuloByZeroRuntimeEffect",
     "OSExitRuntimeEffect",
     "PowerRuntimeEffect",
