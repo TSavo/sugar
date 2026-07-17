@@ -7,11 +7,14 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     PredicateValue,
     SymbolicValue,
@@ -29,6 +32,7 @@ from sugar_lift_py_tests.ir import (
     num,
 )
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.is_not_op_sugar import IsNotOpSugar
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
@@ -85,6 +89,43 @@ def test_ground_string_is_not_none_witness_refutes_wrong_twin(
 
     assert truthful.verdict == pair.truthful.expected == "sat"
     assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_none_guard_refines_joined_binding_and_wrong_twin_refutes(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in IsNotOpSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "none_guard_refines_joined_binding"
+    )
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_reversed_none_guard_preserves_unsupported_live_face_as_loud_gap() -> None:
+    source = (
+        "def A(flag):\n"
+        "    if flag == 1:\n"
+        "        selected = 7\n"
+        "    else:\n"
+        "        selected = None\n"
+        "    if None is not selected:\n"
+        "        return selected[0]\n"
+        "    return 0\n"
+    )
+
+    with pytest.raises(
+        FactoryPanic,
+        match=r"owner=subscript .*observed=TermValue",
+    ):
+        audit_lift_file(source, "unsupported_live_face.py", hold_panic=False)
 
 
 def test_exact_builtin_type_identity_folds_by_type_coordinate() -> None:
