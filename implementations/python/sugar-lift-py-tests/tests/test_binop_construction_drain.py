@@ -58,6 +58,60 @@ def test_matrix_multiply_uses_native_operator_coordinate() -> None:
     ) == SymbolicValue(ctor("@", [make_var("x"), make_var("y")]))
 
 
+def test_concrete_number_matrix_multiply_is_typed_type_error() -> None:
+    """Python defines no scalar ``@``; dig of ``2 @ 3`` is TypeError, not panic."""
+    from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    node = ast.parse("2 @ 3", mode="eval").body
+    site = SourceFragment.from_node(node, "t.py", source="2 @ 3")
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    outcome = build_node(
+        site, filename="t.py", role=SugarRole.TERM, ctx=ctx
+    ).sugar.desugar(ctx)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
+    assert "@" in outcome.effect.reason or "matmul" in outcome.effect.reason.lower()
+
+
+def test_production_lift_constructs_matrix_multiply_return_without_factory_panic() -> None:
+    """#4387 wave-5: ObjectValue.__matmul__ dig body + Derived residue pin."""
+    from sugar_lift_py_tests.lift_rpc import audit_lift_file
+
+    source = (
+        "class Box:\n"
+        "    def __matmul__(self, other):\n"
+        "        return 6\n"
+        "\n"
+        "def A():\n"
+        "    return Box() @ Box()\n"
+        "\n"
+        "def test_a():\n"
+        "    assert A() == 6\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "matrix_multiply_return.py")
+    rpc = payload.to_rpc()
+    selected = {
+        row["selected"]
+        for row in [
+            *rpc.get("factoryAuditSummary", {}).get("factoryWalk", []),
+            *rpc.get("factoryAudits", []),
+        ]
+        if isinstance(row, dict) and isinstance(row.get("selected"), str)
+    }
+
+    assert gaps == []
+    assert "MatrixMultiplyOpSugar" in selected
+    assert "ConstructorCallSugar" in selected
+    assert rpc.get("ir"), "matrix multiply return must emit proof-bearing IR"
+    recovered = audit_lift_file(
+        source, "matrix_multiply_return.py", recover_panics=True
+    )
+    assert recovered.panics == []
+
+
 def test_bit_or_annotation_union_uses_its_annotation_owner() -> None:
     source = "def f(value: int | str):\n    return value\n"
     module = ast.parse(source)

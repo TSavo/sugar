@@ -81,6 +81,22 @@ class ObjectValue(FloorValue):
             ctx=ctx,
         )
 
+    def matrix_multiply(self, other, site):
+        """``@`` on an object is the ``__matmul__`` data-model method.
+
+        MatrixMultiplyOpSugar calls ``left.matrix_multiply(right, site)``
+        directly (same totalizer shape as ``multiply`` / ``add``). Without
+        this arm, ObjectValue falls through FloorValue's construction panic
+        even when the class ships a diggable ``__matmul__`` body — the
+        ``matrix_multiply_return`` witness residual under #4387.
+        """
+        return self.call_method_value(
+            "__matmul__",
+            (other,),
+            owner="MatrixMultiplyOpSugar",
+            blame=str(site),
+        )
+
     def attribute_with(
         self, operation: AttributeLookupOperation, ctx: FactoryBuildContext | None
     ) -> Outcome:

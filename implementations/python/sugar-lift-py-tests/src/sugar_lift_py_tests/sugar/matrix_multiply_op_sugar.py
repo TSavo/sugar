@@ -31,12 +31,24 @@ class MatrixMultiplyOpSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A(x, y):\n    return x @ y\n\n"
+        # Scalar int @ int is TypeError at runtime; the sat/unsat twin rides
+        # an object with a diggable __matmul__ body (same shape as
+        # divmod_dunder_return / format_dunder_return). Free symbolic @
+        # still constructs the native "@" coordinate on SymbolicValue.
+        prefix = (
+            "class Box:\n"
+            "    def __matmul__(self, other):\n"
+            "        return 6\n"
+            "\n"
+            "def A():\n"
+            "    return Box() @ Box()\n"
+            "\n"
+        )
         return _call_pair(
             name="matrix_multiply_return",
             owner_sugar="MatrixMultiplyOpSugar",
-            truthful=prefix + "def test_a():\n    assert A(2, 3) == 6\n",
-            lying=prefix + "def test_a():\n    assert A(2, 3) == 7\n",
+            truthful=prefix + "def test_a():\n    assert A() == 6\n",
+            lying=prefix + "def test_a():\n    assert A() == 7\n",
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

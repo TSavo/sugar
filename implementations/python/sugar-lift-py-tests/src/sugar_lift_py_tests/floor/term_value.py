@@ -429,11 +429,43 @@ class TermValue(FloorValue):
         return getattr(super(), method)(other, site)
 
     def matrix_multiply(self, other, site):
+        """``@`` is not defined on numbers — construct or typed-red, never panic.
+
+        Free symbolic peers stay the native ``@`` coordinate. Concrete
+        number ``@`` number is Python's TypeError (genuine runtime
+        dependence). Object receivers with ``__rmatmul__`` are reflected
+        through the object data-model, not invented as scalar multiply.
+        """
+        from sugar_lift_py_tests.floor.object_value import ObjectValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if type(other) is SymbolicValue:
             return SymbolicValue(self.to_term(owner=str(site))).matrix_multiply(
                 other, site
+            )
+        if type(other) is ObjectValue and other.has_method("__rmatmul__"):
+            return other.call_method_value(
+                "__rmatmul__",
+                (self,),
+                owner="MatrixMultiplyOpSugar",
+                blame=str(site),
+            )
+        if type(other) is TermValue:
+            from sugar_lift_py_tests.effect import (
+                TypeErrorRuntimeEffect,
+                runtime_effect_witness,
+            )
+            from sugar_lift_py_tests.outcome import Incomplete
+
+            left_ty = type(self.value).__name__
+            right_ty = type(other.value).__name__
+            return Incomplete(
+                TypeErrorRuntimeEffect(
+                    f"unsupported operand type(s) for @: "
+                    f"'{left_ty}' and '{right_ty}'; "
+                    f"owner=TermValue.matrix_multiply site={site}",
+                    witness=runtime_effect_witness("py.matmul", other, site),
+                )
             )
         return super().matrix_multiply(other, site)
 
