@@ -5,7 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import (
     AttributeAugAssignRuntimeEffect,
-    runtime_effect_witness,
+    runtime_effect_evidence,
 )
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import ctor, str_const
@@ -86,9 +86,7 @@ class SelectedAttributeAugAssignSugar(Sugar, role=SugarRole.STATEMENT):
                 "attribute augmented assignment depends on the runtime-selected "
                 "receiver and its descriptor protocol; "
                 f"field={self.field_name}; site={self.site}",
-                witness=runtime_effect_witness(
-                    "py.attribute_iadd", coordinate, self.site
-                ),
+                **runtime_effect_evidence("py.attribute_iadd", coordinate, self.site),
             )
         )
 

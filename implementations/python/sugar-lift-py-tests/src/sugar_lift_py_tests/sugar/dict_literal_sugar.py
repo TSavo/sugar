@@ -83,14 +83,14 @@ class DictLiteralSugar(Sugar, role=SugarRole.TERM):
 
         from sugar_lift_py_tests.effect import (
             DictUnpackRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
 
         return Incomplete(
             DictUnpackRuntimeEffect(
                 "dict display keys and values depend on a runtime mapping; "
                 f"site={self.site}",
-                witness=runtime_effect_witness("py.dict_unpack", expansion, self.site),
+                **runtime_effect_evidence("py.dict_unpack", expansion, self.site),
             )
         )
 

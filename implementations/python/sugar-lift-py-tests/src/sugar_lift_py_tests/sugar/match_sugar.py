@@ -245,7 +245,7 @@ def _unsupported_pattern(pattern: ast.pattern, site) -> None:
 def _runtime_selection(operand, site, reason: str) -> Incomplete:
     from sugar_lift_py_tests.effect import (
         MatchSelectionRuntimeEffect,
-        RuntimeEffectWitness,
+        runtime_effect_evidence_from_terms,
     )
     from sugar_lift_py_tests.ir import ctor
 
@@ -253,10 +253,10 @@ def _runtime_selection(operand, site, reason: str) -> Incomplete:
     return Incomplete(
         MatchSelectionRuntimeEffect(
             f"{reason}; blame={site}",
-            witness=RuntimeEffectWitness(
-                operation=ctor("py.match.select", [term]),
-                operand=term,
-                site=site,
+            **runtime_effect_evidence_from_terms(
+                ctor("py.match.select", [term]),
+                term,
+                site,
             ),
         )
     )

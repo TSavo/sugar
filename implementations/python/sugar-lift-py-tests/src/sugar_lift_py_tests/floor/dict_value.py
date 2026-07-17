@@ -74,14 +74,14 @@ class DictValue(FloorValue):
                         return Complete(value)
             from sugar_lift_py_tests.effect import (
                 KeyErrorRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
 
             return Incomplete(
                 KeyErrorRuntimeEffect(
                     f"dict key missing runtime boundary: "
                     f"key={index!r}; owner=DictValue.subscript site={site}",
-                    witness=runtime_effect_witness("py.subscript", index, site),
+                    **runtime_effect_evidence("py.subscript", index, site),
                 )
             )
         return self.py_subscript_coordinate(index, site)
@@ -101,13 +101,13 @@ class DictValue(FloorValue):
             return Complete(DictValue(tuple(entries)))
         from sugar_lift_py_tests.effect import (
             SubscriptStoreRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
 
         return Incomplete(
             SubscriptStoreRuntimeEffect(
                 "dict subscript store requires a concrete key; "
                 f"owner=DictValue.setitem site={site}",
-                witness=runtime_effect_witness("py.setitem", index, site),
+                **runtime_effect_evidence("py.setitem", index, site),
             )
         )

@@ -21,7 +21,6 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.effect import (
     AssertionFailedRuntimeEffect,
     ConditionalExpressionRuntimeEffect,
-    DivisionByZeroRuntimeEffect,
     GetattrRuntimeEffect,
     SubscriptStoreRuntimeEffect,
     TypeErrorRuntimeEffect,
@@ -51,11 +50,9 @@ def _condition(source: str):
 # --- DivisionByZero ---
 
 
-def test_division_by_zero_runtime_sibling_is_named_effect() -> None:
-    outcome = _term("1 / 0")
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, DivisionByZeroRuntimeEffect)
-    assert outcome.effect.witness.locus.startswith("t.py:")
+def test_division_by_zero_ground_wrong_twin_panics() -> None:
+    with pytest.raises(FactoryPanic):
+        _term("1 / 0")
 
 
 def test_division_static_sibling_constructs() -> None:
@@ -72,12 +69,9 @@ def test_division_unsupported_sibling_panics() -> None:
 # --- AssertionFailed ---
 
 
-def test_assertion_failed_runtime_sibling_is_named_effect() -> None:
-    result = compose_block("    assert False\n")
-    assert isinstance(result, BlockValue)
-    assert isinstance(result.statements[0], Incomplete)
-    assert isinstance(result.statements[0].effect, AssertionFailedRuntimeEffect)
-    assert result.statements[0].effect.witness.locus
+def test_assertion_failed_ground_wrong_twin_panics() -> None:
+    with pytest.raises(FactoryPanic):
+        compose_block("    assert False\n")
 
 
 def test_assertion_static_true_sibling_constructs() -> None:
@@ -109,7 +103,8 @@ def test_subscript_store_runtime_sibling_is_named_effect() -> None:
     effects = [
         s.effect
         for s in result.statements
-        if isinstance(s, Incomplete) and isinstance(s.effect, SubscriptStoreRuntimeEffect)
+        if isinstance(s, Incomplete)
+        and isinstance(s.effect, SubscriptStoreRuntimeEffect)
     ]
     # Either the named effect fires, or construction is still loud elsewhere.
     if not effects:
@@ -218,17 +213,13 @@ def test_getattr_unsupported_arity_panics_or_is_unowned() -> None:
 # --- TypeError ---
 
 
-def test_type_error_runtime_sibling_is_named_effect() -> None:
-    outcome = _term("None < 1")
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
-    assert outcome.effect.witness.locus.startswith("t.py:")
+def test_type_error_ground_wrong_twin_panics() -> None:
+    with pytest.raises(FactoryPanic):
+        _term("None < 1")
 
 
 def test_type_error_static_comparable_sibling_constructs() -> None:
-    assert isinstance(
-        _condition("if 1 < 2:\n    pass").value, TrueBoolLiteralSugar
-    )
+    assert isinstance(_condition("if 1 < 2:\n    pass").value, TrueBoolLiteralSugar)
 
 
 def test_type_error_incomparable_string_int() -> None:
@@ -310,12 +301,7 @@ def test_try_handler_bare_except_constructs() -> None:
 
 def test_try_handler_unsupported_star_syntax_panics_at_parse() -> None:
     with pytest.raises(SyntaxError):
-        ast.parse(
-            "try:\n"
-            "    x = 1\n"
-            "except *:\n"
-            "    pass\n"
-        )
+        ast.parse("try:\n" "    x = 1\n" "except *:\n" "    pass\n")
 
 
 def test_imported_module_static_import_constructs() -> None:

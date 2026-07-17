@@ -53,7 +53,7 @@ class YieldSugar(Sugar, role=SugarRole.TERM):
     def _effect(self, yielded) -> Incomplete:
         from sugar_lift_py_tests.effect import (
             GeneratorYieldRuntimeEffect,
-            RuntimeEffectWitness,
+            runtime_effect_evidence_from_terms,
         )
         from sugar_lift_py_tests.ir import ctor
 
@@ -61,10 +61,10 @@ class YieldSugar(Sugar, role=SugarRole.TERM):
             GeneratorYieldRuntimeEffect(
                 "generator suspension is runtime-dependent: "
                 f"py.generator_yield(value={yielded!r}, locus={self.site})",
-                witness=RuntimeEffectWitness(
-                    operation=ctor("py.generator_yield", [yielded]),
-                    operand=yielded,
-                    site=self.site,
+                **runtime_effect_evidence_from_terms(
+                    ctor("py.generator_yield", [yielded]),
+                    yielded,
+                    self.site,
                 ),
             )
         )

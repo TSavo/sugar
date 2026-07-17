@@ -5,7 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import (
     AttributeStoreRuntimeEffect,
-    runtime_effect_witness,
+    runtime_effect_evidence,
 )
 from sugar_lift_py_tests.factory import factory_panic_gap
 from sugar_lift_py_tests.floor import (
@@ -106,7 +106,7 @@ class SelectedAttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
                 AttributeStoreRuntimeEffect(
                     "attribute store dispatch depends on the runtime-selected "
                     f"receiver and its descriptor protocol; field={self.field_name}",
-                    witness=runtime_effect_witness("py.setattr", receiver, self.site),
+                    **runtime_effect_evidence("py.setattr", receiver, self.site),
                 )
             )
 

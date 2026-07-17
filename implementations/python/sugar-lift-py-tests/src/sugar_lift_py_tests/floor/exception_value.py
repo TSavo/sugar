@@ -36,7 +36,7 @@ class ExceptionValue(FloorValue):
         del index
         from sugar_lift_py_tests.effect import (
             TypeErrorRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -44,6 +44,6 @@ class ExceptionValue(FloorValue):
             TypeErrorRuntimeEffect(
                 "exception subscript type boundary: builtin exception instances "
                 f"are not subscriptable; exception={self.exception_name} site={site}",
-                witness=runtime_effect_witness("py.subscript", self, site),
+                **runtime_effect_evidence("py.subscript", self, site),
             )
         )

@@ -5,7 +5,7 @@ from typing import Any
 
 from sugar_lift_py_tests.effect import (
     SetMethodRuntimeEffect,
-    runtime_effect_witness,
+    runtime_effect_evidence,
 )
 from sugar_lift_py_tests.ir import Term, ctor
 
@@ -57,6 +57,6 @@ def _call_method_effect(
             "Python set method results can expose runtime mutation and "
             "iteration-order semantics; keep as typed red until a narrower "
             f"vendor-cited reduction owns the shape. blame={site}",
-            witness=runtime_effect_witness("py.call_method", observed, site),
+            **runtime_effect_evidence("py.call_method", observed, site),
         )
     )

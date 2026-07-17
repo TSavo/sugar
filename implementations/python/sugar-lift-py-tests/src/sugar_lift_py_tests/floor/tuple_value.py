@@ -138,7 +138,7 @@ class TupleValue(FloorValue):
         if type(other) is TermValue and type(other.value) is int:
             from sugar_lift_py_tests.effect import (
                 SequenceRepetitionRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
             from sugar_lift_py_tests.outcome import Complete, Incomplete
 
@@ -149,16 +149,14 @@ class TupleValue(FloorValue):
                         "sequence repetition construction boundary: TupleValue "
                         f"would materialize {repeated} literal floor items; "
                         f"site={site}",
-                        witness=runtime_effect_witness(
-                            "py.sequence_repeat", other, site
-                        ),
+                        **runtime_effect_evidence("py.sequence_repeat", other, site),
                     )
                 )
             return Complete(TupleValue(self.elements * other.value))
         if type(other) is SymbolicValue:
             from sugar_lift_py_tests.effect import (
                 SequenceRepetitionRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
             from sugar_lift_py_tests.outcome import Incomplete
 
@@ -166,7 +164,7 @@ class TupleValue(FloorValue):
                 SequenceRepetitionRuntimeEffect(
                     "sequence repetition by symbolic count: TupleValue depends "
                     f"on runtime __index__/length semantics; site={site}",
-                    witness=runtime_effect_witness("py.sequence_repeat", other, site),
+                    **runtime_effect_evidence("py.sequence_repeat", other, site),
                 )
             )
         return super().multiply(other, site)
@@ -184,14 +182,14 @@ class TupleValue(FloorValue):
                 return Complete(self.elements[i])
             from sugar_lift_py_tests.effect import (
                 IndexErrorRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
 
             return Incomplete(
                 IndexErrorRuntimeEffect(
                     f"tuple index out of range runtime boundary: "
                     f"index={i} length={n}; owner=TupleValue.subscript site={site}",
-                    witness=runtime_effect_witness("py.subscript", index, site),
+                    **runtime_effect_evidence("py.subscript", index, site),
                 )
             )
         return self.py_subscript_coordinate(index, site)

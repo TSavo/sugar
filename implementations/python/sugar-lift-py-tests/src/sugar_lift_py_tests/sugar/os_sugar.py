@@ -48,7 +48,7 @@ class OsSugar(Sugar, role=SugarRole.TERM):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.effect import runtime_effect_witness
+        from sugar_lift_py_tests.effect import runtime_effect_evidence
         from sugar_lift_py_tests.ir import ctor
 
         def effect(operand) -> Outcome:
@@ -56,7 +56,7 @@ class OsSugar(Sugar, role=SugarRole.TERM):
                 OSExitRuntimeEffect(
                     f"OS exit runtime boundary: os.exit halts the program at runtime; "
                     f"owner=OsSugar site={self.site}",
-                    witness=runtime_effect_witness("py.os_exit", operand, self.site),
+                    **runtime_effect_evidence("py.os_exit", operand, self.site),
                 )
             )
 

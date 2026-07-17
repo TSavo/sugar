@@ -70,7 +70,7 @@ class PredicateValue(FloorValue):
         """
         from sugar_lift_py_tests.effect import (
             SubscriptResultRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -80,7 +80,7 @@ class PredicateValue(FloorValue):
                 "result shape may be a scalar boolean or an indexable array; "
                 "keep as typed red until the producing operation carries "
                 f"container shape evidence. site={site}",
-                witness=runtime_effect_witness("py.subscript", self, site),
+                **runtime_effect_evidence("py.subscript", self, site),
             )
         )
 

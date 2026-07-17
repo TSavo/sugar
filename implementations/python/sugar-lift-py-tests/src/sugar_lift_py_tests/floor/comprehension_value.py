@@ -39,7 +39,7 @@ class ComprehensionValue(FloorValue):
     def add(self, other, site):
         from sugar_lift_py_tests.effect import (
             SequenceConcatenationRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.outcome import Incomplete
@@ -49,7 +49,7 @@ class ComprehensionValue(FloorValue):
                 SequenceConcatenationRuntimeEffect(
                     "sequence concatenation depends on runtime comprehension "
                     f"members; owner=ComprehensionValue.add site={site}",
-                    witness=runtime_effect_witness("py.sequence_concat", other, site),
+                    **runtime_effect_evidence("py.sequence_concat", other, site),
                 )
             )
         return super().add(other, site)

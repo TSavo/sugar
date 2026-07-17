@@ -169,7 +169,7 @@ class GuardedValue(FloorValue):
             return self._map("append_with", value, site)
         from sugar_lift_py_tests.effect import (
             AppendRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -178,7 +178,7 @@ class GuardedValue(FloorValue):
                 "append runtime boundary: guarded receiver has a branch without "
                 f"a constructed list post-state; value={value.to_term(owner=str(site))!r}; "
                 f"site={site}",
-                witness=runtime_effect_witness("py.append", self, site),
+                **runtime_effect_evidence("py.append", self, site),
             )
         )
 

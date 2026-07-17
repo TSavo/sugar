@@ -147,7 +147,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         if dynamic_arm is not None:
             from sugar_lift_py_tests.effect import (
                 TryHandlerDispatchRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
             from sugar_lift_py_tests.outcome import Incomplete
 
@@ -167,7 +167,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
                         "try handler dispatch runtime boundary: handler type "
                         "expression is not a source-citable Name, Attribute, tuple, "
                         f"or bare catch-all; site={self.site}",
-                        witness=runtime_effect_witness(
+                        **runtime_effect_evidence(
                             "py.try_handler_dispatch", operand, self.site
                         ),
                     )
@@ -408,9 +408,7 @@ def _record_can_fall_through(record) -> bool:
         entries = tuple(record.statements)
     else:
         entries = tuple(record.contribution())
-    residual = [
-        entry for entry in flatten(entries) if type(entry) not in support_types
-    ]
+    residual = [entry for entry in flatten(entries) if type(entry) not in support_types]
     if not residual:
         return True
     if all(type(entry) in exit_types for entry in residual):

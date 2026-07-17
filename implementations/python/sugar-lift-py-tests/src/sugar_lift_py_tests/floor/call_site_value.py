@@ -102,7 +102,7 @@ class CallSiteValue(FloorValue):
         if type_coordinate is None:
             from sugar_lift_py_tests.effect import (
                 CallResultTypeRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
             from sugar_lift_py_tests.outcome import Incomplete
 
@@ -112,7 +112,7 @@ class CallSiteValue(FloorValue):
                     f"`{self.target_name}(...)` has no cited return-type/native "
                     "tester coordinate; Python must execute the call before its "
                     f"result can serve as an isinstance type operand; site={site}",
-                    witness=runtime_effect_witness("adt.is_python_type", self, site),
+                    **runtime_effect_evidence("adt.is_python_type", self, site),
                 )
             )
         from sugar_lift_py_tests.floor.type_tester import native_type_tester
@@ -332,7 +332,7 @@ class CallSiteValue(FloorValue):
 
         from sugar_lift_py_tests.effect import (
             PowerRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Incomplete
@@ -348,7 +348,7 @@ class CallSiteValue(FloorValue):
             PowerRuntimeEffect(
                 "power dispatch depends on the runtime call result's __pow__; "
                 f"owner=CallSiteValue.power site={site}",
-                witness=runtime_effect_witness("py.power", operand, site),
+                **runtime_effect_evidence("py.power", operand, site),
             )
         )
 
@@ -452,7 +452,7 @@ class CallSiteValue(FloorValue):
         del ctx
         from sugar_lift_py_tests.effect import (
             GetattrRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -463,7 +463,7 @@ class CallSiteValue(FloorValue):
                 "call result before Python attribute lookup; keep as typed red "
                 "until a narrower vendor-cited floor owns the call result and "
                 f"attribute. blame={operation.blame}",
-                witness=runtime_effect_witness("py.getattr", operation.name, operation),
+                **runtime_effect_evidence("py.getattr", self, operation),
             )
         )
 

@@ -245,7 +245,7 @@ def _runtime_format_effect(
 ) -> Incomplete:
     from sugar_lift_py_tests.effect import (
         DynamicFormatRuntimeEffect,
-        RuntimeEffectWitness,
+        runtime_effect_evidence_from_terms,
     )
     from sugar_lift_py_tests.ir import ctor, num
 
@@ -263,10 +263,10 @@ def _runtime_format_effect(
             "formatted string runtime boundary: "
             f"{reason}; keep as typed red until a narrower floor owns this "
             f"shape. blame={site}",
-            witness=RuntimeEffectWitness(
-                operation=ctor("py.format.dynamic_spec", [operand]),
-                operand=operand,
-                site=site,
+            **runtime_effect_evidence_from_terms(
+                ctor("py.format.dynamic_spec", [operand]),
+                operand,
+                site,
             ),
         )
     )

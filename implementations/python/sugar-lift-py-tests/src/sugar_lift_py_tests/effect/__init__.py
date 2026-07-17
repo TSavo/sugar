@@ -36,9 +36,13 @@ from .power_runtime_effect import PowerRuntimeEffect
 from .raise_effect import RaiseEffect
 from .runtime_effect import (
     RuntimeEffect,
+    RuntimeOperand,
     RuntimeEffectWitness,
+    genuine_runtime_operand,
     operand_term,
     resolve_runtime_effect_site,
+    runtime_effect_evidence,
+    runtime_effect_evidence_from_terms,
     runtime_effect_witness,
 )
 from .sequence_repetition_runtime_effect import SequenceRepetitionRuntimeEffect
@@ -88,9 +92,13 @@ __all__ = [
     "PowerRuntimeEffect",
     "RaiseEffect",
     "RuntimeEffect",
+    "RuntimeOperand",
     "RuntimeEffectWitness",
+    "genuine_runtime_operand",
     "operand_term",
     "resolve_runtime_effect_site",
+    "runtime_effect_evidence",
+    "runtime_effect_evidence_from_terms",
     "runtime_effect_witness",
     "SequenceRepetitionRuntimeEffect",
     "SequenceUnpackRuntimeEffect",

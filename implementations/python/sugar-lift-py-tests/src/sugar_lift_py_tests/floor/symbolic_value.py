@@ -79,8 +79,7 @@ class SymbolicValue(FloorValue):
             return value.python_isinstance(term.args[0].value, term, site)
         from sugar_lift_py_tests.effect import (
             DynamicTypeOperandRuntimeEffect,
-            RuntimeEffectWitness,
-            resolve_runtime_effect_site,
+            runtime_effect_evidence_from_terms,
         )
         from sugar_lift_py_tests.outcome import Incomplete
         from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
@@ -94,10 +93,10 @@ class SymbolicValue(FloorValue):
                 "dynamic isinstance type operand runtime boundary: "
                 f"Python must resolve {term!r} as a type or raise TypeError; "
                 f"site={site}",
-                witness=RuntimeEffectWitness(
-                    operation=operation,
-                    operand=term,
-                    site=resolve_runtime_effect_site(site),
+                **runtime_effect_evidence_from_terms(
+                    operation,
+                    term,
+                    site,
                 ),
             )
         )
@@ -138,7 +137,7 @@ class SymbolicValue(FloorValue):
     def append_with(self, value, site):
         from sugar_lift_py_tests.effect import (
             AppendRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -147,7 +146,7 @@ class SymbolicValue(FloorValue):
                 "append runtime boundary: symbolic receiver has no constructed "
                 f"list post-state; value={value.to_term(owner=str(site))!r}; "
                 f"site={site}",
-                witness=runtime_effect_witness("py.append", self, site),
+                **runtime_effect_evidence("py.append", self, site),
             )
         )
 
@@ -522,7 +521,7 @@ class SymbolicValue(FloorValue):
         del ctx
         from sugar_lift_py_tests.effect import (
             MapReceiverRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -532,7 +531,7 @@ class SymbolicValue(FloorValue):
                 "the receiver's runtime collection semantics and pandas mapping "
                 "rules; keep as typed red until a narrower symbolic map floor "
                 f"owns this shape. blame={operation.blame}",
-                witness=runtime_effect_witness("py.map", self.term, operation),
+                **runtime_effect_evidence("py.map", self.term, operation),
             )
         )
 
@@ -553,7 +552,7 @@ class SymbolicValue(FloorValue):
         del ctx
         from sugar_lift_py_tests.effect import (
             AsyncIterationRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -563,7 +562,7 @@ class SymbolicValue(FloorValue):
                 "async-iterated without a concrete async-iterator floor; "
                 f"owner={operation.owner}; keep as typed red until a narrower "
                 f"async-iter floor owns this shape. blame={operation.blame}",
-                witness=runtime_effect_witness("py.async_iter", self.term, operation),
+                **runtime_effect_evidence("py.async_iter", self.term, operation),
             )
         )
 
@@ -572,7 +571,7 @@ class SymbolicValue(FloorValue):
         del ctx
         from sugar_lift_py_tests.effect import (
             AwaitRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -582,7 +581,7 @@ class SymbolicValue(FloorValue):
                 "without a concrete awaitable floor; "
                 f"owner={operation.owner}; keep as typed red until a narrower "
                 f"await floor owns this shape. blame={operation.blame}",
-                witness=runtime_effect_witness("py.await", self.term, operation),
+                **runtime_effect_evidence("py.await", self.term, operation),
             )
         )
 
@@ -591,7 +590,7 @@ class SymbolicValue(FloorValue):
         del ctx
         from sugar_lift_py_tests.effect import (
             AsyncContextManagerRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -601,7 +600,7 @@ class SymbolicValue(FloorValue):
                 "an async context without a concrete async-CM floor; "
                 f"owner={operation.owner}; keep as typed red until a narrower "
                 f"async-with floor owns this shape. blame={operation.blame}",
-                witness=runtime_effect_witness("py.async_with", self.term, operation),
+                **runtime_effect_evidence("py.async_with", self.term, operation),
             )
         )
 
@@ -609,7 +608,7 @@ class SymbolicValue(FloorValue):
         del ctx
         from sugar_lift_py_tests.effect import (
             AttributeStoreRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -621,7 +620,7 @@ class SymbolicValue(FloorValue):
                 "__setattr__ at runtime; keep as typed red until a narrower "
                 "attribute mutation floor owns this shape. "
                 f"blame={operation.blame}",
-                witness=runtime_effect_witness("py.setattr", self.term, operation),
+                **runtime_effect_evidence("py.setattr", self.term, operation),
             )
         )
 

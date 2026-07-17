@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from sugar_lift_py_tests.effect import runtime_effect_witness
+from sugar_lift_py_tests.effect import runtime_effect_evidence
 
 from .floor_value import FloorValue
 
@@ -43,7 +43,7 @@ class NoneValue(FloorValue):
                 TypeErrorRuntimeEffect(
                     f"unorderable types runtime boundary: "
                     f"NoneValue and {type(other).__name__}; site={site}",
-                    witness=runtime_effect_witness("py.lt", other, site),
+                    **runtime_effect_evidence("py.lt", other, site),
                 )
             )
         return super().less_than(other, site)
@@ -84,7 +84,7 @@ class NoneValue(FloorValue):
             TypeErrorRuntimeEffect(
                 "unsupported floor division runtime boundary: NoneType // "
                 f"{type(other).__name__}; site={site}",
-                witness=runtime_effect_witness("py.floor_divide", other, site),
+                **runtime_effect_evidence("py.floor_divide", other, site),
             )
         )
 

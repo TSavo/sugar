@@ -1,6 +1,6 @@
 """The `/` operator (DivideOpSugar): reduce left, reduce right, ask left to divide
-by right (the division floor). True division on the collapsed Number; division by
-a concrete zero is a runtime effect (Incomplete), not a lift-side panic."""
+by right (the division floor). True division on the collapsed Number; a concrete
+zero is lift-time decidable and therefore panics rather than minting an effect."""
 
 from __future__ import annotations
 
@@ -11,22 +11,16 @@ from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-from sugar_lift_py_tests.effect import DivideRuntimeEffect, DivisionByZeroRuntimeEffect
+from sugar_lift_py_tests.effect import DivideRuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import (
-    BlockValue,
-    CallSiteValue,
-    NativeCallableValue,
-    TermValue,
-)
+from sugar_lift_py_tests.floor import CallSiteValue, NativeCallableValue, TermValue
 from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.divide_op_sugar import DivideOpSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
-from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
@@ -62,21 +56,14 @@ def test_divide_is_true_division() -> None:
     )
 
 
-def test_divide_by_zero_is_runtime_effect() -> None:
-    outcome = _term("1 / 0")
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, DivisionByZeroRuntimeEffect)
+def test_divide_by_zero_ground_wrong_twin_panics() -> None:
+    with pytest.raises(FactoryPanic):
+        _term("1 / 0")
 
 
 def test_divide_by_zero_halts_block_like_os_exit() -> None:
-    # ExprSugar propagates Incomplete; BlockSugar records it and leaves the rest
-    # as raw sugar. compose_block returns the BlockValue (outer is Complete).
-    result = compose_block("    1 / 0\n    return 2\n")
-    assert isinstance(result, BlockValue)
-    assert len(result.statements) == 2
-    assert isinstance(result.statements[0], Incomplete)
-    assert isinstance(result.statements[0].effect, DivisionByZeroRuntimeEffect)
-    assert isinstance(result.statements[1], SugarBody)
+    with pytest.raises(FactoryPanic):
+        compose_block("    1 / 0\n    return 2\n")
 
 
 def test_string_divide_panics_for_free() -> None:

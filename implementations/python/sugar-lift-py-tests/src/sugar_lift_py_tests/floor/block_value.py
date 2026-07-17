@@ -93,7 +93,7 @@ class BlockValue(FloorValue):
     def _redispatch_operator(self, operation: Any, ctx: Any, *, kind: str) -> Any:
         from sugar_lift_py_tests.effect import (
             BlockOperatorRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.floor.return_value import ReturnValue
         from sugar_lift_py_tests.operations.perform_operation import perform_operation
@@ -107,9 +107,7 @@ class BlockValue(FloorValue):
                     f"fall-through block cannot host `{op_label}` "
                     f"statically; keep as typed red until branch-wise {kind} "
                     f"floors own this shape. blame={operation.blame}",
-                    witness=runtime_effect_witness(
-                        f"py.block_{kind}", op_label, operation
-                    ),
+                    **runtime_effect_evidence(f"py.block_{kind}", op_label, operation),
                 )
             )
         exit_value = self.statements[0]
@@ -121,9 +119,7 @@ class BlockValue(FloorValue):
                     f"block {kind} operator runtime boundary: single exit is "
                     f"`{type(exit_value).__name__}`, not a FloorValue; "
                     f"blame={operation.blame}",
-                    witness=runtime_effect_witness(
-                        f"py.block_{kind}", op_label, operation
-                    ),
+                    **runtime_effect_evidence(f"py.block_{kind}", op_label, operation),
                 )
             )
         return perform_operation(
