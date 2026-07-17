@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .array_literal import ArrayLiteral
+from .async_function_callable import AsyncFunctionCallable
 from .block_value import BlockValue
 from .bound_var import BoundVar
 from .module_bound_var import ModuleBoundVar
@@ -64,6 +65,7 @@ from .universe_value import UniverseValue
 
 REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ArrayLiteral,
+    AsyncFunctionCallable,
     BlockValue,
     BoundVar,
     NamedExpressionValue,
@@ -121,6 +123,7 @@ for _floor_type in REGISTERED_FLOOR_TYPES:
 
 __all__ = [
     "ArrayLiteral",
+    "AsyncFunctionCallable",
     "BASE_CONSTRUCTION_GAP_METHOD_NAMES",
     "BinaryOperatorFloor",
     "BlockValue",

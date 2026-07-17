@@ -141,15 +141,8 @@ def test_forged_async_sat_unsat_pair_is_not_the_catalog_form() -> None:
     )
 
 
-def test_async_function_def_remains_loud_named_gap_at_production_mint(
-    tmp_path: Path,
-) -> None:
-    """Production residual: AsyncFunctionDef has no sugar yet (retirement path).
-
-    The factory panic names the replacement architecture. This pin ensures we
-    did not silence the gap with an unsound sync-shaped callable.
-    """
-    from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+def test_async_function_def_constructs_without_claiming_call_termination() -> None:
+    """Definition is deterministic; its call remains coroutine-valued."""
     from sugar_lift_py_tests.factory.build import build_node
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.claim import SugarRole
@@ -163,8 +156,6 @@ def test_async_function_def_remains_loud_named_gap_at_production_mint(
         for fragment in module.walk()
         if fragment.observed == "AsyncFunctionDef"
     )
-    with pytest.raises(FactoryPanic) as exc:
-        build_node(async_def, filename="async_def_gap.py", role=SugarRole.STATEMENT)
-    message = str(exc.value)
-    assert "AsyncFunctionDef" in message
-    assert "async_function_def" in message or "write more Sugar" in message
+    built = build_node(async_def, filename="async_def_gap.py", role=SugarRole.STATEMENT)
+
+    assert type(built.sugar).__name__ == "AsyncFunctionDefSugar"
