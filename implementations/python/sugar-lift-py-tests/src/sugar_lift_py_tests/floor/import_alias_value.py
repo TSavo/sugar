@@ -43,11 +43,53 @@ class ImportAliasValue(FloorValue):
         )
 
     def truth(self, site):
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import Complete
+        """Construct decidable truthiness for an import binding.
 
-        return Complete(PredicateValue(py_truthy(self.to_term(owner="truth")), site))
+        Law (#4981 / #4265 ground-operand): ``python:import_alias`` with string
+        coordinates is lift-time ground. Emitting ``py.truthy(import_alias)`` and
+        later minting RuntimeEffect authority is illegal — construct or panic.
+
+        - Dug ``resolved_value`` answers with its own truth.
+        - Module objects are always truthy in Python (``bool(importlib) is True``).
+        - Attribute from-imports without a constructed value cannot invent a
+          soft runtime condition over a ground coordinate: FactoryPanic.
+        """
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        if self.resolved_value is not None:
+            return self.resolved_value.truth(site)
+
+        if _import_alias_binds_module(self):
+            return Complete(TrueBoolLiteralSugar(site=site))
+
+        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
+        target = self.import_target or self.name
+        factory_panic_gap(
+            owner="ImportAliasValue.truth",
+            blame=site,
+            observed=(
+                f"py.truthy(python:import_alias({self.bound_name!r}, {self.name!r}))"
+            ),
+            requested="construct decidable import-alias truthiness",
+            fix=(
+                f"Import binding `{self.bound_name} -> {self.name}` "
+                f"(import_target={target!r}) has no resolved floor value and is "
+                "not a module object. Module imports construct True "
+                "(Python modules are always truthy). Attribute from-imports must "
+                "dig install-source to the value and construct its truth. Ground "
+                "python:import_alias cannot mint RuntimeEffect via py.truthy — "
+                "replacement=resolve_install_source_value then truth(), or keep "
+                "this FactoryPanic (never soft RuntimeEffect for ground cases)."
+            ),
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        raise AssertionError("factory_panic_gap returned")
 
     def subscript(self, index, site):
         return self.py_subscript_coordinate(index, site)
@@ -198,6 +240,22 @@ class ImportAliasValue(FloorValue):
             shape=f"{self.bound_name} {operation.operator} ...",
             replacement="ImportedModuleBinaryEffect",
         )
+
+
+def _import_alias_binds_module(value: ImportAliasValue) -> bool:
+    """True when the import coordinate names an importable module object.
+
+    ``import m`` / ``import pkg.sub`` / ``from pkg import sub`` (submodule)
+    bind module objects, which are always truthy in Python. Attribute
+    from-imports (``from pkg import HAS_FLAG``) are not modules.
+    """
+    import importlib.util
+
+    target = value.import_target or value.name
+    try:
+        return importlib.util.find_spec(target) is not None
+    except (ImportError, ModuleNotFoundError, ValueError, AttributeError):
+        return False
 
 
 def _runtime_alias_effect(
