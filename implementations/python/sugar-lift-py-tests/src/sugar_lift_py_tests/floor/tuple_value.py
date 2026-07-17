@@ -205,7 +205,7 @@ class TupleValue(FloorValue):
                 ground_index_error,
             )
 
-            ground_index_error(
+            return ground_index_error(
                 owner="TupleValue.subscript",
                 operation="tuple subscript",
                 index=i,

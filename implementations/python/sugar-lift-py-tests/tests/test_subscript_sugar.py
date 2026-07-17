@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 
 import pytest
-from factory_reduce import reduce_value
+from factory_reduce import compose_block, reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
@@ -20,6 +21,7 @@ from sugar_lift_py_tests.floor import (
     ListValue,
     OpaqueOpCallsite,
     PredicateValue,
+    RaiseValue,
     StringValue,
     SymbolicValue,
     TermValue,
@@ -28,6 +30,8 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.ir import ctor, make_var, num, py_eq
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _outcome(expr: str, binds: dict | None = None):
@@ -53,39 +57,87 @@ def test_string_subscript_folds_to_one_char() -> None:
     assert reduce_value('"abc"[0]') == StringValue("a")
 
 
-def test_list_subscript_out_of_range_ground_wrong_twin_panics() -> None:
-    with pytest.raises(FactoryPanic) as caught:
-        _outcome("[1,2][5]")
-    assert caught.value.info.owner == "ListValue.subscript"
+def test_list_subscript_out_of_range_constructs_exact_indexerror_exit() -> None:
+    outcome = _outcome("[1,2][5]")
+
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "IndexError"
+    assert outcome.value.effect.blame == "t.py:1:0"
+    assert isinstance(outcome.value.exception, ExceptionValue)
+    assert outcome.value.exception.exception_name == "IndexError"
+
+
+def test_list_subscript_in_range_discrimination_returns_element() -> None:
+    assert _outcome("[1,2][0]").value == TermValue(1)
+
+
+def test_ground_indexerror_short_circuits_outer_expression() -> None:
+    outcome = _outcome("[1,2][5].not_a_real_method()")
+
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "IndexError"
 
 
 @pytest.mark.parametrize(
-    ("operation", "owner"),
+    "operation",
     (
-        (
-            lambda site: TupleValue(()).subscript(TermValue(0), site),
-            "TupleValue.subscript",
-        ),
-        (
-            lambda site: StringValue("").subscript(TermValue(0), site),
-            "StringValue.subscript",
-        ),
-        (
-            lambda site: ListValue(()).setitem(TermValue(0), TermValue(1), site),
-            "ListValue.setitem",
-        ),
-        (lambda site: ListValue(()).delitem(TermValue(0), site), "ListValue.delitem"),
+        lambda site: TupleValue(()).subscript(TermValue(0), site),
+        lambda site: StringValue("").subscript(TermValue(0), site),
+        lambda site: ListValue(()).setitem(TermValue(0), TermValue(1), site),
+        lambda site: ListValue(()).delitem(TermValue(0), site),
     ),
 )
-def test_ground_out_of_range_sequence_operation_panics_under_floor_owner(
-    operation, owner: str
+def test_ground_out_of_range_sequence_operation_constructs_indexerror(
+    operation,
 ) -> None:
     site = SourceFragment.from_source("values[0]\n", "t.py").statements()[0]
 
-    with pytest.raises(FactoryPanic) as caught:
-        operation(site)
+    outcome = operation(site)
 
-    assert caught.value.info.owner == owner
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "IndexError"
+
+
+def test_ground_indexerror_routes_through_matching_try_handler() -> None:
+    block = compose_block(
+        "    try:\n"
+        "        value = [][0]\n"
+        "    except IndexError:\n"
+        "        value = 7\n"
+        "    return value\n"
+    )
+
+    rendered = repr(block)
+    assert "IndexError" in rendered
+    assert "py.except" in rendered
+    assert "TermValue(value=7)" in rendered
+
+
+def test_ground_indexerror_wrong_handler_keeps_exceptional_exit() -> None:
+    block = compose_block(
+        "    try:\n"
+        "        value = [][0]\n"
+        "    except ValueError:\n"
+        "        value = 7\n"
+        "    return value\n"
+    )
+
+    rendered = repr(block)
+    assert "RaiseEffect(exception_name='IndexError'" in rendered
+    assert "_ConstStr(value='ValueError'" in rendered
+
+
+def test_ground_indexerror_witness_truthful_sat_lying_unsat(tmp_path: Path) -> None:
+    pair = SubscriptSugar.witnesses()
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert "SubscriptSugar" in truthful.selected_sugars
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_dict_subscript_folds_to_value() -> None:

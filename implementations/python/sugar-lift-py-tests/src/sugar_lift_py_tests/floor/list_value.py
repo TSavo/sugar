@@ -77,9 +77,7 @@ class ListValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete, Incomplete
 
             self_term = self.to_term(owner=str(site))
-            if is_lift_time_decidable(self_term) and is_lift_time_decidable(
-                other.term
-            ):
+            if is_lift_time_decidable(self_term) and is_lift_time_decidable(other.term):
                 return Complete(
                     ComprehensionValue(
                         ctor(
@@ -233,7 +231,7 @@ class ListValue(FloorValue):
                 ground_index_error,
             )
 
-            ground_index_error(
+            return ground_index_error(
                 owner="ListValue.subscript",
                 operation="list subscript",
                 index=i,
@@ -261,7 +259,7 @@ class ListValue(FloorValue):
                 ground_index_error,
             )
 
-            ground_index_error(
+            return ground_index_error(
                 owner="ListValue.setitem",
                 operation="list assignment",
                 index=i,
@@ -327,7 +325,7 @@ class ListValue(FloorValue):
                 ground_index_error,
             )
 
-            ground_index_error(
+            return ground_index_error(
                 owner="ListValue.delitem",
                 operation="list deletion",
                 index=i,
