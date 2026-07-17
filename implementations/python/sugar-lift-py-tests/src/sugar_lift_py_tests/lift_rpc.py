@@ -2025,7 +2025,11 @@ def audit_lift_file(
                 )
                 continue
             value = complete_value(outcome, owner="lift_file_payload")
-            from sugar_lift_py_tests.floor import FunctionCallable, UniverseValue
+            from sugar_lift_py_tests.floor import (
+                FunctionCallable,
+                TestimonyValue,
+                UniverseValue,
+            )
 
             if isinstance(value, FunctionCallable):
                 # A def statement constructs and binds a callable. It is not a
@@ -2054,6 +2058,28 @@ def audit_lift_file(
                 _qualify_factory_walk_owner(
                     payload.factory_walk, walk_start, qualified_name
                 )
+            elif isinstance(value, TestimonyValue):
+                owner = _definition_class_owner(module, stmt)
+                relative = value.name
+                if owner is not None:
+                    relative = f"{owner}.{relative}"
+                qualified_name = _qualified_callable_spelling(
+                    filename, relative, relative_to_module=True
+                )
+                for effect in value.runtime_effects():
+                    effect_memento = dataclasses.replace(
+                        effect.witness.site.memento(),
+                        source_function_name=qualified_name,
+                        role="runtime-effect",
+                    )
+                    payload.effects.append(
+                        EffectDto(
+                            name=f"{qualified_name}::runtime-effect",
+                            effect=effect,
+                            source_memento=effect_memento,
+                        )
+                    )
+                    payload.source_mementos.append(effect_memento)
             def_memento = dataclasses.replace(
                 stmt.memento(),
                 source_function_name=value.name,

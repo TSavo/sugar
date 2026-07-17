@@ -5,7 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _call_pair, typed_red_effect_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -64,11 +64,26 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             "    return result\n"
             "\n"
         )
-        return _call_pair(
-            name="with_binding_return",
-            owner_sugar="WithSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        return (
+            _call_pair(
+                name="with_binding_return",
+                owner_sugar="WithSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            typed_red_effect_witness(
+                name="with_runtime_manager_exit",
+                owner_sugar="WithSugar",
+                source=(
+                    "def A(z):\n"
+                    "    with z.context():\n"
+                    "        raise ValueError('boom')\n"
+                ),
+                effect_class="ContextManagerExitRuntimeEffect",
+                reason_needle="runtime-selected context manager exit",
+                blame_needle="test_witness.py:2:4",
+                wrong_reason_needle="owner=WithSugar",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -147,6 +162,26 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
 
             if not isinstance(manager, ObjectValue):
                 if cm.body is None:
+                    runtime_receiver = _runtime_manager_receiver(cm)
+                    if runtime_receiver is not None:
+                        from sugar_lift_py_tests.effect import (
+                            ContextManagerExitRuntimeEffect,
+                            runtime_effect_evidence,
+                        )
+                        from sugar_lift_py_tests.outcome import Incomplete
+
+                        return Incomplete(
+                            ContextManagerExitRuntimeEffect(
+                                (
+                                    "ContextManagerExitRuntimeEffect: "
+                                    "runtime-selected context manager exit may "
+                                    f"suppress the raising body; site={self.site}"
+                                ),
+                                **runtime_effect_evidence(
+                                    "py.with.exit", runtime_receiver, self.site
+                                ),
+                            )
+                        )
                     _unresolved_callsite_exit(self.site)
                 manager = force_floor(
                     cm, ctx, owner="WithSugar manager result", project_callsite=False
@@ -314,6 +349,16 @@ def _unresolved_callsite_exit(site) -> None:
         requested="dig manager().__exit__ exception suppression contract",
         fix="attach the exact __exit__ method body before reducing a raising with-body",
     )
+
+
+def _runtime_manager_receiver(manager):
+    """Return only the operand whose runtime type selects ``__exit__``."""
+    from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
+
+    receiver = manager.runtime_dispatch_receiver
+    if isinstance(receiver, (CallSiteValue, SymbolicValue)):
+        return receiver
+    return None
 
 
 def _constructed_truthy(value, site) -> bool:
