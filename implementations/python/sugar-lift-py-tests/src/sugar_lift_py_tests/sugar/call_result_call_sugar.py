@@ -81,7 +81,7 @@ class CallResultCallSugar(Sugar, role=SugarRole.TERM):
                 "__call__",
                 tuple(arguments),
                 owner=type(self).__name__,
-                blame=str(self.site),
+                blame=self.site,
                 ctx=ctx,
             )
 

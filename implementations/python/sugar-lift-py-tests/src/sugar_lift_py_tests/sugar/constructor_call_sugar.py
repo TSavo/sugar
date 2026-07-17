@@ -66,7 +66,7 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
 def _panic(site, observed: str, requested: str, fix: str):
     info = FactoryGapInfo(
         owner="ConstructorCallSugar",
-        blame=site.blame,
+        blame=site,
         observed=observed,
         requested=requested,
         fix=fix,
@@ -78,7 +78,7 @@ def _panic(site, observed: str, requested: str, fix: str):
             role=requested,
             status=FactoryAuditStatus.FLOOR_GAP,
             observed=observed,
-            blame=site.blame,
+            blame=site,
             selected=None,
             candidates=[],
             message=info.message,

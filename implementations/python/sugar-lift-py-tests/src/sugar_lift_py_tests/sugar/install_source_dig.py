@@ -1236,6 +1236,20 @@ class SequentialDigBody:
         # FunctionDef fragment threaded in at construction. The audit-row
         # blame string stays in the reason prose only.
         site = getattr(getattr(terminal, "sugar", None), "site", None) or self.fn_site
+        if site is None:
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="SequentialDigBody",
+                blame=str(blame),
+                observed=str(observed),
+                requested="SourceFragment for terminal dig runtime effect",
+                fix=(
+                    "thread the dug FunctionDef fragment into SequentialDigBody "
+                    "(build_dig_body does this); do not mint a RuntimeEffect "
+                    "without a real site"
+                ),
+            )
         terminal_selection = ctor(
             "py.sequential_terminal",
             [str_const(str(blame)), str_const(str(observed))],

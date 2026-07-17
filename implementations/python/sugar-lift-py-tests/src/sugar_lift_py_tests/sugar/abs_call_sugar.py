@@ -61,7 +61,7 @@ class AbsCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
                     "__abs__",
                     (),
                     owner=type(self).__name__,
-                    blame=str(self.site),
+                    blame=self.site,
                     ctx=ctx,
                 )
                 if isinstance(value, ObjectValue)

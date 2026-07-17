@@ -461,7 +461,7 @@ class SymbolicValue(FloorValue):
                 "the receiver's runtime collection semantics and pandas mapping "
                 "rules; keep as typed red until a narrower symbolic map floor "
                 f"owns this shape. blame={operation.blame}",
-                witness=runtime_effect_witness("py.map", self.term, operation.blame),
+                witness=runtime_effect_witness("py.map", self.term, operation),
             )
         )
 
@@ -493,7 +493,7 @@ class SymbolicValue(FloorValue):
                 f"owner={operation.owner}; keep as typed red until a narrower "
                 f"async-iter floor owns this shape. blame={operation.blame}",
                 witness=runtime_effect_witness(
-                    "py.async_iter", self.term, operation.blame
+                    "py.async_iter", self.term, operation
                 ),
             )
         )
@@ -513,7 +513,7 @@ class SymbolicValue(FloorValue):
                 "without a concrete awaitable floor; "
                 f"owner={operation.owner}; keep as typed red until a narrower "
                 f"await floor owns this shape. blame={operation.blame}",
-                witness=runtime_effect_witness("py.await", self.term, operation.blame),
+                witness=runtime_effect_witness("py.await", self.term, operation),
             )
         )
 
@@ -533,7 +533,7 @@ class SymbolicValue(FloorValue):
                 f"owner={operation.owner}; keep as typed red until a narrower "
                 f"async-with floor owns this shape. blame={operation.blame}",
                 witness=runtime_effect_witness(
-                    "py.async_with", self.term, operation.blame
+                    "py.async_with", self.term, operation
                 ),
             )
         )
@@ -555,7 +555,7 @@ class SymbolicValue(FloorValue):
                 "attribute mutation floor owns this shape. "
                 f"blame={operation.blame}",
                 witness=runtime_effect_witness(
-                    "py.setattr", self.term, operation.blame
+                    "py.setattr", self.term, operation
                 ),
             )
         )
@@ -576,7 +576,7 @@ class SymbolicValue(FloorValue):
                 "runtime state; keep as typed red until a narrower mutation "
                 f"floor owns this shape. blame={operation.blame}",
                 witness=runtime_effect_witness(
-                    "py.setitem", self.term, operation.blame
+                    "py.setitem", self.term, operation
                 ),
             )
         )

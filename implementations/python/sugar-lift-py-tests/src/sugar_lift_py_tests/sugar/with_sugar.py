@@ -105,7 +105,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                     "__enter__",
                     (),
                     owner=type(self).__name__,
-                    blame=str(self.site),
+                    blame=self.site,
                     ctx=ctx,
                 ).value
                 entered = force_floor(
@@ -157,7 +157,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
                 "__exit__",
                 (entered, entered, entered),
                 owner=type(self).__name__,
-                blame=str(self.site),
+                blame=self.site,
                 ctx=ctx,
             ).value
             exit_value = force_floor(
@@ -178,7 +178,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         if not isinstance(cm, ObjectValue):
             return cm._floor_gap(
                 owner=type(self).__name__,
-                blame=str(self.site),
+                blame=self.site,
                 observed=type(cm).__name__,
                 requested="context manager data-model methods",
                 fix="construct __enter__ and __exit__",
@@ -193,7 +193,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             operation=ContextManagerOperation(),
         )
         enter = cm.call_method_value(
-            "__enter__", (), owner=type(self).__name__, blame=str(self.site), ctx=ctx
+            "__enter__", (), owner=type(self).__name__, blame=self.site, ctx=ctx
         ).value
         entered = force_floor(enter, ctx, owner="WithSugar.__enter__")
         body_ctx = ctx
@@ -213,7 +213,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             "__exit__",
             (entered, entered, entered),
             owner=type(self).__name__,
-            blame=str(self.site),
+            blame=self.site,
             ctx=ctx,
         ).value
         exit_value = force_floor(
@@ -232,7 +232,7 @@ def _unresolved_callsite_exit(site) -> None:
 
     factory_panic_gap(
         owner="WithSugar",
-        blame=str(site),
+        blame=site,
         observed="raise-carrying callsite with-body",
         requested="dig manager().__exit__ exception suppression contract",
         fix="attach the exact __exit__ method body before reducing a raising with-body",

@@ -101,7 +101,7 @@ class AsyncForSugar(Sugar, role=SugarRole.STATEMENT):
     def _finish(self, value, ctx):
         iter_op = AsyncIteratorOperation(
             owner=type(self).__name__,
-            blame=str(self.site),
+            blame=self.site,
         )
         recorder = None if ctx is None else getattr(ctx, "record_operation", None)
         if recorder is not None:
@@ -114,11 +114,11 @@ class AsyncForSugar(Sugar, role=SugarRole.STATEMENT):
             # Symbolic / non-object: floor typed red or loud construction gap.
             return value.async_iter_with(iter_op, ctx)
         value.call_method_value(
-            "__aiter__", (), owner=type(self).__name__, blame=str(self.site), ctx=ctx
+            "__aiter__", (), owner=type(self).__name__, blame=self.site, ctx=ctx
         )
         next_op = AsyncNextOperation(
             owner=type(self).__name__,
-            blame=str(self.site),
+            blame=self.site,
         )
         if recorder is not None:
             recorder(
@@ -127,13 +127,13 @@ class AsyncForSugar(Sugar, role=SugarRole.STATEMENT):
                 operation=next_op,
             )
         value.call_method_value(
-            "__anext__", (), owner=type(self).__name__, blame=str(self.site), ctx=ctx
+            "__anext__", (), owner=type(self).__name__, blame=self.site, ctx=ctx
         )
         # Termination of async iteration is not inventable: StopAsyncIteration
         # remains a loud named gap until a real stop floor owns it.
         factory_panic_gap(
             owner=type(self).__name__,
-            blame=str(self.site),
+            blame=self.site,
             observed="AsyncFor.__anext__",
             requested="async iteration stop floor",
             fix="construct StopAsyncIteration termination",

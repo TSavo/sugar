@@ -147,7 +147,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
 
                 factory_panic_gap(
                     owner="ForSugar",
-                    blame=str(self.site),
+                    blame=self.site,
                     observed="nonlocal mutation",
                     requested="classifiable loop-carried local state",
                     fix="rewrite attribute or subscript mutation as explicit carried locals",
@@ -177,7 +177,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
 
             factory_panic_gap(
                 owner="ForSugar",
-                blame=str(self.site),
+                blame=self.site,
                 observed=self.carried,
                 requested="statically bound loop-carried locals",
                 fix="bind every carried local before currying the loop",
@@ -221,7 +221,7 @@ def _static_iterable_elements(iterable_site, ctx, loop_site):
 
         factory_panic_gap(
             owner="ForSugar.static_unfold",
-            blame=str(loop_site),
+            blame=loop_site,
             observed=f"statically finite iterable with {len(values)} elements",
             requested="at most 64 concrete loop self-applications",
             fix="reduce the literal iterable size or raise the reviewed unfold cap",

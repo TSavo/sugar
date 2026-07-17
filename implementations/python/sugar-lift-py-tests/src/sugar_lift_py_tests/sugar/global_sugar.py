@@ -57,7 +57,7 @@ class GlobalSugar(Sugar, role=SugarRole.STATEMENT):
         if ctx is None or ctx.module_temporal is None:
             factory_panic_gap(
                 owner=type(self).__name__,
-                blame=str(self.site),
+                blame=self.site,
                 observed="dynamic module frame",
                 requested="statically known module temporal",
                 fix="construct the function through the module audit door",

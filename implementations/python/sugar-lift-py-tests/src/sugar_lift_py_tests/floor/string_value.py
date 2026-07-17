@@ -334,7 +334,7 @@ class StringValue(FloorValue):
                         "ValueError at runtime; "
                         f"blame={operation.blame}",
                         witness=runtime_effect_witness(
-                            "py.float", self.value, operation.blame
+                            "py.float", self.value, operation
                         ),
                     )
                 )
@@ -349,7 +349,7 @@ class StringValue(FloorValue):
                         "treating NaN/Infinity as proof-bearing; "
                         f"blame={operation.blame}",
                         witness=runtime_effect_witness(
-                            "py.float", self.value, operation.blame
+                            "py.float", self.value, operation
                         ),
                     )
                 )
@@ -364,7 +364,7 @@ class StringValue(FloorValue):
                         "treating this as proof-bearing; "
                         f"blame={operation.blame}",
                         witness=runtime_effect_witness(
-                            "py.float", self.value, operation.blame
+                            "py.float", self.value, operation
                         ),
                     )
                 )
@@ -395,7 +395,7 @@ class StringValue(FloorValue):
                             "argument type or keep the method call as typed red; "
                             f"blame={operation.blame}",
                             witness=runtime_effect_witness(
-                                "py.format", type(arg).__name__, operation.blame
+                                "py.format", type(arg).__name__, operation
                             ),
                         )
                     )
@@ -413,7 +413,7 @@ class StringValue(FloorValue):
                         "the method call as typed red; "
                         f"blame={operation.blame}",
                         witness=runtime_effect_witness(
-                            "py.format", self.value, operation.blame
+                            "py.format", self.value, operation
                         ),
                     )
                 )

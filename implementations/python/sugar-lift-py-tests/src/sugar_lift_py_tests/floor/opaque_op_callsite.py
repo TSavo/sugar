@@ -217,7 +217,7 @@ class OpaqueOpCallsite(FloorValue):
                 "attribute mutation floor owns this shape. "
                 f"blame={operation.blame}",
                 witness=runtime_effect_witness(
-                    "py.setattr", f"call:{self.callee}", operation.blame
+                    "py.setattr", f"call:{self.callee}", operation
                 ),
             )
         )

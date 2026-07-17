@@ -108,7 +108,7 @@ class BuiltinDunderCallSugar(
                 _METHODS[self.name],
                 (),
                 owner=type(self).__name__,
-                blame=str(self.site),
+                blame=self.site,
                 ctx=ctx,
             )
         if self.name == "str":

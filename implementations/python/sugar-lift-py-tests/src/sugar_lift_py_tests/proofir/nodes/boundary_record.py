@@ -164,12 +164,13 @@ def _effectful_refusal_source() -> str:
 
 
 def _runtime_effect_incomplete(reason: str) -> Incomplete:
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    site = SourceFragment.from_source("print(x)\n", "<boundary-record-witness-case>").statements()[0]
     return Incomplete(
         CallResultTypeRuntimeEffect(
             reason,
-            witness=runtime_effect_witness(
-                "py.call", "print", "<boundary-record-witness-case>"
-            ),
+            witness=runtime_effect_witness("py.call", "print", site),
         )
     )
 

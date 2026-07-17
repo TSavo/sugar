@@ -402,7 +402,7 @@ class CallSiteValue(FloorValue):
                 "until a narrower vendor-cited floor owns the call result and "
                 f"attribute. blame={operation.blame}",
                 witness=runtime_effect_witness(
-                    "py.getattr", operation.name, operation.blame
+                    "py.getattr", operation.name, operation
                 ),
             )
         )

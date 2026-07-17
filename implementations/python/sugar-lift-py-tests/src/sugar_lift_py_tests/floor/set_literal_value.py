@@ -35,7 +35,7 @@ class SetLiteralValue(FloorValue):
             # Bare folded count; BuiltinCallSugar wrap re-attaches call:len.
             return Complete(TermValue(len(self.items)))
         return _call_method_effect(
-            blame=operation.blame,
+            site=operation,
             observed=f"SetLiteralValue.{operation.name}",
         )
 
@@ -45,7 +45,7 @@ class SetLiteralValue(FloorValue):
 
 def _call_method_effect(
     *,
-    blame: str,
+    site,
     observed: str,
 ):
     from sugar_lift_py_tests.outcome import Incomplete
@@ -56,7 +56,7 @@ def _call_method_effect(
             f"{observed} has no reduced floor semantics in this tranche. "
             "Python set method results can expose runtime mutation and "
             "iteration-order semantics; keep as typed red until a narrower "
-            f"vendor-cited reduction owns the shape. blame={blame}",
-            witness=runtime_effect_witness("py.call_method", observed, blame),
+            f"vendor-cited reduction owns the shape. blame={site}",
+            witness=runtime_effect_witness("py.call_method", observed, site),
         )
     )

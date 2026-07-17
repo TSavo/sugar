@@ -100,7 +100,7 @@ class AsyncWithSugar(Sugar, role=SugarRole.STATEMENT):
     def _finish(self, manager, ctx):
         operation = AsyncContextManagerOperation(
             owner=type(self).__name__,
-            blame=str(self.site),
+            blame=self.site,
         )
         recorder = None if ctx is None else getattr(ctx, "record_operation", None)
         if recorder is not None:
@@ -113,7 +113,7 @@ class AsyncWithSugar(Sugar, role=SugarRole.STATEMENT):
             # Symbolic / non-object: floor typed red or loud construction gap.
             return manager.async_context_manager_with(operation, ctx)
         entered = manager.call_method_value(
-            "__aenter__", (), owner=type(self).__name__, blame=str(self.site), ctx=ctx
+            "__aenter__", (), owner=type(self).__name__, blame=self.site, ctx=ctx
         ).value
         entered = force_floor(entered, ctx, owner="AsyncWithSugar.__aenter__")
         body_ctx = ctx
@@ -130,7 +130,7 @@ class AsyncWithSugar(Sugar, role=SugarRole.STATEMENT):
             "__aexit__",
             (entered, entered, entered),
             owner=type(self).__name__,
-            blame=str(self.site),
+            blame=self.site,
             ctx=ctx,
         ).value
         force_floor(exit_call, ctx, owner="AsyncWithSugar.__aexit__")

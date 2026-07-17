@@ -79,7 +79,7 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
                 "__getitem__",
                 (index,),
                 owner=type(self).__name__,
-                blame=str(self.site),
+                blame=self.site,
                 ctx=ctx,
             )
         return receiver.subscript(index, self.site)
