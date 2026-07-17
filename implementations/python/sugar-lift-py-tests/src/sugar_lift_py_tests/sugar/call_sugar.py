@@ -216,10 +216,12 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     bound = module_bound
             from sugar_lift_py_tests.floor import ImportAliasValue
 
+            imported_callable_target = None
             if isinstance(bound, ImportAliasValue):
                 if isinstance(bound.resolved_value, ExceptionClassValue):
                     bound = bound.resolved_value
                 elif isinstance(bound.resolved_value, FunctionCallable):
+                    imported_callable_target = bound.import_target or bound.name
                     bound = bound.resolved_value
                 elif isinstance(bound.resolved_value, NativeCallableValue):
                     native = bound.resolved_value
@@ -282,6 +284,18 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 expanded = _expand_function_positional_args(accumulated, site=self.site)
                 if isinstance(expanded, Incomplete):
                     return expanded
+                if imported_callable_target is not None:
+                    from dataclasses import replace
+
+                    from sugar_lift_py_tests.sugar.method_call_sugar import (
+                        _static_exit_suppression_contract,
+                    )
+
+                    exit_suppression = _static_exit_suppression_contract(
+                        imported_callable_target, accumulated
+                    )
+                    if exit_suppression is not None:
+                        bound = replace(bound, exit_suppression=exit_suppression)
                 return bound.callsite(
                     expanded,
                     self.keyword_names,

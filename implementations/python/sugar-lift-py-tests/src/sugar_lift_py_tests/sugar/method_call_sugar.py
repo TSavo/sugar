@@ -330,6 +330,15 @@ def _static_exit_suppression_contract(source_name: str, values: tuple):
         "pytest.warns",
     }:
         return ExitSuppressionContract.never_suppresses()
+    if source_name in {
+        "numpy.testing.assert_raises_regex",
+        "numpy.testing._private.utils.assert_raises_regex",
+    }:
+        from sugar_lift_py_tests.floor import BuiltinExceptionClassValue
+
+        if values and isinstance(values[0], BuiltinExceptionClassValue):
+            return ExitSuppressionContract.suppresses((values[0].name,))
+        return None
     if source_name != "contextlib.suppress" or not values:
         return None
     from sugar_lift_py_tests.floor import BuiltinExceptionClassValue
