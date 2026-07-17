@@ -226,9 +226,11 @@ showcase-bulk-refuse-class:
 
 # Dispatch discoverability: CLAIMED fatal-corpus lanes must carry fleet:lane
 # (+ kit:python,idd,north-star). Bare in-progress is illegal for fleet claims.
+# Default path: classifier self-test THEN live gh measurement.
+# Self-test alone must never mint R=0 (no fake zero).
 .PHONY: check-fleet-claim-contract
 check-fleet-claim-contract:
-	$(PYTHON) tools/check_fleet_claim_contract.py --self-test
+	$(PYTHON) tools/check_fleet_claim_contract.py
 
 .PHONY: numpy-wall
 numpy-wall:

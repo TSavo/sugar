@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
 """Fleet claim-label contract instrument (dispatch discoverability).
 
-R: count of open issues that are claimed (in-progress) but missing fleet:lane,
-or missing the fatal-corpus Python label set.
+R: open claimed fleet lanes that are not dispatch-discoverable.
 
-The dispatcher discovers Python worker lanes via fleet:lane. A claim that only
-carries in-progress is invisible — the 2026-07-17 drift to fleet:lane=0.
+The dispatcher discovers Python worker lanes via ``fleet:lane``. A claim that
+only carries ``in-progress`` is invisible — the 2026-07-17 drift to
+``fleet:lane`` open count = 0.
+
+Hard law for this instrument:
+  - **No fake zero.** Self-test proves the classifier; it does not mint R=0.
+  - Live R is read from GitHub (or an explicit ``--from-json`` snapshot).
+  - Missing live evidence is red (exit 2), not green.
+  - Empty issue list without an explicit empty snapshot is not R=0.
 
 Modes:
-  --self-test   planted shapes trip the contract
-  --from-json   score a GH issues JSON export (array of issue objects)
-  (default)     --self-test only (no network)
+  --self-test     planted shapes trip the classifier (no R=0 claim)
+  --live          fetch open in-progress issues via ``gh`` and score R
+  --from-json P   score a GH issues JSON export (array of issue objects)
+  (default)       --self-test then --live (make/CI path)
 
-Exit 1 when R > 0. Exit 0 when R = 0.
+Exit 0 only when live R = 0 with measured evidence.
+Exit 1 when R > 0.
+Exit 2 when live measurement is unavailable / invalid.
 """
 
 from __future__ import annotations
@@ -20,6 +29,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,7 +46,7 @@ RELEASE_FIRST_LINE = re.compile(r"^(?:RELEASED|COMPLETED)(?:\b|\s|:)", re.I)
 FATAL_CLAIM_LABELS = frozenset(
     {"in-progress", "fleet:lane", "kit:python", "idd", "north-star"}
 )
-# Minimum for any CLAIMED worker lane.
+# Minimum for any CLAIMED worker lane that already carries fleet:lane.
 BASE_CLAIM_LABELS = frozenset({"in-progress", "fleet:lane"})
 
 # Body must name measured work, not only "Part of #N".
@@ -91,7 +102,7 @@ def body_is_thin(title: str, body: str) -> bool:
 
 
 def is_fleet_dispatch_issue(title: str, labels: set[str]) -> bool:
-    """Only fatal-corpus / kit:python fleet lanes enter R.
+    """Only fatal-corpus / already-tagged fleet lanes enter R.
 
     Historical in-progress epics without fleet:lane are not this instrument's
     offenders — the 2026-07-17 failure mode was Python fatal claims dropping
@@ -107,10 +118,8 @@ def is_fleet_dispatch_issue(title: str, labels: set[str]) -> bool:
 def audit_issue(issue: dict[str, Any]) -> Offender | None:
     """Return an offender when an open claimed fleet lane violates the contract.
 
-    R is driven by **missing labels**. Thin bodies are reported on the same
-    offender when labels are already wrong, and as claimed-thin-body only when
-    the issue is a fatal-corpus claim with a full label set but no locus text
-    (orientation debt — still red so file-time discipline holds).
+    R is driven by missing labels and thin fatal bodies. Thin body alone is
+    still R (orientation debt), not a soft note.
     """
     if str(issue.get("state", "open")).lower() != "open":
         return None
@@ -161,6 +170,7 @@ def claim_transition_labels(
 
     Returns (action, labels_to_add, labels_to_remove).
     """
+    del body  # orientation is scored on the issue, not the claim comment
     if CLAIM_FIRST_LINE.match(first_line.strip()):
         required = set(BASE_CLAIM_LABELS)
         if FATAL_TITLE.match(title) or "kit:python" in current:
@@ -175,21 +185,61 @@ def claim_transition_labels(
     return ("noop", set(), set())
 
 
-def scoreboard(offenders: list[Offender]) -> dict[str, Any]:
+def fleet_lane_open_count(issues: list[dict[str, Any]]) -> int:
+    n = 0
+    for issue in issues:
+        if str(issue.get("state", "open")).lower() != "open":
+            continue
+        if "fleet:lane" in labels_of(issue):
+            n += 1
+    return n
+
+
+def claimed_fatal_open_count(issues: list[dict[str, Any]]) -> int:
+    n = 0
+    for issue in issues:
+        if str(issue.get("state", "open")).lower() != "open":
+            continue
+        labels = labels_of(issue)
+        if "in-progress" not in labels:
+            continue
+        if FATAL_TITLE.match(str(issue.get("title") or "")):
+            n += 1
+    return n
+
+
+def scoreboard(
+    offenders: list[Offender],
+    *,
+    issues: list[dict[str, Any]] | None = None,
+    evidence: str,
+) -> dict[str, Any]:
     by_shape: dict[str, int] = {}
     for o in offenders:
         by_shape[o.shape] = by_shape.get(o.shape, 0) + 1
     r = len(offenders)
+    lane_open = fleet_lane_open_count(issues or [])
+    fatals_open = claimed_fatal_open_count(issues or [])
+    # Universe-level shape: claimed fatals exist but zero fleet:lane labels.
+    # Covered per-issue too; surface as its own axis so the fog cannot hide.
+    if fatals_open > 0 and lane_open == 0 and r == 0:
+        # Should be unreachable if per-issue audit is sound; pin loudly if not.
+        r = fatals_open
+        by_shape["fleet-lane-universe-empty"] = fatals_open
     return {
         "schema": SCHEMA,
         "R": r,
+        "evidence": evidence,
+        "fleet_lane_open": lane_open,
+        "claimed_fatal_open": fatals_open,
         "by_shape": dict(sorted(by_shape.items())),
         "offenders": [o.to_json() for o in offenders],
         "replacement": (
             "On CLAIMED: ensure in-progress + fleet:lane "
             "(+ kit:python,idd,north-star for fatal-corpus); "
             "write locus table + hard law in the issue body. "
-            "Never claim with only in-progress."
+            "Never claim with only in-progress. "
+            "Never report R=0 without live issue evidence."
         ),
     }
 
@@ -198,7 +248,10 @@ def render_human(payload: dict[str, Any]) -> str:
     lines = [
         "FLEET CLAIM CONTRACT",
         f"schema: {payload['schema']}",
+        f"evidence: {payload.get('evidence', '?')}",
         f"R={payload['R']}",
+        f"fleet_lane_open={payload.get('fleet_lane_open', '?')}  "
+        f"claimed_fatal_open={payload.get('claimed_fatal_open', '?')}",
     ]
     by_shape = payload.get("by_shape") or {}
     if by_shape:
@@ -214,11 +267,53 @@ def render_human(payload: dict[str, Any]) -> str:
     if int(payload["R"]) > 0:
         lines.append(f"FAIL: R must be 0 — {payload['replacement']}")
     else:
-        lines.append("PASS: R=0 — every open claim is dispatch-discoverable")
+        lines.append(
+            "PASS: measured R=0 — every open fleet claim is dispatch-discoverable"
+        )
     return "\n".join(lines) + "\n"
 
 
+def fetch_live_issues() -> list[dict[str, Any]]:
+    """Pull open in-progress issues via gh. Fail loud if measurement cannot run."""
+    if shutil.which("gh") is None:
+        raise RuntimeError("gh not on PATH; cannot measure live fleet claim R")
+    cmd = [
+        "gh",
+        "issue",
+        "list",
+        "--state",
+        "open",
+        "--label",
+        "in-progress",
+        "--limit",
+        "100",
+        "--json",
+        "number,title,body,labels,state",
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("gh issue list timed out measuring live claim R") from exc
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
+        raise RuntimeError(f"gh issue list failed: {err}")
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("gh issue list returned non-JSON") from exc
+    if not isinstance(data, list):
+        raise RuntimeError("gh issue list JSON must be an array")
+    return data
+
+
 def self_test() -> int:
+    """Classifier proof only. Must never claim live R=0."""
     # Illegal: claimed fatal with only in-progress (the 2026-07-17 shape).
     bad = {
         "number": 5019,
@@ -300,13 +395,80 @@ def self_test() -> int:
         print(f"FAIL: RELEASED must restore available, got {add}", file=sys.stderr)
         return 1
 
-    print("PASS: fleet claim contract self-test")
+    # Planted snapshot must stay red (no fake zero on known offenders).
+    planted = scoreboard(offenders, issues=[bad, good, closed], evidence="self-test-planted")
+    if int(planted["R"]) != 1:
+        print(f"FAIL: planted R must be 1, got {planted['R']}", file=sys.stderr)
+        return 1
+
+    # Explicit empty snapshot is measured R=0 only with evidence=empty-snapshot.
+    empty = scoreboard([], issues=[], evidence="self-test-empty-snapshot")
+    if int(empty["R"]) != 0:
+        print(f"FAIL: empty snapshot R must be 0, got {empty['R']}", file=sys.stderr)
+        return 1
+
+    print(
+        "PASS: fleet claim contract classifier "
+        "(self-test only — does not mint live R=0)"
+    )
     return 0
+
+
+def emit_payload(payload: dict[str, Any], *, json_only: bool) -> int:
+    if json_only:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(render_human(payload), end="")
+    return 1 if int(payload["R"]) > 0 else 0
+
+
+def score_from_json(path: Path, *, json_only: bool) -> int:
+    if not path.is_file():
+        print(f"FAIL: missing {path}", file=sys.stderr)
+        return 2
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        print("FAIL: --from-json must be a JSON array of issues", file=sys.stderr)
+        return 2
+    payload = scoreboard(
+        audit_issues(data),
+        issues=data,
+        evidence=f"from-json:{path}",
+    )
+    return emit_payload(payload, json_only=json_only)
+
+
+def score_live(*, json_only: bool) -> int:
+    try:
+        issues = fetch_live_issues()
+    except RuntimeError as exc:
+        print(f"FAIL: live measurement unavailable — {exc}", file=sys.stderr)
+        print(
+            "replacement: install/auth gh, or pass --from-json with a fresh export; "
+            "do not treat self-test as R=0",
+            file=sys.stderr,
+        )
+        return 2
+    payload = scoreboard(
+        audit_issues(issues),
+        issues=issues,
+        evidence="gh:issue.list:label=in-progress:state=open",
+    )
+    return emit_payload(payload, json_only=json_only)
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--self-test", action="store_true")
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="classifier proof only; never claims live R=0",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="measure R from live GitHub issues via gh",
+    )
     parser.add_argument(
         "--from-json",
         type=Path,
@@ -316,27 +478,32 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--json-only", action="store_true")
     args = parser.parse_args(argv)
 
-    if args.self_test or args.from_json is None:
-        if args.from_json is None and not args.self_test:
-            # Default path: pure instrument self-test (no network).
-            return self_test()
-        if args.self_test and args.from_json is None:
-            return self_test()
+    # Explicit single modes.
+    if args.self_test and not args.live and args.from_json is None:
+        return self_test()
+    if args.from_json is not None and not args.live and not args.self_test:
+        return score_from_json(args.from_json, json_only=args.json_only)
+    if args.live and not args.self_test and args.from_json is None:
+        return score_live(json_only=args.json_only)
 
-    assert args.from_json is not None
-    if not args.from_json.is_file():
-        print(f"FAIL: missing {args.from_json}", file=sys.stderr)
-        return 2
-    data = json.loads(args.from_json.read_text(encoding="utf-8"))
-    if not isinstance(data, list):
-        print("FAIL: --from-json must be a JSON array of issues", file=sys.stderr)
-        return 2
-    payload = scoreboard(audit_issues(data))
-    if args.json_only:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        print(render_human(payload), end="")
-    return 1 if int(payload["R"]) > 0 else 0
+    # Default make/CI path: classifier proof, then live R. Self-test green alone
+    # is never enough (no fake zero).
+    if not args.self_test and not args.live and args.from_json is None:
+        rc = self_test()
+        if rc != 0:
+            return rc
+        return score_live(json_only=args.json_only)
+
+    # Combined flags: self-test then live/json.
+    if args.self_test:
+        rc = self_test()
+        if rc != 0:
+            return rc
+    if args.from_json is not None:
+        return score_from_json(args.from_json, json_only=args.json_only)
+    if args.live:
+        return score_live(json_only=args.json_only)
+    return 2
 
 
 if __name__ == "__main__":
