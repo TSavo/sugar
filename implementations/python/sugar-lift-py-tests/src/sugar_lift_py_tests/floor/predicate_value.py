@@ -67,6 +67,12 @@ class PredicateValue(FloorValue):
             )
         )
 
+    def unary_minus(self, site):
+        # pandas defines unary minus on boolean array predicates as logical
+        # negation, the same closed construction as bitwise invert.
+        del site
+        return self.negate()
+
     def truth(self, site):
         """An already-boolean predicate stands as its existing formula."""
         del site

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 
 import pytest
 
@@ -11,11 +12,12 @@ from factory_reduce import fol, reduce_term, reduce_value
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import SymbolicValue, TermValue
-from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.floor import PredicateValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.ir import ctor, eq, make_var, num
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _site(expr: str):
@@ -51,6 +53,29 @@ def test_bitwise_invert_folds_concrete() -> None:
 def test_symbolic_minus_emits_py_neg() -> None:
     result = reduce_term("-x", {"x": SymbolicValue(make_var("x"))})
     assert fol(result) == fol(ctor("py.neg", [make_var("x")]))
+
+
+def test_predicate_unary_minus_is_logical_negation() -> None:
+    predicate = PredicateValue(eq(make_var("x"), num(0)), _site("x == 0"))
+
+    assert predicate.unary_minus(_site("-(x == 0)")) == predicate.negate()
+
+
+def test_predicate_unary_minus_witness_refutes(tmp_path: Path) -> None:
+    pair = next(
+        pair
+        for pair in UnaryOpSugar.witnesses()
+        if pair.name == "predicate_unary_minus_return"
+    )
+    truthful = run_source_through_real_solver(
+        tmp_path / "predicate-minus-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "predicate-minus-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_symbolic_invert_emits_py_invert() -> None:
