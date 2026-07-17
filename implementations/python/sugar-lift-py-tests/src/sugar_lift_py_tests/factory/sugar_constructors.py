@@ -287,7 +287,7 @@ def _module_level_declarations_before(
         for fragment in root.fragments()
         for statement in fragment.statements()
     ]
-    for statement in top_level:
+    for index, statement in enumerate(top_level):
         candidates = (
             [statement]
             if statement.observed == "FunctionDef"
@@ -305,6 +305,15 @@ def _module_level_declarations_before(
             )
             for candidate in candidates
         ):
+            # Installed modules finish executing before an imported function can
+            # be called. A function may therefore lawfully load a top-level class
+            # declared later in source order. Keep only ClassDefs here; selection
+            # below still filters them by the body's actually loaded names.
+            declarations.extend(
+                later
+                for later in top_level[index + 1 :]
+                if later.observed == "ClassDef"
+            )
             return declarations
         if (
             statement.observed == "Assign"
@@ -351,6 +360,15 @@ def _module_declaration_bound_names(statement: SourceFragment) -> set[str]:
         }
     if statement.observed == "Try":
         return _try_module_bound_names(statement)
+    if statement.observed == "ClassDef":
+        base_names = statement.class_base_names()
+        if (
+            statement.class_decorators()
+            or statement.class_keywords()
+            or any(base_name is None for base_name in base_names)
+        ):
+            return set()
+        return {statement.class_name()}
     return set()
 
 
@@ -377,7 +395,10 @@ def _ctx_with_module_global_binds(site: SourceFragment, ctx):
     declarations are not fabricated: their names remain absent so ordinary
     TemporalContext lookup stays loud when the body demands them.
     """
-    from sugar_lift_py_tests.floor import ImportAliasValue
+    from sugar_lift_py_tests.floor import BlockValue, ImportAliasValue
+    from sugar_lift_py_tests.floor.local_exception_class_value import (
+        module_class_value,
+    )
     from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
     loaded = _module_source_for_site(site, ctx)
@@ -453,6 +474,23 @@ def _ctx_with_module_global_binds(site: SourceFragment, ctx):
                     ),
                 )
             folded_ctx = folded_ctx.with_temporal(temporal)
+            continue
+        if prior.observed == "ClassDef":
+            name = prior.class_name()
+            base_names = tuple(
+                base_name
+                for base_name in prior.class_base_names()
+                if base_name is not None
+            )
+            value = module_class_value(
+                name=name,
+                base_names=base_names,
+                temporal=folded_ctx.temporal,
+                record=BlockValue(()),
+            )
+            folded_ctx = folded_ctx.with_temporal(
+                folded_ctx.temporal.bind_value(name, value)
+            )
             continue
         # #4203: no soft TypeError/Exception continue past construction. A missing
         # shape is Incomplete (leave name unbound) or FactoryPanic (loud). Soft

@@ -3,7 +3,7 @@ from __future__ import annotations
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory import default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import FunctionCallable, ImportAliasValue
+from sugar_lift_py_tests.floor import ClassValue, FunctionCallable, ImportAliasValue
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.statement_function_def_sugar import (
     StatementFunctionDefSugar,
@@ -68,6 +68,45 @@ def test_untagged_statement_callable_does_not_borrow_module_imports() -> None:
     body = callable_value.body
     assert body is not None
     assert body.sugar.base_context.temporal.value_if_bound("com") is None
+
+
+def test_installed_statement_callable_captures_needed_forward_module_class() -> None:
+    callable_value = _statement_callable(
+        "def select(value):\n"
+        "    return isinstance(value, Later)\n"
+        "\n"
+        "class Unused:\n"
+        "    pass\n"
+        "\n"
+        "class Later(Base):\n"
+        "    pass\n",
+        "installed.module.select",
+    )
+
+    body = callable_value.body
+    assert body is not None
+    contextualized = body.sugar
+    later = contextualized.base_context.temporal.value_if_bound("Later")
+    assert isinstance(later, ClassValue)
+    assert later.name == "Later"
+    assert contextualized.base_context.temporal.value_if_bound("Unused") is None
+
+
+def test_installed_statement_callable_leaves_decorated_forward_class_loud() -> None:
+    callable_value = _statement_callable(
+        "def select(value):\n"
+        "    return isinstance(value, Later)\n"
+        "\n"
+        "@runtime_decorator\n"
+        "class Later:\n"
+        "    pass\n",
+        "installed.module.select",
+    )
+
+    body = callable_value.body
+    assert body is not None
+    contextualized = body.sugar
+    assert contextualized.base_context.temporal.value_if_bound("Later") is None
 
 
 def test_module_import_context_truthful_and_lying_twins_refute(tmp_path) -> None:
