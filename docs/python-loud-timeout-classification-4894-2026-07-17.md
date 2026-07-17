@@ -1,5 +1,32 @@
 # Loud-bounded-timeout classification for #4894 (2026-07-17)
 
+## Battleaxe classification checkpoint
+
+The classification replay moved from the contended local Mac to battleaxe.
+Three remote shards run concurrently, while every shard remains sequential
+internally.  The committed recensus records 293 timeouts but did not retain
+their filename artifact.  Replaying the documented snapshot
+`b4ee8c01228ba1e9ac1720d701d548fbb2861da6` with the closest available remote
+runtime (CPython 3.14.3; the census used 3.14.4) reproduced 237 timeout
+identities.  The other 56 remain an explicit identity-unavailable residual;
+they are not counted as completed.
+
+The append-only ledger currently contains 28 final rows:
+
+| Verdict | Files |
+|---|---:|
+| `completes-at-bound` | 11 |
+| `completes-with-panic` | 17 |
+| `bare-exception` | 0 |
+| `hang-at-max-bound` | 0 |
+| **Reconstructed identities pending** | **209** |
+| **Original identities unavailable** | **56** |
+
+The three 60 → 120 → 300 second battleaxe shards remain in progress.  This
+checkpoint is intentionally draft testimony: `28 + 209 + 56 = 293`, so no
+timeout has been silently reclassified or removed from the conservation
+account.
+
 ## Why this pass exists
 
 The #4775/#4872 recensus
