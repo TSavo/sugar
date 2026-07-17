@@ -1149,6 +1149,7 @@ def _ctx_with_required_module_bindings_impl(
         module_class_value,
     )
     from sugar_lift_py_tests.outcome import Incomplete, complete_value
+
     from sugar_lift_py_tests.temporal import TemporalContext
 
     # Imported values are constructed in the defining module's lexical frame.
@@ -1315,6 +1316,23 @@ def _construct_install_source_value(
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.outcome import Incomplete, complete_value
+
+    reexport = _definite_setup_reexport_target(module_name, attr, parsed)
+    if reexport is not None and reexport not in resolving:
+        resolved = resolve_install_source_value(
+            reexport,
+            ctx,
+            _resolving=resolving,
+        )
+        if resolved is not None:
+            return resolved
+        from sugar_lift_py_tests.floor import ImportAliasValue
+
+        return ImportAliasValue(
+            attr,
+            attr,
+            import_target=reexport,
+        )
 
     if _installed_class_is_exception(
         module_name,
@@ -1530,6 +1548,75 @@ def _static_import_targets(module_name: str, parsed: ast.Module) -> dict[str, st
             for alias in statement.names:
                 targets[alias.asname or alias.name.split(".")[0]] = alias.name
     return targets
+
+
+def _definite_setup_reexport_target(
+    module_name: str, attr: str, parsed: ast.Module
+) -> str | None:
+    """Resolve an import in a setup sentinel's provably selected false branch.
+
+    Installed packages commonly guard their public re-exports with the exact
+    fresh-module pattern ``try: __SETUP__; except NameError: __SETUP__ = False``
+    followed by ``if __SETUP__: ... else: from ... import name``.  On a fresh
+    import that private sentinel is unbound, so the false branch is selected.
+    Other conditionals, non-NameError handlers, truthy defaults, nested imports,
+    and ambiguous bindings remain unresolved and loud.
+    """
+
+    false_sentinels: set[str] = set()
+    for statement_index, statement in enumerate(parsed.body):
+        if (
+            not isinstance(statement, ast.Try)
+            or len(statement.body) != 1
+            or statement.orelse
+            or statement.finalbody
+            or not isinstance(statement.body[0], ast.Expr)
+            or not isinstance(statement.body[0].value, ast.Name)
+        ):
+            continue
+        sentinel = statement.body[0].value.id
+        if not (sentinel.startswith("__") and sentinel.endswith("__")):
+            continue
+        if any(
+            _module_declaration_name(previous) == sentinel
+            or sentinel in _module_import_bindings(previous)
+            for previous in parsed.body[:statement_index]
+        ):
+            continue
+        for handler in statement.handlers:
+            if (
+                isinstance(handler.type, ast.Name)
+                and handler.type.id == "NameError"
+                and len(handler.body) == 1
+                and isinstance(handler.body[0], ast.Assign)
+                and len(handler.body[0].targets) == 1
+                and isinstance(handler.body[0].targets[0], ast.Name)
+                and handler.body[0].targets[0].id == sentinel
+                and isinstance(handler.body[0].value, ast.Constant)
+                and handler.body[0].value.value is False
+            ):
+                false_sentinels.add(sentinel)
+
+    targets: list[str] = []
+    for statement in parsed.body:
+        if (
+            not isinstance(statement, ast.If)
+            or not isinstance(statement.test, ast.Name)
+            or statement.test.id not in false_sentinels
+        ):
+            continue
+        for selected in statement.orelse:
+            if not isinstance(selected, ast.ImportFrom):
+                continue
+            target_module = _absolute_import_from_module(
+                module_name, selected.module, selected.level
+            )
+            if target_module is None:
+                continue
+            for alias in selected.names:
+                if (alias.asname or alias.name) == attr and alias.name != "*":
+                    targets.append(f"{target_module}.{alias.name}")
+    return targets[0] if len(targets) == 1 else None
 
 
 def _dotted_ast_name(node: ast.expr) -> str | None:

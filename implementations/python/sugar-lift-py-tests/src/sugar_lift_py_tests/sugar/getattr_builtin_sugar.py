@@ -45,11 +45,22 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
     @classmethod
     def witnesses(cls):
         prefix = "class Box:\n    def __init__(self):\n        self.x = 1\n\ndef A():\n    return getattr(Box(), 'x')\n\n"
-        return _call_pair(
-            name="getattr_builtin_return",
-            owner_sugar=cls.__name__,
-            truthful=prefix + "def test_a():\n    assert A() == 1\n",
-            lying=prefix + "def test_a():\n    assert A() == 2\n",
+        imported = (
+            "import stat\n\n" "def A():\n" "    return getattr(stat, 'ST_MODE')\n\n"
+        )
+        return (
+            _call_pair(
+                name="getattr_builtin_return",
+                owner_sugar=cls.__name__,
+                truthful=prefix + "def test_a():\n    assert A() == 1\n",
+                lying=prefix + "def test_a():\n    assert A() == 2\n",
+            ),
+            _call_pair(
+                name="getattr_imported_source_function_return",
+                owner_sugar=cls.__name__,
+                truthful=imported + "def test_a():\n    assert A() == 0\n",
+                lying=imported + "def test_a():\n    assert A() == 1\n",
+            ),
         )
 
     def desugar(self, ctx=None) -> Outcome:
@@ -77,6 +88,16 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
 
     def _finish_static(self, receiver, name: str, ctx):
         if isinstance(receiver, ImportAliasValue):
+            from sugar_lift_py_tests.sugar.install_source_dig import (
+                resolve_install_source_value,
+            )
+
+            target = receiver.import_target or receiver.name
+            resolved = resolve_install_source_value(f"{target}.{name}", ctx)
+            if resolved is not None:
+                from sugar_lift_py_tests.outcome import Complete
+
+                return Complete(resolved)
             return receiver.getattr_static(name, self.site)
         if not isinstance(receiver, ObjectValue):
             return Incomplete(
