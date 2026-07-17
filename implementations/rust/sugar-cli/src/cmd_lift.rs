@@ -4056,212 +4056,270 @@ fn render_report_visual(
 
 fn render_visual_source_report(report: &LiftSourceReport) -> String {
     let report_span = tracing::info_span!("visual_report_render");
-    let _report_guard = report_span.enter();
-    let source_lookup = VisualSourceLookup {
-        project_root: report.project_root.as_deref(),
-    };
-    let mut out = String::new();
-    {
-        let span = tracing::info_span!("report_section", section = "plan_roll_call");
-        let _guard = span.enter();
-        tracing::info!("report section started");
-        out.push_str(&render_report_prologue(report));
-        out.push_str(&render_report_plan_roll_call(report));
-        tracing::info!(rendered_bytes = out.len(), "report section completed");
-    }
-    // #4319: accounting lines after provenance/census, before factory greens.
-    if let Some(coverage) = &report.lift_coverage {
-        let span = tracing::info_span!("report_section", section = "lift_coverage_accounting");
-        let _guard = span.enter();
-        tracing::info!("report section started");
-        out.push_str(&render_lift_coverage_accounting(
-            coverage,
-            report.project_root.as_deref(),
-        ));
-        if !out.ends_with('\n') {
+    report_span.in_scope(|| {
+        let source_lookup = VisualSourceLookup {
+            project_root: report.project_root.as_deref(),
+        };
+        let mut out = String::new();
+        {
+            let span = tracing::info_span!("report_section", section = "plan_roll_call");
+            span.in_scope(|| {
+                tracing::info!(section = "plan_roll_call", "report section started");
+                out.push_str(&render_report_prologue(report));
+                out.push_str(&render_report_plan_roll_call(report));
+                tracing::info!(
+                    section = "plan_roll_call",
+                    rendered_bytes = out.len(),
+                    "report section completed"
+                );
+            });
+        }
+        // #4319: accounting lines after provenance/census, before factory greens.
+        if let Some(coverage) = &report.lift_coverage {
+            let span =
+                tracing::info_span!("report_section", section = "lift_coverage_accounting");
+            span.in_scope(|| {
+                tracing::info!(section = "lift_coverage_accounting", "report section started");
+                out.push_str(&render_lift_coverage_accounting(
+                    coverage,
+                    report.project_root.as_deref(),
+                ));
+                if !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                tracing::info!(
+                    section = "lift_coverage_accounting",
+                    rendered_bytes = out.len(),
+                    "report section completed"
+                );
+            });
+        }
+        {
+            let span = tracing::info_span!("report_section", section = "universe_visual");
+            span.in_scope(|| {
+                tracing::info!(section = "universe_visual", "report section started");
+                out.push_str(&render_universe_visual_report(report, source_lookup));
+                tracing::info!(
+                    section = "universe_visual",
+                    rendered_bytes = out.len(),
+                    "report section completed"
+                );
+            });
+        }
+        if !out.is_empty() && !out.ends_with('\n') {
             out.push('\n');
         }
-        tracing::info!(rendered_bytes = out.len(), "report section completed");
-    }
-    {
-        let span = tracing::info_span!("report_section", section = "universe_visual");
-        let _guard = span.enter();
-        tracing::info!("report section started");
-        out.push_str(&render_universe_visual_report(report, source_lookup));
-        tracing::info!(rendered_bytes = out.len(), "report section completed");
-    }
-    if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
-    }
-    {
-        let span = tracing::info_span!("report_section", section = "factory_visual");
-        let _guard = span.enter();
-        tracing::info!("report section started");
-        let rows = visual_factory_walk_rows(&report.factory_walk, source_lookup);
-        out.push_str("factory visual:\n");
-        if rows.is_empty() {
-            out.push_str("  <no factory walk emitted>\n");
-        } else {
-            let mut current_context = String::new();
-            let mut heartbeat = RenderHeartbeat::new("factory_visual.rows");
-            for (index, row) in rows.into_iter().enumerate() {
-                heartbeat.tick(index);
-                if row.context != current_context {
-                    current_context = row.context.clone();
-                    out.push_str(&format!("  contract {current_context}\n"));
+        {
+            let span = tracing::info_span!("report_section", section = "factory_visual");
+            span.in_scope(|| {
+                tracing::info!(section = "factory_visual", "report section started");
+                let rows = visual_factory_walk_rows(&report.factory_walk, source_lookup);
+                out.push_str("factory visual:\n");
+                if rows.is_empty() {
+                    out.push_str("  <no factory walk emitted>\n");
+                } else {
+                    let mut current_context = String::new();
+                    let mut heartbeat = RenderHeartbeat::new("factory_visual.rows");
+                    for (index, row) in rows.into_iter().enumerate() {
+                        heartbeat.tick(index);
+                        if row.context != current_context {
+                            current_context = row.context.clone();
+                            out.push_str(&format!("  contract {current_context}\n"));
+                        }
+                        render_visual_source_annotation(
+                            &mut out,
+                            &row.source,
+                            row.tone,
+                            &row.label,
+                        );
+                    }
                 }
-                render_visual_source_annotation(&mut out, &row.source, row.tone, &row.label);
-            }
+                tracing::info!(
+                    section = "factory_visual",
+                    rendered_bytes = out.len(),
+                    "report section completed"
+                );
+            });
         }
-        tracing::info!(rendered_bytes = out.len(), "report section completed");
-    }
-    if !report.call_edges.is_empty() {
-        let span = tracing::info_span!("report_section", section = "observed_occurrences");
-        let _guard = span.enter();
-        tracing::info!("report section started");
-        out.push_str(&format!(
-            "observed occurrences (total={}):\n",
-            report.call_edges.len()
-        ));
-        let mut heartbeat = RenderHeartbeat::new("observed_occurrences.rows");
-        for (index, edge) in report.call_edges.iter().enumerate() {
-            heartbeat.tick(index);
-            out.push_str(&format!("  - {}\n", format_call_edge(edge)));
-        }
-        tracing::info!(rendered_bytes = out.len(), "report section completed");
-    }
-    let demanded_resolved = report
-        .demanded_questions
-        .iter()
-        .filter(|edge| edge.get("status").and_then(Value::as_str) != Some("unjoined"))
-        .count();
-    let demanded_dangling = report
-        .demanded_questions
-        .len()
-        .saturating_sub(demanded_resolved);
-    if report.implication_walk_ran || !report.demanded_questions.is_empty() {
-        out.push_str(&format!(
-            "demanded questions (total={} resolved={} dangling={}):\n",
-            report.demanded_questions.len(),
-            demanded_resolved,
-            demanded_dangling
-        ));
-        for question in &report.demanded_questions {
-            out.push_str(&format!("  - {}\n", format_demanded_question(question)));
-        }
-        out.push_str("implication ledger (demanded questions):\n");
-        if report.demanded_questions.is_empty() {
-            out.push_str("  <no call sites demanded>\n");
-        }
-        for implication in &report.demanded_questions {
-            let source = report_text_field(implication, &["sourceContract", "source_contract"])
-                .unwrap_or_else(|| "<unknown caller>".to_string());
-            let target = report_text_field(
-                implication,
-                &[
-                    "targetContract",
-                    "target_contract",
-                    "targetSymbol",
-                    "target_symbol",
-                ],
-            )
-            .unwrap_or_else(|| "<unknown callee>".to_string());
-            let status = implication
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("failed");
-            let reason = implication
-                .get("reason")
-                .and_then(Value::as_str)
-                .unwrap_or("no reason supplied");
-            let discriminator = format_demand_discriminator(implication);
-            if status == "unjoined" {
+        if !report.call_edges.is_empty() {
+            let span = tracing::info_span!("report_section", section = "observed_occurrences");
+            span.in_scope(|| {
+                tracing::info!(section = "observed_occurrences", "report section started");
                 out.push_str(&format!(
-                    "  - DEBT {source} owes {target}'s pre, unjoined because {reason}{discriminator}\n"
+                    "observed occurrences (total={}):\n",
+                    report.call_edges.len()
                 ));
-            } else {
-                let obligation = implication
-                    .get("obligation")
-                    .map(|formula| {
-                        pretty_visual_formula_with_terms(
-                            formula,
-                            std::env::var_os("NO_COLOR").is_none(),
-                            report.term_table.as_deref(),
-                        )
-                    })
-                    .unwrap_or_else(|| "<missing obligation>".to_string());
-                out.push_str(&format!(
-                    "  - {source} -> {target}: {obligation} [{status}] {reason}{discriminator}\n"
-                ));
-            }
+                let mut heartbeat = RenderHeartbeat::new("observed_occurrences.rows");
+                for (index, edge) in report.call_edges.iter().enumerate() {
+                    heartbeat.tick(index);
+                    out.push_str(&format!("  - {}\n", format_call_edge(edge)));
+                }
+                tracing::info!(
+                    section = "observed_occurrences",
+                    rendered_bytes = out.len(),
+                    "report section completed"
+                );
+            });
         }
-        out.push_str(&format!(
-            "observed occurrences total={}\n\
+        let demanded_resolved = report
+            .demanded_questions
+            .iter()
+            .filter(|edge| edge.get("status").and_then(Value::as_str) != Some("unjoined"))
+            .count();
+        let demanded_dangling = report
+            .demanded_questions
+            .len()
+            .saturating_sub(demanded_resolved);
+        if report.implication_walk_ran || !report.demanded_questions.is_empty() {
+            let span = tracing::info_span!("report_section", section = "demanded_questions");
+            span.in_scope(|| {
+                tracing::info!(section = "demanded_questions", "report section started");
+                out.push_str(&format!(
+                    "demanded questions (total={} resolved={} dangling={}):\n",
+                    report.demanded_questions.len(),
+                    demanded_resolved,
+                    demanded_dangling
+                ));
+                let mut heartbeat = RenderHeartbeat::new("demanded_questions.rows");
+                for (index, question) in report.demanded_questions.iter().enumerate() {
+                    heartbeat.tick(index);
+                    out.push_str(&format!("  - {}\n", format_demanded_question(question)));
+                }
+                out.push_str("implication ledger (demanded questions):\n");
+                if report.demanded_questions.is_empty() {
+                    out.push_str("  <no call sites demanded>\n");
+                }
+                let mut ledger_heartbeat = RenderHeartbeat::new("demanded_questions.ledger");
+                for (index, implication) in report.demanded_questions.iter().enumerate() {
+                    ledger_heartbeat.tick(index);
+                    let source =
+                        report_text_field(implication, &["sourceContract", "source_contract"])
+                            .unwrap_or_else(|| "<unknown caller>".to_string());
+                    let target = report_text_field(
+                        implication,
+                        &[
+                            "targetContract",
+                            "target_contract",
+                            "targetSymbol",
+                            "target_symbol",
+                        ],
+                    )
+                    .unwrap_or_else(|| "<unknown callee>".to_string());
+                    let status = implication
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("failed");
+                    let reason = implication
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .unwrap_or("no reason supplied");
+                    let discriminator = format_demand_discriminator(implication);
+                    if status == "unjoined" {
+                        out.push_str(&format!(
+                            "  - DEBT {source} owes {target}'s pre, unjoined because {reason}{discriminator}\n"
+                        ));
+                    } else {
+                        let obligation = implication
+                            .get("obligation")
+                            .map(|formula| {
+                                pretty_visual_formula_with_terms(
+                                    formula,
+                                    std::env::var_os("NO_COLOR").is_none(),
+                                    report.term_table.as_deref(),
+                                )
+                            })
+                            .unwrap_or_else(|| "<missing obligation>".to_string());
+                        out.push_str(&format!(
+                            "  - {source} -> {target}: {obligation} [{status}] {reason}{discriminator}\n"
+                        ));
+                    }
+                }
+                out.push_str(&format!(
+                    "observed occurrences total={}\n\
              demanded questions total={}\n\
              demanded questions resolved={}\n\
              demanded questions dangling={}\n",
-            report.call_edges.len(),
-            report.demanded_questions.len(),
-            demanded_resolved,
-            demanded_dangling
-        ));
-    }
-    if !report.effects.is_empty() {
-        let span = tracing::info_span!("report_section", section = "effects");
-        let _guard = span.enter();
-        tracing::info!("report section started");
-        out.push_str("runtime effects:\n");
-        for effect in &report.effects {
-            let name = effect
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("<unnamed>");
-            let status = effect
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("<missing status>");
-            let reason = effect
-                .get("reason")
-                .and_then(Value::as_str)
-                .unwrap_or("<missing reason>");
-            let source = effect
-                .get("sourceMemento")
-                .filter(|memento| memento.is_object())
-                .map_or_else(
-                    || "<missing source memento>".to_string(),
-                    |memento| {
-                        let file = memento
-                            .get("file")
-                            .and_then(Value::as_str)
-                            .unwrap_or("<unknown file>");
-                        let line = memento
-                            .pointer("/span/start_line")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0);
-                        format!("{file}:{line}")
-                    },
+                    report.call_edges.len(),
+                    report.demanded_questions.len(),
+                    demanded_resolved,
+                    demanded_dangling
+                ));
+                tracing::info!(
+                    section = "demanded_questions",
+                    rendered_bytes = out.len(),
+                    "report section completed"
                 );
-            out.push_str(&format!("  EFFECT {name} [{status}] {source}: {reason}\n"));
+            });
         }
-        tracing::info!(rendered_bytes = out.len(), "report section completed");
-    }
-    // #4319: factory/universe greens lead; the Minority Report (un-spoken-for
-    // remainder) renders only after the proven walk. Accounting already ran
-    // after census above.
-    if let Some(coverage) = &report.lift_coverage {
-        let span = tracing::info_span!("report_section", section = "minority_report");
-        let _guard = span.enter();
-        tracing::info!("report section started");
-        out.push_str(&render_lift_coverage_minority(
-            coverage,
-            report.project_root.as_deref(),
-        ));
-        if !out.ends_with('\n') {
-            out.push('\n');
+        if !report.effects.is_empty() {
+            let span = tracing::info_span!("report_section", section = "effects");
+            span.in_scope(|| {
+                tracing::info!(section = "effects", "report section started");
+                out.push_str("runtime effects:\n");
+                let mut heartbeat = RenderHeartbeat::new("effects.rows");
+                for (index, effect) in report.effects.iter().enumerate() {
+                    heartbeat.tick(index);
+                    let name = effect
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<unnamed>");
+                    let status = effect
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<missing status>");
+                    let reason = effect
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<missing reason>");
+                    let source = effect
+                        .get("sourceMemento")
+                        .filter(|memento| memento.is_object())
+                        .map_or_else(
+                            || "<missing source memento>".to_string(),
+                            |memento| {
+                                let file = memento
+                                    .get("file")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("<unknown file>");
+                                let line = memento
+                                    .pointer("/span/start_line")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(0);
+                                format!("{file}:{line}")
+                            },
+                        );
+                    out.push_str(&format!("  EFFECT {name} [{status}] {source}: {reason}\n"));
+                }
+                tracing::info!(
+                    section = "effects",
+                    rendered_bytes = out.len(),
+                    "report section completed"
+                );
+            });
         }
-        tracing::info!(rendered_bytes = out.len(), "report section completed");
-    }
-    out
+        // #4319: factory/universe greens lead; the Minority Report (un-spoken-for
+        // remainder) renders only after the proven walk. Accounting already ran
+        // after census above.
+        if let Some(coverage) = &report.lift_coverage {
+            let span = tracing::info_span!("report_section", section = "minority_report");
+            span.in_scope(|| {
+                tracing::info!(section = "minority_report", "report section started");
+                out.push_str(&render_lift_coverage_minority(
+                    coverage,
+                    report.project_root.as_deref(),
+                ));
+                if !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                tracing::info!(
+                    section = "minority_report",
+                    rendered_bytes = out.len(),
+                    "report section completed"
+                );
+            });
+        }
+        out
+    })
 }
 
 /// One visual universe block: contracts that share a name under a
@@ -4562,7 +4620,9 @@ fn render_universe_visual_report(
         "universe visual progress"
     );
     let total = groups.len();
+    let mut universe_heartbeat = RenderHeartbeat::new("universe_visual.universes");
     for (index, group) in groups.into_iter().enumerate() {
+        universe_heartbeat.tick(index);
         let universe_started = Instant::now();
         let contract = group.anchor;
         let identity = &group.identity;
@@ -4576,7 +4636,13 @@ fn render_universe_visual_report(
             cid_prefix = %cid_prefix
         );
         let _universe_guard = universe_span.enter();
-        tracing::info!(index, total, "universe render started");
+        tracing::info!(
+            index,
+            total,
+            qualified_name = %qualified_name,
+            cid_prefix = %cid_prefix,
+            "universe render started"
+        );
         // Predicates for line citations: every member's formulas (assert invs
         // pair with their own warrants when factory walk is empty).
         let predicates_started = Instant::now();
@@ -16334,7 +16400,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
-    fn slow_render_loop_heartbeat_names_its_location() {
+    fn report_pipeline_tracing_heartbeat_names_its_location() {
         let log = RenderTestLog::default();
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::INFO)
@@ -16358,6 +16424,191 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "{rendered}"
         );
         assert!(rendered.contains("index=7"), "{rendered}");
+    }
+
+    /// #4336 pin: a hang in the visual report must name its section from the
+    /// log tail — every residual section is a span with start/completion events.
+    #[test]
+    fn report_pipeline_tracing_section_spans_name_every_residual_section() {
+        let mut report = minimal_source_report();
+        report.contracts = vec![serde_json::json!({
+            "kind": "function-contract",
+            "name": "sample.owner",
+            "formals": [],
+            "post": {"kind": "true"},
+            "sourceWarrants": [{
+                "kind": "source-memento",
+                "file": "sample.py",
+                "sourceFunctionName": "sample.owner",
+                "span": {"start_line": 1, "end_line": 1}
+            }]
+        })];
+        report.factory_walk = vec![serde_json::json!({
+            "kind": "factory-row",
+            "file": "sample.py",
+            "status": "warranted",
+            "verdict": "complete",
+            "context": "sample.owner",
+            "emittedFormula": {"kind": "true"},
+            "sourceMemento": {
+                "file": "sample.py",
+                "sourceFunctionName": "sample.owner",
+                "span": {"start_line": 1, "end_line": 1}
+            }
+        })];
+        report.call_edges = vec![serde_json::json!({
+            "kind": "call-edge",
+            "sourceContract": "sample.owner",
+            "targetSymbol": "helper",
+            "targetContract": "sample.helper",
+            "targetContractCid": "blake3-512:deadbeefcafe",
+            "callSiteLocus": {"file": "sample.py", "line": 3}
+        })];
+        report.implication_walk_ran = true;
+        report.demanded_questions = vec![serde_json::json!({
+            "kind": "implication",
+            "sourceContract": "sample.owner",
+            "targetContract": "sample.helper",
+            "status": "unjoined",
+            "reason": "fixture gap",
+            "callSiteMemento": {
+                "file": "sample.py",
+                "span": {"start_line": 3, "start_col": 0}
+            }
+        })];
+        report.effects = vec![serde_json::json!({
+            "name": "FixtureEffect",
+            "status": "open",
+            "reason": "fixture residual",
+            "sourceMemento": {
+                "file": "sample.py",
+                "span": {"start_line": 2}
+            }
+        })];
+        report.lift_coverage = Some(serde_json::json!({
+            "kind": "lift-coverage",
+            "totals": {
+                "stated": 1,
+                "accounted": 1,
+                "silently_unaccounted": 0,
+                "minority_present": 0,
+                "minority_dug": 0,
+                "minority_un_asserted": 0
+            },
+            "assertions": {
+                "stated": 1,
+                "lifted_cited": 1,
+                "silently_unaccounted": 0,
+                "silent_loci": []
+            },
+            "minority": {
+                "present": 0,
+                "dug": 0,
+                "un_asserted": 0,
+                "un_asserted_loci": []
+            }
+        }));
+
+        let log = RenderTestLog::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(log.clone())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let _ = render_visual_source_report(&report);
+        });
+        let rendered =
+            String::from_utf8(log.0.lock().expect("log lock").clone()).expect("trace is utf8");
+
+        for section in [
+            "plan_roll_call",
+            "lift_coverage_accounting",
+            "universe_visual",
+            "factory_visual",
+            "observed_occurrences",
+            "demanded_questions",
+            "effects",
+            "minority_report",
+        ] {
+            let quoted = format!("section=\"{section}\"");
+            let bare = format!("section={section}");
+            assert!(
+                rendered.contains(&quoted) || rendered.contains(&bare),
+                "missing section={section} on report section span/event:\n{rendered}"
+            );
+        }
+        assert!(
+            rendered.contains("report section started"),
+            "section boundary start events missing:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("report section completed"),
+            "section boundary completion events missing:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("visual_report_render"),
+            "top-level visual report span context missing:\n{rendered}"
+        );
+    }
+
+    /// #4336 pin: a hang inside a universe must name qualified owner + CID
+    /// prefix from the active span fields, never from /proc forensics.
+    #[test]
+    fn report_pipeline_tracing_universe_span_carries_qualified_name_and_cid_prefix() {
+        let mut report = minimal_source_report();
+        report.contracts = vec![serde_json::json!({
+            "kind": "function-contract",
+            "name": "sample.owner",
+            "formals": ["x"],
+            "post": {
+                "kind": "atomic",
+                "name": ">=",
+                "args": [
+                    {"kind": "var", "name": "x"},
+                    {"kind": "const", "value": 0}
+                ]
+            },
+            "sourceWarrants": [{
+                "kind": "source-memento",
+                "file": "sample.py",
+                "sourceFunctionName": "sample.owner",
+                "span": {"start_line": 4, "end_line": 4}
+            }]
+        })];
+
+        let log = RenderTestLog::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(log.clone())
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let _ = render_visual_source_report(&report);
+        });
+        let rendered =
+            String::from_utf8(log.0.lock().expect("log lock").clone()).expect("trace is utf8");
+
+        assert!(
+            rendered.contains("universe render started"),
+            "universe start event missing:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("qualified_name=\"sample.owner\"")
+                || rendered.contains("qualified_name=sample.owner"),
+            "universe span must carry qualified_name:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("cid_prefix=")
+                && (rendered.contains("blake3-512:") || rendered.contains("cid-unavailable")),
+            "universe span must carry cid_prefix:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("report_universe") || rendered.contains("qualified_name="),
+            "report_universe span context missing:\n{rendered}"
+        );
     }
 
     #[test]
