@@ -1948,8 +1948,13 @@ class SequentialDigBody:
         )
         from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
         from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+        from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.return_value import ReturnValue
+        from sugar_lift_py_tests.floor.scope_rebind import (
+            GuardedScopeRebind,
+            ScopeRebind,
+        )
         from sugar_lift_py_tests.ir import and_
         from sugar_lift_py_tests.outcome import Complete
 
@@ -1973,7 +1978,16 @@ class SequentialDigBody:
                 for item in contribution
                 if not isinstance(item, (GuardedReturn, GuardedRaise, ReturnValue))
             )
-            if (guarded_exits or guarded) and non_returns:
+            joined_rebinds = (
+                isinstance(getattr(outcome, "value", None), GuardedFaces)
+                and non_returns
+                and all(
+                    type(item) in (GuardedScopeRebind, ScopeRebind)
+                    for item in non_returns
+                )
+                and any(type(item) is ScopeRebind for item in non_returns)
+            )
+            if (guarded_exits or guarded) and non_returns and not joined_rebinds:
                 return self._control_flow_gap()
             for item in contribution:
                 # Exact unguarded return only — GuardedReturn is multi-exit.

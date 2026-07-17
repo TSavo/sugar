@@ -347,6 +347,127 @@ def test_sequential_dig_guarded_raise_with_state_stays_loud() -> None:
         SequentialDigBody((_MixedStatement(), _FallbackReturnStatement())).desugar()
 
 
+def test_sequential_dig_consumes_guarded_faces_join_before_fallback_return() -> None:
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.factory.build import default_catalog
+    from sugar_lift_py_tests.floor import (
+        GuardedFaces,
+        GuardedRaise,
+        GuardedScopeRebind,
+    )
+    from sugar_lift_py_tests.floor.exceptional_exit_value import ExceptionalExitValue
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import make_var, not_
+    from sugar_lift_py_tests.outcome import Complete
+
+    invalid = make_var("invalid_dtype")
+    selected = GuardedValue(
+        make_var("use_values"),
+        TermValue("from-values"),
+        TermValue("from-categories"),
+    )
+    raised = RaiseEffect(
+        exception_name="ValueError",
+        blame="pandas/core/dtypes/dtypes.py:338:16",
+        source_sha256="0" * 64,
+    )
+
+    class _GuardedFacesStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                GuardedFaces(
+                    guard=invalid,
+                    entries=(
+                        GuardedRaise((invalid,), raised),
+                        GuardedScopeRebind(
+                            (not_(invalid),),
+                            "ordered",
+                            TermValue(False),
+                        ),
+                    ),
+                    then_exits=True,
+                    else_exits=False,
+                    joined_bindings=(("dtype", selected),),
+                    can_fall_through=True,
+                    continuation_guard=not_(invalid),
+                )
+            )
+
+    class _ReturnJoinedDtype:
+        audit_row = None
+
+        def reduce(self, ctx):
+            return Complete(ReturnValue(ctx.temporal.value_if_bound("dtype")))
+
+    ctx = FactoryBuildContext(filename="repro.py", catalog=default_catalog())
+    outcome = SequentialDigBody(
+        (_GuardedFacesStatement(), _ReturnJoinedDtype())
+    ).desugar(ctx)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == GuardedValue(
+        invalid,
+        ExceptionalExitValue(raised),
+        selected,
+    )
+
+
+def test_sequential_dig_guarded_faces_without_join_stays_loud() -> None:
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.factory.build import default_catalog
+    from sugar_lift_py_tests.floor import (
+        GuardedFaces,
+        GuardedReturn,
+        GuardedScopeRebind,
+    )
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import make_var, not_
+    from sugar_lift_py_tests.outcome import Complete
+
+    guard = make_var("branch")
+
+    class _UnjoinedFaces:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                GuardedFaces(
+                    guard=guard,
+                    entries=(
+                        GuardedReturn((guard,), TermValue(7)),
+                        GuardedScopeRebind(
+                            (not_(guard),),
+                            "answer",
+                            TermValue(8),
+                        ),
+                    ),
+                    then_exits=True,
+                    else_exits=False,
+                    can_fall_through=True,
+                    continuation_guard=not_(guard),
+                )
+            )
+
+    class _Fallback:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(ReturnValue(TermValue(0)))
+
+    ctx = FactoryBuildContext(filename="wrong_twin.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic):
+        SequentialDigBody((_UnjoinedFaces(), _Fallback())).desugar(ctx)
+
+
 def test_sequential_dig_mixed_guarded_exit_and_state_stays_loud() -> None:
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn

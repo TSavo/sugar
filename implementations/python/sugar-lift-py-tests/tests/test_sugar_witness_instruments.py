@@ -1410,6 +1410,7 @@ _GROUNDED_PRIMITIVE_REFUTE_SEEDS = (
     "complex_literal_return",
     "if_return",
     "if_raise_fallback_return",
+    "if_raise_joined_binding_return",
     "in_return",
     "is_not_return",
     "chained_compare_return",
