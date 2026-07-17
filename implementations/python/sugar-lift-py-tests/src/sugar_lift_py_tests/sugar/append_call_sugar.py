@@ -93,9 +93,57 @@ class AppendCallSugar(
         return self.value.reduce(ctx).and_then(
             lambda arg: ctx.temporal.value_for(self.receiver_name)
             .answer(ctx)
-            .and_then(
-                lambda receiver: receiver.append_with(arg, self.site).and_then(
+            .and_then(lambda receiver: self._append(receiver, arg))
+        )
+
+    def _append(self, receiver, value) -> Outcome:
+        from sugar_lift_py_tests.floor import CallSiteValue
+
+        if isinstance(receiver, CallSiteValue):
+            if _is_constructed_list_callsite(receiver):
+                return receiver.append_with(value, self.site).and_then(
                     lambda updated: Complete(ScopeRebind(self.receiver_name, updated))
                 )
+            if receiver.target_name in _PANDAS_INDEX_CALL_TARGETS:
+                return Complete(
+                    receiver.linear_method_call("append", (value,), self.site)
+                )
+            from sugar_lift_py_tests.factory import factory_panic_gap
+
+            factory_panic_gap(
+                owner=type(self).__name__,
+                blame=str(self.site),
+                observed=f"CallSiteValue({receiver.target_name})",
+                requested="classified append contract",
+                fix=(
+                    "prove that the call result is a mutable list and rebind it, "
+                    "or construct the exact non-mutating append result"
+                ),
             )
+        return receiver.append_with(value, self.site).and_then(
+            lambda updated: Complete(ScopeRebind(self.receiver_name, updated))
         )
+
+
+_PANDAS_INDEX_CALL_TARGETS = frozenset(
+    {
+        "pandas.DatetimeIndex",
+        "pandas.Index",
+        "pandas.TimedeltaIndex",
+        "pandas.core.indexes.datetimes.date_range",
+        "pandas.core.indexes.timedeltas.timedelta_range",
+    }
+)
+
+
+def _is_constructed_list_callsite(receiver) -> bool:
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    if receiver.target_name in {"builtins.list", "list", "split"}:
+        return True
+    return (
+        receiver.target_name == "py.subscript"
+        and bool(receiver.arg_values)
+        and isinstance(receiver.arg_values[0], CallSiteValue)
+        and _is_constructed_list_callsite(receiver.arg_values[0])
+    )

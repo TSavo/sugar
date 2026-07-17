@@ -119,6 +119,76 @@ def test_append_on_callsite_rebinds_to_list_append_coordinate() -> None:
     assert returned.value.term.name == "py.list_append"
 
 
+@pytest.mark.parametrize(
+    "target_name",
+    (
+        "pandas.DatetimeIndex",
+        "pandas.Index",
+        "pandas.core.indexes.datetimes.date_range",
+        "pandas.core.indexes.timedeltas.timedelta_range",
+    ),
+)
+def test_pandas_index_append_constructs_result_without_rebinding_receiver(
+    target_name: str,
+) -> None:
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+
+    receiver = CallSiteValue(
+        target_name=target_name,
+        arg_values=(),
+        parameters=(),
+        term=ctor(f"call:{target_name}", ()),
+        body=None,
+        site="append.py:1",
+    )
+    index = CallSiteValue(
+        target_name="pandas.Index",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:pandas.Index", ()),
+        body=None,
+        site="append.py:1",
+    )
+
+    record = compose_block(
+        "    result = rng.append(idx)\n    return result[0]\n",
+        binds={"rng": receiver, "idx": index},
+    )
+
+    returned = record.statements[0]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    assert returned.value.target_name == "py.subscript"
+    append_result = returned.value.arg_values[0]
+    assert isinstance(append_result, CallSiteValue)
+    assert append_result.target_name == "append"
+    assert append_result.arg_values == (receiver, index)
+
+
+def test_unclassified_callsite_append_contract_stays_loud() -> None:
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+
+    opaque = CallSiteValue(
+        target_name="opaque_factory",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:opaque_factory", ()),
+        body=None,
+        site="append.py:1",
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    result = opaque.append(1)\n    return result[0]\n",
+            binds={"opaque": opaque},
+        )
+
+    assert raised.value.info.owner == "AppendCallSugar"
+    assert raised.value.info.requested == "classified append contract"
+
+
 def test_requests_check_compatibility_asserts_lift_through_append() -> None:
     """Part of #4103: the five requests __init__ asserts speak after append floor.
 
