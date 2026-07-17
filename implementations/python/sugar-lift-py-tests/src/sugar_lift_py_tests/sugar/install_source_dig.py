@@ -1191,10 +1191,17 @@ def _return_expr_attachable(rv) -> bool:
 
 @dataclass(frozen=True)
 class SequentialDigBody:
-    """Reduce straight-line statements; surface the last return value for dig.
+    """Reduce straight-line statements; surface one diggable return floor.
 
     Used when method bodies are ``x = f(x); return x + ...``. Dig wants the
     return floor, not a BlockValue record. Scope threads via BoundVar.
+
+    An unguarded ``ReturnValue`` is terminal: dig returns that floor and does
+    not walk later statements. Walking past an early return previously kept
+    the *last* return (e.g. fall-through ``return 0`` after a taken
+    ``if ...: return 7``), which fabricated a false Derived EUF residue and
+    dual-refuted truthful control-flow witnesses (#4387). Guarded /
+    multi-exit faces stay Incomplete so dig is opaque rather than lying.
     """
 
     statements: tuple  # SugarBody STATEMENT
@@ -1203,12 +1210,19 @@ class SequentialDigBody:
     fn_site: Any = None
 
     def desugar(self, ctx: Any = None):
+        from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
         from sugar_lift_py_tests.floor.return_value import ReturnValue
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
         cur = ctx
-        last_return = None
+        saw_guarded_exit = False
         for stmt in self.statements:
+            if saw_guarded_exit:
+                # A prior face already posted a GuardedReturn. Later statements
+                # ride under branch polarity (e.g. fall-through after
+                # ``if z in xs: return 1`` / ``return 0``). Dig must not pin the
+                # fall-through as an unguarded literal Derived residue.
+                return self._control_flow_incomplete()
             outcome = stmt.reduce(cur)
             from sugar_lift_py_tests.outcome import Incomplete as _Inc
 
@@ -1216,16 +1230,34 @@ class SequentialDigBody:
                 return outcome
             cur = outcome.extend_scope(cur)
             for item in outcome.contribution():
-                if isinstance(item, ReturnValue):
-                    last_return = item
-        if last_return is not None:
-            # Dig wants the returned floor, not the ReturnValue wrapper.
-            return Complete(last_return.value)
+                # Exact unguarded return only — GuardedReturn is multi-exit.
+                if type(item) is ReturnValue:
+                    # Dig wants the returned floor, not the ReturnValue wrapper.
+                    return Complete(item.value)
+                if isinstance(item, GuardedReturn):
+                    saw_guarded_exit = True
+            follow = getattr(outcome, "follow", None)
+            if callable(follow):
+                step = follow()
+                if not step.continues:
+                    # Nested block already halted (e.g. BlockValue with return).
+                    # Do not reduce later statements; no unguarded dig pin.
+                    break
+                if step.transform is not None:
+                    # Continuation is polarity-guarded; dig cannot pin one arm.
+                    return self._control_flow_incomplete()
+        # No unguarded ReturnValue: either multi-exit (GuardedReturn) or no
+        # return at all. Dig stays opaque so Derived residue cannot invent a
+        # single fall-through literal across control flow.
+        return self._control_flow_incomplete()
+
+    def _control_flow_incomplete(self):
         from sugar_lift_py_tests.effect import (
             ConditionalExpressionRuntimeEffect,
             RuntimeEffectWitness,
         )
         from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.outcome import Incomplete
 
         terminal = self.statements[-1] if self.statements else None
         audit_row = getattr(terminal, "audit_row", None)

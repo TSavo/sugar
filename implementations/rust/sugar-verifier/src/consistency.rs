@@ -1002,7 +1002,9 @@ fn is_const_value(node: &Json) -> bool {
 ///
 /// `py.complex` is a value (Python complex literal), not an operator — dual
 /// faces `call:A()=py.complex(0,2)` vs `call:A()=py.complex(0,3)` must refuse
-/// structurally (#4398). Arithmetic/`call:abs` stay out: abs is folded by
+/// structurally (#4398). `py.ellipsis` is Python's Ellipsis singleton — dual
+/// `call:A()=py.ellipsis` vs `call:A()=None` must refuse (#4387 residue).
+/// Arithmetic/`call:abs` stay out: abs is folded by
 /// [`fold_ground_applications`], arithmetic remains SMT theory.
 fn is_ground_data_ctor_name(name: &str) -> bool {
     matches!(
@@ -1011,6 +1013,7 @@ fn is_ground_data_ctor_name(name: &str) -> bool {
             | "array"
             | "None"
             | "py.complex"
+            | "py.ellipsis"
             | "python:dict"
             | "python:dict_entry"
             | "python:set"
@@ -5663,6 +5666,26 @@ mod tests {
         ]});
         let reason = structural_contradiction_reason(&inv)
             .expect("py.complex(0,2) vs py.complex(0,3) must dual-refute");
+        assert!(
+            reason.contains("equals both"),
+            "expected dual-value structural reason, got: {reason}"
+        );
+    }
+
+    /// #4387 residual: `py.ellipsis` is a data singleton — dual vs `None` refuses.
+    #[test]
+    fn grounded_py_ellipsis_value_contradiction_refuses_structurally() {
+        let call_a = json!({"kind":"ctor","name":"call:A","args":[
+            {"kind":"const","sort":{"kind":"primitive","name":"Int"},"value":5}
+        ]});
+        let ellipsis = json!({"kind":"ctor","name":"py.ellipsis","args":[]});
+        let none = json!({"kind":"ctor","name":"None","args":[]});
+        let inv = json!({"kind":"and","operands":[
+            {"kind":"atomic","name":"=","args":[call_a.clone(), ellipsis]},
+            {"kind":"atomic","name":"py.eq","args":[call_a.clone(), none]},
+        ]});
+        let reason =
+            structural_contradiction_reason(&inv).expect("py.ellipsis vs None must dual-refute");
         assert!(
             reason.contains("equals both"),
             "expected dual-value structural reason, got: {reason}"

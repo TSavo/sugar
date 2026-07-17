@@ -421,8 +421,7 @@ def test_list_literal_shape_has_one_verdict_bearing_owner(
         for row in truthful_result.prove_doc.get("rows", [])
     )
     assert all(
-        row.get("status") != "refused"
-        for row in lying_result.prove_doc.get("rows", [])
+        row.get("status") != "refused" for row in lying_result.prove_doc.get("rows", [])
     )
     # One list owner (ListLiteralSugar), not a dual Array path. Concrete
     # len([1,2,3]) folds to Int 3 — residual call:len/array constructors are not
@@ -1396,9 +1395,10 @@ def test_boolop_literal_residue_lie_lowers_to_concrete_false_operand(
     assert _formula_contains_eq_value(assertion["inv"], False, True)
 
 
-# #4398 measurable lying-arm set: grounded primitive / control-flow vendor posts
-# must refute lies (truthful SAT / lying UNSAT). Residual corpus seeds stay under
-# #4387 / siblings (call_return, keyword_call_return, nested shapes, etc.).
+# #4398 / #4387 residual: grounded primitive / control-flow vendor posts must
+# refute lies (truthful SAT / lying UNSAT). SequentialDigBody must not pin a
+# fall-through return past a taken early return (#4387). Residual corpus seeds
+# stay under #4387 siblings (keyword_call_return, dunder hash, etc.).
 _GROUNDED_PRIMITIVE_REFUTE_SEEDS = (
     "abs_return",
     "bare_return_none",
@@ -1407,6 +1407,8 @@ _GROUNDED_PRIMITIVE_REFUTE_SEEDS = (
     "in_return",
     "is_not_return",
     "chained_compare_return",
+    "not_in_return",
+    "ellipsis_literal_return",
 )
 
 
