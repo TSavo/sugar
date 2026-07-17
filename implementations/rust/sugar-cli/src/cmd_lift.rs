@@ -15978,13 +15978,19 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
-    fn datetime_visual_implication_census_conserves_exactly_21_as_5_plus_16() {
+    fn datetime_visual_implication_census_conserves_exactly_95_and_21_as_5_plus_16() {
+        // #4453 population law: observed occurrences (per-locus syntactic edges)
+        // and demanded questions (implication edges) are distinct populations.
+        // The datetime wall measured 95 observed / 21 demanded = 5 resolved +
+        // 16 dangling. Using unequal sizes is load-bearing: a mixed block under
+        // one header that counted only the demanded population would say
+        // total=21 while rendering 116 rows.
         let mut report = minimal_source_report();
         report.implication_walk_ran = true;
         report.source_mementos = vec![serde_json::json!({
             "file": "datetime.py", "sourceCid": "blake3-512:datetime"
         })];
-        report.call_edges = (1..=21)
+        report.call_edges = (1..=95)
             .map(|line| {
                 serde_json::json!({
                     "kind": "call-edge", "sourceContract": "datetime._cmp",
@@ -16010,19 +16016,49 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
         let visual = render_visual_source_report(&report);
         assert!(
-            visual.contains("observed occurrences (total=21):"),
+            visual.contains("observed occurrences (total=95):"),
             "{visual}"
         );
         assert!(
             visual.contains("demanded questions (total=21 resolved=5 dangling=16):"),
             "{visual}"
         );
-        assert!(visual.contains("observed occurrences total=21"), "{visual}");
+        assert!(visual.contains("observed occurrences total=95"), "{visual}");
         assert!(visual.contains("demanded questions total=21"), "{visual}");
         assert!(visual.contains("demanded questions resolved=5"), "{visual}");
         assert!(
             visual.contains("demanded questions dangling=16"),
             "{visual}"
+        );
+        // Census total must equal the row count of the block it heads.
+        let observed_rows = visual
+            .split("observed occurrences (total=95):\n")
+            .nth(1)
+            .expect("observed block")
+            .split("demanded questions")
+            .next()
+            .expect("observed block end")
+            .lines()
+            .filter(|line| line.starts_with("  - "))
+            .count();
+        let demanded_rows = visual
+            .split("demanded questions (total=21 resolved=5 dangling=16):\n")
+            .nth(1)
+            .expect("demanded block")
+            .split("implication ledger")
+            .next()
+            .expect("demanded block end")
+            .lines()
+            .filter(|line| line.starts_with("  - "))
+            .count();
+        assert_eq!(
+            (observed_rows, demanded_rows),
+            (95, 21),
+            "edge census line must equal the row count of the block it heads:\n{visual}"
+        );
+        assert!(
+            !visual.contains("call edges observed:") && !visual.contains("call edges total="),
+            "must not alias the two populations under the old mixed label:\n{visual}"
         );
     }
 
