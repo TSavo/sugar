@@ -54,7 +54,7 @@ def test_full_datetime_clears_precursors_and_names_next_blockers(
 ) -> None:
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
-    payload, gaps = audit_lift_file(source, str(path), hold_panic=True)
+    payload, gaps = audit_lift_file(source, str(path))
     assertions = account_lift_coverage(
         census_source(source, file=str(path)), payload.to_rpc()
     ).to_json()["assertions"]
@@ -75,11 +75,13 @@ def test_full_datetime_clears_precursors_and_names_next_blockers(
     assert not any(
         "observed=_DI400Y requested=value" in message for message in messages
     )
-    assert assertions["lifted_cited"] == 14
-    assert assertions["refused_loud"] == 31
+    assert assertions["stated"] == 45
+    assert assertions["lifted_cited"] == 45
+    assert assertions["refused_loud"] == 0
     assert assertions["silently_unaccounted"] == 0
     assert {
         locus["line"]
         for locus in assertions["lifted_loci"]
-        if locus["line"] in {53, 60, 144}
-    } == {53, 60, 144}
+        if locus["line"] in {67, 75, 160}
+    } == {67, 75, 160}
+    assert gaps == []

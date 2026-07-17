@@ -64,6 +64,7 @@ def test_floor_division_selects_distinct_term_and_statement_sugars() -> None:
 
 
 def test_real_datetime_full_file_measurement(cpython_311_datetime_path) -> None:
+    """#4104 recognition frontier: SHA-pinned datetime is stable zero."""
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
     payload, gaps = audit_lift_file(source, str(path))
@@ -72,19 +73,14 @@ def test_real_datetime_full_file_measurement(cpython_311_datetime_path) -> None:
         "assertions"
     ]
 
-    assert axis["silently_unaccounted"] == 0
-    messages = [gap.message for gap in gaps]
-    assert not any(
-        "observed=BinOp" in message and ":1462:" in message for message in messages
-    )
-    assert not any(
-        "observed=AugAssign" in message and ":1481:" in message for message in messages
-    )
-    # This test owns exactly the floor-division blockers (:1462, :1481). The
-    # downstream :1507/:1510 fate and the once-next "s unbound" blocker belong
-    # to the branch-join and string-modulo suites; pinning them here went stale
-    # the moment those sibling floors landed (#4198, #4199).
+    # Crime 1 closed: every on-disk assert is lifted+cited, none silent, none
+    # soft-refused. Intermediate 14/31 snapshots are retired; this is the floor.
     assert axis["stated"] == 45
+    assert axis["lifted_cited"] == 45
+    assert axis["refused_loud"] == 0
+    assert axis["silently_unaccounted"] == 0
+    assert axis["is_zero"] is True
+    assert gaps == []
     assert not any(
-        "floor_divide" in message and "floor-gap" in message for message in messages
+        "floor_divide" in gap.message and "floor-gap" in gap.message for gap in gaps
     )

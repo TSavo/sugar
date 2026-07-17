@@ -186,11 +186,15 @@ def test_real_datetime_repr_assertions_measure_after_join(
         census_source(source, file=str(path)), payload.to_rpc()
     ).to_json()["assertions"]
 
+    assert axis["stated"] == 45
+    assert axis["lifted_cited"] == 45
+    assert axis["refused_loud"] == 0
     assert axis["silently_unaccounted"] == 0
+    # time.__repr__ fold/tzinfo branch-joined asserts (artifact loci).
     assert {
-        locus["line"] for locus in axis["lifted_loci"] if locus["line"] in {1507, 1510}
-    } == {1507, 1510}
-    assert not any(gap.label.endswith(":1495:4") for gap in gaps)
+        locus["line"] for locus in axis["lifted_loci"] if locus["line"] in {1610, 1613}
+    } == {1610, 1613}
+    assert gaps == []
 
 
 def test_nested_branch_join_reduces_each_assignment_once(monkeypatch) -> None:

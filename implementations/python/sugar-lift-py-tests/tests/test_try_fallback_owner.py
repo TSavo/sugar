@@ -103,19 +103,16 @@ def test_full_datetime_removes_try_gap_and_names_next_projection_blocker(
 ) -> None:
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
-    assert len(source.splitlines()) == 2635
+    assert len(source.splitlines()) == 2882
 
-    payload, gaps = audit_lift_file(source, str(path), hold_panic=True)
+    payload, gaps = audit_lift_file(source, str(path))
     assertions = account_lift_coverage(
         census_source(source, file=str(path)), payload.to_rpc()
     ).to_json()["assertions"]
 
     assert assertions["stated"] == 45
-    assert assertions["lifted_cited"] == 14
-    assert assertions["refused_loud"] == 31
+    assert assertions["lifted_cited"] == 45
+    assert assertions["refused_loud"] == 0
     assert assertions["silently_unaccounted"] == 0
+    assert gaps == []
     assert not any(gap.info.get("observed") == "Try" for gap in gaps)
-    assert any(
-        gap.label.endswith(":182:0") and gap.info.get("observed") == "GuardedValue"
-        for gap in gaps
-    )

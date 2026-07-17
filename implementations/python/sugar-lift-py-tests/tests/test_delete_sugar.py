@@ -120,22 +120,27 @@ def test_full_datetime_delete_is_owned_and_later_assertions_now_lift(
 ) -> None:
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
-    assert len(source.splitlines()) == 2635
+    assert len(source.splitlines()) == 2882
 
-    report, gaps = audit_lift_file(source, str(path), hold_panic=True)
+    report, gaps = audit_lift_file(source, str(path))
     delete_row = next(
-        row.to_rpc()
-        for row in report.factory_walk
-        if row.to_rpc()["line"] == 2037 and row.to_rpc()["ast_kind"] == "Delete"
+        row
+        for row in report.factory_audits
+        if "Delete" in str(row.get("observed"))
+        and "datetime.py:2203:" in str(row.get("blame", ""))
     )
+    # datetime.__repr__ L[-1] deletes precede the fold/tzinfo asserts.
     assert delete_row["selected"] == "SubscriptDeleteSugar"
-    assert gaps
-    with pytest.raises(FactoryPanic):
-        lift_file_payload(source, str(path))
+    assert gaps == []
+    # Full artifact now lifts without panic (#4104 stable zero).
+    lift_file_payload(source, str(path))
 
     payload = report.to_rpc()
     assertions = account_lift_coverage(
         census_source(source, file=str(path)), payload
     ).to_json()["assertions"]
     assert assertions["stated"] == 45
-    assert {2044, 2047} <= {locus["line"] for locus in assertions["lifted_loci"]}
+    assert assertions["lifted_cited"] == 45
+    assert assertions["refused_loud"] == 0
+    assert assertions["silently_unaccounted"] == 0
+    assert {2212, 2215} <= {locus["line"] for locus in assertions["lifted_loci"]}

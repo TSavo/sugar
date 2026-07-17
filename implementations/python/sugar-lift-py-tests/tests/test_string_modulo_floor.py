@@ -102,15 +102,19 @@ def test_full_datetime_artifact_accounts_repr_assertions_honestly(
 ) -> None:
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
-    assert len(source.splitlines()) == 2635
+    assert len(source.splitlines()) == 2882
 
-    payload, _gaps = audit_lift_file(source, str(path), hold_panic=True)
+    payload, gaps = audit_lift_file(source, str(path))
     assertions = account_lift_coverage(
         census_source(source, file=str(path)), payload.to_rpc()
     ).to_json()["assertions"]
 
     assert assertions["stated"] == 45
-    target_lines = {2044, 2047}
+    assert assertions["lifted_cited"] == 45
+    assert assertions["refused_loud"] == 0
+    assert assertions["silently_unaccounted"] == 0
+    # datetime.__repr__ fold/tzinfo asserts.
+    target_lines = {2212, 2215}
     accounted = {
         locus["line"]
         for key in ("lifted_loci", "refused_loci")
@@ -118,6 +122,7 @@ def test_full_datetime_artifact_accounts_repr_assertions_honestly(
         if locus["line"] in target_lines
     }
     assert accounted == target_lines
+    assert gaps == []
 
 
 def test_full_datetime_repr_distributes_guarded_format_and_lifts_assertions(
@@ -126,22 +131,18 @@ def test_full_datetime_repr_distributes_guarded_format_and_lifts_assertions(
     path = cpython_311_datetime_path
     source = path.read_text(encoding="utf-8")
 
-    payload, gaps = audit_lift_file(source, str(path), hold_panic=True)
+    payload, gaps = audit_lift_file(source, str(path))
     assertions = account_lift_coverage(
         census_source(source, file=str(path)), payload.to_rpc()
     ).to_json()["assertions"]
 
-    assert not any(gap.label.endswith(":1495:4") for gap in gaps)
-    assert not any(
-        ":1500:16 observed=StringValue requested=stand on the modulo floor"
-        in gap.message
-        for gap in gaps
-    )
-    assert assertions["lifted_cited"] == 14
-    assert assertions["refused_loud"] == 31
+    assert assertions["stated"] == 45
+    assert assertions["lifted_cited"] == 45
+    assert assertions["refused_loud"] == 0
     assert assertions["silently_unaccounted"] == 0
     assert {
         locus["line"]
         for locus in assertions["lifted_loci"]
-        if locus["line"] in {1507, 1510}
-    } == {1507, 1510}
+        if locus["line"] in {1610, 1613}
+    } == {1610, 1613}
+    assert gaps == []
