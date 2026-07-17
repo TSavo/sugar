@@ -27,6 +27,12 @@ class PredicateValue(FloorValue):
     rewrite_chains: tuple[tuple[str, str, int], ...] = dataclass_field(
         default=(), compare=False
     )
+    then_bindings: tuple[tuple[str, FloorValue], ...] = dataclass_field(
+        default=(), compare=False
+    )
+    else_bindings: tuple[tuple[str, FloorValue], ...] = dataclass_field(
+        default=(), compare=False
+    )
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import _Atomic, _Connective, ctor
@@ -50,7 +56,15 @@ class PredicateValue(FloorValue):
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(
-            PredicateValue(not_(self.formula), self.site, self.operand_callsites)
+            PredicateValue(
+                not_(self.formula),
+                self.site,
+                self.operand_callsites,
+                self.derived_formulas,
+                self.rewrite_chains,
+                self.else_bindings,
+                self.then_bindings,
+            )
         )
 
     def truth(self, site):
@@ -145,7 +159,10 @@ class PredicateValue(FloorValue):
 
         then_ctx = ctx
         if ctx is not None:
-            then_ctx = ctx.with_temporal(ctx.temporal.activate_guard(self.formula))
+            temporal = ctx.temporal.activate_guard(self.formula)
+            for name, value in self.then_bindings:
+                temporal = temporal.bind_value(name, value)
+            then_ctx = ctx.with_temporal(temporal)
         then_record, then_scope = then.sugar.reduce_with_scope(then_ctx)
         then_own = then_record.contribution()
         then_effect = _conditional_effect(then_own, self.formula)
@@ -163,7 +180,10 @@ class PredicateValue(FloorValue):
             else_guard = not_(self.formula)
             else_ctx = ctx
             if ctx is not None:
-                else_ctx = ctx.with_temporal(ctx.temporal.activate_guard(else_guard))
+                temporal = ctx.temporal.activate_guard(else_guard)
+                for name, value in self.else_bindings:
+                    temporal = temporal.bind_value(name, value)
+                else_ctx = ctx.with_temporal(temporal)
             else_record, else_scope = else_body.sugar.reduce_with_scope(else_ctx)
             else_own = else_record.contribution()
             else_effect = _conditional_effect(else_own, not_(self.formula))
