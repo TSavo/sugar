@@ -70,8 +70,10 @@ def test_division_unsupported_sibling_panics() -> None:
 
 
 def test_assertion_failed_ground_wrong_twin_panics() -> None:
-    with pytest.raises(FactoryPanic):
+    with pytest.raises(FactoryPanic) as caught:
         compose_block("    assert False\n")
+    assert caught.value.info.owner == "FalseBoolLiteralSugar.stated"
+    assert caught.value.info.requested == "construct ground AssertionError exit"
 
 
 def test_assertion_static_true_sibling_constructs() -> None:

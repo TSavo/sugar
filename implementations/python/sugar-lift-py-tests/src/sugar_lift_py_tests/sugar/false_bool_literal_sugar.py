@@ -71,21 +71,24 @@ class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
         return else_body.reduce(ctx)
 
     def stated(self, site):
-        # Ground False under assert is a recognized fact the program halts --
-        # a named runtime effect, per the gap/fact discriminator; never a panic.
-        from sugar_lift_py_tests.effect import (
-            AssertionFailedRuntimeEffect,
-            runtime_effect_evidence,
-        )
-        from sugar_lift_py_tests.ir import bool_const
-        from sugar_lift_py_tests.outcome import Incomplete
+        # Ground False is decided at lift time. Until AssertionError is carried
+        # as a constructed exceptional exit, this arm must stay loudly absent;
+        # a concrete contradiction cannot mint RuntimeEffect authority.
+        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
 
-        return Incomplete(
-            AssertionFailedRuntimeEffect(
-                f"assertion failed runtime boundary: the condition is concretely "
-                f"False; owner=FalseBoolLiteralSugar site={site}",
-                **runtime_effect_evidence("py.assert", bool_const(False), site),
-            )
+        factory_panic_gap(
+            owner="FalseBoolLiteralSugar.stated",
+            blame=site,
+            observed="ground False assertion",
+            requested="construct ground AssertionError exit",
+            fix=(
+                "construct AssertionError as an exceptional exit and halt the "
+                "continuation; never route a decidable false assertion through "
+                "RuntimeEffect"
+            ),
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
         )
 
     def negate(self) -> Outcome:

@@ -13,7 +13,6 @@ from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-from sugar_lift_py_tests.effect import AssertionFailedRuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
@@ -26,7 +25,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
 from sugar_lift_py_tests.ir import and_, eq, implies, make_var, not_, num, py_truthy
-from sugar_lift_py_tests.outcome import Incomplete, complete_value
+from sugar_lift_py_tests.outcome import complete_value
 
 
 def _universe(source: str) -> UniverseValue:
@@ -63,10 +62,9 @@ def test_assert_nonzero_folds_true_to_support() -> None:
 
 
 def test_assert_zero_is_the_named_halt() -> None:
-    record = compose_block("    assert 0\n    return 2\n").statements
-    assert isinstance(record[0], Incomplete)
-    assert isinstance(record[0].effect, AssertionFailedRuntimeEffect)
-    assert len(record) == 2
+    with pytest.raises(FactoryPanic) as caught:
+        compose_block("    assert 0\n    return 2\n")
+    assert caught.value.info.owner == "FalseBoolLiteralSugar.stated"
 
 
 def test_symbolic_condition_emits_py_truthy_guard() -> None:
@@ -82,7 +80,7 @@ def test_symbolic_condition_emits_py_truthy_guard() -> None:
     )
 
 
-def test_symbolic_condition_propagates_named_runtime_effect() -> None:
+def test_symbolic_condition_with_ground_false_assert_stays_loud() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     ctx = replace(
         ctx,
@@ -91,12 +89,9 @@ def test_symbolic_condition_propagates_named_runtime_effect() -> None:
     node = ast.parse("if z:\n    assert 0\n").body[0]
     result = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
 
-    outcome = result.sugar.desugar(ctx)
-
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, AssertionFailedRuntimeEffect)
-    assert "under branch condition" in outcome.reason
-    assert "py.truthy" in outcome.reason
+    with pytest.raises(FactoryPanic) as caught:
+        result.sugar.desugar(ctx)
+    assert caught.value.info.owner == "FalseBoolLiteralSugar.stated"
 
 
 def test_floor_value_default_truth_panics() -> None:
