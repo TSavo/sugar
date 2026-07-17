@@ -58,4 +58,3 @@ existing owner. Ground invalid twins are not converted into effects.
 - The `IfSugar` truthful/lying witness reaches `sat` / `unsat`.
 - Named representative moves from `TemporalContext(result)` to completion or a
   distinct loud named owner; silent remains zero.
-

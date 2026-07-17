@@ -126,10 +126,11 @@ class PredicateValue(FloorValue):
         then_effect = _conditional_effect(then_own, self.formula)
         if then_effect is not None:
             return then_effect
-        then_exits = any(entry.post_contribution() for entry in then_own)
+        then_exits = not then_record.can_fall_through
         then_entries = tuple(entry.guarded(self.formula) for entry in then_own)
         else_entries = ()
         else_exits = False
+        else_record = None
         joined_bindings = ()
         guarded_bindings = ()
         joined_effects = ()
@@ -143,7 +144,7 @@ class PredicateValue(FloorValue):
             else_effect = _conditional_effect(else_own, not_(self.formula))
             if else_effect is not None:
                 return else_effect
-            else_exits = any(entry.post_contribution() for entry in else_own)
+            else_exits = not else_record.can_fall_through
             else_entries = tuple(
                 entry.guarded(not_(self.formula)) for entry in else_own
             )
@@ -160,6 +161,11 @@ class PredicateValue(FloorValue):
             guarded_bindings, joined_effects = self._guarded_bindings(
                 self.formula, then_scope, then_ctx
             )
+        can_fall_through, continuation_guard = _conditional_continuation(
+            self.formula,
+            then_record,
+            else_record,
+        )
         return Complete(
             GuardedFaces(
                 guard=self.formula,
@@ -168,6 +174,8 @@ class PredicateValue(FloorValue):
                 else_exits=else_exits,
                 joined_bindings=joined_bindings,
                 guarded_bindings=guarded_bindings,
+                can_fall_through=can_fall_through,
+                continuation_guard=continuation_guard,
             )
         )
 
@@ -221,6 +229,16 @@ class PredicateValue(FloorValue):
             if isinstance(then_answer, Incomplete) or isinstance(
                 else_answer, Incomplete
             ):
+                joined.append(
+                    (
+                        name,
+                        GuardedValue(
+                            self.formula,
+                            then_binding,
+                            else_binding,
+                        ),
+                    )
+                )
                 continue
             assert isinstance(then_answer, Complete)
             assert isinstance(else_answer, Complete)
@@ -255,6 +273,31 @@ class PredicateValue(FloorValue):
             assert isinstance(answer, Complete)
             bindings.append((name, answer.value))
         return tuple(bindings), tuple(effects)
+
+
+def _conditional_continuation(formula, then_record, else_record):
+    """Construct the guard under which reduced branch outcomes can continue."""
+    from sugar_lift_py_tests.ir import and_, not_, or_
+
+    then_can = then_record.can_fall_through
+    else_can = else_record is None or else_record.can_fall_through
+    if not then_can and not else_can:
+        return False, None
+
+    then_nested = then_record.fall_through
+    else_nested = () if else_record is None else else_record.fall_through
+    if then_can and else_can and not then_nested and not else_nested:
+        return True, None
+
+    paths = []
+    if then_can:
+        paths.append(formula if not then_nested else and_([formula, *then_nested]))
+    if else_can:
+        else_guard = not_(formula)
+        paths.append(
+            else_guard if not else_nested else and_([else_guard, *else_nested])
+        )
+    return True, paths[0] if len(paths) == 1 else or_(paths)
 
 
 def _conditional_effect(entries: tuple, formula):

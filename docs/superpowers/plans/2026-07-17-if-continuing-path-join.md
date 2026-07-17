@@ -127,4 +127,3 @@ T Savo `<evilgenius@nefariousplan.com>`.
 
 Push `if-continuing-path-join`, open a non-closing draft PR with `Part of
 #4837`, post receipts, then mark it ready. Do not merge.
-
