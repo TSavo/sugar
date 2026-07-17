@@ -147,6 +147,15 @@ class ListValue(FloorValue):
             )
         return super().multiply(other, site)
 
+    def matrix_multiply(self, other, site):
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+        if type(other) is CallSiteValue and other.body is None:
+            from sugar_lift_py_tests.effect import runtime_matrix_multiply
+
+            return runtime_matrix_multiply(self, other, site)
+        return super().matrix_multiply(other, site)
+
     def subscript(self, index, site):
         # Concrete list + in-range TermValue int folds to the element; out of
         # range is IndexError. Non-concrete index stays the py.subscript coordinate.
