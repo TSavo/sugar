@@ -19,8 +19,8 @@ use std::sync::Arc;
 use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{encode_jcs, json_to_value, Value as CValue};
 use sugar_claim_envelope::{
-    body_discharge_policy_from_fields_with_default, mint_bridge, mint_contract_with_body_cid,
-    Authoring, MintBridgeArgs, MintContractArgs,
+    body_discharge_default_for_kind, body_discharge_policy_from_fields_with_default, mint_bridge,
+    mint_contract_with_body_cid, Authoring, MintBridgeArgs, MintContractArgs,
 };
 use sugar_proof_envelope::Speaker;
 use sugar_proof_envelope::{
@@ -111,9 +111,15 @@ impl Default for ClaimExtras {
     }
 }
 
-/// Read mint's body-discharge policy fields from an IR row. When absent, use
-/// `default_eligible` (assertions default false; function-contracts true).
-fn body_policy_from_ir(ir: &Json, default_eligible: bool) -> (bool, Option<String>) {
+/// Read mint's body-discharge policy fields from an IR row.
+///
+/// #3901: default eligibility is derived from the IR `kind` via
+/// [`body_discharge_default_for_kind`] — never a free bool that can diverge
+/// from mint. Assertions (`contract`) default false; `function-contract`
+/// default true. Explicit IR directive still wins.
+fn body_policy_from_ir(ir: &Json) -> (bool, Option<String>) {
+    let kind = ir.get("kind").and_then(Json::as_str).unwrap_or("contract");
+    let default_eligible = body_discharge_default_for_kind(kind);
     let policy = body_discharge_policy_from_fields_with_default(
         ir.get("bodyDischargeEligible")
             .or_else(|| ir.get("body_discharge_eligible")),
@@ -619,12 +625,11 @@ pub fn graph_from_fact(fact: &Fact) -> Result<ProofGraph, FeedError> {
     };
 
     let (warrant_jsons, warrants) = warrants_for_fact(fact)?;
-    // Assertion contracts (kind=contract / inv-only claims) are not body-discharged
-    // unless IR explicitly claims eligibility — default false.
+    // Assertion contracts (kind=contract / inv-only claims): default from kind.
     let extras = match fact.ir_row() {
         Some(ir) => {
             let (formals, formals_present) = formals_from_ir_row(ir);
-            let (eligible, reason) = body_policy_from_ir(ir, /*default_eligible=*/ false);
+            let (eligible, reason) = body_policy_from_ir(ir);
             ClaimExtras {
                 emit_empty_formals: formals_present && formals.is_empty(),
                 formals,
@@ -718,8 +723,8 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
             }
         }
         let (formals, formals_present) = formals_from_ir_row(ir);
-        // Function-contracts are body-bearing by default; IR can refuse.
-        let (eligible, reason) = body_policy_from_ir(ir, /*default_eligible=*/ true);
+        // Function-contracts: kind-derived default eligible; IR can refuse.
+        let (eligible, reason) = body_policy_from_ir(ir);
         let extras = ClaimExtras {
             emit_empty_formals: formals_present && formals.is_empty(),
             formals,
@@ -1012,6 +1017,58 @@ mod silent_loss_3901_tests {
             "R_universe_empty_warrants=0 (shell) — name={} warrants={}",
             c.contract_name,
             warrants.len()
+        );
+    }
+
+    /// R_body_discharge_default_ignores_kind: feed defaults must track
+    /// [`body_discharge_default_for_kind`] — assertion IR without directive
+    /// is ineligible; function-contract IR without directive is eligible.
+    #[test]
+    fn body_discharge_default_tracks_ir_kind() {
+        use sugar_ir_types::IrFormula;
+
+        // kind=contract, no bodyDischargeEligible → ineligible
+        let true_atom = json!({"kind": "atomic", "name": "true", "args": []});
+        let payload: IrFormula = serde_json::from_value(true_atom.clone()).expect("true IrFormula");
+        let fact_ir = json!({
+            "kind": "contract",
+            "name": "assert_at_locus",
+            "inv": true_atom
+        });
+        let fact = Fact::for_feed_test(test_memento("assert_at_locus"), payload, Some(fact_ir));
+        let fact_graph = graph_from_fact(&fact).expect("graph_from_fact");
+        let fact_c = first_contract(&fact_graph);
+        assert_eq!(
+            fact_c.body_discharge_eligible,
+            Some(false),
+            "R_body_discharge_default_ignores_kind=1 — feed fact (kind=contract) \
+             without directive must seal bodyDischargeEligible=false (got {:?}). \
+             Replacement: body_policy_from_ir → body_discharge_default_for_kind.",
+            fact_c.body_discharge_eligible
+        );
+
+        // kind=function-contract, no directive → eligible (omitted true)
+        let u_ir = json!({
+            "kind": "function-contract",
+            "name": "mathy::add::callable",
+            "formals": ["a"],
+            "formalSorts": [{"kind": "primitive", "name": "Int"}],
+            "post": {"kind": "atomic", "name": "true", "args": []}
+        });
+        let u = Universe::for_feed_test(test_memento("mathy::add::callable"), Some(u_ir), None);
+        let u_graph = graph_from_universe(&u).expect("graph_from_universe");
+        let u_c = first_contract(&u_graph);
+        // true is omitted from metadata → None means eligible
+        assert!(
+            u_c.body_discharge_eligible.is_none() || u_c.body_discharge_eligible == Some(true),
+            "R_body_discharge_default_ignores_kind=1 — function-contract without \
+             directive must be eligible (omitted or true), got {:?}",
+            u_c.body_discharge_eligible
+        );
+
+        eprintln!(
+            "R_body_discharge_default_ignores_kind=0 — feed fact→false, \
+             function-contract→eligible"
         );
     }
 

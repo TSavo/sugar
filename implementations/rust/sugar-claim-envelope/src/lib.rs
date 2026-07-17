@@ -465,10 +465,14 @@ pub struct MintContractArgs {
     /// contribute to `contract_cid`. Whether this contract may be discharged
     /// by reducing against a function body. Totality axioms such as
     /// `is_ok(result)` are intentionally ineligible: they are trusted kit
-    /// facts, not body-derived equations. Kits are responsible for setting
-    /// this honestly; the verifier preserves and trusts the directive after a
-    /// packaged proof is reloaded. Omitted when `true` to preserve legacy
-    /// bytes and legacy reload behavior.
+    /// facts, not body-derived equations.
+    ///
+    /// At the IR mint/feed boundary the **default** is derived from node kind
+    /// via [`body_discharge_default_for_kind`] (#3901) — assertions never,
+    /// function-contracts yes — so mint and feed cannot disagree when the
+    /// directive is omitted. Kits may still set the directive explicitly.
+    /// Omitted from metadata when `true` to preserve legacy bytes; reload
+    /// of already-minted mementos keeps free-default true for that reason.
     pub body_discharge_eligible: bool,
     /// Loud reason paired with `body_discharge_eligible = false`, stored as
     /// metadata so dependency-proof consumers can preserve the same honesty
@@ -521,8 +525,43 @@ pub enum BodyDischargePolicyWarning {
     },
 }
 
+/// Default body-discharge eligibility derived from the IR node kind (#3901).
+///
+/// Eligibility is a property of the node species, not a free bool that mint
+/// and feed may disagree on:
+/// - `function-contract` — body-bearing by nature; default eligible (kits may
+///   refuse with `bodyDischargeEligible: false` + reason, e.g. totality axioms)
+/// - `contract` (assertions / inv-only claims) and every other kind — never
+///   body-discharged by default
+///
+/// Callers that parse IR policy fields MUST pass this as `default_eligible`
+/// when the directive is omitted. The free-bool `true` default on
+/// [`body_discharge_policy_from_fields`] remains only for **reload** of
+/// already-minted mementos (true is omitted from metadata bytes).
+pub fn body_discharge_default_for_kind(kind: &str) -> bool {
+    matches!(kind, "function-contract")
+}
+
 pub fn body_discharge_policy_from_object(entry: &JsonValue) -> BodyDischargePolicy {
-    body_discharge_policy_from_object_with_default(entry, true)
+    // Prefer kind-derived default when the entry carries IR `kind`. Legacy
+    // callers that pass metadata-only objects (no kind) keep true so reload
+    // of omitted-true function contracts stays byte-compatible.
+    let default = entry
+        .get("kind")
+        .and_then(JsonValue::as_str)
+        .map(body_discharge_default_for_kind)
+        .unwrap_or(true);
+    body_discharge_policy_from_object_with_default(entry, default)
+}
+
+/// Parse body-discharge policy from an IR row using the kind-derived default
+/// (#3901). Prefer this over [`body_discharge_policy_from_object`] at mint/
+/// feed IR boundaries so assertions never silently inherit function defaults.
+pub fn body_discharge_policy_from_object_for_kind(
+    entry: &JsonValue,
+    kind: &str,
+) -> BodyDischargePolicy {
+    body_discharge_policy_from_object_with_default(entry, body_discharge_default_for_kind(kind))
 }
 
 pub fn body_discharge_policy_from_object_with_default(
@@ -546,11 +585,30 @@ pub fn body_discharge_policy_from_fields(
     legacy_reason: Option<&JsonValue>,
     discharge_policy: Option<&JsonValue>,
 ) -> BodyDischargePolicy {
+    // Reload path for minted mementos: true is omitted from metadata, so the
+    // free default remains true. IR mint/feed must use
+    // [`body_discharge_policy_from_fields_with_default`] +
+    // [`body_discharge_default_for_kind`] instead.
     body_discharge_policy_from_fields_with_default(
         legacy_eligible,
         legacy_reason,
         discharge_policy,
         true,
+    )
+}
+
+/// Parse body-discharge policy fields with the kind-derived default (#3901).
+pub fn body_discharge_policy_from_fields_for_kind(
+    legacy_eligible: Option<&JsonValue>,
+    legacy_reason: Option<&JsonValue>,
+    discharge_policy: Option<&JsonValue>,
+    kind: &str,
+) -> BodyDischargePolicy {
+    body_discharge_policy_from_fields_with_default(
+        legacy_eligible,
+        legacy_reason,
+        discharge_policy,
+        body_discharge_default_for_kind(kind),
     )
 }
 
@@ -1833,6 +1891,100 @@ mod tests {
             produced_at: "2026-06-01T00:00:00Z".into(),
             signer_seed: dummy_seed(),
         }
+    }
+
+    /// #3901 instrument: body-discharge default is derived from IR node kind.
+    ///
+    /// Axis `R_body_discharge_default_ignores_kind`:
+    ///   0 when assertions (kind=contract) default ineligible and
+    ///   function-contracts default eligible when the directive is omitted.
+    /// Free bool `true` for every kind is the silent-loss shape mint used
+    /// before this helper — feed already discriminated; mint must share law.
+    #[test]
+    fn r_body_discharge_default_derived_from_kind() {
+        assert!(
+            !body_discharge_default_for_kind("contract"),
+            "R_body_discharge_default_ignores_kind=1 — kind=contract must default \
+             ineligible (assertions are not body-discharged)"
+        );
+        assert!(
+            body_discharge_default_for_kind("function-contract"),
+            "R_body_discharge_default_ignores_kind=1 — kind=function-contract must \
+             default eligible (body-bearing by nature)"
+        );
+        assert!(
+            !body_discharge_default_for_kind("bridge"),
+            "non-contract kinds default ineligible"
+        );
+
+        // Omitted directive + kind on the IR row.
+        let assertion = serde_json::json!({
+            "kind": "contract",
+            "name": "assert_eq_locus",
+            "inv": {"kind": "atomic", "name": "true", "args": []}
+        });
+        let assertion_policy = body_discharge_policy_from_object(&assertion);
+        assert!(
+            !assertion_policy.body_discharge_eligible,
+            "R_body_discharge_default_ignores_kind=1 — kind=contract without \
+             bodyDischargeEligible must not inherit free-bool true. \
+             Replacement: body_discharge_default_for_kind / \
+             body_discharge_policy_from_object_for_kind. got eligible={}",
+            assertion_policy.body_discharge_eligible
+        );
+
+        let function = serde_json::json!({
+            "kind": "function-contract",
+            "name": "mathy::add::callable",
+            "formals": ["a", "b"],
+            "post": {"kind": "atomic", "name": "true", "args": []}
+        });
+        let function_policy = body_discharge_policy_from_object(&function);
+        assert!(
+            function_policy.body_discharge_eligible,
+            "R_body_discharge_default_ignores_kind=1 — kind=function-contract \
+             without directive must default eligible"
+        );
+
+        // Explicit refuse still wins on function-contracts.
+        let refused = body_discharge_policy_from_object_for_kind(
+            &serde_json::json!({
+                "bodyDischargeEligible": false,
+                "bodyDischargeRefusalReason": "totality-axiom"
+            }),
+            "function-contract",
+        );
+        assert!(!refused.body_discharge_eligible);
+        assert_eq!(
+            refused.body_discharge_refusal_reason.as_deref(),
+            Some("totality-axiom")
+        );
+
+        // fields_for_kind mirrors object path.
+        let via_fields = body_discharge_policy_from_fields_for_kind(None, None, None, "contract");
+        assert!(
+            !via_fields.body_discharge_eligible,
+            "fields_for_kind(contract) must default false"
+        );
+        let via_fields_fn =
+            body_discharge_policy_from_fields_for_kind(None, None, None, "function-contract");
+        assert!(
+            via_fields_fn.body_discharge_eligible,
+            "fields_for_kind(function-contract) must default true"
+        );
+
+        // Metadata-only reload (no kind) keeps omitted-true semantics.
+        let reload = body_discharge_policy_from_object(&serde_json::json!({}));
+        assert!(
+            reload.body_discharge_eligible,
+            "minted-memento reload without kind keeps free default true \
+             (true is omitted from metadata bytes)"
+        );
+
+        eprintln!(
+            "R_body_discharge_default_ignores_kind=0 — \
+             contract→ineligible, function-contract→eligible, reload-true preserved"
+        );
     }
 
     #[test]
