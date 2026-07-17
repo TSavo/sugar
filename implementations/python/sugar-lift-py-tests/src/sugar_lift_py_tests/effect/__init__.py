@@ -14,6 +14,7 @@ from .set_method_runtime_effect import SetMethodRuntimeEffect
 from .string_float_conversion_runtime_effect import StringFloatConversionRuntimeEffect
 from .coverage_gap_effect import CoverageGapEffect
 from .conditional_expression_runtime_effect import ConditionalExpressionRuntimeEffect
+from .constructor_runtime_effect import ConstructorRuntimeEffect
 from .call_result_type_runtime_effect import CallResultTypeRuntimeEffect
 from .division_by_zero_runtime_effect import DivisionByZeroRuntimeEffect
 from .dict_unpack_runtime_effect import DictUnpackRuntimeEffect
@@ -57,6 +58,7 @@ __all__ = [
     "StringFloatConversionRuntimeEffect",
     "CoverageGapEffect",
     "ConditionalExpressionRuntimeEffect",
+    "ConstructorRuntimeEffect",
     "CallResultTypeRuntimeEffect",
     "DivisionByZeroRuntimeEffect",
     "DictUnpackRuntimeEffect",
