@@ -152,9 +152,11 @@ def test_requests_package_key_files_lifted_cited_delta() -> None:
     """Measurable package R: 16 lifted / 0 refused / 0 silent on key assert files.
 
     help.py module-level try/import joins are constructed (TemporalContext
-    residual drained). Full package still has non-assert residual panics
-    (structures RecursionError, utils NoneValue.subtract) that do not host the
-    16 stated assert loci. Leave open for that residual under #4016.
+    residual drained). utils NoneValue.subtract is a witnessed TypeError floor
+    (wave-6). Full package still has non-assert residual panics (structures
+    RecursionError; utils later defs may still panic on unrelated floors) that
+    do not host the 16 stated assert loci. Leave open for that residual under
+    #4016.
     """
     files = {
         "__init__.py": (5, 5, 0),
