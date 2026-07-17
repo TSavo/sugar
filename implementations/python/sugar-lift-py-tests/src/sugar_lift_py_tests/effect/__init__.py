@@ -8,6 +8,10 @@ from .attribute_store_runtime_effect import AttributeStoreRuntimeEffect
 from .attribute_augassign_runtime_effect import AttributeAugAssignRuntimeEffect
 from .await_runtime_effect import AwaitRuntimeEffect
 from .block_operator_runtime_effect import BlockOperatorRuntimeEffect
+from .bitwise_xor_runtime_effect import (
+    BitwiseXorRuntimeEffect,
+    runtime_bitwise_xor,
+)
 from .bytes_conversion_runtime_effect import BytesConversionRuntimeEffect
 from .dict_method_runtime_effect import DictMethodRuntimeEffect
 from .map_receiver_runtime_effect import MapReceiverRuntimeEffect
@@ -66,6 +70,8 @@ __all__ = [
     "AttributeAugAssignRuntimeEffect",
     "AwaitRuntimeEffect",
     "BlockOperatorRuntimeEffect",
+    "BitwiseXorRuntimeEffect",
+    "runtime_bitwise_xor",
     "BytesConversionRuntimeEffect",
     "DictMethodRuntimeEffect",
     "MapReceiverRuntimeEffect",
