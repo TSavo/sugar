@@ -94,6 +94,14 @@ class FunctionCallable(FloorValue):
             positional_supplied = arg_values
             keyword_map = {}
 
+        keyword_expansions = tuple(
+            value
+            for name, value in zip(
+                keyword_names, arg_values[len(arg_values) - n_keywords :]
+            )
+            if name == "**"
+        )
+        keyword_map.pop("**", None)
         fixed_positional_count = sum(
             kind in {"positional", "positional-only"} for kind in self.parameter_kinds
         )
@@ -111,16 +119,38 @@ class FunctionCallable(FloorValue):
         )
         has_var_positional = "var-positional" in self.parameter_kinds
         has_var_keyword = "var-keyword" in self.parameter_kinds
-        # Reject ** / * expansion spellings that this binder does not yet own.
-        if any(name == "**" for name in keyword_names) or any(
-            isinstance(value, CallSiteValue) and value.target_name == "*"
-            for value in positional_supplied
+        from .dict_value import DictValue
+        from .symbolic_value import SymbolicValue
+
+        keyword_expansion = (
+            keyword_expansions[0] if len(keyword_expansions) == 1 else None
+        )
+        binds_keyword_expansion_exactly = (
+            keyword_names == ("**",)
+            and self.parameter_kinds
+            and self.parameter_kinds[-1] == "var-keyword"
+            and all(
+                kind in {"positional", "positional-only"}
+                for kind in self.parameter_kinds[:-1]
+            )
+            and len(positional_supplied) == fixed_positional_count
+            and type(keyword_expansion) in (DictValue, SymbolicValue)
+        )
+        # A single mapping expansion binds exactly to a callee-owned **kwargs
+        # formal. Other expansion shapes remain loud: do not invent keys or
+        # confuse missing binder machinery with runtime dependence.
+        if (
+            keyword_expansions
+            and not binds_keyword_expansion_exactly
+            or any(
+                isinstance(value, CallSiteValue) and value.target_name == "*"
+                for value in positional_supplied
+            )
         ):
             bound_values = None
         elif not supported_signature:
             bound_values = None
         else:
-            from .dict_value import DictValue
             from .string_value import StringValue
             from .tuple_value import TupleValue
 
@@ -172,16 +202,19 @@ class FunctionCallable(FloorValue):
                         binding_ok = False
                         break
                 elif kind == "var-keyword":
-                    bound_list.append(
-                        DictValue(
-                            tuple(
-                                (StringValue(key), value)
-                                for key, value in remaining_keywords.items()
+                    if keyword_expansion is not None:
+                        bound_list.append(keyword_expansion)
+                    else:
+                        bound_list.append(
+                            DictValue(
+                                tuple(
+                                    (StringValue(key), value)
+                                    for key, value in remaining_keywords.items()
+                                )
                             )
+                            if remaining_keywords
+                            else DictValue(())
                         )
-                        if remaining_keywords
-                        else DictValue(())
-                    )
                     remaining_keywords.clear()
             # Leftover positionals only lawful with *args.
             try:
