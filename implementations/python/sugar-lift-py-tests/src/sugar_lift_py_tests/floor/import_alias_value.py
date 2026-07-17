@@ -52,6 +52,15 @@ class ImportAliasValue(FloorValue):
     def subscript(self, index, site):
         return self.py_subscript_coordinate(index, site)
 
+    def getattr_static(self, name: str, site):
+        """Resolve builtin getattr through the imported-module floor boundary."""
+        return _runtime_alias_effect_at_site(
+            self,
+            shape=f"getattr({self.bound_name}, {name!r})",
+            site=site,
+            replacement="ImportedModuleGetattrEffect",
+        )
+
     def guarded(self, formula):
         del formula
         return self

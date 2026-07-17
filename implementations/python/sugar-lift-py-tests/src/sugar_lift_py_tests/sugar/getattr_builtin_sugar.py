@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import GetattrRuntimeEffect, runtime_effect_evidence
-from sugar_lift_py_tests.floor import ObjectValue, StringValue
+from sugar_lift_py_tests.floor import ImportAliasValue, ObjectValue, StringValue
 from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.attribute_sugar import project_object_attribute
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -76,6 +76,8 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
         )
 
     def _finish_static(self, receiver, name: str, ctx):
+        if isinstance(receiver, ImportAliasValue):
+            return receiver.getattr_static(name, self.site)
         if not isinstance(receiver, ObjectValue):
             return Incomplete(
                 GetattrRuntimeEffect(
