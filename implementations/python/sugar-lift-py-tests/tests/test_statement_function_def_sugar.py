@@ -13,6 +13,7 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     DictValue,
     FunctionCallable,
+    StringValue,
     TermValue,
     TupleValue,
     UniverseValue,
@@ -20,6 +21,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.ir import ctor, num
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar.keyword_call_sugar import KeywordCallSugar
 from sugar_lift_py_tests.sugar.statement_function_def_sugar import (
     StatementFunctionDefSugar,
 )
@@ -355,6 +357,23 @@ def test_nested_callable_body_bearing_callsite_expansion_stays_loud() -> None:
         )
 
 
+def test_nested_callable_expands_constructed_starred_args_with_keywords() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(*args, **options):\n"
+        "        return args\n"
+        "    return inner(*(1, 2), flag=3)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("args", "options")
+    assert callsite.arg_values == (
+        TupleValue((TermValue(1), TermValue(2))),
+        DictValue(((StringValue("flag"), TermValue(3)),)),
+    )
+
+
 def test_nested_callable_ground_non_mapping_keyword_expansion_stays_loud() -> None:
     with pytest.raises(FactoryPanic) as raised:
         _root_universe(
@@ -398,6 +417,20 @@ def test_callable_self_binding_witness_truthful_sat_and_lying_unsat(tmp_path) ->
         witness
         for witness in StatementFunctionDefSugar.witnesses()
         if witness.name == "statement_function_def_self_binding_return"
+    )
+
+    report = evaluate_seed_witnesses((witness,), tmp_path)
+
+    assert report.is_zero
+
+
+def test_constructed_starred_keyword_witness_truthful_sat_and_lying_unsat(
+    tmp_path,
+) -> None:
+    witness = next(
+        witness
+        for witness in KeywordCallSugar.witnesses()
+        if witness.name == "keyword_call_constructed_starred_return"
     )
 
     report = evaluate_seed_witnesses((witness,), tmp_path)
