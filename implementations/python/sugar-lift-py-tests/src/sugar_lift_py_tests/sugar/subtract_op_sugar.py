@@ -43,11 +43,20 @@ class SubtractOpSugar(Sugar, role=SugarRole.TERM):
             "    return 0\n"
             "\n"
         )
-        return _call_pair(
-            name="subtract_return",
-            owner_sugar="SubtractOpSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        bool_prefix = "def B():\n    return False - 2\n\n"
+        return (
+            _call_pair(
+                name="subtract_return",
+                owner_sugar="SubtractOpSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            _call_pair(
+                name="bool_subtract",
+                owner_sugar="SubtractOpSugar",
+                truthful=bool_prefix + "def test_b():\n    assert B() == -2\n",
+                lying=bool_prefix + "def test_b():\n    assert B() == -1\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
