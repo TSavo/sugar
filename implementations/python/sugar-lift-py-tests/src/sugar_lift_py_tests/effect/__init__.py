@@ -5,6 +5,7 @@ from .append_runtime_effect import AppendRuntimeEffect
 from .async_context_manager_runtime_effect import AsyncContextManagerRuntimeEffect
 from .async_iteration_runtime_effect import AsyncIterationRuntimeEffect
 from .attribute_store_runtime_effect import AttributeStoreRuntimeEffect
+from .attribute_augassign_runtime_effect import AttributeAugAssignRuntimeEffect
 from .await_runtime_effect import AwaitRuntimeEffect
 from .block_operator_runtime_effect import BlockOperatorRuntimeEffect
 from .bytes_conversion_runtime_effect import BytesConversionRuntimeEffect
@@ -52,6 +53,7 @@ __all__ = [
     "AsyncContextManagerRuntimeEffect",
     "AsyncIterationRuntimeEffect",
     "AttributeStoreRuntimeEffect",
+    "AttributeAugAssignRuntimeEffect",
     "AwaitRuntimeEffect",
     "BlockOperatorRuntimeEffect",
     "BytesConversionRuntimeEffect",
