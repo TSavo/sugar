@@ -1,11 +1,18 @@
 """Partition lift-coverage: assertions / minority / Crime 2 forged warrants.
 
-#4013 — dual-axis; #4016 Crime 2 dig-floor warrant detector.
+#4013 — dual-axis + conservation triple (onDisk / accounted / delta);
+#4016 Crime 2 dig-floor warrant detector.
 #4019 — assertions are the default report body (no "majority" brand).
 
 Assertions (claim layer, silent-loss detector — the report's default body):
   stated / lifted+cited / refused-loud / silently-unaccounted
   Gate: silently-unaccounted == 0 (RED if > 0).
+
+Conservation (#4013 — independent AST vs report accounting):
+  onDisk = independent ast assert count (shares NO code with the lift path)
+  accounted = report buckets (lifted+cited + refused-loud / AuditOnlyGap)
+  delta = onDisk - accounted  (silent residue; MUST be 0)
+  Emitted first-class on totals + conservation + perFile rows.
 
 Minority (scope / dig report — NOT a bug when empty dig):
   present / dug / un_asserted
@@ -123,24 +130,47 @@ class LiftCoverageReport:
     minority: MinorityAxis
     crime2: Crime2Axis = field(default_factory=Crime2Axis)
     files: list[str] = field(default_factory=list)
+    # Per-file conservation triple: independent on-disk assert count vs report
+    # accounting (#4013). delta MUST be 0; anything unspoken is silent residue.
+    per_file: list[dict] = field(default_factory=list)
     # Census is the only sanctioned second computation: disagreement with the
     # collapse body count is a lift hole, never silently preferred either way.
     census_disagreement: dict | None = None
 
+    @property
+    def on_disk(self) -> int:
+        """Independent AST count of proof-bearing asserts (N)."""
+        return self.assertions.stated
+
+    @property
+    def accounted(self) -> int:
+        """Report buckets that spoke: lifted+cited + refused-loud (M)."""
+        return self.assertions.lifted_cited + self.assertions.refused_loud
+
+    @property
+    def delta(self) -> int:
+        """Conservation residue N - M. MUST be 0 (silent swallow)."""
+        return self.on_disk - self.accounted
+
     def to_json(self) -> dict:
+        on_disk = self.on_disk
+        accounted = self.accounted
+        delta = self.delta
         body = {
             "kind": "lift-coverage",
-            "version": "4016.crime2.v1",
+            # 4013 conservation triple is first-class; crime2 axes retained.
+            "version": "4013.conservation.v1",
             "files": list(self.files),
             "assertions": self.assertions.to_json(),
             "minority": self.minority.to_json(),
             "crime2": self.crime2.to_json(),
             # Headline totals — never a single folded coverage number.
+            # onDisk / accounted / delta are the #4013 conservation triple.
             "totals": {
                 "stated": self.assertions.stated,
-                "accounted": (
-                    self.assertions.lifted_cited + self.assertions.refused_loud
-                ),
+                "onDisk": on_disk,
+                "accounted": accounted,
+                "delta": delta,
                 "silently_unaccounted": self.assertions.silently_unaccounted,
                 "minority_present": self.minority.present,
                 "minority_dug": self.minority.dug,
@@ -149,6 +179,22 @@ class LiftCoverageReport:
                 "crime2_warranted": self.crime2.warranted,
                 "crime2_forged_warrant": self.crime2.forged_warrant,
             },
+            # First-class conservation block (#4013 acceptance).
+            "conservation": {
+                "onDisk": on_disk,
+                "accounted": accounted,
+                "delta": delta,
+                "gate": "delta == 0",
+                "is_zero": delta == 0,
+                "note": (
+                    "onDisk = independent AST assert count (shares no lift code); "
+                    "accounted = report buckets + AuditOnlyGap enumeration; "
+                    "delta = onDisk - accounted (silent residue; MUST be 0)"
+                ),
+                "perFile": list(self.per_file),
+            },
+            # Flat per-file alias for --report consumers that only read files[].
+            "perFile": list(self.per_file),
         }
         if self.census_disagreement is not None:
             body["census_disagreement"] = dict(self.census_disagreement)
@@ -164,19 +210,72 @@ def account_lift_coverage(
     Minority bodies are the function-contract rows the collapse minted, joined
     to call_edges by bridge_source_symbol / targetSymbol. The AST census is
     only a cross-check: disagreement is a finding, never preferred.
+
+    Conservation (#4013): onDisk (independent AST) vs accounted (report
+    buckets + gaps); delta = onDisk - accounted must be 0.
     """
     payload = report_payload or {}
     assertions = _account_assertions(disk.asserts, payload)
     minority = _account_minority(payload)
     crime2 = _account_crime2(payload)
     disagreement = _census_disagreement(disk.bodies, minority)
+    per_file = _per_file_conservation(assertions)
     return LiftCoverageReport(
         assertions=assertions,
         minority=minority,
         crime2=crime2,
         files=list(disk.files),
+        per_file=per_file,
         census_disagreement=disagreement,
     )
+
+
+def _per_file_conservation(assertions: AssertionAxis) -> list[dict]:
+    """Per-file onDisk / accounted / delta from the on-disk assert partition.
+
+    Each on-disk assert is classified exactly once (lifted / refused / silent).
+    ``lifted_loci`` / ``refused_loci`` / ``silent_loci`` hold the matched on-disk
+    asserts when ``account_lift_coverage`` ran (they carry ``preview`` from the
+    census). Report-side dump loci without preview are ignored for per-file
+    accounting so extras cannot inflate ``accounted``.
+    """
+    rows: dict[str, dict[str, int | str]] = {}
+
+    def ensure(file: str) -> dict[str, int | str]:
+        if file not in rows:
+            rows[file] = {"file": file, "onDisk": 0, "accounted": 0, "delta": 0}
+        return rows[file]
+
+    for locus in assertions.on_disk:
+        ensure(str(locus.get("file") or ""))["onDisk"] = (
+            int(ensure(str(locus.get("file") or ""))["onDisk"]) + 1
+        )
+
+    def is_on_disk_match(locus: Mapping[str, Any]) -> bool:
+        # Census-matched loci always carry preview from AssertLocus.to_json().
+        return "preview" in locus
+
+    for locus in assertions.lifted_loci:
+        if not isinstance(locus, Mapping) or not is_on_disk_match(locus):
+            continue
+        file = str(locus.get("file") or "")
+        ensure(file)["accounted"] = int(ensure(file)["accounted"]) + 1
+    for locus in assertions.refused_loci:
+        if not isinstance(locus, Mapping) or not is_on_disk_match(locus):
+            continue
+        file = str(locus.get("file") or "")
+        ensure(file)["accounted"] = int(ensure(file)["accounted"]) + 1
+
+    # Single-file fallback: when loci are report dumps without preview, the
+    # axis totals still conserve (lifted+refused+silent == stated).
+    if assertions.on_disk and all(int(r["accounted"]) == 0 for r in rows.values()):
+        if len(rows) == 1:
+            only = next(iter(rows.values()))
+            only["accounted"] = assertions.lifted_cited + assertions.refused_loud
+
+    for row in rows.values():
+        row["delta"] = int(row["onDisk"]) - int(row["accounted"])
+    return sorted(rows.values(), key=lambda r: str(r["file"]))
 
 
 def _account_assertions(

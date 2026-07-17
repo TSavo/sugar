@@ -590,3 +590,230 @@ def test_crime2_statistics_forged_warrant_gate_is_zero() -> None:
         raise AssertionError(
             f"crime2 forged_warrant={forged} (must be 0).\n" + "\n".join(lines)
         )
+
+
+# ---------------------------------------------------------------------------
+# #4013 conservation: onDisk / accounted / delta (independent AST vs report)
+# ---------------------------------------------------------------------------
+
+# Gallery wall vendors (#4013 corpus gate). numpy/pandas are full-tree residual
+# axes measured separately when present; stdlib four always run locally.
+_CONSERVATION_VENDORS = (
+    "statistics",
+    "decimal",
+    "fractions",
+    "pathlib",
+    "csv",
+    "datetime",
+)
+
+
+def test_conservation_triple_emitted_and_conserves() -> None:
+    """--report schema: onDisk / accounted / delta first-class; delta == 0."""
+    src = (
+        "def a():\n"
+        "    assert 1 == 1\n"
+        "def b():\n"
+        "    assert 2 == 2\n"
+        "\n"
+        "def test_a():\n"
+        "    assert a() is None or True\n"
+    )
+    disk = census_source(src, file="c.py")
+    # Empty report: every assert is refuse-loud → accounted == onDisk, delta 0.
+    cov = account_lift_coverage(disk, {})
+    body = cov.to_json()
+    totals = body["totals"]
+    cons = body["conservation"]
+    assert totals["onDisk"] == totals["stated"] == 3
+    assert totals["accounted"] == 3
+    assert totals["delta"] == 0
+    assert cons["onDisk"] == 3
+    assert cons["accounted"] == 3
+    assert cons["delta"] == 0
+    assert cons["is_zero"] is True
+    assert cons["gate"] == "delta == 0"
+    assert body["perFile"], "per-file conservation rows required"
+    for row in body["perFile"]:
+        assert set(row) >= {"file", "onDisk", "accounted", "delta"}
+        assert row["delta"] == row["onDisk"] - row["accounted"]
+        assert row["delta"] == 0
+    # Identity: onDisk - accounted == silently_unaccounted under the partition.
+    assert totals["delta"] == totals["silently_unaccounted"]
+
+
+def test_conservation_per_file_rows_for_multi_file_census() -> None:
+    """Per-file onDisk/accounted/delta across a multi-file disk census."""
+    from sugar_lift_py_tests.idd.lift_coverage_census import AssertLocus, DiskCensus
+
+    disk = DiskCensus(
+        files=["a.py", "b.py"],
+        asserts=[
+            AssertLocus("a.py", 1, 0, 1, 10, "assert 1"),
+            AssertLocus("a.py", 2, 0, 2, 10, "assert 2"),
+            AssertLocus("b.py", 1, 0, 1, 10, "assert 3"),
+        ],
+        bodies=[],
+    )
+    # Cite only a.py:1 as warranted; rest refuse-loud.
+    report = {
+        "sourceAudits": [
+            {
+                "file": "a.py",
+                "loci": [
+                    {
+                        "file": "a.py",
+                        "line": 1,
+                        "col": 0,
+                        "status": "warranted",
+                        "ast_kind": "Assert",
+                    }
+                ],
+            }
+        ]
+    }
+    cov = account_lift_coverage(disk, report)
+    body = cov.to_json()
+    assert body["totals"]["onDisk"] == 3
+    assert body["totals"]["accounted"] == 3  # 1 lifted + 2 refuse
+    assert body["totals"]["delta"] == 0
+    by_file = {r["file"]: r for r in body["perFile"]}
+    assert by_file["a.py"]["onDisk"] == 2
+    assert by_file["a.py"]["accounted"] == 2
+    assert by_file["a.py"]["delta"] == 0
+    assert by_file["b.py"]["onDisk"] == 1
+    assert by_file["b.py"]["accounted"] == 1
+    assert by_file["b.py"]["delta"] == 0
+
+
+def test_conservation_bad_twin_drop_from_axis_flips_delta() -> None:
+    """Discrimination: if accounted under-counts onDisk, delta > 0 and RED.
+
+    The production partition never leaves silent residue (refuse-loud fills
+    the gap). This unit twin plants a hand-built axis that violates
+    conservation so the gate field itself is proven measured, not hardcoded.
+    """
+    from sugar_lift_py_tests.idd.lift_coverage_accounting import (
+        AssertionAxis,
+        Crime2Axis,
+        LiftCoverageReport,
+        MinorityAxis,
+    )
+
+    # Hand-built: onDisk=2, accounted=1 → delta=1 (RED).
+    assertions = AssertionAxis(
+        stated=2,
+        lifted_cited=1,
+        refused_loud=0,
+        silently_unaccounted=1,
+        on_disk=[
+            {"file": "t.py", "line": 1, "col": 0, "preview": "assert 1"},
+            {"file": "t.py", "line": 2, "col": 0, "preview": "assert 2"},
+        ],
+        lifted_loci=[
+            {"file": "t.py", "line": 1, "col": 0, "preview": "assert 1"},
+        ],
+        silent_loci=[
+            {"file": "t.py", "line": 2, "col": 0, "preview": "assert 2"},
+        ],
+    )
+    report = LiftCoverageReport(
+        assertions=assertions,
+        minority=MinorityAxis(),
+        crime2=Crime2Axis(),
+        files=["t.py"],
+        per_file=[
+            {"file": "t.py", "onDisk": 2, "accounted": 1, "delta": 1},
+        ],
+    )
+    body = report.to_json()
+    assert body["totals"]["onDisk"] == 2
+    assert body["totals"]["accounted"] == 1
+    assert body["totals"]["delta"] == 1
+    assert body["conservation"]["is_zero"] is False
+    assert body["perFile"][0]["delta"] == 1
+
+
+def test_statistics_report_emits_conservation_triple(
+    statistics_report: dict,
+) -> None:
+    """Live sugar lift --report: onDisk/accounted/delta present; delta==0."""
+    cov = statistics_report.get("liftCoverage") or statistics_report.get(
+        "lift_coverage"
+    )
+    assert cov is not None
+    totals = cov["totals"]
+    cons = cov.get("conservation") or {}
+    assert "onDisk" in totals, f"totals missing onDisk: {sorted(totals)}"
+    assert "accounted" in totals
+    assert "delta" in totals
+    assert totals["delta"] == 0, (
+        f"statistics conservation delta must be 0; got {totals['delta']}; "
+        f"onDisk={totals.get('onDisk')} accounted={totals.get('accounted')}"
+    )
+    assert totals["onDisk"] == totals["accounted"]
+    if cons:
+        assert cons["delta"] == 0
+        assert cons["is_zero"] is True
+    per_file = cov.get("perFile") or cons.get("perFile") or []
+    for row in per_file:
+        assert row["delta"] == 0, f"per-file delta must be 0: {row}"
+
+
+@pytest.mark.parametrize("package", list(_CONSERVATION_VENDORS))
+def test_stdlib_vendor_conservation_delta_is_zero(package: str) -> None:
+    """#4013 corpus gate: independent onDisk vs accounted, delta→0.
+
+    Six stdlib modules. The independent AST census (shares NO code with the
+    lift path) is the onDisk side. Accounted is the report-bucket partition
+    (lifted+cited + refused-loud). Under the refuse-loud doctrine every
+    stated assert is classified, so delta must be 0. Live sugar --report
+    emission of the same triple is gated by
+    ``test_statistics_report_emits_conservation_triple``.
+
+    R = sum(delta) over the corpus; gate is RED while any delta > 0.
+    """
+    path = _resolve_installed_package_path(package)
+    files: list[Path]
+    if path.is_file():
+        files = [path]
+        root = path.parent
+    else:
+        files = sorted(
+            p for p in path.rglob("*.py") if "__pycache__" not in p.parts
+        )[:40]
+        root = path
+        if not files:
+            pytest.skip(f"{package}: no .py files under {path}")
+
+    disk = census_paths(files, root=root)
+    # Factory-instrument-engaged empty report: refuse-loud fills the gap;
+    # conservation identity still holds (delta == 0). The independent census
+    # is the only onDisk source — no lift code is shared.
+    eng_report = {
+        "factoryAuditSummary": {"statusCounts": {"unresolved": 1}},
+        "auditOnlyGaps": [],
+    }
+    cov = account_lift_coverage(disk, eng_report)
+    body = cov.to_json()
+    totals = body["totals"]
+    cons = body["conservation"]
+    total_on_disk = int(totals["onDisk"])
+    total_accounted = int(totals["accounted"])
+    total_delta = int(totals["delta"])
+
+    # Always emit measured R for the instrument run (IDD).
+    print(
+        f"R[{package}]: onDisk={total_on_disk} accounted={total_accounted} "
+        f"delta={total_delta} files={len(disk.files)} asserts={len(disk.asserts)}"
+    )
+    assert "onDisk" in totals and "accounted" in totals and "delta" in totals
+    assert cons["gate"] == "delta == 0"
+    assert total_delta == 0, (
+        f"conservation delta must be 0 for {package}; "
+        f"R=onDisk={total_on_disk} accounted={total_accounted} delta={total_delta}"
+    )
+    assert total_on_disk == total_accounted == len(disk.asserts)
+    assert cons["is_zero"] is True
+    for row in body["perFile"]:
+        assert row["delta"] == 0, f"{package} per-file delta: {row}"

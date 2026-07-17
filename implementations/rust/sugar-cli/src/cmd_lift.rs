@@ -7581,6 +7581,18 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
         .or_else(|| assertions.get("stated").and_then(Value::as_u64))
         .unwrap_or(0);
     let accounted = totals.get("accounted").and_then(Value::as_u64).unwrap_or(0);
+    // #4013 conservation triple: onDisk (independent AST) / accounted / delta.
+    // Prefer first-class fields; fall back to stated / silently_unaccounted.
+    let on_disk = totals
+        .get("onDisk")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            coverage
+                .get("conservation")
+                .and_then(|c| c.get("onDisk"))
+                .and_then(Value::as_u64)
+        })
+        .unwrap_or(stated);
     let silent_n = totals
         .get("silently_unaccounted")
         .and_then(Value::as_u64)
@@ -7590,6 +7602,16 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
                 .and_then(Value::as_u64)
         })
         .unwrap_or(0);
+    let delta = totals
+        .get("delta")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            coverage
+                .get("conservation")
+                .and_then(|c| c.get("delta"))
+                .and_then(Value::as_u64)
+        })
+        .unwrap_or(silent_n);
     let min_present = totals
         .get("minority_present")
         .and_then(Value::as_u64)
@@ -7606,10 +7628,36 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
         .or_else(|| minority.get("un_asserted").and_then(Value::as_u64))
         .unwrap_or(0);
     // Default report body — no section-title qualifier.
+    // #4013: conservation triple is first-class (onDisk/accounted/delta).
+    out.push_str(&format!(
+        "onDisk={on_disk} accounted={accounted} delta={delta}\n"
+    ));
     out.push_str(&format!(
         "stated={stated} accounted={accounted} silently_unaccounted={silent_n}\n"
     ));
-    if silent_n > 0 {
+    // Per-file conservation rows when present.
+    if let Some(per_file) = coverage
+        .get("perFile")
+        .or_else(|| coverage.get("conservation").and_then(|c| c.get("perFile")))
+        .and_then(Value::as_array)
+    {
+        if !per_file.is_empty() {
+            out.push_str("  per-file conservation:\n");
+            for row in per_file.iter().take(64) {
+                let file = row.get("file").and_then(Value::as_str).unwrap_or("?");
+                let f_on = row.get("onDisk").and_then(Value::as_u64).unwrap_or(0);
+                let f_acc = row.get("accounted").and_then(Value::as_u64).unwrap_or(0);
+                let f_delta = row.get("delta").and_then(Value::as_u64).unwrap_or(0);
+                out.push_str(&format!(
+                    "    {file}: onDisk={f_on} accounted={f_acc} delta={f_delta}\n"
+                ));
+            }
+            if per_file.len() > 64 {
+                out.push_str(&format!("    (+{} more files)\n", per_file.len() - 64));
+            }
+        }
+    }
+    if silent_n > 0 || delta > 0 {
         out.push_str("  silent residue (RED — lifter walked past these asserts):\n");
         if let Some(silent) = assertions.get("silent_loci").and_then(Value::as_array) {
             for locus in silent.iter().take(32) {
@@ -16056,6 +16104,12 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         assert!(
             human.contains("stated=2 accounted=1 silently_unaccounted=1"),
             "default assertion fields without section title; got:\n{human}"
+        );
+        // #4013 conservation triple is first-class on the human surface.
+        assert!(
+            human.contains("onDisk=2 accounted=1 delta=1")
+                || (human.contains("onDisk=2") && human.contains("delta=1")),
+            "conservation triple onDisk/accounted/delta must appear; got:\n{human}"
         );
         assert!(
             human.contains("t.py:20  orphan") || human.contains("orphan"),
