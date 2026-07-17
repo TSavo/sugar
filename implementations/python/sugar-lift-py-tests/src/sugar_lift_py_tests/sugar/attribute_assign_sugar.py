@@ -90,7 +90,38 @@ class AttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
 
 def assign_attribute_value(*, receiver, field_name, value, key, site, ctx, owner):
     """The one attribute-store door shared by plain and augmented assignment."""
-    from sugar_lift_py_tests.floor import ObjectValue, StringValue
+    from sugar_lift_py_tests.floor import (
+        CallSiteValue,
+        FunctionCallable,
+        ImportAliasValue,
+        ObjectValue,
+        StringValue,
+    )
+
+    if (
+        type(receiver) is CallSiteValue
+        and receiver.target_name == "options"
+        and receiver.body is None
+        and len(receiver.arg_values) == 1
+        and type(receiver.arg_values[0]) is ImportAliasValue
+        and receiver.arg_values[0].import_target == "pandas._config.config"
+    ):
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+        from sugar_lift_py_tests.sugar.keyword_call_sugar import (
+            _pandas_option_callback_binding,
+        )
+
+        callback = ctx.temporal.value_if_bound(
+            _pandas_option_callback_binding(field_name)
+        )
+        if isinstance(callback, FunctionCallable):
+            return callback.call_scope_updates(
+                (StringValue(field_name),), ctx, site
+            ).and_then(
+                lambda updates: Complete(
+                    ScopeRebinds((*updates.bindings, (key, value)))
+                )
+            )
 
     if isinstance(receiver, ObjectValue):
         descriptor = receiver.class_field_value(field_name)
