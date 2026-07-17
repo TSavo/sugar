@@ -36,6 +36,22 @@ class NativeCallableValue(FloorValue):
             return runtime_subtract(self, other, site)
         return super().subtract(other, site)
 
+    def add(self, other, site):
+        """Preserve addition when both native and call-result coordinates exist.
+
+        This does not claim the call's result type or fold the sum.  It only
+        constructs the exact ``+(native-coordinate, call-coordinate)`` term
+        already named by the source operation.  A free symbolic peer carries
+        no callable coordinate and therefore remains on the loud floor.
+        """
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+        if type(other) is CallSiteValue:
+            from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+            return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+        return super().add(other, site)
+
     def divide(self, other, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
