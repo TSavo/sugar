@@ -798,6 +798,16 @@ def resolve_install_source_value(
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
+    if _installed_class_is_exception(
+        module_name,
+        attr,
+        parsed,
+        resolving=frozenset(),
+    ):
+        from sugar_lift_py_tests.floor import ExceptionClassValue
+
+        return ExceptionClassValue(import_target)
+
     function = _resolve_qualified_function_fragment(import_target, resolving=_resolving)
     if function is not None:
         defining_source = function.node._sugar_source  # type: ignore[attr-defined]
@@ -866,6 +876,118 @@ def resolve_install_source_value(
             if isinstance(outcome, Incomplete):
                 return None
             return complete_value(outcome, owner="install-source imported value")
+    return None
+
+
+def _installed_class_is_exception(
+    module_name: str,
+    class_name: str,
+    parsed: ast.Module,
+    *,
+    resolving: frozenset[str],
+) -> bool:
+    """Prove one exact source class has transitive exception ancestry."""
+    qualified = f"{module_name}.{class_name}"
+    if qualified in resolving:
+        return False
+    resolving = resolving | {qualified}
+    declarations = [
+        statement
+        for statement in parsed.body
+        if isinstance(statement, ast.ClassDef) and statement.name == class_name
+    ]
+    if len(declarations) != 1:
+        return False
+    imports = _static_import_targets(module_name, parsed)
+    classes = {
+        statement.name: statement
+        for statement in parsed.body
+        if isinstance(statement, ast.ClassDef)
+    }
+    return any(
+        _base_is_exception(
+            base,
+            module_name=module_name,
+            parsed=parsed,
+            classes=classes,
+            imports=imports,
+            resolving=resolving,
+        )
+        for base in declarations[0].bases
+    )
+
+
+def _base_is_exception(
+    base: ast.expr,
+    *,
+    module_name: str,
+    parsed: ast.Module,
+    classes: dict[str, ast.ClassDef],
+    imports: dict[str, str],
+    resolving: frozenset[str],
+) -> bool:
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        BUILTIN_EXCEPTION_NAMES,
+    )
+
+    if isinstance(base, ast.Name):
+        if base.id in BUILTIN_EXCEPTION_NAMES:
+            return True
+        if base.id in classes:
+            return _installed_class_is_exception(
+                module_name, base.id, parsed, resolving=resolving
+            )
+        target = imports.get(base.id)
+    else:
+        target = _dotted_ast_name(base)
+        if target is not None:
+            head, separator, rest = target.partition(".")
+            imported = imports.get(head)
+            if imported is not None:
+                target = f"{imported}.{rest}" if separator else imported
+    if target is None or "." not in target or target in resolving:
+        return False
+    target_module, target_name = target.rsplit(".", 1)
+    installed = _installed_source(target_module)
+    if installed is None:
+        return False
+    source, sourcefile = installed
+    try:
+        target_tree = parsed_tree(source, sourcefile)
+    except SyntaxError:
+        return False
+    return _installed_class_is_exception(
+        target_module, target_name, target_tree, resolving=resolving
+    )
+
+
+def _static_import_targets(module_name: str, parsed: ast.Module) -> dict[str, str]:
+    targets: dict[str, str] = {}
+    for statement in parsed.body:
+        if isinstance(statement, ast.ImportFrom):
+            imported_module = _absolute_import_from_module(
+                module_name, statement.module, statement.level
+            )
+            if imported_module is None:
+                continue
+            for alias in statement.names:
+                if alias.name != "*":
+                    targets[alias.asname or alias.name] = (
+                        f"{imported_module}.{alias.name}"
+                    )
+        elif isinstance(statement, ast.Import):
+            for alias in statement.names:
+                targets[alias.asname or alias.name.split(".")[0]] = alias.name
+    return targets
+
+
+def _dotted_ast_name(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        receiver = _dotted_ast_name(node.value)
+        if receiver is not None:
+            return f"{receiver}.{node.attr}"
     return None
 
 
