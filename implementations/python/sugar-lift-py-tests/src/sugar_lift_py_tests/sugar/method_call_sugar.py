@@ -170,6 +170,9 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                         body=body,
                         site=self.site,
                         exit_suppression=exit_suppression,
+                        runtime_dispatch_receiver=(
+                            receiver_floor if self.import_target is None else None
+                        ),
                     )
                 )
 
@@ -188,6 +191,9 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                         body=body,
                         site=self.site,
                         exit_suppression=exit_suppression,
+                        runtime_dispatch_receiver=(
+                            receiver_floor if self.import_target is None else None
+                        ),
                     )
                 )
             )
@@ -293,8 +299,12 @@ def _static_exit_suppression_contract(source_name: str, values: tuple):
     if source_name in {
         "open",
         "builtins.open",
+        "contextlib.closing",
         "numpy.errstate",
         "numpy.nditer",
+        "pandas.HDFStore",
+        "pandas._testing.raises_chained_assignment_error",
+        "pandas.option_context",
     }:
         return ExitSuppressionContract.never_suppresses()
     if source_name != "contextlib.suppress" or not values:

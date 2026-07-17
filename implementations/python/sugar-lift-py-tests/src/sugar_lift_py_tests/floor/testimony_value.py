@@ -42,6 +42,16 @@ class TestimonyValue(FloorValue):
             for edge in entry.edge_contribution(self.name)
         )
 
+    def runtime_effects(self):
+        """Return every typed terminal effect carried by this testimony block."""
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return tuple(
+            entry.effect
+            for entry in self.record.statements
+            if isinstance(entry, Incomplete)
+        )
+
     def payload_rows(self, def_memento):
         # Testimony mints NO function-contract row. Each fact is a contract row.
         # Ground callsite equality rides under its `#euf#` key (verifier

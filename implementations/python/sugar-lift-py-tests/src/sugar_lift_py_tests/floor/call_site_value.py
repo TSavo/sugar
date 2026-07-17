@@ -64,6 +64,11 @@ class CallSiteValue(FloorValue):
     # Source-authenticated context-manager evidence.  None means undecidable,
     # never "does not suppress".
     exit_suppression: ExitSuppressionContract | None = None
+    # The receiver whose runtime type selects a method body. Plain calls and
+    # exact imported methods leave this absent; it is not inferred from args.
+    runtime_dispatch_receiver: FloorValue | None = dataclass_field(
+        default=None, compare=False
+    )
 
     def to_term(self, *, owner: str):
         del owner

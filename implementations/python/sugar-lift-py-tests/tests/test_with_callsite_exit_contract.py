@@ -22,8 +22,9 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
-from sugar_lift_py_tests.ir import ctor
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.ir import ctor, make_var
+from sugar_lift_py_tests.lift_rpc import lift_file_payload
+from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.sugar.method_call_sugar import (
     _static_exit_suppression_contract,
@@ -239,7 +240,16 @@ def test_contextlib_suppress_constructs_named_static_contract() -> None:
 
 @pytest.mark.parametrize(
     "coordinate",
-    ("open", "builtins.open", "numpy.errstate", "numpy.nditer"),
+    (
+        "open",
+        "builtins.open",
+        "contextlib.closing",
+        "numpy.errstate",
+        "numpy.nditer",
+        "pandas.HDFStore",
+        "pandas._testing.raises_chained_assignment_error",
+        "pandas.option_context",
+    ),
 )
 def test_exact_non_suppressing_manager_coordinates_construct_contract(
     coordinate: str,
@@ -251,7 +261,16 @@ def test_exact_non_suppressing_manager_coordinates_construct_contract(
 
 @pytest.mark.parametrize(
     "coordinate",
-    ("project.open", "project.errstate", "project.nditer", "numpy.unknown"),
+    (
+        "project.closing",
+        "project.HDFStore",
+        "project.open",
+        "project.option_context",
+        "project.raises_chained_assignment_error",
+        "project.errstate",
+        "project.nditer",
+        "numpy.unknown",
+    ),
 )
 def test_similar_non_manager_coordinates_do_not_gain_exit_contract(
     coordinate: str,
@@ -281,6 +300,48 @@ def test_shadowed_open_keeps_unknown_exit_loud() -> None:
 
     assert raised.value.info.owner == "WithSugar"
     assert "__exit__" in raised.value.info.requested
+
+
+def test_symbolic_receiver_manager_exit_is_a_runtime_operand() -> None:
+    receiver = SymbolicValue(make_var("pytest_fixture"))
+    manager = CallSiteValue(
+        target_name="context",
+        arg_values=(receiver,),
+        parameters=(),
+        term=ctor("call:context", [receiver.to_term(owner="test")]),
+        body=None,
+        runtime_dispatch_receiver=receiver,
+    )
+
+    outcome = compose_block(
+        "    with manager:\n" "        raise ValueError('boom')\n",
+        binds={"manager": manager},
+    )
+
+    assert isinstance(outcome.statements[0], Incomplete)
+    assert (
+        type(outcome.statements[0].effect).__name__ == "ContextManagerExitRuntimeEffect"
+    )
+    assert outcome.statements[0].effect.witness.operand == receiver.to_term(
+        owner="test"
+    )
+
+
+def test_testimony_report_accounts_for_runtime_manager_exit() -> None:
+    payload = lift_file_payload(
+        "def test_manager_exit(manager):\n"
+        "    with manager.context():\n"
+        "        raise ValueError('boom')\n",
+        "test_manager_exit.py",
+    )
+
+    assert len(payload.effects) == 1
+    assert type(payload.effects[0].effect).__name__ == (
+        "ContextManagerExitRuntimeEffect"
+    )
+    assert (
+        "runtime-selected context manager exit" in payload.effects[0].to_rpc()["reason"]
+    )
 
 
 def test_contextlib_suppress_does_not_hide_unlisted_exception() -> None:
