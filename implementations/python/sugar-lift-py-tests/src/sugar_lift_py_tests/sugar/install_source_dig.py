@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.machinery
+import importlib.util
 import ast
 import copy
 import functools
@@ -540,6 +541,43 @@ def _static_module_exports(module_name: str) -> frozenset[str] | None:
     if len(manifests) != 1:
         return None
     return frozenset(manifests[0])
+
+
+def resolved_star_import_names(module_name: str) -> tuple[str, ...] | None:
+    """Return the closed, lift-decidable names bound by one star import.
+
+    Source modules qualify only when a literal ``__all__`` is present. A
+    computed manifest or an implicit source-module namespace depends on
+    executing arbitrary module code, so it remains a construction panic.
+    Native extensions and builtins have an exact resolved module namespace;
+    Python's star-import rule selects ``__all__`` or its public names.
+    """
+    exports = _static_module_exports(module_name)
+    if exports is not None:
+        return tuple(sorted(exports))
+
+    native_origin = _installed_native_extension(module_name)
+    if native_origin is None:
+        try:
+            spec = importlib.util.find_spec(module_name)
+        except (ImportError, ModuleNotFoundError, ValueError):
+            spec = None
+        if spec is None or spec.loader is not importlib.machinery.BuiltinImporter:
+            return None
+    try:
+        module = importlib.import_module(module_name)
+    except (ImportError, ModuleNotFoundError):
+        return None
+    manifest = getattr(module, "__all__", None)
+    if manifest is not None:
+        if not isinstance(manifest, (list, tuple)) or not all(
+            isinstance(name, str) for name in manifest
+        ):
+            return None
+        names = tuple(manifest)
+    else:
+        names = tuple(name for name in vars(module) if not name.startswith("_"))
+    return tuple(sorted(set(names)))
 
 
 def resolve_install_source_funcdef(import_target: str):
