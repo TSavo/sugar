@@ -7,22 +7,29 @@ from __future__ import annotations
 
 import ast
 
+import pytest
 from factory_reduce import fol, reduce_term
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
-from sugar_lift_py_tests.factory import GapKind, GapLocus
+from sugar_lift_py_tests.factory import FactoryPanic, GapKind, GapLocus
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     Bv32Value,
+    CallSiteValue,
     EncodedStringValue,
     StringValue,
     SymbolicValue,
+    TermValue,
 )
+from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
+from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
+from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _temporal(binds: dict | None = None) -> TemporalContext:
@@ -50,13 +57,76 @@ def test_add_folds_concrete_literals():
     assert fol(reduce_term("2 + 3")) == fol(num(5))
 
 
-def test_division_by_zero_stays_runtime_effect():
-    outcome, operation_log = _reduce_outcome_with_log("1 // 0")
+def test_ground_floor_division_by_zero_stays_loud():
+    with pytest.raises(
+        FactoryPanic,
+        match="construct exact floor-division-by-zero exception",
+    ):
+        _reduce_outcome_with_log("1 // 0")
 
-    assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect).__name__ == "DivisionByZeroRuntimeEffect"
-    assert "division by zero" in outcome.reason
-    assert operation_log == []
+
+def test_term_floor_division_constructs_symbolic_divisor_coordinate():
+    outcome = TermValue(8).floor_divide(
+        SymbolicValue(make_var("divisor")),
+        "floor.py:1",
+    )
+
+    assert fol(outcome.value.term) == fol(ctor("//", [num(8), make_var("divisor")]))
+
+
+def test_term_floor_division_constructs_callsite_divisor_coordinate():
+    divisor = CallSiteValue(
+        "opaque",
+        (),
+        (),
+        ctor("call:opaque", []),
+        None,
+    )
+
+    outcome = TermValue(8).floor_divide(divisor, "floor.py:1")
+
+    assert fol(outcome.value.term) == fol(ctor("//", [num(8), ctor("call:opaque", [])]))
+
+
+def test_term_floor_division_rejects_ground_non_numeric_wrong_twin():
+    with pytest.raises(FactoryPanic, match="owner=floor_divide"):
+        TermValue(8).floor_divide(StringValue("divisor"), "floor.py:1")
+
+
+def test_term_floor_division_conserves_symbolic_assertion_without_effect():
+    source = "def test_a(divisor):\n    assert 8 // divisor == 8 // divisor\n"
+
+    payload, gaps = audit_lift_file(source, "floor_divide.py")
+    rpc = payload.to_rpc()
+    assertions = account_lift_coverage(
+        census_source(source, file="floor_divide.py"), rpc
+    ).to_json()["assertions"]
+
+    assert gaps == []
+    assert rpc["effects"] == []
+    assert assertions["stated"] == 1
+    assert assertions["lifted_cited"] == 1
+    assert assertions["silently_unaccounted"] == 0
+
+
+def test_term_floor_division_truthful_and_lying_twins_refute(tmp_path):
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful",
+        "def test_a(divisor):\n"
+        "    assert (8 // divisor == 8 // divisor)"
+        " & (divisor == 1) & (divisor == 1)\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying",
+        "def test_a(divisor):\n"
+        "    assert (8 // divisor == 8 // divisor)"
+        " & (divisor == 1) & (not (divisor == 1))\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+    assert "FloorDivideOpSugar" in truthful.selected_sugars
+    assert "FloorDivideOpSugar" in lying.selected_sugars
 
 
 def test_binop_dispatches_through_floor_operation_log():
