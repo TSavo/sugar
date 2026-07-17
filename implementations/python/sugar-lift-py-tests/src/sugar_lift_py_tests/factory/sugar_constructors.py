@@ -434,18 +434,13 @@ def _ctx_with_module_global_binds(site: SourceFragment, ctx):
                 )
             folded_ctx = folded_ctx.with_temporal(temporal)
             continue
-        try:
-            outcome = folded_ctx.build_body(prior, SugarRole.STATEMENT).reduce(
-                folded_ctx
-            )
-        except (TypeError, ValueError, AssertionError):
-            continue
+        # #4203: no soft TypeError/Exception continue past construction. A missing
+        # shape is Incomplete (leave name unbound) or FactoryPanic (loud). Soft
+        # continues laundered construction bugs into absent globals.
+        outcome = folded_ctx.build_body(prior, SugarRole.STATEMENT).reduce(folded_ctx)
         if isinstance(outcome, Incomplete):
             continue
-        try:
-            complete_value(outcome, owner="sugar_constructors.module_global_binds")
-        except Exception:
-            continue
+        complete_value(outcome, owner="sugar_constructors.module_global_binds")
         folded_ctx = outcome.extend_scope(folded_ctx)
     return folded_ctx
 

@@ -329,7 +329,7 @@ def _malloc_trim() -> bool:
     try:
         _MALLOC_TRIM(0)
         return True
-    except Exception as exc:  # never crash the plugin, but surface the anomaly
+    except OSError as exc:  # never crash the plugin, but surface the anomaly
         _TRANSPORT_LOG.warning(
             "malloc_trim_failed",
             extra={"stage": "resident.trim", "error": repr(exc)},
@@ -1458,8 +1458,8 @@ def _module_import_temporal(
                     )
                 )
                 continue
-            except (TypeError, ValueError, AssertionError):
-                continue
+            # #4203: no soft TypeError continue past seed construction. Incomplete
+            # leaves the binding unbound; FactoryPanic is recovery-gated above.
             if isinstance(outcome, Incomplete):
                 continue
             temporal = outcome.extend_scope(ctx).temporal
@@ -1481,11 +1481,10 @@ def _iter_liftable_function_defs(module):
         if observed in {"FunctionDef", "AsyncFunctionDef"}:
             yield stmt
         elif observed == "ClassDef":
-            # class body may contain methods and nested classes
-            try:
-                stack[0:0] = list(stmt.class_body())
-            except Exception:
-                continue
+            # class body may contain methods and nested classes.
+            # #4203: class_body is total for ClassDef; soft Exception continue
+            # hid nested methods from the recovered frontier (false-clean file).
+            stack[0:0] = list(stmt.class_body())
 
 
 def _module_import_maps(module, filename: str | None = None) -> "tuple[dict, dict]":

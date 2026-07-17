@@ -27,6 +27,7 @@
 
 from __future__ import annotations
 
+import binascii
 from typing import Any, Callable
 
 from .canonicalizer import blake3_512_of
@@ -116,5 +117,5 @@ def _verify_signature(message_cid: Any, signature_string: Any, signer: Any) -> b
         vk = VerifyKey(base64.b64decode(pubkey_b64))
         vk.verify(message_cid.encode("utf-8"), base64.b64decode(sig_b64))
         return True
-    except (BadSignatureError, ValueError, Exception):
+    except (BadSignatureError, ValueError, TypeError, binascii.Error):
         return False
