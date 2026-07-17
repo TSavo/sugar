@@ -31,10 +31,10 @@ shape or add an effect.
 - Consumes: `SequentialDigBody.desugar(ctx)`, `Complete(BlockValue(...))`.
 - Produces: a positive continuing-block test and a halted-block panic twin.
 
-- [ ] Add a continuing `BlockValue` with `GuardedRaise`, exact rebinds, and a
+- [x] Add a continuing `BlockValue` with `GuardedRaise`, exact rebinds, and a
       following unguarded `ReturnValue`.
-- [ ] Add the same record with `can_fall_through=False` as the loud twin.
-- [ ] Run both tests and confirm the positive arm fails at
+- [x] Add the same record with `can_fall_through=False` as the loud twin.
+- [x] Run both tests and confirm the positive arm fails at
       `owner=SequentialDigBody` while the twin already panics.
 
 ### Task 2: Exact block-state construction
@@ -46,10 +46,10 @@ shape or add an effect.
 - Consumes: reduced `BlockValue.can_fall_through` and contribution entries.
 - Produces: guarded exit selection over an exact later fallback.
 
-- [ ] Accept only a continuing `BlockValue` whose non-exits are rebinds or
+- [x] Accept only a continuing `BlockValue` whose non-exits are rebinds or
       existing support testimony.
-- [ ] Run the discrimination and the unchanged mixed-outcome regression green.
-- [ ] Add and run a truthful/lying real-solver witness.
+- [x] Run the discrimination and the unchanged mixed-outcome regression green.
+- [x] Add and run a truthful/lying real-solver witness.
 
 ### Task 3: Named receipt and publication
 
@@ -60,7 +60,7 @@ shape or add an effect.
 - Consumes: current-main pandas vendor files and the focused tests.
 - Produces: conservation receipt and a ready non-closing PR for #5087.
 
-- [ ] Replay both named representatives and record owner movement with
+- [x] Replay both named representatives and record owner movement with
       `silent=0`.
 - [ ] Rebase on final `origin/main`; rerun the witness fresh.
 - [ ] Run the RuntimeEffect constructor census only if an effect site changed,

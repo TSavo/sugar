@@ -405,6 +405,41 @@ def test_sequential_dig_terminal_face_state_witness_truthful_sat_lying_unsat(
     assert lying.verdict == "unsat"
 
 
+def test_sequential_dig_continuing_block_state_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+
+    prefix = (
+        "def A(start, end, unit):\n"
+        "    if start is None or end is None:\n"
+        "        raise ValueError('missing endpoint')\n"
+        "    if unit is None:\n"
+        "        if start == 1 and end == 2:\n"
+        "            unit = 's'\n"
+        "        elif start == 1:\n"
+        "            unit = 'ms'\n"
+        "        else:\n"
+        "            raise ValueError('unknown unit')\n"
+        "        if unit == 's':\n"
+        "            unit = 'us'\n"
+        "    result = unit\n"
+        "    return result\n"
+        "\n"
+    )
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful",
+        prefix + "def test_a():\n    assert A(1, 2, 'ns') == 'ns'\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying",
+        prefix + "def test_a():\n    assert A(1, 2, 'ns') == 'ms'\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+
 def test_sequential_dig_guarded_raise_with_state_stays_loud() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
     from sugar_lift_py_tests.floor import BlockValue, GuardedRaise, ScopeRebind
@@ -799,6 +834,113 @@ def test_sequential_dig_continuing_face_state_stays_loud() -> None:
     ctx = FactoryBuildContext(filename="wrong_twin.py", catalog=default_catalog())
     with pytest.raises(FactoryPanic):
         SequentialDigBody((_MixedFaces(), _Fallback())).desugar(ctx)
+
+
+def test_sequential_dig_consumes_continuing_block_state_before_fallback() -> None:
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.factory.build import default_catalog
+    from sugar_lift_py_tests.floor import (
+        BlockValue,
+        GuardedRaise,
+        GuardedScopeRebind,
+        ScopeRebind,
+    )
+    from sugar_lift_py_tests.floor.exceptional_exit_value import ExceptionalExitValue
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import make_var, not_
+    from sugar_lift_py_tests.outcome import Complete
+
+    invalid = make_var("invalid")
+    raised = RaiseEffect(
+        exception_name="ValueError",
+        blame="pandas/core/indexes/datetimes.py:1465:12",
+        source_sha256="0" * 64,
+    )
+
+    class _ContinuingBlock:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                BlockValue(
+                    (
+                        GuardedRaise((invalid,), raised),
+                        GuardedScopeRebind(
+                            (not_(invalid),),
+                            "candidate",
+                            TermValue("conditional"),
+                        ),
+                        ScopeRebind("unit", TermValue("us")),
+                    ),
+                    can_fall_through=True,
+                )
+            )
+
+    class _Fallback:
+        audit_row = None
+
+        def reduce(self, ctx):
+            return Complete(ReturnValue(ctx.temporal.value_if_bound("unit")))
+
+    ctx = FactoryBuildContext(filename="repro.py", catalog=default_catalog())
+    outcome = SequentialDigBody((_ContinuingBlock(), _Fallback())).desugar(ctx)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == GuardedValue(
+        invalid,
+        ExceptionalExitValue(raised),
+        TermValue("us"),
+    )
+
+
+def test_sequential_dig_halted_block_state_stays_loud() -> None:
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.factory.build import default_catalog
+    from sugar_lift_py_tests.floor import BlockValue, GuardedRaise, ScopeRebind
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.outcome import Complete
+
+    invalid = make_var("invalid")
+
+    class _HaltedBlock:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                BlockValue(
+                    (
+                        GuardedRaise(
+                            (invalid,),
+                            RaiseEffect(
+                                "ValueError",
+                                "wrong_twin.py:2:8",
+                                "0" * 64,
+                            ),
+                        ),
+                        ScopeRebind("unit", TermValue("us")),
+                    ),
+                    can_fall_through=False,
+                )
+            )
+
+    class _UnreachableFallback:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(ReturnValue(TermValue("invented")))
+
+    ctx = FactoryBuildContext(filename="wrong_twin.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic):
+        SequentialDigBody((_HaltedBlock(), _UnreachableFallback())).desugar(ctx)
 
 
 def test_sequential_dig_mixed_guarded_exit_and_state_stays_loud() -> None:
