@@ -67,6 +67,24 @@ class MultiplyOpSugar(Sugar, role=SugarRole.TERM):
                     "    assert A() == 2\n"
                 ),
             ),
+            _call_pair(
+                name="term_times_len_return",
+                owner_sugar="MultiplyOpSugar",
+                truthful=(
+                    "def A():\n"
+                    "    kinds = [1, 2]\n"
+                    "    return 4 * len(kinds)\n\n"
+                    "def test_a():\n"
+                    "    assert A() == 8\n"
+                ),
+                lying=(
+                    "def A():\n"
+                    "    kinds = [1, 2]\n"
+                    "    return 4 * len(kinds)\n\n"
+                    "def test_a():\n"
+                    "    assert A() == 9\n"
+                ),
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

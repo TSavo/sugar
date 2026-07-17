@@ -63,6 +63,19 @@ class ComprehensionValue(FloorValue):
             return runtime_subtract(self, other, site)
         return super().subtract(other, site)
 
+    def multiply(self, other, site):
+        """Preserve repetition when the count is a constructed Python integer."""
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+
+        if (
+            getattr(self.term, "name", None) == "py.listcomp"
+            and type(other) is TermValue
+            and type(other.value) is int
+        ):
+            return SymbolicValue(self.term).multiply(other, site)
+        return super().multiply(other, site)
+
     def subscript(self, index, site):
         # A runtime comprehension still has Python collection semantics, but
         # neither its members nor its cardinality are available at lift time.
