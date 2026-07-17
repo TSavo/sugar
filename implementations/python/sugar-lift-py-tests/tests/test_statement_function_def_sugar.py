@@ -15,13 +15,14 @@ from sugar_lift_py_tests.floor import (
     FunctionCallable,
     RaiseValue,
     StringValue,
+    SymbolicValue,
     TermValue,
     TupleValue,
     UniverseValue,
 )
-from sugar_lift_py_tests.ir import ctor, num
+from sugar_lift_py_tests.ir import ctor, make_var, num
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
-from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.keyword_call_sugar import KeywordCallSugar
 from sugar_lift_py_tests.sugar.statement_function_def_sugar import (
     StatementFunctionDefSugar,
@@ -313,6 +314,62 @@ def test_nested_callable_binds_single_keyword_expansion_to_var_keyword() -> None
     ) == TermValue(5)
 
 
+def test_nested_callable_binds_default_before_single_keyword_expansion() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(required, optional=4, **options):\n"
+        '        return optional + options["value"]\n'
+        '    return inner(1, **{"value": 5})\n'
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.arg_values == (
+        TermValue(1),
+        TermValue(4),
+        DictValue(((StringValue("value"), TermValue(5)),)),
+    )
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="default plus keyword expansion", project_callsite=False
+    ) == TermValue(9)
+
+
+def test_nested_callable_opaque_expansion_has_authenticated_binding_effect() -> None:
+    site = SourceFragment.from_source(
+        "inner(flag=1, **options)\n", "nested.py"
+    ).statements()[0]
+    callable_value = FunctionCallable(
+        "inner",
+        parameters=("required", "kwargs"),
+        parameter_kinds=("positional", "var-keyword"),
+        positional_defaults=(TermValue(4),),
+        body=object(),
+    )
+    expansion = SymbolicValue(make_var("options"))
+
+    outcome = callable_value.callsite(
+        (TermValue(1), expansion),
+        ("flag", "**"),
+        site,
+    )
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "CallableArgumentBindingRuntimeEffect"
+    assert outcome.effect.runtime_operand.term == expansion.term
+    assert outcome.effect.witness.operand == expansion.term
+
+
+def test_ground_keyword_expansion_cannot_mint_argument_binding_effect() -> None:
+    from sugar_lift_py_tests.effect import runtime_callable_argument_binding
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    site = SourceFragment.from_source("f(**{})\n", "ground.py").statements()[0]
+
+    with pytest.raises(FactoryPanic, match="owner=RuntimeEffect"):
+        runtime_callable_argument_binding(DictValue(()), site)
+
+
 def test_nested_callable_binds_bodyless_callsite_keyword_expansion() -> None:
     universe = _root_universe(
         "def outer(self):\n"
@@ -430,17 +487,23 @@ def test_nested_callable_valid_keyword_still_constructs_callsite() -> None:
     assert value.arg_values == (TermValue(1),)
 
 
-def test_nested_callable_keyword_expansion_without_var_keyword_stays_loud() -> None:
-    with pytest.raises(FactoryPanic) as raised:
-        _root_universe(
-            "def outer(options):\n"
-            "    def inner(value):\n"
-            "        return value\n"
-            "    return inner(**options)\n"
-        )
+def test_nested_callable_opaque_expansion_to_fixed_signature_is_runtime() -> None:
+    site = SourceFragment.from_source(
+        "inner(**options)\n", "nested.py"
+    ).statements()[0]
+    callable_value = FunctionCallable(
+        name="inner",
+        parameters=("value",),
+        parameter_kinds=("positional",),
+        body=object(),
+    )
+    expansion = SymbolicValue(make_var("options"))
 
-    assert raised.value.info.owner == "FunctionCallable"
-    assert raised.value.info.requested == "bind call arguments to a function signature"
+    outcome = callable_value.callsite((expansion,), ("**",), site)
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "CallableArgumentBindingRuntimeEffect"
+    assert outcome.effect.witness.operand == expansion.term
 
 
 def test_keyword_expansion_witness_truthful_sat_and_lying_unsat(tmp_path) -> None:
@@ -448,6 +511,21 @@ def test_keyword_expansion_witness_truthful_sat_and_lying_unsat(tmp_path) -> Non
         witness
         for witness in StatementFunctionDefSugar.witnesses()
         if witness.name == "statement_function_def_keyword_expansion_return"
+    )
+
+    report = evaluate_seed_witnesses((witness,), tmp_path)
+
+    assert report.is_zero
+
+
+def test_default_keyword_expansion_witness_truthful_sat_and_lying_unsat(
+    tmp_path,
+) -> None:
+    witness = next(
+        witness
+        for witness in StatementFunctionDefSugar.witnesses()
+        if witness.name
+        == "statement_function_def_default_keyword_expansion_return"
     )
 
     report = evaluate_seed_witnesses((witness,), tmp_path)

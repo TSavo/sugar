@@ -52,22 +52,34 @@ def _exceptional_exit_formula(effect: RaiseEffect, guards: tuple = ()):
         effect.exception_name if effect.exception_name is not None else "reraise"
     )
 
-    from sugar_lift_py_tests.ir import and_, ctor, eq, implies, make_var, str_const
+    from sugar_lift_py_tests.ir import and_, eq, implies, make_var
 
     exit_formula = eq(
         make_var("out"),
-        ctor(
-            "py.exceptional_exit",
-            [
-                str_const(exception_name),
-                str_const(
-                    f"{effect.blame or '<unknown raise locus>'}"
-                    f"#source-sha256={effect.source_sha256 or 'unavailable'}"
-                ),
-            ],
-        ),
+        _exceptional_exit_term(effect, exception_name=exception_name),
     )
     if not guards:
         return exit_formula
     guard = guards[0] if len(guards) == 1 else and_(list(guards))
     return implies(guard, exit_formula)
+
+
+def _exceptional_exit_term(effect: RaiseEffect, *, exception_name: str | None = None):
+    """Project the one source-cited term shared by raise posts and selections."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    name = (
+        exception_name
+        if exception_name is not None
+        else effect.exception_name or "reraise"
+    )
+    return ctor(
+        "py.exceptional_exit",
+        [
+            str_const(name),
+            str_const(
+                f"{effect.blame or '<unknown raise locus>'}"
+                f"#source-sha256={effect.source_sha256 or 'unavailable'}"
+            ),
+        ],
+    )
