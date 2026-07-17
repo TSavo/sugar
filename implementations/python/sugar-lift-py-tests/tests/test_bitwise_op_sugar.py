@@ -26,6 +26,8 @@ from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.ir import and_, atomic, ctor, make_var, not_, num, or_
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.outcome import Complete, complete_value
+from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -156,6 +158,49 @@ def test_predicate_bitwise_xor_truthful_and_lying_twins_refute(tmp_path) -> None
     lying = run_source_through_real_solver(
         tmp_path / "lying",
         "def test_a(x):\n    assert x == 1\n    assert (x == 1) ^ (x == 1)\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+    assert "RuntimeBitwiseOpSugar" in truthful.selected_sugars
+    assert "RuntimeBitwiseOpSugar" in lying.selected_sugars
+
+
+@pytest.mark.parametrize(
+    ("left_type", "right_type", "result_type"),
+    [
+        (FalseBoolLiteralSugar, FalseBoolLiteralSugar, FalseBoolLiteralSugar),
+        (FalseBoolLiteralSugar, TrueBoolLiteralSugar, TrueBoolLiteralSugar),
+        (TrueBoolLiteralSugar, FalseBoolLiteralSugar, TrueBoolLiteralSugar),
+        (TrueBoolLiteralSugar, TrueBoolLiteralSugar, FalseBoolLiteralSugar),
+    ],
+)
+def test_bool_literal_bitwise_xor_constructs_exact_truth_table(
+    left_type, right_type, result_type
+) -> None:
+    site = SourceFragment.from_source("left ^ right\n", "t.py").statements()[0]
+
+    outcome = left_type(site).bitwise_xor(right_type(site), site)
+
+    assert outcome == Complete(result_type(site))
+
+
+def test_bool_literal_bitwise_xor_nonbool_wrong_twin_stays_loud() -> None:
+    site = SourceFragment.from_source("left ^ right\n", "t.py").statements()[0]
+
+    with pytest.raises(FactoryPanic, match=r"owner=bitwise_xor.*TrueBoolLiteralSugar"):
+        TrueBoolLiteralSugar(site).bitwise_xor(StringValue("right"), site)
+
+
+def test_bool_literal_bitwise_xor_truthful_and_lying_twins_refute(tmp_path) -> None:
+    prefix = "def A():\n    return True ^ False\n\n"
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful",
+        prefix + "def test_a():\n    assert A() == True\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying",
+        prefix + "def test_a():\n    assert A() == False\n",
     )
 
     assert truthful.verdict == "sat"
