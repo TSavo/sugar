@@ -3,7 +3,8 @@
 ## Authoritative headline
 
 **200 of 1,032 assertion-bearing NumPy and pandas files remain on the fatal
-frontier at current head.**
+frontier at pinned commit
+`ac0343f17c28086f86adc49b19cf64ee0481e3e9`.**
 
 The post-escalation terminal vector is:
 
@@ -47,6 +48,24 @@ known sugarbin shelf-miss/build-fallback failure before Cargo ran; the release
 binary was therefore built directly in the synchronized remote Rust workspace.
 The three triage lanes were launched through `BCARGO_FORCE_REMOTE=1 bin/brun`.
 
+## Delta since the pinned commit
+
+The measurement is authoritative for the pinned commit and is not restarted
+when `origin/main` moves. At **2026-07-17 21:07:47 UTC**:
+
+```text
+git log ac0343f17c28086f86adc49b19cf64ee0481e3e9..origin/main --oneline
+```
+
+returned no commits: `origin/main` was still exactly the pinned commit. The
+explicit post-pin Python-lift delta list is therefore **empty**, and the
+current-head estimate at that observation is `200 - 0 = 200`.
+
+Future readers must rerun that exact `git log` range and list newly merged
+Python-lift lanes as an explicit subtraction estimate. Such a delta is not a
+replacement measurement: the exact authority remains **200 at the pinned
+commit**.
+
 Corpus census:
 
 | Axis | Count |
@@ -62,8 +81,8 @@ The comparison boundary is
 `docs/python-corpus-fatal-recensus-4775-2026-07-17.md`, whose 10-second vector
 was `481 completed / 245 typed panic / 13 bare exception / 293 timeout`.
 The current figures below include escalation of every current discovery
-timeout, so that the remaining frontier is authoritative rather than a
-provisional timeout blob.
+timeout, so that the pinned frontier is authoritative rather than a provisional
+timeout blob.
 
 | Axis | #4775 | Current | Delta |
 |---|---:|---:|---:|
@@ -165,7 +184,7 @@ frontier mass; they are neither bare Python exceptions nor bounded timeouts.
 
 ## Dispatch rule
 
-This ledger is a current-head map, not permission to infer a fix from an owner
+This ledger is a pinned-commit map, not permission to infer a fix from an owner
 name. Every lane must replay its named representative against then-current
 main before implementation. Decidable shapes must construct; genuine runtime
 dependence may cross the sealed runtime-effect door; all other missing
