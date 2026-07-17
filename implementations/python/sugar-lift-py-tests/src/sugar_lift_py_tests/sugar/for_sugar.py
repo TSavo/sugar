@@ -88,6 +88,18 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             "    return 0\n"
             "\n"
         )
+        bound_finite_getattr_prefix = (
+            "class Box:\n"
+            "    def __init__(self):\n"
+            "        self.x = 7\n"
+            "\n"
+            "def C():\n"
+            "    names = ['x']\n"
+            "    for name in names:\n"
+            "        return getattr(Box(), name)\n"
+            "    return 0\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="for_return",
@@ -101,6 +113,14 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
                 truthful=large_static_prefix + "def test_b():\n    assert B() == 0\n",
                 lying=large_static_prefix + "def test_b():\n    assert B() == 1\n",
             ),
+            _call_pair(
+                name="for_bound_finite_getattr_return",
+                owner_sugar="ForSugar",
+                truthful=bound_finite_getattr_prefix
+                + "def test_c():\n    assert C() == 7\n",
+                lying=bound_finite_getattr_prefix
+                + "def test_c():\n    assert C() == 8\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -108,8 +128,21 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             return self._unfold_static(self.static_elements, ctx)
         # Reduce the iterable; bind target to the element coordinate; thread body.
         return self.iterable.reduce(ctx).and_then(
-            lambda iterable: self._bind_and_body(iterable, ctx)
+            lambda iterable: self._finish_iterable(iterable, ctx)
         )
+
+    def _finish_iterable(self, iterable, ctx):
+        from sugar_lift_py_tests.floor import ArrayLiteral, ListValue, TupleValue
+
+        elements = None
+        if type(iterable) in (ListValue, TupleValue):
+            elements = iterable.elements
+        elif type(iterable) is ArrayLiteral:
+            elements = iterable.items
+        if elements is not None:
+            _enforce_static_unfold_limit(len(elements), self.site)
+            return self._unfold_values(elements, ctx)
+        return self._bind_and_body(iterable, ctx)
 
     def _unfold_static(self, remaining, ctx, entries=()):
         from sugar_lift_py_tests.floor import BlockValue, ScopeRebind
@@ -122,6 +155,24 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             if isinstance(outcome, Incomplete):
                 return outcome
             iteration_ctx = ScopeRebind(self.target_name, outcome.value).extend_scope(
+                current_ctx
+            )
+            record, current_ctx = self.body.sugar.reduce_with_scope(iteration_ctx)
+            accumulated.extend(record.contribution())
+        bindings = tuple(
+            ScopeRebind(name, value)
+            for name in self.carried
+            if (value := current_ctx.temporal.value_if_bound(name)) is not None
+        )
+        return Complete(BlockValue((*accumulated, *bindings)))
+
+    def _unfold_values(self, values, ctx, entries=()):
+        from sugar_lift_py_tests.floor import BlockValue, ScopeRebind
+
+        accumulated = list(entries)
+        current_ctx = ctx
+        for value in values:
+            iteration_ctx = ScopeRebind(self.target_name, value).extend_scope(
                 current_ctx
             )
             record, current_ctx = self.body.sugar.reduce_with_scope(iteration_ctx)
@@ -237,18 +288,7 @@ def _static_iterable_elements(iterable_site, ctx, loop_site):
     else:
         return None
 
-    if len(values) > STATIC_UNFOLD_LIMIT:
-        from sugar_lift_py_tests.factory import factory_panic_gap
-
-        factory_panic_gap(
-            owner="ForSugar.static_unfold",
-            blame=loop_site,
-            observed=f"statically finite iterable with {len(values)} elements",
-            requested=(
-                f"at most {STATIC_UNFOLD_LIMIT} concrete loop self-applications"
-            ),
-            fix="reduce the literal iterable size or raise the reviewed unfold cap",
-        )
+    _enforce_static_unfold_limit(len(values), loop_site)
     return tuple(
         ctx.build_body(
             (
@@ -259,6 +299,20 @@ def _static_iterable_elements(iterable_site, ctx, loop_site):
             SugarRole.TERM,
         )
         for value in values
+    )
+
+
+def _enforce_static_unfold_limit(size: int, loop_site) -> None:
+    if size <= STATIC_UNFOLD_LIMIT:
+        return
+    from sugar_lift_py_tests.factory import factory_panic_gap
+
+    factory_panic_gap(
+        owner="ForSugar.static_unfold",
+        blame=loop_site,
+        observed=f"statically finite iterable with {size} elements",
+        requested=f"at most {STATIC_UNFOLD_LIMIT} concrete loop self-applications",
+        fix="reduce the literal iterable size or raise the reviewed unfold cap",
     )
 
 
