@@ -191,6 +191,22 @@ class StringValue(FloorValue):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
         return super().add(other, site)
 
+    def subtract(self, other, site):
+        """Dispatch subtraction only when the right operand is runtime-opaque.
+
+        A body-less call result has no lift-time value, so Python's
+        ``__sub__``/``__rsub__`` choice is genuinely runtime-dependent.  A
+        call with a body is decidable machinery work and ground strings are a
+        Python TypeError; both stay on the loud subtraction floor.
+        """
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+        if type(other) is CallSiteValue and other.body is None:
+            from sugar_lift_py_tests.effect import runtime_subtract
+
+            return runtime_subtract(self, other, site)
+        return super().subtract(other, site)
+
     def multiply(self, other, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
