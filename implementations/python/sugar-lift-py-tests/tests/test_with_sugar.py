@@ -21,6 +21,7 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ReturnValue,
     SymbolicValue,
+    TermValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.sugar.with_sugar import WithSugar
@@ -146,6 +147,44 @@ def test_enter_result_twin_cannot_inherit_bare_manager_coordinate() -> None:
     cursor = block.statements[0].value
     assert cursor.term == ctor("call:__enter__", [manager.term])
     assert cursor.term != manager.term
+
+
+def test_continuing_with_body_projects_constructed_binding() -> None:
+    manager = CallSiteValue(
+        target_name="manager",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:manager", []),
+        body=None,
+    )
+
+    block = compose_block(
+        "    with manager:\n" "        result = 5\n" "    return result\n",
+        binds={"manager": manager},
+    )
+
+    assert isinstance(block.statements[-1], ReturnValue)
+    assert block.statements[-1].value == TermValue(5)
+
+
+def test_continuing_with_body_does_not_invent_missing_binding() -> None:
+    manager = CallSiteValue(
+        target_name="manager",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:manager", []),
+        body=None,
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    with manager:\n" "        pass\n" "    return result\n",
+            binds={"manager": manager},
+        )
+
+    assert raised.value.info.owner == "TemporalContext"
+    assert raised.value.info.observed == "result"
+    assert raised.value.info.requested == "value"
 
 
 def test_unresolved_exit_contract_keeps_raise_carrying_body_loud() -> None:
