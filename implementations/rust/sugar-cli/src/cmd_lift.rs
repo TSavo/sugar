@@ -2126,21 +2126,21 @@ fn source_report_from_lift_response(
         .get("liftCoverage")
         .or_else(|| response.get("lift_coverage"))
         .cloned();
-    let symbol_kinds = response
-        .get("symbolKinds")
-        .and_then(Value::as_object)
-        .map(|entries| {
-            entries
-                .iter()
-                .map(|(symbol, kind)| {
-                    let kind = kind.as_str().unwrap_or_else(|| {
-                        panic!("report symbol kind testimony for `{symbol}` is not a string")
-                    });
-                    (symbol.clone(), kind.to_string())
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    // Membrane gap: non-string symbolKinds testimony becomes a named diagnostic
+    // rather than a report-construction crash. Classification floors still panic
+    // if a remaining string kind is unknown once rendering trusts it.
+    let mut symbol_kinds = BTreeMap::new();
+    if let Some(entries) = response.get("symbolKinds").and_then(Value::as_object) {
+        for (symbol, kind) in entries {
+            let Some(kind) = kind.as_str() else {
+                diagnostics.push(Value::String(format!(
+                    "report symbol kind testimony for `{symbol}` is not a string; dropped from symbolKinds membrane"
+                )));
+                continue;
+            };
+            symbol_kinds.insert(symbol.clone(), kind.to_string());
+        }
+    }
 
     Ok(LiftSourceReport {
         ledger,
@@ -3463,15 +3463,14 @@ fn contract_cid_of_report_decl(
     if !matches!(kind, "contract" | "function-contract") {
         return None;
     }
+    // Membrane gaps in term-table resolution become absent formula/sort slots
+    // rather than a report-path crash. CID minting stays content-addressed on
+    // the resolvable residue only.
     let decode = |field: &str, alternate: &str| {
         contract
             .get(field)
             .or_else(|| contract.get(alternate))
-            .map(|value| {
-                term_table.canonical_value(value).unwrap_or_else(|error| {
-                    panic!("report contract CID term-table resolution failed: {error}")
-                })
-            })
+            .and_then(|value| term_table.canonical_value(value).ok())
     };
     let pre = decode("pre", "precondition");
     let post = decode("post", "postcondition");
@@ -3508,11 +3507,7 @@ fn contract_cid_of_report_decl(
         .map(|values| {
             values
                 .iter()
-                .map(|value| {
-                    term_table.canonical_value(value).unwrap_or_else(|error| {
-                        panic!("report contract sort resolution failed: {error}")
-                    })
-                })
+                .filter_map(|value| term_table.canonical_value(value).ok())
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -5030,12 +5025,14 @@ impl<'a> VisualFormulaRenderer<'a> {
 
     fn inventory_term_repeats(&mut self, value: &Value) {
         if value.get("kind").and_then(Value::as_str) == Some("term-ref") {
-            let table = self.term_table.unwrap_or_else(|| {
-                panic!("term-ref reached the report without the required termTable")
-            });
-            let node = table
-                .resolve_reference(value)
-                .unwrap_or_else(|error| panic!("report term-table resolution failed: {error}"));
+            // Membrane gap: unresolved term-refs skip repeat inventory rather
+            // than crash the visual report. Render paths emit named placeholders.
+            let Some(table) = self.term_table else {
+                return;
+            };
+            let Ok(node) = table.resolve_reference(value) else {
+                return;
+            };
             self.inventory_term_node_repeats(&node);
             return;
         }
@@ -5349,13 +5346,13 @@ impl<'a> VisualFormulaRenderer<'a> {
 
     fn term(&mut self, term: &Value, depth: usize) -> String {
         if term.get("kind").and_then(Value::as_str) == Some("term-ref") {
-            let table = self.term_table.unwrap_or_else(|| {
-                panic!("term-ref reached the report without the required termTable")
-            });
-            let node = table
-                .resolve_reference(term)
-                .unwrap_or_else(|error| panic!("report term-table resolution failed: {error}"));
-            return self.term_node(&node, depth);
+            let Some(table) = self.term_table else {
+                return "<missing termTable>".to_string();
+            };
+            return match table.resolve_reference(term) {
+                Ok(node) => self.term_node(&node, depth),
+                Err(error) => format!("<unresolved term-ref: {error}>"),
+            };
         }
         let shared_cid = match self.plan(term, depth) {
             VisualRenderPlan::Reference(reference) | VisualRenderPlan::Elided(reference) => {
@@ -6124,14 +6121,14 @@ fn contract_formula_symbols(
             Value::Object(object) => {
                 match object.get("kind").and_then(Value::as_str) {
                     Some("term-ref") => {
-                        let table = term_table.unwrap_or_else(|| {
-                            panic!(
-                                "term-ref reached symbol inventory without the required termTable"
-                            )
-                        });
-                        let term = table.resolve_reference(value).unwrap_or_else(|error| {
-                            panic!("report symbol term-table resolution failed: {error}")
-                        });
+                        // Membrane gap: unresolved term-refs contribute no symbols.
+                        // Render still emits named placeholders when printing them.
+                        let Some(table) = term_table else {
+                            return;
+                        };
+                        let Ok(term) = table.resolve_reference(value) else {
+                            return;
+                        };
                         visit_term_node(&term, symbols, symbol_kinds, visited_terms);
                         return;
                     }
@@ -8572,8 +8569,11 @@ fn format_demand_discriminator(question: &Value) -> String {
         .and_then(Value::as_u64)
         .map(|value| format!(":{value}"))
         .unwrap_or_default();
-    let serialized = serde_json::to_vec(memento)
-        .unwrap_or_else(|error| panic!("demand identity serialization failed: {error}"));
+    let Ok(serialized) = serde_json::to_vec(memento) else {
+        // Membrane gap: demand identity is presentation-only. Serialization
+        // failure cannot invent a CID; reuse the named absence placeholder.
+        return " @ <unknown demand identity>".to_string();
+    };
     let cid = sugar_canonicalizer::blake3_512_of(&serialized);
     format!(" @ {file}:{line}{column} [demand {}]", short_cid(&cid))
 }
@@ -17491,34 +17491,145 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
+    fn visual_report_renders_missing_term_table_as_named_gap() {
+        let mut report = minimal_source_report();
+        report.contracts = vec![serde_json::json!({
+            "name": "owner", "kind": "function-contract", "formals": [],
+            "post": {"kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"},
+                {"kind": "term-ref", "cid": "blake3-512:deadbeef"}
+            ]}
+        })];
+
+        let visual = render_report_visual(&report, None);
+        assert!(
+            visual.contains("<missing termTable>"),
+            "term-ref without termTable must render a named gap, not panic:\n{visual}"
+        );
+        assert!(
+            !visual.contains("panic"),
+            "named gap must not look like a panic payload:\n{visual}"
+        );
+    }
+
+    #[test]
+    fn report_membrane_drops_non_string_symbol_kind_with_diagnostic() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [],
+            "sourceLedger": {
+                "source_loci": 0, "source_warranted": 0,
+                "source_inactive": 0, "source_support": 0,
+                "source_boundary": 0, "source_unresolved": 0,
+                "unclassified_source": 0
+            },
+            "sourceAudits": [], "sourceMementos": [],
+            "assertionSurfaceAudits": [], "factoryAudits": [],
+            "factoryAuditSummary": {
+                "emittedRows": 0,
+                "statusCounts": {"warranted": 0, "incomplete": 0, "support": 0, "unresolved": 0},
+                "unresolvedSites": [], "factoryWalk": []
+            },
+            "planMementos": [], "implications": [], "callEdges": [],
+            "vendorConjoins": [], "diagnostics": [], "warnings": [],
+            "effects": [],
+            "symbolKinds": {
+                "call:ok": "coordinate",
+                "call:bad": 17
+            }
+        });
+
+        let report = source_report_from_lift_response(&response, None).expect("membrane");
+        assert_eq!(
+            report.symbol_kinds.get("call:ok").map(String::as_str),
+            Some("coordinate")
+        );
+        assert!(!report.symbol_kinds.contains_key("call:bad"));
+        assert!(
+            report.diagnostics.iter().any(|diagnostic| {
+                diagnostic.as_str().is_some_and(|text| {
+                    text.contains("report symbol kind testimony for `call:bad` is not a string")
+                })
+            }),
+            "expected named diagnostic, got {:?}",
+            report.diagnostics
+        );
+    }
+
+    #[test]
     fn render_panic_census_has_no_unclassified_production_escape() {
+        // R = crash_escape + unclassified. Honest floors and dead arms remain
+        // as lawful panics; they are not remaining work for this lane.
         let source = include_str!("cmd_lift.rs");
         let production = source
             .split("#[cfg(test)]\nmod tests")
             .next()
             .unwrap_or(source);
-        assert_eq!(
-            production
-                .lines()
-                .filter(|line| line.contains("panic!(") && !line.contains("=> panic!"))
-                .count(),
-            15,
-            "update the census"
-        );
+        let lines: Vec<&str> = production.lines().collect();
+        let honest_floor_markers = [
+            "factory walk row missing verdict",
+            "red verdict carries no grounds",
+            "report symbol classification gap",
+            "indexed universe identity disappeared",
+        ];
+        // These strings must not appear inside production panic bodies. Named
+        // gaps/diagnostics may still mention them outside panic!(...).
+        let crash_escape_markers = [
+            "term-ref reached the report without the required termTable",
+            "term-ref reached symbol inventory without the required termTable",
+            "report term-table resolution failed",
+            "report symbol term-table resolution failed",
+            "report contract CID term-table resolution failed",
+            "report contract sort resolution failed",
+            "demand identity serialization failed",
+            "report symbol kind testimony for `",
+        ];
+
+        let mut live_crash_escapes = Vec::new();
+        for marker in crash_escape_markers {
+            let still_panics = production
+                .split("panic!(")
+                .skip(1)
+                .any(|chunk| chunk.lines().take(8).any(|line| line.contains(marker)));
+            if still_panics {
+                live_crash_escapes.push(marker);
+            }
+        }
+
+        let mut panic_windows = Vec::new();
+        let mut unclassified = Vec::new();
+        for (index, line) in lines.iter().enumerate() {
+            if !(line.contains("panic!(") && !line.contains("=> panic!")) {
+                continue;
+            }
+            let window = lines[index..lines.len().min(index + 8)].join("\n");
+            panic_windows.push(window.clone());
+            let honest = honest_floor_markers
+                .iter()
+                .any(|marker| window.contains(marker));
+            let crash = crash_escape_markers
+                .iter()
+                .any(|marker| window.contains(marker));
+            if !honest && !crash {
+                unclassified.push(window);
+            }
+        }
+
+        let r = live_crash_escapes.len() + unclassified.len();
         assert_eq!(
             production.matches(".expect(").count(),
             0,
-            "update the census"
+            "production expect is a crash escape unless classified"
         );
         assert_eq!(
             production.matches(".unwrap()").count(),
             3,
-            "update the census"
+            "guarded contract-filter unwraps are the only production unwraps"
         );
         assert_eq!(
             production.matches("unreachable!(").count(),
             1,
-            "update the census"
+            "plain-tone unreachable is the only production unreachable"
         );
         let census = include_str!("../../../../docs/render-path-census.md");
         for classified in [
@@ -17528,6 +17639,10 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "indexed universe identity removed",
             "plain ANSI tone",
             "guarded contract-filter unwraps",
+            "term-ref without `termTable`",
+            "report contract CID/sort term-table resolution",
+            "non-string `symbolKinds` testimony",
+            "demand identity serialization failure",
         ] {
             assert!(
                 census.contains(classified),
@@ -17535,13 +17650,33 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             );
         }
         let fol = include_str!("../../sugar-verifier/src/fol_render.rs");
+        let fol_production = fol.split("#[cfg(test)]").next().unwrap_or(fol);
         assert_eq!(
-            fol.matches("panic!(").count(),
-            1,
-            "fol_render keeps one classified panic for unknown Python operators"
+            fol_production.matches("panic!(").count(),
+            0,
+            "fol_render production path must stay total"
         );
-        assert!(!fol.contains(".expect("), "fol_render must stay total");
-        assert!(!fol.contains(".unwrap()"), "fol_render must stay total");
-        assert!(!fol.contains("unreachable!("), "fol_render must stay total");
+        assert!(
+            !fol_production.contains(".expect("),
+            "fol_render must stay total"
+        );
+        assert!(
+            !fol_production.contains(".unwrap()"),
+            "fol_render must stay total"
+        );
+        assert!(
+            !fol_production.contains("unreachable!("),
+            "fol_render must stay total"
+        );
+        assert_eq!(
+            r, 0,
+            "R(crash_escape+unclassified)={r} crash_escapes={live_crash_escapes:?} unclassified={unclassified:?}"
+        );
+        // Honest-floor/dead residual. New panics force a census edit.
+        assert_eq!(
+            panic_windows.len(),
+            7,
+            "honest-floor/dead residual changed; update docs/render-path-census.md: {panic_windows:?}"
+        );
     }
 }
