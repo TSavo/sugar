@@ -16,16 +16,18 @@ from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
+    DictValue,
+    GuardedValue,
     OpaqueOpCallsite,
     ReturnValue,
+    StringValue,
     SymbolicValue,
     TermValue,
 )
-from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.ir import atomic, make_var
+from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
 from sugar_lift_py_tests.sugar.subscript_delete_sugar import SubscriptDeleteSugar
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
@@ -124,6 +126,49 @@ def test_concrete_dict_delete_constructs_post_state() -> None:
     )
 
     assert block.statements == (ReturnValue(TermValue(2)),)
+
+
+def test_guarded_dict_delete_constructs_each_face_post_state() -> None:
+    guard = atomic("flag", [])
+    receiver = GuardedValue(
+        guard,
+        DictValue(
+            (
+                (StringValue("drop"), TermValue(1)),
+                (StringValue("keep"), TermValue(2)),
+            )
+        ),
+        DictValue(
+            (
+                (StringValue("drop"), TermValue(3)),
+                (StringValue("keep"), TermValue(4)),
+            )
+        ),
+    )
+
+    outcome = receiver.delitem(StringValue("drop"), "t.py:1")
+
+    assert outcome == Complete(
+        GuardedValue(
+            guard,
+            DictValue(((StringValue("keep"), TermValue(2)),)),
+            DictValue(((StringValue("keep"), TermValue(4)),)),
+        )
+    )
+
+
+def test_guarded_delete_with_unsupported_face_stays_loud() -> None:
+    receiver = GuardedValue(
+        atomic("flag", []),
+        DictValue(((StringValue("drop"), TermValue(1)),)),
+        StringValue("not-a-container"),
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        receiver.delitem(StringValue("drop"), "t.py:1")
+
+    assert raised.value.info.owner == "delitem"
+    assert raised.value.info.observed == "StringValue"
 
 
 def test_ground_non_container_subscript_delete_stays_loud() -> None:

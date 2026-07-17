@@ -51,6 +51,15 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
             "    del d['drop']\n"
             "    return d['keep']\n\n"
         )
+        guarded_dict_prefix = (
+            "def B(flag):\n"
+            "    if flag:\n"
+            "        d = {'drop': 1, 'keep': 2}\n"
+            "    else:\n"
+            "        d = {'drop': 3, 'keep': 4}\n"
+            "    del d['drop']\n"
+            "    return d['keep']\n\n"
+        )
         return (
             _call_pair(
                 name="subscript_delete_post_state",
@@ -63,6 +72,16 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
                 owner_sugar="SubscriptDeleteSugar",
                 truthful=dict_prefix + "def test_a():\n    assert A() == 2\n",
                 lying=dict_prefix + "def test_a():\n    assert A() == 1\n",
+            ),
+            _call_pair(
+                name="guarded_dict_subscript_delete_post_state",
+                owner_sugar="SubscriptDeleteSugar",
+                truthful=guarded_dict_prefix + "def test_b():\n"
+                "    assert B(True) == 2\n"
+                "    assert B(False) == 4\n",
+                lying=guarded_dict_prefix + "def test_b():\n"
+                "    assert B(True) == 2\n"
+                "    assert B(False) == 3\n",
             ),
         )
 
