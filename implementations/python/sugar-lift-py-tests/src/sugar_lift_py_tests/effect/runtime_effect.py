@@ -90,7 +90,7 @@ class RuntimeOperand:
                 "RuntimeOperand is construction-closed; use "
                 "genuine_runtime_operand at the audited evidence door."
             )
-        if _is_lift_time_decidable(term):
+        if is_lift_time_decidable(term):
             raise TypeError(
                 "RuntimeOperand cannot contain a lift-time-decidable term; "
                 "ground values and construction-gap prose are unconstructable."
@@ -101,7 +101,7 @@ class RuntimeOperand:
 def genuine_runtime_operand(operation: str, operand) -> RuntimeOperand:
     """Mint construction authority only for an opaque/runtime-derived term."""
     term = operand_term(operation, operand)
-    if _is_lift_time_decidable(term):
+    if is_lift_time_decidable(term):
         raise TypeError(
             "RuntimeEffect requires a genuine runtime-dependent operand; "
             f"{term!r} is ground/decidable at lift time. Construction-gap prose "
@@ -111,7 +111,7 @@ def genuine_runtime_operand(operation: str, operand) -> RuntimeOperand:
     return RuntimeOperand(term, _seal=_RUNTIME_OPERAND_SEAL)
 
 
-def _is_lift_time_decidable(term: Term) -> bool:
+def is_lift_time_decidable(term: Term) -> bool:
     from sugar_lift_py_tests.ir import (
         _ConstBool,
         _ConstInt,
@@ -130,7 +130,7 @@ def _is_lift_time_decidable(term: Term) -> bool:
         # call executes, even when every argument to that call is ground.
         if term.name.startswith("call:"):
             return False
-        return all(_is_lift_time_decidable(arg) for arg in term.args)
+        return all(is_lift_time_decidable(arg) for arg in term.args)
     raise TypeError(f"unknown RuntimeEffect operand term: {term!r}")
 
 
