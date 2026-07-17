@@ -127,6 +127,27 @@ class PredicateValue(FloorValue):
             )
         )
 
+    def bitwise_xor(self, other, site):
+        if type(other) is not PredicateValue:
+            return super().bitwise_xor(other, site)
+        from sugar_lift_py_tests.ir import and_, not_, or_
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                or_(
+                    [
+                        and_([self.formula, not_(other.formula)]),
+                        and_([not_(self.formula), other.formula]),
+                    ]
+                ),
+                site,
+                (*self.operand_callsites, *other.operand_callsites),
+                (*self.derived_formulas, *other.derived_formulas),
+                (*self.rewrite_chains, *other.rewrite_chains),
+            )
+        )
+
     def bitwise_invert(self, site):
         """Boolean bitwise invert is the standing predicate's negation."""
         del site

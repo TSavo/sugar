@@ -23,7 +23,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-from sugar_lift_py_tests.ir import and_, atomic, ctor, make_var, num
+from sugar_lift_py_tests.ir import and_, atomic, ctor, make_var, not_, num, or_
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.outcome import Complete, complete_value
 from sugar_lift_py_tests.temporal import TemporalContext
@@ -96,6 +96,66 @@ def test_predicate_bitwise_and_truthful_and_lying_twins_refute(tmp_path) -> None
     lying = run_source_through_real_solver(
         tmp_path / "lying",
         "def test_a(x):\n    assert (x == 1) & (not (x == 1))\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+    assert "RuntimeBitwiseOpSugar" in truthful.selected_sugars
+    assert "RuntimeBitwiseOpSugar" in lying.selected_sugars
+
+
+def test_predicate_bitwise_xor_constructs_exclusive_disjunction() -> None:
+    site = SourceFragment.from_source("left ^ right\n", "t.py").statements()[0]
+    left = PredicateValue(atomic("left", []), site)
+    right = PredicateValue(atomic("right", []), site)
+
+    outcome = left.bitwise_xor(right, site)
+
+    assert outcome == Complete(
+        PredicateValue(
+            or_(
+                [
+                    and_([left.formula, not_(right.formula)]),
+                    and_([not_(left.formula), right.formula]),
+                ]
+            ),
+            site,
+        )
+    )
+
+
+def test_predicate_bitwise_xor_nonpredicate_wrong_twin_stays_loud() -> None:
+    site = SourceFragment.from_source("left ^ right\n", "t.py").statements()[0]
+    left = PredicateValue(atomic("left", []), site)
+
+    with pytest.raises(FactoryPanic, match=r"owner=bitwise_xor.*PredicateValue"):
+        left.bitwise_xor(StringValue("right"), site)
+
+
+def test_predicate_bitwise_xor_conserves_assertion_without_an_effect() -> None:
+    source = "def test_a(x):\n    assert (x == 1) ^ (x == 2)\n"
+
+    payload, gaps = audit_lift_file(source, "predicate_xor.py")
+    rpc = payload.to_rpc()
+    assertions = account_lift_coverage(
+        census_source(source, file="predicate_xor.py"), rpc
+    ).to_json()["assertions"]
+
+    assert gaps == []
+    assert rpc["effects"] == []
+    assert assertions["stated"] == 1
+    assert assertions["lifted_cited"] == 1
+    assert assertions["silently_unaccounted"] == 0
+
+
+def test_predicate_bitwise_xor_truthful_and_lying_twins_refute(tmp_path) -> None:
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful",
+        "def test_a(x):\n    assert x == 1\n    assert (x == 1) ^ (x == 2)\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying",
+        "def test_a(x):\n    assert x == 1\n    assert (x == 1) ^ (x == 1)\n",
     )
 
     assert truthful.verdict == "sat"
