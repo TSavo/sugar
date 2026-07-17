@@ -35,6 +35,7 @@ from sugar_lift_py_tests.sugar.call_sugar import (
     _module_sibling_function_nodes,
     _resolve_install_source_funcdef,
 )
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _tag_install_source(
@@ -110,6 +111,96 @@ def test_installed_source_body_binds_needed_sibling_assignment_and_import() -> N
     assert "len" not in bindings  # no ambient builtins namespace flood
     assert module_name not in sys.modules
     assert "provider_alpha" not in sys.modules
+
+
+def test_installed_source_body_binds_prior_identity_decorated_class() -> None:
+    """Executed modules bind prior classes when every decorator preserves identity."""
+    src = (
+        "from pandas.util._decorators import set_module\n"
+        '@set_module("pkg")\n'
+        "class Result:\n"
+        "    pass\n"
+        "def f():\n"
+        "    return Result\n"
+    )
+    root = SourceFragment.from_source(src, "/pkg/mod.py")
+    fn = next(
+        fragment
+        for fragment in root.walk()
+        if fragment.observed == "FunctionDef" and fragment.function_name() == "f"
+    )
+    _tag_install_source(fn, src, "/pkg/mod.py", "pkg.mod.f")
+    ctx = FactoryBuildContext(
+        filename="consumer.py",
+        catalog=default_catalog(),
+        name_resolver={"pkg.mod.f": fn.node},
+    )
+
+    body_ctx = _ctx_with_formal_binds(fn, ctx)
+
+    assert body_ctx.temporal.value_for("Result").name == "Result"
+
+
+def test_installed_source_body_rejects_prior_unknown_decorated_class() -> None:
+    """A same-named local decorator cannot counterfeit the vendor contract."""
+    src = (
+        "def set_module(name):\n"
+        "    def replace(cls):\n"
+        "        return 7\n"
+        "    return replace\n"
+        '@set_module("pkg")\n'
+        "class Result:\n"
+        "    pass\n"
+        "def f():\n"
+        "    return Result\n"
+    )
+    root = SourceFragment.from_source(src, "/pkg/mod.py")
+    fn = next(
+        fragment
+        for fragment in root.walk()
+        if fragment.observed == "FunctionDef" and fragment.function_name() == "f"
+    )
+    _tag_install_source(fn, src, "/pkg/mod.py", "pkg.mod.f")
+    ctx = FactoryBuildContext(
+        filename="consumer.py",
+        catalog=default_catalog(),
+        name_resolver={"pkg.mod.f": fn.node},
+    )
+
+    with pytest.raises(FactoryPanic, match=r"bind `Result` before reducing NameSugar"):
+        build_control_flow_body_sugar(fn, ctx)
+
+
+def test_prior_identity_decorated_class_truthful_and_lying_refute(tmp_path) -> None:
+    def project(name: str) -> Path:
+        root = tmp_path / name
+        root.mkdir()
+        (root / "decorated_origin.py").write_text(
+            "from pandas.util._decorators import set_module\n"
+            '@set_module("decorated_origin")\n'
+            "class Result:\n"
+            "    pass\n"
+            "def observed():\n"
+            "    return Result\n",
+            encoding="utf-8",
+        )
+        return root
+
+    def source(*, truthful: bool) -> str:
+        comparison = "is" if truthful else "is not"
+        return (
+            "from decorated_origin import observed\n"
+            "def test_decorated_class_binding():\n"
+            f"    assert observed() {comparison} observed()\n"
+        )
+
+    truthful = run_source_through_real_solver(
+        project("truthful"), source(truthful=True)
+    )
+    lying = run_source_through_real_solver(project("lying"), source(truthful=False))
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
 
 
 def test_unsupported_installed_source_global_remains_loud() -> None:

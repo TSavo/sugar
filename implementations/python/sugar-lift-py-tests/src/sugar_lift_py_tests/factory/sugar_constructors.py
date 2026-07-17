@@ -332,9 +332,60 @@ def _module_level_declarations_before(
         elif statement.observed == "Try":
             # Optional imports and try/except/else name joins (e.g. requests/help).
             declarations.append(statement)
+        elif statement.observed == "ClassDef":
+            # An installed module has executed its earlier class declarations
+            # before an imported function can run. Eligibility remains exact in
+            # _module_declaration_bound_names: dynamic bases, metaclasses, and
+            # class-replacing decorators bind nothing and therefore stay loud.
+            declarations.append(statement)
     # Never attach declarations when the preserved tree does not contain this
     # exact function coordinate: that is stale or mismatched provenance.
     return []
+
+
+def _class_decorators_preserve_identity(statement: SourceFragment) -> bool:
+    """Recognize source contracts whose decorator result is exactly the class.
+
+    pandas ``set_module`` and ``inherit_names`` mutate class metadata/methods
+    and return the same class object. That identity is sufficient for a later
+    function to name the executed module class; arbitrary decorators may
+    replace the class and therefore remain unbound.
+    """
+    identity_exports = {
+        ("pandas.core.indexes.extension", "inherit_names"),
+        ("pandas.util._decorators", "set_module"),
+    }
+    try:
+        root = SourceFragment.from_source(statement.source, statement.filename or "")
+    except SyntaxError:
+        return False
+    authenticated_names: set[str] = set()
+    declarations = [
+        declaration
+        for fragment in root.fragments()
+        for declaration in fragment.statements()
+    ]
+    for declaration in declarations:
+        if declaration.observed != "ImportFrom":
+            continue
+        module = declaration.importfrom_module()
+        for imported, alias in declaration.importfrom_names():
+            if (module, imported) in identity_exports:
+                authenticated_names.add(alias or imported)
+    for decorator in statement.class_decorators():
+        if decorator.observed == "Name":
+            receiver = decorator
+        elif decorator.observed == "Call":
+            receiver = decorator.call_func()
+        else:
+            return False
+        if (
+            receiver is None
+            or receiver.observed != "Name"
+            or receiver.name_id() not in authenticated_names
+        ):
+            return False
+    return True
 
 
 def _module_declaration_bound_names(statement: SourceFragment) -> set[str]:
@@ -363,7 +414,7 @@ def _module_declaration_bound_names(statement: SourceFragment) -> set[str]:
     if statement.observed == "ClassDef":
         base_names = statement.class_base_names()
         if (
-            statement.class_decorators()
+            not _class_decorators_preserve_identity(statement)
             or statement.class_keywords()
             or any(base_name is None for base_name in base_names)
         ):
