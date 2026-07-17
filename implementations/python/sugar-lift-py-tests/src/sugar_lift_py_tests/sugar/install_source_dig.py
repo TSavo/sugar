@@ -1449,6 +1449,48 @@ def _construct_install_source_value(
                 if isinstance(outcome, Incomplete):
                     return None
                 return complete_value(outcome, owner="install-source imported value")
+
+    # A module value selected by ``try`` / ``except`` is still source-owned.
+    # Let TrySugar reduce every path and admit the binding only when its
+    # continuing-path join constructs one exact value. Import availability is
+    # represented by the existing cited ``py.except`` guard; a ground import
+    # coordinate never mints RuntimeEffect authority.
+    for target_index, statement in enumerate(parsed.body):
+        if not isinstance(statement, ast.Try) or not any(
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Store)
+            and node.id == attr
+            for node in ast.walk(statement)
+        ):
+            continue
+        with reduction_span(
+            sugar=import_target,
+            role="dig.construct.try",
+            site=import_target,
+        ):
+            module_ctx = _ctx_with_required_module_bindings(
+                parsed.body,
+                target_index,
+                _loaded_names(statement),
+                source=source,
+                sourcefile=sourcefile,
+                ctx=ctx,
+                resolving=resolving,
+                defining_module=module_name,
+            )
+            if module_ctx is None:
+                return None
+            body = module_ctx.build_body(
+                SourceFragment.from_node(statement, sourcefile, source=source),
+                SugarRole.STATEMENT,
+            )
+            outcome = body.reduce(module_ctx)
+            if isinstance(outcome, Incomplete):
+                return None
+            extended = outcome.extend_scope(module_ctx)
+            resolved = extended.temporal.value_if_bound(attr)
+            if resolved is not None:
+                return resolved
     return None
 
 
