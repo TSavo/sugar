@@ -152,6 +152,31 @@ fn pandas_sum_vendor_ir() -> Vec<Json> {
     })]
 }
 
+fn pandas_len_vendor_ir() -> Vec<Json> {
+    // Live sugar-pandas-demo residual (#3864): `len(pd.DataFrame())` only gets
+    // AmbientGroundCallsiteFact ("Vendor fact") from a plain EqualityFact pool
+    // member. Vendor universe is fail-open on linkedPosts, and
+    // collect_ambient_posts only builds AmbientPosts from BRIDGE mementos whose
+    // target contract carries formals — so a formals-bearing call:len contract
+    // is required. This is a *sworn vendor equality* at the composed coordinate
+    // (empty frame length is 0 — the same fact pandas' constructor suite
+    // asserts), NOT a fabricated operator domain axiom (`out >= 0` /
+    // `len::builtin-universe`, killed by #3898). Free call `len(x)` is
+    // `call:len(<arg>)`: one formal for the argument, matching #3668 arity.
+    vec![json!({
+        "kind": "function-contract",
+        "name": "pandas.DataFrame.__len__",
+        "bridgeSourceSymbol": "call:len",
+        "formals": ["obj"],
+        "formalSorts": [{"kind": "primitive", "name": "Any"}],
+        "outBinding": "out",
+        "post": eq(
+            var("out"),
+            json!({"kind": "const", "value": 0, "sort": int_sort()}),
+        ),
+    })]
+}
+
 fn write_static_vendor_plugin(path: &Path, ir: &[Json]) {
     let ir = serde_json::to_string(ir).expect("vendor IR serializes");
     write_executable(
@@ -268,6 +293,10 @@ fn stage_vendor_proof() -> (tempfile::TempDir, PathBuf, String) {
 
 fn stage_pandas_sum_vendor_proof() -> (tempfile::TempDir, PathBuf, String) {
     stage_static_vendor_proof(pandas_sum_vendor_ir())
+}
+
+fn stage_pandas_len_vendor_proof() -> (tempfile::TempDir, PathBuf, String) {
+    stage_static_vendor_proof(pandas_len_vendor_ir())
 }
 
 fn build_python_lift_tests() -> PathBuf {
@@ -575,6 +604,55 @@ fn assert_linked_sum_post_targets_imported_proof(row: &Json, proof_cid: &str) {
     );
 }
 
+fn assert_linked_len_post_targets_imported_proof(row: &Json, proof_cid: &str) {
+    let posts = row["verification"]["linkedPosts"]
+        .as_array()
+        .expect("linkedPosts array");
+    let post = posts
+        .iter()
+        .find(|post| post["sourceSymbol"].as_str() == Some("call:len"))
+        .unwrap_or_else(|| panic!("pandas DataFrame.__len__ linked post missing: {row:#}"));
+    assert_eq!(post["targetProofCid"].as_str(), Some(proof_cid));
+    assert!(post["targetContractCid"].as_str().is_some());
+    assert_eq!(post["call"]["name"].as_str(), Some("call:len"));
+    // #3864 residual: formals-bearing call:len ambient must stamp vendorPost so
+    // the three-fact middle line (Vendor universe) is audible for the live
+    // demo's len(pd.DataFrame()) shape — not only for Series.sum.
+    assert!(
+        post.get("vendorPost").is_some(),
+        "call:len linked post must carry vendorPost for Vendor universe: {post:#}"
+    );
+    let universe = row["verification"]["vendorUniverseFol"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        !universe.is_empty(),
+        "verification.vendorUniverseFol must be non-empty when len links (three-fact Vendor universe line): {row:#}"
+    );
+    assert!(
+        universe.starts_with("⊢ ") || universe.contains('=') || universe.contains('∀'),
+        "vendorUniverseFol must be human FOL, got: {universe}"
+    );
+    // Free call `len(pd.DataFrame())` is `call:len(<arg>)` with the empty
+    // DataFrame construction as the sole argument.
+    let frame = json!({
+        "kind": "ctor",
+        "name": "call:pandas.DataFrame",
+        "args": [],
+    });
+    assert_eq!(
+        post["instantiatedPost"],
+        json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "ctor", "name": "call:len", "args": [frame]},
+                {"kind": "const", "value": 0, "sort": int_sort()},
+            ],
+        })
+    );
+}
+
 #[test]
 fn imported_numpy_load_precondition_discharges_and_refuses_at_consumer_callsite() {
     assert!(
@@ -698,6 +776,67 @@ def test_sum():
     let bad_row = find_consistency_row(&bad_prove, "sum#euf#");
     assert_eq!(bad_row["status"].as_str(), Some("unsatisfied"));
     assert_linked_sum_post_targets_imported_proof(bad_row, &proof_cid);
+}
+
+#[test]
+fn imported_pandas_len_showcase_universe_links_into_consumer_assertions() {
+    assert!(
+        python_available(),
+        "python3 is required for the Python lift plugin"
+    );
+    assert!(
+        z3_available(),
+        "z3 is required for the production prove verdict"
+    );
+    let (_vendor_dir, proof, proof_cid) = stage_pandas_len_vendor_proof();
+
+    let good = stage_consumer_project(
+        &proof,
+        r#"import pandas as pd
+
+
+def test_pandas_fact():
+    assert len(pd.DataFrame()) == 0
+"#,
+        "pandas-len-good",
+    );
+    let good_report = run_lift_report(&good);
+    // Free call projects `call:len` (same EUF head as method collapse). The
+    // vendor binding's bridgeSourceSymbol is `call:len` with one formal for
+    // the argument so ambient post specialization arity-matches and stamps
+    // vendorPost → vendorUniverseFol for the three-fact middle line.
+    assert_report_edge_targets_imported_proof(&good_report, "call:len", &proof_cid);
+    run_mint(&good);
+    let (good_prove, good_code) = run_prove(&good);
+    assert_eq!(
+        good_code, 0,
+        "pandas len(DataFrame()) truthful consumer must prove: {good_prove}"
+    );
+    assert_eq!(good_prove["violations"].as_u64(), Some(0));
+    let good_row = find_consistency_row(&good_prove, "len#euf#");
+    assert_eq!(good_row["status"].as_str(), Some("discharged"));
+    assert_linked_len_post_targets_imported_proof(good_row, &proof_cid);
+
+    let bad = stage_consumer_project(
+        &proof,
+        r#"import pandas as pd
+
+
+def test_pandas_fact():
+    assert len(pd.DataFrame()) == 2
+"#,
+        "pandas-len-bad",
+    );
+    run_mint(&bad);
+    let (bad_prove, bad_code) = run_prove(&bad);
+    assert_eq!(
+        bad_code, 1,
+        "pandas len(DataFrame()) contradictory consumer must stay red: {bad_prove}"
+    );
+    assert_eq!(bad_prove["violations"].as_u64(), Some(1));
+    let bad_row = find_consistency_row(&bad_prove, "len#euf#");
+    assert_eq!(bad_row["status"].as_str(), Some("unsatisfied"));
+    assert_linked_len_post_targets_imported_proof(bad_row, &proof_cid);
 }
 
 #[test]
