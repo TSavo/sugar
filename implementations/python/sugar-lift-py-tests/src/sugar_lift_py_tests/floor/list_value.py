@@ -70,10 +70,27 @@ class ListValue(FloorValue):
         if type(other) is ComprehensionValue:
             from sugar_lift_py_tests.effect import (
                 SequenceConcatenationRuntimeEffect,
+                is_lift_time_decidable,
                 runtime_effect_evidence,
             )
-            from sugar_lift_py_tests.outcome import Incomplete
+            from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.outcome import Complete, Incomplete
 
+            self_term = self.to_term(owner=str(site))
+            if is_lift_time_decidable(self_term) and is_lift_time_decidable(
+                other.term
+            ):
+                return Complete(
+                    ComprehensionValue(
+                        ctor(
+                            "+",
+                            [
+                                self_term,
+                                other.term,
+                            ],
+                        )
+                    )
+                )
             return Incomplete(
                 SequenceConcatenationRuntimeEffect(
                     "list concatenation depends on runtime comprehension members; "
