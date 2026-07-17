@@ -213,6 +213,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
 
 def _static_iterable_elements(iterable_site, ctx, loop_site):
     import ast
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
     node = iterable_site.node
     values = None
@@ -229,8 +230,10 @@ def _static_iterable_elements(iterable_site, ctx, loop_site):
         ):
             return None
         values = tuple(range(*(arg.value for arg in node.args)))
-    elif isinstance(node, (ast.Tuple, ast.List)):
-        values = tuple(element for element in node.elts)
+    elif isinstance(node, ast.Tuple):
+        values = tuple(iterable_site.tuple_elts())
+    elif isinstance(node, ast.List):
+        values = tuple(iterable_site.list_elts())
     else:
         return None
 
@@ -250,7 +253,7 @@ def _static_iterable_elements(iterable_site, ctx, loop_site):
         ctx.build_body(
             (
                 ast.copy_location(ast.Constant(value=value), node)
-                if not isinstance(value, ast.AST)
+                if not isinstance(value, (ast.AST, SourceFragment))
                 else value
             ),
             SugarRole.TERM,
