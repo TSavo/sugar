@@ -556,6 +556,21 @@ def test_function_decorators_present():
     assert decs[0].name_id() == "staticmethod"
 
 
+def test_literal_parametrize_keeps_decidable_columns_from_mixed_rows() -> None:
+    fn = _module(
+        "@pytest.mark.parametrize(\n"
+        "    'typ, ad',\n"
+        "    [['float', {}], ['float', {'A': 1}], ['int', {}]],\n"
+        ")\n"
+        "def test_constructor(typ, ad):\n"
+        "    pass\n"
+    ).fragments()[0].statements()[0]
+
+    assert fn.literal_pytest_parametrize_rows() == (
+        (("typ",), (("float",), ("float",), ("int",))),
+    )
+
+
 def test_aug_assign_op():
     site = _stmt("x += 1\n")
     assert site.aug_assign_op() == "Add"

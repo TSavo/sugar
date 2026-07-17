@@ -68,7 +68,16 @@ class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
         del then, site
         if else_body is None:
             return Complete(BlockValue(()))
-        return else_body.reduce(ctx)
+        record, final_ctx = else_body.sugar.reduce_with_scope(ctx)
+        from sugar_lift_py_tests.floor import ScopeRebind
+
+        before = {binding.name: binding.value for binding in ctx.temporal.bindings}
+        rebound = tuple(
+            ScopeRebind(binding.name, binding.value)
+            for binding in final_ctx.temporal.bindings
+            if before.get(binding.name) is not binding.value
+        )
+        return Complete(BlockValue((*record.contribution(), *rebound)))
 
     def stated(self, site):
         # Ground False is decided at lift time. Until AssertionError is carried
