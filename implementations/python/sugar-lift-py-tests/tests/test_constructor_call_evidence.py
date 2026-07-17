@@ -10,9 +10,17 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-from sugar_lift_py_tests.floor import ImportAliasValue, ObjectValue, TermValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    ImportAliasValue,
+    ObjectValue,
+    StringValue,
+    TermValue,
+)
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.temporal import TemporalContext
+from sugar_lift_py_tests.sugar.constructor_call_sugar import ConstructorCallSugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
@@ -441,17 +449,160 @@ def test_runtime_selected_base_wrong_twin_hits_runtime_operand_door() -> None:
         )
 
 
-def test_effectful_init_stays_a_named_runtime_effect() -> None:
-    from sugar_lift_py_tests.effect import ConstructorRuntimeEffect
+def test_ground_effectful_init_stays_a_loud_constructor_gap() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class Box:\n" "    def __init__(self, value):\n" "        assert value\n",
+            "Box(1)",
+        )
 
-    outcome = _outcome(
-        "class Box:\n" "    def __init__(self, value):\n" "        assert value\n",
-        "Box(1)",
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "constructed source initializer"
+
+
+def test_source_bytesio_constructor_truthful_sat_wrong_twin_unsat(tmp_path) -> None:
+    pair = next(
+        witness
+        for witness in ConstructorCallSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "source_bytesio_constructor"
     )
 
-    assert type(outcome) is Incomplete
-    assert type(outcome.effect) is ConstructorRuntimeEffect
-    assert "Assert" in outcome.effect.reason
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_source_bytesio_constructor_carries_seeded_buffer() -> None:
+    temporal = (
+        TemporalContext.empty()
+        .bind_value(
+            "BytesIO",
+            ImportAliasValue(
+                "BytesIO",
+                "BytesIO",
+                import_target="io.BytesIO",
+            ),
+        )
+        .bind_value(
+            "asbytes",
+            ImportAliasValue(
+                "asbytes",
+                "asbytes",
+                import_target="numpy._utils.asbytes",
+            ),
+        )
+    )
+    outcome = _outcome(
+        "class TextIO(BytesIO):\n"
+        "    def __init__(self, value=''):\n"
+        "        BytesIO.__init__(self, asbytes(value))\n",
+        "TextIO('seeded')",
+        temporal=temporal,
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    fields = _field_values(outcome.value)
+    assert tuple(fields) == ("__bytesio_buffer__",)
+    buffer = fields["__bytesio_buffer__"]
+    assert type(buffer) is CallSiteValue
+    assert buffer.target_name == "numpy._utils.asbytes"
+    assert buffer.arg_values == (StringValue("seeded"),)
+
+
+def test_unrecognized_ground_initializer_stays_loud_constructor_gap() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class Box:\n" "    def __init__(self):\n" "        unknown(self)\n",
+            "Box()",
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "constructed source initializer"
+
+
+def test_source_bytesio_initializer_requires_bytesio_ancestry() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "from io import BytesIO\n"
+            "from numpy._utils import asbytes\n"
+            "class TextIO:\n"
+            "    def __init__(self, value=''):\n"
+            "        BytesIO.__init__(self, asbytes(value))\n",
+            "TextIO()",
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "constructed source initializer"
+
+
+@pytest.mark.parametrize(
+    "shadow",
+    (
+        "BytesIO = object\n",
+        "asbytes = lambda value: value\n",
+    ),
+)
+def test_source_bytesio_initializer_rejects_shadowed_imports(shadow: str) -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "from io import BytesIO\n"
+            "from numpy._utils import asbytes\n"
+            f"{shadow}"
+            "class TextIO(BytesIO):\n"
+            "    def __init__(self, value=''):\n"
+            "        BytesIO.__init__(self, asbytes(value))\n",
+            "TextIO()",
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+
+
+@pytest.mark.parametrize(
+    "asbytes_call",
+    (
+        "asbytes()",
+        "asbytes(value, value)",
+        "asbytes(value=value)",
+    ),
+)
+def test_source_bytesio_initializer_rejects_invalid_asbytes_calls(
+    asbytes_call: str,
+) -> None:
+    temporal = (
+        TemporalContext.empty()
+        .bind_value(
+            "BytesIO",
+            ImportAliasValue(
+                "BytesIO",
+                "BytesIO",
+                import_target="io.BytesIO",
+            ),
+        )
+        .bind_value(
+            "asbytes",
+            ImportAliasValue(
+                "asbytes",
+                "asbytes",
+                import_target="numpy._utils.asbytes",
+            ),
+        )
+    )
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class TextIO(BytesIO):\n"
+            "    def __init__(self, value=''):\n"
+            f"        BytesIO.__init__(self, {asbytes_call})\n",
+            "TextIO()",
+            temporal=temporal,
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
 
 
 def test_statically_impossible_constructor_arity_is_witnessed_type_error() -> None:
