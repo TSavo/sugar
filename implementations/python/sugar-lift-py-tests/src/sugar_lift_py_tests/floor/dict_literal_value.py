@@ -6,7 +6,7 @@ from typing import Any
 from sugar_lift_py_tests.effect import (
     DictMethodRuntimeEffect,
     KeyErrorRuntimeEffect,
-    runtime_effect_witness,
+    runtime_effect_evidence,
 )
 from sugar_lift_py_tests.ir import (
     _ConstBool,
@@ -95,7 +95,7 @@ def _call_method_effect(
             "Python dictionary method results can expose runtime view/mutation "
             "semantics; keep as typed red until a narrower vendor-cited "
             f"reduction owns the shape. blame={site}",
-            witness=runtime_effect_witness("py.call_method", observed, site),
+            **runtime_effect_evidence("py.call_method", observed, site),
         )
     )
 
@@ -114,7 +114,7 @@ def _subscript_effect(
             "lookup can raise KeyError or depend on runtime __hash__/__eq__; "
             "keep as typed red until a narrower vendor-cited reduction owns "
             f"the shape. blame={site}",
-            witness=runtime_effect_witness("py.subscript", observed, site),
+            **runtime_effect_evidence("py.subscript", observed, site),
         )
     )
 

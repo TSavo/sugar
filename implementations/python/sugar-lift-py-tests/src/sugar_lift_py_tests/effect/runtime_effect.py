@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from sugar_lift_py_tests.ir import Term
 
@@ -55,7 +55,7 @@ def operand_term(operation: str, operand) -> Term:
         return operand
     to_term = getattr(operand, "to_term", None)
     if callable(to_term):
-        return to_term(owner=operation)
+        return cast(Term, to_term(owner=operation))
     if type(operand) is bool:
         return bool_const(operand)
     if type(operand) is int:
@@ -70,6 +70,70 @@ def operand_term(operation: str, operand) -> Term:
     )
 
 
+_RUNTIME_OPERAND_SEAL = object()
+
+
+@dataclass(frozen=True, init=False)
+class RuntimeOperand:
+    """A term whose value or behavior is unavailable until Python executes.
+
+    Callers cannot turn a ground value or a description of missing machinery
+    into this capability.  The only public construction door is
+    :func:`genuine_runtime_operand`, which rejects decidable constants.
+    """
+
+    term: Term
+
+    def __init__(self, term: Term, *, _seal: object) -> None:
+        if _seal is not _RUNTIME_OPERAND_SEAL:
+            raise TypeError(
+                "RuntimeOperand is construction-closed; use "
+                "genuine_runtime_operand at the audited evidence door."
+            )
+        if _is_lift_time_decidable(term):
+            raise TypeError(
+                "RuntimeOperand cannot contain a lift-time-decidable term; "
+                "ground values and construction-gap prose are unconstructable."
+            )
+        object.__setattr__(self, "term", term)
+
+
+def genuine_runtime_operand(operation: str, operand) -> RuntimeOperand:
+    """Mint construction authority only for an opaque/runtime-derived term."""
+    term = operand_term(operation, operand)
+    if _is_lift_time_decidable(term):
+        raise TypeError(
+            "RuntimeEffect requires a genuine runtime-dependent operand; "
+            f"{term!r} is ground/decidable at lift time. Construction-gap prose "
+            "and ground values cannot mint RuntimeEffect authority. "
+            "replacement=construct the exact result or FactoryPanic loudly."
+        )
+    return RuntimeOperand(term, _seal=_RUNTIME_OPERAND_SEAL)
+
+
+def _is_lift_time_decidable(term: Term) -> bool:
+    from sugar_lift_py_tests.ir import (
+        _ConstBool,
+        _ConstInt,
+        _ConstReal,
+        _ConstStr,
+        _Ctor,
+        _Var,
+    )
+
+    if isinstance(term, (_ConstBool, _ConstInt, _ConstReal, _ConstStr)):
+        return True
+    if isinstance(term, _Var):
+        return False
+    if isinstance(term, _Ctor):
+        # A call coordinate denotes a result that does not exist until the
+        # call executes, even when every argument to that call is ground.
+        if term.name.startswith("call:"):
+            return False
+        return all(_is_lift_time_decidable(arg) for arg in term.args)
+    raise TypeError(f"unknown RuntimeEffect operand term: {term!r}")
+
+
 @dataclass(frozen=True)
 class RuntimeEffectWitness:
     """Evidence that perfect lift-time machinery still meets a runtime operand.
@@ -81,7 +145,7 @@ class RuntimeEffectWitness:
     """
 
     operation: Term
-    operand: Term
+    runtime_operand: RuntimeOperand
     site: "SourceFragment"
 
     def __post_init__(self) -> None:
@@ -93,10 +157,15 @@ class RuntimeEffectWitness:
                 "RuntimeEffectWitness.operation must be a Term; got "
                 f"{type(self.operation).__name__}"
             )
-        if not isinstance(self.operand, TermType):
+        if not isinstance(self.runtime_operand, RuntimeOperand):
             raise TypeError(
-                "RuntimeEffectWitness.operand must be a Term; got "
-                f"{type(self.operand).__name__}"
+                "RuntimeEffectWitness.runtime_operand must be a RuntimeOperand; got "
+                f"{type(self.runtime_operand).__name__}"
+            )
+        if not isinstance(self.runtime_operand.term, TermType):
+            raise TypeError(
+                "RuntimeEffectWitness.runtime_operand.term must be a Term; got "
+                f"{type(self.runtime_operand.term).__name__}"
             )
         if not isinstance(self.site, SourceFragment):
             raise TypeError(
@@ -110,18 +179,89 @@ class RuntimeEffectWitness:
         """The witness address, projected for display: ``file:line:col``."""
         return str(self.site)
 
+    @property
+    def operand(self) -> Term:
+        """The proof/render coordinate, projected from typed authority."""
+        return self.runtime_operand.term
 
-def runtime_effect_witness(operation: str, operand, site) -> RuntimeEffectWitness:
+
+def runtime_effect_witness(
+    operation: str,
+    operand: RuntimeOperand,
+    site,
+) -> RuntimeEffectWitness:
     """Build the required witness from the operation's real runtime operand."""
     from sugar_lift_py_tests.ir import ctor
 
-    term = operand_term(operation, operand)
+    if not isinstance(operand, RuntimeOperand):
+        raise TypeError(
+            "RuntimeEffectWitness requires a genuine runtime-dependent operand "
+            "capability. Call genuine_runtime_operand(operation, operand) only "
+            "for an opaque/runtime-derived value; ground values and gap prose "
+            "must construct or FactoryPanic."
+        )
     fragment = resolve_runtime_effect_site(site)
     return RuntimeEffectWitness(
-        operation=ctor(operation, [term]),
-        operand=term,
+        operation=ctor(operation, [operand.term]),
+        runtime_operand=operand,
         site=fragment,
     )
+
+
+class RuntimeEffectEvidence(TypedDict):
+    runtime_operand: RuntimeOperand
+    witness: RuntimeEffectWitness
+
+
+def _runtime_operand_or_panic(operation: str, operand, site) -> RuntimeOperand:
+    try:
+        return genuine_runtime_operand(operation, operand)
+    except TypeError as exc:
+        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
+        factory_panic_gap(
+            owner="RuntimeEffect",
+            blame=resolve_runtime_effect_site(site),
+            observed=f"{operation} operand={operand!r}",
+            requested="genuine runtime-dependent operand",
+            fix=(
+                f"{exc} A decidable operand or construction-gap description "
+                "must construct the exact result or panic; it cannot mint a "
+                "RuntimeEffect."
+            ),
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        raise AssertionError("factory_panic_gap returned")
+
+
+def runtime_effect_evidence_from_terms(
+    operation: Term,
+    operand,
+    site,
+) -> RuntimeEffectEvidence:
+    """Build evidence when the caller already owns the exact operation term."""
+    runtime_operand = _runtime_operand_or_panic("RuntimeEffect", operand, site)
+    witness = RuntimeEffectWitness(
+        operation=operation,
+        runtime_operand=runtime_operand,
+        site=resolve_runtime_effect_site(site),
+    )
+    return {"runtime_operand": runtime_operand, "witness": witness}
+
+
+def runtime_effect_evidence(
+    operation: str,
+    operand,
+    site,
+) -> RuntimeEffectEvidence:
+    """Build the only lawful constructor bundle for a RuntimeEffect."""
+    runtime_operand = _runtime_operand_or_panic(operation, operand, site)
+    return {
+        "runtime_operand": runtime_operand,
+        "witness": runtime_effect_witness(operation, runtime_operand, site),
+    }
 
 
 @dataclass(frozen=True)
@@ -133,7 +273,20 @@ class RuntimeEffect(ABC):
     """
 
     reason: str
+    runtime_operand: RuntimeOperand
     witness: RuntimeEffectWitness
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.runtime_operand, RuntimeOperand):
+            raise TypeError(
+                "RuntimeEffect.runtime_operand must be a RuntimeOperand; "
+                "ground values and construction-gap prose are unconstructable."
+            )
+        if self.witness.runtime_operand != self.runtime_operand:
+            raise TypeError(
+                "RuntimeEffect runtime_operand must be the operand bound by its "
+                "witness handle; unrelated receipt-shaped evidence is forbidden."
+            )
 
     @abstractmethod
     def kind(self) -> type["RuntimeEffect"]:

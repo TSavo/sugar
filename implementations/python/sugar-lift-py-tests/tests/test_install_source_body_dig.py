@@ -149,12 +149,11 @@ def test_sequential_dig_stops_at_first_unguarded_return() -> None:
 
 
 def test_sequential_dig_refuses_guarded_multi_exit_as_single_literal() -> None:
-    """Guarded returns are multi-exit: dig stays Incomplete, never last-arm pin."""
-    from sugar_lift_py_tests.effect import ConditionalExpressionRuntimeEffect
+    """Ground guard descriptions cannot mint runtime-dependence evidence."""
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
     from sugar_lift_py_tests.floor.term_value import TermValue
     from sugar_lift_py_tests.ir import atomic, num
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
+    from sugar_lift_py_tests.outcome import Complete
 
     guard = atomic("py.eq", [num(1), num(1)])
 
@@ -179,38 +178,27 @@ def test_sequential_dig_refuses_guarded_multi_exit_as_single_literal() -> None:
         "def f(x):\n    if x:\n        return 1\n    return 0\n",
         "numpy/_core/repro.py",
     ).statements()[0]
-    outcome = SequentialDigBody(
-        (_GuardedReturnStatement(), _FallthroughReturn()),
-        fn_site=fn_site,
-    ).desugar()
-
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, ConditionalExpressionRuntimeEffect)
-    assert "runtime control flow" in outcome.reason
+    with pytest.raises(FactoryPanic):
+        SequentialDigBody(
+            (_GuardedReturnStatement(), _FallthroughReturn()),
+            fn_site=fn_site,
+        ).desugar()
 
 
-def test_sequential_dig_runtime_selected_return_is_a_named_effect() -> None:
-    from sugar_lift_py_tests.effect import ConditionalExpressionRuntimeEffect
+def test_sequential_dig_gap_prose_wrong_twin_panics() -> None:
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-    from sugar_lift_py_tests.outcome import Incomplete
 
     fn_site = SourceFragment.from_source(
         "def f(x):\n    if x:\n        return 1\n", "numpy/_core/repro.py"
     ).statements()[0]
-    outcome = SequentialDigBody((_NoReturnStatement(),), fn_site=fn_site).desugar()
-
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, ConditionalExpressionRuntimeEffect)
-    assert "numpy/_core/repro.py:17:4" in outcome.reason
-    assert "If" in outcome.reason
-    assert "runtime control flow" in outcome.reason
-    assert outcome.effect.witness.site is fn_site
+    with pytest.raises(FactoryPanic):
+        SequentialDigBody((_NoReturnStatement(),), fn_site=fn_site).desugar()
 
 
 def test_sequential_dig_propagates_a_named_runtime_effect() -> None:
     from sugar_lift_py_tests.effect import (
         DivisionByZeroRuntimeEffect,
-        runtime_effect_witness,
+        runtime_effect_evidence,
     )
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.outcome import Incomplete
@@ -220,7 +208,7 @@ def test_sequential_dig_propagates_a_named_runtime_effect() -> None:
     site = SourceFragment.from_source("x / y\n", "numpy/_core/repro.py").statements()[0]
     effect = DivisionByZeroRuntimeEffect(
         "numpy/_core/repro.py:21:8 division denominator is runtime-dependent",
-        witness=runtime_effect_witness("py.divide", make_var("denominator"), site),
+        **runtime_effect_evidence("py.divide", make_var("denominator"), site),
     )
 
     class EffectStatement:

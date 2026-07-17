@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .runtime_effect import RuntimeEffect, runtime_effect_witness
+from .runtime_effect import RuntimeEffect, runtime_effect_evidence
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,6 @@ def runtime_divide(left, right, site):
         DivideRuntimeEffect(
             "division depends on runtime __truediv__/__rtruediv__ dispatch; "
             f"left={type(left).__name__} right={type(right).__name__} site={site}",
-            witness=runtime_effect_witness("py.divide", operand, site),
+            **runtime_effect_evidence("py.divide", operand, site),
         )
     )

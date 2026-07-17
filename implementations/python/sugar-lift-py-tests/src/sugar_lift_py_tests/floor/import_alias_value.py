@@ -217,12 +217,13 @@ def _runtime_alias_effect_at_site(
 
     from sugar_lift_py_tests.effect import (
         ImportedModuleRuntimeEffect,
-        RuntimeEffectWitness,
+        runtime_effect_evidence_from_terms,
     )
     from sugar_lift_py_tests.ir import ctor, str_const
     from sugar_lift_py_tests.outcome import Incomplete
 
-    operand = value.to_term(owner="ImportedModuleRuntimeEffect")
+    alias = value.to_term(owner="ImportedModuleRuntimeEffect")
+    operand = ctor("call:import_module", [alias])
 
     return Incomplete(
         ImportedModuleRuntimeEffect(
@@ -232,13 +233,13 @@ def _runtime_alias_effect_at_site(
             "The alias floor records name binding only; it does not fabricate "
             "module object semantics. "
             f"replacement={replacement}; blame={site}",
-            witness=RuntimeEffectWitness(
-                operation=ctor(
+            **runtime_effect_evidence_from_terms(
+                ctor(
                     "python:import_floor_operation",
-                    [str_const(replacement), str_const(shape)],
+                    [operand, str_const(replacement), str_const(shape)],
                 ),
-                operand=operand,
-                site=site,
+                operand,
+                site,
             ),
         )
     )

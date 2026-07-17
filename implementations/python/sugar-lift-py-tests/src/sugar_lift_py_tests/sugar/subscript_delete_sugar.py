@@ -62,13 +62,13 @@ class SubscriptDeleteSugar(Sugar, role=SugarRole.STATEMENT):
     def _cite_update(self, updated) -> Outcome:
         if self.receiver_name is not None:
             return Complete(ScopeRebind(self.receiver_name, updated))
-        from sugar_lift_py_tests.effect import runtime_effect_witness
+        from sugar_lift_py_tests.effect import runtime_effect_evidence
 
         return Incomplete(
             SubscriptStoreRuntimeEffect(
                 "subscript delete completed on a non-name receiver whose post-state "
                 f"cannot be rebound; site={self.site}",
-                witness=runtime_effect_witness("py.delitem", updated, self.site),
+                **runtime_effect_evidence("py.delitem", updated, self.site),
             )
         )
 

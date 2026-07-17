@@ -210,7 +210,7 @@ class OpaqueOpCallsite(FloorValue):
         del ctx
         from sugar_lift_py_tests.effect import (
             AttributeStoreRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -222,7 +222,7 @@ class OpaqueOpCallsite(FloorValue):
                 "__setattr__ at runtime; keep as typed red until a narrower "
                 "attribute mutation floor owns this shape. "
                 f"blame={operation.blame}",
-                witness=runtime_effect_witness(
+                **runtime_effect_evidence(
                     "py.setattr", f"call:{self.callee}", operation
                 ),
             )

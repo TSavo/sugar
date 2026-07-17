@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from sugar_lift_py_tests.effect import runtime_effect_witness
+from sugar_lift_py_tests.effect import runtime_effect_evidence
 from typing import Any
 
 from .floor_value import FloorValue
@@ -40,7 +40,7 @@ class ArrayLiteral(FloorValue):
         del ctx
         from sugar_lift_py_tests.effect import (
             GetattrRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -51,9 +51,7 @@ class ArrayLiteral(FloorValue):
                 "attribute_with; Python resolves attributes through descriptor and "
                 "__getattribute__ hooks at runtime. Keep as typed red until a "
                 f"narrower attribute floor owns the shape. blame={operation.blame}",
-                witness=runtime_effect_witness(
-                    "py.getattr", operation.name, operation
-                ),
+                **runtime_effect_evidence("py.getattr", operation.name, operation),
             )
         )
 
@@ -109,9 +107,7 @@ class ArrayLiteral(FloorValue):
                         "sequence repetition construction boundary: ArrayLiteral "
                         f"would materialize {repeated} literal floor items; "
                         f"site={site}",
-                        witness=runtime_effect_witness(
-                            "py.sequence_repeat", other, site
-                        ),
+                        **runtime_effect_evidence("py.sequence_repeat", other, site),
                     )
                 )
             return Complete(ArrayLiteral(self.items * other.value))
@@ -123,7 +119,7 @@ class ArrayLiteral(FloorValue):
                 SequenceRepetitionRuntimeEffect(
                     "sequence repetition by symbolic count: ArrayLiteral depends "
                     f"on runtime __index__/length semantics; site={site}",
-                    witness=runtime_effect_witness("py.sequence_repeat", other, site),
+                    **runtime_effect_evidence("py.sequence_repeat", other, site),
                 )
             )
         return super().multiply(other, site)

@@ -8,7 +8,7 @@ from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.effect import (
     SequenceRepetitionRuntimeEffect,
     SubscriptStoreRuntimeEffect,
-    runtime_effect_witness,
+    runtime_effect_evidence,
 )
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
@@ -247,7 +247,7 @@ def test_guarded_descendant_preserves_the_typed_store_effect() -> None:
     effect = Incomplete(
         SubscriptStoreRuntimeEffect(
             "symbolic store",
-            witness=runtime_effect_witness(
+            **runtime_effect_evidence(
                 "py.setitem",
                 make_var("runtime_index"),
                 SourceFragment.from_source("x[i] = 1\n", "t.py").statements()[0],

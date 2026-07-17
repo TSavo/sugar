@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.effect import (
     ConditionalExpressionRuntimeEffect,
-    RuntimeEffectWitness,
+    runtime_effect_evidence_from_terms,
 )
 from sugar_lift_py_tests.floor import (
     FloorValue,
@@ -26,12 +26,10 @@ class _EffectValue(FloorValue):
         operand = make_var("runtime_operand")
         return ConditionalExpressionRuntimeEffect(
             reason,
-            witness=RuntimeEffectWitness(
-                operation=ctor("py.ifexp.select", [operand]),
-                operand=operand,
-                site=SourceFragment.from_source(
-                    "x if c else y\n", "t.py"
-                ).statements()[0],
+            **runtime_effect_evidence_from_terms(
+                ctor("py.ifexp.select", [operand]),
+                operand,
+                SourceFragment.from_source("x if c else y\n", "t.py").statements()[0],
             ),
         )
 

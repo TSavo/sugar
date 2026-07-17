@@ -1,21 +1,20 @@
-"""Ground cross-type ordering is a recognized runtime fact: Python raises
-TypeError (None < 5, "a" < 1). Under the gap/fact discriminator that is
-TypeErrorRuntimeEffect (Incomplete), not an unconstrained py.lt emit.
-String-vs-string folds; symbolic still emits."""
+"""Ground cross-type ordering is lift-time decidable and therefore panics.
+It cannot mint RuntimeEffect evidence. String-vs-string folds; symbolic still
+emits."""
 
 from __future__ import annotations
 
 import ast
 
+import pytest
 from factory_reduce import compose_block, reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import BlockValue, PredicateValue, SymbolicValue
 from sugar_lift_py_tests.ir import make_var, num, py_lt
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
 
@@ -27,16 +26,14 @@ def _term(source: str):
     return sugar.desugar(ctx)
 
 
-def test_none_less_than_number_is_typeerror_effect() -> None:
-    outcome = _term("None < 5")
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
+def test_none_less_than_number_ground_wrong_twin_panics() -> None:
+    with pytest.raises(FactoryPanic):
+        _term("None < 5")
 
 
-def test_string_less_than_number_is_typeerror_effect() -> None:
-    outcome = _term('"a" < 1')
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
+def test_string_less_than_number_ground_wrong_twin_panics() -> None:
+    with pytest.raises(FactoryPanic):
+        _term('"a" < 1')
 
 
 def test_string_less_than_string_folds() -> None:

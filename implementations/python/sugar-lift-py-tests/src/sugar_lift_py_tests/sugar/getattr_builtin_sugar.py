@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.effect import GetattrRuntimeEffect, runtime_effect_witness
+from sugar_lift_py_tests.effect import GetattrRuntimeEffect, runtime_effect_evidence
 from sugar_lift_py_tests.floor import ObjectValue, StringValue
 from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.attribute_sugar import project_object_attribute
@@ -64,7 +64,7 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
                 lambda name: Incomplete(
                     GetattrRuntimeEffect(
                         f"getattr runtime boundary: attribute name expression `{self.dynamic_observed}` is runtime; blame={self.site}",
-                        witness=runtime_effect_witness(
+                        **runtime_effect_evidence(
                             "py.getattr.dynamic_name", name, self.site
                         ),
                     )
@@ -74,7 +74,7 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
             return Incomplete(
                 GetattrRuntimeEffect(
                     f"getattr runtime boundary: receiver reduced to {type(receiver).__name__}; Python resolves attributes at runtime; blame={self.site}",
-                    witness=runtime_effect_witness(
+                    **runtime_effect_evidence(
                         "py.getattr.receiver", receiver, self.site
                     ),
                 )

@@ -6,7 +6,7 @@ from typing import Any
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import (
     SequenceUnpackRuntimeEffect,
-    runtime_effect_witness,
+    runtime_effect_evidence,
 )
 from sugar_lift_py_tests.floor import (
     BoundVar,
@@ -366,7 +366,7 @@ class SequenceUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
         return Incomplete(
             SequenceUnpackRuntimeEffect(
                 f"sequence unpack runtime boundary: {reason}; site={self.site}",
-                witness=runtime_effect_witness("py.sequence_unpack", value, self.site),
+                **runtime_effect_evidence("py.sequence_unpack", value, self.site),
             )
         )
 

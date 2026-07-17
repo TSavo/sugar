@@ -100,7 +100,7 @@ class TermValue(FloorValue):
         if type(other) in (StringValue, NoneValue, ListValue, TupleValue, SetValue):
             from sugar_lift_py_tests.effect import (
                 TypeErrorRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
             from sugar_lift_py_tests.outcome import Incomplete
 
@@ -108,7 +108,7 @@ class TermValue(FloorValue):
                 TypeErrorRuntimeEffect(
                     f"unorderable types runtime boundary: "
                     f"TermValue and {type(other).__name__}; site={site}",
-                    witness=runtime_effect_witness("py.less_than", other, site),
+                    **runtime_effect_evidence("py.less_than", other, site),
                 )
             )
         return super().less_than(other, site)
@@ -290,14 +290,14 @@ class TermValue(FloorValue):
             if other.value == 0:
                 from sugar_lift_py_tests.effect import (
                     DivisionByZeroRuntimeEffect,
-                    runtime_effect_witness,
+                    runtime_effect_evidence,
                 )
 
                 return Incomplete(
                     DivisionByZeroRuntimeEffect(
                         f"division by zero runtime boundary: the divisor is "
                         f"concretely 0; owner=TermValue.divide site={site}",
-                        witness=runtime_effect_witness("py.divide", other, site),
+                        **runtime_effect_evidence("py.divide", other, site),
                     )
                 )
             return Complete(TermValue(self.value / other.value))
@@ -312,14 +312,14 @@ class TermValue(FloorValue):
             if other.value == 0:
                 from sugar_lift_py_tests.effect import (
                     ModuloByZeroRuntimeEffect,
-                    runtime_effect_witness,
+                    runtime_effect_evidence,
                 )
 
                 return Incomplete(
                     ModuloByZeroRuntimeEffect(
                         f"modulo by zero runtime boundary: the divisor is "
                         f"concretely 0; owner=TermValue.modulo site={site}",
-                        witness=runtime_effect_witness("py.modulo", other, site),
+                        **runtime_effect_evidence("py.modulo", other, site),
                     )
                 )
             return Complete(TermValue(self.value % other.value))
@@ -332,14 +332,14 @@ class TermValue(FloorValue):
             if other.value == 0:
                 from sugar_lift_py_tests.effect import (
                     DivisionByZeroRuntimeEffect,
-                    runtime_effect_witness,
+                    runtime_effect_evidence,
                 )
 
                 return Incomplete(
                     DivisionByZeroRuntimeEffect(
                         "floor division by zero runtime boundary: the divisor is "
                         f"concretely 0; owner=TermValue.floor_divide site={site}",
-                        witness=runtime_effect_witness("py.floor_divide", other, site),
+                        **runtime_effect_evidence("py.floor_divide", other, site),
                     )
                 )
             return Complete(TermValue(self.value // other.value))
@@ -465,7 +465,7 @@ class TermValue(FloorValue):
             return Complete(TermValue(~self.value))
         from sugar_lift_py_tests.effect import (
             TypeErrorRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.outcome import Incomplete
 
@@ -473,7 +473,7 @@ class TermValue(FloorValue):
             TypeErrorRuntimeEffect(
                 f"bad operand type for unary ~: "
                 f"'float'; owner=TermValue.bitwise_invert site={site}",
-                witness=runtime_effect_witness("py.bitwise_invert", self, site),
+                **runtime_effect_evidence("py.bitwise_invert", self, site),
             )
         )
 
@@ -524,7 +524,7 @@ class TermValue(FloorValue):
         if operation.name == "__bytes__" and not operation.arguments:
             from sugar_lift_py_tests.effect import (
                 BytesConversionRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
             from sugar_lift_py_tests.outcome import Incomplete
 
@@ -534,7 +534,7 @@ class TermValue(FloorValue):
                     "numeric bytes conversion runtime boundary: "
                     f"TermValue.__bytes__ is not defined for {type(self.value).__name__}; "
                     f"blame={operation.blame}",
-                    witness=runtime_effect_witness(
+                    **runtime_effect_evidence(
                         "py.bytes", type(self.value).__name__, operation
                     ),
                 )

@@ -168,7 +168,7 @@ class RuntimeConstructorStrategy:
         from sugar_lift_py_tests.effect import (
             ConstructorRuntimeEffect,
             TypeErrorRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
@@ -186,6 +186,6 @@ class RuntimeConstructorStrategy:
         return Incomplete(
             effect_type(
                 self.reason,
-                witness=runtime_effect_witness("py.constructor", call_term, self.site),
+                **runtime_effect_evidence("py.constructor", call_term, self.site),
             )
         )

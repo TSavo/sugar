@@ -10,7 +10,7 @@ from sugar_lift_py_tests.effect import (
     effect_kind,
     effect_reason,
     require_effect,
-    runtime_effect_witness,
+    runtime_effect_evidence,
 )
 from sugar_lift_py_tests.ir import _json_like_to_value, eq, make_var, num
 from sugar_lift_py_tests.outcome import Incomplete
@@ -166,11 +166,13 @@ def _effectful_refusal_source() -> str:
 def _runtime_effect_incomplete(reason: str) -> Incomplete:
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
-    site = SourceFragment.from_source("print(x)\n", "<boundary-record-witness-case>").statements()[0]
+    site = SourceFragment.from_source(
+        "print(x)\n", "<boundary-record-witness-case>"
+    ).statements()[0]
     return Incomplete(
         CallResultTypeRuntimeEffect(
             reason,
-            witness=runtime_effect_witness("py.call", "print", site),
+            **runtime_effect_evidence("py.call", "print", site),
         )
     )
 

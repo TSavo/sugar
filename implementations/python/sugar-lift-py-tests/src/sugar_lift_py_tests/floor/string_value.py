@@ -85,7 +85,7 @@ class StringValue(FloorValue):
         if type(other) in (TermValue, NoneValue, ListValue, TupleValue, SetValue):
             from sugar_lift_py_tests.effect import (
                 TypeErrorRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
             from sugar_lift_py_tests.outcome import Incomplete
 
@@ -93,7 +93,7 @@ class StringValue(FloorValue):
                 TypeErrorRuntimeEffect(
                     f"unorderable types runtime boundary: "
                     f"StringValue and {type(other).__name__}; site={site}",
-                    witness=runtime_effect_witness("py.less_than", other, site),
+                    **runtime_effect_evidence("py.less_than", other, site),
                 )
             )
         return super().less_than(other, site)
@@ -142,14 +142,14 @@ class StringValue(FloorValue):
                 return Complete(StringValue(self.value[i]))
             from sugar_lift_py_tests.effect import (
                 IndexErrorRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
 
             return Incomplete(
                 IndexErrorRuntimeEffect(
                     f"string index out of range runtime boundary: "
                     f"index={i} length={n}; owner=StringValue.subscript site={site}",
-                    witness=runtime_effect_witness("py.subscript", index, site),
+                    **runtime_effect_evidence("py.subscript", index, site),
                 )
             )
         return self.py_subscript_coordinate(index, site)
@@ -176,7 +176,7 @@ class StringValue(FloorValue):
                 return Complete(StringValue(self.value + other.computed.value))
             from sugar_lift_py_tests.effect import (
                 SequenceConcatenationRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
             from sugar_lift_py_tests.outcome import Incomplete
 
@@ -184,7 +184,7 @@ class StringValue(FloorValue):
                 SequenceConcatenationRuntimeEffect(
                     "string concatenation depends on runtime str() content; "
                     f"owner=StringValue.add site={site}",
-                    witness=runtime_effect_witness("py.sequence_concat", other, site),
+                    **runtime_effect_evidence("py.sequence_concat", other, site),
                 )
             )
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
@@ -221,7 +221,7 @@ class StringValue(FloorValue):
         if ground is not _NOT_GROUND:
             from sugar_lift_py_tests.effect import (
                 DynamicFormatRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
             from sugar_lift_py_tests.outcome import Complete, Incomplete
 
@@ -233,9 +233,7 @@ class StringValue(FloorValue):
                         "percent-format runtime boundary: Python rejected a "
                         "ground format application; "
                         f"shape={type(exc).__name__}; site={site}",
-                        witness=runtime_effect_witness(
-                            "py.percent_format", other, site
-                        ),
+                        **runtime_effect_evidence("py.percent_format", other, site),
                     )
                 )
 
@@ -316,7 +314,7 @@ class StringValue(FloorValue):
         if operation.name == "__float__" and not operation.arguments:
             from sugar_lift_py_tests.effect import (
                 StringFloatConversionRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
             from sugar_lift_py_tests.floor.term_value import TermValue
             from sugar_lift_py_tests.outcome import Complete, Incomplete
@@ -333,9 +331,7 @@ class StringValue(FloorValue):
                         "replacement=keep this as typed red because Python raises "
                         "ValueError at runtime; "
                         f"blame={operation.blame}",
-                        witness=runtime_effect_witness(
-                            "py.float", self.value, operation
-                        ),
+                        **runtime_effect_evidence("py.float", self.value, operation),
                     )
                 )
             if not math.isfinite(parsed):
@@ -348,9 +344,7 @@ class StringValue(FloorValue):
                         "replacement=add a cited non-finite numeric floor before "
                         "treating NaN/Infinity as proof-bearing; "
                         f"blame={operation.blame}",
-                        witness=runtime_effect_witness(
-                            "py.float", self.value, operation
-                        ),
+                        **runtime_effect_evidence("py.float", self.value, operation),
                     )
                 )
             if not parsed.is_integer():
@@ -363,16 +357,14 @@ class StringValue(FloorValue):
                         "replacement=add a deterministic Real-return floor before "
                         "treating this as proof-bearing; "
                         f"blame={operation.blame}",
-                        witness=runtime_effect_witness(
-                            "py.float", self.value, operation
-                        ),
+                        **runtime_effect_evidence("py.float", self.value, operation),
                     )
                 )
             return Complete(TermValue(parsed))
         if operation.name == "format":
             from sugar_lift_py_tests.effect import (
                 DynamicFormatRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
             from sugar_lift_py_tests.floor.term_value import TermValue
             from sugar_lift_py_tests.outcome import Complete, Incomplete
@@ -394,7 +386,7 @@ class StringValue(FloorValue):
                             "replacement=add a cited str.format floor for this "
                             "argument type or keep the method call as typed red; "
                             f"blame={operation.blame}",
-                            witness=runtime_effect_witness(
+                            **runtime_effect_evidence(
                                 "py.format", type(arg).__name__, operation
                             ),
                         )
@@ -412,9 +404,7 @@ class StringValue(FloorValue):
                         "replacement=prove a narrower format-string floor or keep "
                         "the method call as typed red; "
                         f"blame={operation.blame}",
-                        witness=runtime_effect_witness(
-                            "py.format", self.value, operation
-                        ),
+                        **runtime_effect_evidence("py.format", self.value, operation),
                     )
                 )
         if operation.name == "__format__" and len(operation.arguments) == 1:

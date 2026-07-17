@@ -275,7 +275,7 @@ def _with_binding(names, entered, site):
         return None
     from sugar_lift_py_tests.effect import (
         ContextManagerUnpackRuntimeEffect,
-        runtime_effect_witness,
+        runtime_effect_evidence,
     )
     from sugar_lift_py_tests.floor import ListValue, ScopeRebind, TupleValue
     from sugar_lift_py_tests.outcome import Complete, Incomplete
@@ -299,7 +299,7 @@ def _with_binding(names, entered, site):
     return Incomplete(
         ContextManagerUnpackRuntimeEffect(
             f"context-manager as-target needs {len(names)} runtime values; site={site}",
-            witness=runtime_effect_witness("py.with.unpack", entered, site),
+            **runtime_effect_evidence("py.with.unpack", entered, site),
         )
     )
 

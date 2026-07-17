@@ -1266,7 +1266,7 @@ class SequentialDigBody:
     def _control_flow_incomplete(self):
         from sugar_lift_py_tests.effect import (
             ConditionalExpressionRuntimeEffect,
-            RuntimeEffectWitness,
+            runtime_effect_evidence_from_terms,
         )
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.outcome import Incomplete
@@ -1302,10 +1302,10 @@ class SequentialDigBody:
             ConditionalExpressionRuntimeEffect(
                 f"{blame}: {observed} leaves the sequential dig return value "
                 "dependent on runtime control flow",
-                witness=RuntimeEffectWitness(
-                    operation=ctor("py.conditional_select", [terminal_selection]),
-                    operand=terminal_selection,
-                    site=site,
+                **runtime_effect_evidence_from_terms(
+                    ctor("py.conditional_select", [terminal_selection]),
+                    terminal_selection,
+                    site,
                 ),
             )
         )

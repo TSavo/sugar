@@ -91,7 +91,7 @@ def _if_exp_join(cond, true_v, false_v, site) -> Outcome:
     del true_v, false_v
     from sugar_lift_py_tests.effect import (
         ConditionalExpressionRuntimeEffect,
-        RuntimeEffectWitness,
+        runtime_effect_evidence_from_terms,
     )
     from sugar_lift_py_tests.ir import ctor
 
@@ -102,10 +102,10 @@ def _if_exp_join(cond, true_v, false_v, site) -> Outcome:
             "conditional expression runtime boundary: Python evaluates the "
             "condition at runtime before choosing a branch; keep as typed red "
             f"until IfExpSugar constructs the guarded value. blame={site}",
-            witness=RuntimeEffectWitness(
-                operation=ctor("py.ifexp.select", [condition]),
-                operand=condition,
-                site=site,
+            **runtime_effect_evidence_from_terms(
+                ctor("py.ifexp.select", [condition]),
+                condition,
+                site,
             ),
         )
     )

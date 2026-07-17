@@ -75,7 +75,7 @@ class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
         # a named runtime effect, per the gap/fact discriminator; never a panic.
         from sugar_lift_py_tests.effect import (
             AssertionFailedRuntimeEffect,
-            runtime_effect_witness,
+            runtime_effect_evidence,
         )
         from sugar_lift_py_tests.ir import bool_const
         from sugar_lift_py_tests.outcome import Incomplete
@@ -84,7 +84,7 @@ class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
             AssertionFailedRuntimeEffect(
                 f"assertion failed runtime boundary: the condition is concretely "
                 f"False; owner=FalseBoolLiteralSugar site={site}",
-                witness=runtime_effect_witness("py.assert", bool_const(False), site),
+                **runtime_effect_evidence("py.assert", bool_const(False), site),
             )
         )
 
