@@ -196,6 +196,11 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             return _carry_continuing_binding(outcome, binding)
 
         if isinstance(cm, CallSiteValue):
+            # Attach a source-digged exit contract before body reduction when
+            # the callsite arrived without one. Construction owns the proof;
+            # missing evidence stays None and the raise path below stays loud.
+            if cm.exit_suppression is None:
+                cm = _attach_source_exit_contract(cm)
             # An exact source-derived exit contract is sufficient when the
             # statement does not bind ``as``: no entered value is demanded,
             # and reducing the producer body would construct unrelated result
@@ -468,6 +473,28 @@ def _with_binding(names, entered, site):
             **runtime_effect_evidence("py.with.unpack", entered, site),
         )
     )
+
+
+def _attach_source_exit_contract(manager):
+    """Dig and attach a source-backed exit contract onto a callsite manager.
+
+    Qualified install-source targets only: bare names cannot name an exact
+    ``__exit__`` owner. Returns the original manager when dig cannot prove a
+    disposition — never fabricates non-suppression.
+    """
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        resolve_source_exit_contract,
+    )
+
+    target = getattr(manager, "target_name", None)
+    if not isinstance(target, str) or "." not in target:
+        return manager
+    contract = resolve_source_exit_contract(target)
+    if contract is None:
+        return manager
+    return replace(manager, exit_suppression=contract)
 
 
 def _unresolved_callsite_exit(site) -> None:

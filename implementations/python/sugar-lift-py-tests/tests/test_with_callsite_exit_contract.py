@@ -583,3 +583,124 @@ def test_multi_item_raise_demands_exact_exits_right_to_left() -> None:
         "exit:Right",
         "exit:Left",
     ]
+
+
+def _install_module(tmp_path, monkeypatch, name: str, source: str) -> str:
+    import importlib
+
+    (tmp_path / f"{name}.py").write_text(source, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    return name
+
+
+def test_source_class_exit_contract_proves_non_suppression_from_exit_body(
+    tmp_path, monkeypatch
+) -> None:
+    """Digged class ``__exit__`` (not the #4702 static coordinate table).
+
+    Live shape from #4979: raise-carrying with-body over an install-source
+    manager whose exact ``__exit__`` cannot return truthy (implicit None).
+    """
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        resolve_class_exit_contract,
+        resolve_source_exit_contract,
+    )
+
+    module = _install_module(
+        tmp_path,
+        monkeypatch,
+        "exit_never_manager",
+        "class Managed:\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, exc_type, exc, tb):\n"
+        "        self.close()\n"
+        "    def close(self):\n"
+        "        pass\n",
+    )
+    target = f"{module}.Managed"
+
+    contract = resolve_class_exit_contract(target)
+    assert contract is not None
+    assert contract.exception_names == frozenset()
+    assert resolve_source_exit_contract(target) == contract
+
+    payload = lift_file_payload(
+        f"from {module} import Managed\n"
+        "def test_raise_through_manager():\n"
+        "    with Managed():\n"
+        "        raise ValueError('boom')\n",
+        "test_source_class_exit.py",
+    )
+    assert not payload.effects
+
+
+def test_source_class_truthy_exit_stays_loud_without_static_hatch(
+    tmp_path, monkeypatch
+) -> None:
+    """``return True`` is not a never-suppresses proof; keep the named gap."""
+    from sugar_lift_py_tests.sugar.install_source_dig import resolve_class_exit_contract
+
+    module = _install_module(
+        tmp_path,
+        monkeypatch,
+        "exit_true_manager",
+        "class Managed:\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, exc_type, exc, tb):\n"
+        "        return True\n",
+    )
+
+    assert resolve_class_exit_contract(f"{module}.Managed") is None
+
+    with pytest.raises(FactoryPanic) as raised:
+        lift_file_payload(
+            f"from {module} import Managed\n"
+            "def test_raise_suppressed_unknown():\n"
+            "    with Managed():\n"
+            "        raise ValueError('boom')\n",
+            "test_source_class_true_exit.py",
+        )
+
+    assert raised.value.info.owner == "WithSugar"
+    assert raised.value.info.observed == "raise-carrying callsite with-body"
+    assert "dig manager().__exit__" in raised.value.info.requested
+
+
+def test_source_function_exit_contract_inherits_digged_manager_class(
+    tmp_path, monkeypatch
+) -> None:
+    """Factory function returning a diggable manager class (deprecated_call shape)."""
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        resolve_source_exit_contract,
+    )
+
+    module = _install_module(
+        tmp_path,
+        monkeypatch,
+        "exit_factory_manager",
+        "class Managed:\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, exc_type, exc, tb):\n"
+        "        return None\n"
+        "\n"
+        "def managed() -> Managed:\n"
+        "    return Managed()\n",
+    )
+
+    assert resolve_source_exit_contract(f"{module}.managed") is not None
+    assert resolve_source_exit_contract(f"{module}.managed").exception_names == (
+        frozenset()
+    )
+
+    payload = lift_file_payload(
+        f"from {module} import managed\n"
+        "def test_raise_through_factory():\n"
+        "    with managed():\n"
+        "        raise ValueError('boom')\n",
+        "test_source_function_exit.py",
+    )
+    assert not payload.effects
