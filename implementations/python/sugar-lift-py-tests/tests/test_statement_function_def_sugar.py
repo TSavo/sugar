@@ -335,6 +335,31 @@ def test_nested_callable_binds_default_before_single_keyword_expansion() -> None
     ) == TermValue(9)
 
 
+def test_nested_callable_merges_explicit_keyword_with_constructed_expansion() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(required=4, **options):\n"
+        '        return required + options["left"] + options["right"]\n'
+        '    return inner(left=1, **{"right": 2})\n'
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.arg_values == (
+        TermValue(4),
+        DictValue(
+            (
+                (StringValue("left"), TermValue(1)),
+                (StringValue("right"), TermValue(2)),
+            )
+        ),
+    )
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="merged keyword expansion", project_callsite=False
+    ) == TermValue(7)
+
+
 def test_nested_callable_opaque_expansion_has_authenticated_binding_effect() -> None:
     site = SourceFragment.from_source(
         "inner(flag=1, **options)\n", "nested.py"
