@@ -5,7 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _call_pair, typed_red_effect_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -69,6 +69,17 @@ class AddOpSugar(Sugar, role=SugarRole.TERM):
                 owner_sugar="AddOpSugar",
                 truthful=tuple_prefix + "def test_a():\n    assert A() == (1, 2, 3)\n",
                 lying=tuple_prefix + "def test_a():\n    assert A() == (1, 2)\n",
+            ),
+            typed_red_effect_witness(
+                name="runtime_comprehension_sequence_concat",
+                owner_sugar="AddOpSugar",
+                source=("def A(xs):\n" "    return [x for x in xs] + ['tail']\n"),
+                effect_class="SequenceConcatenationRuntimeEffect",
+                reason_needle=(
+                    "sequence concatenation depends on runtime comprehension members"
+                ),
+                blame_needle="test_witness.py:2:11",
+                wrong_reason_needle="owner=ListValue.add",
             ),
         )
 
