@@ -4175,11 +4175,18 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
             span.in_scope(|| {
                 tracing::info!(section = "demanded_questions", "report section started");
                 out.push_str(&format!(
-                    "demanded questions (total={} resolved={} dangling={}):\n",
+                    "demanded questions (total={} resolved={} none_found={}):\n",
                     report.demanded_questions.len(),
                     demanded_resolved,
                     demanded_dangling
                 ));
+                if demanded_dangling > 0 {
+                    out.push_str(&format!(
+                        "  call book: {demanded_resolved} answered; {demanded_dangling} wanted an X, none found\n"
+                    ));
+                } else if demanded_resolved > 0 {
+                    out.push_str("  call book: every demanded call found a contract\n");
+                }
                 let mut heartbeat = RenderHeartbeat::new("demanded_questions.rows");
                 for (index, question) in report.demanded_questions.iter().enumerate() {
                     heartbeat.tick(index);
@@ -4247,7 +4254,7 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
                     "observed occurrences total={}\n\
              demanded questions total={}\n\
              demanded questions resolved={}\n\
-             demanded questions dangling={}\n",
+             demanded questions none_found={}\n",
                     report.call_edges.len(),
                     report.demanded_questions.len(),
                     demanded_resolved,
@@ -6158,6 +6165,9 @@ const REPORT_PYTHON_COORDINATE_CONSTRUCTORS: &[&str] = &[
     "py.ellipsis",
     "py.except",
     "py.exception",
+    // Constructed RaiseValue / exceptional-exit floor is a coordinate of the
+    // constrained path (Some arm), not an open Incomplete RuntimeEffect.
+    "py.exceptional_exit",
     "py.format",
     "py.formatted",
     "py.fstring",
@@ -6181,7 +6191,6 @@ const REPORT_PYTHON_EFFECT_CONSTRUCTORS: &[&str] = &[
     "py.conditional_select",
     "py.delitem",
     "py.divide",
-    "py.exceptional_exit",
     "py.floor_divide",
     "py.format.arguments",
     "py.format.dynamic_spec",
@@ -7058,9 +7067,25 @@ fn visual_factory_walk_rows(
             .and_then(Value::as_str)
             .unwrap_or("<unknown>")
             .to_string();
-        let status = normalized_source_status(row.get("status").and_then(Value::as_str));
-        let raw_verdict = if status == "unresolved" {
-            "gap"
+        let raw_status = row.get("status").and_then(Value::as_str).unwrap_or("");
+        let status = normalized_source_status(Some(raw_status).filter(|s| !s.is_empty()));
+        // Paint law: constraints (complete) GREEN; open effects/gaps RED; no third case.
+        // Wire statuses raise-effect / runtime-effect / coverage-gap (and output=effect)
+        // are always open effects — even when normalized_source_status collapses them
+        // to "boundary" for census buckets.
+        let force_effect = matches!(
+            raw_status,
+            "raise-effect" | "runtime-effect" | "coverage-gap"
+        ) || row
+            .get("output")
+            .and_then(Value::as_str)
+            .is_some_and(|o| o == "effect" || o.ends_with("-effect"));
+        let raw_verdict = if status == "unresolved" || force_effect {
+            if force_effect && status != "unresolved" {
+                "incomplete"
+            } else {
+                "gap"
+            }
         } else {
             row.get("verdict")
                 .and_then(Value::as_str)
@@ -7071,7 +7096,7 @@ fn visual_factory_walk_rows(
                 })
         };
         let context = factory_walk_context_key(row, &file);
-        let (tone, label) = if raw_verdict == "complete" {
+        let (tone, label) = if raw_verdict == "complete" && !force_effect {
             let predicate = row
                 .get("emittedFormula")
                 .or_else(|| row.get("emitted_formula"))
@@ -7658,7 +7683,7 @@ fn render_report_plan_roll_call(report: &LiftSourceReport) -> String {
         }
     }
     out.push_str(&format!(
-        "report sections: unit test facts={}, body universes={}, factory report={}, observed occurrences total={}, demanded questions total={}, demanded questions resolved={}, demanded questions dangling={}, vendor conjoins={}, source mementos={}\n",
+        "report sections: unit test facts={}, body universes={}, factory report={}, observed occurrences total={}, demanded questions total={}, demanded questions resolved={}, demanded questions none_found={}, vendor conjoins={}, source mementos={}\n",
         sections.unit_test_facts,
         sections.body_universes,
         sections.factory_report,
@@ -7949,6 +7974,14 @@ fn render_lift_coverage_accounting(coverage: &Value, project_root: Option<&Path>
     out.push_str(&format!(
         "stated={stated} accounted={accounted} silently_unaccounted={silent_n}\n"
     ));
+    // Dual-book plain English: assert alibis vs open call demands are different books.
+    if silent_n == 0 {
+        out.push_str("  assert book: every stated assert has an alibi (silent=0)\n");
+    } else {
+        out.push_str(&format!(
+            "  assert book: {silent_n} stated assert(s) have no alibi (silent residue RED)\n",
+        ));
+    }
     // Per-file conservation rows when present.
     if let Some(per_file) = coverage
         .get("perFile")
@@ -8290,12 +8323,20 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             .iter()
             .filter(|edge| edge.get("status").and_then(Value::as_str) != Some("unjoined"))
             .count();
+        let none_found = report.demanded_questions.len().saturating_sub(resolved);
         out.push_str(&format!(
-            "demanded questions (total={} resolved={} dangling={}):\n",
+            "demanded questions (total={} resolved={} none_found={}):\n",
             report.demanded_questions.len(),
             resolved,
-            report.demanded_questions.len().saturating_sub(resolved)
+            none_found
         ));
+        if none_found > 0 {
+            out.push_str(&format!(
+                "  call book: {resolved} answered; {none_found} wanted an X, none found\n"
+            ));
+        } else if resolved > 0 {
+            out.push_str("  call book: every demanded call found a contract\n");
+        }
         for question in &report.demanded_questions {
             out.push_str(&format!("  - {}\n", format_demanded_question(question)));
         }
@@ -12699,7 +12740,7 @@ mod tests {
             "{human}"
         );
         assert!(human.contains("bin blake3-512:"), "{human}");
-        assert!(human.contains("report sections: unit test facts=1, body universes=1, factory report=2, observed occurrences total=1, demanded questions total=0, demanded questions resolved=0, demanded questions dangling=0, vendor conjoins=0, source mementos=1"), "{human}");
+        assert!(human.contains("report sections: unit test facts=1, body universes=1, factory report=2, observed occurrences total=1, demanded questions total=0, demanded questions resolved=0, demanded questions none_found=0, vendor conjoins=0, source mementos=1"), "{human}");
 
         let rendered_json = render_report_json(&report, None).expect("json report");
         let parsed: serde_json::Value = serde_json::from_str(&rendered_json).expect("valid json");
@@ -16284,7 +16325,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "{visual}"
         );
         assert!(
-            visual.contains("demanded questions (total=2 resolved=1 dangling=1):"),
+            visual.contains("demanded questions (total=2 resolved=1 none_found=1):"),
             "{visual}"
         );
         assert!(
@@ -16302,13 +16343,20 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "{visual}"
         );
         assert!(
+            visual.contains("call book: 1 answered; 1 wanted an X, none found"),
+            "{visual}"
+        );
+        assert!(
             !visual.contains("DEBT "),
             "report must not invent DEBT; got:\n{visual}"
         );
         assert!(visual.contains("observed occurrences total=2"), "{visual}");
         assert!(visual.contains("demanded questions total=2"), "{visual}");
         assert!(visual.contains("demanded questions resolved=1"), "{visual}");
-        assert!(visual.contains("demanded questions dangling=1"), "{visual}");
+        assert!(
+            visual.contains("demanded questions none_found=1"),
+            "{visual}"
+        );
         // Demanded list + implication ledger each list both rows (joined + none-found).
         assert_eq!(
             visual
@@ -16333,7 +16381,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             .filter(|line| line.starts_with("  - "))
             .count();
         let demanded = visual
-            .split("demanded questions (total=2 resolved=1 dangling=1):\n")
+            .split("demanded questions (total=2 resolved=1 none_found=1):\n")
             .nth(1)
             .expect("demanded block")
             .split("implication ledger")
@@ -16350,7 +16398,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         // #4453 population law: observed occurrences (per-locus syntactic edges)
         // and demanded questions (implication edges) are distinct populations.
         // The datetime wall measured 95 observed / 21 demanded = 5 resolved +
-        // 16 dangling. Using unequal sizes is load-bearing: a mixed block under
+        // 16 none_found. Using unequal sizes is load-bearing: a mixed block under
         // one header that counted only the demanded population would say
         // total=21 while rendering 116 rows.
         let mut report = minimal_source_report();
@@ -16388,14 +16436,14 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "{visual}"
         );
         assert!(
-            visual.contains("demanded questions (total=21 resolved=5 dangling=16):"),
+            visual.contains("demanded questions (total=21 resolved=5 none_found=16):"),
             "{visual}"
         );
         assert!(visual.contains("observed occurrences total=95"), "{visual}");
         assert!(visual.contains("demanded questions total=21"), "{visual}");
         assert!(visual.contains("demanded questions resolved=5"), "{visual}");
         assert!(
-            visual.contains("demanded questions dangling=16"),
+            visual.contains("demanded questions none_found=16"),
             "{visual}"
         );
         // Census total must equal the row count of the block it heads.
@@ -16410,7 +16458,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             .filter(|line| line.starts_with("  - "))
             .count();
         let demanded_rows = visual
-            .split("demanded questions (total=21 resolved=5 dangling=16):\n")
+            .split("demanded questions (total=21 resolved=5 none_found=16):\n")
             .nth(1)
             .expect("demanded block")
             .split("implication ledger")
@@ -16450,7 +16498,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
         let visual = render_visual_source_report(&report);
         assert!(
-            visual.contains("demanded questions (total=2 resolved=2 dangling=0):"),
+            visual.contains("demanded questions (total=2 resolved=2 none_found=0):"),
             "{visual}"
         );
         assert!(visual.contains("@ control.py:3:4"), "{visual}");
@@ -16910,6 +16958,10 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             human.contains("onDisk=2 accounted=1 delta=1")
                 || (human.contains("onDisk=2") && human.contains("delta=1")),
             "conservation triple onDisk/accounted/delta must appear; got:\n{human}"
+        );
+        assert!(
+            human.contains("assert book:"),
+            "assert book dual-book line required; got:\n{human}"
         );
         assert!(
             human.contains("No dig warranted by assertion:"),
