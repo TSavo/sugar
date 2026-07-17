@@ -5,7 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair, WitnessSource
+from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -33,7 +33,7 @@ class DivideOpSugar(Sugar, role=SugarRole.TERM):
         )
 
     @classmethod
-    def witnesses(cls) -> SugarWitnessPair:
+    def witnesses(cls):
         # Concrete `10 / 2 == 5` folds on the division floor; the True/False face
         # picks the if-face. The truthful twin rides that face, the lying twin
         # asserts the other -- the pair proves the lift discriminates on the quotient.
@@ -44,17 +44,36 @@ class DivideOpSugar(Sugar, role=SugarRole.TERM):
             "    return 0\n"
             "\n"
         )
-        return SugarWitnessPair(
-            name="divide_return",
-            owner_sugar="DivideOpSugar",
-            family="literal-call",
-            truthful=WitnessSource(
-                source=prefix + "def test_a():\n    assert A(5) == 5\n",
-                expected="sat",
+        return (
+            _call_pair(
+                name="divide_return",
+                owner_sugar="DivideOpSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
             ),
-            lying=WitnessSource(
-                source=prefix + "def test_a():\n    assert A(5) == 0\n",
-                expected="unsat",
+            _call_pair(
+                name="exceptional_exit_divide",
+                owner_sugar="DivideOpSugar",
+                truthful=(
+                    "def fail():\n"
+                    "    raise TypeError()\n\n"
+                    "def A(value):\n"
+                    "    if value < 0:\n"
+                    "        return fail() / 2\n"
+                    "    return value\n\n"
+                    "def test_a():\n"
+                    "    assert A(5) == 5\n"
+                ),
+                lying=(
+                    "def fail():\n"
+                    "    raise TypeError()\n\n"
+                    "def A(value):\n"
+                    "    if value < 0:\n"
+                    "        return fail() / 2\n"
+                    "    return value\n\n"
+                    "def test_a():\n"
+                    "    assert A(5) == 6\n"
+                ),
             ),
         )
 
