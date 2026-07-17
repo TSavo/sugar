@@ -1309,11 +1309,27 @@ def _module_import_temporal(
                 if name == "*":
                     continue  # star-import stays loud / unsupported
                 bound = asname or name
-                import_target = (
-                    f"{stmt.importfrom_module()}.{name}"
-                    if stmt.importfrom_module()
-                    else name
-                )
+                # Absolute-ize relative imports the same way `_module_import_maps`
+                # does, so install-source dig can resolve package exceptions to
+                # ExceptionClassValue (e.g. `from .exceptions import InvalidURL`).
+                mod = stmt.importfrom_module() or ""
+                level = stmt.importfrom_level()
+                if level and stmt.filename is not None:
+                    defining_module = _installed_module_name_from_filename(
+                        stmt.filename
+                    )
+                    if defining_module is not None:
+                        from sugar_lift_py_tests.sugar.install_source_dig import (
+                            _absolute_import_from_module,
+                        )
+
+                        mod = (
+                            _absolute_import_from_module(
+                                defining_module, mod or None, level
+                            )
+                            or mod
+                        )
+                import_target = f"{mod}.{name}" if mod else name
                 from sugar_lift_py_tests.sugar.install_source_dig import (
                     resolve_install_source_value,
                 )

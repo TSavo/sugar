@@ -6,7 +6,6 @@ from sugar_lift_py_tests.effect import RaiseEffect
 
 from .exception_value import ExceptionValue
 from .floor_value import FloorValue
-from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 
 @dataclass(frozen=True)
@@ -38,17 +37,13 @@ class RaiseValue(FloorValue):
 
 
 def _exceptional_exit_formula(effect: RaiseEffect, guards: tuple = ()):
-    if effect.exception_name is None:
-        from sugar_lift_py_tests.factory import factory_panic_gap
-
-        factory_panic_gap(
-            owner="RaiseValue",
-            blame=effect.blame or "<raise>",
-            observed="unclassified raise exit",
-            requested="an exceptional-exit coordinate",
-            fix="classify the raised exception before projecting the scope exit",
-            status=FactoryAuditStatus.FLOOR_GAP,
-        )
+    # Bare ``raise`` (re-raise of the active exception) is a source-cited
+    # exceptional exit: the coordinate is ``reraise``, not a silent drop and
+    # not a fabricated exception class. Explicit ``raise Exc(...)`` keeps its
+    # constructed name. Absence of both would be a construction gap elsewhere.
+    exception_name = (
+        effect.exception_name if effect.exception_name is not None else "reraise"
+    )
 
     from sugar_lift_py_tests.ir import and_, ctor, eq, implies, make_var, str_const
 
@@ -57,7 +52,7 @@ def _exceptional_exit_formula(effect: RaiseEffect, guards: tuple = ()):
         ctor(
             "py.exceptional_exit",
             [
-                str_const(effect.exception_name),
+                str_const(exception_name),
                 str_const(
                     f"{effect.blame or '<unknown raise locus>'}"
                     f"#source-sha256={effect.source_sha256 or 'unavailable'}"

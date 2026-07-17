@@ -318,23 +318,46 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
 
 
 def _except_arm_contributions(entries: tuple, arm: "TryExceptArm") -> tuple:
-    """Except-arm returns must not unguard-kill the rest of the outer block.
+    """Except-arm exits must not unguard-kill the rest of the outer block.
 
     Recognition threading splices handler bodies into the enclosing record. An
-    unguarded ReturnValue.follow_rest keeps the tail raw — which would drop
-    asserts *after* a try/except that only returns on the exception path.
-    Wrap handler returns as GuardedReturn under py.except(type) so the tail
-    still reduces.
+    unguarded ReturnValue / RaiseValue.follow_rest keeps the tail raw or drops
+    it — which would poison asserts *after* a try/except that only exits on the
+    exception path. Wrap handler returns as GuardedReturn and raises as
+    GuardedRaise under py.except(type) so the tail still reduces.
     """
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.raise_value import RaiseValue
     from sugar_lift_py_tests.floor.return_value import ReturnValue
-    from sugar_lift_py_tests.ir import atomic, str_const
 
     guard = _except_guard(arm)
     out = []
     for entry in entries:
         if type(entry) is ReturnValue:
             out.append(GuardedReturn(guards=(guard,), value=entry.value))
+        elif type(entry) is RaiseValue:
+            # Bare ``raise`` inside ``except Type`` re-raises the active
+            # exception: classify from the handler's source-cited type names
+            # so the exceptional-exit coordinate is never unclassified.
+            if entry.effect.exception_name is None and arm.type_names:
+                from sugar_lift_py_tests.effect import RaiseEffect
+
+                classified = RaiseValue(
+                    RaiseEffect(
+                        (
+                            arm.type_names[0]
+                            if len(arm.type_names) == 1
+                            else ",".join(arm.type_names)
+                        ),
+                        entry.effect.blame,
+                        entry.effect.source_sha256,
+                    ),
+                    scope=entry.scope,
+                    exception=entry.exception,
+                )
+                out.append(classified.guarded(guard))
+            else:
+                out.append(entry.guarded(guard))
         else:
             out.append(entry)
     return tuple(out)

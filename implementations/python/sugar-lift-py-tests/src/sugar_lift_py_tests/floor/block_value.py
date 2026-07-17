@@ -35,14 +35,18 @@ class BlockValue(FloorValue):
         )
 
     def follow_rest(self):
-        # Only an *unguarded* return makes the entire continuation unreachable.
-        # GuardedReturn (if/except path) and other posts coexist with a live tail
-        # — e.g. try/except: return; assert ... must still reduce the assert.
+        # Only an *unguarded* return or raise makes the entire continuation
+        # unreachable. GuardedReturn / GuardedRaise (if/except path) coexist
+        # with a live tail — e.g. try/except: return|raise; assert ... must
+        # still reduce the assert on the non-exception path.
+        from sugar_lift_py_tests.floor.raise_value import RaiseValue
         from sugar_lift_py_tests.floor.return_value import ReturnValue
         from sugar_lift_py_tests.outcome.follow_step import FollowStep
 
         if any(type(entry) is ReturnValue for entry in self.statements):
             return FollowStep.halt(keeps_rest=True)
+        if any(type(entry) is RaiseValue for entry in self.statements):
+            return FollowStep.halt(keeps_rest=False)
         return FollowStep.continue_with()
 
     def extend_scope(self, ctx):

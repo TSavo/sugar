@@ -111,8 +111,36 @@ class KeywordCallSugar(
         ctx: object,
     ) -> Outcome:
         if not remaining:
-            from sugar_lift_py_tests.floor import CallSiteValue
+            from sugar_lift_py_tests.floor import (
+                BuiltinExceptionClassValue,
+                CallSiteValue,
+                ExceptionClassValue,
+                ExceptionValue,
+                ImportAliasValue,
+            )
             from sugar_lift_py_tests.ir import ctor, str_const
+
+            # Exact exception constructors with kwargs still construct
+            # ExceptionValue so RaiseSugar can route them — same door as
+            # CallSugar for positional exception calls. CallSiteValue alone is
+            # not reclassified by spelling at raise time.
+            if self.receiver is None:
+                bound = ctx.temporal.value_if_bound(self.target_name)
+                if isinstance(bound, ImportAliasValue) and isinstance(
+                    bound.resolved_value, ExceptionClassValue
+                ):
+                    bound = bound.resolved_value
+                if type(bound) in (BuiltinExceptionClassValue, ExceptionClassValue):
+                    # Positional args first; keyword values follow in source
+                    # order. Names ride on the call coordinate via parameters
+                    # only when this path falls through to CallSiteValue.
+                    return Complete(
+                        ExceptionValue(
+                            exception_name=bound.name,
+                            arguments=(*pos_values, *(value for _, value in kw_pairs)),
+                            site=self.site,
+                        )
+                    )
 
             # term: call:name(pos..., kw:k=v, ...)
             term_args = [value.to_term(owner=str(self.site)) for value in pos_values]
