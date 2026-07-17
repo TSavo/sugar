@@ -13,6 +13,8 @@ from sugar_lift_py_tests.sugar.while_sugar import (
     _has_unclassified_mutation,
 )
 
+STATIC_UNFOLD_LIMIT = 1024
+
 
 @dataclass(frozen=True)
 class ForSugar(Sugar, role=SugarRole.STATEMENT):
@@ -79,11 +81,26 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             "    return 0\n"
             "\n"
         )
-        return _call_pair(
-            name="for_return",
-            owner_sugar="ForSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 0\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 1\n",
+        large_static_prefix = (
+            "def B():\n"
+            "    for x in range(65):\n"
+            "        pass\n"
+            "    return 0\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="for_return",
+                owner_sugar="ForSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 0\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 1\n",
+            ),
+            _call_pair(
+                name="for_large_static_unfold",
+                owner_sugar="ForSugar",
+                truthful=large_static_prefix + "def test_b():\n    assert B() == 0\n",
+                lying=large_static_prefix + "def test_b():\n    assert B() == 1\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -96,29 +113,25 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
 
     def _unfold_static(self, remaining, ctx, entries=()):
         from sugar_lift_py_tests.floor import BlockValue, ScopeRebind
+        from sugar_lift_py_tests.outcome import Incomplete
 
-        if not remaining:
-            bindings = tuple(
-                ScopeRebind(name, value)
-                for name in self.carried
-                if (value := ctx.temporal.value_if_bound(name)) is not None
+        accumulated = list(entries)
+        current_ctx = ctx
+        for element_body in remaining:
+            outcome = element_body.reduce(current_ctx)
+            if isinstance(outcome, Incomplete):
+                return outcome
+            iteration_ctx = ScopeRebind(self.target_name, outcome.value).extend_scope(
+                current_ctx
             )
-            return Complete(BlockValue((*entries, *bindings)))
-        head, *rest = remaining
-        return head.reduce(ctx).and_then(
-            lambda element: self._unfold_iteration(element, tuple(rest), ctx, entries)
+            record, current_ctx = self.body.sugar.reduce_with_scope(iteration_ctx)
+            accumulated.extend(record.contribution())
+        bindings = tuple(
+            ScopeRebind(name, value)
+            for name in self.carried
+            if (value := current_ctx.temporal.value_if_bound(name)) is not None
         )
-
-    def _unfold_iteration(self, element, remaining, ctx, entries):
-        from sugar_lift_py_tests.floor import ScopeRebind
-
-        iteration_ctx = ScopeRebind(self.target_name, element).extend_scope(ctx)
-        record, next_ctx = self.body.sugar.reduce_with_scope(iteration_ctx)
-        return self._unfold_static(
-            remaining,
-            next_ctx,
-            (*entries, *record.contribution()),
-        )
+        return Complete(BlockValue((*accumulated, *bindings)))
 
     def _bind_and_body(self, iterable, ctx: object) -> Outcome:
         from sugar_lift_py_tests.floor import CallSiteValue, ScopeRebind
@@ -221,14 +234,16 @@ def _static_iterable_elements(iterable_site, ctx, loop_site):
     else:
         return None
 
-    if len(values) > 64:
+    if len(values) > STATIC_UNFOLD_LIMIT:
         from sugar_lift_py_tests.factory import factory_panic_gap
 
         factory_panic_gap(
             owner="ForSugar.static_unfold",
             blame=loop_site,
             observed=f"statically finite iterable with {len(values)} elements",
-            requested="at most 64 concrete loop self-applications",
+            requested=(
+                f"at most {STATIC_UNFOLD_LIMIT} concrete loop self-applications"
+            ),
             fix="reduce the literal iterable size or raise the reviewed unfold cap",
         )
     return tuple(
