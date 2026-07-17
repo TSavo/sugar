@@ -167,6 +167,11 @@ class ListValue(FloorValue):
             # max preserves one of its operands. When every operand already
             # carries the runtime-integer/count shape, its result carries it too.
             runtime_count_kind = "integer-warranted callsite max"
+        elif _is_pyarrow_list_length_max_as_py(other):
+            # Arrow list_value_length produces integer scalars, max preserves
+            # that element type, and Scalar.as_py returns its Python integer.
+            # The selected count itself still only exists when Arrow executes.
+            runtime_count_kind = "pyarrow list-length maximum"
         if runtime_count_kind is not None:
             from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
             from sugar_lift_py_tests.outcome import Incomplete
@@ -338,3 +343,47 @@ class ListValue(FloorValue):
                 **runtime_effect_evidence("py.delitem", index, site),
             )
         )
+
+
+def _is_pyarrow_compute(value) -> bool:
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
+
+    return (
+        type(value) is CallSiteValue
+        and value.target_name == "compute"
+        and value.body is None
+        and len(value.arg_values) == 1
+        and type(value.arg_values[0]) is ImportAliasValue
+        and value.arg_values[0].name == "pyarrow"
+    )
+
+
+def _is_pyarrow_list_length_max_as_py(value) -> bool:
+    """Recognize the source-proved pandas Arrow list-length maximum."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+    if (
+        type(value) is not CallSiteValue
+        or value.target_name != "as_py"
+        or value.body is not None
+        or len(value.arg_values) != 1
+    ):
+        return False
+    maximum = value.arg_values[0]
+    if (
+        type(maximum) is not CallSiteValue
+        or maximum.target_name != "max"
+        or maximum.body is not None
+        or len(maximum.arg_values) != 2
+        or not _is_pyarrow_compute(maximum.arg_values[0])
+    ):
+        return False
+    lengths = maximum.arg_values[1]
+    return (
+        type(lengths) is CallSiteValue
+        and lengths.target_name == "list_value_length"
+        and lengths.body is None
+        and len(lengths.arg_values) == 2
+        and _is_pyarrow_compute(lengths.arg_values[0])
+    )
