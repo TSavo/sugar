@@ -45,6 +45,11 @@
 // builder is `LiftManifest::resolved(...)`. Live handshake still refuses
 // non-kits; privacy narrows the syntactic forgery surface so casual
 // `LiftManifest { .. }` construction is a compile error (trybuild).
+//
+// Strong `Kit::lift` request (#3855 residual): `lift` takes `LiftRequest`, not
+// free-form `serde_json::Value`. Trybuild `lift_request_is_not_value.rs` pins
+// the type door. Residual axes still open: census move, pool single-owner,
+// SourceMemento relocate / sugar-compiler→sugar-walk ban.
 
 use std::path::{Path, PathBuf};
 
@@ -52,6 +57,7 @@ use libsugar::core::{
     address, ConformanceDeclaration, Dialect, HashMapInputCatalog, Input, Path as CorePath,
     PathAlgebra, Verb,
 };
+use serde::Serialize;
 use serde_json::Value;
 use sugar_claim_envelope::KitDeclaration;
 
@@ -177,6 +183,159 @@ pub enum KitError {
     Enumerate(#[from] crate::tree::EnumerateError),
 }
 
+/// Strong lift request at the `Kit` boundary (#3855 residual).
+///
+/// Free-form `serde_json::Value` is no longer accepted by [`Kit::lift`]. The
+/// only construction doors are [`LiftRequest::project`] (minimal whole-project
+/// walk) and the builder methods that attach optional wire fields the language
+/// kits already consume. Wire JSON keys stay stable so kit RPC params do not
+/// drift when the type hardens.
+///
+/// Nested option keys use the historical camelCase names (`identifyOnly`,
+/// `reportSummary`, `workspaceOverride`) because that is the kit wire, not a
+/// new Rust surface.
+#[derive(Debug, Clone, Serialize)]
+pub struct LiftRequest {
+    workspace_root: PathBuf,
+    source_paths: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    surface: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<LiftRequestOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    contract_bindings: Option<Vec<Value>>,
+}
+
+/// Nested `options` object on the lift wire. Built by the CLI census path
+/// (`build_lift_params`); optional for focused tests that only need a
+/// workspace walk.
+#[derive(Debug, Clone, Serialize)]
+pub struct LiftRequestOptions {
+    layer: String,
+    #[serde(rename = "identifyOnly")]
+    identify_only: bool,
+    #[serde(rename = "emit", skip_serializing_if = "Option::is_none")]
+    emit: Option<String>,
+    #[serde(rename = "reportSummary", skip_serializing_if = "Option::is_none")]
+    report_summary: Option<bool>,
+    #[serde(rename = "workspaceOverride", skip_serializing_if = "Option::is_none")]
+    workspace_override: Option<String>,
+}
+
+impl LiftRequestOptions {
+    /// Full options object the CLI mints for a surface. `report_summary` is
+    /// only serialized when true (historical wire shape).
+    pub fn resolved(
+        layer: impl Into<String>,
+        identify_only: bool,
+        emit: Option<String>,
+        report_summary: bool,
+        workspace_override: Option<String>,
+    ) -> Self {
+        Self {
+            layer: layer.into(),
+            identify_only,
+            emit,
+            report_summary: report_summary.then_some(true),
+            workspace_override,
+        }
+    }
+
+    pub fn layer(&self) -> &str {
+        &self.layer
+    }
+
+    pub fn identify_only(&self) -> bool {
+        self.identify_only
+    }
+
+    pub fn emit(&self) -> Option<&str> {
+        self.emit.as_deref()
+    }
+
+    pub fn report_summary(&self) -> bool {
+        self.report_summary.unwrap_or(false)
+    }
+
+    pub fn workspace_override(&self) -> Option<&str> {
+        self.workspace_override.as_deref()
+    }
+}
+
+impl LiftRequest {
+    /// Minimal project-root lift: walk `source_paths` under `workspace_root`.
+    ///
+    /// This is the door focused tests use (`source_paths = ["."]`). CLI/census
+    /// paths add surface/config/options via the builder methods.
+    pub fn project(
+        workspace_root: impl Into<PathBuf>,
+        source_paths: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            workspace_root: workspace_root.into(),
+            source_paths: source_paths.into_iter().map(Into::into).collect(),
+            surface: None,
+            config_path: None,
+            options: None,
+            contract_bindings: None,
+        }
+    }
+
+    pub fn with_surface(mut self, surface: impl Into<String>) -> Self {
+        self.surface = Some(surface.into());
+        self
+    }
+
+    pub fn with_config_path(mut self, config_path: impl Into<String>) -> Self {
+        self.config_path = Some(config_path.into());
+        self
+    }
+
+    pub fn with_options(mut self, options: LiftRequestOptions) -> Self {
+        self.options = Some(options);
+        self
+    }
+
+    pub fn with_contract_bindings(mut self, bindings: Vec<Value>) -> Self {
+        if !bindings.is_empty() {
+            self.contract_bindings = Some(bindings);
+        }
+        self
+    }
+
+    pub fn workspace_root(&self) -> &Path {
+        &self.workspace_root
+    }
+
+    pub fn source_paths(&self) -> &[String] {
+        &self.source_paths
+    }
+
+    pub fn surface(&self) -> Option<&str> {
+        self.surface.as_deref()
+    }
+
+    pub fn config_path(&self) -> Option<&str> {
+        self.config_path.as_deref()
+    }
+
+    pub fn options(&self) -> Option<&LiftRequestOptions> {
+        self.options.as_ref()
+    }
+
+    /// Encode to the JSON object kits already parse. Used by mint path
+    /// `Input::Spec` and CLI tests that still inspect the wire shape.
+    pub fn to_wire_value(&self) -> Result<Value, serde_json::Error> {
+        serde_json::to_value(self)
+    }
+
+    fn to_json_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(self)
+    }
+}
+
 /// The unforgeable frontend handle. Private fields; the only minter is
 /// `Kit::rendezvous`.
 ///
@@ -275,16 +434,16 @@ impl Kit {
         &self.initialize_response
     }
 
-    /// `Kit::lift(project_root, request)`: folds `dispatch_lift_path`'s
-    /// body (build request -> `Input::Source` -> `CorePath` -> `execute_path`
-    /// -> terminal claim). `request` is the already-JSON-encoded lift
-    /// params (`build_lift_params`'s output stays a `Value` in this pass --
-    /// see the module doc's scope note; retyping it into a strong
-    /// lift-request type is not done here).
-    pub fn lift(&self, request: Value) -> Result<libsugar::core::DomainClaim, KitError> {
+    /// `Kit::lift(request)`: folds `dispatch_lift_path`'s body (build request
+    /// -> `Input::Source` -> `CorePath` -> `execute_path` -> terminal claim).
+    ///
+    /// `request` is a strong [`LiftRequest`] (#3855): free-form `Value` no
+    /// longer types as a kit lift input. Wire JSON is produced here from the
+    /// typed request so kit RPC params stay shape-stable.
+    pub fn lift(&self, request: LiftRequest) -> Result<libsugar::core::DomainClaim, KitError> {
         let source = Input::Source {
             dialect: self.manifest.dialect.clone(),
-            bytes: serde_json::to_vec(&request).map_err(KitError::RequestEncoding)?,
+            bytes: request.to_json_bytes().map_err(KitError::RequestEncoding)?,
         };
         let source_cid = address(&source);
         let mut inputs = HashMapInputCatalog::default();
@@ -444,5 +603,52 @@ mod rendezvous_tests {
             Kit::rendezvous(forged),
             Err(RendezvousError::EmptyCommand(_))
         ));
+    }
+
+    /// Wire shape for the minimal project door stays kit-compatible
+    /// (`workspace_root` + non-empty `source_paths`; no Value blob at the
+    /// Kit boundary).
+    #[test]
+    fn lift_request_project_wire_shape() {
+        let request = LiftRequest::project("/tmp/proj", ["."]);
+        let wire = request.to_wire_value().expect("LiftRequest serializes");
+        assert_eq!(wire["workspace_root"].as_str(), Some("/tmp/proj"));
+        assert_eq!(
+            wire["source_paths"]
+                .as_array()
+                .expect("source_paths array")
+                .len(),
+            1
+        );
+        assert_eq!(wire["source_paths"][0].as_str(), Some("."));
+        assert!(wire.get("surface").is_none());
+        assert!(wire.get("options").is_none());
+    }
+
+    /// CLI-shaped request carries surface/options with historical camelCase
+    /// option keys so kit RPC params do not drift under the type.
+    #[test]
+    fn lift_request_cli_options_preserve_wire_keys() {
+        let request = LiftRequest::project("/ws", ["."])
+            .with_surface("rust")
+            .with_config_path(".sugar/config.toml")
+            .with_options(LiftRequestOptions::resolved(
+                "library-bindings",
+                false,
+                Some("ir-document".to_string()),
+                true,
+                Some("vendor/dep".to_string()),
+            ));
+        let wire = request.to_wire_value().expect("serialize");
+        assert_eq!(wire["surface"].as_str(), Some("rust"));
+        assert_eq!(wire["config_path"].as_str(), Some(".sugar/config.toml"));
+        assert_eq!(wire["options"]["layer"].as_str(), Some("library-bindings"));
+        assert_eq!(wire["options"]["identifyOnly"].as_bool(), Some(false));
+        assert_eq!(wire["options"]["emit"].as_str(), Some("ir-document"));
+        assert_eq!(wire["options"]["reportSummary"].as_bool(), Some(true));
+        assert_eq!(
+            wire["options"]["workspaceOverride"].as_str(),
+            Some("vendor/dep")
+        );
     }
 }

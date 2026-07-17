@@ -196,10 +196,7 @@ fn universes_from_tree(kit: &Kit, workspace_root: &Path) -> BTreeSet<String> {
 
 /// Whole-project `Kit::lift` payload — today's mint IR source of truth.
 fn whole_project_lift_payload(kit: &Kit, workspace_root: &Path) -> Value {
-    let request = json!({
-        "workspace_root": workspace_root.display().to_string(),
-        "source_paths": ["."],
-    });
+    let request = sugar_compiler::kit::LiftRequest::project(workspace_root, ["."]);
     let claim = kit.lift(request).expect("Kit::lift");
     match claim.payload {
         Some(libsugar::core::Term::Const { value, .. }) => value,
