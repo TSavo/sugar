@@ -8,6 +8,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
     DictValue,
@@ -18,8 +19,12 @@ from sugar_lift_py_tests.floor import (
     UniverseValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var, num
-from sugar_lift_py_tests.outcome import complete_value
-from sugar_lift_py_tests.sugar.call_sugar import _expand_function_positional_args
+from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
+from sugar_lift_py_tests.outcome import Incomplete, complete_value
+from sugar_lift_py_tests.sugar.call_sugar import (
+    CallSugar,
+    _expand_function_positional_args,
+)
 
 
 def _root_universe(source: str) -> UniverseValue:
@@ -120,17 +125,19 @@ def test_empty_constructed_star_preserves_default_binding() -> None:
     )
 
 
-def test_unknown_symbolic_star_stays_loud() -> None:
-    with pytest.raises(FactoryPanic) as raised:
-        _expand_function_positional_args(
-            (_star(SymbolicValue(make_var("items"))),), site="symbolic-star"
-        )
+def test_unknown_symbolic_star_is_a_named_runtime_effect() -> None:
+    site = SourceFragment.from_source(
+        "inner(*items)\n", "symbolic-star.py"
+    ).statements()[0]
 
-    assert raised.value.info.owner == "CallSugar"
-    assert raised.value.info.requested == (
-        "expand a constructed finite positional sequence at a starred call argument"
+    outcome = _expand_function_positional_args(
+        (_star(SymbolicValue(make_var("items"))),), site=site
     )
-    assert raised.value.info.observed == "SymbolicValue"
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "StarredPositionalRuntimeEffect"
+    assert outcome.effect.runtime_operand.term == make_var("items")
+    assert outcome.effect.witness.locus == "symbolic-star.py:1:0"
 
 
 @pytest.mark.parametrize(
@@ -149,3 +156,17 @@ def test_non_sequence_star_stays_loud(value) -> None:
 def test_no_star_positional_arguments_are_unchanged() -> None:
     args = (TermValue(5), ListValue((TermValue(6),)))
     assert _expand_function_positional_args(args, site="control") == args
+
+
+def test_starred_positional_effect_witness_truthful_and_wrong_reason_refutes(
+    tmp_path,
+) -> None:
+    witness = next(
+        witness
+        for witness in CallSugar.witnesses()
+        if witness.name == "call_starred_positional_runtime_effect"
+    )
+
+    report = evaluate_seed_witnesses((witness,), tmp_path)
+
+    assert report.is_zero

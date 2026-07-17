@@ -59,6 +59,7 @@ from .sequence_repetition_runtime_effect import SequenceRepetitionRuntimeEffect
 from .sequence_unpack_runtime_effect import SequenceUnpackRuntimeEffect
 from .sequence_concatenation_runtime_effect import SequenceConcatenationRuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
+from .starred_positional_runtime_effect import StarredPositionalRuntimeEffect
 from .subscript_store_runtime_effect import SubscriptStoreRuntimeEffect
 from .subscript_result_runtime_effect import SubscriptResultRuntimeEffect
 from .subtract_runtime_effect import SubtractRuntimeEffect, runtime_subtract
@@ -121,6 +122,7 @@ __all__ = [
     "SequenceUnpackRuntimeEffect",
     "SequenceConcatenationRuntimeEffect",
     "SourceOracleEffect",
+    "StarredPositionalRuntimeEffect",
     "SubscriptStoreRuntimeEffect",
     "SubscriptResultRuntimeEffect",
     "SubtractRuntimeEffect",
