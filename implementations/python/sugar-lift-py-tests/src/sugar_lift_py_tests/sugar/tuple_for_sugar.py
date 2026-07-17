@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -49,11 +49,30 @@ class TupleForSugar(Sugar, role=SugarRole.STATEMENT):
             "        return 1\n"
             "    return 0\n\n"
         )
-        return _call_pair(
-            name="tuple_for_return",
-            owner_sugar="TupleForSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        nditer_prefix = (
+            "import numpy as np\n"
+            "\n"
+            "def B():\n"
+            "    it = np.nditer([np.arange(1), np.arange(1)])\n"
+            "    for left, right in it:\n"
+            "        pass\n"
+            "    del left, right, it\n"
+            "    return 1\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="tuple_for_return",
+                owner_sugar="TupleForSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            _call_pair(
+                name="tuple_for_nonempty_nditer_cleanup",
+                owner_sugar="TupleForSugar",
+                truthful=nditer_prefix + "def test_b():\n    assert B() == 1\n",
+                lying=nditer_prefix + "def test_b():\n    assert B() == 0\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -62,7 +81,7 @@ class TupleForSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _bind_targets_and_body(self, iterable, ctx: object) -> Outcome:
-        from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, ScopeRebind
         from sugar_lift_py_tests.ir import ctor, num
 
         element = CallSiteValue(
@@ -77,19 +96,130 @@ class TupleForSugar(Sugar, role=SugarRole.STATEMENT):
             site=self.site,
         )
         temporal = ctx.temporal
+        target_values = {}
         for index, name in enumerate(self.names):
+            target = CallSiteValue(
+                target_name="py.subscript",
+                arg_values=(element,),
+                parameters=(),
+                term=ctor("py.subscript", [element.term, num(index)]),
+                body=None,
+                site=self.site,
+            )
+            target_values[name] = target
             temporal = temporal.bind_value(
                 name,
-                CallSiteValue(
-                    target_name="py.subscript",
-                    arg_values=(element,),
-                    parameters=(),
-                    term=ctor("py.subscript", [element.term, num(index)]),
-                    body=None,
-                    site=self.site,
-                ),
+                target,
             )
-        return self.body.reduce(ctx.with_temporal(temporal))
+        body_ctx = ctx.with_temporal(temporal)
+        if not _proves_nonempty_nditer(iterable):
+            return self.body.reduce(body_ctx)
+
+        record, final_ctx = self.body.sugar.reduce_with_scope(body_ctx)
+        post_loop_bindings = tuple(
+            ScopeRebind(
+                name,
+                final_ctx.temporal.value_if_bound(name) or target_values[name],
+            )
+            for name in self.names
+        )
+        return Complete(
+            BlockValue(
+                (*record.statements, *post_loop_bindings),
+                fall_through=record.fall_through,
+                can_fall_through=record.can_fall_through,
+            )
+        )
 
     def walk_children(self):
         return (self.iterable, self.body)
+
+
+def _proves_nonempty_nditer(iterable) -> bool:
+    """Prove the closed NumPy nditer subset that executes at least once.
+
+    Tuple targets survive a Python ``for`` only after an iteration.  Unknown
+    iterables therefore retain the existing loud post-loop unbound-name
+    behavior.  This door admits only the source-resolved NumPy constructors
+    whose ground shape is visible in the call coordinate.
+    """
+
+    from sugar_lift_py_tests.floor import CallSiteValue, ImportAliasValue, ListValue
+
+    if type(iterable) is not CallSiteValue or not _is_numpy_call(
+        iterable, qualified="numpy.nditer", member="nditer"
+    ):
+        return False
+    args = iterable.arg_values
+    if args and type(args[0]) is ImportAliasValue:
+        args = args[1:]
+    if not args or type(args[0]) is not ListValue or not args[0].elements:
+        return False
+    return all(_proves_nonempty_numpy_array(value) for value in args[0].elements)
+
+
+def _proves_nonempty_numpy_array(value) -> bool:
+    from sugar_lift_py_tests.floor import CallSiteValue, TermValue
+
+    if type(value) is not CallSiteValue:
+        return False
+    if value.target_name == "astype":
+        args = _without_import_receiver(value.arg_values)
+        return bool(args) and _proves_nonempty_numpy_array(args[0])
+    if _is_numpy_call(value, qualified="numpy.arange", member="arange"):
+        args = _without_import_receiver(value.arg_values)
+        bounds = [
+            arg.value
+            for arg in args
+            if type(arg) is TermValue and type(arg.value) is int
+        ]
+        if len(bounds) != len(args) or not 1 <= len(bounds) <= 3:
+            return False
+        try:
+            return len(range(*bounds)) > 0
+        except ValueError:
+            return False
+    if value.target_name == "numpy.random.randint":
+        size = _ground_keyword_int(value, "size")
+        return size is not None and size > 0
+    return False
+
+
+def _without_import_receiver(args):
+    from sugar_lift_py_tests.floor import ImportAliasValue
+
+    if args and type(args[0]) is ImportAliasValue:
+        return args[1:]
+    return args
+
+
+def _is_numpy_call(callsite, *, qualified: str, member: str) -> bool:
+    from sugar_lift_py_tests.floor import ImportAliasValue
+
+    if callsite.target_name == qualified:
+        return True
+    receiver = callsite.runtime_dispatch_receiver
+    return (
+        callsite.target_name == member
+        and type(receiver) is ImportAliasValue
+        and receiver.name == "numpy"
+        and receiver.import_target == "numpy"
+    )
+
+
+def _ground_keyword_int(callsite, name: str) -> int | None:
+    from sugar_lift_py_tests.ir import _ConstInt, _ConstStr, _Ctor
+
+    if not isinstance(callsite.term, _Ctor):
+        return None
+    for arg in callsite.term.args:
+        if (
+            isinstance(arg, _Ctor)
+            and arg.name == "kw"
+            and len(arg.args) == 2
+            and isinstance(arg.args[0], _ConstStr)
+            and arg.args[0].value == name
+            and isinstance(arg.args[1], _ConstInt)
+        ):
+            return arg.args[1].value
+    return None
