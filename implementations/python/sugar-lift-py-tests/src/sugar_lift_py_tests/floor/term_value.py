@@ -335,22 +335,30 @@ class TermValue(FloorValue):
 
     def floor_divide(self, other, site):
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete, Incomplete
+            from sugar_lift_py_tests.outcome import Complete
 
             if other.value == 0:
-                from sugar_lift_py_tests.effect import (
-                    DivisionByZeroRuntimeEffect,
-                    runtime_effect_evidence,
-                )
-
-                return Incomplete(
-                    DivisionByZeroRuntimeEffect(
-                        "floor division by zero runtime boundary: the divisor is "
-                        f"concretely 0; owner=TermValue.floor_divide site={site}",
-                        **runtime_effect_evidence("py.floor_divide", other, site),
-                    )
+                self._floor_gap(
+                    owner="floor_divide",
+                    blame=site,
+                    observed=(
+                        f"left={type(self).__name__} right={type(other).__name__} "
+                        "divisor=0"
+                    ),
+                    requested="construct exact floor-division-by-zero exception",
+                    fix=(
+                        "construct the exact ZeroDivisionError evidence; a "
+                        "decidable zero divisor cannot mint RuntimeEffect"
+                    ),
                 )
             return Complete(TermValue(self.value // other.value))
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(other) in (CallSiteValue, SymbolicValue):
+            return SymbolicValue(self.to_term(owner=str(site))).floor_divide(
+                other, site
+            )
         return super().floor_divide(other, site)
 
     def right_shift(self, other, site):
