@@ -34,6 +34,12 @@ class ScopeRebind(FloorValue):
 
         return Complete(self)
 
+    def to_term(self, *, owner: str):
+        # Rebind holds the folded result; project that value's nested term.
+        # Missing projection stays a loud Floor/Projection gap on unhandled floors
+        # (via FloorValue.to_term) — never a soft RuntimeEffect.
+        return self.value.to_term(owner=owner)
+
     def guarded(self, formula):
         return GuardedScopeRebind((formula,), self.name, self.value)
 
