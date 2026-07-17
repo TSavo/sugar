@@ -7,17 +7,26 @@ import pytest
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
 from sugar_lift_py_tests.floor import GuardedValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import (
+    Formula,
+    _Atomic,
+    _Connective,
     _ConstInt,
+    _ConstStr,
     _Ctor,
     _Var,
     Int,
+    String,
     Term,
     TermTableBuilder,
     atomic,
     ctor,
     constructor_symbol_kinds,
+    formula_to_value,
     formula_term,
+    implies,
+    make_var,
     not_,
+    str_const,
     term_to_value,
     term_intern_scope,
 )
@@ -48,7 +57,7 @@ def _distributed_terms() -> tuple[Term, ...]:
 def _lift_terms(monkeypatch) -> tuple[Term, ...]:
     captured: list[tuple[Term, ...]] = []
 
-    def audit_lift_file(source, filename, *, hold_panic):
+    def audit_lift_file(source, filename, *, hold_panic=False):
         del source, filename, hold_panic
         captured.append(_distributed_terms())
         return LiftReportPayloadDto(source_ledger={}), []
@@ -77,6 +86,68 @@ def test_nested_guard_distribution_shares_equal_term_nodes_per_lift(
         ),
     )
     assert encode_jcs(term_to_value(terms[0])) == encode_jcs(term_to_value(unshared))
+
+
+def _guard_formula_pair() -> tuple[Formula, Formula]:
+    """Same adt.is_python_type guard constructed twice — the timedelta residual.
+
+    Issue #4355: terms were hash-consed but formula wrappers around shared
+    guards still minted distinct identities, so not(adt.is_python_type(...))
+    repeated thousands of times as separate objects.
+    """
+    guard = atomic(
+        "adt.is_python_type",
+        [make_var("microseconds"), str_const("float")],
+    )
+    again = atomic(
+        "adt.is_python_type",
+        [make_var("microseconds"), str_const("float")],
+    )
+    return not_(guard), not_(again)
+
+
+def test_equal_formulas_share_identity_per_lift() -> None:
+    with term_intern_scope():
+        left, right = _guard_formula_pair()
+        implication = implies(left, atomic("=", [make_var("out"), make_var("out")]))
+        implication_again = implies(
+            right, atomic("=", [make_var("out"), make_var("out")])
+        )
+
+    offenders = [
+        name
+        for name, a, b in (
+            ("not-guard", left, right),
+            ("implies", implication, implication_again),
+        )
+        if a is not b
+    ]
+    assert not offenders, (
+        f"R={len(offenders)} equal formulas have distinct identities ({offenders}); "
+        "route formula constructors through request-scoped formula hash-consing"
+    )
+
+    # Byte-identical to an independently built unshared tree of the same shape.
+    unshared = _Connective(
+        "not",
+        (
+            _Atomic(
+                "adt.is_python_type",
+                (_Var("microseconds"), _ConstStr("float", String())),
+            ),
+        ),
+    )
+    assert encode_jcs(formula_to_value(left)) == encode_jcs(formula_to_value(unshared))
+
+
+def test_formula_identity_does_not_cross_lift_requests() -> None:
+    with term_intern_scope():
+        first, _ = _guard_formula_pair()
+    with term_intern_scope():
+        second, _ = _guard_formula_pair()
+
+    assert first == second
+    assert first is not second
 
 
 def test_term_identity_does_not_cross_lift_requests(monkeypatch) -> None:
@@ -126,7 +197,7 @@ def test_symbol_kind_testimony_is_a_payload_sidecar() -> None:
 
 
 def test_lift_collects_constructor_testimony_once_per_spelling(monkeypatch) -> None:
-    def audit_lift_file(source, filename, *, hold_panic):
+    def audit_lift_file(source, filename, *, hold_panic=False):
         del source, filename, hold_panic
         ctor("call:vendor_open_name", [], symbol_kind="method-coordinate")
         ctor("call:vendor_open_name", [], symbol_kind="method-coordinate")
