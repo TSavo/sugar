@@ -289,7 +289,9 @@ _NON_RETURN: dict = {
     ),
     "AsyncFunctionDef": _debt(
         "definition tail (defining an async fn is itself deterministic; "
-        "async-ness bites at the CALL, where Await rows are membrane)"
+        "async-ness bites at the CALL, where Await rows are membrane). "
+        "#4688 adjudicated: call≠termination; create async_function_def_sugar "
+        "with termination-gated callsite bridge before sat/unsat witnesses"
     ),
     "ClassDef": _debt("definition tail (see FunctionDef)"),
     "Delete": _debt("del tail: deterministic scope mutation; state-relation owed"),
@@ -311,9 +313,15 @@ _NON_RETURN: dict = {
     "Nonlocal": _membrane("declared shared-scope mutation (see Global)"),
     "AsyncWith": _membrane(
         "suspension inside the tail: scheduler interleaving is not pinned "
-        "by the body"
+        "by the body. #4688: symbolic managers typed red "
+        "(AsyncContextManagerRuntimeEffect); closed-static ObjectValue "
+        "may force __aenter__/__aexit__ without claiming the scheduler"
     ),
-    "AsyncFor": _membrane("suspension inside the tail (see AsyncWith)"),
+    "AsyncFor": _membrane(
+        "suspension inside the tail (see AsyncWith). #4688: symbolic "
+        "iterables typed red (AsyncIterationRuntimeEffect); StopAsyncIteration "
+        "termination remains a loud named gap"
+    ),
     "Break": _membrane(
         "compile-rejected placement: the parser admits a function-tail "
         "break, the compiler refuses it — no runnable witness can exist"
