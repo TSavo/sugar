@@ -49,11 +49,29 @@ class SubscriptAssignSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def witnesses(cls):
         prefix = "def A():\n    xs = [1, 2, 3]\n    xs[1] = 9\n    return xs[1]\n\n"
-        return _call_pair(
-            name="subscript_assign_post_state",
-            owner_sugar="SubscriptAssignSugar",
-            truthful=prefix + "def test_a():\n    assert A() == 9\n",
-            lying=prefix + "def test_a():\n    assert A() == 2\n",
+        comprehension = (
+            "def A(source):\n"
+            "    values = [item for item in source]\n"
+            "    values[0] = 9\n"
+            "    return 1\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="subscript_assign_post_state",
+                owner_sugar="SubscriptAssignSugar",
+                truthful=prefix + "def test_a():\n    assert A() == 9\n",
+                lying=prefix + "def test_a():\n    assert A() == 2\n",
+            ),
+            _call_pair(
+                name="subscript_assign_comprehension_post_state",
+                owner_sugar="SubscriptAssignSugar",
+                truthful=(
+                    comprehension + "def test_a():\n    assert A(source()) == 1\n"
+                ),
+                lying=comprehension + "def test_a():\n    assert A(source()) == 0\n",
+                family="comprehension-setitem",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
