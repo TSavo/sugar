@@ -44,6 +44,11 @@ class BoundVar(FloorValue):
 
     def extend_scope(self, ctx):
         # Thread this binding forward so later statements resolve the name.
+        from sugar_lift_py_tests.sugar.nonlocal_sugar import (
+            reject_unconstructed_nonlocal_store,
+        )
+
+        reject_unconstructed_nonlocal_store(ctx, self.name)
         return replace(ctx, temporal=ctx.temporal.bind_value(self.name, self))
 
     def answer(self, ctx=None):

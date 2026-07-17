@@ -31,6 +31,10 @@ class FactoryBuildContext:
     # Names declared ``global`` in the function currently being reduced. This
     # routes later stores through the statically known module frame.
     global_names: frozenset[str] = field(default_factory=frozenset[str])
+    # Names declared ``nonlocal`` in the function currently being reduced.
+    # Reads use the captured lexical temporal. Stores remain a loud
+    # NonlocalRoute gap until cross-frame mutation is constructed.
+    nonlocal_names: frozenset[str] = field(default_factory=frozenset[str])
     source_oracle: Any = None
     expected_role: SugarRole | None = None
     name_resolver: Any = None
@@ -110,6 +114,7 @@ class FactoryBuildContext:
             temporal=temporal,
             module_temporal=self.module_temporal,
             global_names=self.global_names,
+            nonlocal_names=self.nonlocal_names,
             source_oracle=self.source_oracle,
             expected_role=self.expected_role,
             name_resolver=self.name_resolver,
