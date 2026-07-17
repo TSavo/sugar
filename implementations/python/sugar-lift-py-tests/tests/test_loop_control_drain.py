@@ -10,13 +10,16 @@ import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-from sugar_lift_py_tests.effect import GeneratorYieldRuntimeEffect
+from sugar_lift_py_tests.effect import (
+    GeneratorYieldRuntimeEffect,
+    runtime_effect_evidence_from_terms,
+)
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import GuardedLoopControl, LoopControlValue
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
-from sugar_lift_py_tests.ir import ctor, num
+from sugar_lift_py_tests.ir import ctor, make_var, num
 
 
 def _sugar_names(sugar) -> list[str]:
@@ -158,8 +161,39 @@ def test_yield_is_a_named_generator_protocol_effect() -> None:
     assert isinstance(outcome.effect, GeneratorYieldRuntimeEffect)
     assert "py.generator_yield" in outcome.reason
     assert outcome.effect.witness is not None
-    assert outcome.effect.witness.operand == num(1)
+    assert outcome.effect.witness.operand == make_var("py.generator_resume@t.py:2:4")
     assert outcome.effect.witness.operation == ctor("py.generator_yield", [num(1)])
+
+
+def test_bare_yield_keeps_none_as_yielded_value_not_runtime_operand() -> None:
+    source = "def generate():\n    yield\n"
+    module = ast.parse(source)
+    node = next(node for node in ast.walk(module) if isinstance(node, ast.Yield))
+    site = SourceFragment.from_node(node, "t.py", source=source)
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    result = build_node(site, filename="t.py", role=SugarRole.TERM, ctx=ctx)
+    outcome = result.sugar.desugar(ctx)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, GeneratorYieldRuntimeEffect)
+    assert outcome.effect.witness.operation == ctor(
+        "py.generator_yield", [ctor("None", [])]
+    )
+    assert outcome.effect.witness.operand == make_var("py.generator_resume@t.py:2:4")
+
+
+def test_yielded_ground_value_cannot_masquerade_as_runtime_operand() -> None:
+    source = "def generate():\n    yield 1\n"
+    module = ast.parse(source)
+    node = next(node for node in ast.walk(module) if isinstance(node, ast.Yield))
+    site = SourceFragment.from_node(node, "t.py", source=source)
+
+    with pytest.raises(FactoryPanic, match="owner=RuntimeEffect"):
+        runtime_effect_evidence_from_terms(
+            ctor("py.generator_yield", [num(1)]),
+            num(1),
+            site,
+        )
 
 
 def test_yield_outside_a_function_stays_loud() -> None:
