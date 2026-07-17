@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import Any, cast
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -167,15 +168,20 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
             _contextualized_dig_body,
             resolve_contextmanager_exit_contract,
         )
+        from sugar_lift_py_tests.factory.sugar_constructors import (
+            _ctx_with_module_global_binds,
+        )
 
         callable_body = self.body
+        site = cast(Any, self.site)
         if isinstance(self.body.sugar, BlockSugar):
+            body_ctx = _ctx_with_module_global_binds(site, ctx)
             callable_body = _contextualized_dig_body(
                 SugarBody(
                     sugar=SequentialDigBody(self.body.sugar.statements),
                     role=SugarRole.TERM,
                 ),
-                ctx,
+                body_ctx,
             )
         return Complete(
             FunctionCallable(
@@ -187,11 +193,7 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 decorators=decorators,
                 exit_suppression=(
                     resolve_contextmanager_exit_contract(bridge_name)
-                    if (
-                        bridge_name := getattr(
-                            self.site.node, "_sugar_bridge_name", None
-                        )
-                    )
+                    if (bridge_name := getattr(site.node, "_sugar_bridge_name", None))
                     else None
                 ),
                 body=callable_body,
