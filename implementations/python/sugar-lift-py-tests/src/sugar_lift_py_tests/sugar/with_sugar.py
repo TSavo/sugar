@@ -177,7 +177,14 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             # Dig that result structurally so __enter__/__exit__ resolve on the
             # exact ObjectValue method table; never borrow a same-leaf method
             # from a resolver or invent a suppression contract.
-            manager = cm._dig_floor_or_none(ctx, owner="WithSugar manager result")
+            manager_effects = []
+            manager = cm._dig_floor_or_none(
+                ctx,
+                owner="WithSugar manager result",
+                incomplete_outcome=manager_effects,
+            )
+            if manager_effects:
+                return manager_effects[0]
             if isinstance(manager, ObjectValue):
                 enter_call = manager.call_method_value(
                     "__enter__",
