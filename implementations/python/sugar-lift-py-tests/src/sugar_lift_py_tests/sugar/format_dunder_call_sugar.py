@@ -39,6 +39,14 @@ class FormatDunderCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar
     def witnesses(cls):
         prefix = "class Box:\n    def __format__(self, spec):\n        return spec\n\ndef A():\n    return format(Box(), 'x')\n\n"
         opaque = "def A():\n    return format(external_box(), 'brief')\n\n"
+        nested_opaque = (
+            "def runtime_box():\n"
+            "    return external_box()\n"
+            "\n"
+            "def A():\n"
+            "    return format(runtime_box(), 'brief')\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="format_dunder_return",
@@ -54,6 +62,22 @@ class FormatDunderCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar
                 + "def test_a():\n"
                 + "    assert A() == 'rendered'\n"
                 + "    assert A() == 'different'\n",
+                family="callsite-format-coordinate",
+            ),
+            _call_pair(
+                name="nested_callsite_format_coordinate",
+                owner_sugar=cls.__name__,
+                truthful=(
+                    nested_opaque
+                    + "def test_a():\n"
+                    + "    assert A() == 'rendered'\n"
+                ),
+                lying=(
+                    nested_opaque
+                    + "def test_a():\n"
+                    + "    assert A() == 'rendered'\n"
+                    + "    assert A() == 'different'\n"
+                ),
                 family="callsite-format-coordinate",
             ),
         )
