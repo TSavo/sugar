@@ -16,6 +16,10 @@ from .bytes_conversion_runtime_effect import BytesConversionRuntimeEffect
 from .dict_method_runtime_effect import DictMethodRuntimeEffect
 from .map_receiver_runtime_effect import MapReceiverRuntimeEffect
 from .match_selection_runtime_effect import MatchSelectionRuntimeEffect
+from .matrix_multiply_runtime_effect import (
+    MatrixMultiplyRuntimeEffect,
+    runtime_matrix_multiply,
+)
 from .set_method_runtime_effect import SetMethodRuntimeEffect
 from .string_float_conversion_runtime_effect import StringFloatConversionRuntimeEffect
 from .coverage_gap_effect import CoverageGapEffect
@@ -76,6 +80,8 @@ __all__ = [
     "DictMethodRuntimeEffect",
     "MapReceiverRuntimeEffect",
     "MatchSelectionRuntimeEffect",
+    "MatrixMultiplyRuntimeEffect",
+    "runtime_matrix_multiply",
     "SetMethodRuntimeEffect",
     "StringFloatConversionRuntimeEffect",
     "CoverageGapEffect",
