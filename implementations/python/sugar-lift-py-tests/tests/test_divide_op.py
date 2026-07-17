@@ -24,6 +24,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.ir import ctor
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+from sugar_lift_py_tests.sugar.divide_op_sugar import DivideOpSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
@@ -114,16 +115,31 @@ def test_native_callable_divide_unsupported_peer_stays_loud() -> None:
         )
 
 
-def test_divide_truthful_and_lying_twins_reach_opposite_verdicts(tmp_path) -> None:
-    prefix = "def A():\n    return 10 / 2\n\n"
-    truthful = run_source_through_real_solver(
-        tmp_path / "truthful", prefix + "def test_a():\n    assert A() == 5\n"
-    )
-    lying = run_source_through_real_solver(
-        tmp_path / "lying", prefix + "def test_a():\n    assert A() == 4\n"
+def test_native_callable_divide_diggable_call_peer_is_not_a_runtime_effect() -> None:
+    site = SourceFragment.from_source("NaT / known()\n", "t.py").statements()[0]
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    body = ctx.build_body(ast.parse("2", mode="eval").body, SugarRole.TERM)
+    right = CallSiteValue(
+        target_name="known",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:known", []),
+        body=body,
+        site=site,
     )
 
-    assert truthful.verdict == "sat"
-    assert lying.verdict == "unsat"
+    with pytest.raises(FactoryPanic, match="owner=divide"):
+        NativeCallableValue("pandas.NaT", "/native/pandas.so").divide(right, site)
+
+
+def test_divide_truthful_and_lying_twins_reach_opposite_verdicts(tmp_path) -> None:
+    witness = DivideOpSugar.witnesses()
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", witness.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", witness.lying.source)
+
+    assert truthful.verdict == witness.truthful.expected == "sat"
+    assert lying.verdict == witness.lying.expected == "unsat"
     assert "DivideOpSugar" in truthful.selected_sugars
     assert "DivideOpSugar" in lying.selected_sugars

@@ -29,9 +29,13 @@ The constructor builds the full `/(left, right)` term and calls the existing
 `runtime_effect_witness("py.divide", operand, site)` boundary.
 
 `NativeCallableValue.divide` uses this constructor only when the right operand
-is a `CallSiteValue`. This is the exact current-main shape. Numeric division
-and concrete division-by-zero keep their existing implementations. Every
-other `NativeCallableValue.divide` combination continues through
+is a `CallSiteValue` with no diggable body. This is the exact current-main
+shape and is the #4265 evidence that the operand's value exists only at
+runtime. A callsite with a body is a refuting twin: it may be unfinished
+construction, but it is not admissible as runtime dependence and therefore
+stays on the loud floor. Numeric division and concrete division-by-zero keep
+their existing implementations. Every other `NativeCallableValue.divide`
+combination continues through
 `FloorValue.divide` and therefore remains a loud owner-named gap.
 
 No new Sugar class is introduced. `DivideOpSugar` remains the proof-bearing
@@ -45,6 +49,8 @@ TDD first pins:
 - `NativeCallableValue / CallSiteValue` produces an incomplete
   `DivideRuntimeEffect` whose witness carries both operands and the real source
   locus;
+- a callsite peer with a diggable body refutes the runtime-effect arm and
+  remains a loud `owner=divide` gap;
 - an unsupported sibling still raises the existing `owner=divide` panic;
 - the existing `DivideOpSugar` truthful/lying pair reaches opposite solver
   verdicts.

@@ -27,7 +27,9 @@
 - Produces: a RED test for the missing runtime boundary, a loud unsupported sibling, and SAT/UNSAT proof discrimination.
 
 - [ ] Add a test constructing `NativeCallableValue("pandas.NaT", ...) / CallSiteValue("Timedelta", ...)` at a real source fragment and assert a named witnessed incomplete result.
-- [ ] Add a sibling assertion that `NativeCallableValue / TermValue` still panics with `owner=divide`.
+- [ ] Add sibling assertions that `NativeCallableValue / TermValue` and a
+  callsite with a diggable body still panic with `owner=divide`; neither is
+  admissible as #4265 runtime-dependence evidence.
 - [ ] Add a real-solver test for the existing truthful `10 / 2 == 5` and lying `10 / 2 == 4` claims.
 - [ ] Run the focused new tests and record the expected missing-effect/floor failure before production edits.
 
@@ -44,7 +46,7 @@
 
 - [ ] Define `DivideRuntimeEffect(RuntimeEffect)` and return its own kind.
 - [ ] Build `ctor("/", [left.to_term(...), right.to_term(...)])` and authenticate it as `py.divide`.
-- [ ] Dispatch only the observed `NativeCallableValue / CallSiteValue` pair through the helper.
+- [ ] Dispatch only the observed `NativeCallableValue / CallSiteValue(body=None)` pair through the helper.
 - [ ] Run the focused divide and runtime-effect witness suites.
 
 ### Task 3: Measure and publish

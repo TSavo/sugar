@@ -39,7 +39,7 @@ class NativeCallableValue(FloorValue):
     def divide(self, other, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
-        if type(other) is CallSiteValue:
+        if type(other) is CallSiteValue and other.body is None:
             from sugar_lift_py_tests.effect import runtime_divide
 
             return runtime_divide(self, other, site)
