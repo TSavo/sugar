@@ -4214,10 +4214,19 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
                         .and_then(Value::as_str)
                         .unwrap_or("no reason supplied");
                     let discriminator = format_demand_discriminator(implication);
+                    // Human law: no DEBT. Unjoined = "Wanted an X, none found."
+                    // Joined outcomes stay discharged/failed with obligation text.
                     if status == "unjoined" {
-                        out.push_str(&format!(
-                            "  - DEBT {source} owes {target}'s pre, unjoined because {reason}{discriminator}\n"
-                        ));
+                        let line = format!(
+                            "  - {}{}",
+                            format_wanted_none_found(&target),
+                            format_demand_site_suffix(&source, &discriminator, reason)
+                        );
+                        if std::env::var_os("NO_COLOR").is_none() {
+                            out.push_str(&format!("{ANSI_RED}{line}{ANSI_RESET}\n"));
+                        } else {
+                            out.push_str(&format!("{line}\n"));
+                        }
                     } else {
                         let obligation = implication
                             .get("obligation")
@@ -8006,13 +8015,15 @@ fn render_lift_coverage_minority(coverage: &Value, project_root: Option<&Path>) 
         .and_then(Value::as_u64)
         .or_else(|| minority.get("un_asserted").and_then(Value::as_u64))
         .unwrap_or(0);
-    // Exception alone is named — literal header, no other wording.
+    // Exception alone is named — literal header `Minority Report`.
+    // Unasserted bodies: human law "No dig warranted by assertion."
     if min_un > 0 || min_present > 0 {
         out.push_str("Minority Report\n");
         out.push_str(&format!(
             "  present={min_present} dug={min_dug} un_asserted={min_un}\n"
         ));
         if min_un > 0 {
+            out.push_str("  No dig warranted by assertion:\n");
             if let Some(un) = minority.get("un_asserted_loci").and_then(Value::as_array) {
                 for locus in un {
                     append_unaccounted_source_block(
@@ -8765,10 +8776,38 @@ fn format_demanded_question(question: &Value) -> String {
         ],
     )
     .unwrap_or_else(|| "<unknown callee>".to_string());
-    format!(
-        "{source} -> {target}{}",
-        format_demand_discriminator(question)
-    )
+    let discriminator = format_demand_discriminator(question);
+    let status = question.get("status").and_then(Value::as_str).unwrap_or("");
+    if status == "unjoined" {
+        let reason = question
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("no target candidate");
+        return format!(
+            "{}{}",
+            format_wanted_none_found(&target),
+            format_demand_site_suffix(&source, &discriminator, reason)
+        );
+    }
+    format!("{source} -> {target}{discriminator}")
+}
+
+/// Bare symbol a call demanded (`call:int` → `int`).
+fn human_wanted_symbol(target: &str) -> &str {
+    target
+        .strip_prefix("call:")
+        .or_else(|| target.strip_prefix("method:"))
+        .unwrap_or(target)
+}
+
+/// Human law for unjoined demand: Wanted an X, none found.
+fn format_wanted_none_found(target: &str) -> String {
+    let x = human_wanted_symbol(target);
+    format!("Wanted an {x}, none found.")
+}
+
+fn format_demand_site_suffix(source: &str, discriminator: &str, reason: &str) -> String {
+    format!(" From {source}{discriminator} ({reason})")
 }
 
 fn format_demand_discriminator(question: &Value) -> String {
@@ -16253,21 +16292,35 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "{visual}"
         );
         assert!(visual.contains("caller -> callee"), "{visual}");
+        // Unjoined is human law: Wanted an X, none found. Never DEBT.
         assert!(
-            visual.contains("DEBT caller owes missing's pre"),
+            visual.contains("Wanted an missing, none found."),
             "{visual}"
+        );
+        assert!(
+            visual.contains("From caller") && visual.contains("no qualified contract"),
+            "{visual}"
+        );
+        assert!(
+            !visual.contains("DEBT "),
+            "report must not invent DEBT; got:\n{visual}"
         );
         assert!(visual.contains("observed occurrences total=2"), "{visual}");
         assert!(visual.contains("demanded questions total=2"), "{visual}");
         assert!(visual.contains("demanded questions resolved=1"), "{visual}");
         assert!(visual.contains("demanded questions dangling=1"), "{visual}");
+        // Demanded list + implication ledger each list both rows (joined + none-found).
         assert_eq!(
             visual
                 .lines()
-                .filter(|line| line.starts_with("  - ")
-                    && (line.contains("caller -> callee") || line.contains("DEBT caller")))
+                .filter(|line| {
+                    let plain = line.replace("\u{1b}[31m", "").replace("\u{1b}[0m", "");
+                    plain.starts_with("  - ")
+                        && (plain.contains("caller -> callee")
+                            || plain.contains("Wanted an missing, none found."))
+                })
                 .count(),
-            3
+            4
         );
         let observed = visual
             .split("observed occurrences (total=2):\n")
@@ -16857,6 +16910,10 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             human.contains("onDisk=2 accounted=1 delta=1")
                 || (human.contains("onDisk=2") && human.contains("delta=1")),
             "conservation triple onDisk/accounted/delta must appear; got:\n{human}"
+        );
+        assert!(
+            human.contains("No dig warranted by assertion:"),
+            "minority un_asserted must speak the human law; got:\n{human}"
         );
         assert!(
             human.contains("t.py:20  orphan") || human.contains("orphan"),
