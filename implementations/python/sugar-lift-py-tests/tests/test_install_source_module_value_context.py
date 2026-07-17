@@ -98,9 +98,7 @@ def test_install_source_value_leaves_runtime_selected_prerequisite_unresolved(
     importlib.invalidate_caches()
 
     try:
-        resolved = resolve_install_source_value(
-            "runtime_selected_value.ANSWER", _ctx()
-        )
+        resolved = resolve_install_source_value("runtime_selected_value.ANSWER", _ctx())
     except FactoryPanic as panic:
         assert "RuntimeEffect" in str(panic) or "runtime" in str(panic).lower()
         return

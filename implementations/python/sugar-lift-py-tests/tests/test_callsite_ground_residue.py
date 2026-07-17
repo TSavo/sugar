@@ -21,9 +21,7 @@ def test_ground_value_term_accepts_primitive_consts() -> None:
 def test_ground_value_term_accepts_verifier_data_ctors() -> None:
     assert _is_ground_value_term(ctor("None", []))
     assert _is_ground_value_term(ctor("py.ellipsis", []))
-    assert _is_ground_value_term(
-        ctor("py.complex", [real_lit("0.0"), real_lit("2.0")])
-    )
+    assert _is_ground_value_term(ctor("py.complex", [real_lit("0.0"), real_lit("2.0")]))
     assert _is_ground_value_term(ctor("tuple", [num(1), num(2)]))
     assert _is_ground_value_term(ctor("python:bytes", [num(97), num(98)]))
     # Module / type coordinates are structural identities for residue duals.
@@ -34,6 +32,8 @@ def test_ground_value_term_accepts_verifier_data_ctors() -> None:
 def test_ground_value_term_rejects_operator_and_call_ctors() -> None:
     assert not _is_ground_value_term(ctor("call:A", [num(5)]))
     assert not _is_ground_value_term(ctor("+", [num(1), num(2)]))
-    assert not _is_ground_value_term(ctor("py.attr", [ctor("call:m", []), str_const("x")]))
+    assert not _is_ground_value_term(
+        ctor("py.attr", [ctor("call:m", []), str_const("x")])
+    )
     # Nested non-ground arg disqualifies an otherwise-whitelisted ctor.
     assert not _is_ground_value_term(ctor("tuple", [ctor("call:f", [])]))

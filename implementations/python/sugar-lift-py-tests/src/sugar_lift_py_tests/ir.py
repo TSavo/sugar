@@ -979,9 +979,7 @@ def subst_var_in_term(t: Term, formal: str, actual: Term) -> Term:
 
 def subst_var_in_formula(f: Formula, formal: str, actual: Term) -> Formula:
     if isinstance(f, _Atomic):
-        return atomic(
-            f.name, [subst_var_in_term(a, formal, actual) for a in f.args]
-        )
+        return atomic(f.name, [subst_var_in_term(a, formal, actual) for a in f.args])
     if isinstance(f, _Connective):
         return connective(
             f.kind, [subst_var_in_formula(o, formal, actual) for o in f.operands]

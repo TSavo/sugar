@@ -146,7 +146,9 @@ def _handler_ends_in_loud_terminal(handler: SourceFragment) -> bool:
     statements = handler.except_handler_body().statements()
     if not statements:
         return False
-    if any(stmt.observed in {"Return", "Continue", "Break", "Pass"} for stmt in statements):
+    if any(
+        stmt.observed in {"Return", "Continue", "Break", "Pass"} for stmt in statements
+    ):
         return False
     return any(
         fragment.observed == "Call" and _call_name(fragment) in _LOUD_TERMINALS

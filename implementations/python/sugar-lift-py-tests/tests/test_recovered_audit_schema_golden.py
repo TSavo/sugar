@@ -15,10 +15,7 @@ import pytest
 from sugar_lift_py_tests.kit_rpc import RecoveredAuditDto, RecoveredFrontierAuditDto
 
 _FIXTURES = (
-    Path(__file__).resolve().parents[4]
-    / "protocol"
-    / "conformance"
-    / "recovered-audit"
+    Path(__file__).resolve().parents[4] / "protocol" / "conformance" / "recovered-audit"
 )
 
 

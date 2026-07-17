@@ -280,9 +280,7 @@ def extract_progress_from_engine_log(
         ],
         "phase_ms": {name: round(ms, 1) for name, ms in phase_ms.most_common()},
         "phase_share": phase_share,
-        "role_ms": {
-            name: round(ms, 1) for name, ms in role_ms.most_common(16)
-        },
+        "role_ms": {name: round(ms, 1) for name, ms in role_ms.most_common(16)},
         "dig_target_ms": [
             {"target": name, "elapsed_ms": round(ms, 1)}
             for name, ms in dig_target_ms.most_common(12)

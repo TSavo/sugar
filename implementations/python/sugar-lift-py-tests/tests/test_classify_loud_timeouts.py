@@ -477,9 +477,7 @@ def test_extract_progress_from_engine_log_ranks_sugar_hotspots(tmp_path: Path) -
     assert progress["sugar_hotspots"][0]["sugar"] == "ForSugar"
     assert progress["sugar_hotspots"][0]["heartbeat_count"] == 2
     assert progress["last_heartbeat"]["sugar"] == "TemporalContext"
-    assert progress["last_heartbeat"]["active_stack"] == [
-        "TemporalContext|term|a.py:3"
-    ]
+    assert progress["last_heartbeat"]["active_stack"] == ["TemporalContext|term|a.py:3"]
     # Second-cut phases: dig vs factory_new vs reduce (from exit elapsed_ms).
     assert progress["phase_share"]["dig"] > progress["phase_share"]["factory_new"]
     assert progress["dig_target_ms"][0]["target"] == "numpy.ma.core.array"

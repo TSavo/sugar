@@ -44,14 +44,12 @@ from sugar_lift_py_tests.idd.live_factory_panic_isolation import (  # noqa: E402
 
 def _git_head(cwd: Path) -> str:
     try:
-        return (
-            subprocess.check_output(
-                ["git", "rev-parse", "HEAD"],
-                cwd=cwd,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            ).strip()
-        )
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=cwd,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return ""
 
@@ -74,9 +72,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--limit",
         type=int,
-        default=int(os.environ["SUGAR_4013_LIMIT"])
-        if os.environ.get("SUGAR_4013_LIMIT")
-        else None,
+        default=(
+            int(os.environ["SUGAR_4013_LIMIT"])
+            if os.environ.get("SUGAR_4013_LIMIT")
+            else None
+        ),
         help="Optional cap on assert-bearing files (smoke)",
     )
     parser.add_argument(

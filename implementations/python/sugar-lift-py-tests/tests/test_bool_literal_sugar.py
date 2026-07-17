@@ -67,6 +67,4 @@ def test_false_face_carries_selected_else_scope_rebind() -> None:
 
     outcome = false_lit.binary_conditional(_Branch("then"), _ScopedBranch(), ctx)
 
-    assert outcome.value.statements == (
-        ScopeRebind("dtype", StringValue("m8[ns]")),
-    )
+    assert outcome.value.statements == (ScopeRebind("dtype", StringValue("m8[ns]")),)

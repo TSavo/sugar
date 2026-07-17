@@ -68,9 +68,7 @@ class FormatDunderCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar
                 name="nested_callsite_format_coordinate",
                 owner_sugar=cls.__name__,
                 truthful=(
-                    nested_opaque
-                    + "def test_a():\n"
-                    + "    assert A() == 'rendered'\n"
+                    nested_opaque + "def test_a():\n" + "    assert A() == 'rendered'\n"
                 ),
                 lying=(
                     nested_opaque
