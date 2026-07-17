@@ -47,3 +47,21 @@ def test_assert_nonzero_folds_through_truth_to_support() -> None:
     assert compose_block("    assert 5\n    return 2\n") == BlockValue(
         (ReturnValue(TermValue(2)),)
     )
+
+
+def test_runtime_expression_assert_message_does_not_emit_conditional_effect() -> None:
+    """#4594: message evaluation is diagnostic-only, never a py.* effect.
+
+    `assert <true>, f(y)` must not invent a conditional effect from the
+    message Call. On the holding path the message is unevaluated at runtime;
+    at lift it is provenance spelling only. Ground-false halt remains the
+    named AssertionFailedRuntimeEffect of the condition, not of the message.
+    """
+    holding = compose_block("    assert 1 == 1, f(y)\n    return 2\n")
+    assert holding == BlockValue((ReturnValue(TermValue(2)),))
+
+    record = compose_block("    assert 1 == 2, f(y)\n    return 2\n").statements
+    assert isinstance(record[0], Incomplete)
+    assert isinstance(record[0].effect, AssertionFailedRuntimeEffect)
+    assert type(record[0].effect).__name__ == "AssertionFailedRuntimeEffect"
+    assert len(record) == 2
