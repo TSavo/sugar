@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
+from sugar_lift_py_tests.ir import TermTableBuilder
 from sugar_lift_py_tests.kit_rpc import (
     BodyUniverseDto,
     CallsiteFactDto,
@@ -109,7 +110,8 @@ class UniverseMint(ProofIRNode):
         )
 
     def to_declaration(self) -> dict[str, Any]:
-        return self.to_body_universe().to_rpc()
+        # Wire shape: term positions are content-addressed refs (#4406).
+        return self.to_body_universe().to_rpc_with_term_table(TermTableBuilder())
 
     @classmethod
     def verdict_witnesses(cls) -> VerdictWitnessPair:

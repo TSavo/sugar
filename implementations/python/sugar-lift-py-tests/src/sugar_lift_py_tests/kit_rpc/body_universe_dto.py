@@ -44,10 +44,40 @@ class BodyUniverseDto:
     def to_rpc(self) -> dict[str, Any]:
         raise RuntimeError(
             "BodyUniverseDto requires the payload term-table writer; "
-            "fix=serialize through LiftReportPayloadDto.to_rpc"
+            "fix=serialize through LiftReportPayloadDto.to_rpc "
+            "or BodyUniverseDto.to_rpc_with_term_table"
         )
 
     def to_rpc_with_term_table(self, term_table: TermTableBuilder) -> dict[str, Any]:
+        """Payload/wire declaration: formula term positions are term-refs."""
+        out = self._envelope()
+        if self.pre is not None:
+            out["pre"] = term_table.formula(self.pre.ir_formula)
+        if self.post is not None:
+            out["post"] = term_table.formula(self.post.ir_formula)
+        if self.inv is not None:
+            out["inv"] = term_table.formula(self.inv.ir_formula)
+        self._attach_sidecars(out)
+        return out
+
+    def to_semantic_rpc(self) -> dict[str, Any]:
+        """Local identity preimage only — expanded formula trees, not the wire door.
+
+        Semantic CIDs hash fully-resolved term bytes (the same preimage the
+        term-table keys). This method must never be the transport path for a
+        payload; transport is ``to_rpc_with_term_table`` / LiftReportPayloadDto.
+        """
+        out = self._envelope()
+        if self.pre is not None:
+            out["pre"] = to_rpc_value(self.pre)
+        if self.post is not None:
+            out["post"] = to_rpc_value(self.post)
+        if self.inv is not None:
+            out["inv"] = to_rpc_value(self.inv)
+        self._attach_sidecars(out)
+        return out
+
+    def _envelope(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "kind": self.kind,
             "name": self.name,
@@ -57,12 +87,9 @@ class BodyUniverseDto:
             out["formals"] = list(self.formals)
         if self.bridge_source_symbol is not None:
             out["bridgeSourceSymbol"] = self.bridge_source_symbol
-        if self.pre is not None:
-            out["pre"] = term_table.formula(self.pre.ir_formula)
-        if self.post is not None:
-            out["post"] = term_table.formula(self.post.ir_formula)
-        if self.inv is not None:
-            out["inv"] = term_table.formula(self.inv.ir_formula)
+        return out
+
+    def _attach_sidecars(self, out: dict[str, Any]) -> None:
         if self.source_warrants:
             out["sourceWarrants"] = [
                 to_rpc_value(warrant) for warrant in self.source_warrants
@@ -71,7 +98,6 @@ class BodyUniverseDto:
             out["proofirProvenance"] = to_rpc_value(self.proofir_provenance)
         if self.warranted_by is not None:
             out["warrantedBy"] = to_rpc_value(self.warranted_by)
-        return out
 
 
 def _require_claim_formula_slot(field_name: str, value: object) -> None:

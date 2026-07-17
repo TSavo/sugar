@@ -7,6 +7,7 @@ from sugar_lift_py_tests.ir import (
     Formula as IrFormula,
     Sort as IrSort,
     Term as IrTerm,
+    TermTableBuilder,
     _Atomic,
     _Connective,
     _ConstBool,
@@ -147,7 +148,8 @@ class FunctionContract(ProofIRNode):
         return self.warrants[0]
 
     def to_declaration(self) -> dict[str, Any]:
-        return self.to_body_universe().to_rpc()
+        # Wire shape: term positions are content-addressed refs (#4406).
+        return self.to_body_universe().to_rpc_with_term_table(TermTableBuilder())
 
     def to_body_universe(self) -> BodyUniverseDto:
         source_warrants = list(self.source_warrants) or [

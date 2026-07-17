@@ -6,15 +6,19 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.canonicalizer import encode_jcs
-from sugar_lift_py_tests.factory.factory_gap import factory_panic
+from sugar_lift_py_tests.factory.factory_gap import (
+    FactoryPanic,
+    dig_boundary_panic,
+    factory_panic,
+)
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
-from sugar_lift_py_tests.factory.factory_gap import dig_boundary_panic
 from sugar_lift_py_tests.factory.factory_gap_info import FactoryGapInfo
 from sugar_lift_py_tests.factory.floor_contract_agreement import (
     FloorContractAgreementViolation,
 )
 from sugar_lift_py_tests.ir import (
     Locus,
+    TermTableBuilder,
     eq,
     eq as ir_eq,
     formula_to_value,
@@ -138,7 +142,7 @@ def test_eq_refuses_wrong_sort_terms() -> None:
     call = CallTerm("h", (), sort=IntSort())
     rhs = ConstTerm("not-an-int", sort=StringSort())
 
-    with pytest.raises(factory_panic, match="matching sorts"):
+    with pytest.raises(FactoryPanic, match="matching sorts"):
         Eq(call, rhs)
 
 
@@ -146,10 +150,10 @@ def test_closed_formula_refuses_naked_ir_formula_and_illegal_free_var() -> None:
     out = VarTerm("out", sort=IntSort())
     ghost = VarTerm("ghost", sort=IntSort())
 
-    with pytest.raises(factory_panic, match="naked ir.Formula"):
+    with pytest.raises(FactoryPanic, match="naked ir.Formula"):
         ClosedFormula(ir_eq(make_var("out"), num(0)))
 
-    with pytest.raises(factory_panic, match="illegal free var"):
+    with pytest.raises(FactoryPanic, match="illegal free var"):
         ClosedFormula(Eq(out, ghost), allowed_vars=("out",))
 
 
@@ -167,7 +171,7 @@ def test_post_condition_enforces_contract_scope_and_sort_law() -> None:
 
     assert post.ir_formula == ir_eq(out.ir_term, x.ir_term)
 
-    with pytest.raises(factory_panic, match="declared formals plus out"):
+    with pytest.raises(FactoryPanic, match="declared formals plus out"):
         PostCondition(
             Eq(out, ghost),
             formals={"x": IntSort()},
@@ -175,7 +179,7 @@ def test_post_condition_enforces_contract_scope_and_sort_law() -> None:
             out_sort=IntSort(),
         )
 
-    with pytest.raises(factory_panic, match="post mentioning 'out'"):
+    with pytest.raises(FactoryPanic, match="post mentioning 'out'"):
         PostCondition(
             Eq(x, ConstTerm(0, sort=IntSort())),
             formals={"x": IntSort()},
@@ -188,7 +192,7 @@ def test_post_condition_enforces_contract_scope_and_sort_law() -> None:
         free_vars=frozenset({"out", "x"}),
         free_var_sorts={"out": IntSort()},
     )
-    with pytest.raises(factory_panic, match="sort"):
+    with pytest.raises(FactoryPanic, match="sort"):
         PostCondition(
             unsorted,
             formals={"x": IntSort()},
@@ -214,18 +218,28 @@ def test_equality_fact_derives_key_and_preserves_wire_bytes() -> None:
     )
     expected_inv_rpc = json.loads(encode_jcs(formula_to_value(expected_formula)))
     expected_name = canonical_euf_callsite_name(call)
+    wire_table = TermTableBuilder()
     expected_declaration = BodyUniverseDto(
         name=expected_name,
         out_binding="out",
         inv=expected_inv,
         proofir_provenance=fact.provenance().warrant_memento(),
-    ).to_rpc()
+    ).to_rpc_with_term_table(wire_table)
+    semantic_declaration = BodyUniverseDto(
+        name=expected_name,
+        out_binding="out",
+        inv=expected_inv,
+    ).to_semantic_rpc()
 
     assert expected_inv.to_rpc() == expected_inv_rpc
     assert fact.euf_key == expected_name
     assert repr(fact.denotation()) == repr(ir_eq(call.ir_term, rhs.ir_term))
+    # Wire declaration carries term-refs; semantic identity stays expanded.
     assert fact.to_declaration() == expected_declaration
+    assert all(arg["kind"] == "term-ref" for arg in expected_declaration["inv"]["args"])
     assert json.loads(fact.to_proof_ir()) == expected_declaration
+    assert fact.to_semantic_declaration() == semantic_declaration
+    assert semantic_declaration["inv"] == expected_inv_rpc
 
 
 def test_equality_fact_unknown_return_sort_policy_is_explicit() -> None:
@@ -288,7 +302,7 @@ def test_naked_formula_cannot_be_inserted_as_equality_fact_term() -> None:
     call = CallTerm("h", (), sort=IntSort())
     rhs = ConstTerm(0, sort=IntSort())
 
-    with pytest.raises(factory_panic, match="CallTerm"):
+    with pytest.raises(FactoryPanic, match="CallTerm"):
         EqualityFact(
             call_term=Eq(call, rhs),
             rhs_term=rhs,
@@ -460,7 +474,7 @@ def test_role_wrappers_refuse_raw_formula_and_missing_provenance() -> None:
     assert wrapped.to_rpc()["kind"] == "atomic"
     assert wrapped.provenance.node_class == "UniverseMint"
 
-    with pytest.raises(factory_panic, match="Provenance"):
+    with pytest.raises(FactoryPanic, match="Provenance"):
         claim_formula_from_ir(
             formula,
             var_sorts={"out": IntSort()},
@@ -469,7 +483,7 @@ def test_role_wrappers_refuse_raw_formula_and_missing_provenance() -> None:
             role="construction-law",
         )
 
-    with pytest.raises(factory_panic, match="illegal free var"):
+    with pytest.raises(FactoryPanic, match="illegal free var"):
         claim_formula_from_ir(
             formula,
             var_sorts={"out": IntSort()},
@@ -492,13 +506,12 @@ def test_universe_mint_requires_claim_formula_and_preserves_wire_shape() -> None
     assert UniverseMint.__module__.endswith(".proofir.nodes.universe_mint")
     assert mint.denotation() == formula.ir_formula
     assert mint.to_body_universe().inv == formula
-    assert (
-        mint.to_declaration()
-        == BodyUniverseDto(
-            name="module::test::assertion",
-            out_binding="out",
-            inv=formula,
-        ).to_rpc()
+    expected = mint.to_body_universe().to_rpc_with_term_table(TermTableBuilder())
+    assert mint.to_declaration() == expected
+    # #4406 residual: member declarations share the term-ref wire shape.
+    assert all(
+        isinstance(arg, dict) and arg.get("kind") == "term-ref"
+        for arg in expected["inv"]["args"]
     )
 
     with pytest.raises(TypeError, match="ClaimFormula"):
@@ -509,7 +522,7 @@ def test_universe_mint_requires_claim_formula_and_preserves_wire_shape() -> None
             provenance=_universe_provenance(),
         )
 
-    with pytest.raises(factory_panic, match="Provenance"):
+    with pytest.raises(FactoryPanic, match="Provenance"):
         UniverseMint(
             name="module::missing::assertion",
             slot="inv",

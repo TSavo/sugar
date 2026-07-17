@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from sugar_lift_py_tests.ir import Formula, Term, _Ctor
+from sugar_lift_py_tests.ir import Formula, Term, TermTableBuilder, _Ctor
 from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
 from sugar_lift_py_tests.proofir._errors import proofir_construction_gap
 from sugar_lift_py_tests.proofir.formulas import Eq as ProofEq
@@ -95,9 +95,11 @@ class EqualityFact(ProofIRNode):
         )
 
     def to_declaration(self) -> dict[str, Any]:
-        return self.to_body_universe().to_rpc()
+        # Wire shape: term positions are content-addressed refs (#4406).
+        return self.to_body_universe().to_rpc_with_term_table(TermTableBuilder())
 
     def to_semantic_declaration(self) -> dict[str, Any]:
+        # Local merge identity preimage — expanded trees, not the payload door.
         return BodyUniverseDto(
             name=self.euf_key,
             out_binding="out",
@@ -111,7 +113,7 @@ class EqualityFact(ProofIRNode):
                 provenance=self.provenance(),
                 role="EqualityFact.inv",
             ),
-        ).to_rpc()
+        ).to_semantic_rpc()
 
     @classmethod
     def verdict_witnesses(cls) -> VerdictWitnessPair:
