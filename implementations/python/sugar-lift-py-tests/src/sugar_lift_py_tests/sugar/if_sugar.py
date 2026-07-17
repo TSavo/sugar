@@ -59,6 +59,14 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
             "    return 0\n"
             "\n"
         )
+        existing_binding = (
+            "def A(z):\n"
+            "    answer = 3\n"
+            "    if z == 1:\n"
+            "        answer = 7\n"
+            "    return answer\n"
+            "\n"
+        )
         guarded_raise = (
             "def A(z):\n"
             "    if z == 0:\n"
@@ -90,6 +98,15 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
                 truthful=repeated + "def test_a():\n    assert A(1) == 7\n",
                 lying=repeated + "def test_a():\n    assert A(1) == 8\n",
                 family="repeated-guard-binding",
+            ),
+            _call_pair(
+                name="if_one_arm_existing_binding_join",
+                owner_sugar="IfSugar",
+                truthful=existing_binding
+                + "def test_a():\n    assert A(1) == 7\n    assert A(2) == 3\n",
+                lying=existing_binding
+                + "def test_a():\n    assert A(1) == 3\n    assert A(2) == 3\n",
+                family="one-arm-existing-binding-join",
             ),
             _call_pair(
                 name="if_raise_fallback_return",

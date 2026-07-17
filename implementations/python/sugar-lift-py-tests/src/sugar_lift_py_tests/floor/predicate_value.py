@@ -235,9 +235,11 @@ class PredicateValue(FloorValue):
             # definite in the continuation, not guarded possibilities.
             joined_bindings = self.else_bindings
         elif then_ctx is not None:
-            guarded_bindings, joined_effects = self._guarded_bindings(
-                self.formula, then_scope, then_ctx
-            )
+            (
+                joined_bindings,
+                guarded_bindings,
+                joined_effects,
+            ) = self._one_arm_bindings(self.formula, then_scope, then_ctx)
         can_fall_through, continuation_guard = _conditional_continuation(
             self.formula,
             then_record,
@@ -256,7 +258,9 @@ class PredicateValue(FloorValue):
             )
         )
 
-    def _guarded_bindings(self, guard, branch_scope, before_scope):
+    def _one_arm_bindings(self, guard, branch_scope, before_scope):
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+        from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
         before = {
@@ -265,18 +269,44 @@ class PredicateValue(FloorValue):
         after = {
             binding.name: binding.value for binding in branch_scope.temporal.bindings
         }
-        bindings = []
+        joined = []
+        guarded = []
         effects = []
         for name, binding in sorted(after.items()):
             if before.get(name) is binding:
                 continue
-            answer = binding.answer(branch_scope)
-            if isinstance(answer, Incomplete):
-                effects.append(answer.guarded(guard))
+            branch_answer = binding.answer(branch_scope)
+            prior = before.get(name)
+            if prior is None:
+                if isinstance(branch_answer, Incomplete):
+                    effects.append(branch_answer.guarded(guard))
+                    continue
+                assert isinstance(branch_answer, Complete)
+                guarded.append((guard, name, branch_answer.value))
                 continue
-            assert isinstance(answer, Complete)
-            bindings.append((guard, name, answer.value))
-        return tuple(bindings), tuple(effects)
+            prior_answer = prior.answer(before_scope)
+            if isinstance(branch_answer, Incomplete):
+                effects.append(branch_answer.guarded(guard))
+            if isinstance(prior_answer, Incomplete):
+                effects.append(prior_answer.guarded(not_(guard)))
+            if isinstance(branch_answer, Incomplete) or isinstance(
+                prior_answer, Incomplete
+            ):
+                joined.append((name, GuardedValue(guard, binding, prior)))
+                continue
+            assert isinstance(branch_answer, Complete)
+            assert isinstance(prior_answer, Complete)
+            joined.append(
+                (
+                    name,
+                    GuardedValue(
+                        guard,
+                        branch_answer.value,
+                        prior_answer.value,
+                    ),
+                )
+            )
+        return tuple(joined), tuple(guarded), tuple(effects)
 
     def _joined_bindings(self, then_scope, else_scope, ctx):
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
