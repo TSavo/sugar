@@ -115,7 +115,7 @@ class SymbolicValue(FloorValue):
         from sugar_lift_py_tests.floor.list_value import ListValue
 
         if type(other) is ListValue:
-            return super().multiply(other, site)
+            return other.multiply(self, site)
 
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.ir import ctor

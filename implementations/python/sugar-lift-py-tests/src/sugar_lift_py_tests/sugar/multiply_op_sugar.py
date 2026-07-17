@@ -44,11 +44,29 @@ class MultiplyOpSugar(Sugar, role=SugarRole.TERM):
             "    return 0\n"
             "\n"
         )
-        return _call_pair(
-            name="multiply_return",
-            owner_sugar="MultiplyOpSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        return (
+            _call_pair(
+                name="multiply_return",
+                owner_sugar="MultiplyOpSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            _call_pair(
+                name="list_repetition_length_return",
+                owner_sugar="MultiplyOpSugar",
+                truthful=(
+                    "def A():\n"
+                    "    return len([7] * 3)\n\n"
+                    "def test_a():\n"
+                    "    assert A() == 3\n"
+                ),
+                lying=(
+                    "def A():\n"
+                    "    return len([7] * 3)\n\n"
+                    "def test_a():\n"
+                    "    assert A() == 2\n"
+                ),
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
