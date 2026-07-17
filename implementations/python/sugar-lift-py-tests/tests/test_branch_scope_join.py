@@ -21,7 +21,10 @@ from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_covera
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
+from sugar_lift_py_tests.sugar.if_sugar import IfSugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.temporal import TemporalContext
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 BOTH_ARMS = (
     "def f(p, expected):\n"
@@ -48,6 +51,71 @@ def test_one_arm_binding_read_stays_loud() -> None:
 
     with pytest.raises(FactoryPanic, match="observed=s requested=value"):
         audit_lift_file(source, "one.py", hold_panic=False)
+
+
+def test_repeated_identical_guard_activates_prior_one_arm_binding() -> None:
+    source = (
+        "def f(p):\n"
+        "    if p:\n"
+        "        s = 'only'\n"
+        "    if p:\n"
+        "        assert s == 'only'\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "same_guard.py")
+
+    assert gaps == []
+    assert any(row.inv is not None for row in payload.ir)
+
+
+def test_different_guard_does_not_activate_prior_one_arm_binding() -> None:
+    source = (
+        "def f(p, q):\n"
+        "    if p:\n"
+        "        s = 'only'\n"
+        "    if q:\n"
+        "        assert s == 'only'\n"
+    )
+
+    with pytest.raises(FactoryPanic, match="observed=s requested=value"):
+        audit_lift_file(source, "different_guard.py", hold_panic=False)
+
+
+def test_repeated_guard_binding_stays_unbound_after_guarded_region() -> None:
+    source = (
+        "def f(p):\n"
+        "    if p:\n"
+        "        s = 'only'\n"
+        "    if p:\n"
+        "        assert s == 'only'\n"
+        "    return s\n"
+    )
+
+    with pytest.raises(FactoryPanic, match="observed=s requested=value"):
+        audit_lift_file(source, "after_guard.py", hold_panic=False)
+
+
+def test_repeated_guard_binding_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    witnesses = IfSugar.witnesses()
+    pairs = witnesses if isinstance(witnesses, tuple) else (witnesses,)
+    pair = next(
+        witness
+        for witness in pairs
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "if_repeated_guard_binding"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "same-guard-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "same-guard-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_nested_join_in_one_outer_arm_does_not_fabricate_definite_binding() -> None:
