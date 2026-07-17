@@ -20,7 +20,9 @@ def test_datetime_native_star_import_advances_to_next_loud_front(
         )
         for panic in recovered.panics
     )
-    assert any(
-        panic.gap["observed"] == "Delete" and panic.gap["blame"].endswith(":2834:4")
+    assert all(
+        not (
+            panic.gap["observed"] == "Delete" and panic.gap["blame"].endswith(":2834:4")
+        )
         for panic in recovered.panics
     )

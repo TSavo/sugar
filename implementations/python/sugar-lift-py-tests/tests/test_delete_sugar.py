@@ -52,6 +52,12 @@ def test_delete_names_unbinds_each_name_and_preserves_later_statements() -> None
     ) == BlockValue((ReturnValue(TermValue(3)),))
 
 
+def test_parenthesized_delete_names_unbind_each_name() -> None:
+    block = compose_block("    a = 1\n    b = 2\n    del (a, b)\n    return 3\n")
+
+    assert block.statements == (ReturnValue(TermValue(3)),)
+
+
 def test_read_after_delete_reaches_the_unbound_name_floor_loudly() -> None:
     with pytest.raises(FactoryPanic) as raised:
         compose_block("    x = 1\n    del x\n    return x\n")
@@ -68,18 +74,24 @@ def test_non_name_delete_targets_stay_loud(source: str) -> None:
         _build_statement(source)
 
 
-def test_delete_sugar_owns_only_flat_all_name_targets() -> None:
+def test_delete_sugar_owns_only_flat_or_parenthesized_all_name_targets() -> None:
     from sugar_lift_py_tests.sugar.delete_sugar import DeleteSugar
 
     assert DeleteSugar.owns(_site("del a"))
     assert DeleteSugar.owns(_site("del a, b"))
+    assert DeleteSugar.owns(_site("del (a, b)"))
     assert not DeleteSugar.owns(_site("del d[k]"))
     assert not DeleteSugar.owns(_site("del obj.attr"))
+    assert not DeleteSugar.owns(_site("del (a, obj.attr)"))
 
     built = _build_statement("del a, b")
     assert type(built.sugar).__name__ == "DeleteSugar"
     assert built.sugar.names == ("a", "b")
     assert built.sugar.walk_children() == ()
+
+    parenthesized = _build_statement("del (a, b)")
+    assert type(parenthesized.sugar).__name__ == "DeleteSugar"
+    assert parenthesized.sugar.names == ("a", "b")
 
 
 def test_subscript_delete_reuses_store_post_state_and_negative_index_floor() -> None:
@@ -141,6 +153,23 @@ def test_ground_missing_dict_delete_key_refutes_effect_authority() -> None:
 
     assert raised.value.info.owner == "RuntimeEffect"
     assert raised.value.info.requested == "genuine runtime-dependent operand"
+
+
+def test_parenthesized_name_delete_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    from sugar_lift_py_tests.sugar.delete_sugar import DeleteSugar
+
+    pair = DeleteSugar.witnesses()
+    assert isinstance(pair, SugarWitnessPair)
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_dict_delete_witness_truthful_sat_lying_unsat(tmp_path: Path) -> None:
