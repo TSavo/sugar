@@ -133,6 +133,40 @@ def test_unsupported_installed_source_global_remains_loud() -> None:
         build_control_flow_body_sugar(fn, ctx)
 
 
+def test_installed_source_try_optional_import_binds_name() -> None:
+    """Module try/import + except None joins into install-source body temporal."""
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor import NoneValue
+
+    src = (
+        "try:\n"
+        "    import optional_mod\n"
+        "except ImportError:\n"
+        "    optional_mod = None\n"
+        "def f():\n"
+        "    return optional_mod\n"
+    )
+    root = SourceFragment.from_source(src, "/opt/mod.py")
+    fn = next(
+        fragment
+        for fragment in root.walk()
+        if fragment.observed == "FunctionDef" and fragment.function_name() == "f"
+    )
+    _tag_install_source(fn, src, "/opt/mod.py", "opt.mod.f")
+    ctx = FactoryBuildContext(
+        filename="consumer.py",
+        catalog=default_catalog(),
+        name_resolver={"opt.mod.f": fn.node},
+    )
+    body_ctx = _ctx_with_formal_binds(fn, ctx)
+    bindings = {binding.name: binding.value for binding in body_ctx.temporal.bindings}
+    assert "optional_mod" in bindings, bindings
+    value = bindings["optional_mod"]
+    assert isinstance(value, GuardedValue)
+    assert isinstance(value.when_false, NoneValue)
+    assert isinstance(value.when_true, ImportAliasValue)
+
+
 def test_minimal_module_global_without_sugar_tag_does_not_seed() -> None:
     """Without install-source tags, formal-only temporal (no silent ambient seed)."""
     src = 'GLOBAL = b"untagged"\n' "def f(s):\n" "    return s.translate(GLOBAL)\n"
