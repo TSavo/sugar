@@ -168,13 +168,17 @@ case_function_name() {
   esac
 }
 
-write_slice_bodyguard_source() {
-  python3 - "$STDROOT/core/src/slice/mod.rs" "$1" <<'PY'
+extract_impl_methods() {
+  # Extract named pub const methods from a rust-src file into a minimal impl
+  # wrapper so the showcase does not mint the whole ambient std surface.
+  # Full-file symlink of char/methods.rs previously dragged is_digit→to_digit
+  # identity formalActuals plus dozens of unrelated self-post/unwrap claims
+  # (prove-red/bodyguard-claims-failed-or-undecided, #3751).
+  python3 - "$1" "$2" "$3" "${@:4}" <<'PY'
 import sys
 
-source, dest = sys.argv[1:]
+source, dest, impl_header, *names = sys.argv[1:]
 lines = open(source, encoding="utf-8").read().splitlines()
-names = ["chunks", "chunks_exact", "rchunks", "rchunks_exact"]
 
 def extract_method(name: str) -> list[str]:
     sig_idx = next(
@@ -195,9 +199,9 @@ def extract_method(name: str) -> list[str]:
     raise RuntimeError(f"unterminated method {name}")
 
 chunks = [
-    "// Extracted verbatim from pinned rust-src core/src/slice/mod.rs by run.sh.",
-    "// Kept minimal so sugar-walk can parse the primitive-slice impl methods.",
-    "impl<T> [T] {",
+    f"// Extracted verbatim from pinned rust-src by run.sh ({source}).",
+    "// Kept minimal so sugar-walk only sees the bodyguard method(s).",
+    impl_header,
 ]
 for name in names:
     chunks.extend(extract_method(name))
@@ -205,6 +209,22 @@ for name in names:
 chunks.append("}")
 open(dest, "w", encoding="utf-8").write("\n".join(chunks))
 PY
+}
+
+write_to_digit_bodyguard_source() {
+  extract_impl_methods \
+    "$STDROOT/core/src/char/methods.rs" \
+    "$1" \
+    "impl char {" \
+    to_digit
+}
+
+write_slice_bodyguard_source() {
+  extract_impl_methods \
+    "$STDROOT/core/src/slice/mod.rs" \
+    "$1" \
+    "impl<T> [T] {" \
+    chunks chunks_exact rchunks rchunks_exact
 }
 
 write_bodyguard_lib() {
@@ -328,7 +348,7 @@ write_suite() {
     "$dir/.sugar/lift/rust-implications" \
     "$dir/.sugar/lift/rust-cargo-test-witness"
   if [ "$case_name" = "to-digit" ]; then
-    ln -s "$STDROOT/$(case_source_rel "$case_name")" "$dir/src/$(case_source_link "$case_name")"
+    write_to_digit_bodyguard_source "$dir/src/$(case_source_link "$case_name")"
   else
     write_slice_bodyguard_source "$dir/src/$(case_source_link "$case_name")"
   fi
@@ -431,6 +451,21 @@ def receipt_like(obj):
         and isinstance(obj.get("witnessDimension"), dict)
     )
 
+def row_matches(row, target_property_cid, target_method):
+    if row.get("bridge") != target_method:
+        return False
+    # Primary: formula-walk claims pin propertyCid to the caller contract.
+    if row.get("propertyCid") == target_property_cid:
+        return True
+    prop = str(row.get("property") or "")
+    if target_property_cid in prop:
+        return True
+    # Showcase bodyguard callsite lives in lib.rs; prefer it over any residual
+    # internal std method:to_digit symbol collision still present in the receipt.
+    if (row.get("file") or "").endswith("lib.rs"):
+        return True
+    return False
+
 text = open(sys.argv[1], encoding="utf-8").read()
 target_property_cid = sys.argv[2]
 target_method = sys.argv[3]
@@ -451,11 +486,18 @@ for idx, ch in enumerate(text):
 if receipt is None:
     print("MISSING")
     raise SystemExit(0)
-rows = receipt.get("rows") or receipt.get("obligations") or []
-for row in rows:
-    if row.get("propertyCid") == target_property_cid and row.get("bridge") == target_method:
-        print(row.get(field) or "MISSING")
-        raise SystemExit(0)
+rows = receipt.get("rows") or receipt.get("claims") or receipt.get("obligations") or []
+# Prefer exact propertyCid / lib.rs bodyguard rows over any residual internal hit.
+ranked = sorted(
+    (row for row in rows if row_matches(row, target_property_cid, target_method)),
+    key=lambda row: (
+        0 if row.get("propertyCid") == target_property_cid else 1,
+        0 if (row.get("file") or "").endswith("lib.rs") else 1,
+    ),
+)
+if ranked:
+    print(ranked[0].get(field) or "MISSING")
+    raise SystemExit(0)
 print("MISSING")
 PY
 }
