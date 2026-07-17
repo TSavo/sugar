@@ -372,6 +372,39 @@ def test_sequential_dig_terminal_raise_witness_truthful_sat_lying_unsat(
     assert lying.verdict == "unsat"
 
 
+def test_sequential_dig_terminal_face_state_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+
+    prefix = (
+        "def A(kind, size):\n"
+        "    if kind == 0:\n"
+        "        if size == 1:\n"
+        "            length = 3\n"
+        "        elif size == 2:\n"
+        "            length = 5\n"
+        "        else:\n"
+        "            raise AssertionError('unsupported size')\n"
+        "        return length\n"
+        "    if kind == 1:\n"
+        "        return 7\n"
+        "    raise AssertionError('unsupported kind')\n"
+        "\n"
+    )
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful",
+        prefix + "def test_a():\n    assert A(0, 1) == 3\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying",
+        prefix + "def test_a():\n    assert A(0, 1) == 5\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+
 def test_sequential_dig_guarded_raise_with_state_stays_loud() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
     from sugar_lift_py_tests.floor import BlockValue, GuardedRaise, ScopeRebind
@@ -653,6 +686,119 @@ def test_sequential_dig_guarded_faces_without_join_stays_loud() -> None:
     ctx = FactoryBuildContext(filename="wrong_twin.py", catalog=default_catalog())
     with pytest.raises(FactoryPanic):
         SequentialDigBody((_UnjoinedFaces(), _Fallback())).desugar(ctx)
+
+
+def test_sequential_dig_consumes_state_guarded_by_terminal_face() -> None:
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.factory.build import default_catalog
+    from sugar_lift_py_tests.floor import (
+        GuardedFaces,
+        GuardedReturn,
+        GuardedScopeRebind,
+    )
+    from sugar_lift_py_tests.floor.exceptional_exit_value import ExceptionalExitValue
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.raise_value import RaiseValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import make_var, not_
+    from sugar_lift_py_tests.outcome import Complete
+
+    terminal_face = make_var("known_integer_dtype")
+    raised = RaiseEffect(
+        exception_name="AssertionError",
+        blame="numpy/_core/tests/test_casting_unittests.py:73:4",
+        source_sha256="0" * 64,
+    )
+
+    class _TerminalFaceWithLocalState:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                GuardedFaces(
+                    guard=terminal_face,
+                    entries=(
+                        GuardedScopeRebind(
+                            (terminal_face,),
+                            "length",
+                            TermValue(3),
+                        ),
+                        GuardedReturn((terminal_face,), TermValue(3)),
+                    ),
+                    then_exits=True,
+                    else_exits=False,
+                    can_fall_through=True,
+                    continuation_guard=not_(terminal_face),
+                )
+            )
+
+    class _TerminalRaise:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(RaiseValue(raised))
+
+    ctx = FactoryBuildContext(filename="repro.py", catalog=default_catalog())
+    outcome = SequentialDigBody(
+        (_TerminalFaceWithLocalState(), _TerminalRaise())
+    ).desugar(ctx)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == GuardedValue(
+        terminal_face,
+        TermValue(3),
+        ExceptionalExitValue(raised),
+    )
+
+
+def test_sequential_dig_continuing_face_state_stays_loud() -> None:
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.factory.build import default_catalog
+    from sugar_lift_py_tests.floor import (
+        GuardedFaces,
+        GuardedReturn,
+        GuardedScopeRebind,
+    )
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import make_var, not_
+    from sugar_lift_py_tests.outcome import Complete
+
+    guard = make_var("branch")
+    state = GuardedScopeRebind((not_(guard),), "state", TermValue(9))
+
+    class _MixedFaces:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                GuardedFaces(
+                    guard=guard,
+                    entries=(
+                        GuardedReturn((guard,), TermValue(7)),
+                        state,
+                    ),
+                    then_exits=True,
+                    else_exits=False,
+                    can_fall_through=True,
+                    continuation_guard=not_(guard),
+                )
+            )
+
+    class _Fallback:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(ReturnValue(TermValue(0)))
+
+    ctx = FactoryBuildContext(filename="wrong_twin.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic):
+        SequentialDigBody((_MixedFaces(), _Fallback())).desugar(ctx)
 
 
 def test_sequential_dig_mixed_guarded_exit_and_state_stays_loud() -> None:

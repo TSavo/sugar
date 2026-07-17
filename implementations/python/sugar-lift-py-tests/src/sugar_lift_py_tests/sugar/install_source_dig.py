@@ -2208,7 +2208,7 @@ class SequentialDigBody:
             GuardedScopeRebind,
             ScopeRebind,
         )
-        from sugar_lift_py_tests.ir import and_
+        from sugar_lift_py_tests.ir import and_, not_
         from sugar_lift_py_tests.outcome import Complete
 
         cur = ctx
@@ -2237,7 +2237,8 @@ class SequentialDigBody:
                     item, (GuardedReturn, GuardedRaise, ReturnValue, RaiseValue)
                 )
             )
-            guarded_faces = isinstance(getattr(outcome, "value", None), GuardedFaces)
+            faces = getattr(outcome, "value", None)
+            guarded_faces = isinstance(faces, GuardedFaces)
             support_types = (ImportAliasValue, InvValue)
             # A joined branch composite has already constructed its exact
             # post-branch values in ``joined_bindings``. Imports and assertions
@@ -2261,6 +2262,34 @@ class SequentialDigBody:
                 and non_returns
                 and all(type(item) in support_types for item in non_returns)
             )
+            # GuardedFaces is the reduced semantic authority for which branch
+            # exits. State guarded by that exact terminal face is local
+            # implementation testimony, not a competing function result.
+            # State on a continuing face remains loud.
+            terminal_face_guards = (
+                (
+                    *((faces.guard,) if faces.then_exits else ()),
+                    *((not_(faces.guard),) if faces.else_exits else ()),
+                )
+                if guarded_faces
+                else ()
+            )
+            terminal_face_state = (
+                guarded_faces
+                and non_returns
+                and any(type(item) is GuardedScopeRebind for item in non_returns)
+                and all(
+                    type(item) in support_types
+                    or (
+                        type(item) is GuardedScopeRebind
+                        and any(
+                            terminal_guard in item.guards
+                            for terminal_guard in terminal_face_guards
+                        )
+                    )
+                    for item in non_returns
+                )
+            )
             # Statements after a guarded exit execute only on its fall-through
             # path. Exact rebind-only BlockValues can therefore thread that
             # continuation scope before the final fallback is selected. A
@@ -2278,7 +2307,12 @@ class SequentialDigBody:
             if (
                 (guarded_exits or guarded)
                 and non_returns
-                and not (joined_faces or support_only_faces or continuation_rebinds)
+                and not (
+                    joined_faces
+                    or support_only_faces
+                    or terminal_face_state
+                    or continuation_rebinds
+                )
             ):
                 return self._control_flow_gap()
             for item in contribution:
