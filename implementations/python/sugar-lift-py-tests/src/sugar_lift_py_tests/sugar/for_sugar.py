@@ -262,7 +262,12 @@ def _static_iterable_elements(iterable_site, ctx, loop_site):
     )
 
 
-def _loop_carried_names(site) -> tuple[str, ...]:
+def _loop_carried_names(
+    site,
+    *,
+    target_name: str | None = None,
+    entry_reads=(),
+) -> tuple[str, ...]:
     """Return stored locals whose prior value can be read in an iteration.
 
     A store alone does not make a local loop-carried.  Iteration temporaries and
@@ -272,7 +277,8 @@ def _loop_carried_names(site) -> tuple[str, ...]:
 
     import ast
 
-    target_name = site.for_target_name()
+    if target_name is None and site.observed == "For":
+        target_name = site.for_target_name()
     candidates_list: list[str] = []
 
     class CandidateStores(ast.NodeVisitor):
@@ -442,5 +448,7 @@ def _loop_carried_names(site) -> tuple[str, ...]:
         current.update(stored_names(statement))
         return current
 
-    scan_block(site.node.body, {target_name})
+    for entry_read in entry_reads:
+        note_loads(entry_read, set())
+    scan_block(site.node.body, {target_name} if target_name is not None else set())
     return tuple(name for name in candidates if name in carried)

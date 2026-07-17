@@ -30,6 +30,16 @@ def _carried_names(site) -> tuple[str, ...]:
     return tuple(names)
 
 
+def _while_carried_names(site) -> tuple[str, ...]:
+    # Import lazily because ForSugar shares the loop-control helpers from this
+    # module.  A while's test is evaluated at every iteration boundary, so a
+    # stored local read there is prior-state even when the body assigns it
+    # before any body-local read.
+    from sugar_lift_py_tests.sugar.for_sugar import _loop_carried_names
+
+    return _loop_carried_names(site, entry_reads=(site.node.test,))
+
+
 def _has_loop_control(site) -> bool:
     import ast
 
@@ -92,7 +102,7 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
         return cls(
             test=ctx.build_body(site.while_test(), SugarRole.TERM),
             body=ctx.build_body(site.while_body_block(), SugarRole.STATEMENT),
-            carried=_carried_names(site),
+            carried=_while_carried_names(site),
             curried=_has_loop_control(site),
             unclassified_mutation=_has_unclassified_mutation(site),
             site=site,
@@ -108,11 +118,29 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
             "    return 0\n"
             "\n"
         )
-        return _call_pair(
-            name="while_return",
-            owner_sugar="WhileSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        carried_prefix = (
+            "def B(z):\n"
+            "    value = 1\n"
+            "    while z.ready():\n"
+            "        local = value\n"
+            "        value = local\n"
+            "        break\n"
+            "    return value\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="while_return",
+                owner_sugar="WhileSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            _call_pair(
+                name="while_loop_carried",
+                owner_sugar="WhileSugar",
+                truthful=carried_prefix + "def test_b():\n    assert B(5) == 1\n",
+                lying=carried_prefix + "def test_b():\n    assert B(5) == 0\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
