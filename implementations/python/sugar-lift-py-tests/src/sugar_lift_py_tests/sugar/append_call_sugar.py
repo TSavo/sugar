@@ -56,6 +56,13 @@ class AppendCallSugar(
         length_prefix = (
             "def A():\n" "    xs = [1]\n" "    xs.append(2)\n" "    return len(xs)\n\n"
         )
+        comprehension_prefix = (
+            "def A(values, z):\n"
+            "    xs = [value for value in values]\n"
+            "    xs.append(z)\n"
+            "    return z\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="append_return",
@@ -68,6 +75,16 @@ class AppendCallSugar(
                 owner_sugar="AppendCallSugar",
                 truthful=length_prefix + "def test_a():\n    assert A() == 2\n",
                 lying=length_prefix + "def test_a():\n    assert A() == 1\n",
+            ),
+            _call_pair(
+                name="append_comprehension_return",
+                owner_sugar="AppendCallSugar",
+                truthful=comprehension_prefix
+                + "def test_a():\n"
+                + "    assert A([1, 2], 3) == 3\n",
+                lying=comprehension_prefix
+                + "def test_a():\n"
+                + "    assert A([1, 2], 3) == 2\n",
             ),
         )
 

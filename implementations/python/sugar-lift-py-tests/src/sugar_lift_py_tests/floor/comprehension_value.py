@@ -36,6 +36,33 @@ class ComprehensionValue(FloorValue):
             PredicateValue(py_truthy(self.term), site, operand_callsites=())
         )
 
+    def append_with(self, value, site):
+        """Construct the post-state of a list comprehension append.
+
+        The comprehension's members may be runtime-derived, but its container
+        kind and Python append semantics are already known. Preserve the prior
+        list coordinate and appended value without inventing either history or
+        cardinality.
+        """
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+
+        return Complete(
+            ComprehensionValue(
+                ctor(
+                    "py.list_append",
+                    [
+                        self.term,
+                        floor_to_term(
+                            value, owner="ComprehensionValue.append_with value"
+                        ),
+                    ],
+                    symbol_kind="method-coordinate",
+                )
+            )
+        )
+
     def add(self, other, site):
         from sugar_lift_py_tests.effect import (
             SequenceConcatenationRuntimeEffect,
@@ -48,9 +75,7 @@ class ComprehensionValue(FloorValue):
 
         if type(other) in (ComprehensionValue, ListValue):
             other_term = other.to_term(owner=str(site))
-            if is_lift_time_decidable(self.term) and is_lift_time_decidable(
-                other_term
-            ):
+            if is_lift_time_decidable(self.term) and is_lift_time_decidable(other_term):
                 return Complete(
                     ComprehensionValue(
                         ctor(
