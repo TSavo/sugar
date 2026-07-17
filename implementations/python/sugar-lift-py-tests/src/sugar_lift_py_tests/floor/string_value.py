@@ -90,6 +90,15 @@ class StringValue(FloorValue):
                 if self.value == other.value
                 else FalseBoolLiteralSugar(site=site)
             )
+        from sugar_lift_py_tests.floor.term_value import TermValue
+
+        if type(other) is TermValue:
+            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+
+            return Complete(FalseBoolLiteralSugar(site=site))
         return super().equals(other, site)
 
     def less_than(self, other, site):

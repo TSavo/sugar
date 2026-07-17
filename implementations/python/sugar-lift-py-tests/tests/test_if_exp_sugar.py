@@ -26,6 +26,14 @@ def test_literal_ifexp_false_branch_reduces() -> None:
     assert reduce_value("1 if False else 2") == TermValue(2)
 
 
+def test_ground_numeric_is_not_none_selects_true_branch() -> None:
+    assert reduce_value("1 if 2 is not None else 3") == TermValue(1)
+
+
+def test_ground_string_integer_equality_selects_false_branch() -> None:
+    assert reduce_value("1 if '1' == 1 else 2") == TermValue(2)
+
+
 def test_ground_nonzero_term_condition_selects_true_branch() -> None:
     ctx = FactoryBuildContext(filename="if_exp.py", catalog=default_catalog())
     body = ctx.build_body(

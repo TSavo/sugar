@@ -154,6 +154,34 @@ def test_symbolic_iterable_dynamic_getattr_remains_authenticated_runtime() -> No
     )
 
 
+def test_ground_tuple_dynamic_getattr_stays_loud_at_owner() -> None:
+    from sugar_lift_py_tests.factory import FactoryPanic
+    from sugar_lift_py_tests.floor import TupleValue
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    body = ctx.build_body(
+        ast.parse("getattr(obj, name)", mode="eval").body,
+        SugarRole.TERM,
+    )
+    names = TupleValue((StringValue("a"), StringValue("b")))
+    reduce_ctx = ReduceContext(
+        temporal=(
+            TemporalContext.empty()
+            .bind_value("obj", SymbolicValue(make_var("obj")))
+            .bind_value(
+                "name",
+                SymbolicValue(ctor("py.iter_elem", [names.to_term(owner="test")])),
+            )
+        )
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        body.reduce(reduce_ctx)
+
+    assert raised.value.info.owner == "GetattrBuiltinSugar"
+    assert raised.value.info.requested == "statically enumerated attribute name"
+
+
 def test_owns_simple_name_for_not_tuple_while_or_expr() -> None:
     """(3) owns simple-Name For; not tuple target, While, or Assign."""
     assert ForSugar.owns(_site("for x in y:\n    pass\n")) is True
