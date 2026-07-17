@@ -65,19 +65,65 @@ jobs:
           echo "wall_exit=$wall_exit" >> "$GITHUB_OUTPUT"
           test -s .sugar/numpy-wall/frontier.json
 
-      - name: Publish NumPy telemetry vector
+      - name: Publish NumPy conservation vector + ΔR
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # #4263: post-merge instrument. Mint the closed conservation vector,
+          # diff against the prior #4102 ledger entry (advisory), and comment
+          # the absolute vector + ΔR. Unexplained movement is loud telemetry to
+          # fix forward — not a reason to have blocked the merge.
+          summary_args=()
+          if [ -f .sugar/numpy-wall/summary.json ]; then
+            summary_args=(--summary .sugar/numpy-wall/summary.json)
+          fi
           python tools/wall_frontier_telemetry.py \
             --frontier .sugar/numpy-wall/frontier.json \
+            "${summary_args[@]}" \
             --wall numpy \
             --run-url "$RUN_URL" \
             --output .sugar/numpy-wall/telemetry.md \
+            --vector-json-out .sugar/numpy-wall/conservation-vector.json \
             | tee -a "$GITHUB_STEP_SUMMARY"
+
+          : > .sugar/numpy-wall/delta.md
+          python tools/wall_ledger_previous_vector.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --issue 4102 \
+            --wall numpy \
+            --skip-run "$RUN_URL" \
+            --output .sugar/numpy-wall/previous-vector.json \
+            || true
+          if [ -s .sugar/numpy-wall/previous-vector.json ]; then
+            python tools/wall_conservation_diff.py \
+              --before-vector-json .sugar/numpy-wall/previous-vector.json \
+              --after-vector-json .sugar/numpy-wall/conservation-vector.json \
+              --wall numpy \
+              --before-label "prior #4102 ledger" \
+              --after-label "this mint" \
+              --run-url "$RUN_URL" \
+              --advisory \
+              --markdown-out .sugar/numpy-wall/delta.md \
+              --json-out .sugar/numpy-wall/conservation-delta.json \
+              | tee -a "$GITHUB_STEP_SUMMARY" || true
+          else
+            {
+              echo "### numpy wall conservation ΔR"
+              echo "No prior machine vector on #4102 — this mint is the ledger baseline."
+            } | tee -a "$GITHUB_STEP_SUMMARY" | tee .sugar/numpy-wall/delta.md
+          fi
+
+          {
+            cat .sugar/numpy-wall/telemetry.md
+            echo
+            cat .sugar/numpy-wall/delta.md
+          } > .sugar/numpy-wall/ledger-comment.md
+
           gh issue comment 4102 --repo "$GITHUB_REPOSITORY" \
-            --body-file .sugar/numpy-wall/telemetry.md
+            --body-file .sugar/numpy-wall/ledger-comment.md
+          gh issue comment 4263 --repo "$GITHUB_REPOSITORY" \
+            --body-file .sugar/numpy-wall/ledger-comment.md
 
       - name: Upload NumPy wall artifacts
         if: always()

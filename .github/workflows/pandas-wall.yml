@@ -102,20 +102,66 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish pandas telemetry vector
+      - name: Publish pandas conservation vector + ΔR
         if: steps.wall.outputs.has_frontier == '1'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # #4263: post-merge instrument. Mint the closed conservation vector,
+          # diff against the prior #4102 ledger entry (advisory), and comment
+          # the absolute vector + ΔR. Unexplained movement is loud telemetry to
+          # fix forward — not a reason to have blocked the merge.
+          summary_args=()
+          if [ -f .sugar/pandas-wall/summary.json ]; then
+            summary_args=(--summary .sugar/pandas-wall/summary.json)
+          fi
           python tools/wall_frontier_telemetry.py \
             --frontier .sugar/pandas-wall/frontier.json \
+            "${summary_args[@]}" \
             --wall pandas \
             --run-url "$RUN_URL" \
             --output .sugar/pandas-wall/telemetry.md \
+            --vector-json-out .sugar/pandas-wall/conservation-vector.json \
             | tee -a "$GITHUB_STEP_SUMMARY"
+
+          : > .sugar/pandas-wall/delta.md
+          python tools/wall_ledger_previous_vector.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --issue 4102 \
+            --wall pandas \
+            --skip-run "$RUN_URL" \
+            --output .sugar/pandas-wall/previous-vector.json \
+            || true
+          if [ -s .sugar/pandas-wall/previous-vector.json ]; then
+            python tools/wall_conservation_diff.py \
+              --before-vector-json .sugar/pandas-wall/previous-vector.json \
+              --after-vector-json .sugar/pandas-wall/conservation-vector.json \
+              --wall pandas \
+              --before-label "prior #4102 ledger" \
+              --after-label "this mint" \
+              --run-url "$RUN_URL" \
+              --advisory \
+              --markdown-out .sugar/pandas-wall/delta.md \
+              --json-out .sugar/pandas-wall/conservation-delta.json \
+              | tee -a "$GITHUB_STEP_SUMMARY" || true
+          else
+            {
+              echo "### pandas wall conservation ΔR"
+              echo "No prior machine vector on #4102 — this mint is the ledger baseline."
+            } | tee -a "$GITHUB_STEP_SUMMARY" | tee .sugar/pandas-wall/delta.md
+          fi
+
+          {
+            cat .sugar/pandas-wall/telemetry.md
+            echo
+            cat .sugar/pandas-wall/delta.md
+          } > .sugar/pandas-wall/ledger-comment.md
+
           gh issue comment 4102 --repo "$GITHUB_REPOSITORY" \
-            --body-file .sugar/pandas-wall/telemetry.md
+            --body-file .sugar/pandas-wall/ledger-comment.md
+          gh issue comment 4263 --repo "$GITHUB_REPOSITORY" \
+            --body-file .sugar/pandas-wall/ledger-comment.md
 
       - name: Upload pandas wall artifacts
         if: always()
