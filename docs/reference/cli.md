@@ -46,11 +46,11 @@ the **21 subcommands the binary actually dispatches** (the `Cmd` match arms in
 
 | Verb | What it does |
 |---|---|
-| `recognize` | Scan source for shapes that match published sugar binding templates; emit tags. The reverse direction of `materialize`. |
-| `materialize` | Materialize source-oracle bodies by resolving real source by reference. |
-| `bind` | Bind concept contracts to source code (the eight-verb pipeline: lift, cluster, name, scope, identify, realize, witness). Flags: `--rewrite={annotate,canonical,invisible} --mode={witness,emitter,monitor,gate} --target-language=<lang>`. |
+| `bind` | Bind concept contracts to source code (lift, cluster, name, scope, identify, witness). Flags: `--rewrite={annotate,canonical,invisible} --mode={witness,emitter,monitor,gate} --target-language=<lang>`. |
 | `emit` | Emit target/framework test artifacts from neutral contract predicates. |
 | `derive` | Derive a concrete output from a lifted universe BV expression via z3 model extraction (`get-value`) — derived, not executed. Flagship: `abs(Integer.MIN_VALUE) = -2147483648`, from the lifted `Math.abs` body. |
+
+Retired (deleted with their dispatchers; do not re-advertise): `recognize`, `materialize`. Ingress is lift of native source; egress is emit.
 
 ## Project and lifecycle
 

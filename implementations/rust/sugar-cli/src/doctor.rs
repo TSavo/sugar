@@ -496,7 +496,7 @@ where
     let config = read_project_config(kit_dir);
 
     // Enumerate manifest TOML files for all declared plugins (check 1 continued).
-    // Map: (surface, kind) -> manifest dir name ("lift", "realize", "emit").
+    // Map: (surface, kind) -> manifest dir name ("lift", "emit").
     let manifest_entries = collect_manifest_entries(kit_dir, &config.plugins);
     for (surface, kind_dir, manifest_path) in &manifest_entries {
         let check_name = format!("manifest-toml-parse:{kind_dir}:{surface}");

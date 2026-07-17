@@ -291,6 +291,53 @@ fn sugar_cli_does_not_expose_legacy_link_subcommand() {
 }
 
 #[test]
+fn sugar_cli_does_not_expose_retired_materialize_or_recognize_subcommands() {
+    // #3816 / #3809: materialize and recognize were deleted with their kit
+    // handlers. Ingress is lift of native source; egress is emit. No source-
+    // rewriting verb and no tag-scanning verb remain on the CLI surface.
+    let help = Command::new(sugar_bin())
+        .arg("--help")
+        .output()
+        .expect("spawn sugar --help");
+    let stdout = String::from_utf8_lossy(&help.stdout);
+    let stderr = String::from_utf8_lossy(&help.stderr);
+    assert!(
+        help.status.success(),
+        "sugar --help failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    for retired in ["materialize ", "recognize "] {
+        assert!(
+            !stdout
+                .lines()
+                .any(|line| line.trim_start().starts_with(retired)),
+            "`sugar {retired}` must stay retired after the verb purge\nstdout:\n{stdout}"
+        );
+    }
+
+    for (verb, args) in [
+        ("materialize", vec!["project"]),
+        ("recognize", vec!["project"]),
+    ] {
+        let rejected = Command::new(sugar_bin())
+            .arg(verb)
+            .args(&args)
+            .output()
+            .unwrap_or_else(|_| panic!("spawn sugar {verb}"));
+        let stderr = String::from_utf8_lossy(&rejected.stderr);
+        assert!(
+            !rejected.status.success(),
+            "`sugar {verb}` must be rejected at the CLI boundary"
+        );
+        assert!(
+            stderr.contains("unrecognized subcommand")
+                || stderr.contains("unknown")
+                || stderr.contains("invalid value"),
+            "stderr should reject retired {verb} at clap boundary\n{stderr}"
+        );
+    }
+}
+
+#[test]
 fn lift_identify_only_delegates_from_project_config() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let project = dir.path().join("project");

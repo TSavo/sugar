@@ -72,9 +72,8 @@ The verbs you'll use first:
 | `sugar init` | Scaffold a project (`sugar.toml`, `.sugar/`, sample invariant, GitHub Action). |
 | `sugar doctor` | Validate a kit's config and manifest wiring before a run. |
 
-Other subcommands (`lift`, `compose`, `recognize`, `materialize`, `bind`,
-`emit`) cover the lower-level lift and concept-binding pipeline; see
-`sugar --help`.
+Other subcommands (`lift`, `compose`, `bind`, `emit`) cover the lower-level
+lift and concept-binding pipeline; see `sugar --help`.
 
 ## How it works, in one paragraph
 

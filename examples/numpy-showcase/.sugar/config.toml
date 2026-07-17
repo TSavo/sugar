@@ -1,13 +1,12 @@
-# numpy showcase showdown — all five verbs over one numpy operation.
+# numpy showcase showdown — mint/prove/verify over one numpy operation.
 #
 # lift   : the numpy sugar `.proof` (in imports/) carries numpy.add's sugar;
 #          mint lifts the unit-test CONTRACTS from test_numpy_add.py.
-# recognize  : a production np.add callsite is found from the sugar `.proof`.
-# prove      : the test contracts discharge (consistent) / refuse (contradictory).
-# verify     : signed witness mementos cite the discharging solver.
+# prove  : the test contracts discharge (consistent) / refuse (contradictory).
+# verify : signed witness mementos cite the discharging solver.
 #
-# The pytest surface drives mint/prove/verify; the python-bind surface (kit
-# manifest) drives recognize. Both kits self-resolve their `.proof`s.
+# The pytest and python-bind lift surfaces both self-resolve their `.proof`s.
+# (recognize/materialize were retired; ingress is lift of native source.)
 [[plugins]]
 name = "python-numpy-testing-lift"
 kind = "lift"

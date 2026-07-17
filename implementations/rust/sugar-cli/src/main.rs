@@ -146,8 +146,8 @@ enum Cmd {
     /// Per spec protocol/specs/2026-05-09-contract-composition-protocol.md §6.3.
     /// Reads JSON-RPC requests on stdin, writes responses on stdout.
     Compose(ComposeArgs),
-    /// Bind concept contracts to source code: lift, cluster, name, scope, identify, realize, witness.
-    /// Implements the eight-verb pipeline (paper 20 §9) against arbitrary user code.
+    /// Bind concept contracts to source code: lift, cluster, name, scope, identify, witness.
+    /// Implements the bind pipeline (paper 20 §9) against arbitrary user code.
     /// --rewrite={annotate,canonical,invisible} --mode={witness,emitter,monitor,gate} --target-language=<lang>
     Bind(cmd_bind::BindArgs),
     /// Validate a kit's config/manifest wiring before a run. Catches missing

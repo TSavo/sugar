@@ -1,3 +1,0 @@
-name = "rust-realize"
-command = ["../target/debug/sugar-realize-rust", "--rpc"]
-working_dir = "."
