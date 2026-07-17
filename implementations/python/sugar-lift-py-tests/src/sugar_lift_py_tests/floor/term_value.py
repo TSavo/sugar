@@ -323,6 +323,12 @@ class TermValue(FloorValue):
                     )
                 )
             return Complete(TermValue(self.value % other.value))
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+        if type(other) is CallSiteValue and other.body is None:
+            from sugar_lift_py_tests.effect import runtime_modulo
+
+            return runtime_modulo(self, other, site)
         return super().modulo(other, site)
 
     def floor_divide(self, other, site):
