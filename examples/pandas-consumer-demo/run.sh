@@ -151,6 +151,9 @@ flags = ["-smt2", "-in"]
         encoding="utf-8",
     )
     plugin = vendor / "static_pandas_vendor.py"
+    # Mirror write_static_vendor_plugin in cross_proof_imported_implications.rs:
+    # pep/1.7.0 requires sugar.plugin.kit_declaration with a `kit` object or
+    # mint fails at rendezvous before any callEdges exist.
     write_executable(
         plugin,
         f"""#!/usr/bin/env python3
@@ -163,7 +166,18 @@ for line in sys.stdin:
     request = json.loads(line)
     method = request.get("method")
     if method == "initialize":
-        result = {{"name": "static-pandas-vendor", "protocol_version": "pep/1.7.0", "capabilities": {{}}}}
+        result = {{
+            "name": "static-pandas-vendor",
+            "protocol_version": "pep/1.7.0",
+            "capabilities": {{}},
+        }}
+    elif method == "sugar.plugin.kit_declaration":
+        result = {{
+            "kit": {{"id": "static-pandas-vendor", "language": "python", "version": "0.0.0"}},
+            "rpc": {{"methods": [{{"name": "lift", "required": True}}]}},
+            "proofResolution": {{"strategy": "none"}},
+            "residueCategories": [],
+        }}
     elif method in ("lift", "sugar.plugin.lift"):
         result = {{"kind": "ir-document", "ir": IR, "diagnostics": []}}
     elif method == "shutdown":
@@ -295,7 +309,23 @@ def row_for(report, property_contains):
 
 
 def edge_for(report, target_symbol):
-    return next(e for e in report["callEdges"] if e["targetSymbol"] == target_symbol)
+    # Join key is the EUF ctor head `call:<callee>` (CallSiteValue), matching
+    # the vendor binding's bridgeSourceSymbol and the load-bearing seat in
+    # cross_proof_imported_implications.rs. Never use method:<name> here —
+    # that was a stale AliasFloor vocabulary that exhausts to StopIteration
+    # when the wall only emits call:sum (see #3752).
+    edges = report.get("callEdges") or []
+    for edge in edges:
+        if edge.get("targetSymbol") == target_symbol:
+            return edge
+    available = sorted({e.get("targetSymbol") for e in edges if e.get("targetSymbol")})
+    raise SystemExit(
+        f"call edge for {target_symbol!r} missing from wall report; "
+        f"available targetSymbols={available!r}. "
+        f"Vendor bridgeSourceSymbol and CallSiteValue both use call:<callee>; "
+        f"do not look up method:<name> (regression #3752). "
+        f"callEdges={json.dumps(edges, indent=2)}"
+    )
 
 
 proof, proof_cid = mint_vendor()
@@ -304,7 +334,8 @@ print("vendor surface: pandas-showcase Series.sum fact; no PRE-bearing pandas co
 
 good = stage_consumer("consumer-good", 6, proof)
 good_wall = lift_report(good)
-good_edge = edge_for(good_wall, "method:sum")
+# call:sum — not method:sum. Collapse projects the EUF head call:<callee>.
+good_edge = edge_for(good_wall, "call:sum")
 print(
     "good wall edge:",
     good_edge["sourceContract"],
@@ -324,7 +355,7 @@ print(
 
 bad = stage_consumer("consumer-bad", 7, proof)
 bad_wall = lift_report(bad)
-bad_edge = edge_for(bad_wall, "method:sum")
+bad_edge = edge_for(bad_wall, "call:sum")
 print(
     "bad wall edge:",
     bad_edge["sourceContract"],
@@ -342,6 +373,11 @@ print(
     f"bad consumer: exit={bad_code} status={bad_row['status']} linked-origin={bad_post['targetProofCid']}"
 )
 
+if good_edge.get("targetProofCid") != proof_cid or bad_edge.get("targetProofCid") != proof_cid:
+    raise SystemExit(
+        f"wall call:sum edge must target imported vendor proof {proof_cid}; "
+        f"good={good_edge.get('targetProofCid')!r} bad={bad_edge.get('targetProofCid')!r}"
+    )
 if good_code != 0 or good_row["status"] != "discharged":
     raise SystemExit(f"good consumer must discharge through imported pandas proof: {good_prove}")
 if bad_code == 0 or bad_row["status"] != "unsatisfied":
