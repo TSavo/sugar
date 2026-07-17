@@ -50,10 +50,10 @@ use libsugar::core::{
 };
 use sugar_canonicalizer::{blake3_512_of, cid_hex, encode_jcs, json_to_value, Value as CValue};
 use sugar_claim_envelope::{
-    body_discharge_policy_from_fields, compute_contract_set_cid, contract_cid, mint_authority,
-    mint_bridge, mint_contract_with_body_cid, mint_implication, Authoring,
-    BodyDischargePolicyWarning, BridgeCallsite, MintAuthorityArgs, MintBridgeArgs,
-    MintContractArgs, MintImplicationArgs,
+    body_discharge_policy_from_fields, body_discharge_policy_from_fields_for_kind,
+    compute_contract_set_cid, contract_cid, mint_authority, mint_bridge,
+    mint_contract_with_body_cid, mint_implication, Authoring, BodyDischargePolicyWarning,
+    BridgeCallsite, MintAuthorityArgs, MintBridgeArgs, MintContractArgs, MintImplicationArgs,
 };
 use sugar_compiler::kit_path::LiftTermTable;
 use sugar_ir_types::Sort;
@@ -4421,12 +4421,16 @@ fn mint_ir_document_with_source_and_plan_mementos(
             }
             None => Vec::new(),
         };
-        let body_policy = body_discharge_policy_from_fields(
+        // #3901: default eligibility is derived from IR kind (assertions never;
+        // function-contracts yes). Free-bool `true` for every kind is the
+        // silent-loss shape that diverged from feed_from_tree.
+        let body_policy = body_discharge_policy_from_fields_for_kind(
             decl.get("bodyDischargeEligible")
                 .or_else(|| decl.get("body_discharge_eligible")),
             decl.get("bodyDischargeRefusalReason")
                 .or_else(|| decl.get("body_discharge_refusal_reason")),
             decl.get("dischargePolicy"),
+            kind,
         );
         log_body_discharge_policy_warnings("mint-ir-contract-decl", &name, &body_policy.warnings);
         let body_discharge_eligible = body_policy.body_discharge_eligible;
@@ -7604,6 +7608,110 @@ mod tests {
             Some("libsugar")
         );
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// #3901 instrument: mint IR body-discharge default is derived from kind.
+    ///
+    /// Axis `R_body_discharge_default_ignores_kind` — free-bool true for every
+    /// kind made mint diverge from feed (assertions silently body-eligible).
+    /// Replacement: `body_discharge_policy_from_fields_for_kind`.
+    #[test]
+    fn mint_ir_body_discharge_default_derived_from_kind() {
+        let root = temp_workspace("mint_body_discharge_kind_default");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+        let ir = vec![
+            json!({
+                "kind": "contract",
+                "name": "assert_no_policy",
+                "outBinding": "out",
+                "inv": {"kind": "atomic", "name": "true", "args": []}
+                // deliberately omit bodyDischargeEligible
+            }),
+            json!({
+                "kind": "function-contract",
+                "name": "fn_no_policy",
+                "formals": ["x"],
+                "formalSorts": [{"kind": "primitive", "name": "Int"}],
+                "outBinding": "out",
+                "post": {"kind": "atomic", "name": "true", "args": []}
+                // deliberately omit bodyDischargeEligible
+            }),
+        ];
+
+        let minted = mint_ir_document(&ir, None, None, None, &root, &out_dir, true)
+            .expect("mint ir-document");
+
+        let assert_binding = minted
+            .contract_bindings
+            .iter()
+            .find(|b| b["name"] == "assert_no_policy")
+            .expect("assert binding");
+        assert_eq!(
+            assert_binding["bodyDischargeEligible"], false,
+            "R_body_discharge_default_ignores_kind=1 — kind=contract without \
+             directive must mint bodyDischargeEligible=false (got {}). \
+             Replacement: body_discharge_policy_from_fields_for_kind(kind).",
+            assert_binding["bodyDischargeEligible"]
+        );
+        assert_eq!(
+            assert_binding["body_bearing"], false,
+            "assertion contracts must not be body_bearing when ineligible"
+        );
+
+        let fn_binding = minted
+            .contract_bindings
+            .iter()
+            .find(|b| b["name"] == "fn_no_policy")
+            .expect("function binding");
+        assert_eq!(
+            fn_binding["bodyDischargeEligible"], true,
+            "R_body_discharge_default_ignores_kind=1 — kind=function-contract \
+             without directive must mint bodyDischargeEligible=true (got {})",
+            fn_binding["bodyDischargeEligible"]
+        );
+        assert_eq!(
+            fn_binding["body_bearing"], true,
+            "function-contract with post must be body_bearing when eligible"
+        );
+
+        // Metadata membrane: false is written; true is omitted.
+        let graph = ProofGraph::read(&minted.bytes).expect("decode proof");
+        let assert_view = graph
+            .members_view()
+            .find(|v| {
+                v.field("name").as_deref() == Some("assert_no_policy")
+                    || v.field("contractName").as_deref() == Some("assert_no_policy")
+            })
+            .expect("assert envelope");
+        assert_eq!(
+            assert_view
+                .json()
+                .pointer("/metadata/bodyDischargeEligible")
+                .and_then(|v| v.as_bool()),
+            Some(false),
+            "kind=contract must seal bodyDischargeEligible=false into metadata"
+        );
+        let fn_view = graph
+            .members_view()
+            .find(|v| {
+                v.field("name").as_deref() == Some("fn_no_policy")
+                    || v.field("contractName").as_deref() == Some("fn_no_policy")
+            })
+            .expect("fn envelope");
+        assert!(
+            fn_view
+                .json()
+                .pointer("/metadata/bodyDischargeEligible")
+                .is_none(),
+            "eligible function-contract omits bodyDischargeEligible (legacy true)"
+        );
+
+        eprintln!(
+            "R_body_discharge_default_ignores_kind=0 — mint kind=contract→false, \
+             function-contract→true"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
