@@ -85,6 +85,16 @@ class CallResultCallSugar(Sugar, role=SugarRole.TERM):
                 ctx=ctx,
             )
 
+        exception_type_coordinate = None
+        if (
+            isinstance(receiver, CallSiteValue)
+            and receiver.target_name == "type"
+            and len(receiver.arg_values) == 1
+            and isinstance(receiver.arg_values[0], CallSiteValue)
+            and receiver.arg_values[0].target_name == "except"
+        ):
+            exception_type_coordinate = receiver.term
+
         return Complete(
             CallSiteValue(
                 target_name="__call__",
@@ -97,6 +107,7 @@ class CallResultCallSugar(Sugar, role=SugarRole.TERM):
                 ),
                 body=None,
                 site=self.site,
+                exception_type_coordinate=exception_type_coordinate,
             )
         )
 

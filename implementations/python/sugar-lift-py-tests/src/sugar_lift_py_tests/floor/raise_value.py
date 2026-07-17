@@ -49,7 +49,9 @@ def _exceptional_exit_formula(effect: RaiseEffect, guards: tuple = ()):
     # not a fabricated exception class. Explicit ``raise Exc(...)`` keeps its
     # constructed name. Absence of both would be a construction gap elsewhere.
     exception_name = (
-        effect.exception_name if effect.exception_name is not None else "reraise"
+        effect.exception_name
+        if effect.exception_name is not None
+        else (None if effect.exception_type_coordinate is not None else "reraise")
     )
 
     from sugar_lift_py_tests.ir import and_, eq, implies, make_var
@@ -68,15 +70,19 @@ def _exceptional_exit_term(effect: RaiseEffect, *, exception_name: str | None = 
     """Project the one source-cited term shared by raise posts and selections."""
     from sugar_lift_py_tests.ir import ctor, str_const
 
-    name = (
-        exception_name
-        if exception_name is not None
-        else effect.exception_name or "reraise"
-    )
+    if effect.exception_type_coordinate is not None and exception_name is None:
+        name_term = effect.exception_type_coordinate
+    else:
+        name = (
+            exception_name
+            if exception_name is not None
+            else effect.exception_name or "reraise"
+        )
+        name_term = str_const(name)
     return ctor(
         "py.exceptional_exit",
         [
-            str_const(name),
+            name_term,
             str_const(
                 f"{effect.blame or '<unknown raise locus>'}"
                 f"#source-sha256={effect.source_sha256 or 'unavailable'}"

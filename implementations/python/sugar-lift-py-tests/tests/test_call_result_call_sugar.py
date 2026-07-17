@@ -11,8 +11,8 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
-from sugar_lift_py_tests.ir import ctor, make_var
+from sugar_lift_py_tests.floor import CallSiteValue, StringValue, SymbolicValue
+from sugar_lift_py_tests.ir import ctor, make_var, str_const
 
 
 def _site(expr: str) -> SourceFragment:
@@ -33,6 +33,34 @@ def test_call_result_is_the_receiver_first_call_coordinate() -> None:
     assert value.target_name == "__call__"
     assert value.arg_values[0].to_term(owner="test") == receiver
     assert value.term == ctor("call:__call__", [receiver, make_var("dtype")])
+
+
+def test_caught_exception_type_call_authenticates_dynamic_exception_instance() -> None:
+    caught = CallSiteValue(
+        target_name="except",
+        arg_values=(),
+        parameters=(),
+        term=ctor("py.except", [str_const("Exception")]),
+        body=None,
+    )
+
+    value = reduce_value(
+        "type(err)('new')",
+        binds={"err": caught},
+    )
+
+    assert isinstance(value, CallSiteValue)
+    assert value.exception_type_coordinate == ctor("call:type", [caught.term])
+
+
+def test_non_exception_type_call_cannot_authenticate_dynamic_exception() -> None:
+    value = reduce_value(
+        "type(value)('new')",
+        binds={"value": StringValue("ground")},
+    )
+
+    assert isinstance(value, CallSiteValue)
+    assert value.exception_type_coordinate is None
 
 
 def test_call_result_carries_star_and_keyword_expansions_as_coordinates() -> None:

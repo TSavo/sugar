@@ -69,6 +69,13 @@ class CallSiteValue(FloorValue):
     runtime_dispatch_receiver: FloorValue | None = dataclass_field(
         default=None, compare=False
     )
+    # Authority to treat this call result as an exception instance.  This is
+    # issued only for ``type(caught_exception)(...)``: the coordinate names the
+    # genuinely runtime-selected exception class.  Ordinary call-result shapes
+    # and ``type(ground_value)(...)`` cannot acquire it.
+    exception_type_coordinate: Term | None = dataclass_field(
+        default=None, compare=False
+    )
 
     def to_term(self, *, owner: str):
         del owner

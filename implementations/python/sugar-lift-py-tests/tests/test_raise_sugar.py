@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from factory_reduce import compose_block
 
-from sugar_lift_py_tests.floor import BlockValue, RaiseValue
+from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, RaiseValue
+from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
 
@@ -53,3 +54,28 @@ def test_a_block_with_only_a_raise_carries_a_raise_exit():
     assert isinstance(block, BlockValue)
     assert len(block.statements) == 1
     assert isinstance(block.statements[0], RaiseValue)
+
+
+def test_caught_exception_reconstruction_is_a_routeable_dynamic_raise():
+    caught = CallSiteValue(
+        target_name="except",
+        arg_values=(),
+        parameters=(),
+        term=ctor("py.except", [str_const("Exception")]),
+        body=None,
+    )
+    block = compose_block(
+        '    raise type(err)("new") from err\n',
+        {"err": caught},
+    )
+    assert isinstance(block, BlockValue)
+
+    dynamic = [
+        statement
+        for statement in block.statements
+        if isinstance(statement, RaiseValue)
+        and statement.effect.exception_type_coordinate is not None
+    ]
+    assert len(dynamic) == 1
+    assert dynamic[0].effect.exception_name is None
+    assert dynamic[0].cause is not None

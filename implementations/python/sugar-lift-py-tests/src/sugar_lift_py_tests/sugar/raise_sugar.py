@@ -107,6 +107,20 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _constructed_raise(self, value, ctx, source_sha256: str | None) -> Outcome:
+        if (
+            isinstance(value, CallSiteValue)
+            and value.exception_type_coordinate is not None
+        ):
+            effect = RaiseEffect(
+                None,
+                str(self.site),
+                source_sha256,
+                exception_type_coordinate=value.exception_type_coordinate,
+            )
+            return self._attach_cause(
+                RaiseValue(effect, scope=ctx),
+                ctx,
+            )
         if not isinstance(value, ExceptionValue):
             from sugar_lift_py_tests.factory import factory_panic_gap
 
@@ -120,6 +134,7 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
                     "do not substitute arbitrary call coordinates"
                 ),
             )
+        assert isinstance(value, ExceptionValue)
         effect = RaiseEffect(
             value.exception_name,
             str(self.site),
