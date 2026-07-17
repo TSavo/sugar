@@ -431,6 +431,65 @@ def test_contextlib_suppress_constructs_named_static_contract() -> None:
 @pytest.mark.parametrize(
     "coordinate",
     (
+        "numpy.testing.assert_raises_regex",
+        "numpy.testing._private.utils.assert_raises_regex",
+    ),
+)
+def test_numpy_assert_raises_regex_constructs_named_static_contract(
+    coordinate: str,
+) -> None:
+    exception = BuiltinExceptionClassValue(
+        name="ValueError", bases=(), record=BlockValue(())
+    )
+
+    contract = _static_exit_suppression_contract(
+        coordinate,
+        (exception, TermValue("boom")),
+    )
+
+    assert contract == ExitSuppressionContract.suppresses(("ValueError",))
+
+
+def test_numpy_assert_raises_regex_suppresses_the_exact_exception() -> None:
+    payload = lift_file_payload(
+        "from numpy.testing import assert_raises_regex\n"
+        "def test_expected_error():\n"
+        "    with assert_raises_regex(ValueError, 'boom'):\n"
+        "        raise ValueError('boom')\n",
+        "test_numpy_assert_raises_regex.py",
+    )
+
+    assert not payload.effects
+
+
+def test_unrelated_assert_raises_regex_coordinate_stays_loud() -> None:
+    assert (
+        _static_exit_suppression_contract(
+            "project.assert_raises_regex",
+            (
+                BuiltinExceptionClassValue(
+                    name="ValueError", bases=(), record=BlockValue(())
+                ),
+                TermValue("boom"),
+            ),
+        )
+        is None
+    )
+
+
+def test_numpy_assert_raises_regex_with_nonclass_operand_stays_loud() -> None:
+    assert (
+        _static_exit_suppression_contract(
+            "numpy.testing.assert_raises_regex",
+            (TermValue("ValueError"), TermValue("boom")),
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "coordinate",
+    (
         "open",
         "builtins.open",
         "contextlib.closing",
