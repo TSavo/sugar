@@ -77,6 +77,25 @@ class ImportAliasValue(FloorValue):
     def bitwise_xor(self, other, site):
         return self._binary_runtime_effect(other, site, "^")
 
+    def bitwise_or(self, other, site):
+        if site.is_within_annotation():
+            from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+            from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(
+                SymbolicValue(
+                    ctor(
+                        "|",
+                        [
+                            self.to_term(owner=str(site)),
+                            other.to_term(owner=str(site)),
+                        ],
+                    )
+                )
+            )
+        return super().bitwise_or(other, site)
+
     def unary_minus(self, site):
         return self._unary_runtime_effect(site, "-")
 

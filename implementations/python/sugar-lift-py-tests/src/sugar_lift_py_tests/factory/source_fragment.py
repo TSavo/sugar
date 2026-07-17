@@ -59,6 +59,18 @@ def _mark_annotation_subtree(node: ast.AST) -> ast.AST:
     return node
 
 
+def _is_pep613_type_alias(node: ast.AST) -> bool:
+    if not isinstance(node, ast.AnnAssign) or node.value is None:
+        return False
+    annotation = node.annotation
+    return (
+        isinstance(annotation, ast.Name)
+        and annotation.id == "TypeAlias"
+        or isinstance(annotation, ast.Attribute)
+        and annotation.attr == "TypeAlias"
+    )
+
+
 def _annotation_roots(node: ast.AST) -> list[ast.AST]:
     roots: list[ast.AST] = []
     for descendant in ast.walk(node):
@@ -71,6 +83,8 @@ def _annotation_roots(node: ast.AST) -> list[ast.AST]:
             roots.append(descendant.returns)
         if isinstance(descendant, ast.AnnAssign):
             roots.append(descendant.annotation)
+            if _is_pep613_type_alias(descendant):
+                roots.append(descendant.value)
         type_alias = getattr(ast, "TypeAlias", ())
         if type_alias and isinstance(descendant, type_alias):
             roots.append(descendant.value)
@@ -309,6 +323,12 @@ class SourceFragment:
             ):
                 return True
             if isinstance(parent, ast.AnnAssign) and parent.annotation is current:
+                return True
+            if (
+                _is_pep613_type_alias(parent)
+                and isinstance(parent, ast.AnnAssign)
+                and parent.value is current
+            ):
                 return True
             type_alias = getattr(ast, "TypeAlias", ())
             if (

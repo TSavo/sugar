@@ -205,6 +205,29 @@ def test_annotation_and_runtime_bit_or_have_disjoint_factory_owners() -> None:
     ] == ["RuntimeBitwiseOpSugar"]
 
 
+def test_pep613_type_alias_value_and_runtime_bad_twin_have_disjoint_owners() -> None:
+    def value_site(marker: str) -> SourceFragment:
+        module = SourceFragment.from_source(
+            f"Alias: {marker} = Imported | str\n", "alias.py"
+        )
+        value = module.statements()[0].statements()[0].annassign_value()
+        assert value is not None
+        return value
+
+    catalog = default_catalog()
+    type_alias = value_site("TypeAlias")
+    runtime_twin = value_site("OtherMarker")
+
+    assert [
+        candidate.name
+        for candidate in catalog.candidates_for(SugarRole.TERM, type_alias)
+    ] == ["AnnotationUnionSugar"]
+    assert [
+        candidate.name
+        for candidate in catalog.candidates_for(SugarRole.TERM, runtime_twin)
+    ] == ["RuntimeBitwiseOpSugar"]
+
+
 def test_sourceful_annotation_membership_follows_only_the_parent_chain() -> None:
     cases = (
         ("def f(value: list[ArgType]):\n    pass\n", "ArgType", True),

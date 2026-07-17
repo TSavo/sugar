@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 import importlib
+import subprocess
+import sys
 
 import pytest
 
 from sugar_lift_py_tests.effect import ImportedModuleRuntimeEffect
 from sugar_lift_py_tests.factory import FactoryPanic
-from sugar_lift_py_tests.floor import ImportAliasValue, StringValue, TermValue
+from sugar_lift_py_tests.floor import (
+    ImportAliasValue,
+    StringValue,
+    SymbolicValue,
+    TermValue,
+)
+from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import Incomplete
-from sugar_lift_py_tests.lift_rpc import audit_lift_file
+from sugar_lift_py_tests.lift_rpc import audit_lift_file, lift_file_payload
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.outcome import complete_value
@@ -17,6 +25,13 @@ from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
 _SITE = SourceFragment.from_source("np + 1\n", "alias.py").statements()[0]
 _CONSUMER = SourceFragment.from_source("ANSWER + 2\n", "consumer.py").statements()[0]
+_ANNOTATION_SITE = (
+    SourceFragment.from_source("Alias: TypeAlias = Imported | str\n", "alias.py")
+    .statements()[0]
+    .statements()[0]
+    .annassign_value()
+)
+assert _ANNOTATION_SITE is not None
 
 
 def _assert_import_effect(outcome, operator: str) -> None:
@@ -78,6 +93,99 @@ def test_unresolvable_native_import_floor_has_operand_witness() -> None:
     assert outcome.effect.witness.operand == alias.to_term(owner="test")
     assert outcome.effect.witness.site is _SITE
     assert outcome.effect.witness.locus.startswith("alias.py:")
+
+
+def test_import_alias_annotation_union_constructs_source_coordinate() -> None:
+    alias = ImportAliasValue(
+        "datetime.timedelta",
+        "timedelta",
+        import_target="datetime.timedelta",
+    )
+    right = SymbolicValue(ctor("python:type", [str_const("str")]))
+
+    outcome = alias.bitwise_or(right, _ANNOTATION_SITE)
+
+    assert complete_value(outcome, owner="test") == SymbolicValue(
+        ctor(
+            "|",
+            [
+                alias.to_term(owner="test"),
+                ctor("python:type", [str_const("str")]),
+            ],
+        )
+    )
+
+
+def test_import_alias_runtime_bitwise_or_stays_loud() -> None:
+    alias = ImportAliasValue(
+        "datetime.timedelta",
+        "timedelta",
+        import_target="datetime.timedelta",
+    )
+
+    with pytest.raises(
+        FactoryPanic,
+        match=r"owner=bitwise_or.*observed=ImportAliasValue",
+    ):
+        alias.bitwise_or(TermValue(1), _SITE)
+
+
+def test_import_alias_annotation_union_witness_refutes_wrong_twin() -> None:
+    script = """\
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+from sugar_lift_py_tests.floor import ImportAliasValue, SymbolicValue
+from sugar_lift_py_tests.ir import ctor, str_const
+from sugar_lift_py_tests.outcome import complete_value
+
+site = SourceFragment.from_source(
+    "Alias: TypeAlias = Imported | str\\n", "witness.py"
+).statements()[0].statements()[0].annassign_value()
+alias = ImportAliasValue(
+    "datetime.timedelta", "timedelta", import_target="datetime.timedelta"
+)
+right = SymbolicValue(ctor("python:type", [str_const("str")]))
+actual = complete_value(alias.bitwise_or(right, site), owner="witness")
+expected = SymbolicValue(ctor("|", EXPECTED))
+assert actual == expected
+"""
+
+    def run(expected: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-c", script.replace("EXPECTED", expected)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    truthful = run(
+        '[alias.to_term(owner="witness"), ' 'ctor("python:type", [str_const("str")])]'
+    )
+    lying = run(
+        '[ctor("python:type", [str_const("str")]), ' 'alias.to_term(owner="witness")]'
+    )
+
+    assert truthful.returncode == 0, truthful.stderr
+    assert lying.returncode == 1, lying.stderr
+
+
+def test_pep613_import_alias_representative_lifts_without_bitwise_gap() -> None:
+    source = """\
+from datetime import timedelta
+from typing import Literal, TypeAlias
+
+TimestampNonexistent: TypeAlias = Literal["shift_forward", "raise"] | timedelta
+
+def A():
+    return TimestampNonexistent
+
+def test_a():
+    assert A() == A()
+"""
+
+    payload = lift_file_payload(source, "pandas_type_alias_representative.py")
+
+    assert len(payload.ir) == 2
+    assert payload.effects == []
 
 
 def test_diggable_import_format_floor_panics() -> None:
