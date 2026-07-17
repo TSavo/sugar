@@ -311,9 +311,9 @@ _NON_RETURN: dict = {
         "this body"
     ),
     "Nonlocal": _debt(
-        "declared enclosing-frame rebinding is structurally decidable "
-        "(#4783): construct shared-scope binding like GlobalRoute, or keep "
-        "the factory None-arm panic — never a RuntimeEffect"
+        "read-only enclosing-frame routing is constructed by NonlocalSugar; "
+        "cross-frame stores remain a named NonlocalRoute construction panic "
+        "until caller-visible rebinding is built — never a RuntimeEffect"
     ),
     "AsyncWith": _membrane(
         "suspension inside the tail: scheduler interleaving is not pinned "
