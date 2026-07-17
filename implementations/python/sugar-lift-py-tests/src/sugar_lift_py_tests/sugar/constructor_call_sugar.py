@@ -72,6 +72,18 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
             '        raise LocalError("neg")\n'
             "    return z\n\n"
         )
+        bytesio_prefix = (
+            "from io import BytesIO\n"
+            "from numpy._utils import asbytes\n"
+            "\n"
+            "class TextIO(BytesIO):\n"
+            "    def __init__(self, s=''):\n"
+            "        BytesIO.__init__(self, asbytes(s))\n"
+            "\n"
+            "    def marker(self):\n"
+            "        return 7\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="constructor_field_return",
@@ -84,6 +96,15 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
                 owner_sugar=cls.__name__,
                 truthful=exception_prefix + "def test_b():\n    assert B(5) == 5\n",
                 lying=exception_prefix + "def test_b():\n    assert B(5) == 6\n",
+            ),
+            _call_pair(
+                name="source_bytesio_constructor",
+                owner_sugar=cls.__name__,
+                truthful=bytesio_prefix
+                + "def test_c():\n    assert TextIO('seeded').marker() == 7\n",
+                lying=bytesio_prefix
+                + "def test_c():\n    assert TextIO('seeded').marker() == 8\n",
+                family="source-native-base-constructor",
             ),
         )
 
@@ -187,6 +208,7 @@ def _strategy(
         ctx,
         target,
         init,
+        class_site=class_site,
         methods=methods,
         class_fields=_class_fields(class_site, ctx),
     )
@@ -198,8 +220,10 @@ def _strategy_from_init(
     target: str,
     init,
     *,
+    class_site=None,
     methods=(),
     class_fields=(),
+    allow_source_body_fallback=False,
 ) -> ConstructorStrategy | RuntimeConstructorStrategy:
     params = tuple(init.function_params())
     if not params:
@@ -224,6 +248,20 @@ def _strategy_from_init(
     supplied = site.call_arg_count()
     if not min_args <= supplied <= max_args:
         return _arity_strategy(site, ctx, target, min_args, max_args)
+    bytesio = _source_bytesio_strategy(
+        site,
+        ctx,
+        target,
+        init=init,
+        class_site=class_site,
+        methods=methods,
+        class_fields=class_fields,
+        parameters=constructor_params,
+        max_args=max_args,
+        supplied=supplied,
+    )
+    if bytesio is not None:
+        return bytesio
     fields = []
     for stmt in init.function_body():
         if (
@@ -244,12 +282,20 @@ def _strategy_from_init(
                 )
             )
             continue
-        return _runtime_strategy(
+        if allow_source_body_fallback:
+            return _runtime_strategy(
+                site,
+                ctx,
+                target,
+                "source initializer requires ordinary statement construction: "
+                f"{target}.__init__ contains {stmt.observed} at {stmt}",
+            )
+        _panic(
             site,
-            ctx,
-            target,
-            "effectful constructor runtime boundary: "
-            f"{target}.__init__ contains {stmt.observed} at {stmt}",
+            f"{target}.__init__ contains {stmt.observed}",
+            "constructed source initializer",
+            f"construct `{target}.__init__` statement {stmt.observed} exactly "
+            "or leave this constructor loud",
         )
     arguments = [ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()]
     missing = max_args - supplied
@@ -267,6 +313,100 @@ def _strategy_from_init(
         class_fields=class_fields,
         identity=site.blame,
     )
+
+
+def _source_bytesio_strategy(
+    site,
+    ctx,
+    target,
+    init,
+    class_site,
+    methods,
+    class_fields,
+    parameters,
+    max_args,
+    supplied,
+):
+    """Construct the exact native BytesIO state seeded by NumPy ``asbytes``."""
+    if class_site is None:
+        return None
+    bases = class_site.class_bases()
+    if (
+        len(bases) != 1
+        or bases[0].observed != "Name"
+        or bases[0].name_id() != "BytesIO"
+        or _import_target_for_name(ctx, "BytesIO") not in {"io.BytesIO", "_io.BytesIO"}
+    ):
+        return None
+    statements = tuple(
+        statement
+        for statement in init.function_body()
+        if not (
+            statement.observed == "Expr"
+            and statement.expr_value().observed == "PrimitiveLiteral"
+            and isinstance(statement.expr_value().literal_value(), str)
+        )
+    )
+    if len(statements) != 1 or statements[0].observed != "Expr":
+        return None
+    call = statements[0].expr_value()
+    if call.observed != "Call" or call.call_has_keywords():
+        return None
+    if call.call_qualified_target_name() != "BytesIO.__init__":
+        return None
+    call_args = call.call_args()
+    init_params = tuple(init.function_params())
+    if (
+        len(call_args) != 2
+        or not init_params
+        or call_args[0].observed != "Name"
+        or call_args[0].name_id() != init_params[0]
+    ):
+        return None
+    initial = call_args[1]
+    if (
+        initial.observed != "Call"
+        or initial.call_target_name() != "asbytes"
+        or initial.call_has_keywords()
+        or len(initial.call_args()) != 1
+    ):
+        return None
+    if _import_target_for_name(ctx, "asbytes") != "numpy._utils.asbytes":
+        return None
+    arguments = [ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()]
+    missing = max_args - supplied
+    if missing:
+        defaults = init.function_defaults()
+        arguments.extend(
+            ctx.build_body(default, SugarRole.TERM) for default in defaults[-missing:]
+        )
+    return ConstructorStrategy(
+        class_name=target,
+        fields=(
+            (
+                "__bytesio_buffer__",
+                ctx.build_body(initial, SugarRole.TERM),
+            ),
+        ),
+        parameters=parameters,
+        arguments=tuple(arguments),
+        methods=methods,
+        class_fields=class_fields,
+        identity=site.blame,
+    )
+
+
+def _import_target_for_name(ctx, name: str) -> str | None:
+    from sugar_lift_py_tests.floor import ImportAliasValue
+
+    bound = ctx.temporal.value_if_bound(name)
+    if bound is not None:
+        return bound.import_target if isinstance(bound, ImportAliasValue) else None
+    imported = (ctx.from_imports or {}).get(name)
+    if imported is None:
+        return None
+    module, attr = imported
+    return f"{module}.{attr}" if module else attr
 
 
 def _generated_strategy(
@@ -581,6 +721,7 @@ def _constructor_from_mro_entry(site, ctx, target: str, class_site, methods, ent
             init,
             methods=methods,
             class_fields=class_fields,
+            allow_source_body_fallback=True,
         )
         if (
             isinstance(strategy, RuntimeConstructorStrategy)
