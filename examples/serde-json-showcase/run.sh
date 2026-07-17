@@ -169,8 +169,15 @@ next((r.get('status') for r in d.get('rows', []) if 'witness-package' in (r.get(
   if [ "$expect_witness" = "DISCHARGE" ]; then
     [ "$witness_status" = "discharged" ] || { echo "FAIL[$suite]: expected witness discharge, got $witness_status"; exit 1; }
   else
+    # #3754: failing cargo-test packages settle as unsatisfied from package
+    # body outcomes (never discharged). A green discharge here is the
+    # witness-refusal-expected-got-discharged drift the gate classifies.
     if [ "$witness_status" = "discharged" ] || [ "$witness_status" = "MISSING" ]; then
       echo "FAIL[$suite]: expected witness refusal, got $witness_status"
+      exit 1
+    fi
+    if [ "$witness_status" != "unsatisfied" ] && [ "$witness_status" != "refused" ]; then
+      echo "FAIL[$suite]: expected witness unsatisfied/refused (not-green), got $witness_status"
       exit 1
     fi
     echo "-- prove (LYING DISCHARGE): stdout says DISCHARGED; witness row must stay not-green --"

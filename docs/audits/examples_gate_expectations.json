@@ -482,14 +482,12 @@
       "work_order_issue": 3749
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "verdict-drift/witness-refusal-expected-got-discharged",
+      "expected": "GREEN",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape verdict-drift/witness-refusal-expected-got-discharged in the recensus4 clean sweep; work order #3754. See docs/audits/2026-07-06-recensus4.md for the full re-bucket.",
-      "last_observed_rc": 1,
-      "last_observed_seconds": 4.327,
-      "name": "examples/serde-json-showcase/run.sh",
-      "work_order_issue": 3754
+      "grounds": "script exited 0 after #3754 drain: GOOD consistency rows stay refuse-not-green under singleton/ambient discharge law while cargo-test witness discharges (suite passes); BAD contradiction is unsatisfied on consistency and unsatisfied on witness-package (1/1 outcomes failed from package body), and lying SUGAR_WITNESS_DISCHARGE_CARGO_TEST stdout cannot flip it green. Oracle + unit instrument cargo_test_all_failed_package_is_unsatisfied_never_discharged pin the law. Supersedes NAMED_RED verdict-drift/witness-refusal-expected-got-discharged (work order #3754).",
+      "last_observed_rc": 0,
+      "last_observed_seconds": 45.0,
+      "name": "examples/serde-json-showcase/run.sh"
     },
     {
       "expected": "GREEN",
