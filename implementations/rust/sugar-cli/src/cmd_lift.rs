@@ -15798,13 +15798,20 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             },
         );
         let plain = without_ansi(&visual);
-        assert!(
-            visual.contains("vendor assertion (module level)"),
-            "{visual}"
+        // #4426: module-level header must say module once — either the
+        // parenthetical or the owner token, never both on one line.
+        let assertion_label = plain
+            .lines()
+            .find(|line| line.contains("vendor assertion"))
+            .expect("vendor assertion label");
+        assert_eq!(
+            assertion_label.trim(),
+            "vendor assertion (module level)",
+            "module-level header must not also carry the <module> owner token: {assertion_label}\nfull visual:\n{visual}"
         );
         assert!(
-            !visual.contains("vendor assertion (module level) <module>"),
-            "{visual}"
+            !assertion_label.contains("<module>"),
+            "redundant owner token on module-level header: {assertion_label}"
         );
         assert!(visual.contains("assert 1 == 1"), "{visual}");
         assert!(plain.contains("FOL: 1 = 1"), "{visual}");
