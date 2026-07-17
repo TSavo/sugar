@@ -1272,7 +1272,14 @@ def _module_import_temporal(
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
     from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-    from sugar_lift_py_tests.floor import BlockValue, ClassValue, ImportAliasValue
+    from sugar_lift_py_tests.floor import (
+        BlockValue,
+        ClassValue,
+        ImportAliasValue,
+    )
+    from sugar_lift_py_tests.floor.local_exception_class_value import (
+        module_class_value,
+    )
     from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.temporal import TemporalContext
 
@@ -1345,7 +1352,16 @@ def _module_import_temporal(
             name = stmt.class_name()
             temporal = temporal.bind_value(
                 name,
-                ClassValue(name=name, bases=(), record=BlockValue(())),
+                module_class_value(
+                    name=name,
+                    base_names=tuple(
+                        base.name_id()
+                        for base in stmt.class_bases()
+                        if base.observed == "Name"
+                    ),
+                    temporal=temporal,
+                    record=BlockValue(()),
+                ),
             )
         elif observed == "FunctionDef":
             ctx = FactoryBuildContext(

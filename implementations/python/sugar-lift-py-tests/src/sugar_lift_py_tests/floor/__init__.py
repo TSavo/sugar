@@ -19,6 +19,7 @@ from .dict_value import DictValue
 from .encoded_string_value import EncodedStringValue
 from .exception_value import ExceptionValue
 from .exception_class_value import ExceptionClassValue
+from .local_exception_class_value import LocalExceptionClassValue
 from .floor_dispatch_surface import (
     BinaryOperatorFloor,
     FLOOR_OPERATION_METHOD_NAMES,
@@ -78,6 +79,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     EncodedStringValue,
     ExceptionValue,
     ExceptionClassValue,
+    LocalExceptionClassValue,
     FunctionCallable,
     GuardedRaise,
     GuardedLoopControl,
@@ -139,6 +141,7 @@ __all__ = [
     "EncodedStringValue",
     "ExceptionValue",
     "ExceptionClassValue",
+    "LocalExceptionClassValue",
     "FLOOR_OPERATION_METHOD_NAMES",
     "FloorDispatchSurface",
     "FloorValue",

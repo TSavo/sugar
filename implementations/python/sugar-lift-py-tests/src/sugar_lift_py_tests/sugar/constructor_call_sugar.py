@@ -48,18 +48,40 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
             from sugar_lift_py_tests.sugar.call_sugar import CallSugar
 
             return CallSugar.new(site, ctx)
-        return cls(
-            _strategy(site, ctx, target, SourceFragment.from_node(node, ctx.filename))
-        )
+        class_site = SourceFragment.from_node(node, ctx.filename)
+        if _has_exact_exception_ancestry(class_site, ctx):
+            from sugar_lift_py_tests.sugar.call_sugar import CallSugar
+
+            # ClassDefSugar binds the exact LocalExceptionClassValue before this
+            # deferred call reduces. Keep exception construction on that typed
+            # temporal route instead of fabricating an ordinary object.
+            return CallSugar.new(site, ctx, exact_exception_name=target)
+        return cls(_strategy(site, ctx, target, class_site))
 
     @classmethod
     def witnesses(cls):
         prefix = "class Box:\n    def __init__(self, x):\n        self.x = x\n\ndef A():\n    return Box(1).x\n\n"
-        return _call_pair(
-            name="constructor_field_return",
-            owner_sugar=cls.__name__,
-            truthful=prefix + "def test_a():\n    assert A() == 1\n",
-            lying=prefix + "def test_a():\n    assert A() == 2\n",
+        exception_prefix = (
+            "class LocalError(Exception):\n"
+            "    pass\n\n"
+            "def B(z):\n"
+            "    if z < 0:\n"
+            '        raise LocalError("neg")\n'
+            "    return z\n\n"
+        )
+        return (
+            _call_pair(
+                name="constructor_field_return",
+                owner_sugar=cls.__name__,
+                truthful=prefix + "def test_a():\n    assert A() == 1\n",
+                lying=prefix + "def test_a():\n    assert A() == 2\n",
+            ),
+            _call_pair(
+                name="local_exception_class_raise",
+                owner_sugar=cls.__name__,
+                truthful=exception_prefix + "def test_b():\n    assert B(5) == 5\n",
+                lying=exception_prefix + "def test_b():\n    assert B(5) == 6\n",
+            ),
         )
 
     def desugar(self, ctx=None) -> Outcome:
@@ -87,6 +109,40 @@ def _panic(site, observed: str, requested: str, fix: str):
             message=info.message,
         ),
     )
+
+
+def _has_exact_exception_ancestry(class_site, ctx, seen: frozenset[str] = frozenset()):
+    from sugar_lift_py_tests.floor import (
+        BuiltinExceptionClassValue,
+        ExceptionClassValue,
+        ImportAliasValue,
+    )
+
+    resolver = ctx.name_resolver or {}
+    for base in class_site.class_bases():
+        if base.observed != "Name":
+            continue
+        name = base.name_id()
+        if name in seen:
+            continue
+        resolved = resolver.get(name)
+        if resolved is None:
+            bound = ctx.temporal.value_if_bound(name)
+            if type(bound) in (BuiltinExceptionClassValue, ExceptionClassValue):
+                return True
+            if isinstance(bound, ImportAliasValue) and isinstance(
+                bound.resolved_value, ExceptionClassValue
+            ):
+                return True
+            continue
+        resolved_site = SourceFragment.from_node(resolved, ctx.filename)
+        if resolved_site.observed == "ClassDef" and _has_exact_exception_ancestry(
+            resolved_site,
+            ctx,
+            seen | {name},
+        ):
+            return True
+    return False
 
 
 def _strategy(
