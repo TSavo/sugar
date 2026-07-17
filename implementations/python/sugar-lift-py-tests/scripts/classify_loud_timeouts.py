@@ -51,6 +51,27 @@ from sugar_lift_py_tests.idd.factory_panic_fronts import (
 DEFAULT_DISCOVERY_BOUND = 10
 DEFAULT_ESCALATION_BOUNDS = (60, 120, 300)
 PERF_CANDIDATE_THRESHOLD_SECONDS = 120
+# #4775/#4872 recensus provisional timeout mass. Live rediscovery may differ;
+# used as a residual floor until a pure timeout seed replaces it.
+RECENSUS_TIMEOUT_BLOB_COUNT = 293
+
+# Cause classes (#4894): every final timeout-blob verdict gets one explicit tag.
+# Residual R = unclassified_timeout_blob + hang@300 (class D). Stable zero only
+# when both are zero — hang is classified but remains product work until a
+# budget-exceeded terminal exists.
+CAUSE_CLASS_A_BOUND_TIGHT = "A"  # completes after bound > discovery (≤120s)
+CAUSE_CLASS_B_HIDDEN_PANIC = "B"  # completes-with-panic → typed FactoryPanic
+CAUSE_CLASS_C_PERF_COMPLETE = "C"  # completes-at-bound with elapsed/bound >120s
+CAUSE_CLASS_D_HANG = "D"  # hang-at-max-bound at 300s
+CAUSE_CLASS_E_BARE = "E"  # bare-exception after long work
+
+CAUSE_CLASS_LABELS = {
+    CAUSE_CLASS_A_BOUND_TIGHT: "bound-tight",
+    CAUSE_CLASS_B_HIDDEN_PANIC: "hidden-panic",
+    CAUSE_CLASS_C_PERF_COMPLETE: "perf-complete",
+    CAUSE_CLASS_D_HANG: "hang",
+    CAUSE_CLASS_E_BARE: "bare",
+}
 
 
 def _resolve_path(package: str, rel: str) -> Path:
@@ -176,6 +197,52 @@ def run_child_at_bound(
     return row
 
 
+def cause_class_for_verdict(
+    *,
+    verdict: str,
+    bound_seconds: int | None = None,
+    elapsed_seconds: float | None = None,
+    perf_candidate: bool | None = None,
+) -> str | None:
+    """Map a final classification verdict to cause class A–E.
+
+    Intermediate ``timeout-at-bound`` rows and ``other:*`` crash/signal terminals
+    are not A–E product-cause classes (they stay loud under their own labels).
+    """
+    if verdict == "completes-with-panic":
+        return CAUSE_CLASS_B_HIDDEN_PANIC
+    if verdict == "hang-at-max-bound":
+        return CAUSE_CLASS_D_HANG
+    if verdict == "bare-exception":
+        return CAUSE_CLASS_E_BARE
+    if verdict == "completes-at-bound":
+        elapsed = float(elapsed_seconds or 0)
+        bound = int(bound_seconds or 0)
+        is_perf = bool(perf_candidate) or (
+            elapsed > PERF_CANDIDATE_THRESHOLD_SECONDS
+            or bound > PERF_CANDIDATE_THRESHOLD_SECONDS
+        )
+        if is_perf:
+            return CAUSE_CLASS_C_PERF_COMPLETE
+        return CAUSE_CLASS_A_BOUND_TIGHT
+    return None
+
+
+def attach_cause_class(row: dict[str, Any]) -> dict[str, Any]:
+    """Stamp ``cause_class`` + human label on a final ledger row (idempotent)."""
+    verdict = str(row.get("verdict") or "")
+    cause = cause_class_for_verdict(
+        verdict=verdict,
+        bound_seconds=row.get("bound_seconds"),
+        elapsed_seconds=row.get("elapsed_seconds"),
+        perf_candidate=row.get("perf_candidate"),
+    )
+    if cause is not None:
+        row["cause_class"] = cause
+        row["cause_class_label"] = CAUSE_CLASS_LABELS[cause]
+    return row
+
+
 def verdict_from_terminal(terminal: dict[str, Any], *, bound: int) -> dict[str, Any]:
     """Map a triage category at a given bound into a #4894 classification verdict."""
     category = str(terminal.get("category") or "")
@@ -206,7 +273,7 @@ def verdict_from_terminal(terminal: dict[str, Any], *, bound: int) -> dict[str, 
                 if effect.get("effect")
             }
         )
-        return base
+        return attach_cause_class(base)
     if category == "factory-construction-panic":
         testimony = terminal.get("testimony") or {}
         gap = testimony.get("gap") if isinstance(testimony, dict) else {}
@@ -215,14 +282,14 @@ def verdict_from_terminal(terminal: dict[str, Any], *, bound: int) -> dict[str, 
         base["owner"] = fingerprint[0] or "unknown"
         base["fingerprint"] = list(fingerprint)
         base["gap"] = gap if isinstance(gap, dict) else {}
-        return base
+        return attach_cause_class(base)
     if category == "bare-exception":
         base["verdict"] = "bare-exception"
         testimony = terminal.get("testimony") or {}
         base["exception_type"] = (
             testimony.get("exception_type") if isinstance(testimony, dict) else None
         )
-        return base
+        return attach_cause_class(base)
     if category == "timeout-or-hang":
         base["verdict"] = "timeout-at-bound"
         return base
@@ -283,79 +350,125 @@ def classify_file(
             final["discovery_bound_seconds"] = discovery_bound
             final["escalation_bounds_seconds"] = list(escalation_bounds)
             final["was_discovery_timeout"] = True
-            return final
+            return attach_cause_class(final)
 
     # Exhausted all bounds including max — genuine hang / pathological lift.
     last = attempts[-1]
-    return {
-        "file": rel,
-        "verdict": "hang-at-max-bound",
-        "bound_seconds": last.get("bound_seconds"),
-        "elapsed_seconds": last.get("elapsed_seconds"),
-        "category": "timeout-or-hang",
-        "reason": last.get("reason"),
-        "attempts": attempts,
-        "discovery_bound_seconds": discovery_bound,
-        "escalation_bounds_seconds": list(escalation_bounds),
-        "was_discovery_timeout": True,
-        "next_owner": (
-            "lift-work-budget: emit loud budget-exceeded terminal; hang is not OK"
-        ),
-    }
+    return attach_cause_class(
+        {
+            "file": rel,
+            "verdict": "hang-at-max-bound",
+            "bound_seconds": last.get("bound_seconds"),
+            "elapsed_seconds": last.get("elapsed_seconds"),
+            "category": "timeout-or-hang",
+            "reason": last.get("reason"),
+            "attempts": attempts,
+            "discovery_bound_seconds": discovery_bound,
+            "escalation_bounds_seconds": list(escalation_bounds),
+            "was_discovery_timeout": True,
+            "next_owner": (
+                "lift-work-budget: emit loud budget-exceeded terminal; hang is not OK"
+            ),
+        }
+    )
 
 
 def summarize_ledger(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Aggregate classification counts, panic owners, and perf candidates."""
+    """Aggregate classification counts, cause classes, panic owners, perf candidates."""
     verdict_counts: Counter[str] = Counter()
+    cause_counts: Counter[str] = Counter()
     bound_hist: Counter[int] = Counter()
     perf_candidates: list[str] = []
     hang_files: list[str] = []
     panic_rows: list[dict[str, Any]] = []
     bare_exceptions: list[dict[str, Any]] = []
     other: list[dict[str, Any]] = []
+    by_cause: dict[str, list[str]] = defaultdict(list)
 
     for row in rows:
-        verdict = str(row.get("verdict") or "missing")
+        # Recompute cause tags so pre-upgrade ledger lines still classify.
+        tagged = attach_cause_class(dict(row))
+        verdict = str(tagged.get("verdict") or "missing")
         verdict_counts[verdict] += 1
+        cause = tagged.get("cause_class")
+        if cause:
+            cause_counts[str(cause)] += 1
+            by_cause[str(cause)].append(str(tagged.get("file") or ""))
         if verdict == "completes-at-bound":
-            bound = int(row.get("bound_seconds") or 0)
+            bound = int(tagged.get("bound_seconds") or 0)
             bound_hist[bound] += 1
-            if row.get("perf_candidate"):
-                perf_candidates.append(str(row["file"]))
+            if tagged.get("perf_candidate") or cause == CAUSE_CLASS_C_PERF_COMPLETE:
+                perf_candidates.append(str(tagged["file"]))
         elif verdict == "completes-with-panic":
             panic_rows.append(
                 {
-                    "file": row.get("file"),
-                    "owner": row.get("owner") or "unknown",
-                    "gap": row.get("gap") or {},
-                    "fingerprint": row.get("fingerprint") or [],
+                    "file": tagged.get("file"),
+                    "owner": tagged.get("owner") or "unknown",
+                    "gap": tagged.get("gap") or {},
+                    "fingerprint": tagged.get("fingerprint") or [],
+                    "cause_class": CAUSE_CLASS_B_HIDDEN_PANIC,
                 }
             )
-            bound_hist[int(row.get("bound_seconds") or 0)] += 1
+            bound_hist[int(tagged.get("bound_seconds") or 0)] += 1
         elif verdict == "hang-at-max-bound":
-            hang_files.append(str(row["file"]))
+            hang_files.append(str(tagged["file"]))
         elif verdict == "bare-exception":
             bare_exceptions.append(
                 {
-                    "file": row.get("file"),
-                    "exception_type": row.get("exception_type"),
-                    "reason": row.get("reason"),
-                    "bound_seconds": row.get("bound_seconds"),
+                    "file": tagged.get("file"),
+                    "exception_type": tagged.get("exception_type"),
+                    "reason": tagged.get("reason"),
+                    "bound_seconds": tagged.get("bound_seconds"),
+                    "cause_class": CAUSE_CLASS_E_BARE,
                 }
             )
         elif verdict.startswith("other:"):
             other.append(
                 {
-                    "file": row.get("file"),
+                    "file": tagged.get("file"),
                     "verdict": verdict,
-                    "reason": row.get("reason"),
+                    "reason": tagged.get("reason"),
                 }
             )
 
     ranking = rank_factory_panic_fronts(panic_rows)
+    # Ranked B owners: same ranking as factory panic fronts, tagged for dispatch.
+    ranked_b_owners = [
+        {
+            "rank": index,
+            "owner": owner,
+            "file_count": count,
+            "cause_class": CAUSE_CLASS_B_HIDDEN_PANIC,
+            "cause_class_label": CAUSE_CLASS_LABELS[CAUSE_CLASS_B_HIDDEN_PANIC],
+            "dispatch": "typed FactoryPanic owner — fold into factory-panic lane",
+        }
+        for index, (owner, count) in enumerate(
+            sorted(
+                (ranking.get("owners") or {}).items(),
+                key=lambda item: (-int(item[1]), str(item[0])),
+            ),
+            start=1,
+        )
+    ]
+    cause_class_counts = {
+        key: int(cause_counts.get(key, 0))
+        for key in (
+            CAUSE_CLASS_A_BOUND_TIGHT,
+            CAUSE_CLASS_B_HIDDEN_PANIC,
+            CAUSE_CLASS_C_PERF_COMPLETE,
+            CAUSE_CLASS_D_HANG,
+            CAUSE_CLASS_E_BARE,
+        )
+    }
     return {
         "R_classified": len(rows),
         "verdict_counts": dict(sorted(verdict_counts.items())),
+        "cause_class_counts": cause_class_counts,
+        "cause_class_labels": dict(CAUSE_CLASS_LABELS),
+        "cause_class_files": {
+            key: sorted(files) for key, files in sorted(by_cause.items())
+        },
+        "ranked_B_owners": ranked_b_owners,
         "completes_by_bound": dict(sorted(bound_hist.items())),
         "perf_candidate_count": len(perf_candidates),
         "perf_candidates": sorted(perf_candidates),
@@ -590,6 +703,7 @@ def run_classify(args: argparse.Namespace) -> int:
         else:
             row["package_versions"] = versions
             row["classified_at_unix"] = int(time.time())
+            attach_cause_class(row)
             append_ledger(ledger_path, row)
             classified += 1
             print(
@@ -601,6 +715,8 @@ def run_classify(args: argparse.Namespace) -> int:
                         "pending_total": len(pending),
                         "file": rel,
                         "verdict": row.get("verdict"),
+                        "cause_class": row.get("cause_class"),
+                        "cause_class_label": row.get("cause_class_label"),
                         "bound_seconds": row.get("bound_seconds"),
                         "elapsed_seconds": row.get("elapsed_seconds"),
                         "owner": row.get("owner"),
@@ -622,24 +738,54 @@ def run_classify(args: argparse.Namespace) -> int:
     summary["scanned_this_run"] = scanned
     summary["classified_this_run"] = classified
     summary["skipped_not_timeout_this_run"] = skipped_not_timeout
-    # When seeded with --files-from, residual is seed rows without ledger verdict.
-    # When scanning packages, residual is the unknown remainder of the live timeout
-    # blob (recensus said 293; live R is measured by continuing discovery).
-    if args.files_from:
-        summary["R_pending"] = max(0, len(candidates) - len(rows))
-    else:
-        summary["R_pending"] = max(0, len(pending) - scanned)
-    summary["R_unclassified_timeout_blob"] = summary["R_pending"]
+    # Residual work left in THIS invocation's worklist (unscanned remaining).
+    # Ledger-classified rows are already removed from ``pending`` under --resume.
+    summary["R_pending"] = max(0, len(pending) - scanned)
     summary["R_timeout_blob_classified"] = len(rows)
+    # Unclassified timeout-blob residual:
+    # - pure timeout seed (--skip-discovery): seed − classified
+    # - otherwise: max(unscanned pending, recensus baseline − classified)
+    #   so the instrument cannot green while ~293 remain unmeasured.
+    recensus_unclassified = max(0, RECENSUS_TIMEOUT_BLOB_COUNT - len(rows))
+    if args.files_from and args.skip_discovery:
+        unclassified = max(0, len(candidates) - len(rows))
+    else:
+        unclassified = max(int(summary["R_pending"]), recensus_unclassified)
+    summary["R_unclassified_timeout_blob"] = unclassified
+    summary["R_recensus_timeout_blob"] = RECENSUS_TIMEOUT_BLOB_COUNT
+    summary["R_recensus_unclassified"] = recensus_unclassified
+    # Residual R: unclassified blob + hang@300 (class D). Instrument stays red
+    # until both are zero (hang needs product budget-exceeded terminal).
+    hang_count = int(summary["hang_at_max_bound_count"])
+    summary["R_residual"] = unclassified + hang_count
+    summary["R_residual_axes"] = {
+        "unclassified_timeout_blob": unclassified,
+        "hang_at_max_bound_D": hang_count,
+        "recensus_unclassified": recensus_unclassified,
+    }
     rendered = json.dumps(summary, indent=2, sort_keys=True)
     if summary_path is not None:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(rendered + "\n", encoding="utf-8")
     print(rendered, flush=True)
+    print(
+        json.dumps(
+            {
+                "event": "residual-R",
+                "R_residual": summary["R_residual"],
+                "R_unclassified_timeout_blob": summary["R_unclassified_timeout_blob"],
+                "hang_at_max_bound_count": hang_count,
+                "cause_class_counts": summary.get("cause_class_counts"),
+                "ranked_B_owners": summary.get("ranked_B_owners"),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
     # Red while residual pool remains OR hang mass remains. Hang rows are
     # recorded explicitly (never silent); exit red so R>0 cannot look green.
-    residual = int(summary["R_pending"]) + int(summary["hang_at_max_bound_count"])
+    residual = int(summary["R_residual"])
     return 1 if residual > 0 else 0
 
 
@@ -720,14 +866,45 @@ def main() -> int:
         summary = summarize_ledger(rows)
         summary["ledger"] = args.ledger
         summary["R_classified"] = len(rows)
+        summary["R_timeout_blob_classified"] = len(rows)
+        hang_count = int(summary.get("hang_at_max_bound_count") or 0)
+        recensus_unclassified = max(0, RECENSUS_TIMEOUT_BLOB_COUNT - len(rows))
+        # summarize-only: pure timeout seed residual, else recensus baseline − classified.
+        if args.files_from and args.skip_discovery:
+            seed = load_file_list(Path(args.files_from))
+            unclassified = max(0, len(seed) - len(rows))
+        else:
+            unclassified = recensus_unclassified
+        summary["R_pending"] = unclassified
+        summary["R_unclassified_timeout_blob"] = unclassified
+        summary["R_recensus_timeout_blob"] = RECENSUS_TIMEOUT_BLOB_COUNT
+        summary["R_recensus_unclassified"] = recensus_unclassified
+        summary["R_residual"] = unclassified + hang_count
+        summary["R_residual_axes"] = {
+            "unclassified_timeout_blob": unclassified,
+            "hang_at_max_bound_D": hang_count,
+            "recensus_unclassified": recensus_unclassified,
+        }
         rendered = json.dumps(summary, indent=2, sort_keys=True)
         if args.summary:
             Path(args.summary).parent.mkdir(parents=True, exist_ok=True)
             Path(args.summary).write_text(rendered + "\n", encoding="utf-8")
         print(rendered)
-        residual = int(summary.get("hang_at_max_bound_count") or 0)
-        # summarize-only does not know the seed size; hang mass alone keeps red.
-        return 1 if residual > 0 else 0
+        print(
+            json.dumps(
+                {
+                    "event": "residual-R",
+                    "R_residual": summary["R_residual"],
+                    "R_unclassified_timeout_blob": unclassified,
+                    "hang_at_max_bound_count": hang_count,
+                    "cause_class_counts": summary.get("cause_class_counts"),
+                    "ranked_B_owners": summary.get("ranked_B_owners"),
+                },
+                sort_keys=True,
+            )
+        )
+        # Hang mass and/or seed residual keep red; never green while D>0.
+        return 1 if summary["R_residual"] > 0 else 0
     return run_classify(args)
 
 

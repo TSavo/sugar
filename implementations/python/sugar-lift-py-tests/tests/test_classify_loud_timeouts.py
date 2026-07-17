@@ -106,6 +106,8 @@ def test_escalation_records_completes_at_60(
     assert row["bound_seconds"] == 60
     assert row["was_discovery_timeout"] is True
     assert row["perf_candidate"] is False
+    assert row["cause_class"] == "A"
+    assert row["cause_class_label"] == "bound-tight"
     assert len(row["attempts"]) == 2
 
 
@@ -130,6 +132,8 @@ def test_panic_after_escalation_attributes_owner(
     assert row["verdict"] == "completes-with-panic"
     assert row["owner"] == "RaiseSugar"
     assert row["fingerprint"][0] == "RaiseSugar"
+    assert row["cause_class"] == "B"
+    assert row["cause_class_label"] == "hidden-panic"
 
 
 def test_hang_at_max_bound_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -149,8 +153,118 @@ def test_hang_at_max_bound_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
     assert row["verdict"] == "hang-at-max-bound"
     assert row["bound_seconds"] == 300
     assert "budget-exceeded" in row["next_owner"]
+    assert row["cause_class"] == "D"
+    assert row["cause_class_label"] == "hang"
     # discovery + three escalations
     assert [a["bound_seconds"] for a in row["attempts"]] == [10, 60, 120, 300]
+
+
+def test_cause_class_tags_A_B_C_D_E() -> None:
+    """Every final verdict maps to exactly one A–E cause class."""
+    assert (
+        mod.cause_class_for_verdict(
+            verdict="completes-at-bound",
+            bound_seconds=60,
+            elapsed_seconds=22.0,
+            perf_candidate=False,
+        )
+        == "A"
+    )
+    assert (
+        mod.cause_class_for_verdict(
+            verdict="completes-with-panic",
+            bound_seconds=60,
+            elapsed_seconds=30.0,
+        )
+        == "B"
+    )
+    assert (
+        mod.cause_class_for_verdict(
+            verdict="completes-at-bound",
+            bound_seconds=300,
+            elapsed_seconds=150.0,
+            perf_candidate=True,
+        )
+        == "C"
+    )
+    assert (
+        mod.cause_class_for_verdict(
+            verdict="completes-at-bound",
+            bound_seconds=60,
+            elapsed_seconds=130.0,
+            perf_candidate=False,
+        )
+        == "C"
+    )
+    assert (
+        mod.cause_class_for_verdict(
+            verdict="hang-at-max-bound",
+            bound_seconds=300,
+            elapsed_seconds=300.0,
+        )
+        == "D"
+    )
+    assert (
+        mod.cause_class_for_verdict(
+            verdict="bare-exception",
+            bound_seconds=120,
+            elapsed_seconds=90.0,
+        )
+        == "E"
+    )
+    # Intermediate timeout and crash/signal are not A–E product-cause tags.
+    assert mod.cause_class_for_verdict(verdict="timeout-at-bound") is None
+    assert mod.cause_class_for_verdict(verdict="other:crash") is None
+
+
+def test_perf_complete_class_C_on_escalation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(*, script, path, rel, timeout_seconds):  # noqa: ANN001
+        if timeout_seconds < 300:
+            return _timeout(rel, timeout_seconds)
+        return _completed(rel, 300, elapsed=180.0)
+
+    monkeypatch.setattr(mod, "run_child_at_bound", fake_run)
+    row = mod.classify_file(
+        script=Path("corpus_fatal_triage.py"),
+        path=Path("x.py"),
+        rel="pandas/tests/perf.py",
+        discovery_bound=10,
+        escalation_bounds=(60, 120, 300),
+        skip_discovery=True,
+    )
+    assert row is not None
+    assert row["verdict"] == "completes-at-bound"
+    assert row["cause_class"] == "C"
+    assert row["perf_candidate"] is True
+
+
+def test_bare_exception_class_E(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(*, script, path, rel, timeout_seconds):  # noqa: ANN001
+        if timeout_seconds == 60:
+            return {
+                "file": rel,
+                "category": "bare-exception",
+                "bound_seconds": 60,
+                "elapsed_seconds": 45.0,
+                "testimony": {"exception_type": "RuntimeError"},
+            }
+        return _timeout(rel, timeout_seconds)
+
+    monkeypatch.setattr(mod, "run_child_at_bound", fake_run)
+    row = mod.classify_file(
+        script=Path("corpus_fatal_triage.py"),
+        path=Path("x.py"),
+        rel="numpy/bare.py",
+        discovery_bound=10,
+        escalation_bounds=(60, 120, 300),
+        skip_discovery=True,
+    )
+    assert row is not None
+    assert row["verdict"] == "bare-exception"
+    assert row["cause_class"] == "E"
+    assert row["exception_type"] == "RuntimeError"
 
 
 def test_summarize_ranks_panic_owners_and_keeps_hangs_loud() -> None:
@@ -194,15 +308,56 @@ def test_summarize_ranks_panic_owners_and_keeps_hangs_loud() -> None:
             "verdict": "hang-at-max-bound",
             "bound_seconds": 300,
         },
+        {
+            "file": "e.py",
+            "verdict": "bare-exception",
+            "bound_seconds": 120,
+            "exception_type": "ValueError",
+        },
     ]
     summary = mod.summarize_ledger(rows)
     assert summary["verdict_counts"]["completes-at-bound"] == 2
     assert summary["verdict_counts"]["completes-with-panic"] == 1
     assert summary["verdict_counts"]["hang-at-max-bound"] == 1
+    assert summary["verdict_counts"]["bare-exception"] == 1
+    assert summary["cause_class_counts"] == {
+        "A": 1,
+        "B": 1,
+        "C": 1,
+        "D": 1,
+        "E": 1,
+    }
+    assert summary["ranked_B_owners"][0]["owner"] == "TemporalContext"
+    assert summary["ranked_B_owners"][0]["cause_class"] == "B"
     assert summary["perf_candidate_count"] == 1
     assert summary["hang_files"] == ["d.py"]
     assert summary["R_live_factory_panic_files"] == 1
     assert summary["owners"]["TemporalContext"] == 1
+
+
+def test_summarize_residual_uses_recensus_floor() -> None:
+    """Instrument stays red until recensus-scale blob + hang are drained."""
+    rows = [
+        {
+            "file": "a.py",
+            "verdict": "completes-with-panic",
+            "bound_seconds": 60,
+            "owner": "X",
+            "fingerprint": ["X", "k", "l", "o", "r"],
+            "gap": {
+                "owner": "X",
+                "gap_kind": "k",
+                "gap_locus": "l",
+                "observed": "o",
+                "requested": "r",
+            },
+        }
+    ]
+    summary = mod.summarize_ledger(rows)
+    # summarize_ledger alone does not compute residual; residual is main/run path.
+    assert summary["cause_class_counts"]["B"] == 1
+    assert mod.RECENSUS_TIMEOUT_BLOB_COUNT == 293
+    assert max(0, mod.RECENSUS_TIMEOUT_BLOB_COUNT - 1) == 292
 
 
 def test_ledger_resume_and_append(tmp_path: Path) -> None:

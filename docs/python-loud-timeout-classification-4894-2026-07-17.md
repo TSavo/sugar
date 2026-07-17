@@ -40,6 +40,20 @@ host/bound artifact — not product non-termination wearing a stopwatch.
 | `hang-at-max-bound` | Still non-terminating at 300s | **real frontier**: lift must emit loud budget-exceeded terminal |
 | `other:*` | crash/signal/transport | keep loud; never reclassify as complete |
 
+### Cause classes (tag every final ledger row)
+
+| Tag | Label | Meaning |
+|---|---|---|
+| **A** | bound-tight | `completes-at-bound` with elapsed/bound ≤120s (10s discovery was operational) |
+| **B** | hidden-panic | `completes-with-panic` → typed FactoryPanic owner (dispatchable fatal) |
+| **C** | perf-complete | `completes-at-bound` with elapsed or bound >120s |
+| **D** | hang | `hang-at-max-bound` at 300s — product needs budget-exceeded terminal |
+| **E** | bare | `bare-exception` after long work |
+
+Intermediate `timeout-at-bound` and `other:*` stay loud under their own labels
+(not A–E product-cause tags). Summary prints `cause_class_counts`,
+`ranked_B_owners`, and residual R.
+
 ### Escalation bounds
 
 `10s` (discovery) → `60s` → `120s` → `300s`. Single-lane sequential only.
@@ -51,74 +65,98 @@ bound. No panic/refusal is weakened.
 | Axis | Meaning |
 |---|---|
 | `R_timeout_blob_classified` | Files with a final ledger verdict (measured) |
-| `R_unclassified_timeout_blob` / `R_pending` | Seed or pool rows still without a final verdict |
-| `hang_at_max_bound_count` | Genuine non-termination mass at 300s |
-| `R_live_factory_panic_files` | Panic rows recovered from the former timeout blob |
-| `perf_candidate_count` | Completes that needed >120s |
+| `R_unclassified_timeout_blob` | Pure-timeout seed rows still without a final verdict (or unscanned pending) |
+| `hang_at_max_bound_count` / class **D** | Genuine non-termination mass at 300s |
+| `R_residual` | `R_unclassified_timeout_blob + hang_at_max_bound_count` |
+| `R_live_factory_panic_files` / class **B** | Panic rows recovered from the former timeout blob |
+| `perf_candidate_count` / class **C** | Completes that needed >120s |
 
-Instrument exit is **red** while `R_pending + hang_at_max_bound_count > 0`.
+Instrument exit is **red** while `R_residual > 0`.
 
 ## Measurement boundary (this wave)
 
-- Worktree: `fleet-issue-4894` @ main base `9fe134453` (+ local instrument)
+- Worktree: `fleet-issue-4894` / branch `fleet/issue-4894-w7`
 - Python 3.14.4, NumPy 2.5.1, pandas 3.0.3
 - Host: single-lane sequential child processes (`PYTHONFAULTHANDLER=1`)
-- First shard: size-biased seed of 42 assertion-bearing files (known 120s+
-  hangers ordered last) to produce early evidence without monopolizing the
-  multi-fleet host for a full 293×300s worst-case wall clock
+- First shard: size-biased seed of 42 assertion-bearing files (known long
+  runners ordered last) — live rediscovery at 10s shows many prior seed
+  members no longer time out under current head/load (not blob mass)
 
 ## First-shard ledger (live; append-only)
 
 Source of truth: `docs/ledgers/loud-timeout-classification-4894.jsonl`.
 
-| File | Verdict | Bound | Owner / note |
-|---|---|---:|---|
-| `numpy/ma/tests/test_core.py` | **completes-with-panic** | 60s | `FormatDunderCallSugar callsite receiver` — Floor/Projection missing callsite body for `MaskedArray` |
-| `numpy/_core/tests/test_multiarray.py` | not timeout at 10s | — | discovery miss under current head/load (not blob mass) |
-| `numpy/_core/tests/test_umath.py` | not timeout at 10s | — | same |
-| `numpy/lib/tests/test_function_base.py` | not timeout at 10s | — | same |
-| `numpy/_core/tests/test_numeric.py` | not timeout at 10s | — | same |
+| File | Verdict | Class | Bound | Elapsed | Owner |
+|---|---|---|---:|---:|---|
+| `numpy/ma/tests/test_core.py` | completes-with-panic | **B** | 60s | ~30s | `FormatDunderCallSugar callsite receiver` |
+| `pandas/tests/io/test_sql.py` | completes-with-panic | **B** | 300s | ~197s | `WithSugar manager result` |
+| `pandas/tests/tools/test_to_datetime.py` | completes-with-panic | **B** | 120s | ~57s | `SequentialDigBody` |
+| `pandas/tests/extension/test_arrow.py` | completes-with-panic | **B** | 60s | ~36s | `ConstructorCallSugar` |
+| `pandas/tests/frame/test_constructors.py` | completes-with-panic | **B** | 60s | ~10s | `TemporalContext` |
+| `pandas/tests/indexing/test_loc.py` | completes-with-panic | **B** | 60s | ~52s | `RuntimeEffect` |
+| `pandas/tests/reshape/merge/test_merge_asof.py` | completes-with-panic | **B** | 60s | ~29s | `SequentialDigBody` |
+| `pandas/tests/reshape/merge/test_merge.py` | completes-with-panic | **B** | 300s | ~177s | `RuntimeEffect` |
 
-### First-shard counts (at instrument PR time)
+Several large seed members finished inside the 10s discovery bound under current
+head (e.g. `numpy/_core/tests/test_multiarray.py`, `test_umath.py`) — discovery
+misses, not timeout-blob mass.
+
+### Cause-class counts (first shard so far)
+
+| Class | Count | Notes |
+|---|---:|---|
+| A bound-tight | 0 | none yet |
+| **B hidden-panic** | **8** | all recovered finals so far |
+| C perf-complete | 0 | none yet (panics are not C) |
+| D hang | 0 | `test_to_string` / `test_multi` still queued last |
+| E bare | 0 | none yet |
+
+### Residual R (measured)
 
 | Axis | Count |
 |---|---:|
-| Timeout-blob rows with final verdict | **1** |
-| `completes-with-panic` | **1** |
-| `completes-at-bound` | 0 |
-| `hang-at-max-bound` | 0 |
-| `bare-exception` | 0 |
-| Seed scanned (incl. not-timeout) | 5+ (run in progress / residual) |
-| Recensus provisional timeout residual R | **292** remaining of original 293 identity (live rediscovery may differ) |
+| `R_timeout_blob_classified` | **8** |
+| Recensus provisional residual (≈293 − classified) | **~285** (live rediscovery may differ) |
+| Seed rows still unscanned / incomplete | continue single-lane resume |
+| `hang_at_max_bound_count` (D) | **0** |
+| `R_residual` (unclassified pure-timeout seed + D) | **> 0** — instrument stays red |
 
-## Ranked recovered panic owners (from timeout blob so far)
+## Ranked recovered B owners (from timeout blob so far)
 
-| Rank | Owner | Files | Representative |
+| Rank | Owner | Files | Dispatch issue |
 |---:|---|---:|---|
-| 1 | `FormatDunderCallSugar callsite receiver` | **1** | `numpy/ma/tests/test_core.py` |
+| 1 | `RuntimeEffect` | **2** | #4922 |
+| 2 | `SequentialDigBody` | **2** | #4921 |
+| 3 | `ConstructorCallSugar` | **1** | #4922 |
+| 4 | `FormatDunderCallSugar callsite receiver` | **1** | #4917 |
+| 5 | `TemporalContext` | **1** | #4922 |
+| 6 | `WithSugar manager result` | **1** | #4918 |
 
-This owner was **invisible** to the #4775 typed ranking because the file timed
-out at 10s before the panic terminal. Escalation surfaces it as ordinary
+These owners were **invisible** to the #4775 typed ranking when the file timed
+out at 10s before the panic terminal. Escalation surfaces them as ordinary
 dispatchable construction mass.
 
-## Dispatchable buckets (filed when pattern is clear)
+## Dispatchable buckets
 
 | Bucket | Pattern | Disposition |
 |---|---|---|
-| Recovered typed panic — FormatDunderCallSugar / MaskedArray callsite | Floor Projection missing body | Fold into live factory-panic dispatch (same ranking as #4775 owners); not a new timeout class |
-| PERF lane (>120s completes) | none yet in ledger | Open separate fatal-perf issue when count ≥1 with clear shape |
-| Hang at 300s | none yet; recensus sample named `pandas/tests/io/formats/test_to_string.py` and `pandas/tests/reshape/merge/test_multi.py` as 120s+ long runners | When confirmed at 300s: file budget-exceeded product terminal issue |
+| Recovered B — FormatDunderCallSugar / MaskedArray | Floor Projection missing body | **#4917** |
+| Recovered B — WithSugar manager result | manager result construction | **#4918** |
+| Recovered B — SequentialDigBody | sequential dig body (2 files) | **#4921** |
+| Recovered B — ConstructorCallSugar / TemporalContext / RuntimeEffect | mixed first-shard singles (RuntimeEffect×2) | **#4922** (split when R grows) |
+| PERF lane (C) | none yet | Open fatal-perf issue when count ≥1 with clear shape |
+| Hang at 300s (D) | none yet; seed queues `pandas/tests/io/formats/test_to_string.py` and `pandas/tests/reshape/merge/test_multi.py` last | When confirmed: file **budget-exceeded product terminal** issue (do not invent soft RuntimeEffect) |
 
 ## How to continue (fix-forward)
 
 ```bash
-# 1) Rediscover live timeout list at 10s (single lane)
-.venv/bin/python implementations/python/sugar-lift-py-tests/scripts/classify_loud_timeouts.py \
+# 1) Rediscover live timeout list at 10s (single lane — do not parallelize)
+.venv-4894/bin/python implementations/python/sugar-lift-py-tests/scripts/classify_loud_timeouts.py \
   --discover-timeouts docs/ledgers/loud-timeout-discovery-10s-4894.json \
   --discovery-bound 10
 
-# 2) Escalate only the timeout blob (resume-safe)
-.venv/bin/python implementations/python/sugar-lift-py-tests/scripts/classify_loud_timeouts.py \
+# 2) Escalate only the pure timeout blob (resume-safe, append-only ledger)
+.venv-4894/bin/python implementations/python/sugar-lift-py-tests/scripts/classify_loud_timeouts.py \
   --files-from docs/ledgers/loud-timeout-discovery-10s-4894.json \
   --skip-discovery \
   --escalation-bounds 60,120,300 \
@@ -126,9 +164,26 @@ dispatchable construction mass.
   --ledger docs/ledgers/loud-timeout-classification-4894.jsonl \
   --summary docs/ledgers/loud-timeout-classification-4894-summary.json
 
+# 2b) Or resume the first-shard seed (mixed discovery)
+.venv-4894/bin/python implementations/python/sugar-lift-py-tests/scripts/classify_loud_timeouts.py \
+  --files-from docs/ledgers/loud-timeout-first-shard-seed-4894.txt \
+  --discovery-bound 10 \
+  --escalation-bounds 60,120,300 \
+  --resume \
+  --ledger docs/ledgers/loud-timeout-classification-4894.jsonl \
+  --summary docs/ledgers/loud-timeout-classification-4894-summary.json
+
 # 3) Focused instrument
-.venv/bin/python -m pytest -q \
+.venv-4894/bin/python -m pytest -q \
   implementations/python/sugar-lift-py-tests/tests/test_classify_loud_timeouts.py
+
+# 4) Summarize residual R (pure timeout seed + --skip-discovery)
+.venv-4894/bin/python implementations/python/sugar-lift-py-tests/scripts/classify_loud_timeouts.py \
+  --summarize-only \
+  --files-from docs/ledgers/loud-timeout-discovery-10s-4894.json \
+  --skip-discovery \
+  --ledger docs/ledgers/loud-timeout-classification-4894.jsonl \
+  --summary docs/ledgers/loud-timeout-classification-4894-summary.json
 ```
 
 ## Floors preserved
@@ -137,13 +192,17 @@ dispatchable construction mass.
 - No timeout silently reclassified as complete/dropped
 - No bound raised to invent green without recording the successful bound
 - Wall conservation: silent = 0; hang remains explicit until product budget terminal exists
+- Single-lane classification only (no parallel children)
 
 ## Predicted Epsilon R (this PR)
 
 | Axis | Δ | Why |
 |---|---:|---|
-| timeout-blob instrument | 0 → executable | classifier + red residual axes |
-| `R_timeout_blob_classified` | +1 (first shard) | `test_core.py` panic at 60s |
-| typed panic owners recovered from blob | +1 family | FormatDunderCallSugar callsite |
-| hang / perf product terminals | 0 | not yet confirmed at 300s / >120s complete |
+| cause-class instrument | 0 → executable A–E tags + residual R | classifier + tests |
+| `R_timeout_blob_classified` | +8 (first shard) | all class B so far |
+| typed panic owners recovered from blob | +6 families | ranked B owners |
+| dispatch issues filed | +4 | #4917 #4918 #4921 #4922 |
+| hang / perf product terminals | 0 | not yet confirmed at 300s hang / >120s complete-with-IR |
 | panic/refusal floors | 0 | measurement only |
+
+**Leave #4894 OPEN** while `R_residual > 0` (unclassified timeout blob and/or D hang).
