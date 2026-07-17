@@ -161,6 +161,27 @@ class GuardedValue(FloorValue):
     def add(self, other, site):
         return self._map("add", other, site)
 
+    def append_with(self, value, site):
+        if all(
+            "append_with" in type(face).__dict__
+            for face in (self.when_true, self.when_false)
+        ):
+            return self._map("append_with", value, site)
+        from sugar_lift_py_tests.effect import (
+            AppendRuntimeEffect,
+            runtime_effect_witness,
+        )
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        return Incomplete(
+            AppendRuntimeEffect(
+                "append runtime boundary: guarded receiver has a branch without "
+                f"a constructed list post-state; value={value.to_term(owner=str(site))!r}; "
+                f"site={site}",
+                witness=runtime_effect_witness("py.append", self, site),
+            )
+        )
+
     def subtract(self, other, site):
         return self._map("subtract", other, site)
 
