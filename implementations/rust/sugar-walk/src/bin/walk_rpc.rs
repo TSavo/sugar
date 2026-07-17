@@ -4735,15 +4735,13 @@ fn crate_name_for(dir: &Path) -> Option<String> {
 /// `Cargo.toml`), WITHOUT the `-`→`_` normalization `crate_name_for` applies.
 ///
 /// The derived `library-sugar-binding-entry` stamps this as its
-/// `target_library_tag`, and the materialize verb matches a native boundary
-/// stub by
+/// `target_library_tag`. Consumer native boundary bindings match by
 /// `(target_library_tag, source_function_name) == (library, call)` with a RAW
 /// `==` (no normalization on either side). The consumer's native boundary
 /// binding carries the crate name verbatim (hyphens intact), so the tag we
-/// derive must too, or the match silently misses. (The DERIVED symbol the verb
-/// synthesizes is `format!("{library}.{call}")` —
-/// `rust-boundary-vendor.reverse_chars` — built from the boundary binding, not
-/// from this entry, so the separator is the verb's concern, not ours.)
+/// derive must too, or the match silently misses. (The DERIVED symbol is
+/// `format!("{library}.{call}")` — e.g. `rust-boundary-vendor.reverse_chars` —
+/// built from the boundary binding, not from this entry.)
 fn crate_name_raw_for(dir: &Path) -> Option<String> {
     // sugar-audit: default-ok(raw crate tag probing treats an unreadable Cargo.toml as absence, not proof evidence)
     let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
@@ -6580,7 +6578,7 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
         == Some("library-bindings");
     // The crate the derived tag names: the RAW `[package].name` (hyphens
     // intact) so it matches a consumer's native boundary binding verbatim under
-    // the materialize verb's raw `==`.
+    // raw `==` (no hyphen/underscore normalization on either side).
     let derived_crate_tag = if derive_library_bindings {
         crate_name_raw_for(&root)
     } else {
@@ -6725,11 +6723,9 @@ fn bind_lift(params: &Value) -> Result<Value, String> {
         // fns are skipped; boundary stubs are a separate consumer surface. Impl
         // methods + nested-module fns are the next increment of "anything" (a
         // structural walk, not an access rule). No name-keyed identity is
-        // emitted, so `recognize` (which requires a
-        // pinned op CID) keeps the
-        // project's own functions out of its published match-template set; the
-        // derived binding is materialize-only, exactly like python's derived
-        // path.
+        // emitted without a pinned op CID so project-local derived bindings
+        // stay out of any published match-template set — the same shape as
+        // python's derived path (library tag + source function name only).
         if let Some(crate_tag) = &derived_crate_tag {
             for item in &file.items {
                 let syn::Item::Fn(item_fn) = item else {
@@ -10223,7 +10219,7 @@ mod tests {
     use sugar_walk::source_oracle::block_to_ast_template;
     use sugar_walk::{bind_result_payload, bind_term_document, BindOptions};
 
-    // ---- Source Oracle + materialize (#1359) --------------------------------
+    // ---- Source Oracle (#1359) ----------------------------------------------
 
     /// Mint a SourceMemento for `fn_name` in `src`, then return
     /// (project_root, memento). Mirrors what the producer (`sugar_body_source`)

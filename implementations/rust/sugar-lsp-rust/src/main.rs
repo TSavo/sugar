@@ -85,7 +85,7 @@ fn main() {
                                 "sugar.lsp.parse_error",
                                 "sugar.lsp.implication_failed"
                             ],
-                            "status_kinds": ["materialize", "emit", "check", "prove"]
+                            "status_kinds": ["lift", "emit", "check", "prove"]
                         }
                     }
                 });

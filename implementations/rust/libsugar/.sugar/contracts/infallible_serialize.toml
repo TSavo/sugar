@@ -5,13 +5,6 @@
 # lifting; the CLI/verifier receive only the emitted contract/bridge IR over RPC.
 
 [[serde_json]]
-function = "to_value"
-type_crate = "libsugar"
-type_name = "RealizedSource"
-contract = "serde_json_to_value__realized_source"
-reason = "RealizedSource derives Serialize over serde_json-infallible fields: strings, bools, options, vectors, and serde_json::Value"
-
-[[serde_json]]
 function = "to_string"
 type_crate = "sugar_ir_types"
 type_name = "Sort"
@@ -39,7 +32,7 @@ function = "to_value"
 type_crate = "sugar_ir_types"
 type_name = "BridgeHeaderV14"
 contract = "serde_json_to_value__bridge_header_v14"
-reason = "BridgeHeaderV14 derives Serialize at sugar-ir-types/src/lib.rs:68 over strings plus BridgeTarget string-CID payloads; closes src/core/source_transform_kit.rs:296 (formerly also src/core/emit_obligation.rs:62, deleted in the emit retirement)"
+reason = "BridgeHeaderV14 derives Serialize at sugar-ir-types/src/lib.rs:68 over strings plus BridgeTarget string-CID payloads; closes src/core/source_transform_kit.rs:296"
 audited_for_crate = "sugar_ir_types"
 audited_at = "2026-06-03"
 
