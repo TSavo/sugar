@@ -62,9 +62,29 @@ PINS = (
         relative_path="pandas-2.3.3/test_frame_equals.py",
         sha256="00599b73d4a67e0a505743c3f61097ba4b5109190dbc31794b567bcf7d44db11",
         assertion_count=18,
-        # Improvement over #4278's (15,): frame-equals now lifts four loci with
-        # zero silent. Loud pin update required by the tripwire contract.
-        lifted_loci=(15, 24, 28, 29),
+        # Positive ratchet: all 18 frame-equals asserts are lifted with zero
+        # silent (was (15, 24, 28, 29) after #4278). Loud pin update required
+        # by the tripwire contract — CI red until this records the improvement.
+        lifted_loci=(
+            15,
+            24,
+            28,
+            29,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            56,
+            61,
+            66,
+            72,
+            77,
+            80,
+            85,
+        ),
     ),
     ClaimMassPin(
         name="numpy",
