@@ -76,6 +76,35 @@ class NoneValue(FloorValue):
             return Complete(FalseBoolLiteralSugar(site=site))
         return super().equals(other, site)
 
+    def subtract(self, other, site):
+        # None - x is TypeError: the None-ness IS the type. Ground rights are
+        # lift-time decidable, so they cannot mint RuntimeEffect evidence as a
+        # bare constant; cite the data-model dunder call (call: is runtime by
+        # law) so the boundary is witnessed rather than a floor panic.
+        from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
+        from sugar_lift_py_tests.effect.runtime_effect import genuine_runtime_operand
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        try:
+            genuine_runtime_operand("py.subtract", other)
+            operand = other
+        except TypeError:
+            operand = ctor(
+                "call:NoneType.__sub__",
+                [
+                    self.to_term(owner=str(site)),
+                    other.to_term(owner=str(site)),
+                ],
+            )
+        return Incomplete(
+            TypeErrorRuntimeEffect(
+                "unsupported operand type(s) for -: 'NoneType' and "
+                f"{type(other).__name__}; site={site}",
+                **runtime_effect_evidence("py.subtract", operand, site),
+            )
+        )
+
     def floor_divide(self, other, site):
         from sugar_lift_py_tests.effect import TypeErrorRuntimeEffect
         from sugar_lift_py_tests.outcome import Incomplete

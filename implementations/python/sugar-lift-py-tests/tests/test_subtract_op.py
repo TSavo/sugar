@@ -9,7 +9,7 @@ import ast
 import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.effect import SubtractRuntimeEffect
+from sugar_lift_py_tests.effect import SubtractRuntimeEffect, TypeErrorRuntimeEffect
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
@@ -18,6 +18,7 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ComprehensionValue,
     NativeCallableValue,
+    NoneValue,
     SetValue,
     StringValue,
     SymbolicValue,
@@ -70,6 +71,89 @@ def test_string_subtract_panics_on_the_floor() -> None:
     sugar, ctx = _build_term('"a" - "b"')
     with pytest.raises(FactoryPanic, match="write more Floor"):
         sugar.desugar(ctx)
+
+
+def test_none_subtract_is_a_witnessed_type_error_boundary() -> None:
+    """Part of #4103: NoneValue.subtract constructs TypeError, never panics.
+
+    requests.utils.super_len rejoins total_length with a None face; after
+    `if total_length is None: total_length = 0` residual None arms still hit
+    the subtraction floor. The None-ness IS the type — Python raises TypeError
+    for `None - x`, so the floor is a witnessed boundary.
+    """
+    site = SourceFragment.from_source("None - 1\n", "t.py").statements()[0]
+    outcome = NoneValue().subtract(TermValue(1), site)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
+    assert outcome.effect.witness is not None
+    operand = ctor(
+        "call:NoneType.__sub__",
+        [NoneValue().to_term(owner="test"), TermValue(1).to_term(owner="test")],
+    )
+    assert outcome.effect.witness.operand == operand
+    assert outcome.effect.witness.operation == ctor("py.subtract", [operand])
+    assert "NoneType" in outcome.effect.reason
+
+
+def test_none_minus_int_expression_constructs_type_error_effect() -> None:
+    sugar, ctx = _build_term("None - 1")
+    outcome = sugar.desugar(ctx)
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
+
+
+def test_none_minus_symbolic_uses_the_opaque_right_as_evidence() -> None:
+    site = SourceFragment.from_source("None - runtime_n\n", "t.py").statements()[0]
+    right = SymbolicValue(make_var("runtime_n"))
+    outcome = NoneValue().subtract(right, site)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, TypeErrorRuntimeEffect)
+    assert outcome.effect.witness.operand == make_var("runtime_n")
+    assert outcome.effect.witness.operation == ctor(
+        "py.subtract", [make_var("runtime_n")]
+    )
+
+
+def test_requests_super_len_none_face_subtract_does_not_panic() -> None:
+    """Vendor residual shape from requests/utils.py:228 (Guarded None - pos)."""
+    source = (
+        "def super_len(o):\n"
+        "    total_length = None\n"
+        "    current_position = 0\n"
+        "    if hasattr(o, '__len__'):\n"
+        "        total_length = len(o)\n"
+        "    elif hasattr(o, 'len'):\n"
+        "        total_length = o.len\n"
+        "    elif hasattr(o, 'fileno'):\n"
+        "        try:\n"
+        "            total_length = o.fileno()\n"
+        "        except (OSError, AttributeError):\n"
+        "            pass\n"
+        "        else:\n"
+        "            total_length = total_length\n"
+        "    if hasattr(o, 'tell'):\n"
+        "        try:\n"
+        "            current_position = o.tell()\n"
+        "        except OSError:\n"
+        "            if total_length is not None:\n"
+        "                current_position = total_length\n"
+        "        else:\n"
+        "            if hasattr(o, 'seek') and total_length is None:\n"
+        "                try:\n"
+        "                    o.seek(0, 2)\n"
+        "                    total_length = o.tell()\n"
+        "                    o.seek(current_position or 0)\n"
+        "                except OSError:\n"
+        "                    total_length = 0\n"
+        "    if total_length is None:\n"
+        "        total_length = 0\n"
+        "    return max(0, total_length - current_position)\n"
+    )
+    payload, gaps = audit_lift_file(source, "requests/utils_super_len.py")
+    assert gaps == []
+    assert len(payload.ir) == 1
 
 
 def test_string_minus_opaque_call_result_is_a_witnessed_runtime_effect() -> None:
