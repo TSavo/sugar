@@ -11,11 +11,13 @@ Headline after #4017 (total assertion-surface enumeration):
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -681,11 +683,157 @@ _HEAVY_CONSERVATION_VENDORS = (
     "pandas",
 )
 
+# Live production isolation residual after #4760. Multi-file sugar lift
+# --report still dies on first FactoryPanic; --audit-frontier cannot pair with
+# --report. Per assert-bearing file isolation measures live conservation and
+# names R_live_factory_panic_files. numpy first (full assert-file set);
+# pandas is the same residual class (heavier; opt-in via env).
+_HEAVY_LIVE_ISOLATION_VENDORS = (
+    "numpy",
+)
+
 # Multi-file live sugar --report paths denser than single-module statistics.
 _SHOWCASE_CONSERVATION_TARGETS = (
     "examples/pandas-showcase",
     "examples/numpy-showcase",
 )
+
+
+def _assert_bearing_py_files(root: Path) -> list[Path]:
+    """Independent AST walk: every ``*.py`` under root that contains ``ast.Assert``."""
+    out: list[Path] = []
+    for path in sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        if any(isinstance(node, ast.Assert) for node in ast.walk(tree)):
+            out.append(path)
+    return out
+
+
+def _factory_engaged_empty_report() -> dict:
+    """Factory instrument engaged, no spoken assert rows → refuse-loud partition."""
+    return {
+        "factoryAuditSummary": {"statusCounts": {"unresolved": 1}},
+        "auditOnlyGaps": [],
+    }
+
+
+def _panic_owner(message: str) -> str:
+    if "owner=" not in message:
+        return "unknown"
+    return message.split("owner=", 1)[1].split()[0]
+
+
+def _live_per_file_isolation_conservation(
+    files: list[Path], *, root: Path, package: str
+) -> dict:
+    """Production lift path per assert-bearing file; conservation + panic residual.
+
+    Completed files feed the real lift payload into ``account_lift_coverage``.
+    FactoryPanic / other hard fails engage refuse-loud for that file's on-disk
+    asserts (panic is loud, not silent). Aggregate delta must be 0.
+    """
+    from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+    from sugar_lift_py_tests.lift_rpc import lift_file_payload
+
+    # Keep isolation telemetry readable; panics still raise, only log noise drops.
+    os.environ.setdefault("SUGAR_ENGINE_LOG", os.devnull)
+
+    completed = 0
+    panic_rows: list[dict] = []
+    other_rows: list[dict] = []
+    on_disk_total = 0
+    accounted_total = 0
+    per_file: list[dict] = []
+    engaged = _factory_engaged_empty_report()
+
+    for index, path in enumerate(files, start=1):
+        rel = f"{package}/{path.relative_to(root).as_posix()}"
+        src = path.read_text(encoding="utf-8", errors="replace")
+        disk = census_source(src, file=rel)
+        file_on_disk = len(disk.asserts)
+        on_disk_total += file_on_disk
+        try:
+            payload = lift_file_payload(src, rel)
+            report = payload.to_rpc()
+            body = account_lift_coverage(disk, report).to_json()
+            status = "completed"
+            completed += 1
+        except FactoryPanic as panic:
+            body = account_lift_coverage(disk, engaged).to_json()
+            status = "factory_panic"
+            panic_rows.append(
+                {
+                    "file": rel,
+                    "onDisk": file_on_disk,
+                    "owner": _panic_owner(str(panic)),
+                    "message": str(panic).splitlines()[0][:200],
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 — residual taxonomy, not swallow
+            body = account_lift_coverage(disk, engaged).to_json()
+            status = "other"
+            other_rows.append(
+                {
+                    "file": rel,
+                    "onDisk": file_on_disk,
+                    "kind": type(exc).__name__,
+                    "message": str(exc).splitlines()[0][:200],
+                }
+            )
+
+        totals = body["totals"]
+        delta = int(totals["delta"])
+        accounted = int(totals["accounted"])
+        accounted_total += accounted
+        per_file.append(
+            {
+                "file": rel,
+                "onDisk": int(totals["onDisk"]),
+                "accounted": accounted,
+                "delta": delta,
+                "status": status,
+            }
+        )
+        assert delta == 0, (
+            f"live isolation conservation delta must be 0 for {rel} "
+            f"status={status}; onDisk={totals['onDisk']} accounted={accounted} "
+            f"delta={delta}"
+        )
+        if index % 20 == 0 or index == len(files):
+            print(
+                f"  [{package}-live-isolation] {index}/{len(files)} "
+                f"completed={completed} panic={len(panic_rows)} "
+                f"other={len(other_rows)}",
+                flush=True,
+            )
+
+    owners = Counter(row["owner"] for row in panic_rows)
+    result = {
+        "package": package,
+        "assert_files": len(files),
+        "completed": completed,
+        "factory_panic_files": len(panic_rows),
+        "other_fail_files": len(other_rows),
+        "onDisk": on_disk_total,
+        "accounted": accounted_total,
+        "delta": on_disk_total - accounted_total,
+        "owners": dict(owners.most_common()),
+        "panic_rows": panic_rows,
+        "other_rows": other_rows,
+        "perFile": per_file,
+    }
+    print(
+        f"R[{package}-live-isolation]: onDisk={on_disk_total} "
+        f"accounted={accounted_total} delta={result['delta']} "
+        f"assert_files={len(files)} completed={completed} "
+        f"R_live_factory_panic_files={len(panic_rows)} "
+        f"R_other_fail_files={len(other_rows)} "
+        f"owners={dict(owners.most_common(12))}"
+    )
+    return result
 
 
 def test_conservation_triple_emitted_and_conserves() -> None:
@@ -919,6 +1067,74 @@ def test_heavy_vendor_full_tree_conservation_delta_is_zero(package: str) -> None
     # Per-file conservation rows cover every assert-bearing file.
     assert body["perFile"], f"{package}: empty perFile on full-tree"
     assert len(body["perFile"]) <= len(files)
+
+
+@pytest.mark.parametrize("package", list(_HEAVY_LIVE_ISOLATION_VENDORS))
+def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
+    package: str,
+) -> None:
+    """#4013 residual after #4760: live production path via per-file isolation.
+
+    Full-tree multi-file ``sugar lift --report`` still FactoryPanics (cannot
+    pair ``--audit-frontier`` with ``--report``). Isolate every assert-bearing
+    file on the production ``lift_file_payload`` path:
+
+    * completed → real payload into conservation accounting
+    * FactoryPanic → refuse-loud for that file's on-disk asserts
+
+    Gate: aggregate conservation delta==0 on the live path.
+    Residual axis (named, leave #4013 open): ``R_live_factory_panic_files``
+    must go to 0 via production floors before multi-file live report can gate.
+    Opt-in pandas: set ``SUGAR_4013_HEAVY_PANDAS=1`` (same class, ~1h).
+    """
+    path = _resolve_installed_package_path(package)
+    if not path.exists():
+        pytest.skip(f"{package}: not installed at {path}")
+    if path.is_file():
+        files = [path] if _file_has_assert(path) else []
+        root = path.parent
+    else:
+        root = path
+        files = _assert_bearing_py_files(root)
+    if not files:
+        pytest.skip(f"{package}: no assert-bearing .py files under {path}")
+
+    result = _live_per_file_isolation_conservation(
+        files, root=root, package=package
+    )
+    assert result["delta"] == 0, (
+        f"{package} live isolation conservation delta must be 0; R={result}"
+    )
+    assert result["onDisk"] == result["accounted"]
+    assert result["onDisk"] > 0, f"{package}: vacuous live isolation (no asserts)"
+    assert result["assert_files"] == len(files)
+    # Non-vacuous: isolation must exercise more than the stdlib 40-file sample.
+    assert result["assert_files"] > 40, (
+        f"{package} live isolation must exceed stdlib sample; "
+        f"got assert_files={result['assert_files']}"
+    )
+    # Every per-file row conserved (completed or refuse-loud after panic).
+    for row in result["perFile"]:
+        assert int(row["delta"]) == 0, row
+    # Residual is measured, not hidden. Multi-file live report stays open
+    # while R_live_factory_panic_files > 0 (production floors).
+    assert "factory_panic_files" in result
+    assert result["factory_panic_files"] >= 0
+
+
+def test_heavy_vendor_live_isolation_opt_in_pandas() -> None:
+    """Same live isolation residual class as numpy; opt-in (heavy)."""
+    if os.environ.get("SUGAR_4013_HEAVY_PANDAS") != "1":
+        pytest.skip("set SUGAR_4013_HEAVY_PANDAS=1 for full pandas live isolation")
+    test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero("pandas")
+
+
+def _file_has_assert(path: Path) -> bool:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError:
+        return False
+    return any(isinstance(node, ast.Assert) for node in ast.walk(tree))
 
 
 @pytest.mark.parametrize("relative", list(_SHOWCASE_CONSERVATION_TARGETS))
