@@ -581,6 +581,33 @@ def _constructor_from_mro_entry(site, ctx, target: str, class_site, methods, ent
     return None
 
 
+def _native_imported_base_targets(class_site, ctx):
+    """Resolve direct dotted bases whose module artifact is a native extension."""
+    import importlib.machinery
+    import importlib.util
+
+    from sugar_lift_py_tests.floor import ImportAliasValue
+
+    targets = []
+    for base in class_site.class_bases():
+        coordinate = _base_type_coordinate(base)
+        if coordinate is None or "." not in coordinate:
+            return None
+        module_name, class_name = coordinate.split(".", 1)
+        bound = ctx.temporal.value_if_bound(module_name)
+        if not isinstance(bound, ImportAliasValue) or bound.import_target is None:
+            return None
+        spec = importlib.util.find_spec(bound.import_target)
+        origin = None if spec is None else spec.origin
+        if origin is None or not any(
+            origin.endswith(suffix)
+            for suffix in importlib.machinery.EXTENSION_SUFFIXES
+        ):
+            return None
+        targets.append(f"{bound.import_target}.{class_name}")
+    return tuple(targets) if targets else None
+
+
 def _multi_base_inherited_strategy(site, ctx, target: str, class_site, methods=()):
     """Construct the exact multiple-inheritance MRO and take the first ``__init__``.
 
@@ -589,6 +616,17 @@ def _multi_base_inherited_strategy(site, ctx, target: str, class_site, methods=(
     """
     mro = _static_constructor_mro(target, class_site, ctx)
     if mro is None:
+        native_bases = _native_imported_base_targets(class_site, ctx)
+        if native_bases is not None:
+            return _runtime_strategy(
+                site,
+                ctx,
+                target,
+                "native inherited constructor runtime boundary: "
+                f"{target} has statically resolved extension bases "
+                f"{native_bases}; the constructor result depends on its "
+                "runtime arguments",
+            )
         _panic(
             site,
             f"{target} bases={class_site.class_base_names()}",
