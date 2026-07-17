@@ -92,6 +92,9 @@ effect remains live frontier mass.
 | `SubtractRuntimeEffect` | **5** | 7 | Genuine runtime data-model dispatch after concrete floors fail. |
 | `ConstructorRuntimeEffect` | **2** | 5 | **Suspicious live bucket.** Reasons cite unresolved inherited `__new__`/`__init__`; class ancestry is structurally discoverable, so this is construct-or-panic unless the selected class itself is runtime-only. |
 
+The two suppression candidates are dispatchable as #4869 and #4870,
+respectively.
+
 Smaller emitted classes (`SubscriptResultRuntimeEffect`,
 `SequenceConcatenationRuntimeEffect`, `DynamicTypeOperandRuntimeEffect`,
 `AttributeStoreRuntimeEffect`, `ContextManagerExitRuntimeEffect`,
