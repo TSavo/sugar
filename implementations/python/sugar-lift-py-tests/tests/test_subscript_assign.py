@@ -15,6 +15,7 @@ from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
+    ComprehensionValue,
     GuardedValue,
     ListValue,
     ReturnValue,
@@ -24,9 +25,11 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
+from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.ir import ctor, make_var, py_truthy
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.sugar.subscript_assign_sugar import SubscriptAssignSugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -60,6 +63,38 @@ def test_symbolic_subscript_assign_rebinds_through_py_setitem() -> None:
     assert isinstance(returned.value, CallSiteValue)
     assert returned.value.target_name == "setitem"
     assert returned.value.term.name == "py.setitem"
+
+
+def test_comprehension_subscript_assign_rebinds_through_py_setitem() -> None:
+    outcome = compose_block(
+        "    values = [item for item in source]\n"
+        "    values[0] = 9\n"
+        "    return values\n",
+        binds={"source": SymbolicValue(make_var("source"))},
+    )
+
+    assert isinstance(outcome, BlockValue)
+    returned = outcome.statements[-1]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    assert returned.value.target_name == "setitem"
+    assert returned.value.term.name == "py.setitem"
+    assert isinstance(returned.value.arg_values[0], ComprehensionValue)
+    assert returned.value.arg_values[1:] == (TermValue(0), TermValue(9))
+
+
+def test_comprehension_subscript_assign_witness_truthful_sat_lying_unsat(
+    tmp_path,
+) -> None:
+    witness = next(
+        witness
+        for witness in SubscriptAssignSugar.witnesses()
+        if witness.name == "subscript_assign_comprehension_post_state"
+    )
+
+    report = evaluate_seed_witnesses((witness,), tmp_path)
+
+    assert report.is_zero
 
 
 def test_call_result_subscript_assign_is_a_receiver_witnessed_store_effect() -> None:
@@ -202,8 +237,9 @@ def test_guarded_setitem_source_conserves_without_an_effect() -> None:
     assert assertions["silently_unaccounted"] == 0
 
 
-def test_runtime_store_receivers_own_explicit_setitem_arms() -> None:
+def test_coordinate_store_receivers_own_explicit_setitem_arms() -> None:
     assert "setitem" in CallSiteValue.__dict__
+    assert "setitem" in ComprehensionValue.__dict__
     assert "setitem" in SymbolicValue.__dict__
 
 

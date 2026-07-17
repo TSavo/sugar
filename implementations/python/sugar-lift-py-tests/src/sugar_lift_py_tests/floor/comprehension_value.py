@@ -82,3 +82,35 @@ class ComprehensionValue(FloorValue):
         # Preserve the real lookup as a proof-bearing coordinate; do not invent
         # an element or silently assume the lookup succeeds.
         return self.py_subscript_coordinate(index, site)
+
+    def setitem(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, index, value, site
+    ):
+        """Carry the exact post-state of a name-bound comprehension store."""
+        from typing import cast
+
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import Term, ctor
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+
+        index_term = floor_to_term(index, owner="ComprehensionValue.setitem index")
+        value_term = floor_to_term(value, owner="ComprehensionValue.setitem value")
+        return Complete(
+            CallSiteValue(
+                target_name="setitem",
+                arg_values=(self, index, value),
+                parameters=(),
+                term=ctor(
+                    "py.setitem",
+                    [
+                        cast(Term, self.to_term(owner=str(site))),
+                        index_term,
+                        value_term,
+                    ],
+                    symbol_kind="method-coordinate",
+                ),
+                body=None,
+                site=site,
+            )
+        )
