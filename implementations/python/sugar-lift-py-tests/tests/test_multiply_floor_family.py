@@ -16,6 +16,7 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ComprehensionValue,
+    GroundSequenceRepetitionValue,
     ListValue,
     ImportAliasValue,
     OpaqueOpCallsite,
@@ -203,6 +204,28 @@ def test_large_ground_list_repetition_witness_truthful_sat_lying_unsat(
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_test_loc_list_repetition_100000_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    """#4922 locus: compact ground ``[0] * 100000`` length is solver-discharged."""
+    pair = next(
+        witness
+        for witness in MultiplyOpSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "test_loc_list_repetition_100000_length_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "test-loc-100000-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "test-loc-100000-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_imported_list_repetition_count_remains_a_named_loud_gap() -> None:
     count = ImportAliasValue("start_caching_at", "start_caching_at")
     receiver = ListValue((StringValue("2024-01-01"),))
@@ -234,6 +257,32 @@ def test_runtime_list_repetition_count_is_a_named_typed_effect(
     assert outcome.effect.witness.operation == ctor(
         "py.sequence_repeat", [make_var("runtime_n")]
     )
+
+
+def test_ground_sequence_repeat_100000_constructs_compact_floor() -> None:
+    """#4922: ground TermValue(100000) constructs; never mints RuntimeEffect."""
+    from sugar_lift_py_tests.effect import genuine_runtime_operand
+    from sugar_lift_py_tests.outcome import Complete, complete_value
+
+    site = SourceFragment.from_source(
+        "index = [0] * 100000\n",
+        "pandas/tests/indexing/test_loc.py",
+    ).statements()[0]
+    items = ListValue((TermValue(0),))
+    count = TermValue(100000)
+
+    outcome = items.multiply(count, site)
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, GroundSequenceRepetitionValue)
+    assert outcome.value.repetitions == 100000
+    assert complete_value(outcome.value.length(site), owner="length") == TermValue(
+        100000
+    )
+
+    # Law: the ground operand cannot mint SequenceRepetitionRuntimeEffect evidence.
+    with pytest.raises(TypeError, match="genuine runtime-dependent operand"):
+        genuine_runtime_operand("py.sequence_repeat", count)
 
 
 def test_len_result_is_a_warranted_runtime_list_repetition_count() -> None:
