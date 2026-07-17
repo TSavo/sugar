@@ -27,11 +27,6 @@ from sugar_lift_py_tests.idd.collect_panic_audit import (
     _resolve_audit_sugar_bin,
     _resolve_installed_package_path,
 )
-from sugar_lift_py_tests.idd.factory_panic_fronts import (
-    fingerprint_from_panic_info,
-    fingerprint_label,
-    rank_factory_panic_fronts,
-)
 from sugar_lift_py_tests.idd.lift_coverage_accounting import (
     account_lift_coverage,
     paint_lines,
@@ -39,6 +34,11 @@ from sugar_lift_py_tests.idd.lift_coverage_accounting import (
 from sugar_lift_py_tests.idd.lift_coverage_census import (
     census_paths,
     census_source,
+)
+from sugar_lift_py_tests.idd.live_factory_panic_isolation import (
+    assert_bearing_py_files as _assert_bearing_py_files,
+    live_per_file_isolation_conservation as _live_per_file_isolation_conservation,
+    maybe_write_isolation_receipt_from_env,
 )
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -692,6 +692,14 @@ _HEAVY_CONSERVATION_VENDORS = (
 # --report. Per assert-bearing file isolation measures live conservation and
 # names R_live_factory_panic_files. numpy first (full assert-file set);
 # pandas is the same residual class (heavier; opt-in via env).
+#
+# Re-measure at 9fe134453 (wave-6, after #4808 ranking + intervening floors):
+#   assert_files=142 completed=69 R_live_factory_panic_files=71 R_other=2
+#   onDisk=3208 accounted=3208 delta=0
+#   prior #4791 baseline R_panic=74 → Delta R = -3
+#   top owners: TemporalContext 21, RuntimeEffect 10, CallSugar 5, ...
+# Re-run: scripts/live_factory_panic_isolation.py --package numpy --out PATH
+# or pytest + SUGAR_4013_ISOLATION_OUT=PATH (writes ranked receipt).
 _HEAVY_LIVE_ISOLATION_VENDORS = (
     "numpy",
 )
@@ -701,162 +709,6 @@ _SHOWCASE_CONSERVATION_TARGETS = (
     "examples/pandas-showcase",
     "examples/numpy-showcase",
 )
-
-
-def _assert_bearing_py_files(root: Path) -> list[Path]:
-    """Independent AST walk: every ``*.py`` under root that contains ``ast.Assert``."""
-    out: list[Path] = []
-    for path in sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-        except SyntaxError:
-            continue
-        if any(isinstance(node, ast.Assert) for node in ast.walk(tree)):
-            out.append(path)
-    return out
-
-
-def _factory_engaged_empty_report() -> dict:
-    """Factory instrument engaged, no spoken assert rows → refuse-loud partition."""
-    return {
-        "factoryAuditSummary": {"statusCounts": {"unresolved": 1}},
-        "auditOnlyGaps": [],
-    }
-
-
-def _panic_owner(message: str) -> str:
-    """Fallback owner parse when structured gap is unavailable."""
-    if "owner=" not in message:
-        return "unknown"
-    return message.split("owner=", 1)[1].split()[0]
-
-
-def _live_per_file_isolation_conservation(
-    files: list[Path], *, root: Path, package: str
-) -> dict:
-    """Production lift path per assert-bearing file; conservation + panic residual.
-
-    Completed files feed the real lift payload into ``account_lift_coverage``.
-    FactoryPanic / other hard fails engage refuse-loud for that file's on-disk
-    asserts (panic is loud, not silent). Aggregate delta must be 0.
-
-    Panic residual is ranked by structured FactoryGapInfo fingerprints
-    (same axes as ``corpus_fatal_triage``) so fatal recensus and floor drain
-    share one owner map: owner families + exact fronts.
-    """
-    from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-    from sugar_lift_py_tests.lift_rpc import lift_file_payload
-
-    # Keep isolation telemetry readable; panics still raise, only log noise drops.
-    os.environ.setdefault("SUGAR_ENGINE_LOG", os.devnull)
-
-    completed = 0
-    panic_rows: list[dict] = []
-    other_rows: list[dict] = []
-    on_disk_total = 0
-    accounted_total = 0
-    per_file: list[dict] = []
-    engaged = _factory_engaged_empty_report()
-
-    for index, path in enumerate(files, start=1):
-        rel = f"{package}/{path.relative_to(root).as_posix()}"
-        src = path.read_text(encoding="utf-8", errors="replace")
-        disk = census_source(src, file=rel)
-        file_on_disk = len(disk.asserts)
-        on_disk_total += file_on_disk
-        try:
-            payload = lift_file_payload(src, rel)
-            report = payload.to_rpc()
-            body = account_lift_coverage(disk, report).to_json()
-            status = "completed"
-            completed += 1
-        except FactoryPanic as panic:
-            body = account_lift_coverage(disk, engaged).to_json()
-            status = "factory_panic"
-            gap = panic.info.to_json() if getattr(panic, "info", None) is not None else {}
-            fingerprint = fingerprint_from_panic_info(getattr(panic, "info", None))
-            panic_rows.append(
-                {
-                    "file": rel,
-                    "onDisk": file_on_disk,
-                    "owner": gap.get("owner") or _panic_owner(str(panic)),
-                    "gap": gap,
-                    "fingerprint": list(fingerprint),
-                    "front": fingerprint_label(fingerprint),
-                    "message": str(panic).splitlines()[0][:200],
-                }
-            )
-        except Exception as exc:  # noqa: BLE001 — residual taxonomy, not swallow
-            body = account_lift_coverage(disk, engaged).to_json()
-            status = "other"
-            other_rows.append(
-                {
-                    "file": rel,
-                    "onDisk": file_on_disk,
-                    "kind": type(exc).__name__,
-                    "message": str(exc).splitlines()[0][:200],
-                }
-            )
-
-        totals = body["totals"]
-        delta = int(totals["delta"])
-        accounted = int(totals["accounted"])
-        accounted_total += accounted
-        per_file.append(
-            {
-                "file": rel,
-                "onDisk": int(totals["onDisk"]),
-                "accounted": accounted,
-                "delta": delta,
-                "status": status,
-            }
-        )
-        assert delta == 0, (
-            f"live isolation conservation delta must be 0 for {rel} "
-            f"status={status}; onDisk={totals['onDisk']} accounted={accounted} "
-            f"delta={delta}"
-        )
-        if index % 20 == 0 or index == len(files):
-            print(
-                f"  [{package}-live-isolation] {index}/{len(files)} "
-                f"completed={completed} panic={len(panic_rows)} "
-                f"other={len(other_rows)}",
-                flush=True,
-            )
-
-    ranking = rank_factory_panic_fronts(panic_rows)
-    result = {
-        "package": package,
-        "assert_files": len(files),
-        "completed": completed,
-        "factory_panic_files": len(panic_rows),
-        "other_fail_files": len(other_rows),
-        "onDisk": on_disk_total,
-        "accounted": accounted_total,
-        "delta": on_disk_total - accounted_total,
-        # Prior instrument shape + structured ranking for fatal recensus.
-        "owners": ranking["owners"],
-        "owner_families": ranking["owner_families"],
-        "exact_fronts": ranking["exact_fronts"],
-        "owner_family_count": ranking["owner_family_count"],
-        "exact_front_count": ranking["exact_front_count"],
-        "panic_rows": panic_rows,
-        "other_rows": other_rows,
-        "perFile": per_file,
-    }
-    top_fronts = [
-        f"{row['count']}×{row['label']}" for row in ranking["exact_fronts"][:8]
-    ]
-    print(
-        f"R[{package}-live-isolation]: onDisk={on_disk_total} "
-        f"accounted={accounted_total} delta={result['delta']} "
-        f"assert_files={len(files)} completed={completed} "
-        f"R_live_factory_panic_files={len(panic_rows)} "
-        f"R_other_fail_files={len(other_rows)} "
-        f"owner_families={ranking['owners']} "
-        f"exact_fronts={top_fronts}"
-    )
-    return result
 
 
 def test_conservation_triple_emitted_and_conserves() -> None:
@@ -1125,9 +977,12 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
     result = _live_per_file_isolation_conservation(
         files, root=root, package=package
     )
+    # Optional durable receipt for recensus / wave re-measure (env path).
+    maybe_write_isolation_receipt_from_env(result)
     assert result["delta"] == 0, (
         f"{package} live isolation conservation delta must be 0; R={result}"
     )
+    assert result["R_live_factory_panic_files"] == result["factory_panic_files"]
     assert result["onDisk"] == result["accounted"]
     assert result["onDisk"] > 0, f"{package}: vacuous live isolation (no asserts)"
     assert result["assert_files"] == len(files)
