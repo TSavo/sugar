@@ -169,7 +169,7 @@ def _strategy(
         if generated is not None:
             return generated
         if class_site.class_bases():
-            return _inherited_strategy(site, ctx, target, class_site)
+            return _inherited_strategy(site, ctx, target, class_site, methods)
         if site.call_arg_count() != 0:
             return _arity_strategy(site, ctx, target, 0, 0)
         return ConstructorStrategy(
@@ -179,6 +179,25 @@ def _strategy(
             class_fields=_class_fields(class_site, ctx),
             identity=site.blame,
         )
+    return _strategy_from_init(
+        site,
+        ctx,
+        target,
+        init,
+        methods=methods,
+        class_fields=_class_fields(class_site, ctx),
+    )
+
+
+def _strategy_from_init(
+    site,
+    ctx,
+    target: str,
+    init,
+    *,
+    methods=(),
+    class_fields=(),
+) -> ConstructorStrategy | RuntimeConstructorStrategy:
     params = tuple(init.function_params())
     if not params:
         _panic(
@@ -242,7 +261,7 @@ def _strategy(
         parameters=constructor_params,
         arguments=tuple(arguments),
         methods=methods,
-        class_fields=_class_fields(class_site, ctx),
+        class_fields=class_fields,
         identity=site.blame,
     )
 
@@ -324,7 +343,7 @@ def _runtime_strategy(
     )
 
 
-def _inherited_strategy(site, ctx, target: str, class_site):
+def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
     bases = class_site.class_bases()
     if len(bases) != 1:
         _panic(
@@ -347,11 +366,14 @@ def _inherited_strategy(site, ctx, target: str, class_site):
     base_name = base_coordinate
     resolved = (ctx.name_resolver or {}).get(base_name)
     if resolved is None:
-        from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.floor import ImportAliasValue, SymbolicValue
 
-        if base.observed == "Name" and isinstance(
-            ctx.temporal.value_if_bound(base_name), SymbolicValue
-        ):
+        bound = (
+            ctx.temporal.value_if_bound(base_name)
+            if base.observed == "Name"
+            else None
+        )
+        if isinstance(bound, SymbolicValue):
             return _runtime_strategy(
                 site,
                 ctx,
@@ -360,6 +382,23 @@ def _inherited_strategy(site, ctx, target: str, class_site):
                 f"Python must resolve {target}.__new__/__init__ from `{base_name}`",
                 runtime_operand=base,
             )
+        if isinstance(bound, ImportAliasValue) and bound.import_target is not None:
+            from sugar_lift_py_tests.sugar.install_source_dig import (
+                resolve_install_source_class_method,
+            )
+
+            init = resolve_install_source_class_method(
+                bound.import_target, "__init__"
+            )
+            if init is not None:
+                return _strategy_from_init(
+                    site,
+                    ctx,
+                    target,
+                    init,
+                    methods=methods,
+                    class_fields=_class_fields(class_site, ctx),
+                )
         _panic(
             site,
             f"{target}({base_name})",
