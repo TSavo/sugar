@@ -228,7 +228,11 @@ def _resolve_qualified_native_callable(
 
 
 def _imported_module_source(module_name: str) -> tuple[str, str] | None:
-    """Compatibility source fallback for modules without a passive file spec."""
+    """Compatibility source fallback for modules without a passive file spec.
+
+    Open-domain absence (missing module, no Python file, unreadable path) is
+    ``None`` by pre-check — never a soft TypeError/getsource swallow (#4203).
+    """
     try:
         from _pytest.outcomes import Skipped
     except ImportError:
@@ -238,10 +242,8 @@ def _imported_module_source(module_name: str) -> tuple[str, str] | None:
 
     try:
         module = importlib.import_module(module_name)
-        sourcefile = inspect.getsourcefile(module)
-        if not sourcefile:
-            return None
-        return Path(sourcefile).read_text(encoding="utf-8"), sourcefile
+    except ImportError:
+        return None
     except Skipped as skipped:
         from sugar_lift_py_tests.factory import (
             FactoryAuditRow,
@@ -272,7 +274,14 @@ def _imported_module_source(module_name: str) -> tuple[str, str] | None:
                 message=f"install-source import raised pytest Skipped: {skipped}; {info.message}",
             ),
         )
-    except (ImportError, OSError, TypeError, UnicodeError):
+
+    # Built-ins and extension modules have no diggable Python source file.
+    sourcefile = getattr(module, "__file__", None)
+    if not isinstance(sourcefile, str) or not sourcefile.endswith((".py", ".pyi")):
+        return None
+    try:
+        return Path(sourcefile).read_text(encoding="utf-8"), sourcefile
+    except (OSError, UnicodeError):
         return None
 
 
@@ -1020,18 +1029,31 @@ def resolve_install_source_class_method(qualified_class: str, method_name: str):
 
     try:
         module = importlib.import_module(module_name)
-        cls = getattr(module, class_name)
-        if not inspect.isclass(cls):
-            return None
-        obj = cls.__dict__.get(method_name)
-        if obj is None:
-            obj = getattr(cls, method_name, None)
-        if obj is None or not callable(obj):
-            return None
-        defining_module = getattr(obj, "__module__", None) or module_name
+    except ImportError:
+        return None
+    cls = getattr(module, class_name, None)
+    if cls is None or not inspect.isclass(cls):
+        return None
+    obj = cls.__dict__.get(method_name)
+    if obj is None:
+        obj = getattr(cls, method_name, None)
+    if obj is None or not callable(obj):
+        return None
+    # Open domain: builtins / descriptors / extension methods have no source.
+    # Pre-check so TypeError from getsource is not soft-swallowed (#4203).
+    if inspect.isbuiltin(obj) or inspect.ismethoddescriptor(obj):
+        return None
+    target = inspect.unwrap(obj) if callable(obj) else obj
+    code = getattr(target, "__code__", None)
+    if code is None:
+        code = getattr(getattr(target, "__func__", None), "__code__", None)
+    if code is None:
+        return None
+    defining_module = getattr(obj, "__module__", None) or module_name
+    try:
         source = textwrap.dedent(inspect.getsource(obj))
         sourcefile = inspect.getsourcefile(obj) or f"<{module_name}>"
-    except (ImportError, AttributeError, OSError, TypeError):
+    except OSError:
         return None
     try:
         parsed = SourceFragment.from_source_private(source, sourcefile)
@@ -1424,8 +1446,11 @@ def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
         return None
     if require_attachable and not method_body_is_attachable(fn_site):
         return None
+    from dataclasses import replace
+
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.factory.sugar_constructors import (
+        IncompleteFunctionBody,
         _ctx_with_formal_binds,
         build_bridge_body,
     )
@@ -1437,8 +1462,6 @@ def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
     if name in building or bridge in building:
         return None
     try:
-        from dataclasses import replace
-
         body_ctx = replace(ctx, building=building | {name, bridge})
         body_ctx = _ctx_with_method_module_bindings(fn_site, body_ctx)
         mod = getattr(fn_site.node, "_sugar_bridge_name", "") or ""
@@ -1477,7 +1500,9 @@ def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
             role=SugarRole.TERM,
         )
         return _contextualized_dig_body(sequential, formal_ctx)
-    except Exception:
+    except IncompleteFunctionBody:
+        # Named dig opacity: body reduction stayed Incomplete. Coordinate-only
+        # body=None — not a soft Exception swallow of construction gaps (#4203).
         return None
 
 
