@@ -13,17 +13,10 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 class StarImportFromSugar(Sugar, role=SugarRole.STATEMENT):
     """``from module import *`` — bind only statically decidable public names.
 
-    When the imported module carries a literal ``__all__`` (or other static
-    export manifest the dig layer can read without executing the module), each
-    export becomes an ``ImportAliasValue`` the same way a named import-from
-    does. When no static manifest exists — C extensions, builtins, open
-    environments — the statement still has a recognizer: it reduces to an
-    empty block of bindings. Unresolved names stay unbound and TemporalContext
-    stays loud on demand; the AST shape is no longer unowned.
-
-    Relative star imports keep the same empty-or-manifest rule; absolute-izing
-    relative targets for dig is the install-source layer's job when a consumer
-    later demands a name.
+    Literal source ``__all__`` manifests and exact native/builtin namespaces
+    are decidable at lift time, so every exported name becomes the same
+    ``ImportAliasValue`` used by a named import-from. Relative, missing, and
+    dynamically-computed source namespaces remain loud construction gaps.
     """
 
     module: str
@@ -40,22 +33,40 @@ class StarImportFromSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def new(cls, site, ctx) -> "StarImportFromSugar":
         del ctx
-        prefix = "." * site.importfrom_level()
+        from sugar_lift_py_tests.sugar.install_source_dig import (
+            resolved_star_import_names,
+        )
+
         module = site.importfrom_module()
-        if module is not None:
-            prefix += module
-        exports = _static_star_exports(module, site.importfrom_level())
-        return cls(prefix, exports, site)
+        exports = (
+            resolved_star_import_names(module)
+            if site.importfrom_level() == 0 and module is not None
+            else None
+        )
+        if exports is None:
+            from sugar_lift_py_tests.factory import factory_panic_gap
+            from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
+            factory_panic_gap(
+                owner="StarImportFromSugar",
+                blame=site,
+                observed=f"from {'.' * site.importfrom_level()}{module or ''} import *",
+                requested="resolved static star-import exports",
+                fix=(
+                    "provide a literal source __all__ or an exact native/builtin "
+                    "module; relative, dynamic, and unresolved stars stay loud"
+                ),
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.CONSTRUCTION,
+            )
+        assert module is not None and exports is not None
+        return cls(module, exports, site)
 
     @classmethod
     def witnesses(cls):
         # Star itself contributes no FOL fact; the return pins ownership via
         # an enclosing function that still reaches a SAT/UNSAT twin.
-        prefix = (
-            "def A():\n"
-            "    from operator import *\n"
-            "    return 1\n\n"
-        )
+        prefix = "def A():\n" "    from operator import *\n" "    return 1\n\n"
         return _call_pair(
             name="star_importfrom_statement",
             owner_sugar="StarImportFromSugar",
@@ -65,20 +76,13 @@ class StarImportFromSugar(Sugar, role=SugarRole.STATEMENT):
 
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx
-        if not self.names:
-            return Complete(BlockValue(()))
-        separator = "" if self.module.endswith(".") or not self.module else "."
         return Complete(
             BlockValue(
                 tuple(
                     ImportAliasValue(
-                        name=f"{self.module}{separator}{exported}",
+                        name=f"{self.module}.{exported}",
                         bound_name=exported,
-                        import_target=(
-                            f"{self.module}{separator}{exported}"
-                            if self.module
-                            else exported
-                        ),
+                        import_target=f"{self.module}.{exported}",
                     )
                     for exported in self.names
                 )
@@ -87,24 +91,3 @@ class StarImportFromSugar(Sugar, role=SugarRole.STATEMENT):
 
     def walk_children(self):
         return ()
-
-
-def _static_star_exports(module: str | None, level: int) -> tuple[str, ...]:
-    """Read a static star-export set without executing the imported module.
-
-    Only absolute modules with a passive source ``__all__`` are decidable here.
-    Relative stars and extension/builtin modules return the empty set so the
-    sugar still owns the shape without fabricating names.
-    """
-    if level != 0 or not module:
-        return ()
-    try:
-        from sugar_lift_py_tests.sugar.install_source_dig import (
-            _static_module_exports,
-        )
-    except ImportError:
-        return ()
-    exports = _static_module_exports(module)
-    if exports is None:
-        return ()
-    return tuple(sorted(exports))
