@@ -44,7 +44,9 @@ def _expand_function_positional_args(
             expanded.extend(operand.elements)
             continue
 
-        if type(operand) is SymbolicValue:
+        if type(operand) is SymbolicValue or (
+            type(operand) is CallSiteValue and operand.body is None
+        ):
             from sugar_lift_py_tests.effect import (
                 StarredPositionalRuntimeEffect,
                 runtime_effect_evidence,
