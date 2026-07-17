@@ -532,6 +532,121 @@ def test_source_bytesio_constructor_truthful_sat_wrong_twin_unsat(tmp_path) -> N
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_inherited_bytesio_constructor_carries_seed_and_methods() -> None:
+    temporal = TemporalContext.empty().bind_value(
+        "BytesIO",
+        ImportAliasValue(
+            "BytesIO",
+            "BytesIO",
+            import_target="io.BytesIO",
+        ),
+    )
+    outcome = _outcome(
+        "class RandomReader(BytesIO):\n"
+        "    kind = 'random-reader'\n"
+        "    def marker(self):\n"
+        "        return 7\n",
+        "RandomReader('seeded')",
+        temporal=temporal,
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert _field_values(outcome.value) == {
+        "__bytesio_buffer__": StringValue("seeded"),
+    }
+    assert outcome.value.has_method("marker")
+    assert {field.name: field.value for field in outcome.value.class_fields} == {
+        "kind": StringValue("random-reader"),
+    }
+
+
+@pytest.mark.parametrize("expression", ("RandomReader()", "RandomReader(1, 2)"))
+def test_inherited_bytesio_constructor_wrong_arity_stays_loud(
+    expression: str,
+) -> None:
+    temporal = TemporalContext.empty().bind_value(
+        "BytesIO",
+        ImportAliasValue(
+            "BytesIO",
+            "BytesIO",
+            import_target="io.BytesIO",
+        ),
+    )
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class RandomReader(BytesIO):\n" "    pass\n",
+            expression,
+            temporal=temporal,
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+
+
+def test_inherited_bytesio_constructor_shadowed_base_stays_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class BytesIO:\n"
+            "    pass\n"
+            "class RandomReader(BytesIO):\n"
+            "    pass\n",
+            "RandomReader('seeded')",
+        )
+
+    assert raised.value.info.owner == "RuntimeEffect"
+    assert raised.value.info.requested == "genuine runtime-dependent operand"
+
+
+@pytest.mark.parametrize(
+    "class_source",
+    (
+        "class RandomReader(BytesIO):\n"
+        "    def __new__(cls, seed):\n"
+        "        return object()\n",
+        "class RandomReader(BytesIO):\n" "    __new__ = replacement\n",
+        "class RandomReader(BytesIO):\n"
+        "    async def __new__(cls, seed):\n"
+        "        return object()\n",
+        "@decorate\n" "class RandomReader(BytesIO):\n" "    pass\n",
+        "class RandomReader(BytesIO, metaclass=Meta):\n" "    pass\n",
+    ),
+)
+def test_inherited_bytesio_constructor_overrides_stay_loud(
+    class_source: str,
+) -> None:
+    temporal = TemporalContext.empty().bind_value(
+        "BytesIO",
+        ImportAliasValue(
+            "BytesIO",
+            "BytesIO",
+            import_target="io.BytesIO",
+        ),
+    )
+    with pytest.raises(FactoryPanic):
+        _outcome(
+            class_source,
+            "RandomReader('seeded')",
+            temporal=temporal,
+        )
+
+
+def test_inherited_bytesio_constructor_witness_refutes_wrong_twin(tmp_path) -> None:
+    pair = next(
+        witness
+        for witness in ConstructorCallSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "inherited_bytesio_constructor"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_source_bytesio_constructor_carries_seeded_buffer() -> None:
     temporal = (
         TemporalContext.empty()

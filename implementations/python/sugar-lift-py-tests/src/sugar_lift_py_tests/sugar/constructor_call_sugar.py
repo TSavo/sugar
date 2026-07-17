@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
@@ -84,6 +85,14 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
             "        return 7\n"
             "\n"
         )
+        inherited_bytesio_prefix = (
+            "from io import BytesIO\n"
+            "\n"
+            "class RandomReader(BytesIO):\n"
+            "    def marker(self):\n"
+            "        return 7\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="constructor_field_return",
@@ -104,6 +113,17 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
                 + "def test_c():\n    assert TextIO('seeded').marker() == 7\n",
                 lying=bytesio_prefix
                 + "def test_c():\n    assert TextIO('seeded').marker() == 8\n",
+                family="source-native-base-constructor",
+            ),
+            _call_pair(
+                name="inherited_bytesio_constructor",
+                owner_sugar=cls.__name__,
+                truthful=inherited_bytesio_prefix
+                + "def test_inherited():\n"
+                + "    assert RandomReader(b'seeded').marker() == 7\n",
+                lying=inherited_bytesio_prefix
+                + "def test_inherited():\n"
+                + "    assert RandomReader(b'seeded').marker() == 8\n",
                 family="source-native-base-constructor",
             ),
         )
@@ -501,6 +521,16 @@ def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
             f"resolve {target}.__new__/__init__ from that runtime operand",
             runtime_operand=base,
         )
+    inherited_bytesio = _inherited_bytesio_strategy(
+        site,
+        ctx,
+        target,
+        class_site,
+        methods,
+        base,
+    )
+    if inherited_bytesio is not None:
+        return inherited_bytesio
     base_name = base_coordinate
     mro = _static_constructor_mro(target, class_site, ctx)
     if mro is not None:
@@ -552,6 +582,62 @@ def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
             f"`{base_name}` must resolve to a ClassDef before `{target}` can construct",
         )
     return _strategy(site, ctx, target, resolved_site)
+
+
+def _inherited_bytesio_strategy(site, ctx, target, class_site, methods, base):
+    """Carry the exact one-argument ``io.BytesIO`` inherited constructor seed."""
+    has_local_new = any(
+        _statement_binds_name(statement.node, "__new__")
+        for statement in class_site.class_body()
+    )
+    if (
+        base.observed != "Name"
+        or class_site.class_decorators()
+        or class_site.class_keywords()
+        or has_local_new
+        or (ctx.name_resolver or {}).get(base.name_id()) is not None
+        or _import_target_for_name(ctx, base.name_id())
+        not in {"io.BytesIO", "_io.BytesIO"}
+        or site.call_arg_count() != 1
+    ):
+        return None
+    return ConstructorStrategy(
+        class_name=target,
+        fields=(
+            (
+                "__bytesio_buffer__",
+                ctx.build_body(site.call_args()[0], SugarRole.TERM),
+            ),
+        ),
+        methods=methods,
+        class_fields=_class_fields(class_site, ctx),
+        identity=site.blame,
+    )
+
+
+def _statement_binds_name(node, name: str) -> bool:
+    """Conservatively reject any class-body statement that may bind ``name``."""
+    for descendant in ast.walk(node):
+        if (
+            isinstance(
+                descendant,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+            )
+            and descendant.name == name
+        ):
+            return True
+        if (
+            isinstance(descendant, ast.Name)
+            and isinstance(descendant.ctx, ast.Store)
+            and descendant.id == name
+        ):
+            return True
+        if isinstance(descendant, (ast.Import, ast.ImportFrom)) and any(
+            (alias.asname or alias.name.split(".", 1)[0]) == name
+            for alias in descendant.names
+        ):
+            return True
+    return False
 
 
 def _base_type_coordinate(base):
