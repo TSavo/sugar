@@ -453,7 +453,7 @@ class TermValue(FloorValue):
         if type(other) is TermValue:
             from sugar_lift_py_tests.effect import (
                 TypeErrorRuntimeEffect,
-                runtime_effect_witness,
+                runtime_effect_evidence,
             )
             from sugar_lift_py_tests.outcome import Incomplete
 
@@ -464,7 +464,7 @@ class TermValue(FloorValue):
                     f"unsupported operand type(s) for @: "
                     f"'{left_ty}' and '{right_ty}'; "
                     f"owner=TermValue.matrix_multiply site={site}",
-                    witness=runtime_effect_witness("py.matmul", other, site),
+                    **runtime_effect_evidence("py.matmul", other, site),
                 )
             )
         return super().matrix_multiply(other, site)
