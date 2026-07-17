@@ -18,6 +18,12 @@ Hard law:
   - No panic/refusal weakened; no bound raised to invent green without recording slow.
   - Single-lane sequential replay only (no host parallelism).
   - Ledger is append-only JSONL so partial progress ships and residual R is measured.
+
+Progress (macro hotspots — no guessing):
+  - Children set SUGAR_ENGINE_LOG + SUGAR_ENGINE_PROGRESS so factory/sugar
+    reduction_span heartbeats write JSONL while lifting.
+  - On kill, each attempt carries last_progress: sugar_hotspots, last stack/site.
+  - That answers "lift, and which sugar?" — not solve (this path never solves).
 """
 
 from __future__ import annotations
@@ -149,14 +155,161 @@ def append_ledger(ledger_path: Path, row: dict[str, Any]) -> None:
         handle.flush()
 
 
+def _phase_from_role(role: str | None) -> str:
+    """Bisection bucket from span role.
+
+    First cut: factory vs reduce vs file.
+    Second cut (inside factory wall): dig.* vs factory.select vs factory.new.*.
+    """
+    text = str(role or "")
+    if text.startswith("dig."):
+        return "dig"
+    if text.startswith("factory.select"):
+        return "factory_select"
+    if text.startswith("factory.new") or text.startswith("factory."):
+        return "factory_new"
+    if text == "file":
+        return "file"
+    if text:
+        return "reduce"
+    return "other"
+
+
+def extract_progress_from_engine_log(
+    path: Path, *, last_n: int = 12
+) -> dict[str, Any] | None:
+    """Macro hotspot summary from ``sugar.engine.log.v1`` JSONL (no guessing).
+
+    First-cut bisection answers (not a profiler guess):
+      - phase_ms / phase_share: factory construct vs SugarBody.reduce wall
+        from completed span exits (elapsed_ms)
+      - sugar_hotspots: heartbeat primary sugar (deepest live frame)
+      - exit_sugar_ms: completed-span wall by sugar name (where time *finished*)
+      - last_heartbeat / active_stack: where the kill still was
+
+    Bisect method: open the dominant phase, then the dominant sugar, then add
+    tighter spans inside that path until the quadratic shows.
+    """
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    events: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and payload.get("schema") == "sugar.engine.log.v1":
+            events.append(payload)
+    if not events:
+        return {
+            "event_count": 0,
+            "heartbeat_count": 0,
+            "sugar_hotspots": [],
+            "exit_sugar_ms": [],
+            "phase_ms": {},
+            "phase_share": {},
+            "last_heartbeat": None,
+            "recent": [],
+        }
+    heartbeats = [event for event in events if event.get("event") == "heartbeat"]
+    exits = [event for event in events if event.get("event") == "exit"]
+    sugar_counts: Counter[str] = Counter(
+        str(event.get("sugar") or "?") for event in heartbeats
+    )
+    # Completed-span wall: sum exit elapsed_ms by sugar and by phase.
+    # Nested spans double-count wall; use phase_share only for ranking buckets.
+    exit_ms_by_sugar: Counter[str] = Counter()
+    phase_ms: Counter[str] = Counter()
+    role_ms: Counter[str] = Counter()
+    dig_target_ms: Counter[str] = Counter()
+    for event in exits:
+        try:
+            ms = float(event.get("elapsed_ms") or 0.0)
+        except (TypeError, ValueError):
+            ms = 0.0
+        if ms <= 0:
+            continue
+        sugar = str(event.get("sugar") or "?")
+        role = (
+            event.get("role")
+            if isinstance(event.get("role"), str)
+            else str(event.get("role") or "")
+        )
+        exit_ms_by_sugar[sugar] += ms
+        phase = _phase_from_role(role)
+        phase_ms[phase] += ms
+        role_ms[role or "?"] += ms
+        if phase == "dig":
+            dig_target_ms[sugar] += ms
+    # Heartbeat phase votes (live stack tips during hang).
+    heartbeat_phase: Counter[str] = Counter(
+        _phase_from_role(
+            event.get("role")
+            if isinstance(event.get("role"), str)
+            else str(event.get("role") or "")
+        )
+        for event in heartbeats
+    )
+    heartbeat_role: Counter[str] = Counter(
+        str(event.get("role") or "?") for event in heartbeats
+    )
+    total_phase = sum(phase_ms.values()) or 0.0
+    phase_share = {
+        name: round(ms / total_phase, 4) if total_phase else 0.0
+        for name, ms in phase_ms.items()
+    }
+    recent = (heartbeats or events)[-last_n:]
+    last_hb = heartbeats[-1] if heartbeats else None
+    return {
+        "event_count": len(events),
+        "heartbeat_count": len(heartbeats),
+        "sugar_hotspots": [
+            {"sugar": name, "heartbeat_count": count}
+            for name, count in sugar_counts.most_common(12)
+        ],
+        "exit_sugar_ms": [
+            {"sugar": name, "elapsed_ms": round(ms, 1)}
+            for name, ms in exit_ms_by_sugar.most_common(12)
+        ],
+        "phase_ms": {name: round(ms, 1) for name, ms in phase_ms.most_common()},
+        "phase_share": phase_share,
+        "role_ms": {
+            name: round(ms, 1) for name, ms in role_ms.most_common(16)
+        },
+        "dig_target_ms": [
+            {"target": name, "elapsed_ms": round(ms, 1)}
+            for name, ms in dig_target_ms.most_common(12)
+        ],
+        "heartbeat_phase_counts": dict(heartbeat_phase),
+        "heartbeat_role_counts": dict(heartbeat_role),
+        "last_heartbeat": last_hb,
+        "recent": recent,
+    }
+
+
 def run_child_at_bound(
     *,
     script: Path,
     path: Path,
     rel: str,
     timeout_seconds: int,
+    engine_log_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Run one file in a child process with a hard wall clock bound."""
+    """Run one file in a child process with a hard wall clock bound.
+
+    When ``engine_log_dir`` is set (default: temp under system tmp for each
+    call when env SUGAR_ENGINE_PROGRESS is not ``0``), the child writes engine
+    heartbeats to a per-run JSONL. On timeout the parent attaches
+    ``last_progress`` (macro sugar hotspots + last stack) so the kill is not
+    a blind stopwatch.
+    """
     command = [
         sys.executable,
         str(script),
@@ -167,6 +320,28 @@ def run_child_at_bound(
     ]
     env = dict(os.environ)
     env["PYTHONFAULTHANDLER"] = "1"
+    progress_off = (env.get("SUGAR_ENGINE_PROGRESS") or "").strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    log_path: Path | None = None
+    if not progress_off:
+        import tempfile
+
+        if engine_log_dir is not None:
+            engine_log_dir.mkdir(parents=True, exist_ok=True)
+            safe = rel.replace("/", "__").replace("\\", "__")
+            log_path = engine_log_dir / f"{safe}.{timeout_seconds}s.engine.jsonl"
+        else:
+            fd, name = tempfile.mkstemp(prefix="sugar-engine-", suffix=".jsonl")
+            os.close(fd)
+            log_path = Path(name)
+        env["SUGAR_ENGINE_LOG"] = str(log_path)
+        env["SUGAR_ENGINE_PROGRESS"] = "1"
+        # Fast heartbeats under short discovery bounds so 10s kills still have stacks.
+        env.setdefault("SUGAR_ENGINE_HEARTBEAT_SECONDS", "2")
     started = time.monotonic()
     try:
         result = subprocess.run(
@@ -194,6 +369,30 @@ def run_child_at_bound(
         )
     row["bound_seconds"] = timeout_seconds
     row["elapsed_seconds"] = round(elapsed, 3)
+    if log_path is not None:
+        progress = extract_progress_from_engine_log(log_path)
+        if progress is not None:
+            row["last_progress"] = progress
+            if row.get("category") == "timeout-or-hang" or row.get("verdict") in {
+                "timeout-at-bound",
+                "hang-at-max-bound",
+            }:
+                # Surface the hotspot name for humans scanning JSONL.
+                hotspots = progress.get("sugar_hotspots") or []
+                if hotspots:
+                    row["timeout_hotspot"] = hotspots[0].get("sugar")
+                last_hb = progress.get("last_heartbeat")
+                if isinstance(last_hb, dict):
+                    row["timeout_last_sugar"] = last_hb.get("sugar")
+                    row["timeout_last_site"] = last_hb.get("site")
+                    row["timeout_last_stack"] = last_hb.get("active_stack")
+        # Keep hang logs; drop completed noise unless caller set a durable dir.
+        if engine_log_dir is None and log_path.is_file():
+            if row.get("category") != "timeout-or-hang":
+                try:
+                    log_path.unlink()
+                except OSError:
+                    pass
     return row
 
 
@@ -243,6 +442,19 @@ def attach_cause_class(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _copy_progress_fields(src: dict[str, Any], dest: dict[str, Any]) -> None:
+    """Preserve macro hotspot progress from the child kill/finish path."""
+    for key in (
+        "last_progress",
+        "timeout_hotspot",
+        "timeout_last_sugar",
+        "timeout_last_site",
+        "timeout_last_stack",
+    ):
+        if key in src and src[key] is not None:
+            dest[key] = src[key]
+
+
 def verdict_from_terminal(terminal: dict[str, Any], *, bound: int) -> dict[str, Any]:
     """Map a triage category at a given bound into a #4894 classification verdict."""
     category = str(terminal.get("category") or "")
@@ -253,6 +465,7 @@ def verdict_from_terminal(terminal: dict[str, Any], *, bound: int) -> dict[str, 
         "category": category,
         "reason": terminal.get("reason"),
     }
+    _copy_progress_fields(terminal, base)
     if category == "completed":
         base["verdict"] = "completes-at-bound"
         # PERF lane: only when the lift truly needed >120s, not merely when the
@@ -354,23 +567,29 @@ def classify_file(
 
     # Exhausted all bounds including max — genuine hang / pathological lift.
     last = attempts[-1]
-    return attach_cause_class(
-        {
-            "file": rel,
-            "verdict": "hang-at-max-bound",
-            "bound_seconds": last.get("bound_seconds"),
-            "elapsed_seconds": last.get("elapsed_seconds"),
-            "category": "timeout-or-hang",
-            "reason": last.get("reason"),
-            "attempts": attempts,
-            "discovery_bound_seconds": discovery_bound,
-            "escalation_bounds_seconds": list(escalation_bounds),
-            "was_discovery_timeout": True,
-            "next_owner": (
-                "lift-work-budget: emit loud budget-exceeded terminal; hang is not OK"
-            ),
-        }
-    )
+    hang: dict[str, Any] = {
+        "file": rel,
+        "verdict": "hang-at-max-bound",
+        "bound_seconds": last.get("bound_seconds"),
+        "elapsed_seconds": last.get("elapsed_seconds"),
+        "category": "timeout-or-hang",
+        "reason": last.get("reason"),
+        "attempts": attempts,
+        "discovery_bound_seconds": discovery_bound,
+        "escalation_bounds_seconds": list(escalation_bounds),
+        "was_discovery_timeout": True,
+        "next_owner": (
+            "lift-work-budget: emit loud budget-exceeded terminal; hang is not OK"
+        ),
+    }
+    # Prefer last attempt's progress (max-bound kill); fall back to any earlier.
+    _copy_progress_fields(last, hang)
+    if "last_progress" not in hang:
+        for attempt in reversed(attempts):
+            if attempt.get("last_progress"):
+                _copy_progress_fields(attempt, hang)
+                break
+    return attach_cause_class(hang)
 
 
 def summarize_ledger(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -384,6 +603,7 @@ def summarize_ledger(rows: list[dict[str, Any]]) -> dict[str, Any]:
     bare_exceptions: list[dict[str, Any]] = []
     other: list[dict[str, Any]] = []
     by_cause: dict[str, list[str]] = defaultdict(list)
+    timeout_hotspot_counts: Counter[str] = Counter()
 
     for row in rows:
         # Recompute cause tags so pre-upgrade ledger lines still classify.
@@ -394,6 +614,13 @@ def summarize_ledger(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if cause:
             cause_counts[str(cause)] += 1
             by_cause[str(cause)].append(str(tagged.get("file") or ""))
+        hotspot = tagged.get("timeout_hotspot")
+        if hotspot:
+            timeout_hotspot_counts[str(hotspot)] += 1
+        elif isinstance(tagged.get("last_progress"), dict):
+            sugars = tagged["last_progress"].get("sugar_hotspots") or []
+            if sugars and isinstance(sugars[0], dict) and sugars[0].get("sugar"):
+                timeout_hotspot_counts[str(sugars[0]["sugar"])] += 1
         if verdict == "completes-at-bound":
             bound = int(tagged.get("bound_seconds") or 0)
             bound_hist[bound] += 1
@@ -483,6 +710,10 @@ def summarize_ledger(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "owner_families": ranking["owner_families"],
         "owners": ranking["owners"],
         "factory_panic_fronts": ranking["exact_fronts"],
+        "timeout_sugar_hotspots": [
+            {"sugar": name, "file_count": count}
+            for name, count in timeout_hotspot_counts.most_common(20)
+        ],
     }
 
 

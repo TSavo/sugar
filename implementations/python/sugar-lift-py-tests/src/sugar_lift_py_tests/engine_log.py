@@ -122,15 +122,19 @@ def _emit_heartbeats(
             if not stack:
                 continue
             oldest = stack[0]
+            # Primary sugar/site is the *deepest* frame (current hotspot).
+            # oldest_elapsed_ms still measures how long the root span has been open.
+            current = stack[-1]
             elapsed = now - oldest.started
             if elapsed < minimum:
                 continue
             _emit(
                 logging.WARNING,
                 "heartbeat",
-                oldest,
+                current,
                 thread_id=thread_id,
                 oldest_elapsed_ms=round(elapsed * 1000, 3),
+                oldest_fingerprint=oldest.fingerprint,
                 active_depth=len(stack),
                 active_stack=[item.fingerprint for item in stack],
             )

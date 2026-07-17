@@ -81,30 +81,46 @@ def _build_site(
     catalog: SugarCatalog,
     ctx: FactoryBuildContext,
 ) -> FactoryBuildResult:
-    candidates = list(catalog.candidates_for(role, site))
-    if not candidates:
-        info = FactoryGapInfo(
-            owner="python.factory",
-            blame=site.blame,
-            observed=site.observed,
-            requested=role.value,
-            fix=f"create {site.suggested_sugar_module}",
-        )
-        audit_row = FactoryAuditRow(
-            role=role.value,
-            status=FactoryAuditStatus.SUGAR_GAP,
-            observed=site.observed,
-            blame=site.blame,
-            selected=None,
-            candidates=[],
-            message=info.message,
-        )
-        factory_panic(info, audit_row)
+    # Second-cut bisection: factory.select (catalog match) vs factory.new
+    # (claim construction). Heartbeats name which half owns the wall.
+    from sugar_lift_py_tests.engine_log import reduction_span
 
-    selected = _select_candidate(candidates)
-    if selected is None:
-        _raise_ambiguous_candidates(site, role, candidates)
-    sugar = selected.claim.new(site, ctx)
+    with reduction_span(
+        sugar=str(site.observed),
+        role="factory.select",
+        site=site.blame,
+    ):
+        candidates = list(catalog.candidates_for(role, site))
+        if not candidates:
+            info = FactoryGapInfo(
+                owner="python.factory",
+                blame=site.blame,
+                observed=site.observed,
+                requested=role.value,
+                fix=f"create {site.suggested_sugar_module}",
+            )
+            audit_row = FactoryAuditRow(
+                role=role.value,
+                status=FactoryAuditStatus.SUGAR_GAP,
+                observed=site.observed,
+                blame=site.blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            )
+            factory_panic(info, audit_row)
+
+        selected = _select_candidate(candidates)
+        if selected is None:
+            _raise_ambiguous_candidates(site, role, candidates)
+    # Nested claim.new → build_body → build_node (and dig) stacks show *which
+    # sugar is being built* on hang heartbeats (distinct from SugarBody.reduce).
+    with reduction_span(
+        sugar=selected.name,
+        role=f"factory.new.{role.value}",
+        site=site.blame,
+    ):
+        sugar = selected.claim.new(site, ctx)
     message = (
         f"selected Sugar `{selected.name}` for role {role.value} at `{site.blame}`"
     )
