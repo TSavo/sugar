@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 
 import pytest
-from factory_reduce import fol
+from factory_reduce import compose_block, fol
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext
@@ -11,10 +11,19 @@ from sugar_lift_py_tests.factory import factory_panic
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic as FactoryGap
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, TermValue
+from sugar_lift_py_tests.floor import (
+    BlockValue,
+    CallSiteValue,
+    ImportAliasValue,
+    ReturnValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar.attribute_delete_sugar import AttributeDeleteSugar
 from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _ctx_for_module(source: str) -> FactoryBuildContext:
@@ -184,6 +193,43 @@ class Box:
     value = block.statements[0]
     assert isinstance(value, CallSiteValue)
     assert value.target_name == "Box.__delattr__"
+
+
+def test_attribute_delete_unbinds_a_constructed_dotted_attribute() -> None:
+    block = compose_block(
+        "    np._ScaledFloatTestDType = 1\n"
+        "    del np._ScaledFloatTestDType\n"
+        "    return 2",
+        binds={"np": ImportAliasValue("numpy", "np", import_target="numpy")},
+    )
+
+    assert block.statements == (ReturnValue(TermValue(2)),)
+
+
+def test_attribute_delete_without_a_constructed_binding_stays_loud() -> None:
+    with pytest.raises(FactoryGap) as raised:
+        compose_block(
+            "    del np.unconstructed",
+            binds={"np": ImportAliasValue("numpy", "np", import_target="numpy")},
+        )
+
+    assert raised.value.info.owner == "AttributeDeleteSugar"
+    assert raised.value.info.requested == "attribute deletion data-model method"
+
+
+def test_constructed_attribute_delete_witness_truthful_sat_lying_unsat(
+    tmp_path,
+) -> None:
+    pair = AttributeDeleteSugar.witnesses()
+    assert isinstance(pair, SugarWitnessPair)
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_descriptor_set_dunder_wins_for_attribute_assignment() -> None:
