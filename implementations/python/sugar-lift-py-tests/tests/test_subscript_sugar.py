@@ -23,6 +23,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var, num, py_eq
+from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.outcome import Incomplete
 
 
@@ -61,6 +62,27 @@ def test_dict_subscript_folds_to_value() -> None:
 def test_dict_subscript_missing_key_ground_wrong_twin_panics() -> None:
     with pytest.raises(FactoryPanic):
         _outcome('{"k":9}["missing"]')
+
+
+def test_membership_guard_refines_joined_dict_before_ground_subscript() -> None:
+    source = """
+def choose(flag):
+    if flag:
+        selector = {"*": "runtime"}
+    else:
+        selector = {}
+    if "*" in selector:
+        return selector["*"]
+    return "missing"
+
+def test_choose():
+    assert choose(True) == "runtime"
+"""
+
+    payload = lift_file_payload(source, "membership_subscript.py")
+
+    assert payload.ir
+    assert not payload.effects
 
 
 def test_symbolic_receiver_is_py_subscript_coordinate() -> None:

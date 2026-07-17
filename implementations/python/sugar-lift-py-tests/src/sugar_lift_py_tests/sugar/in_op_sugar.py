@@ -57,30 +57,73 @@ class InOpSugar(Sugar, role=SugarRole.TERM):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        return self.left.reduce(ctx).and_then(
+            lambda left: self.right.reduce(ctx).and_then(
+                lambda right: self._predicate(left, right)
+            )
+        )
+
+    def _predicate(self, left, right):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
         from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 
-        return self.left.reduce(ctx).and_then(
-            lambda left: self.right.reduce(ctx).and_then(
-                lambda right: Complete(
-                    PredicateValue(
-                        atomic(
-                            "py.in",
-                            [
-                                left.to_term(owner=str(self.site)),
-                                right.to_term(owner=str(self.site)),
-                            ],
-                        ),
-                        self.site,
-                        operand_callsites=(
-                            *left.callsites(),
-                            *right.callsites(),
-                        ),
-                    )
-                )
+        formula = atomic(
+            "py.in",
+            [
+                left.to_term(owner=str(self.site)),
+                right.to_term(owner=str(self.site)),
+            ],
+        )
+        then_bindings = ()
+        else_bindings = ()
+        if isinstance(self.right.sugar, NameSugar):
+            name = self.right.sugar.name
+            when_present = _membership_face(right, left, present=True)
+            when_absent = _membership_face(right, left, present=False)
+            if when_present is not None:
+                then_bindings = ((name, when_present),)
+            if when_absent is not None:
+                else_bindings = ((name, when_absent),)
+        return Complete(
+            PredicateValue(
+                formula,
+                self.site,
+                operand_callsites=(
+                    *left.callsites(),
+                    *right.callsites(),
+                ),
+                then_bindings=then_bindings,
+                else_bindings=else_bindings,
             )
         )
 
     def walk_children(self):
         return (self.left, self.right)
+
+
+def _membership_face(value, needle, *, present: bool):
+    """Keep only joined dictionary faces compatible with a membership branch."""
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+
+    if isinstance(value, GuardedValue):
+        when_true = _membership_face(value.when_true, needle, present=present)
+        when_false = _membership_face(value.when_false, needle, present=present)
+        if when_true is None:
+            return when_false
+        if when_false is None:
+            return when_true
+        return GuardedValue(value.guard, when_true, when_false)
+    if not isinstance(value, DictValue):
+        return value
+    if type(needle) not in (StringValue, TermValue):
+        return value
+    contains = any(
+        type(key) is type(needle) and key.value == needle.value
+        for key, _entry_value in value.entries
+    )
+    return value if contains is present else None
