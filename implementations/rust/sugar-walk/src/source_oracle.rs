@@ -5,6 +5,11 @@
 //! names, and recomputable CIDs. It never carries source text or serialized AST
 //! content. Consumers re-read the authoritative source file and recompute the
 //! CIDs to prove the pointer still names the same body.
+//!
+//! #3855: `SourceMemento` / `SrcSpan` are membrane currency in
+//! `libsugar::core` (language-neutral wire locators). This module re-exports
+//! them and owns the Rust-kit oracle surface (fragments, span minting from
+//! syn/proc_macro2, resolve).
 
 use std::collections::BTreeMap;
 
@@ -13,14 +18,8 @@ use serde_json::{json, Value};
 use sugar_canonicalizer::blake3_512_of;
 use syn::spanned::Spanned;
 
-/// A source span, 1-based line / 0-based column.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SrcSpan {
-    pub start_line: usize,
-    pub start_col: usize,
-    pub end_line: usize,
-    pub end_col: usize,
-}
+/// Language-neutral source locator types — owned by libsugar membrane.
+pub use libsugar::core::{SourceMemento, SrcSpan};
 
 /// The oracle-side source fragment. This is the materialized form that may carry
 /// source body text and an AST template. It is never emitted as a memento.
@@ -44,148 +43,6 @@ impl SourceFragment {
             source_cid: blake3_512_of(self.body_text.as_bytes()),
             template_cid: blake3_512_of(self.ast_template.to_string().as_bytes()),
         }
-    }
-}
-
-/// Content-addressed pointer to a Rust source function body.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SourceMemento {
-    pub file: String,
-    pub function_name: String,
-    pub span: SrcSpan,
-    pub param_names: Vec<String>,
-    pub source_cid: String,
-    pub template_cid: String,
-}
-
-impl SourceMemento {
-    pub fn source_function_name(&self) -> Option<&str> {
-        (!self.function_name.is_empty()).then_some(self.function_name.as_str())
-    }
-
-    pub fn to_json(&self) -> Value {
-        let mut value = json!({
-            "kind": "source-memento",
-            "file": self.file,
-            "span": {
-                "start_line": self.span.start_line,
-                "start_col": self.span.start_col,
-                "end_line": self.span.end_line,
-                "end_col": self.span.end_col,
-            },
-            "paramNames": self.param_names,
-            "param_names": self.param_names,
-            "source_cid": self.source_cid,
-            "template_cid": self.template_cid,
-        });
-        if let Some(name) = self.source_function_name() {
-            value["sourceFunctionName"] = json!(name);
-            value["source_function_name"] = json!(name);
-        }
-        value
-    }
-
-    /// Extract the source text this memento's span refers to from a full source
-    /// file string. Returns `None` when the line/column indices are out of range
-    /// or the byte slice is not valid UTF-8.
-    ///
-    /// Span coordinates: `start_line` / `end_line` are 1-indexed; `start_col`
-    /// / `end_col` are 0-indexed byte offsets within the line (exclusive end),
-    /// matching proc_macro2 / syn conventions.
-    pub fn extract_term_source<'a>(&self, source_text: &'a str) -> Option<&'a str> {
-        if self.span.start_line == 0 || self.span.start_line != self.span.end_line {
-            return None; // absent or multi-line: not supported
-        }
-        let line = source_text.lines().nth(self.span.start_line - 1)?; // 1→0 indexed
-        let bytes = line.as_bytes();
-        let start = self.span.start_col.min(bytes.len());
-        let end = self.span.end_col.min(bytes.len());
-        if start >= end {
-            return None;
-        }
-        match std::str::from_utf8(&bytes[start..end]) {
-            Ok(source) => Some(source),
-            Err(_) => None,
-        }
-    }
-
-    /// Like `to_json` but stamps a `sourceOracle.source` field with the term
-    /// text extracted from `source_text` at the stored span. Consumers that
-    /// have the source text in scope (e.g. test helpers, CLI renderers) call
-    /// this instead of a separate oracle RPC round-trip.
-    pub fn to_json_stamped(&self, source_text: &str) -> Value {
-        let mut value = self.to_json();
-        if let Some(source) = self.extract_term_source(source_text) {
-            value["sourceOracle"] = json!({
-                "status": "resolved",
-                "source": source,
-            });
-        }
-        value
-    }
-
-    pub fn to_body_source_json(&self) -> Value {
-        json!({
-            "file": self.file,
-            "span": {
-                "start_line": self.span.start_line,
-                "start_col": self.span.start_col,
-                "end_line": self.span.end_line,
-                "end_col": self.span.end_col,
-            },
-            "source_cid": self.source_cid,
-            "template_cid": self.template_cid,
-            "param_names": self.param_names,
-        })
-    }
-
-    pub fn from_body_source(
-        source_function_name: Option<String>,
-        body_source: &Value,
-    ) -> Option<Self> {
-        let file = body_source.get("file").and_then(Value::as_str)?.to_string();
-        let span = body_source.get("span")?;
-        let param_names = match body_source
-            .get("param_names")
-            .or_else(|| body_source.get("paramNames"))
-            .and_then(Value::as_array)
-        {
-            Some(arr) => arr
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect(),
-            None => Vec::new(),
-        };
-        let function_name = match source_function_name {
-            Some(name) => name,
-            None => String::new(),
-        };
-        let source_cid = body_source
-            .get("source_cid")
-            .or_else(|| body_source.get("sourceCid"))
-            .and_then(Value::as_str)
-            .filter(|cid| !cid.trim().is_empty())?
-            .to_string();
-        let template_cid = body_source
-            .get("template_cid")
-            .or_else(|| body_source.get("templateCid"))
-            .and_then(Value::as_str)
-            .filter(|cid| !cid.trim().is_empty())?
-            .to_string();
-        Some(SourceMemento {
-            file,
-            function_name,
-            span: SrcSpan {
-                start_line: span.get("start_line").and_then(Value::as_u64)? as usize,
-                start_col: span.get("start_col").and_then(Value::as_u64)? as usize,
-                end_line: span.get("end_line").and_then(Value::as_u64)? as usize,
-                end_col: span.get("end_col").and_then(Value::as_u64)? as usize,
-            },
-            source_cid,
-            template_cid,
-            param_names,
-        })
     }
 }
 

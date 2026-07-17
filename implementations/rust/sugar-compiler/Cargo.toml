@@ -12,7 +12,6 @@ sugar-lift-rpc-client = { path = "../sugar-lift-rpc-client" }
 sugar-verifier = { path = "../sugar-verifier" }
 libsugar = { path = "../libsugar" }
 sugar-ir-types = { path = "../sugar-ir-types" }
-sugar-walk = { path = "../sugar-walk" }
 sugar-claim-envelope = { path = "../sugar-claim-envelope" }
 sugar-canonicalizer = { path = "../sugar-canonicalizer" }
 sugar-linker = { path = "../sugar-linker" }

@@ -24,9 +24,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use libsugar::core::SourceMemento;
 use sugar_compiler::kit::{Kit, LiftManifest};
 use sugar_compiler::tree::Sourced;
-use sugar_walk::source_oracle::SourceMemento;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

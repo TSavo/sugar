@@ -6,10 +6,9 @@
 //! `sugar-cli/src/kit_path/` to here as the legal home for the `Kit` noun
 //! (`sugar_compiler::kit::Kit`) that wraps this engine.
 //!
-//! #3855 purification: realize-sidecar strip no longer imports `sugar-walk`.
-//! It is membrane law in `libsugar::core::strip_realize_sidecar_from_lift_term`.
-//! This module must stay free of `sugar_walk` imports (instrument:
-//! `kit_path_has_no_sugar_walk_import`).
+//! #3855 purification: realize-sidecar strip and SourceMemento live in
+//! libsugar; this module must not import `sugar-walk` (instrument:
+//! `kit_path_has_no_sugar_walk_import`). Crate ban: arch-guard.
 //!
 //! `lift_plugin.rs` (LiftPluginKit/LiftKit transport) and `path_executor.rs`
 //! (execute_path/KitRegistry dispatch) live here. `sugar-cli::lift_plugin`

@@ -103,6 +103,26 @@ fn baseline_linker_depends_on_verifier() {
     );
 }
 
+/// #3855 sugar-walk purification: sugar-compiler holds language-neutral kit
+/// dispatch + membrane locators (SourceMemento in libsugar). It must not
+/// depend on the Rust kit (sugar-walk). Reintroducing the edge is BOUNDARY
+/// IMPURITY: rust-kit knowledge leaking into the neutral compiler.
+#[test]
+fn sugar_compiler_never_reaches_sugar_walk() {
+    let graph = direct_graph();
+    if !graph.contains_key("sugar-compiler") {
+        return;
+    }
+    let reach = closure(&graph, "sugar-compiler");
+    assert!(
+        !reach.contains("sugar-walk"),
+        "FORBIDDEN ARROW: sugar-compiler -> sugar-walk (#3855 purification). \
+         SourceMemento/SrcSpan live in libsugar::core; realize-sidecar strip \
+         lives in libsugar::core::strip_realize_sidecar_from_lift_term. \
+         Do not re-import the Rust kit into the neutral compiler."
+    );
+}
+
 /// sugar-compiler (when it lands in SEAM 1) is a strict top under the faces:
 /// nothing below it may ever depend on it. Written now so the rule is armed
 /// the moment the crate appears.
