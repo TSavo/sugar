@@ -57,4 +57,3 @@
 - [ ] Re-run the representative child and record completion or the next independent named frontier.
 - [ ] Run Black, the type ratchet, and focused tests.
 - [ ] Commit as T Savo, push, and open a non-closing PR with `Part of #4704`.
-

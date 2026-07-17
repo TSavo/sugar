@@ -142,6 +142,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             from sugar_lift_py_tests.floor import (
                 BuiltinExceptionClassValue,
                 CallSiteValue,
+                ExceptionClassValue,
                 ExceptionValue,
                 FunctionCallable,
                 NativeCallableValue,
@@ -157,7 +158,9 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             from sugar_lift_py_tests.floor import ImportAliasValue
 
             if isinstance(bound, ImportAliasValue):
-                if isinstance(bound.resolved_value, FunctionCallable):
+                if isinstance(bound.resolved_value, ExceptionClassValue):
+                    bound = bound.resolved_value
+                elif isinstance(bound.resolved_value, FunctionCallable):
                     bound = bound.resolved_value
                 elif isinstance(bound.resolved_value, NativeCallableValue):
                     native = bound.resolved_value
@@ -210,7 +213,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     source_arg_values=accumulated,
                 )
 
-            if type(bound) is BuiltinExceptionClassValue:
+            if type(bound) in (BuiltinExceptionClassValue, ExceptionClassValue):
                 return Complete(
                     ExceptionValue(
                         exception_name=bound.name,

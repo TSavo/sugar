@@ -37,4 +37,3 @@ native classes remain `CallSiteValue` and therefore retain the existing named
   reaches the named `RaiseSugar` gap.
 - The real pandas `AbstractMethodError` representative advances from its fatal
   RaiseSugar frontier to completion or the next independently named frontier.
-
