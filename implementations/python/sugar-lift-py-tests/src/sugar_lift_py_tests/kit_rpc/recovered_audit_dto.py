@@ -85,9 +85,7 @@ _TREE_CENSUS_FIELDS = frozenset(
 _TREE_PANIC_FIELDS = _LEAF_PANIC_FIELDS | frozenset({"demandedBody", "ownerIdentity"})
 _TREE_EFFECT_FIELDS = _LEAF_EFFECT_FIELDS | frozenset({"demandedBody"})
 _TREE_SUPPRESSED_FIELDS = _LEAF_SUPPRESSED_FIELDS | frozenset({"demandedBody"})
-_TREE_OWNER_FIELDS = frozenset(
-    {"demandedBody", "demandedSource", "terminalGapLocus"}
-)
+_TREE_OWNER_FIELDS = frozenset({"demandedBody", "demandedSource", "terminalGapLocus"})
 
 
 @dataclass(frozen=True)
@@ -211,7 +209,9 @@ class RecoveredAuditDto:
         ]
         effects = [
             RecoveredEffectDto.from_rpc(item)
-            for item in _require_list(row.get("effects"), "recovered audit leaf effects")
+            for item in _require_list(
+                row.get("effects"), "recovered audit leaf effects"
+            )
         ]
         suppressed = [
             SuppressedAuditLocusDto.from_rpc(item)
@@ -325,7 +325,9 @@ class RecoveredFactoryPanicTreeDto:
         if row.get("kind") != "FactoryPanic" or row.get("status") != "mandatory-panic":
             raise ValueError("recovered tree panic must be a mandatory FactoryPanic")
         gap = _require_mapping(row.get("gap"), "recovered tree panic gap")
-        body = _require_mapping(row.get("demandedBody"), "recovered tree panic demandedBody")
+        body = _require_mapping(
+            row.get("demandedBody"), "recovered tree panic demandedBody"
+        )
         owner = RecoveredPanicOwnerIdentityDto.from_rpc(row.get("ownerIdentity"))
         demanded_source = _require_str(
             row.get("demandedSource"), "recovered tree panic demandedSource"
@@ -339,7 +341,9 @@ class RecoveredFactoryPanicTreeDto:
             terminal_gap_locus=terminal_gap_locus,
         )
         if owner != expected:
-            raise ValueError("recovered tree panic ownerIdentity does not match ownership")
+            raise ValueError(
+                "recovered tree panic ownerIdentity does not match ownership"
+            )
         return cls(
             locus=_require_str(row.get("locus"), "recovered tree panic locus"),
             demanded_source=demanded_source,
@@ -374,11 +378,15 @@ class RecoveredEffectTreeDto:
     def from_rpc(cls, data: object) -> RecoveredEffectTreeDto:
         row = _require_mapping(data, "recovered tree effect")
         _reject_unknown(row, set(_TREE_EFFECT_FIELDS), "recovered tree effect")
-        body = _require_mapping(row.get("demandedBody"), "recovered tree effect demandedBody")
+        body = _require_mapping(
+            row.get("demandedBody"), "recovered tree effect demandedBody"
+        )
         return cls(
             locus=_require_str(row.get("locus"), "recovered tree effect locus"),
             effect=_require_str(row.get("effect"), "recovered tree effect effect"),
-            category=_require_str(row.get("category"), "recovered tree effect category"),
+            category=_require_str(
+                row.get("category"), "recovered tree effect category"
+            ),
             status=_require_str(row.get("status"), "recovered tree effect status"),
             reason=_require_str(row.get("reason"), "recovered tree effect reason"),
             demanded_body=dict(body),
@@ -460,7 +468,9 @@ class RecoveredFrontierAuditDto:
         ]
         effects = [
             RecoveredEffectTreeDto.from_rpc(item)
-            for item in _require_list(row.get("effects"), "recovered audit tree effects")
+            for item in _require_list(
+                row.get("effects"), "recovered audit tree effects"
+            )
         ]
         suppressed = [
             SuppressedAuditLocusTreeDto.from_rpc(item)

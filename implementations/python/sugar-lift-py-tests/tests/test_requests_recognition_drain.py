@@ -29,9 +29,7 @@ from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 
-VENDOR = (
-    Path(__file__).resolve().parent / "vendor" / "requests-2.34.2" / "requests"
-)
+VENDOR = Path(__file__).resolve().parent / "vendor" / "requests-2.34.2" / "requests"
 
 
 def _axis(source: str, filename: str) -> dict:
@@ -220,9 +218,7 @@ def test_keyword_exception_constructor_routes_raise() -> None:
             resolved_value=ExceptionClassValue("requests.exceptions.InvalidURL"),
         ),
     }
-    block = compose_block(
-        "    raise InvalidURL(e, request=request)\n", binds=binds
-    )
+    block = compose_block("    raise InvalidURL(e, request=request)\n", binds=binds)
     raised = block.statements[0]
     assert isinstance(raised, RaiseValue)
     assert raised.effect.exception_name == "requests.exceptions.InvalidURL"

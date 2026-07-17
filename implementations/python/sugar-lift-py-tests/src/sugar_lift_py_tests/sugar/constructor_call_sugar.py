@@ -369,9 +369,7 @@ def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
         from sugar_lift_py_tests.floor import ImportAliasValue, SymbolicValue
 
         bound = (
-            ctx.temporal.value_if_bound(base_name)
-            if base.observed == "Name"
-            else None
+            ctx.temporal.value_if_bound(base_name) if base.observed == "Name" else None
         )
         if isinstance(bound, SymbolicValue):
             return _runtime_strategy(
@@ -387,9 +385,7 @@ def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
                 resolve_install_source_class_method,
             )
 
-            init = resolve_install_source_class_method(
-                bound.import_target, "__init__"
-            )
+            init = resolve_install_source_class_method(bound.import_target, "__init__")
             if init is not None:
                 return _strategy_from_init(
                     site,

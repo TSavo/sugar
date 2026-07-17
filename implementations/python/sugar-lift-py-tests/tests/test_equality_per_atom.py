@@ -175,9 +175,9 @@ def test_chained_eq_uses_per_atom_resolution_not_hardcoded_py_eq() -> None:
         else (value.formula,)
     )
     for face in faces:
-        assert face.name == "=", (
-            f"chained same-sort Int face must resolve to FOL =, got {face}"
-        )
+        assert (
+            face.name == "="
+        ), f"chained same-sort Int face must resolve to FOL =, got {face}"
 
 
 def test_equality_construction_door_has_no_chain_hardcode() -> None:
@@ -195,7 +195,9 @@ def test_equality_construction_door_has_no_chain_hardcode() -> None:
         / "chained_compare_sugar.py"
     )
     offenders: list[str] = []
-    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for lineno, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         stripped = line.lstrip()
         if stripped.startswith("#"):
             continue

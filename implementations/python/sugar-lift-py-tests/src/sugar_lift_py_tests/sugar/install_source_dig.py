@@ -178,7 +178,9 @@ class DigBodyOracle:
         if fn_site is None or getattr(fn_site, "observed", None) != "FunctionDef":
             return None
         node = fn_site.node
-        file = str(getattr(node, "_sugar_file", None) or getattr(fn_site, "blame", "") or "")
+        file = str(
+            getattr(node, "_sugar_file", None) or getattr(fn_site, "blame", "") or ""
+        )
         lineno = int(getattr(node, "lineno", -1) or -1)
         name = str(fn_site.function_name())
         bridge = str(getattr(node, "_sugar_bridge_name", None) or name)
@@ -1842,9 +1844,7 @@ def _build_dig_body_impl(fn_site, ctx: Any):
                         for stmt in frags
                     )
                     core = SugarBody(
-                        sugar=SequentialDigBody(
-                            statements=statements, fn_site=fn_site
-                        ),
+                        sugar=SequentialDigBody(statements=statements, fn_site=fn_site),
                         role=SugarRole.TERM,
                     )
             if key is not None:

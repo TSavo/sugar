@@ -56,7 +56,12 @@ class NestedTupleForSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _bind_and_reduce(self, iterable, ctx) -> Outcome:
-        from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, ListValue, TupleValue
+        from sugar_lift_py_tests.floor import (
+            BlockValue,
+            CallSiteValue,
+            ListValue,
+            TupleValue,
+        )
         from sugar_lift_py_tests.ir import ctor, num
         from sugar_lift_py_tests.outcome import Complete
 

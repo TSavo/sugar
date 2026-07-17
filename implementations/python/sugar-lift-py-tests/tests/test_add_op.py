@@ -107,9 +107,7 @@ def test_native_callable_addition_preserves_exact_callsite_coordinate() -> None:
     site = SourceFragment.from_source("NaT + make_offset(kind)\n", "t.py").statements()[
         0
     ]
-    left = NativeCallableValue(
-        "pandas._libs.tslibs.nattype.NaT", "/native/pandas.so"
-    )
+    left = NativeCallableValue("pandas._libs.tslibs.nattype.NaT", "/native/pandas.so")
     right = CallSiteValue(
         target_name="make_offset",
         arg_values=(SymbolicValue(make_var("kind")),),

@@ -557,14 +557,18 @@ def test_function_decorators_present():
 
 
 def test_literal_parametrize_keeps_decidable_columns_from_mixed_rows() -> None:
-    fn = _module(
-        "@pytest.mark.parametrize(\n"
-        "    'typ, ad',\n"
-        "    [['float', {}], ['float', {'A': 1}], ['int', {}]],\n"
-        ")\n"
-        "def test_constructor(typ, ad):\n"
-        "    pass\n"
-    ).fragments()[0].statements()[0]
+    fn = (
+        _module(
+            "@pytest.mark.parametrize(\n"
+            "    'typ, ad',\n"
+            "    [['float', {}], ['float', {'A': 1}], ['int', {}]],\n"
+            ")\n"
+            "def test_constructor(typ, ad):\n"
+            "    pass\n"
+        )
+        .fragments()[0]
+        .statements()[0]
+    )
 
     assert fn.literal_pytest_parametrize_rows() == (
         (("typ",), (("float",), ("float",), ("int",))),

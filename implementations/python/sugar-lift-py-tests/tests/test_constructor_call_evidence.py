@@ -125,8 +125,7 @@ def test_source_backed_imported_inherited_constructor_builds_base_fields(
     )
 
     outcome = _outcome(
-        "class Child(Base):\n"
-        "    pass\n",
+        "class Child(Base):\n" "    pass\n",
         "Child(7)",
         temporal=temporal,
     )

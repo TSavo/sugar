@@ -52,9 +52,7 @@ def test_value_oracle_constructs_once_for_same_source_identity(
     assert INSTALL_SOURCE_VALUE_ORACLE.hit_count == hits_after_first + 1
 
 
-def test_value_oracle_keys_through_source_oracle_cid(
-    tmp_path, monkeypatch
-) -> None:
+def test_value_oracle_keys_through_source_oracle_cid(tmp_path, monkeypatch) -> None:
     """Identity wraps SourceOracle content CID + name — does not re-discover source."""
     (tmp_path / "oracle_cid.py").write_text("FLAG = 1\n", encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path))
@@ -69,9 +67,7 @@ def test_value_oracle_keys_through_source_oracle_cid(
     assert len(source_cid) >= 32  # blake3 pin from SourceOracle
 
 
-def test_value_oracle_does_not_publish_cycle_breaks(
-    tmp_path, monkeypatch
-) -> None:
+def test_value_oracle_does_not_publish_cycle_breaks(tmp_path, monkeypatch) -> None:
     """Cycle None is not published as the system's answer for that name."""
     (tmp_path / "oracle_cycle.py").write_text("X = 1\n", encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path))

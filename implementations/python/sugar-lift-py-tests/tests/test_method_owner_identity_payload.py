@@ -59,9 +59,9 @@ class datetime:
         "datetime.datetime._cmp and cannot collide with module-level datetime._cmp."
     )
     assert len(rows) == 4, rows
-    assert len(names) == 4, (
-        f"identity collision under function-contract name: {sorted(names)}"
-    )
+    assert (
+        len(names) == 4
+    ), f"identity collision under function-contract name: {sorted(names)}"
 
     warrants = {
         row["sourceWarrants"][0]["sourceFunctionName"]

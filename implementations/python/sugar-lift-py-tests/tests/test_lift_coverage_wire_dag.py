@@ -8,7 +8,12 @@ from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
 from sugar_lift_py_tests.kit_rpc.source_function_contract_dto import (
     SourceFunctionContractDto,
 )
-from sugar_lift_py_tests.proofir import ConstructionSite, Derived, Provenance, UniverseMint
+from sugar_lift_py_tests.proofir import (
+    ConstructionSite,
+    Derived,
+    Provenance,
+    UniverseMint,
+)
 from sugar_lift_py_tests.proofir.scope import claim_formula_from_ir
 from sugar_lift_py_tests.proofir.sorts import IntSort
 
@@ -54,7 +59,9 @@ def test_source_lifter_contract_terms_enter_the_shared_term_table() -> None:
     assert len(table.nodes) == 3
 
 
-def test_body_universe_to_rpc_stays_closed_and_member_declaration_uses_term_refs() -> None:
+def test_body_universe_to_rpc_stays_closed_and_member_declaration_uses_term_refs() -> (
+    None
+):
     """#4406 residual: no bare BodyUniverseDto.to_rpc side door; members emit refs.
 
     After the payload term-table flip, EqualityFact/UniverseMint/FunctionContract
