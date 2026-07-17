@@ -2183,6 +2183,7 @@ class SequentialDigBody:
         from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
         from sugar_lift_py_tests.floor.inv_value import InvValue
         from sugar_lift_py_tests.floor.return_value import ReturnValue
+        from sugar_lift_py_tests.floor.raise_value import RaiseValue
         from sugar_lift_py_tests.floor.scope_rebind import (
             GuardedScopeRebind,
             ScopeRebind,
@@ -2212,7 +2213,9 @@ class SequentialDigBody:
             non_returns = tuple(
                 item
                 for item in contribution
-                if not isinstance(item, (GuardedReturn, GuardedRaise, ReturnValue))
+                if not isinstance(
+                    item, (GuardedReturn, GuardedRaise, ReturnValue, RaiseValue)
+                )
             )
             guarded_faces = isinstance(getattr(outcome, "value", None), GuardedFaces)
             support_types = (ImportAliasValue, InvValue)
@@ -2259,9 +2262,13 @@ class SequentialDigBody:
             ):
                 return self._control_flow_gap()
             for item in contribution:
-                # Exact unguarded return only — GuardedReturn is multi-exit.
-                if type(item) is ReturnValue:
-                    value = item.value
+                # Exact unguarded terminal only; guarded exits remain multi-exit.
+                if type(item) in (ReturnValue, RaiseValue):
+                    value = (
+                        item.value
+                        if type(item) is ReturnValue
+                        else ExceptionalExitValue(item.effect)
+                    )
                     for prior in reversed(guarded_exits):
                         guard = (
                             prior.guards[0]
