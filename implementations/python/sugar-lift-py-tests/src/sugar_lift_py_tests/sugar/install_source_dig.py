@@ -2290,6 +2290,25 @@ class SequentialDigBody:
                     for item in non_returns
                 )
             )
+            # BlockSugar has already reduced and threaded a continuing block's
+            # exact scope testimony. Its guarded exits are result-bearing; its
+            # rebind/support entries are not competing return values. A halted
+            # block or any opaque residue remains loud.
+            continuing_block_state = (
+                isinstance(faces, BlockValue)
+                and faces.can_fall_through
+                and guarded
+                and non_returns
+                and all(
+                    type(item)
+                    in (
+                        GuardedScopeRebind,
+                        ScopeRebind,
+                        *support_types,
+                    )
+                    for item in non_returns
+                )
+            )
             # Statements after a guarded exit execute only on its fall-through
             # path. Exact rebind-only BlockValues can therefore thread that
             # continuation scope before the final fallback is selected. A
@@ -2311,6 +2330,7 @@ class SequentialDigBody:
                     joined_faces
                     or support_only_faces
                     or terminal_face_state
+                    or continuing_block_state
                     or continuation_rebinds
                 )
             ):
