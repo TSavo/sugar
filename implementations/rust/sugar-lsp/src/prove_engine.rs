@@ -278,53 +278,95 @@ fn dialect_for_surface(surface: &str) -> Dialect {
     }
 }
 
-/// Rendezvous the first configured lift kit for `project_root`.
+/// Why the LSP overlay kit face is unavailable.
 ///
-/// Same selection shape as CLI prove Task 9: project config lift plugins +
-/// manifest resolution, then `Kit::rendezvous` (live kit_declaration handshake).
-fn try_rendezvous_lift_kit(project_root: &Path) -> Result<Kit, String> {
-    let cfg = sugar_cli::project_config::read_project_config(project_root);
-    let mut last_err: Option<String> = None;
-    for plugin in cfg.plugins.iter().filter(|p| p.is_lift_plugin()) {
-        let planned = match sugar_cli::lift_plugin::find_manifest_for_surface(
-            project_root,
-            &plugin.surface,
-        ) {
-            Ok(m) => m,
-            Err(e) => {
-                last_err = Some(e);
-                continue;
+/// #3901 first-match residual: multi-surface projects must never take the
+/// first successful rendezvous and silently drop sibling surfaces. The named
+/// multi-surface witness is the only multi-plugin outcome (CLI `NoKit::MultiSurface`
+/// parity). Callers degrade to the resident disk pool with this reason loud.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OverlayNoKit {
+    /// Zero configured lift plugins.
+    NoLiftSurface,
+    /// Multi-surface config: one Kit cannot represent the composed plan.
+    MultiSurface { count: usize },
+    /// Single surface but empty command vector.
+    EmptyCommand { surface: String },
+    /// Single surface: manifest resolution failed.
+    ManifestMissing { surface: String, detail: String },
+    /// Single surface: kit rendezvous failed (handshake / spawn / declaration).
+    RendezvousFailed { surface: String, detail: String },
+}
+
+impl std::fmt::Display for OverlayNoKit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OverlayNoKit::NoLiftSurface => {
+                write!(f, "no lift kit configured (no [[plugins]] lift surfaces)")
             }
-        };
-        if planned.command.is_empty() {
-            last_err = Some(format!(
-                "empty lift command for surface `{}`",
-                planned.surface
-            ));
-            continue;
-        }
-        let working_dir =
-            sugar_cli::lift_plugin::absolute_working_dir_for_manifest(project_root, &planned);
-        let manifest = LiftManifest::resolved(
-            planned.surface.clone(),
-            planned.name.clone(),
-            dialect_for_surface(&planned.surface),
-            planned.command.clone(),
-            working_dir,
-            planned.method.clone(),
-        );
-        match Kit::rendezvous(manifest) {
-            Ok(kit) => return Ok(kit),
-            Err(e) => {
-                last_err = Some(e.to_string());
-                continue;
+            OverlayNoKit::MultiSurface { count } => write!(
+                f,
+                "multi-surface plan ({count} lifts); refusing first-match kit selection (#3901). \
+                 Composed .proof / multi-kit fold required; overlay degrades named. \
+                 Replacement: single [[plugins]] lift surface — never first-match Ok(kit)"
+            ),
+            OverlayNoKit::EmptyCommand { surface } => {
+                write!(f, "empty lift command for surface `{surface}`")
+            }
+            OverlayNoKit::ManifestMissing { surface, detail } => {
+                write!(f, "lift manifest missing for surface `{surface}`: {detail}")
+            }
+            OverlayNoKit::RendezvousFailed { surface, detail } => {
+                write!(f, "lift kit rendezvous failed for `{surface}`: {detail}")
             }
         }
     }
-    Err(last_err.unwrap_or_else(|| {
-        "no lift kit configured (no [[plugins]] lift surfaces with a resolvable manifest)"
-            .to_string()
-    }))
+}
+
+/// Rendezvous the single configured lift kit for `project_root`.
+///
+/// #3901: multi-surface first-match is unexpressible. Exactly one lift plugin
+/// is required for the overlay kit face; zero → `NoLiftSurface`, many →
+/// `MultiSurface { count }` (named degrade, never first Ok(kit)).
+fn try_rendezvous_lift_kit(project_root: &Path) -> Result<Kit, String> {
+    resolve_overlay_kit_face(project_root).map_err(|n| n.to_string())
+}
+
+/// One constructor for the overlay kit face — exhaustive over named outcomes.
+fn resolve_overlay_kit_face(project_root: &Path) -> Result<Kit, OverlayNoKit> {
+    let cfg = sugar_cli::project_config::read_project_config(project_root);
+    let lift_plugins: Vec<_> = cfg.plugins.iter().filter(|p| p.is_lift_plugin()).collect();
+    match lift_plugins.as_slice() {
+        [] => Err(OverlayNoKit::NoLiftSurface),
+        [plugin] => {
+            let planned =
+                sugar_cli::lift_plugin::find_manifest_for_surface(project_root, &plugin.surface)
+                    .map_err(|detail| OverlayNoKit::ManifestMissing {
+                        surface: plugin.surface.clone(),
+                        detail,
+                    })?;
+            if planned.command.is_empty() {
+                return Err(OverlayNoKit::EmptyCommand {
+                    surface: planned.surface.clone(),
+                });
+            }
+            let working_dir =
+                sugar_cli::lift_plugin::absolute_working_dir_for_manifest(project_root, &planned);
+            let manifest = LiftManifest::resolved(
+                planned.surface.clone(),
+                planned.name.clone(),
+                dialect_for_surface(&planned.surface),
+                planned.command.clone(),
+                working_dir,
+                planned.method.clone(),
+            );
+            Kit::rendezvous(manifest).map_err(|e| OverlayNoKit::RendezvousFailed {
+                surface: planned.surface.clone(),
+                detail: e.to_string(),
+            })
+        }
+        many => Err(OverlayNoKit::MultiSurface { count: many.len() }),
+    }
 }
 
 /// #3809: consumer feed half — enumerate→fold→pool, NOT batch mint.
@@ -604,4 +646,135 @@ pub fn assess_dropped_ambient_posts(
          (reasons: {}); the vendor law never reached the solve -- falling back to resident disk-pool",
         reasons.join(", ")
     ))
+}
+
+/// #3901 first-match residual instrument (LSP half).
+///
+/// Axes (measured live; red while any > 0):
+///   R_lsp_first_match_kit_selection — multi-surface loop `return Ok(kit)` face
+///   R_lsp_multi_surface_unnamed     — multi-plugin without OverlayNoKit::MultiSurface
+#[cfg(test)]
+mod first_match_3901_tests {
+    use super::*;
+    use std::fs;
+
+    fn production_half(src: &str) -> &str {
+        src.split("#[cfg(test)]").next().unwrap_or(src)
+    }
+
+    /// Production membrane: multi-surface first-match is unexpressible.
+    #[test]
+    fn r_lsp_first_match_kit_selection_is_zero() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/prove_engine.rs");
+        let full = fs::read_to_string(&path).expect("read prove_engine.rs");
+        let production = production_half(&full);
+
+        let mut offenders: Vec<String> = Vec::new();
+
+        // Illegal shape: loop over plugins that returns Ok(kit) on first success.
+        // The pre-fix face was `for plugin in … { match Kit::rendezvous { Ok(kit) => return Ok(kit) } }`.
+        if production.contains("for plugin in")
+            && production.contains("return Ok(kit)")
+            && production.contains("is_lift_plugin")
+        {
+            offenders.push(
+                "R_lsp_first_match_kit_selection: for-plugin loop still first-matches Ok(kit). \
+                 Replacement: match lift_plugins { [] => NoLiftSurface, [one] => rendezvous, many => MultiSurface }"
+                    .into(),
+            );
+        }
+
+        // Required architecture: named multi-surface witness + exhaustive resolver.
+        if !production.contains("MultiSurface") {
+            offenders.push(
+                "R_lsp_multi_surface_unnamed: OverlayNoKit::MultiSurface missing. \
+                 Replacement: multi-plugin → Err(MultiSurface { count })"
+                    .into(),
+            );
+        }
+        if !production.contains("resolve_overlay_kit_face") {
+            offenders.push(
+                "R_lsp_first_match_kit_selection: resolve_overlay_kit_face missing. \
+                 Replacement: one constructor, never first-match loop"
+                    .into(),
+            );
+        }
+        if !production.contains("enum OverlayNoKit") {
+            offenders.push(
+                "R_lsp_multi_surface_unnamed: OverlayNoKit witness type missing. \
+                 Replacement: enum OverlayNoKit { NoLiftSurface, MultiSurface, … }"
+                    .into(),
+            );
+        }
+
+        let r = offenders.len();
+        eprintln!("#3901 LSP first-match membrane on sugar-lsp/src/prove_engine.rs");
+        for o in &offenders {
+            eprintln!("  offender: {o}");
+        }
+        eprintln!("R_lsp_first_match_kit_selection={r}");
+        assert!(
+            r == 0,
+            "R_lsp_first_match_kit_selection={r} — multi-surface first-match is the illegal shape (#3901). \
+             Replacement: resolve_overlay_kit_face match {{ [] => NoLiftSurface, [one] => Kit, many => MultiSurface }}. \
+             offenders:\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    /// Behavioral pin: two [[plugins]] lift surfaces → MultiSurface, never Kit.
+    #[test]
+    fn multi_surface_config_is_named_multi_surface_not_first_match() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sugar = dir.path().join(".sugar");
+        fs::create_dir_all(&sugar).expect("mkdir .sugar");
+        fs::write(
+            sugar.join("config.toml"),
+            r#"
+[[plugins]]
+surface = "alpha"
+
+[[plugins]]
+surface = "beta"
+"#,
+        )
+        .expect("write config");
+
+        let err = match resolve_overlay_kit_face(dir.path()) {
+            Ok(_) => panic!(
+                "R_lsp_first_match_kit_selection=1 — multi-surface must NOT first-match into Kit \
+                 (drops sibling surfaces). Replacement: OverlayNoKit::MultiSurface"
+            ),
+            Err(e) => e,
+        };
+        assert_eq!(
+            err,
+            OverlayNoKit::MultiSurface { count: 2 },
+            "R_lsp_first_match_kit_selection offender: expected MultiSurface{{count:2}}, got {err}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("multi-surface") && msg.contains("first-match"),
+            "multi-surface witness must name the crime for the next agent: {msg}"
+        );
+        eprintln!(
+            "R_lsp_first_match_kit_selection multi_surface=0 — OverlayNoKit::MultiSurface count=2"
+        );
+    }
+
+    /// Zero lift plugins → named NoLiftSurface (not a silent empty loop).
+    #[test]
+    fn zero_lift_plugins_is_named_no_lift_surface() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sugar = dir.path().join(".sugar");
+        fs::create_dir_all(&sugar).expect("mkdir .sugar");
+        fs::write(sugar.join("config.toml"), "# empty project config\n").expect("write config");
+
+        let err = match resolve_overlay_kit_face(dir.path()) {
+            Ok(_) => panic!("zero plugins must name NoLiftSurface, not return Kit"),
+            Err(e) => e,
+        };
+        assert_eq!(err, OverlayNoKit::NoLiftSurface);
+        eprintln!("R_lsp_first_match_kit_selection no_lift=0 — OverlayNoKit::NoLiftSurface");
+    }
 }
