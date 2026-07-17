@@ -7,20 +7,52 @@ from sugar_lift_py_tests.floor import ObjectValue, ScopeRebind
 from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
+@dataclass(frozen=True)
 class AsyncContextManagerOperation:
-    pass
+    """Floor operation for ``async with`` — call ≠ termination (#4688)."""
+
+    owner: str
+    blame: str
+
+    def async_context_object(self, receiver, ctx) -> Outcome:
+        """Closed-static ObjectValue managers force ``__aenter__``/``__aexit__``.
+
+        Body threading is owned by AsyncWithSugar; this method only proves the
+        manager dunder surface exists. Symbolic managers never reach here —
+        they stay typed red on the floor.
+        """
+        del ctx
+        return receiver.call_method_value(
+            "__aenter__",
+            (),
+            owner=self.owner,
+            blame=self.blame,
+            ctx=None,
+        )
 
 
+@dataclass(frozen=True)
 class BindValueOperation:
     pass
 
 
 @dataclass(frozen=True)
 class AsyncWithSugar(Sugar, role=SugarRole.STATEMENT):
+    """``async with <manager> as name: body`` — async context-manager surface.
+
+    ADJUDICATION (#4688): async with is a suspension membrane. Symbolic
+    managers are typed red (``AsyncContextManagerRuntimeEffect``). Closed
+    static ObjectValue managers may force ``__aenter__``/``__aexit__`` without
+    claiming scheduler interleaving. Enrolled witness is typed red over a
+    free manager — not a forged sat/unsat pair, and not a bare unrelated
+    assert. Sat/unsat discrimination waits on AsyncFunctionDef + termination
+    drive (retirement path named by the factory: create async_function_def_sugar).
+    """
+
     manager: SugarBody
     body: SugarBody
     optional_name: str | None
@@ -48,12 +80,16 @@ class AsyncWithSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def witnesses(cls):
-        prefix = "async def A(z):\n    async with z as x:\n        return x\n\n"
-        return _call_pair(
-            name="async_with_dunder",
+        return typed_red_effect_witness(
+            name="async_with_runtime_effect",
             owner_sugar=cls.__name__,
-            truthful=prefix + "def test_a():\n    assert 1 == 1\n",
-            lying=prefix + "def test_a():\n    assert 1 == 2\n",
+            source=(
+                "async def A(z):\n" "    async with z as x:\n" "        return x\n"
+            ),
+            effect_class="AsyncContextManagerRuntimeEffect",
+            reason_needle="async with runtime boundary",
+            blame_needle="test_witness.py:2:4",
+            wrong_reason_needle="owner=AwaitSugar",
         )
 
     def desugar(self, ctx=None) -> Outcome:
@@ -62,30 +98,32 @@ class AsyncWithSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _finish(self, manager, ctx):
-        if not isinstance(manager, ObjectValue):
-            return manager._floor_gap(
-                owner=type(self).__name__,
-                blame=str(self.site),
-                observed=type(manager).__name__,
-                requested="async context manager data-model methods",
-                fix="construct __aenter__ and __aexit__",
-            )
-        ctx.record_operation(
-            owner="AsyncWithSugar",
-            method_name="async_context_manager_with",
-            operation=AsyncContextManagerOperation(),
+        operation = AsyncContextManagerOperation(
+            owner=type(self).__name__,
+            blame=str(self.site),
         )
+        recorder = None if ctx is None else getattr(ctx, "record_operation", None)
+        if recorder is not None:
+            recorder(
+                owner="AsyncWithSugar",
+                method_name="async_context_manager_with",
+                operation=operation,
+            )
+        if not isinstance(manager, ObjectValue):
+            # Symbolic / non-object: floor typed red or loud construction gap.
+            return manager.async_context_manager_with(operation, ctx)
         entered = manager.call_method_value(
             "__aenter__", (), owner=type(self).__name__, blame=str(self.site), ctx=ctx
         ).value
         entered = force_floor(entered, ctx, owner="AsyncWithSugar.__aenter__")
         body_ctx = ctx
         if self.optional_name is not None:
-            ctx.record_operation(
-                owner="AsyncWithSugar",
-                method_name="bind_with",
-                operation=BindValueOperation(),
-            )
+            if recorder is not None:
+                recorder(
+                    owner="AsyncWithSugar",
+                    method_name="bind_with",
+                    operation=BindValueOperation(),
+                )
             body_ctx = ScopeRebind(self.optional_name, entered).extend_scope(ctx)
         outcome = self.body.reduce(body_ctx)
         exit_call = manager.call_method_value(
