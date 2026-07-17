@@ -94,14 +94,14 @@ fn python_kit_manifest(dir: &Path) -> LiftManifest {
             py_source_src.display()
         ),
     );
-    LiftManifest {
-        surface: "python".to_string(),
-        name: "python-lift".to_string(),
-        dialect: Dialect::Other("python".to_string()),
-        command: vec![script.display().to_string()],
-        working_dir: None,
-        method: None,
-    }
+    LiftManifest::resolved(
+        "python".to_string(),
+        "python-lift".to_string(),
+        Dialect::Other("python".to_string()),
+        vec![script.display().to_string()],
+        None,
+        None,
+    )
 }
 
 fn stage_fixture(dir: &Path) -> PathBuf {

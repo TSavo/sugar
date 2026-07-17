@@ -538,14 +538,14 @@ fn recovered_audit_tree(
             "lift-plugin.manifest: {error}; configure a lift manifest whose sugar.enumerate method serves the keyed audit tree"
         )
     })?;
-    let kit = Kit::rendezvous(LiftManifest {
-        surface: surface.to_string(),
-        name: manifest.name.clone(),
-        dialect: lift_plugin::dialect_for_surface(surface),
-        command: manifest.command.clone(),
-        working_dir: lift_plugin::absolute_working_dir_for_manifest(project_root, &manifest),
-        method: manifest.method.clone(),
-    })
+    let kit = Kit::rendezvous(LiftManifest::resolved(
+        surface.to_string(),
+        manifest.name.clone(),
+        lift_plugin::dialect_for_surface(surface),
+        manifest.command.clone(),
+        lift_plugin::absolute_working_dir_for_manifest(project_root, &manifest),
+        manifest.method.clone(),
+    ))
     .map_err(|error| format!("lift.rendezvous: {error}"))?;
     sugar_compiler::tree::fold_recovered_audit(&kit, project_root, allowed_broken_components)
         .map_err(|error| format!("lift.path: {error}"))
@@ -578,14 +578,14 @@ fn report_implication_tree(
 ) -> Result<Vec<Value>, String> {
     let manifest = lift_plugin::find_manifest_for_surface(project_root, surface)
         .map_err(|error| format!("lift-plugin.manifest: {error}"))?;
-    let kit = Kit::rendezvous(LiftManifest {
-        surface: surface.to_string(),
-        name: manifest.name.clone(),
-        dialect: lift_plugin::dialect_for_surface(surface),
-        command: manifest.command.clone(),
-        working_dir: lift_plugin::absolute_working_dir_for_manifest(project_root, &manifest),
-        method: manifest.method.clone(),
-    })
+    let kit = Kit::rendezvous(LiftManifest::resolved(
+        surface.to_string(),
+        manifest.name.clone(),
+        lift_plugin::dialect_for_surface(surface),
+        manifest.command.clone(),
+        lift_plugin::absolute_working_dir_for_manifest(project_root, &manifest),
+        manifest.method.clone(),
+    ))
     .map_err(|error| format!("lift.rendezvous: {error}"))?;
     if !kit.supports_rpc_method("sugar.enumerate") {
         eprintln!(

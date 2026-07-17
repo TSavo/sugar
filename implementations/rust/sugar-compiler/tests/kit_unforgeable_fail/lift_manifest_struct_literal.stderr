@@ -1,0 +1,28 @@
+error: cannot construct `LiftManifest` with struct literal syntax due to private fields
+  --> tests/kit_unforgeable_fail/lift_manifest_struct_literal.rs:7:21
+   |
+ 7 |     let _manifest = sugar_compiler::kit::LiftManifest {
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 8 |         surface: "forged".to_string(),
+   |         ----------------------------- private field
+ 9 |         name: "forged".to_string(),
+   |         -------------------------- private field
+10 |         dialect: libsugar::core::Dialect::Rust,
+   |         -------------------------------------- private field
+11 |         command: vec!["/bin/false".to_string()],
+   |         --------------------------------------- private field
+12 |         working_dir: None,
+   |         ----------------- private field
+   |
+   = note: ...and other private field `method` that was not provided
+help: you might have meant to use the `resolved` associated function
+   |
+ 7 -     let _manifest = sugar_compiler::kit::LiftManifest {
+ 8 -         surface: "forged".to_string(),
+ 9 -         name: "forged".to_string(),
+10 -         dialect: libsugar::core::Dialect::Rust,
+11 -         command: vec!["/bin/false".to_string()],
+12 -         working_dir: None,
+13 -     };
+ 7 +     let _manifest = sugar_compiler::kit::LiftManifest::resolved(_, _, _, _, _, _);
+   |

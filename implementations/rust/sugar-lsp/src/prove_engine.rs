@@ -305,14 +305,14 @@ fn try_rendezvous_lift_kit(project_root: &Path) -> Result<Kit, String> {
         }
         let working_dir =
             sugar_cli::lift_plugin::absolute_working_dir_for_manifest(project_root, &planned);
-        let manifest = LiftManifest {
-            surface: planned.surface.clone(),
-            name: planned.name.clone(),
-            dialect: dialect_for_surface(&planned.surface),
-            command: planned.command.clone(),
+        let manifest = LiftManifest::resolved(
+            planned.surface.clone(),
+            planned.name.clone(),
+            dialect_for_surface(&planned.surface),
+            planned.command.clone(),
             working_dir,
-            method: planned.method.clone(),
-        };
+            planned.method.clone(),
+        );
         match Kit::rendezvous(manifest) {
             Ok(kit) => return Ok(kit),
             Err(e) => {
