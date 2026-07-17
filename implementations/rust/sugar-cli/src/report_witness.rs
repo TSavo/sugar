@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{json, Value as Json};
-use sugar_canonicalizer::{blake3_512_of, cid_hex, encode_jcs, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, encode_jcs, json_to_value, Value as CValue};
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, proof_filename, Ed25519Seed,
     MementoCid, ProofEnvelopeInput, ProofGraph, WitnessMemento,
@@ -643,27 +643,14 @@ fn sanitize_filename(name: &str) -> String {
         .collect()
 }
 
+/// #3901: shared refuse door with mint/feed (no float→string dual).
 fn json_to_cvalue(j: &Json) -> Arc<CValue> {
-    match j {
-        Json::Null => CValue::null(),
-        Json::Bool(b) => CValue::boolean(*b),
-        Json::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                CValue::integer(i128::from(i))
-            } else if let Some(u) = n.as_u64() {
-                CValue::integer(i128::from(u))
-            } else {
-                CValue::string(n.to_string())
-            }
-        }
-        Json::String(s) => CValue::string(s.clone()),
-        Json::Array(items) => CValue::array(items.iter().map(json_to_cvalue).collect()),
-        Json::Object(obj) => CValue::object(
-            obj.iter()
-                .map(|(k, v)| (k.clone(), json_to_cvalue(v)))
-                .collect::<Vec<_>>(),
-        ),
-    }
+    json_to_value(j).unwrap_or_else(|err| {
+        panic!(
+            "report_witness json_to_cvalue: {err} — non-integer JSON number cannot \
+             enter a content-addressed witness; use sugar_canonicalizer::json_to_value"
+        )
+    })
 }
 
 #[cfg(test)]

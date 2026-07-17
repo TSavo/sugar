@@ -18,7 +18,7 @@ use std::time::Duration;
 use libsugar::core::ComponentRegistry;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, encode_jcs, json_to_value, Value as CValue};
 use sugar_ir_compiler::{
     registry::Registry as CompilerRegistry, subprocess::LazyJsonRpcCompiler, Capabilities,
     PROTOCOL_VERSION as IR_COMPILER_PROTOCOL_VERSION,
@@ -2048,29 +2048,15 @@ fn jcs_bytes(value: &Value) -> String {
     encode_jcs(json_to_cvalue(value).as_ref())
 }
 
+/// #3901: shared refuse door with mint/feed (no float→string dual).
 #[allow(dead_code)] // JCS helper shared by plan-artifact path and report_witness (cmd_prove binary)
 fn json_to_cvalue(value: &Value) -> Arc<CValue> {
-    match value {
-        Value::Null => CValue::null(),
-        Value::Bool(value) => CValue::boolean(*value),
-        Value::Number(number) => {
-            if let Some(value) = number.as_i64() {
-                CValue::integer(i128::from(value))
-            } else if let Some(value) = number.as_u64() {
-                CValue::integer(i128::from(value))
-            } else {
-                CValue::string(number.to_string())
-            }
-        }
-        Value::String(value) => CValue::string(value.clone()),
-        Value::Array(items) => CValue::array(items.iter().map(json_to_cvalue).collect()),
-        Value::Object(items) => CValue::object(
-            items
-                .iter()
-                .map(|(key, value)| (key.as_str(), json_to_cvalue(value)))
-                .collect::<Vec<_>>(),
-        ),
-    }
+    json_to_value(value).unwrap_or_else(|err| {
+        panic!(
+            "component_plan json_to_cvalue: {err} — non-integer JSON number cannot \
+             enter a content-addressed plan artifact; use sugar_canonicalizer::json_to_value"
+        )
+    })
 }
 
 #[cfg(test)]

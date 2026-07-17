@@ -46,7 +46,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, encode_jcs, json_to_value, Value as CValue};
 use sugar_ir_symbolic::parse_expr::parse_expr;
 use sugar_ir_symbolic::{
     and_, atomic_, eq, gt, gte, lt, lte, make_var, ne, num, or_, serialize::formula_to_value,
@@ -1182,32 +1182,16 @@ fn formula_to_ir_formula(f: &Rc<Formula>) -> IrFormula {
 }
 
 /// Convert a `serde_json::Value` to a `canonicalizer::Value`.
+///
+/// #3901: shared refuse door — no float→string second encoder.
 fn serde_json_to_cvalue(v: &serde_json::Value) -> Arc<CValue> {
-    match v {
-        serde_json::Value::Null => CValue::null(),
-        serde_json::Value::Bool(b) => CValue::boolean(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                CValue::integer(i128::from(i))
-            } else if let Some(u) = n.as_u64() {
-                CValue::integer(i128::from(u))
-            } else {
-                CValue::string(n.to_string())
-            }
-        }
-        serde_json::Value::String(s) => CValue::string(s.clone()),
-        serde_json::Value::Array(items) => {
-            let cv: Vec<Arc<CValue>> = items.iter().map(serde_json_to_cvalue).collect();
-            CValue::array(cv)
-        }
-        serde_json::Value::Object(map) => {
-            let entries: Vec<(String, Arc<CValue>)> = map
-                .iter()
-                .map(|(k, v)| (k.clone(), serde_json_to_cvalue(v)))
-                .collect();
-            Arc::new(CValue::Object(entries))
-        }
-    }
+    json_to_value(v).unwrap_or_else(|err| {
+        panic!(
+            "lift-contracts serde_json_to_cvalue: {err} — non-integer JSON number \
+             cannot enter a content-addressed evidence CID; use \
+             sugar_canonicalizer::json_to_value"
+        )
+    })
 }
 
 /// Compute the JCS-canonical CID for an `EvidenceMemento`.

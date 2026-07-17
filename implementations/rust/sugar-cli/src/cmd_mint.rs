@@ -48,7 +48,7 @@ use libsugar::core::{
     HashMapInputCatalog, Input, InputCatalog, Kit, KitError, Path as CorePath, PathAlgebra,
     PathDocument, Term, Verb, Verdict,
 };
-use sugar_canonicalizer::{blake3_512_of, cid_hex, encode_jcs, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, encode_jcs, json_to_value, Value as CValue};
 use sugar_claim_envelope::{
     body_discharge_policy_from_fields, compute_contract_set_cid, contract_cid, mint_authority,
     mint_bridge, mint_contract_with_body_cid, mint_implication, Authoring,
@@ -5599,34 +5599,17 @@ fn hex_nibble(byte: u8) -> u8 {
 }
 
 /// Convert `serde_json::Value` to `sugar_canonicalizer::Value`.
+///
+/// #3901: ONE door shared with feed / claim-envelope — refuse non-integer
+/// numbers rather than silent-zero / float truncation.
 fn json_to_cvalue(j: &Value) -> Arc<CValue> {
-    match j {
-        Value::Null => CValue::null(),
-        Value::Bool(b) => CValue::boolean(*b),
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                CValue::integer(i128::from(i))
-            } else if let Some(u) = n.as_u64() {
-                CValue::integer(i128::from(u))
-            } else if let Some(f) = n.as_f64() {
-                CValue::integer(f as i128)
-            } else {
-                CValue::integer(0)
-            }
-        }
-        Value::String(s) => CValue::string(s.clone()),
-        Value::Array(items) => {
-            let v: Vec<_> = items.iter().map(|x| json_to_cvalue(x)).collect();
-            CValue::array(v)
-        }
-        Value::Object(map) => {
-            let entries: Vec<(String, Arc<CValue>)> = map
-                .iter()
-                .map(|(k, v)| (k.clone(), json_to_cvalue(v)))
-                .collect();
-            CValue::object(entries)
-        }
-    }
+    json_to_value(j).unwrap_or_else(|err| {
+        panic!(
+            "cmd_mint json_to_cvalue: {err} — replacement: refuse non-integer \
+             JSON numbers at the authoring boundary; do not reintroduce a local \
+             Number→Value arm (sugar_canonicalizer::json_to_value is the only door)"
+        )
+    })
 }
 
 fn json_to_cvalue_with_terms(

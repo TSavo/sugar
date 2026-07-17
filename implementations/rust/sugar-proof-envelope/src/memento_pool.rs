@@ -1400,40 +1400,9 @@ impl ImplicationResult {
 /// Compute the CID for a formula JSON node by canonicalizing and hashing.
 /// The hash IS the boundary: this function is the gate between the
 /// formula domain and the hash domain.
+///
+/// #3901: ONE door with mint/feed — `jcs_cid_of_json` refuses non-integer
+/// numbers rather than silent-zero / float-truncation.
 pub fn compute_formula_cid(formula: &Json) -> String {
-    use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
-
-    fn json_to_value(j: &Json) -> std::sync::Arc<Value> {
-        match j {
-            Json::Null => Value::null(),
-            Json::Bool(b) => Value::boolean(*b),
-            Json::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Value::integer(i128::from(i))
-                } else if let Some(u) = n.as_u64() {
-                    Value::integer(i128::from(u))
-                } else if let Some(f) = n.as_f64() {
-                    Value::integer(f as i128)
-                } else {
-                    Value::integer(0)
-                }
-            }
-            Json::String(s) => Value::string(s.clone()),
-            Json::Array(items) => {
-                let v: Vec<_> = items.iter().map(json_to_value).collect();
-                Value::array(v)
-            }
-            Json::Object(map) => {
-                let entries: Vec<(String, _)> = map
-                    .iter()
-                    .map(|(k, v)| (k.clone(), json_to_value(v)))
-                    .collect();
-                std::sync::Arc::new(Value::Object(entries))
-            }
-        }
-    }
-
-    let value_tree = json_to_value(formula);
-    let canonical = encode_jcs(&value_tree);
-    blake3_512_of(canonical.as_bytes())
+    sugar_canonicalizer::jcs_cid_of_json(formula)
 }

@@ -201,13 +201,22 @@ mod tests {
 
 /// #3901 dual Number→CValue encoder membrane.
 ///
-/// Axis `R_mint_feed_local_number_encoder`: production mint/feed critical-path
-/// sources must route JSON numbers through `sugar_canonicalizer::json_to_value`
-/// (or `json_to_value_at`). A second local Number arm is the habitat of the
-/// silent-zero / float→string / float→null class.
+/// Axes:
+///   * `R_mint_feed_local_number_encoder` — mint/feed critical path
+///   * `R_production_local_number_encoder` — residual production content-
+///     address paths outside that critical path (CLI mint, formula CID,
+///     verifier handshake, IR symbolic parse, SMT position CID, …)
+///
+/// Both axes require routing JSON numbers through
+/// `sugar_canonicalizer::json_to_value` / `json_to_value_at` / `jcs_cid_of_json`.
+/// A second local Number arm is the habitat of silent-zero / float→string /
+/// float→null / float→truncation.
 ///
 /// Replacement: delete the local arm; call the shared door; map errors into
 /// the caller's typed residual (`FeedError::Incomplete`, panic, SugarError).
+///
+/// Open residual (not on these axes yet): test-only helpers, walk tagged
+/// non-i64 encoding, CBOR float frontend (different domain).
 #[cfg(test)]
 mod dual_number_encoder_3901_tests {
     use std::path::PathBuf;
@@ -217,6 +226,20 @@ mod dual_number_encoder_3901_tests {
         "sugar-claim-envelope/src/lib.rs",
         "sugar-compiler/src/feed_from_tree.rs",
         "libsugar/src/canonical.rs",
+    ];
+
+    /// Residual production content-address duals (#3901 wave after #4723).
+    /// Each must share the refuse door so feed==mint / formula CID parity is
+    /// true by construction on integer protocol input.
+    const PRODUCTION_RESIDUAL_PATH: &[&str] = &[
+        "sugar-cli/src/cmd_mint.rs",
+        "sugar-proof-envelope/src/memento_pool.rs",
+        "sugar-ir-symbolic/src/parse.rs",
+        "sugar-verifier/src/handshake.rs",
+        "sugar-lift-contracts/src/lib.rs",
+        "sugar-ir-compiler-smt-lib/src/emitter.rs",
+        "sugar-cli/src/component_plan.rs",
+        "sugar-cli/src/report_witness.rs",
     ];
 
     fn rust_impl_root() -> PathBuf {
@@ -245,27 +268,34 @@ mod dual_number_encoder_3901_tests {
                 || trimmed.contains("CValue::string")
                 || trimmed.contains("as i128")
                 || trimmed.contains("as i64"));
-        float_to_string_or_null || (has_as_f64 && silent_zero)
+        // Number else-arms that stringify a JSON Number without as_f64
+        // (same habitat: invent a Value from a non-integer). Match only the
+        // number-variable to_string form — not arbitrary Value::string(format!).
+        let number_else_failopen = !has_as_f64
+            && (trimmed.contains("CValue::string(n.to_string())")
+                || trimmed.contains("CValue::string(number.to_string())")
+                || trimmed.contains("Value::string(n.to_string())")
+                || trimmed.contains("Value::string(number.to_string())"));
+        float_to_string_or_null || (has_as_f64 && silent_zero) || number_else_failopen
     }
 
     fn file_uses_shared_door(src: &str) -> bool {
-        src.contains("json_to_value(") || src.contains("json_to_value_at(")
+        src.contains("json_to_value(")
+            || src.contains("json_to_value_at(")
+            || src.contains("jcs_cid_of_json(")
     }
 
-    #[test]
-    fn r_mint_feed_local_number_encoder_is_zero() {
-        let root = rust_impl_root();
+    fn collect_offenders(root: &std::path::Path, paths: &[&str]) -> Vec<String> {
         let mut offenders: Vec<String> = Vec::new();
-
-        for rel in CRITICAL_PATH {
+        for rel in paths {
             let path = root.join(rel);
             let src = std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
             if !file_uses_shared_door(&src) {
                 offenders.push(format!(
-                    "{rel}: missing sugar_canonicalizer::json_to_value call — \
-                     R_mint_feed_local_number_encoder: route Number→Value through \
-                     the shared refuse door (json.rs)"
+                    "{rel}: missing sugar_canonicalizer::json_to_value / \
+                     jcs_cid_of_json call — route Number→Value through the \
+                     shared refuse door (json.rs)"
                 ));
             }
             for (idx, line) in src.lines().enumerate() {
@@ -278,7 +308,12 @@ mod dual_number_encoder_3901_tests {
                 }
             }
         }
+        offenders
+    }
 
+    #[test]
+    fn r_mint_feed_local_number_encoder_is_zero() {
+        let offenders = collect_offenders(&rust_impl_root(), CRITICAL_PATH);
         let r = offenders.len();
         eprintln!(
             "R_mint_feed_local_number_encoder={r} — critical mint/feed path must \
@@ -292,6 +327,29 @@ mod dual_number_encoder_3901_tests {
             "R_mint_feed_local_number_encoder={r} > 0 — delete local Number→Value \
              arms on the mint/feed path; call sugar_canonicalizer::json_to_value. \
              offenders:\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    #[test]
+    fn r_production_local_number_encoder_is_zero() {
+        let offenders = collect_offenders(&rust_impl_root(), PRODUCTION_RESIDUAL_PATH);
+        let r = offenders.len();
+        eprintln!(
+            "R_production_local_number_encoder={r} — residual production content-\
+             address paths must share sugar_canonicalizer::json_to_value / \
+             jcs_cid_of_json (refuse non-integers). Replacement: delete local \
+             Number→Value arms; call the shared door."
+        );
+        for o in &offenders {
+            eprintln!("  offender: {o}");
+        }
+        assert!(
+            r == 0,
+            "R_production_local_number_encoder={r} > 0 — dual encoder residual \
+             still expressible. Delete local Number→Value arms on production \
+             content-address paths; call sugar_canonicalizer::json_to_value or \
+             jcs_cid_of_json. offenders:\n{}",
             offenders.join("\n")
         );
     }

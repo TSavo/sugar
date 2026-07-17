@@ -23,7 +23,7 @@
 use std::rc::Rc;
 
 use serde_json::Value as Json;
-use sugar_canonicalizer::Value as CValue;
+use sugar_canonicalizer::{json_to_value, Value as CValue};
 
 use crate::{
     and_, atomic_, contract, exists, finish, forall, implies, make_var, not_, num, or_,
@@ -198,29 +198,14 @@ fn parse_panic_loci_at(
     Ok(arr.iter().map(json_to_cvalue).collect())
 }
 
+/// #3901: shared refuse door — panic on non-integer rather than silent zero.
 fn json_to_cvalue(v: &Json) -> std::sync::Arc<CValue> {
-    match v {
-        Json::Null => CValue::null(),
-        Json::Bool(b) => CValue::boolean(*b),
-        Json::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                CValue::integer(i128::from(i))
-            } else if let Some(u) = n.as_u64() {
-                CValue::integer(i128::from(u))
-            } else if let Some(f) = n.as_f64() {
-                CValue::integer(f as i128)
-            } else {
-                CValue::integer(0)
-            }
-        }
-        Json::String(s) => CValue::string(s.clone()),
-        Json::Array(items) => CValue::array(items.iter().map(json_to_cvalue).collect()),
-        Json::Object(map) => CValue::object(
-            map.iter()
-                .map(|(key, value)| (key.clone(), json_to_cvalue(value)))
-                .collect::<Vec<_>>(),
-        ),
-    }
+    json_to_value(v).unwrap_or_else(|err| {
+        panic!(
+            "ir-symbolic json_to_cvalue: {err} — non-integer JSON number cannot \
+             enter a content-addressed IR atom; use sugar_canonicalizer::json_to_value"
+        )
+    })
 }
 
 fn parse_evidence_at(v: &Json, path: &str) -> Result<EvidenceTerm, ParseError> {
