@@ -25,8 +25,7 @@ class SymbolicValue(FloorValue):
 
     def test_python_type(self, value, site):
         """Dispatch a vendor type test from an existing ``python:type`` term."""
-        from sugar_lift_py_tests.factory import factory_panic_gap
-        from sugar_lift_py_tests.ir import _ConstStr, _Ctor
+        from sugar_lift_py_tests.ir import _ConstStr, _Ctor, ctor
 
         term = self.term
         if (
@@ -36,15 +35,29 @@ class SymbolicValue(FloorValue):
             and type(term.args[0]) is _ConstStr
         ):
             return value.python_isinstance(term.args[0].value, term, site)
-        factory_panic_gap(
-            owner="SymbolicValue.test_python_type",
-            blame=str(site),
-            observed=repr(term),
-            requested="identified python:type coordinate",
-            fix=(
-                "resolve the type name through BuiltinTypeNameSugar; unknown "
-                "local classes and tuple-of-types remain loud"
-            ),
+        from sugar_lift_py_tests.effect import (
+            DynamicTypeOperandRuntimeEffect,
+            RuntimeEffectWitness,
+            resolve_runtime_effect_site,
+        )
+        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+
+        operation = ctor(
+            "adt.is_python_type",
+            [floor_to_term(value, owner="isinstance value"), term],
+        )
+        return Incomplete(
+            DynamicTypeOperandRuntimeEffect(
+                "dynamic isinstance type operand runtime boundary: "
+                f"Python must resolve {term!r} as a type or raise TypeError; "
+                f"site={site}",
+                witness=RuntimeEffectWitness(
+                    operation=operation,
+                    operand=term,
+                    site=resolve_runtime_effect_site(site),
+                ),
+            )
         )
 
     def to_term(self, *, owner: str):
@@ -508,9 +521,7 @@ class SymbolicValue(FloorValue):
                 "async-iterated without a concrete async-iterator floor; "
                 f"owner={operation.owner}; keep as typed red until a narrower "
                 f"async-iter floor owns this shape. blame={operation.blame}",
-                witness=runtime_effect_witness(
-                    "py.async_iter", self.term, operation
-                ),
+                witness=runtime_effect_witness("py.async_iter", self.term, operation),
             )
         )
 
@@ -548,9 +559,7 @@ class SymbolicValue(FloorValue):
                 "an async context without a concrete async-CM floor; "
                 f"owner={operation.owner}; keep as typed red until a narrower "
                 f"async-with floor owns this shape. blame={operation.blame}",
-                witness=runtime_effect_witness(
-                    "py.async_with", self.term, operation
-                ),
+                witness=runtime_effect_witness("py.async_with", self.term, operation),
             )
         )
 
@@ -570,9 +579,7 @@ class SymbolicValue(FloorValue):
                 "__setattr__ at runtime; keep as typed red until a narrower "
                 "attribute mutation floor owns this shape. "
                 f"blame={operation.blame}",
-                witness=runtime_effect_witness(
-                    "py.setattr", self.term, operation
-                ),
+                witness=runtime_effect_witness("py.setattr", self.term, operation),
             )
         )
 
@@ -591,9 +598,7 @@ class SymbolicValue(FloorValue):
                 "Python subscript assignment can invoke __setitem__ and mutate "
                 "runtime state; keep as typed red until a narrower mutation "
                 f"floor owns this shape. blame={operation.blame}",
-                witness=runtime_effect_witness(
-                    "py.setitem", self.term, operation
-                ),
+                witness=runtime_effect_witness("py.setitem", self.term, operation),
             )
         )
 

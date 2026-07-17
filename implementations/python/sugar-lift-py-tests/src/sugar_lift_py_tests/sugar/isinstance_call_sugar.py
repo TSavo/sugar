@@ -5,7 +5,10 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
+from sugar_lift_py_tests.sugar.witnesses import (
+    _call_return_pair,
+    typed_red_effect_witness,
+)
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -50,12 +53,23 @@ class IsinstanceCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
 
     @classmethod
     def witnesses(cls):
-        return _call_return_pair(
-            name="isinstance_predicate",
-            owner_sugar="IsinstanceCallSugar",
-            body="isinstance(1, int)",
-            truthful="True",
-            lying="False",
+        return (
+            _call_return_pair(
+                name="isinstance_predicate",
+                owner_sugar="IsinstanceCallSugar",
+                body="isinstance(1, int)",
+                truthful="True",
+                lying="False",
+            ),
+            typed_red_effect_witness(
+                name="isinstance_dynamic_type_operand",
+                owner_sugar="IsinstanceCallSugar",
+                source=("def A(z, expected):\n" "    return isinstance(z, expected)\n"),
+                effect_class="DynamicTypeOperandRuntimeEffect",
+                reason_needle="dynamic isinstance type operand runtime boundary",
+                blame_needle="test_witness.py:2:11",
+                wrong_reason_needle="owner=CallResultTypeRuntimeEffect",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

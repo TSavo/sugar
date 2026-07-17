@@ -21,6 +21,7 @@ from .call_result_type_runtime_effect import CallResultTypeRuntimeEffect
 from .division_by_zero_runtime_effect import DivisionByZeroRuntimeEffect
 from .dict_unpack_runtime_effect import DictUnpackRuntimeEffect
 from .dynamic_format_runtime_effect import DynamicFormatRuntimeEffect
+from .dynamic_type_operand_runtime_effect import DynamicTypeOperandRuntimeEffect
 from .getattr_runtime_effect import GetattrRuntimeEffect
 from .generator_yield_runtime_effect import GeneratorYieldRuntimeEffect
 from .effect import Effect, effect_kind, effect_reason, effect_status, require_effect
@@ -70,6 +71,7 @@ __all__ = [
     "DivisionByZeroRuntimeEffect",
     "DictUnpackRuntimeEffect",
     "DynamicFormatRuntimeEffect",
+    "DynamicTypeOperandRuntimeEffect",
     "GetattrRuntimeEffect",
     "GeneratorYieldRuntimeEffect",
     "Effect",
