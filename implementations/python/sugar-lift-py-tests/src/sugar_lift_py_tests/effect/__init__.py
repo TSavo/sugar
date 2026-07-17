@@ -37,6 +37,7 @@ from .sequence_repetition_runtime_effect import SequenceRepetitionRuntimeEffect
 from .sequence_concatenation_runtime_effect import SequenceConcatenationRuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
 from .subscript_store_runtime_effect import SubscriptStoreRuntimeEffect
+from .subscript_result_runtime_effect import SubscriptResultRuntimeEffect
 from .type_error_runtime_effect import TypeErrorRuntimeEffect
 from .try_handler_dispatch_runtime_effect import TryHandlerDispatchRuntimeEffect
 
@@ -76,6 +77,7 @@ __all__ = [
     "SequenceConcatenationRuntimeEffect",
     "SourceOracleEffect",
     "SubscriptStoreRuntimeEffect",
+    "SubscriptResultRuntimeEffect",
     "TypeErrorRuntimeEffect",
     "TryHandlerDispatchRuntimeEffect",
     "effect_kind",

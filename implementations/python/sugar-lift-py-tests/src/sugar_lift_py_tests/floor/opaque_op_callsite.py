@@ -128,6 +128,12 @@ class OpaqueOpCallsite(FloorValue):
     def divide(self, other, site):
         return self._arithmetic("divide", other, site)
 
+    def subscript(self, index, site):
+        # Preserve a computed operator value when one exists; otherwise the
+        # operator coordinate is the symbolic receiver.  Both paths retain the
+        # lookup rather than inventing an element.
+        return self._downstream().subscript(index, site)
+
     def floor_divide(self, other, site):
         return self._arithmetic("floor_divide", other, site)
 
