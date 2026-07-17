@@ -87,6 +87,50 @@ def test_bound_finite_list_unfolds_its_constructed_elements() -> None:
     assert returned.value == StringValue("x")
 
 
+def test_nonempty_static_for_exports_final_constructed_binding() -> None:
+    block = compose_block(
+        "    for unit in ['ms', 'us', 'ns']:\n" "        x = unit\n" "    return x\n"
+    )
+
+    returned = next(
+        statement
+        for statement in block.statements
+        if isinstance(statement, ReturnValue)
+    )
+    assert returned.value == StringValue("ns")
+
+
+def test_empty_static_for_does_not_invent_post_binding() -> None:
+    with pytest.raises(FactoryPanic) as caught:
+        compose_block("    for unit in []:\n        x = unit\n    return x\n")
+
+    assert caught.value.info.owner == "TemporalContext"
+    assert caught.value.info.observed == "x"
+
+
+def test_static_for_post_binding_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    prefix = (
+        "def A():\n"
+        "    for unit in ['ms', 'us', 'ns']:\n"
+        "        x = unit\n"
+        "    return x\n"
+        "\n"
+    )
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful",
+        prefix + "def test_a():\n    assert A() == 'ns'\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying",
+        prefix + "def test_a():\n    assert A() == 'us'\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+
 def test_symbolic_iterable_dynamic_getattr_remains_authenticated_runtime() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     body = ctx.build_body(
