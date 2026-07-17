@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
+from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -59,9 +59,13 @@ class IfExpSugar(Sugar, role=SugarRole.TERM):
 
     def desugar(self, ctx: object = None) -> Outcome:
         return self.condition.reduce(ctx).and_then(
-            lambda cond: self.true_branch.reduce(ctx).and_then(
-                lambda true_v: self.false_branch.reduce(ctx).and_then(
-                    lambda false_v: _if_exp_join(cond, true_v, false_v, self.site)
+            lambda cond: cond.truth(self.site).and_then(
+                lambda truth: _if_exp_select(
+                    truth,
+                    self.true_branch,
+                    self.false_branch,
+                    self.site,
+                    ctx,
                 )
             )
         )
@@ -70,7 +74,7 @@ class IfExpSugar(Sugar, role=SugarRole.TERM):
         return (self.condition, self.true_branch, self.false_branch)
 
 
-def _if_exp_join(cond, true_v, false_v, site) -> Outcome:
+def _if_exp_select(truth, true_branch, false_branch, site, ctx) -> Outcome:
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
         FalseBoolLiteralSugar,
     )
@@ -78,24 +82,23 @@ def _if_exp_join(cond, true_v, false_v, site) -> Outcome:
         TrueBoolLiteralSugar,
     )
 
-    if type(cond) is TrueBoolLiteralSugar:
-        return Complete(true_v)
-    if type(cond) is FalseBoolLiteralSugar:
-        return Complete(false_v)
+    if type(truth) is TrueBoolLiteralSugar:
+        return true_branch.reduce(ctx)
+    if type(truth) is FalseBoolLiteralSugar:
+        return false_branch.reduce(ctx)
 
     # A term-level conditional with a runtime condition is not an uninterpreted
     # value. Python chooses exactly one arm after evaluating the condition. Until
     # that guarded value is constructed here, preserve the typed runtime boundary
     # so descendants propagate it instead of minting coordinates about a value
     # that has not been selected.
-    del true_v, false_v
     from sugar_lift_py_tests.effect import (
         ConditionalExpressionRuntimeEffect,
         runtime_effect_evidence_from_terms,
     )
     from sugar_lift_py_tests.ir import ctor
 
-    condition = cond.to_term(owner="IfExpSugar runtime condition")
+    condition = truth.to_term(owner="IfExpSugar runtime condition")
 
     return Incomplete(
         ConditionalExpressionRuntimeEffect(
