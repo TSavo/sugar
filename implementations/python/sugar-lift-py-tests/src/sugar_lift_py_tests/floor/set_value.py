@@ -62,3 +62,15 @@ class SetValue(FloorValue):
                 )
             )
         return super().subtract(other, site)
+
+    def bitwise_or(self, other, site):
+        if type(other) is SetValue:
+            del site
+            from sugar_lift_py_tests.outcome import Complete
+
+            elements = list(self.elements)
+            elements.extend(
+                element for element in other.elements if element not in elements
+            )
+            return Complete(SetValue(tuple(elements)))
+        return super().bitwise_or(other, site)
