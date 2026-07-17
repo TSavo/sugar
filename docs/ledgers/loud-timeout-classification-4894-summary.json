@@ -1,36 +1,272 @@
 {
-  "R_classified": 8,
-  "R_live_factory_panic_files": 8,
-  "R_pending": 285,
+  "R_classified": 240,
+  "R_live_factory_panic_files": 120,
+  "R_pending": 53,
   "R_recensus_timeout_blob": 293,
-  "R_recensus_unclassified": 285,
-  "R_residual": 285,
+  "R_recensus_unclassified": 53,
+  "R_residual": 53,
   "R_residual_axes": {
     "hang_at_max_bound_D": 0,
-    "recensus_unclassified": 285,
-    "unclassified_timeout_blob": 285
+    "recensus_unclassified": 53,
+    "unclassified_timeout_blob": 53
   },
-  "R_timeout_blob_classified": 8,
-  "R_unclassified_timeout_blob": 285,
+  "R_timeout_blob_classified": 240,
+  "R_unclassified_timeout_blob": 53,
   "bare_exception_count": 0,
   "bare_exceptions": [],
   "cause_class_counts": {
-    "A": 0,
-    "B": 8,
-    "C": 0,
+    "A": 119,
+    "B": 120,
+    "C": 1,
     "D": 0,
     "E": 0
   },
   "cause_class_files": {
+    "A": [
+      "numpy/_core/_exceptions.py",
+      "numpy/_core/tests/test__exceptions.py",
+      "numpy/_core/tests/test_api.py",
+      "numpy/_core/tests/test_array_api_info.py",
+      "numpy/_core/tests/test_array_interface.py",
+      "pandas/core/algorithms.py",
+      "pandas/core/apply.py",
+      "pandas/core/arrays/_mixins.py",
+      "pandas/core/arrays/numeric.py",
+      "pandas/core/arrays/timedeltas.py",
+      "pandas/core/groupby/grouper.py",
+      "pandas/core/groupby/ops.py",
+      "pandas/core/indexes/datetimes.py",
+      "pandas/core/indexing.py",
+      "pandas/core/methods/describe.py",
+      "pandas/core/tools/numeric.py",
+      "pandas/plotting/_matplotlib/core.py",
+      "pandas/plotting/_matplotlib/groupby.py",
+      "pandas/tests/apply/test_frame_transform.py",
+      "pandas/tests/apply/test_series_apply.py",
+      "pandas/tests/arrays/categorical/test_api.py",
+      "pandas/tests/arrays/categorical/test_constructors.py",
+      "pandas/tests/arrays/period/test_astype.py",
+      "pandas/tests/base/test_value_counts.py",
+      "pandas/tests/copy_view/index/test_datetimeindex.py",
+      "pandas/tests/copy_view/index/test_index.py",
+      "pandas/tests/copy_view/index/test_intervalindex.py",
+      "pandas/tests/copy_view/index/test_periodindex.py",
+      "pandas/tests/copy_view/index/test_timedeltaindex.py",
+      "pandas/tests/copy_view/test_interp_fillna.py",
+      "pandas/tests/copy_view/test_methods.py",
+      "pandas/tests/dtypes/cast/test_box_unbox.py",
+      "pandas/tests/dtypes/cast/test_construct_from_scalar.py",
+      "pandas/tests/dtypes/cast/test_construct_ndarray.py",
+      "pandas/tests/dtypes/cast/test_infer_dtype.py",
+      "pandas/tests/dtypes/test_missing.py",
+      "pandas/tests/frame/common.py",
+      "pandas/tests/frame/indexing/test_getitem.py",
+      "pandas/tests/frame/indexing/test_indexing.py",
+      "pandas/tests/frame/indexing/test_setitem.py",
+      "pandas/tests/frame/indexing/test_xs.py",
+      "pandas/tests/frame/methods/test_asfreq.py",
+      "pandas/tests/frame/methods/test_asof.py",
+      "pandas/tests/frame/methods/test_drop_duplicates.py",
+      "pandas/tests/frame/methods/test_fillna.py",
+      "pandas/tests/frame/methods/test_join.py",
+      "pandas/tests/frame/methods/test_values.py",
+      "pandas/tests/groupby/test_grouping.py",
+      "pandas/tests/groupby/transform/test_transform.py",
+      "pandas/tests/indexes/base_class/test_setops.py",
+      "pandas/tests/indexes/datetimelike_/test_drop_duplicates.py",
+      "pandas/tests/indexes/datetimelike_/test_equals.py",
+      "pandas/tests/indexes/datetimes/methods/test_factorize.py",
+      "pandas/tests/indexes/datetimes/methods/test_to_period.py",
+      "pandas/tests/indexes/datetimes/methods/test_to_pydatetime.py",
+      "pandas/tests/indexes/datetimes/test_constructors.py",
+      "pandas/tests/indexes/datetimes/test_iter.py",
+      "pandas/tests/indexes/datetimes/test_join.py",
+      "pandas/tests/indexes/datetimes/test_pickle.py",
+      "pandas/tests/indexes/interval/test_astype.py",
+      "pandas/tests/indexes/interval/test_interval_range.py",
+      "pandas/tests/indexes/numeric/test_astype.py",
+      "pandas/tests/indexes/period/methods/test_asfreq.py",
+      "pandas/tests/indexes/period/methods/test_astype.py",
+      "pandas/tests/indexes/period/methods/test_shift.py",
+      "pandas/tests/indexes/period/methods/test_to_timestamp.py",
+      "pandas/tests/indexes/period/test_join.py",
+      "pandas/tests/indexes/period/test_partial_slicing.py",
+      "pandas/tests/indexes/period/test_pickle.py",
+      "pandas/tests/indexes/period/test_tools.py",
+      "pandas/tests/indexes/test_index_new.py",
+      "pandas/tests/indexes/timedeltas/methods/test_factorize.py",
+      "pandas/tests/indexing/multiindex/test_datetime.py",
+      "pandas/tests/indexing/test_floats.py",
+      "pandas/tests/indexing/test_iat.py",
+      "pandas/tests/indexing/test_iloc.py",
+      "pandas/tests/indexing/test_indexing.py",
+      "pandas/tests/indexing/test_partial.py",
+      "pandas/tests/io/excel/test_style.py",
+      "pandas/tests/io/json/test_readlines.py",
+      "pandas/tests/io/parser/common/test_iterator.py",
+      "pandas/tests/io/parser/test_c_parser_only.py",
+      "pandas/tests/io/parser/test_network.py",
+      "pandas/tests/io/pytables/test_append.py",
+      "pandas/tests/io/pytables/test_categorical.py",
+      "pandas/tests/io/pytables/test_compat.py",
+      "pandas/tests/io/pytables/test_put.py",
+      "pandas/tests/io/pytables/test_select.py",
+      "pandas/tests/io/pytables/test_time_series.py",
+      "pandas/tests/io/test_gcs.py",
+      "pandas/tests/io/test_html.py",
+      "pandas/tests/resample/test_base.py",
+      "pandas/tests/reshape/concat/test_append.py",
+      "pandas/tests/reshape/concat/test_dataframe.py",
+      "pandas/tests/reshape/concat/test_empty.py",
+      "pandas/tests/reshape/concat/test_index.py",
+      "pandas/tests/reshape/concat/test_series.py",
+      "pandas/tests/reshape/test_crosstab.py",
+      "pandas/tests/reshape/test_melt.py",
+      "pandas/tests/series/accessors/test_cat_accessor.py",
+      "pandas/tests/series/indexing/test_getitem.py",
+      "pandas/tests/series/indexing/test_indexing.py",
+      "pandas/tests/series/indexing/test_setitem.py",
+      "pandas/tests/series/methods/test_asof.py",
+      "pandas/tests/series/methods/test_combine_first.py",
+      "pandas/tests/series/methods/test_infer_objects.py",
+      "pandas/tests/test_algos.py",
+      "pandas/tests/test_sorting.py",
+      "pandas/tests/tseries/holiday/test_federal.py",
+      "pandas/tests/tseries/holiday/test_holiday.py",
+      "pandas/tests/util/test_hashing.py",
+      "pandas/tests/window/test_api.py",
+      "pandas/tests/window/test_apply.py",
+      "pandas/tests/window/test_base_indexer.py",
+      "pandas/tests/window/test_groupby.py",
+      "pandas/tests/window/test_pairwise.py",
+      "pandas/tests/window/test_rolling_quantile.py",
+      "pandas/tests/window/test_rolling_skew_kurt.py",
+      "pandas/tests/window/test_win_type.py"
+    ],
     "B": [
+      "numpy/_core/tests/test_array_coercion.py",
+      "numpy/_core/tests/test_ufunc.py",
+      "numpy/f2py/tests/test_crackfortran.py",
       "numpy/ma/tests/test_core.py",
+      "pandas/_testing/asserters.py",
+      "pandas/core/arrays/arrow/array.py",
+      "pandas/core/arrays/base.py",
+      "pandas/core/arrays/categorical.py",
+      "pandas/core/arrays/datetimelike.py",
+      "pandas/core/arrays/datetimes.py",
+      "pandas/core/arrays/interval.py",
+      "pandas/core/arrays/sparse/array.py",
+      "pandas/core/arrays/string_.py",
+      "pandas/core/dtypes/cast.py",
+      "pandas/core/frame.py",
+      "pandas/core/generic.py",
+      "pandas/core/groupby/groupby.py",
+      "pandas/core/indexes/base.py",
+      "pandas/core/indexes/multi.py",
+      "pandas/core/indexes/period.py",
+      "pandas/core/indexes/range.py",
+      "pandas/core/internals/blocks.py",
+      "pandas/core/internals/managers.py",
+      "pandas/core/ops/array_ops.py",
+      "pandas/core/resample.py",
+      "pandas/core/reshape/pivot.py",
+      "pandas/core/reshape/reshape.py",
+      "pandas/core/series.py",
+      "pandas/core/tools/datetimes.py",
+      "pandas/core/window/rolling.py",
+      "pandas/io/excel/_base.py",
+      "pandas/io/formats/format.py",
+      "pandas/io/parsers/readers.py",
+      "pandas/io/pytables.py",
+      "pandas/io/sql.py",
+      "pandas/io/stata.py",
+      "pandas/plotting/_matplotlib/boxplot.py",
+      "pandas/plotting/_matplotlib/converter.py",
+      "pandas/plotting/_matplotlib/hist.py",
+      "pandas/tests/apply/test_frame_apply.py",
+      "pandas/tests/arithmetic/test_datetime64.py",
+      "pandas/tests/arithmetic/test_numeric.py",
+      "pandas/tests/arithmetic/test_period.py",
+      "pandas/tests/arithmetic/test_timedelta64.py",
+      "pandas/tests/arrays/categorical/test_astype.py",
+      "pandas/tests/arrays/categorical/test_repr.py",
+      "pandas/tests/computation/test_eval.py",
+      "pandas/tests/copy_view/test_functions.py",
+      "pandas/tests/dtypes/cast/test_find_common_type.py",
+      "pandas/tests/dtypes/test_common.py",
+      "pandas/tests/dtypes/test_dtypes.py",
       "pandas/tests/extension/test_arrow.py",
+      "pandas/tests/frame/methods/test_astype.py",
+      "pandas/tests/frame/methods/test_set_index.py",
+      "pandas/tests/frame/methods/test_to_csv.py",
+      "pandas/tests/frame/methods/test_to_timestamp.py",
       "pandas/tests/frame/test_constructors.py",
+      "pandas/tests/frame/test_reductions.py",
+      "pandas/tests/frame/test_repr.py",
+      "pandas/tests/groupby/aggregate/test_aggregate.py",
+      "pandas/tests/groupby/aggregate/test_other.py",
+      "pandas/tests/groupby/methods/test_rank.py",
+      "pandas/tests/groupby/test_groupby.py",
+      "pandas/tests/groupby/test_reductions.py",
+      "pandas/tests/indexes/datetimes/methods/test_tz_localize.py",
+      "pandas/tests/indexes/datetimes/test_timezones.py",
+      "pandas/tests/indexes/interval/test_constructors.py",
+      "pandas/tests/indexes/interval/test_indexing.py",
+      "pandas/tests/indexes/interval/test_interval.py",
+      "pandas/tests/indexes/multi/test_analytics.py",
+      "pandas/tests/indexes/multi/test_util.py",
+      "pandas/tests/indexes/period/methods/test_repeat.py",
+      "pandas/tests/indexes/period/test_constructors.py",
+      "pandas/tests/indexes/period/test_indexing.py",
+      "pandas/tests/indexes/period/test_period.py",
+      "pandas/tests/indexes/period/test_setops.py",
+      "pandas/tests/indexes/test_base.py",
+      "pandas/tests/indexes/test_old_base.py",
+      "pandas/tests/indexes/test_setops.py",
       "pandas/tests/indexing/test_loc.py",
+      "pandas/tests/internals/test_internals.py",
+      "pandas/tests/io/excel/test_writers.py",
+      "pandas/tests/io/formats/style/test_bar.py",
+      "pandas/tests/io/formats/test_format.py",
+      "pandas/tests/io/formats/test_to_string.py",
+      "pandas/tests/io/json/test_json_table_schema_ext_dtype.py",
+      "pandas/tests/io/json/test_pandas.py",
+      "pandas/tests/io/parser/common/test_chunksize.py",
+      "pandas/tests/io/parser/test_encoding.py",
+      "pandas/tests/io/parser/test_textreader.py",
+      "pandas/tests/io/pytables/test_store.py",
+      "pandas/tests/io/test_fsspec.py",
+      "pandas/tests/io/test_pickle.py",
       "pandas/tests/io/test_sql.py",
+      "pandas/tests/libs/test_hashtable.py",
+      "pandas/tests/plotting/test_datetimelike.py",
+      "pandas/tests/plotting/test_hist_method.py",
+      "pandas/tests/plotting/test_misc.py",
+      "pandas/tests/plotting/test_series.py",
+      "pandas/tests/reductions/test_reductions.py",
+      "pandas/tests/resample/test_datetime_index.py",
+      "pandas/tests/resample/test_period_index.py",
+      "pandas/tests/reshape/concat/test_concat.py",
+      "pandas/tests/reshape/concat/test_datetimes.py",
+      "pandas/tests/reshape/merge/test_join.py",
       "pandas/tests/reshape/merge/test_merge.py",
       "pandas/tests/reshape/merge/test_merge_asof.py",
-      "pandas/tests/tools/test_to_datetime.py"
+      "pandas/tests/reshape/merge/test_multi.py",
+      "pandas/tests/reshape/test_cut.py",
+      "pandas/tests/reshape/test_pivot.py",
+      "pandas/tests/series/accessors/test_dt_accessor.py",
+      "pandas/tests/series/test_constructors.py",
+      "pandas/tests/series/test_formats.py",
+      "pandas/tests/strings/test_cat.py",
+      "pandas/tests/tools/test_to_datetime.py",
+      "pandas/tests/tseries/frequencies/test_inference.py",
+      "pandas/tests/tseries/holiday/test_calendar.py",
+      "pandas/tests/window/moments/test_moments_consistency_ewm.py",
+      "pandas/tests/window/test_rolling.py",
+      "pandas/tests/window/test_rolling_functions.py"
+    ],
+    "C": [
+      "pandas/core/arrays/masked.py"
     ]
   },
   "cause_class_labels": {
@@ -41,11 +277,264 @@
     "E": "bare"
   },
   "completes_by_bound": {
-    "60": 5,
-    "120": 1,
-    "300": 2
+    "60": 230,
+    "120": 6,
+    "300": 4
   },
   "factory_panic_fronts": [
+    {
+      "count": 10,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "SequentialDigBody / Floor / Construction / Try / reduced guarded returns with an unguarded fallback",
+      "observed": "Try",
+      "owner": "SequentialDigBody",
+      "representative_files": [
+        "pandas/tests/arrays/categorical/test_repr.py",
+        "pandas/tests/frame/test_repr.py",
+        "pandas/tests/io/formats/test_format.py",
+        "pandas/tests/io/formats/test_to_string.py",
+        "pandas/tests/libs/test_hashtable.py"
+      ],
+      "requested": "reduced guarded returns with an unguarded fallback"
+    },
+    {
+      "count": 10,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / com / value",
+      "observed": "com",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/tests/arithmetic/test_datetime64.py",
+        "pandas/tests/arithmetic/test_period.py",
+        "pandas/tests/arithmetic/test_timedelta64.py",
+        "pandas/tests/indexes/datetimes/methods/test_tz_localize.py",
+        "pandas/tests/indexes/datetimes/test_timezones.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 8,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / RuntimeEffect operand=_ConstInt(value=1, sort=PrimitiveSort(name='Int')) / genuine runtime-dependent operand",
+      "observed": "RuntimeEffect operand=_ConstInt(value=1, sort=PrimitiveSort(name='Int'))",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/frame/methods/test_set_index.py",
+        "pandas/tests/groupby/methods/test_rank.py",
+        "pandas/tests/indexes/period/methods/test_repeat.py",
+        "pandas/tests/io/excel/test_writers.py",
+        "pandas/tests/io/json/test_pandas.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 6,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "SequentialDigBody / Floor / Construction / Return / reduced guarded returns with an unguarded fallback",
+      "observed": "Return",
+      "owner": "SequentialDigBody",
+      "representative_files": [
+        "pandas/tests/dtypes/cast/test_find_common_type.py",
+        "pandas/tests/dtypes/test_dtypes.py",
+        "pandas/tests/frame/methods/test_to_timestamp.py",
+        "pandas/tests/indexes/multi/test_util.py",
+        "pandas/tests/tools/test_to_datetime.py"
+      ],
+      "requested": "reduced guarded returns with an unguarded fallback"
+    },
+    {
+      "count": 4,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "ImportAliasValue / Floor / Construction / numpy / dig installed import source before applying floor operation",
+      "observed": "numpy",
+      "owner": "ImportAliasValue",
+      "representative_files": [
+        "pandas/tests/apply/test_frame_apply.py",
+        "pandas/tests/frame/test_reductions.py",
+        "pandas/tests/indexes/period/test_period.py",
+        "pandas/tests/reductions/test_reductions.py"
+      ],
+      "requested": "dig installed import source before applying floor operation"
+    },
+    {
+      "count": 4,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / codecs / value",
+      "observed": "codecs",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/core/frame.py",
+        "pandas/io/excel/_base.py",
+        "pandas/io/stata.py",
+        "pandas/tests/frame/methods/test_to_csv.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 4,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "multiply / Floor / Construction / ListValue / stand on the multiplication floor",
+      "observed": "ListValue",
+      "owner": "multiply",
+      "representative_files": [
+        "pandas/core/arrays/base.py",
+        "pandas/io/formats/format.py",
+        "pandas/tests/arithmetic/test_numeric.py",
+        "pandas/tests/indexes/test_setops.py"
+      ],
+      "requested": "stand on the multiplication floor"
+    },
+    {
+      "count": 3,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / RuntimeEffect operand=_Ctor(name='python:module', args=(_ConstStr(value='copy', sort=PrimitiveSort(name='String')),)) / genuine runtime-dependent operand",
+      "observed": "RuntimeEffect operand=_Ctor(name='python:module', args=(_ConstStr(value='copy', sort=PrimitiveSort(name='String')),))",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/core/arrays/categorical.py",
+        "pandas/core/arrays/interval.py",
+        "pandas/core/indexes/base.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 3,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / py.subscript operand=TermValue(value=0) / genuine runtime-dependent operand",
+      "observed": "py.subscript operand=TermValue(value=0)",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/core/indexes/range.py",
+        "pandas/core/internals/managers.py",
+        "pandas/core/window/rolling.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 3,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "WithSugar / Floor / Construction / raise-carrying callsite with-body / dig manager().__exit__ exception suppression contract",
+      "observed": "raise-carrying callsite with-body",
+      "owner": "WithSugar",
+      "representative_files": [
+        "pandas/tests/io/parser/common/test_chunksize.py",
+        "pandas/tests/io/parser/test_textreader.py",
+        "pandas/tests/io/pytables/test_store.py"
+      ],
+      "requested": "dig manager().__exit__ exception suppression contract"
+    },
+    {
+      "count": 2,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "FunctionCallable / Floor / Construction / [['positional', 'positional', 'var-keyword'], ['**']] / bind call arguments to a function signature",
+      "observed": "[['positional', 'positional', 'var-keyword'], ['**']]",
+      "owner": "FunctionCallable",
+      "representative_files": [
+        "pandas/tests/plotting/test_hist_method.py",
+        "pandas/tests/plotting/test_series.py"
+      ],
+      "requested": "bind call arguments to a function signature"
+    },
+    {
+      "count": 2,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RaiseSugar / Floor / Construction / CallSiteValue / constructed exception floor",
+      "observed": "CallSiteValue",
+      "owner": "RaiseSugar",
+      "representative_files": [
+        "pandas/core/groupby/groupby.py",
+        "pandas/core/resample.py"
+      ],
+      "requested": "constructed exception floor"
+    },
+    {
+      "count": 2,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / RuntimeEffect operand=_ConstInt(value=0, sort=PrimitiveSort(name='Int')) / genuine runtime-dependent operand",
+      "observed": "RuntimeEffect operand=_ConstInt(value=0, sort=PrimitiveSort(name='Int'))",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/groupby/test_groupby.py",
+        "pandas/tests/io/test_fsspec.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 2,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / RuntimeEffect operand=_Ctor(name='python:import_alias', args=(_ConstStr(value='HAS_PYARROW', sort=PrimitiveSort(name='String')), _ConstStr(value='HAS_PYARROW', sort=PrimitiveSort(name='String')))) / genuine runtime-dependent operand",
+      "observed": "RuntimeEffect operand=_Ctor(name='python:import_alias', args=(_ConstStr(value='HAS_PYARROW', sort=PrimitiveSort(name='String')), _ConstStr(value='HAS_PYARROW', sort=PrimitiveSort(name='String'))))",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/dtypes/test_common.py",
+        "pandas/tests/series/test_constructors.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 2,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / lib / value",
+      "observed": "lib",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/tests/arrays/categorical/test_astype.py",
+        "pandas/tests/io/json/test_json_table_schema_ext_dtype.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 2,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "append_with / Floor / Construction / ComprehensionValue / stand on the append floor",
+      "observed": "ComprehensionValue",
+      "owner": "append_with",
+      "representative_files": [
+        "pandas/core/reshape/reshape.py",
+        "pandas/tests/window/test_rolling_functions.py"
+      ],
+      "requested": "stand on the append floor"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "label": "ConstructorCallSugar / Constructor / AST / Int16DtypeNoCopy(pd.Int16Dtype) / statically resolved inherited constructor",
+      "observed": "Int16DtypeNoCopy(pd.Int16Dtype)",
+      "owner": "ConstructorCallSugar",
+      "representative_files": [
+        "pandas/tests/frame/methods/test_astype.py"
+      ],
+      "requested": "statically resolved inherited constructor"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "label": "ConstructorCallSugar / Constructor / AST / MultiIndexPyIntEngine bases=('libindex.BaseMultiIndexCodesEngine', 'libindex.ObjectEngine') / statically resolved inherited constructor",
+      "observed": "MultiIndexPyIntEngine bases=('libindex.BaseMultiIndexCodesEngine', 'libindex.ObjectEngine')",
+      "owner": "ConstructorCallSugar",
+      "representative_files": [
+        "pandas/core/indexes/multi.py"
+      ],
+      "requested": "statically resolved inherited constructor"
+    },
     {
       "count": 1,
       "gap_kind": "Constructor",
@@ -74,11 +563,203 @@
       "count": 1,
       "gap_kind": "Floor",
       "gap_locus": "Construction",
+      "label": "FunctionCallable / Floor / Construction / [['positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'var-keyword'], ['column', 'by', 'ax', 'grid', 'figsize', 'sharex', 'sharey', 'layout', 'bins', 'xlabelsize', 'xrot', 'ylabelsize', 'yrot', 'legend', '**']] / bind call arguments to a function signature",
+      "observed": "[['positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'var-keyword'], ['column', 'by', 'ax', 'grid', 'figsize', 'sharex', 'sharey', 'layout', 'bins', 'xlabelsize', 'xrot', 'ylabelsize', 'yrot', 'legend', '**']]",
+      "owner": "FunctionCallable",
+      "representative_files": [
+        "pandas/plotting/_matplotlib/hist.py"
+      ],
+      "requested": "bind call arguments to a function signature"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "FunctionCallable / Floor / Construction / [['positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional'], ['**']] / bind call arguments to a function signature",
+      "observed": "[['positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional'], ['**']]",
+      "owner": "FunctionCallable",
+      "representative_files": [
+        "pandas/tests/copy_view/test_functions.py"
+      ],
+      "requested": "bind call arguments to a function signature"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "FunctionCallable / Floor / Construction / [['positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'var-keyword'], ['index', 'columns', 'values', 'aggfunc', '**']] / bind call arguments to a function signature",
+      "observed": "[['positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'var-keyword'], ['index', 'columns', 'values', 'aggfunc', '**']]",
+      "owner": "FunctionCallable",
+      "representative_files": [
+        "pandas/tests/reshape/test_pivot.py"
+      ],
+      "requested": "bind call arguments to a function signature"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "FunctionCallable / Floor / Construction / [['positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional'], ['**']] / bind call arguments to a function signature",
+      "observed": "[['positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional'], ['**']]",
+      "owner": "FunctionCallable",
+      "representative_files": [
+        "pandas/io/sql.py"
+      ],
+      "requested": "bind call arguments to a function signature"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "FunctionCallable / Floor / Construction / [['positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional'], ['check_exact', 'exact', 'rtol', 'atol', '**']] / bind call arguments to a function signature",
+      "observed": "[['positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional'], ['check_exact', 'exact', 'rtol', 'atol', '**']]",
+      "owner": "FunctionCallable",
+      "representative_files": [
+        "pandas/_testing/asserters.py"
+      ],
+      "requested": "bind call arguments to a function signature"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "FunctionCallable / Floor / Construction / [['positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional'], ['**']] / bind call arguments to a function signature",
+      "observed": "[['positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional', 'positional'], ['**']]",
+      "owner": "FunctionCallable",
+      "representative_files": [
+        "pandas/tests/reshape/test_cut.py"
+      ],
+      "requested": "bind call arguments to a function signature"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "FunctionCallable / Floor / Construction / [['positional', 'positional', 'positional', 'positional', 'positional'], ['**']] / bind call arguments to a function signature",
+      "observed": "[['positional', 'positional', 'positional', 'positional', 'positional'], ['**']]",
+      "owner": "FunctionCallable",
+      "representative_files": [
+        "pandas/tests/resample/test_datetime_index.py"
+      ],
+      "requested": "bind call arguments to a function signature"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "FunctionCallable / Floor / Construction / [['positional', 'positional', 'var-keyword'], ['color_tup', '**']] / bind call arguments to a function signature",
+      "observed": "[['positional', 'positional', 'var-keyword'], ['color_tup', '**']]",
+      "owner": "FunctionCallable",
+      "representative_files": [
+        "pandas/plotting/_matplotlib/boxplot.py"
+      ],
+      "requested": "bind call arguments to a function signature"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "FunctionCallable / Floor / Construction / [['positional', 'positional', 'var-keyword'], ['series', '**']] / bind call arguments to a function signature",
+      "observed": "[['positional', 'positional', 'var-keyword'], ['series', '**']]",
+      "owner": "FunctionCallable",
+      "representative_files": [
+        "pandas/tests/plotting/test_misc.py"
+      ],
+      "requested": "bind call arguments to a function signature"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "FunctionCallable / Floor / Construction / [['var-positional', 'var-keyword'], ['other', 'other_name', '**']] / bind call arguments to a function signature",
+      "observed": "[['var-positional', 'var-keyword'], ['other', 'other_name', '**']]",
+      "owner": "FunctionCallable",
+      "representative_files": [
+        "pandas/core/indexes/period.py"
+      ],
+      "requested": "bind call arguments to a function signature"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / RuntimeEffect operand=_ConstReal(value='2.5', sort=PrimitiveSort(name='Real')) / genuine runtime-dependent operand",
+      "observed": "RuntimeEffect operand=_ConstReal(value='2.5', sort=PrimitiveSort(name='Real'))",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/io/formats/style/test_bar.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / RuntimeEffect operand=_Ctor(name='py.subscript', args=(_Ctor(name='py.iter_elem', args=(_Ctor(name='array', args=(_Ctor(name='array', args=(_ConstInt(value=1, sort=PrimitiveSort(name='Int')), _ConstStr(value='2012-01-01', sort=PrimitiveSort(name='String')), _ConstReal(value='1.0', sort=PrimitiveSort(name='Real')))), _Ctor(name='array', args=(_ConstInt(value=2, sort=PrimitiveSort(name='Int')), _ConstStr(value='2012-01-02', sort=PrimitiveSort(name='String')), _ConstReal(value='2.0', sort=PrimitiveSort(name='Real')))), _Ctor(name='array', args=(_ConstInt(value=3, sort=PrimitiveSort(name='Int')), _Ctor(name='None', args=()), _ConstReal(value='3.0', sort=PrimitiveSort(name='Real')))))),)), _ConstInt(value=1, sort=PrimitiveSort(name='Int')))) / genuine runtime-dependent operand",
+      "observed": "RuntimeEffect operand=_Ctor(name='py.subscript', args=(_Ctor(name='py.iter_elem', args=(_Ctor(name='array', args=(_Ctor(name='array', args=(_ConstInt(value=1, sort=PrimitiveSort(name='Int')), _ConstStr(value='2012-01-01', sort=PrimitiveSort(name='String')), _ConstReal(value='1.0', sort=PrimitiveSort(name='Real')))), _Ctor(name='array', args=(_ConstInt(value=2, sort=PrimitiveSort(name='Int')), _ConstStr(value='2012-01-02', sort=PrimitiveSort(name='String')), _ConstReal(value='2.0', sort=PrimitiveSort(name='Real')))), _Ctor(name='array', args=(_ConstInt(value=3, sort=PrimitiveSort(name='Int')), _Ctor(name='None', args=()), _ConstReal(value='3.0', sort=PrimitiveSort(name='Real')))))),)), _ConstInt(value=1, sort=PrimitiveSort(name='Int'))))",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/groupby/aggregate/test_other.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / RuntimeEffect operand=_Ctor(name='python:import_alias', args=(_ConstStr(value='IS64', sort=PrimitiveSort(name='String')), _ConstStr(value='IS64', sort=PrimitiveSort(name='String')))) / genuine runtime-dependent operand",
+      "observed": "RuntimeEffect operand=_Ctor(name='python:import_alias', args=(_ConstStr(value='IS64', sort=PrimitiveSort(name='String')), _ConstStr(value='IS64', sort=PrimitiveSort(name='String'))))",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/internals/test_internals.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
       "label": "RuntimeEffect / Floor / Construction / RuntimeEffect operand=_Ctor(name='python:import_alias', args=(_ConstStr(value='PY314', sort=PrimitiveSort(name='String')), _ConstStr(value='PY314', sort=PrimitiveSort(name='String')))) / genuine runtime-dependent operand",
       "observed": "RuntimeEffect operand=_Ctor(name='python:import_alias', args=(_ConstStr(value='PY314', sort=PrimitiveSort(name='String')), _ConstStr(value='PY314', sort=PrimitiveSort(name='String'))))",
       "owner": "RuntimeEffect",
       "representative_files": [
         "pandas/tests/reshape/merge/test_merge.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / py.call.starred_positional operand=SymbolicValue(term=_Ctor(name='python:module', args=(_ConstStr(value='types', sort=PrimitiveSort(name='String')),))) / genuine runtime-dependent operand",
+      "observed": "py.call.starred_positional operand=SymbolicValue(term=_Ctor(name='python:module', args=(_ConstStr(value='types', sort=PrimitiveSort(name='String')),)))",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/core/dtypes/cast.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / py.getattr.dynamic_name operand=CallSiteValue(target_name='iter_elem', arg_values=(ListValue(elements=(StringValue(value='to_period'), StringValue(value='to_pydatetime'), StringValue(value='tz_localize'), StringValue(value='tz_convert'), StringValue(value='normalize'), StringValue(value='strftime'), StringValue(value='round'), StringValue(value='floor'), StringValue(value='ceil'), StringValue(value='day_name'), StringValue(value='month_name'), StringValue(value='isocalendar'), StringValue(value='as_unit'))),), parameters=(), term=_Ctor(name='py.iter_elem', args=(_Ctor(name='array', args=(_ConstStr(value='to_period', sort=PrimitiveSort(name='String')), _ConstStr(value='to_pydatetime', sort=PrimitiveSort(name='String')), _ConstStr(value='tz_localize', sort=PrimitiveSort(name='String')), _ConstStr(value='tz_convert', sort=PrimitiveSort(name='String')), _ConstStr(value='normalize', sort=PrimitiveSort(name='String')), _ConstStr(value='strftime', sort=PrimitiveSort(name='String')), _ConstStr(value='round', sort=PrimitiveSort(name='String')), _ConstStr(value='floor', sort=PrimitiveSort(name='String')), _ConstStr(value='ceil', sort=PrimitiveSort(name='String')), _ConstStr(value='day_name', sort=PrimitiveSort(name='String')), _ConstStr(value='month_name', sort=PrimitiveSort(name='String')), _ConstStr(value='isocalendar', sort=PrimitiveSort(name='String')), _ConstStr(value='as_unit', sort=PrimitiveSort(name='String')))),)), body=None, site=SourceFragment(node=For(target=Name(id='prop', ctx=Store()), iter=Name(id='ok_for_dt_methods', ctx=Load()), body=[Expr(value=Call(func=Name(...), args=[Attribute(...), Name(...)], keywords=[]))], orelse=[], type_comment=None), filename='pandas/tests/series/accessors/test_dt_accessor.py', line=115, col=8, source='import calendar\\nfrom datetime import (\\n    date,\\n    datetime,\\n    time,\\n)\\nimport locale\\nimport unicodedata\\n\\nimport numpy as np\\nimport pytest\\n\\nfrom pandas._libs.tslibs.timezones import maybe_get_tz\\nfrom pandas.errors import Pandas4Warning\\n\\nfrom pandas.core.dtypes.common import (\\n    is_integer_dtype,\\n    is_list_like,\\n)\\n\\nimport pandas as pd\\nfrom pandas import (\\n    DataFrame,\\n    DatetimeIndex,\\n    Index,\\n    Period,\\n    PeriodIndex,\\n    Series,\\n    StringDtype,\\n    TimedeltaIndex,\\n    date_range,\\n    period_range,\\n    timedelta_range,\\n)\\nimport pandas._testing as tm\\nfrom pandas.core.arrays import (\\n    DatetimeArray,\\n    PeriodArray,\\n    TimedeltaArray,\\n)\\n\\nok_for_period = PeriodArray._datetimelike_ops\\nok_for_period_methods = [\"strftime\", \"to_timestamp\", \"asfreq\"]\\nok_for_dt = DatetimeArray._datetimelike_ops\\nok_for_dt_methods = [\\n    \"to_period\",\\n    \"to_pydatetime\",\\n    \"tz_localize\",\\n    \"tz_convert\",\\n    \"normalize\",\\n    \"strftime\",\\n    \"round\",\\n    \"floor\",\\n    \"ceil\",\\n    \"day_name\",\\n    \"month_name\",\\n    \"isocalendar\",\\n    \"as_unit\",\\n]\\nok_for_td = TimedeltaArray._datetimelike_ops\\nok_for_td_methods = [\\n    \"components\",\\n    \"to_pytimedelta\",\\n    \"total_seconds\",\\n    \"round\",\\n    \"floor\",\\n    \"ceil\",\\n    \"as_unit\",\\n]\\n\\n\\ndef get_dir(ser):\\n    # check limited display api\\n    results = [r for r in ser.dt.__dir__() if not r.startswith(\"_\")]\\n    return sorted(set(results))\\n\\n\\nclass TestSeriesDatetimeValues:\\n    def _compare(self, ser, name):\\n        # GH 7207, 11128\\n        # test .dt namespace accessor\\n\\n        def get_expected(ser, prop):\\n            result = getattr(Index(ser._values), prop)\\n            if isinstance(result, np.ndarray):\\n                if is_integer_dtype(result):\\n                    result = result.astype(\"int64\")\\n            elif not is_list_like(result) or isinstance(result, DataFrame):\\n                return result\\n            return Series(result, index=ser.index, name=ser.name)\\n\\n        left = getattr(ser.dt, name)\\n        right = get_expected(ser, name)\\n        if not (is_list_like(left) and is_list_like(right)):\\n            assert left == right\\n        elif isinstance(left, DataFrame):\\n            tm.assert_frame_equal(left, right)\\n        else:\\n            tm.assert_series_equal(left, right)\\n\\n    @pytest.mark.parametrize(\"freq\", [\"D\", \"s\", \"ms\"])\\n    def test_dt_namespace_accessor_datetime64(self, freq):\\n        # GH#7207, GH#11128\\n        # test .dt namespace accessor\\n\\n        # datetimeindex\\n        dti = date_range(\"20130101\", periods=5, freq=freq)\\n        ser = Series(dti, name=\"xxx\")\\n\\n        for prop in ok_for_dt:\\n            # we test freq below\\n            if prop != \"freq\":\\n                self._compare(ser, prop)\\n\\n        for prop in ok_for_dt_methods:\\n            getattr(ser.dt, prop)\\n\\n        result = ser.dt.to_pydatetime()\\n        assert isinstance(result, Series)\\n        assert result.dtype == object\\n\\n        result = ser.dt.tz_localize(\"US/Eastern\")\\n        exp_values = DatetimeIndex(ser.values).tz_localize(\"US/Eastern\")\\n        expected = Series(exp_values, index=ser.index, name=\"xxx\")\\n        tm.assert_series_equal(result, expected)\\n\\n        tz_result = result.dt.tz\\n        assert str(tz_result) == \"US/Eastern\"\\n        freq_result = ser.dt.freq\\n        assert freq_result == DatetimeIndex(ser.values, freq=\"infer\").freq\\n\\n        # let\\'s localize, then convert\\n        result = ser.dt.tz_localize(\"UTC\").dt.tz_convert(\"US/Eastern\")\\n        exp_values = (\\n            DatetimeIndex(ser.values).tz_localize(\"UTC\").tz_convert(\"US/Eastern\")\\n        )\\n        expected = Series(exp_values, index=ser.index, name=\"xxx\")\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_dt_namespace_accessor_datetime64tz(self):\\n        # GH#7207, GH#11128\\n        # test .dt namespace accessor\\n\\n        # datetimeindex with tz\\n        dti = date_range(\"20130101\", periods=5, tz=\"US/Eastern\")\\n        ser = Series(dti, name=\"xxx\")\\n        for prop in ok_for_dt:\\n            # we test freq below\\n            if prop != \"freq\":\\n                self._compare(ser, prop)\\n\\n        for prop in ok_for_dt_methods:\\n            getattr(ser.dt, prop)\\n\\n        result = ser.dt.to_pydatetime()\\n        assert isinstance(result, Series)\\n        assert result.dtype == object\\n\\n        result = ser.dt.tz_convert(\"CET\")\\n        expected = Series(ser._values.tz_convert(\"CET\"), index=ser.index, name=\"xxx\")\\n        tm.assert_series_equal(result, expected)\\n\\n        tz_result = result.dt.tz\\n        assert str(tz_result) == \"CET\"\\n        freq_result = ser.dt.freq\\n        assert freq_result == DatetimeIndex(ser.values, freq=\"infer\").freq\\n\\n    def test_dt_namespace_accessor_timedelta(self):\\n        # GH#7207, GH#11128\\n        # test .dt namespace accessor\\n\\n        # timedelta index\\n        cases = [\\n            Series(\\n                timedelta_range(\"1 day\", periods=5), index=list(\"abcde\"), name=\"xxx\"\\n            ),\\n            Series(timedelta_range(\"1 day 01:23:45\", periods=5, freq=\"s\"), name=\"xxx\"),\\n            Series(\\n                timedelta_range(\"2 days 01:23:45.012345\", periods=5, freq=\"ms\"),\\n                name=\"xxx\",\\n            ),\\n        ]\\n        for ser in cases:\\n            for prop in ok_for_td:\\n                # we test freq below\\n                if prop != \"freq\":\\n                    self._compare(ser, prop)\\n\\n            for prop in ok_for_td_methods:\\n                getattr(ser.dt, prop)\\n\\n            result = ser.dt.components\\n            assert isinstance(result, DataFrame)\\n            tm.assert_index_equal(result.index, ser.index)\\n\\n            msg = \"The behavior of TimedeltaProperties.to_pytimedelta is deprecated\"\\n            with tm.assert_produces_warning(Pandas4Warning, match=msg):\\n                result = ser.dt.to_pytimedelta()\\n            assert isinstance(result, np.ndarray)\\n            assert result.dtype == object\\n\\n            result = ser.dt.total_seconds()\\n            assert isinstance(result, Series)\\n            assert result.dtype == \"float64\"\\n\\n            freq_result = ser.dt.freq\\n            assert freq_result == TimedeltaIndex(ser.values, freq=\"infer\").freq\\n\\n    def test_dt_namespace_accessor_period(self):\\n        # GH#7207, GH#11128\\n        # test .dt namespace accessor\\n\\n        # periodindex\\n        pi = period_range(\"20130101\", periods=5, freq=\"D\")\\n        ser = Series(pi, name=\"xxx\")\\n\\n        for prop in ok_for_period:\\n            # we test freq below\\n            if prop != \"freq\":\\n                self._compare(ser, prop)\\n\\n        for prop in ok_for_period_methods:\\n            getattr(ser.dt, prop)\\n\\n        freq_result = ser.dt.freq\\n        assert freq_result == PeriodIndex(ser.values).freq\\n\\n    def test_dt_namespace_accessor_index_and_values(self):\\n        # both\\n        index = date_range(\"20130101\", periods=3, freq=\"D\")\\n        dti = date_range(\"20140204\", periods=3, freq=\"s\")\\n        ser = Series(dti, index=index, name=\"xxx\")\\n        exp = Series(\\n            np.array([2014, 2014, 2014], dtype=\"int32\"), index=index, name=\"xxx\"\\n        )\\n        tm.assert_series_equal(ser.dt.year, exp)\\n\\n        exp = Series(np.array([2, 2, 2], dtype=\"int32\"), index=index, name=\"xxx\")\\n        tm.assert_series_equal(ser.dt.month, exp)\\n\\n        exp = Series(np.array([0, 1, 2], dtype=\"int32\"), index=index, name=\"xxx\")\\n        tm.assert_series_equal(ser.dt.second, exp)\\n\\n        exp = Series([ser.iloc[0]] * 3, index=index, name=\"xxx\")\\n        tm.assert_series_equal(ser.dt.normalize(), exp)\\n\\n    def test_dt_accessor_limited_display_api(self):\\n        # tznaive\\n        ser = Series(date_range(\"20130101\", periods=5, freq=\"D\"), name=\"xxx\")\\n        results = get_dir(ser)\\n        tm.assert_almost_equal(results, sorted(set(ok_for_dt + ok_for_dt_methods)))\\n\\n        # tzaware\\n        ser = Series(date_range(\"2015-01-01\", \"2016-01-01\", freq=\"min\"), name=\"xxx\")\\n        ser = ser.dt.tz_localize(\"UTC\").dt.tz_convert(\"America/Chicago\")\\n        results = get_dir(ser)\\n        tm.assert_almost_equal(results, sorted(set(ok_for_dt + ok_for_dt_methods)))\\n\\n        # Period\\n        idx = period_range(\"20130101\", periods=5, freq=\"D\", name=\"xxx\")\\n        ser = Series(idx)\\n        results = get_dir(ser)\\n        tm.assert_almost_equal(\\n            results, sorted(set(ok_for_period + ok_for_period_methods))\\n        )\\n\\n    def test_dt_accessor_ambiguous_freq_conversions(self):\\n        # GH#11295\\n        # ambiguous time error on the conversions\\n        ser = Series(date_range(\"2015-01-01\", \"2016-01-01\", freq=\"min\"), name=\"xxx\")\\n        ser = ser.dt.tz_localize(\"UTC\").dt.tz_convert(\"America/Chicago\")\\n\\n        exp_values = date_range(\\n            \"2015-01-01\", \"2016-01-01\", freq=\"min\", tz=\"UTC\"\\n        ).tz_convert(\"America/Chicago\")\\n        # freq not preserved by tz_localize above\\n        exp_values = exp_values._with_freq(None)\\n        expected = Series(exp_values, name=\"xxx\")\\n        tm.assert_series_equal(ser, expected)\\n\\n    def test_dt_accessor_not_writeable(self):\\n        # no setting allowed\\n        ser = Series(date_range(\"20130101\", periods=5, freq=\"D\"), name=\"xxx\")\\n        with pytest.raises(ValueError, match=\"modifications\"):\\n            ser.dt.hour = 5\\n\\n        # trying to set a copy\\n        with tm.raises_chained_assignment_error():\\n            ser.dt.hour[0] = 5\\n\\n    @pytest.mark.parametrize(\\n        \"method, dates\",\\n        [\\n            [\"round\", [\"2012-01-02\", \"2012-01-02\", \"2012-01-01\"]],\\n            [\"floor\", [\"2012-01-01\", \"2012-01-01\", \"2012-01-01\"]],\\n            [\"ceil\", [\"2012-01-02\", \"2012-01-02\", \"2012-01-02\"]],\\n        ],\\n    )\\n    def test_dt_round(self, method, dates):\\n        # round\\n        ser = Series(\\n            pd.to_datetime(\\n                [\"2012-01-01 13:00:00\", \"2012-01-01 12:01:00\", \"2012-01-01 08:00:00\"]\\n            ),\\n            name=\"xxx\",\\n        )\\n        result = getattr(ser.dt, method)(\"D\")\\n        expected = Series(pd.to_datetime(dates), name=\"xxx\")\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_dt_round_tz(self):\\n        ser = Series(\\n            pd.to_datetime(\\n                [\"2012-01-01 13:00:00\", \"2012-01-01 12:01:00\", \"2012-01-01 08:00:00\"]\\n            ),\\n            name=\"xxx\",\\n        )\\n        result = ser.dt.tz_localize(\"UTC\").dt.tz_convert(\"US/Eastern\").dt.round(\"D\")\\n\\n        exp_values = pd.to_datetime(\\n            [\"2012-01-01\", \"2012-01-01\", \"2012-01-01\"]\\n        ).tz_localize(\"US/Eastern\")\\n        expected = Series(exp_values, name=\"xxx\")\\n        tm.assert_series_equal(result, expected)\\n\\n    @pytest.mark.parametrize(\"method\", [\"ceil\", \"round\", \"floor\"])\\n    def test_dt_round_tz_ambiguous(self, method):\\n        # GH 18946 round near \"fall back\" DST\\n        df1 = DataFrame(\\n            [\\n                pd.to_datetime(\"2017-10-29 02:00:00+02:00\", utc=True),\\n                pd.to_datetime(\"2017-10-29 02:00:00+01:00\", utc=True),\\n                pd.to_datetime(\"2017-10-29 03:00:00+01:00\", utc=True),\\n            ],\\n            columns=[\"date\"],\\n        )\\n        df1[\"date\"] = df1[\"date\"].dt.tz_convert(\"Europe/Madrid\")\\n        # infer\\n        result = getattr(df1.date.dt, method)(\"h\", ambiguous=\"infer\")\\n        expected = df1[\"date\"]\\n        tm.assert_series_equal(result, expected)\\n\\n        # bool-array\\n        result = getattr(df1.date.dt, method)(\"h\", ambiguous=[True, False, False])\\n        tm.assert_series_equal(result, expected)\\n\\n        # NaT\\n        result = getattr(df1.date.dt, method)(\"h\", ambiguous=\"NaT\")\\n        expected = df1[\"date\"].copy()\\n        expected.iloc[0:2] = pd.NaT\\n        tm.assert_series_equal(result, expected)\\n\\n        # raise\\n        with tm.external_error_raised(ValueError):\\n            getattr(df1.date.dt, method)(\"h\", ambiguous=\"raise\")\\n\\n    @pytest.mark.parametrize(\\n        \"method, ts_str, freq\",\\n        [\\n            [\"ceil\", \"2018-03-11 01:59:00-0600\", \"5min\"],\\n            [\"round\", \"2018-03-11 01:59:00-0600\", \"5min\"],\\n            [\"floor\", \"2018-03-11 03:01:00-0500\", \"2h\"],\\n        ],\\n    )\\n    def test_dt_round_tz_nonexistent(self, method, ts_str, freq):\\n        # GH 23324 round near \"spring forward\" DST\\n        ser = Series([pd.Timestamp(ts_str, tz=\"America/Chicago\").as_unit(\"s\")])\\n        result = getattr(ser.dt, method)(freq, nonexistent=\"shift_forward\")\\n        expected = Series(\\n            [pd.Timestamp(\"2018-03-11 03:00:00\", tz=\"America/Chicago\").as_unit(\"s\")]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n        result = getattr(ser.dt, method)(freq, nonexistent=\"NaT\")\\n        expected = Series([pd.NaT]).dt.tz_localize(result.dt.tz)\\n        tm.assert_series_equal(result, expected)\\n\\n        with pytest.raises(ValueError, match=\"2018-03-11 02:00:00\"):\\n            getattr(ser.dt, method)(freq, nonexistent=\"raise\")\\n\\n    @pytest.mark.parametrize(\"freq\", [\"ns\", \"us\", \"1000us\"])\\n    def test_dt_round_nonnano_higher_resolution_no_op(self, freq):\\n        # GH 52761\\n        ser = Series(\\n            [\"2020-05-31 08:00:00\", \"2000-12-31 04:00:05\", \"1800-03-14 07:30:20\"],\\n            dtype=\"datetime64[ms]\",\\n        )\\n        expected = ser.copy()\\n        result = ser.dt.round(freq)\\n        tm.assert_series_equal(result, expected)\\n\\n        assert not np.shares_memory(ser.array._ndarray, result.array._ndarray)\\n\\n    def test_dt_namespace_accessor_categorical(self):\\n        # GH 19468\\n        dti = DatetimeIndex([\"20171111\", \"20181212\"]).repeat(2)\\n        ser = Series(pd.Categorical(dti), name=\"foo\")\\n        result = ser.dt.year\\n        expected = Series([2017, 2017, 2018, 2018], dtype=\"int32\", name=\"foo\")\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_dt_tz_localize_categorical(self, tz_aware_fixture):\\n        # GH 27952\\n        tz = tz_aware_fixture\\n        datetimes = Series(\\n            [\"2019-01-01\", \"2019-01-01\", \"2019-01-02\"], dtype=\"datetime64[ns]\"\\n        )\\n        categorical = datetimes.astype(\"category\")\\n        result = categorical.dt.tz_localize(tz)\\n        expected = datetimes.dt.tz_localize(tz)\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_dt_tz_convert_categorical(self, tz_aware_fixture):\\n        # GH 27952\\n        tz = tz_aware_fixture\\n        datetimes = Series(\\n            [\"2019-01-01\", \"2019-01-01\", \"2019-01-02\"], dtype=\"datetime64[ns, MET]\"\\n        )\\n        categorical = datetimes.astype(\"category\")\\n        result = categorical.dt.tz_convert(tz)\\n        expected = datetimes.dt.tz_convert(tz)\\n        tm.assert_series_equal(result, expected)\\n\\n    @pytest.mark.parametrize(\"accessor\", [\"year\", \"month\", \"day\"])\\n    def test_dt_other_accessors_categorical(self, accessor):\\n        # GH 27952\\n        datetimes = Series(\\n            [\"2018-01-01\", \"2018-01-01\", \"2019-01-02\"], dtype=\"datetime64[ns]\"\\n        )\\n        categorical = datetimes.astype(\"category\")\\n        result = getattr(categorical.dt, accessor)\\n        expected = getattr(datetimes.dt, accessor)\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_dt_accessor_no_new_attributes(self):\\n        # https://github.com/pandas-dev/pandas/issues/10673\\n        ser = Series(date_range(\"20130101\", periods=5, freq=\"D\"))\\n        with pytest.raises(AttributeError, match=\"You cannot add any new attribute\"):\\n            ser.dt.xlabel = \"a\"\\n\\n    @pytest.mark.parametrize(\\n        \"time_locale\",\\n        [None, *tm.get_locales()],\\n    )\\n    def test_dt_accessor_datetime_name_accessors(self, time_locale):\\n        # Test Monday -> Sunday and January -> December, in that sequence\\n        if time_locale is None:\\n            # If the time_locale is None, day-name and month_name should\\n            # return the english attributes\\n            expected_days = [\\n                \"Monday\",\\n                \"Tuesday\",\\n                \"Wednesday\",\\n                \"Thursday\",\\n                \"Friday\",\\n                \"Saturday\",\\n                \"Sunday\",\\n            ]\\n            expected_months = [\\n                \"January\",\\n                \"February\",\\n                \"March\",\\n                \"April\",\\n                \"May\",\\n                \"June\",\\n                \"July\",\\n                \"August\",\\n                \"September\",\\n                \"October\",\\n                \"November\",\\n                \"December\",\\n            ]\\n        else:\\n            with tm.set_locale(time_locale, locale.LC_TIME):\\n                expected_days = calendar.day_name[:]\\n                expected_months = calendar.month_name[1:]\\n\\n        ser = Series(date_range(freq=\"D\", start=datetime(1998, 1, 1), periods=365))\\n        english_days = [\\n            \"Monday\",\\n            \"Tuesday\",\\n            \"Wednesday\",\\n            \"Thursday\",\\n            \"Friday\",\\n            \"Saturday\",\\n            \"Sunday\",\\n        ]\\n        for day, name, eng_name in zip(range(4, 11), expected_days, english_days):\\n            name = name.capitalize()\\n            assert ser.dt.day_name(locale=time_locale)[day] == name\\n            assert ser.dt.day_name(locale=None)[day] == eng_name\\n        ser = pd.concat([ser, Series([pd.NaT])])\\n        assert np.isnan(ser.dt.day_name(locale=time_locale).iloc[-1])\\n\\n        ser = Series(date_range(freq=\"ME\", start=\"2012\", end=\"2013\"))\\n        result = ser.dt.month_name(locale=time_locale)\\n        expected = Series([month.capitalize() for month in expected_months])\\n\\n        # work around https://github.com/pandas-dev/pandas/issues/22342\\n        result = result.str.normalize(\"NFD\")\\n        expected = expected.str.normalize(\"NFD\")\\n\\n        tm.assert_series_equal(result, expected)\\n\\n        for s_date, expected in zip(ser, expected_months):\\n            result = s_date.month_name(locale=time_locale)\\n            expected = expected.capitalize()\\n\\n            result = unicodedata.normalize(\"NFD\", result)\\n            expected = unicodedata.normalize(\"NFD\", expected)\\n\\n            assert result == expected\\n\\n        ser = pd.concat([ser, Series([pd.NaT])])\\n        assert np.isnan(ser.dt.month_name(locale=time_locale).iloc[-1])\\n\\n    def test_strftime(self):\\n        # GH 10086\\n        ser = Series(date_range(\"20130101\", periods=5))\\n        result = ser.dt.strftime(\"%Y/%m/%d\")\\n        expected = Series(\\n            [\"2013/01/01\", \"2013/01/02\", \"2013/01/03\", \"2013/01/04\", \"2013/01/05\"]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n        ser = Series(date_range(\"2015-02-03 11:22:33.4567\", periods=5))\\n        result = ser.dt.strftime(\"%Y/%m/%d %H-%M-%S\")\\n        expected = Series(\\n            [\\n                \"2015/02/03 11-22-33\",\\n                \"2015/02/04 11-22-33\",\\n                \"2015/02/05 11-22-33\",\\n                \"2015/02/06 11-22-33\",\\n                \"2015/02/07 11-22-33\",\\n            ]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n        ser = Series(period_range(\"20130101\", periods=5))\\n        result = ser.dt.strftime(\"%Y/%m/%d\")\\n        expected = Series(\\n            [\"2013/01/01\", \"2013/01/02\", \"2013/01/03\", \"2013/01/04\", \"2013/01/05\"]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n        ser = Series(period_range(\"2015-02-03 11:22:33.4567\", periods=5, freq=\"s\"))\\n        result = ser.dt.strftime(\"%Y/%m/%d %H-%M-%S\")\\n        expected = Series(\\n            [\\n                \"2015/02/03 11-22-33\",\\n                \"2015/02/03 11-22-34\",\\n                \"2015/02/03 11-22-35\",\\n                \"2015/02/03 11-22-36\",\\n                \"2015/02/03 11-22-37\",\\n            ]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_strftime_dt64_days(self):\\n        ser = Series(date_range(\"20130101\", periods=5))\\n        ser.iloc[0] = pd.NaT\\n        result = ser.dt.strftime(\"%Y/%m/%d\")\\n        expected = Series(\\n            [np.nan, \"2013/01/02\", \"2013/01/03\", \"2013/01/04\", \"2013/01/05\"]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n        datetime_index = date_range(\"20150301\", periods=5)\\n        result = datetime_index.strftime(\"%Y/%m/%d\")\\n\\n        expected = Index(\\n            [\"2015/03/01\", \"2015/03/02\", \"2015/03/03\", \"2015/03/04\", \"2015/03/05\"],\\n        )\\n        # dtype may be S10 or U10 depending on python version\\n        tm.assert_index_equal(result, expected)\\n\\n    def test_strftime_period_days(self, using_infer_string):\\n        period_index = period_range(\"20150301\", periods=5)\\n        result = period_index.strftime(\"%Y/%m/%d\")\\n        expected = Index(\\n            [\"2015/03/01\", \"2015/03/02\", \"2015/03/03\", \"2015/03/04\", \"2015/03/05\"],\\n            dtype=\"=U10\",\\n        )\\n        if using_infer_string:\\n            expected = expected.astype(StringDtype(na_value=np.nan))\\n        tm.assert_index_equal(result, expected)\\n\\n    def test_strftime_dt64_microsecond_resolution(self):\\n        ser = Series([datetime(2013, 1, 1, 2, 32, 59), datetime(2013, 1, 2, 14, 32, 1)])\\n        result = ser.dt.strftime(\"%Y-%m-%d %H:%M:%S\")\\n        expected = Series([\"2013-01-01 02:32:59\", \"2013-01-02 14:32:01\"])\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_strftime_period_hours(self):\\n        ser = Series(period_range(\"20130101\", periods=4, freq=\"h\"))\\n        result = ser.dt.strftime(\"%Y/%m/%d %H:%M:%S\")\\n        expected = Series(\\n            [\\n                \"2013/01/01 00:00:00\",\\n                \"2013/01/01 01:00:00\",\\n                \"2013/01/01 02:00:00\",\\n                \"2013/01/01 03:00:00\",\\n            ]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_strftime_period_minutes(self):\\n        ser = Series(period_range(\"20130101\", periods=4, freq=\"ms\"))\\n        result = ser.dt.strftime(\"%Y/%m/%d %H:%M:%S.%l\")\\n        expected = Series(\\n            [\\n                \"2013/01/01 00:00:00.000\",\\n                \"2013/01/01 00:00:00.001\",\\n                \"2013/01/01 00:00:00.002\",\\n                \"2013/01/01 00:00:00.003\",\\n            ]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n    @pytest.mark.parametrize(\\n        \"data\",\\n        [\\n            DatetimeIndex([\"2019-01-01\", pd.NaT]),\\n            PeriodIndex([\"2019-01-01\", pd.NaT], dtype=\"period[D]\"),\\n        ],\\n    )\\n    def test_strftime_nat(self, data):\\n        # GH 29578\\n        ser = Series(data)\\n        result = ser.dt.strftime(\"%Y-%m-%d\")\\n        expected = Series([\"2019-01-01\", np.nan])\\n        tm.assert_series_equal(result, expected)\\n\\n    @pytest.mark.parametrize(\\n        \"data\", [DatetimeIndex([pd.NaT]), PeriodIndex([pd.NaT], dtype=\"period[D]\")]\\n    )\\n    def test_strftime_all_nat(self, data):\\n        # https://github.com/pandas-dev/pandas/issues/45858\\n        ser = Series(data)\\n        with tm.assert_produces_warning(None):\\n            result = ser.dt.strftime(\"%Y-%m-%d\")\\n        expected = Series([np.nan], dtype=\"str\")\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_valid_dt_with_missing_values(self):\\n        # GH 8689\\n        ser = Series(date_range(\"20130101\", periods=5, freq=\"D\"))\\n        ser.iloc[2] = pd.NaT\\n\\n        for attr in [\"microsecond\", \"nanosecond\", \"second\", \"minute\", \"hour\", \"day\"]:\\n            expected = getattr(ser.dt, attr).copy()\\n            expected.iloc[2] = np.nan\\n            result = getattr(ser.dt, attr)\\n            tm.assert_series_equal(result, expected)\\n\\n        result = ser.dt.date\\n        expected = Series(\\n            [\\n                date(2013, 1, 1),\\n                date(2013, 1, 2),\\n                pd.NaT,\\n                date(2013, 1, 4),\\n                date(2013, 1, 5),\\n            ],\\n            dtype=\"object\",\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n        result = ser.dt.time\\n        expected = Series([time(0), time(0), pd.NaT, time(0), time(0)], dtype=\"object\")\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_dt_accessor_api(self):\\n        # GH 9322\\n        from pandas.core.indexes.accessors import (\\n            CombinedDatetimelikeProperties,\\n            DatetimeProperties,\\n        )\\n\\n        assert Series.dt is CombinedDatetimelikeProperties\\n\\n        ser = Series(date_range(\"2000-01-01\", periods=3))\\n        assert isinstance(ser.dt, DatetimeProperties)\\n\\n    @pytest.mark.parametrize(\\n        \"data\",\\n        [\\n            np.arange(5),\\n            list(\"abcde\"),\\n            np.random.default_rng(2).standard_normal(5),\\n        ],\\n    )\\n    def test_dt_accessor_invalid(self, data):\\n        # GH#9322 check that series with incorrect dtypes don\\'t have attr\\n        ser = Series(data)\\n        with pytest.raises(AttributeError, match=\"only use .dt accessor\"):\\n            ser.dt\\n        assert not hasattr(ser, \"dt\")\\n\\n    def test_dt_accessor_updates_on_inplace(self):\\n        ser = Series(date_range(\"2018-01-01\", periods=10))\\n        ser[2] = None\\n        result = ser.fillna(pd.Timestamp(\"2018-01-01\"), inplace=True)\\n        assert result is ser\\n        result = ser.dt.date\\n        assert result[0] == result[2]\\n\\n    def test_date_tz(self):\\n        # GH11757\\n        rng = DatetimeIndex(\\n            [\"2014-04-04 23:56\", \"2014-07-18 21:24\", \"2015-11-22 22:14\"],\\n            tz=\"US/Eastern\",\\n        )\\n        ser = Series(rng)\\n        expected = Series([date(2014, 4, 4), date(2014, 7, 18), date(2015, 11, 22)])\\n        tm.assert_series_equal(ser.dt.date, expected)\\n        tm.assert_series_equal(ser.apply(lambda x: x.date()), expected)\\n\\n    def test_dt_timetz_accessor(self, tz_naive_fixture):\\n        # GH21358\\n        tz = maybe_get_tz(tz_naive_fixture)\\n\\n        dtindex = DatetimeIndex(\\n            [\"2014-04-04 23:56\", \"2014-07-18 21:24\", \"2015-11-22 22:14\"], tz=tz\\n        )\\n        ser = Series(dtindex)\\n        expected = Series(\\n            [time(23, 56, tzinfo=tz), time(21, 24, tzinfo=tz), time(22, 14, tzinfo=tz)]\\n        )\\n        result = ser.dt.timetz\\n        tm.assert_series_equal(result, expected)\\n\\n    @pytest.mark.parametrize(\\n        \"input_series, expected_output\",\\n        [\\n            [[\"2020-01-01\"], [[2020, 1, 3]]],\\n            [[pd.NaT], [[None, None, None]]],\\n            [[\"2019-12-31\", \"2019-12-29\"], [[2020, 1, 2], [2019, 52, 7]]],\\n            [[\"2010-01-01\", pd.NaT], [[2009, 53, 5], [None, None, None]]],\\n            # see GH#36032\\n            [[\"2016-01-08\", \"2016-01-04\"], [[2016, 1, 5], [2016, 1, 1]]],\\n            [[\"2016-01-07\", \"2016-01-01\"], [[2016, 1, 4], [2015, 53, 5]]],\\n        ],\\n    )\\n    def test_isocalendar(self, input_series, expected_output):\\n        result = pd.to_datetime(Series(input_series)).dt.isocalendar()\\n        expected_frame = DataFrame(\\n            expected_output, columns=[\"year\", \"week\", \"day\"], dtype=\"UInt32\"\\n        )\\n        tm.assert_frame_equal(result, expected_frame)\\n\\n    def test_hour_index(self):\\n        dt_series = Series(\\n            date_range(start=\"2021-01-01\", periods=5, freq=\"h\"),\\n            index=[2, 6, 7, 8, 11],\\n            dtype=\"category\",\\n        )\\n        result = dt_series.dt.hour\\n        expected = Series(\\n            [0, 1, 2, 3, 4],\\n            dtype=\"int32\",\\n            index=[2, 6, 7, 8, 11],\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n\\nclass TestSeriesPeriodValuesDtAccessor:\\n    @pytest.mark.parametrize(\\n        \"input_vals\",\\n        [\\n            [Period(\"2016-01\", freq=\"M\"), Period(\"2016-02\", freq=\"M\")],\\n            [Period(\"2016-01-01\", freq=\"D\"), Period(\"2016-01-02\", freq=\"D\")],\\n            [\\n                Period(\"2016-01-01 00:00:00\", freq=\"h\"),\\n                Period(\"2016-01-01 01:00:00\", freq=\"h\"),\\n            ],\\n            [\\n                Period(\"2016-01-01 00:00:00\", freq=\"M\"),\\n                Period(\"2016-01-01 00:01:00\", freq=\"M\"),\\n            ],\\n            [\\n                Period(\"2016-01-01 00:00:00\", freq=\"s\"),\\n                Period(\"2016-01-01 00:00:01\", freq=\"s\"),\\n            ],\\n        ],\\n    )\\n    def test_end_time_timevalues(self, input_vals):\\n        # GH#17157\\n        # Check that the time part of the Period is adjusted by end_time\\n        # when using the dt accessor on a Series\\n        dtype = pd.PeriodDtype(input_vals[0].freq)\\n        input_vals = PeriodArray._from_sequence(np.asarray(input_vals), dtype=dtype)\\n\\n        ser = Series(input_vals)\\n        result = ser.dt.end_time\\n        expected = ser.apply(lambda x: x.end_time)\\n        tm.assert_series_equal(result, expected)\\n\\n    @pytest.mark.parametrize(\"input_vals\", [(\"2001\"), (\"NaT\")])\\n    def test_to_period(self, input_vals):\\n        # GH#21205\\n        expected = Series([input_vals], dtype=\"Period[D]\")\\n        result = Series([input_vals], dtype=\"datetime64[ns]\").dt.to_period(\"D\")\\n        tm.assert_series_equal(result, expected)\\n\\n\\ndef test_normalize_pre_epoch_dates():\\n    # GH: 36294\\n    ser = pd.to_datetime(Series([\"1969-01-01 09:00:00\", \"2016-01-01 09:00:00\"]))\\n    result = ser.dt.normalize()\\n    expected = pd.to_datetime(Series([\"1969-01-01\", \"2016-01-01\"]))\\n    tm.assert_series_equal(result, expected)\\n\\n\\ndef test_day_attribute_non_nano_beyond_int32():\\n    # GH 52386\\n    data = np.array(\\n        [\\n            136457654736252,\\n            134736784364431,\\n            245345345545332,\\n            223432411,\\n            2343241,\\n            3634548734,\\n            23234,\\n        ],\\n        dtype=\"timedelta64[s]\",\\n    )\\n    ser = Series(data)\\n    result = ser.dt.days\\n    expected = Series([1579371003, 1559453522, 2839645203, 2586, 27, 42066, 0])\\n    tm.assert_series_equal(result, expected)\\n'), python_type_coordinate=None, exit_suppression=None, runtime_dispatch_receiver=None) / genuine runtime-dependent operand",
+      "observed": "py.getattr.dynamic_name operand=CallSiteValue(target_name='iter_elem', arg_values=(ListValue(elements=(StringValue(value='to_period'), StringValue(value='to_pydatetime'), StringValue(value='tz_localize'), StringValue(value='tz_convert'), StringValue(value='normalize'), StringValue(value='strftime'), StringValue(value='round'), StringValue(value='floor'), StringValue(value='ceil'), StringValue(value='day_name'), StringValue(value='month_name'), StringValue(value='isocalendar'), StringValue(value='as_unit'))),), parameters=(), term=_Ctor(name='py.iter_elem', args=(_Ctor(name='array', args=(_ConstStr(value='to_period', sort=PrimitiveSort(name='String')), _ConstStr(value='to_pydatetime', sort=PrimitiveSort(name='String')), _ConstStr(value='tz_localize', sort=PrimitiveSort(name='String')), _ConstStr(value='tz_convert', sort=PrimitiveSort(name='String')), _ConstStr(value='normalize', sort=PrimitiveSort(name='String')), _ConstStr(value='strftime', sort=PrimitiveSort(name='String')), _ConstStr(value='round', sort=PrimitiveSort(name='String')), _ConstStr(value='floor', sort=PrimitiveSort(name='String')), _ConstStr(value='ceil', sort=PrimitiveSort(name='String')), _ConstStr(value='day_name', sort=PrimitiveSort(name='String')), _ConstStr(value='month_name', sort=PrimitiveSort(name='String')), _ConstStr(value='isocalendar', sort=PrimitiveSort(name='String')), _ConstStr(value='as_unit', sort=PrimitiveSort(name='String')))),)), body=None, site=SourceFragment(node=For(target=Name(id='prop', ctx=Store()), iter=Name(id='ok_for_dt_methods', ctx=Load()), body=[Expr(value=Call(func=Name(...), args=[Attribute(...), Name(...)], keywords=[]))], orelse=[], type_comment=None), filename='pandas/tests/series/accessors/test_dt_accessor.py', line=115, col=8, source='import calendar\\nfrom datetime import (\\n    date,\\n    datetime,\\n    time,\\n)\\nimport locale\\nimport unicodedata\\n\\nimport numpy as np\\nimport pytest\\n\\nfrom pandas._libs.tslibs.timezones import maybe_get_tz\\nfrom pandas.errors import Pandas4Warning\\n\\nfrom pandas.core.dtypes.common import (\\n    is_integer_dtype,\\n    is_list_like,\\n)\\n\\nimport pandas as pd\\nfrom pandas import (\\n    DataFrame,\\n    DatetimeIndex,\\n    Index,\\n    Period,\\n    PeriodIndex,\\n    Series,\\n    StringDtype,\\n    TimedeltaIndex,\\n    date_range,\\n    period_range,\\n    timedelta_range,\\n)\\nimport pandas._testing as tm\\nfrom pandas.core.arrays import (\\n    DatetimeArray,\\n    PeriodArray,\\n    TimedeltaArray,\\n)\\n\\nok_for_period = PeriodArray._datetimelike_ops\\nok_for_period_methods = [\"strftime\", \"to_timestamp\", \"asfreq\"]\\nok_for_dt = DatetimeArray._datetimelike_ops\\nok_for_dt_methods = [\\n    \"to_period\",\\n    \"to_pydatetime\",\\n    \"tz_localize\",\\n    \"tz_convert\",\\n    \"normalize\",\\n    \"strftime\",\\n    \"round\",\\n    \"floor\",\\n    \"ceil\",\\n    \"day_name\",\\n    \"month_name\",\\n    \"isocalendar\",\\n    \"as_unit\",\\n]\\nok_for_td = TimedeltaArray._datetimelike_ops\\nok_for_td_methods = [\\n    \"components\",\\n    \"to_pytimedelta\",\\n    \"total_seconds\",\\n    \"round\",\\n    \"floor\",\\n    \"ceil\",\\n    \"as_unit\",\\n]\\n\\n\\ndef get_dir(ser):\\n    # check limited display api\\n    results = [r for r in ser.dt.__dir__() if not r.startswith(\"_\")]\\n    return sorted(set(results))\\n\\n\\nclass TestSeriesDatetimeValues:\\n    def _compare(self, ser, name):\\n        # GH 7207, 11128\\n        # test .dt namespace accessor\\n\\n        def get_expected(ser, prop):\\n            result = getattr(Index(ser._values), prop)\\n            if isinstance(result, np.ndarray):\\n                if is_integer_dtype(result):\\n                    result = result.astype(\"int64\")\\n            elif not is_list_like(result) or isinstance(result, DataFrame):\\n                return result\\n            return Series(result, index=ser.index, name=ser.name)\\n\\n        left = getattr(ser.dt, name)\\n        right = get_expected(ser, name)\\n        if not (is_list_like(left) and is_list_like(right)):\\n            assert left == right\\n        elif isinstance(left, DataFrame):\\n            tm.assert_frame_equal(left, right)\\n        else:\\n            tm.assert_series_equal(left, right)\\n\\n    @pytest.mark.parametrize(\"freq\", [\"D\", \"s\", \"ms\"])\\n    def test_dt_namespace_accessor_datetime64(self, freq):\\n        # GH#7207, GH#11128\\n        # test .dt namespace accessor\\n\\n        # datetimeindex\\n        dti = date_range(\"20130101\", periods=5, freq=freq)\\n        ser = Series(dti, name=\"xxx\")\\n\\n        for prop in ok_for_dt:\\n            # we test freq below\\n            if prop != \"freq\":\\n                self._compare(ser, prop)\\n\\n        for prop in ok_for_dt_methods:\\n            getattr(ser.dt, prop)\\n\\n        result = ser.dt.to_pydatetime()\\n        assert isinstance(result, Series)\\n        assert result.dtype == object\\n\\n        result = ser.dt.tz_localize(\"US/Eastern\")\\n        exp_values = DatetimeIndex(ser.values).tz_localize(\"US/Eastern\")\\n        expected = Series(exp_values, index=ser.index, name=\"xxx\")\\n        tm.assert_series_equal(result, expected)\\n\\n        tz_result = result.dt.tz\\n        assert str(tz_result) == \"US/Eastern\"\\n        freq_result = ser.dt.freq\\n        assert freq_result == DatetimeIndex(ser.values, freq=\"infer\").freq\\n\\n        # let\\'s localize, then convert\\n        result = ser.dt.tz_localize(\"UTC\").dt.tz_convert(\"US/Eastern\")\\n        exp_values = (\\n            DatetimeIndex(ser.values).tz_localize(\"UTC\").tz_convert(\"US/Eastern\")\\n        )\\n        expected = Series(exp_values, index=ser.index, name=\"xxx\")\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_dt_namespace_accessor_datetime64tz(self):\\n        # GH#7207, GH#11128\\n        # test .dt namespace accessor\\n\\n        # datetimeindex with tz\\n        dti = date_range(\"20130101\", periods=5, tz=\"US/Eastern\")\\n        ser = Series(dti, name=\"xxx\")\\n        for prop in ok_for_dt:\\n            # we test freq below\\n            if prop != \"freq\":\\n                self._compare(ser, prop)\\n\\n        for prop in ok_for_dt_methods:\\n            getattr(ser.dt, prop)\\n\\n        result = ser.dt.to_pydatetime()\\n        assert isinstance(result, Series)\\n        assert result.dtype == object\\n\\n        result = ser.dt.tz_convert(\"CET\")\\n        expected = Series(ser._values.tz_convert(\"CET\"), index=ser.index, name=\"xxx\")\\n        tm.assert_series_equal(result, expected)\\n\\n        tz_result = result.dt.tz\\n        assert str(tz_result) == \"CET\"\\n        freq_result = ser.dt.freq\\n        assert freq_result == DatetimeIndex(ser.values, freq=\"infer\").freq\\n\\n    def test_dt_namespace_accessor_timedelta(self):\\n        # GH#7207, GH#11128\\n        # test .dt namespace accessor\\n\\n        # timedelta index\\n        cases = [\\n            Series(\\n                timedelta_range(\"1 day\", periods=5), index=list(\"abcde\"), name=\"xxx\"\\n            ),\\n            Series(timedelta_range(\"1 day 01:23:45\", periods=5, freq=\"s\"), name=\"xxx\"),\\n            Series(\\n                timedelta_range(\"2 days 01:23:45.012345\", periods=5, freq=\"ms\"),\\n                name=\"xxx\",\\n            ),\\n        ]\\n        for ser in cases:\\n            for prop in ok_for_td:\\n                # we test freq below\\n                if prop != \"freq\":\\n                    self._compare(ser, prop)\\n\\n            for prop in ok_for_td_methods:\\n                getattr(ser.dt, prop)\\n\\n            result = ser.dt.components\\n            assert isinstance(result, DataFrame)\\n            tm.assert_index_equal(result.index, ser.index)\\n\\n            msg = \"The behavior of TimedeltaProperties.to_pytimedelta is deprecated\"\\n            with tm.assert_produces_warning(Pandas4Warning, match=msg):\\n                result = ser.dt.to_pytimedelta()\\n            assert isinstance(result, np.ndarray)\\n            assert result.dtype == object\\n\\n            result = ser.dt.total_seconds()\\n            assert isinstance(result, Series)\\n            assert result.dtype == \"float64\"\\n\\n            freq_result = ser.dt.freq\\n            assert freq_result == TimedeltaIndex(ser.values, freq=\"infer\").freq\\n\\n    def test_dt_namespace_accessor_period(self):\\n        # GH#7207, GH#11128\\n        # test .dt namespace accessor\\n\\n        # periodindex\\n        pi = period_range(\"20130101\", periods=5, freq=\"D\")\\n        ser = Series(pi, name=\"xxx\")\\n\\n        for prop in ok_for_period:\\n            # we test freq below\\n            if prop != \"freq\":\\n                self._compare(ser, prop)\\n\\n        for prop in ok_for_period_methods:\\n            getattr(ser.dt, prop)\\n\\n        freq_result = ser.dt.freq\\n        assert freq_result == PeriodIndex(ser.values).freq\\n\\n    def test_dt_namespace_accessor_index_and_values(self):\\n        # both\\n        index = date_range(\"20130101\", periods=3, freq=\"D\")\\n        dti = date_range(\"20140204\", periods=3, freq=\"s\")\\n        ser = Series(dti, index=index, name=\"xxx\")\\n        exp = Series(\\n            np.array([2014, 2014, 2014], dtype=\"int32\"), index=index, name=\"xxx\"\\n        )\\n        tm.assert_series_equal(ser.dt.year, exp)\\n\\n        exp = Series(np.array([2, 2, 2], dtype=\"int32\"), index=index, name=\"xxx\")\\n        tm.assert_series_equal(ser.dt.month, exp)\\n\\n        exp = Series(np.array([0, 1, 2], dtype=\"int32\"), index=index, name=\"xxx\")\\n        tm.assert_series_equal(ser.dt.second, exp)\\n\\n        exp = Series([ser.iloc[0]] * 3, index=index, name=\"xxx\")\\n        tm.assert_series_equal(ser.dt.normalize(), exp)\\n\\n    def test_dt_accessor_limited_display_api(self):\\n        # tznaive\\n        ser = Series(date_range(\"20130101\", periods=5, freq=\"D\"), name=\"xxx\")\\n        results = get_dir(ser)\\n        tm.assert_almost_equal(results, sorted(set(ok_for_dt + ok_for_dt_methods)))\\n\\n        # tzaware\\n        ser = Series(date_range(\"2015-01-01\", \"2016-01-01\", freq=\"min\"), name=\"xxx\")\\n        ser = ser.dt.tz_localize(\"UTC\").dt.tz_convert(\"America/Chicago\")\\n        results = get_dir(ser)\\n        tm.assert_almost_equal(results, sorted(set(ok_for_dt + ok_for_dt_methods)))\\n\\n        # Period\\n        idx = period_range(\"20130101\", periods=5, freq=\"D\", name=\"xxx\")\\n        ser = Series(idx)\\n        results = get_dir(ser)\\n        tm.assert_almost_equal(\\n            results, sorted(set(ok_for_period + ok_for_period_methods))\\n        )\\n\\n    def test_dt_accessor_ambiguous_freq_conversions(self):\\n        # GH#11295\\n        # ambiguous time error on the conversions\\n        ser = Series(date_range(\"2015-01-01\", \"2016-01-01\", freq=\"min\"), name=\"xxx\")\\n        ser = ser.dt.tz_localize(\"UTC\").dt.tz_convert(\"America/Chicago\")\\n\\n        exp_values = date_range(\\n            \"2015-01-01\", \"2016-01-01\", freq=\"min\", tz=\"UTC\"\\n        ).tz_convert(\"America/Chicago\")\\n        # freq not preserved by tz_localize above\\n        exp_values = exp_values._with_freq(None)\\n        expected = Series(exp_values, name=\"xxx\")\\n        tm.assert_series_equal(ser, expected)\\n\\n    def test_dt_accessor_not_writeable(self):\\n        # no setting allowed\\n        ser = Series(date_range(\"20130101\", periods=5, freq=\"D\"), name=\"xxx\")\\n        with pytest.raises(ValueError, match=\"modifications\"):\\n            ser.dt.hour = 5\\n\\n        # trying to set a copy\\n        with tm.raises_chained_assignment_error():\\n            ser.dt.hour[0] = 5\\n\\n    @pytest.mark.parametrize(\\n        \"method, dates\",\\n        [\\n            [\"round\", [\"2012-01-02\", \"2012-01-02\", \"2012-01-01\"]],\\n            [\"floor\", [\"2012-01-01\", \"2012-01-01\", \"2012-01-01\"]],\\n            [\"ceil\", [\"2012-01-02\", \"2012-01-02\", \"2012-01-02\"]],\\n        ],\\n    )\\n    def test_dt_round(self, method, dates):\\n        # round\\n        ser = Series(\\n            pd.to_datetime(\\n                [\"2012-01-01 13:00:00\", \"2012-01-01 12:01:00\", \"2012-01-01 08:00:00\"]\\n            ),\\n            name=\"xxx\",\\n        )\\n        result = getattr(ser.dt, method)(\"D\")\\n        expected = Series(pd.to_datetime(dates), name=\"xxx\")\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_dt_round_tz(self):\\n        ser = Series(\\n            pd.to_datetime(\\n                [\"2012-01-01 13:00:00\", \"2012-01-01 12:01:00\", \"2012-01-01 08:00:00\"]\\n            ),\\n            name=\"xxx\",\\n        )\\n        result = ser.dt.tz_localize(\"UTC\").dt.tz_convert(\"US/Eastern\").dt.round(\"D\")\\n\\n        exp_values = pd.to_datetime(\\n            [\"2012-01-01\", \"2012-01-01\", \"2012-01-01\"]\\n        ).tz_localize(\"US/Eastern\")\\n        expected = Series(exp_values, name=\"xxx\")\\n        tm.assert_series_equal(result, expected)\\n\\n    @pytest.mark.parametrize(\"method\", [\"ceil\", \"round\", \"floor\"])\\n    def test_dt_round_tz_ambiguous(self, method):\\n        # GH 18946 round near \"fall back\" DST\\n        df1 = DataFrame(\\n            [\\n                pd.to_datetime(\"2017-10-29 02:00:00+02:00\", utc=True),\\n                pd.to_datetime(\"2017-10-29 02:00:00+01:00\", utc=True),\\n                pd.to_datetime(\"2017-10-29 03:00:00+01:00\", utc=True),\\n            ],\\n            columns=[\"date\"],\\n        )\\n        df1[\"date\"] = df1[\"date\"].dt.tz_convert(\"Europe/Madrid\")\\n        # infer\\n        result = getattr(df1.date.dt, method)(\"h\", ambiguous=\"infer\")\\n        expected = df1[\"date\"]\\n        tm.assert_series_equal(result, expected)\\n\\n        # bool-array\\n        result = getattr(df1.date.dt, method)(\"h\", ambiguous=[True, False, False])\\n        tm.assert_series_equal(result, expected)\\n\\n        # NaT\\n        result = getattr(df1.date.dt, method)(\"h\", ambiguous=\"NaT\")\\n        expected = df1[\"date\"].copy()\\n        expected.iloc[0:2] = pd.NaT\\n        tm.assert_series_equal(result, expected)\\n\\n        # raise\\n        with tm.external_error_raised(ValueError):\\n            getattr(df1.date.dt, method)(\"h\", ambiguous=\"raise\")\\n\\n    @pytest.mark.parametrize(\\n        \"method, ts_str, freq\",\\n        [\\n            [\"ceil\", \"2018-03-11 01:59:00-0600\", \"5min\"],\\n            [\"round\", \"2018-03-11 01:59:00-0600\", \"5min\"],\\n            [\"floor\", \"2018-03-11 03:01:00-0500\", \"2h\"],\\n        ],\\n    )\\n    def test_dt_round_tz_nonexistent(self, method, ts_str, freq):\\n        # GH 23324 round near \"spring forward\" DST\\n        ser = Series([pd.Timestamp(ts_str, tz=\"America/Chicago\").as_unit(\"s\")])\\n        result = getattr(ser.dt, method)(freq, nonexistent=\"shift_forward\")\\n        expected = Series(\\n            [pd.Timestamp(\"2018-03-11 03:00:00\", tz=\"America/Chicago\").as_unit(\"s\")]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n        result = getattr(ser.dt, method)(freq, nonexistent=\"NaT\")\\n        expected = Series([pd.NaT]).dt.tz_localize(result.dt.tz)\\n        tm.assert_series_equal(result, expected)\\n\\n        with pytest.raises(ValueError, match=\"2018-03-11 02:00:00\"):\\n            getattr(ser.dt, method)(freq, nonexistent=\"raise\")\\n\\n    @pytest.mark.parametrize(\"freq\", [\"ns\", \"us\", \"1000us\"])\\n    def test_dt_round_nonnano_higher_resolution_no_op(self, freq):\\n        # GH 52761\\n        ser = Series(\\n            [\"2020-05-31 08:00:00\", \"2000-12-31 04:00:05\", \"1800-03-14 07:30:20\"],\\n            dtype=\"datetime64[ms]\",\\n        )\\n        expected = ser.copy()\\n        result = ser.dt.round(freq)\\n        tm.assert_series_equal(result, expected)\\n\\n        assert not np.shares_memory(ser.array._ndarray, result.array._ndarray)\\n\\n    def test_dt_namespace_accessor_categorical(self):\\n        # GH 19468\\n        dti = DatetimeIndex([\"20171111\", \"20181212\"]).repeat(2)\\n        ser = Series(pd.Categorical(dti), name=\"foo\")\\n        result = ser.dt.year\\n        expected = Series([2017, 2017, 2018, 2018], dtype=\"int32\", name=\"foo\")\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_dt_tz_localize_categorical(self, tz_aware_fixture):\\n        # GH 27952\\n        tz = tz_aware_fixture\\n        datetimes = Series(\\n            [\"2019-01-01\", \"2019-01-01\", \"2019-01-02\"], dtype=\"datetime64[ns]\"\\n        )\\n        categorical = datetimes.astype(\"category\")\\n        result = categorical.dt.tz_localize(tz)\\n        expected = datetimes.dt.tz_localize(tz)\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_dt_tz_convert_categorical(self, tz_aware_fixture):\\n        # GH 27952\\n        tz = tz_aware_fixture\\n        datetimes = Series(\\n            [\"2019-01-01\", \"2019-01-01\", \"2019-01-02\"], dtype=\"datetime64[ns, MET]\"\\n        )\\n        categorical = datetimes.astype(\"category\")\\n        result = categorical.dt.tz_convert(tz)\\n        expected = datetimes.dt.tz_convert(tz)\\n        tm.assert_series_equal(result, expected)\\n\\n    @pytest.mark.parametrize(\"accessor\", [\"year\", \"month\", \"day\"])\\n    def test_dt_other_accessors_categorical(self, accessor):\\n        # GH 27952\\n        datetimes = Series(\\n            [\"2018-01-01\", \"2018-01-01\", \"2019-01-02\"], dtype=\"datetime64[ns]\"\\n        )\\n        categorical = datetimes.astype(\"category\")\\n        result = getattr(categorical.dt, accessor)\\n        expected = getattr(datetimes.dt, accessor)\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_dt_accessor_no_new_attributes(self):\\n        # https://github.com/pandas-dev/pandas/issues/10673\\n        ser = Series(date_range(\"20130101\", periods=5, freq=\"D\"))\\n        with pytest.raises(AttributeError, match=\"You cannot add any new attribute\"):\\n            ser.dt.xlabel = \"a\"\\n\\n    @pytest.mark.parametrize(\\n        \"time_locale\",\\n        [None, *tm.get_locales()],\\n    )\\n    def test_dt_accessor_datetime_name_accessors(self, time_locale):\\n        # Test Monday -> Sunday and January -> December, in that sequence\\n        if time_locale is None:\\n            # If the time_locale is None, day-name and month_name should\\n            # return the english attributes\\n            expected_days = [\\n                \"Monday\",\\n                \"Tuesday\",\\n                \"Wednesday\",\\n                \"Thursday\",\\n                \"Friday\",\\n                \"Saturday\",\\n                \"Sunday\",\\n            ]\\n            expected_months = [\\n                \"January\",\\n                \"February\",\\n                \"March\",\\n                \"April\",\\n                \"May\",\\n                \"June\",\\n                \"July\",\\n                \"August\",\\n                \"September\",\\n                \"October\",\\n                \"November\",\\n                \"December\",\\n            ]\\n        else:\\n            with tm.set_locale(time_locale, locale.LC_TIME):\\n                expected_days = calendar.day_name[:]\\n                expected_months = calendar.month_name[1:]\\n\\n        ser = Series(date_range(freq=\"D\", start=datetime(1998, 1, 1), periods=365))\\n        english_days = [\\n            \"Monday\",\\n            \"Tuesday\",\\n            \"Wednesday\",\\n            \"Thursday\",\\n            \"Friday\",\\n            \"Saturday\",\\n            \"Sunday\",\\n        ]\\n        for day, name, eng_name in zip(range(4, 11), expected_days, english_days):\\n            name = name.capitalize()\\n            assert ser.dt.day_name(locale=time_locale)[day] == name\\n            assert ser.dt.day_name(locale=None)[day] == eng_name\\n        ser = pd.concat([ser, Series([pd.NaT])])\\n        assert np.isnan(ser.dt.day_name(locale=time_locale).iloc[-1])\\n\\n        ser = Series(date_range(freq=\"ME\", start=\"2012\", end=\"2013\"))\\n        result = ser.dt.month_name(locale=time_locale)\\n        expected = Series([month.capitalize() for month in expected_months])\\n\\n        # work around https://github.com/pandas-dev/pandas/issues/22342\\n        result = result.str.normalize(\"NFD\")\\n        expected = expected.str.normalize(\"NFD\")\\n\\n        tm.assert_series_equal(result, expected)\\n\\n        for s_date, expected in zip(ser, expected_months):\\n            result = s_date.month_name(locale=time_locale)\\n            expected = expected.capitalize()\\n\\n            result = unicodedata.normalize(\"NFD\", result)\\n            expected = unicodedata.normalize(\"NFD\", expected)\\n\\n            assert result == expected\\n\\n        ser = pd.concat([ser, Series([pd.NaT])])\\n        assert np.isnan(ser.dt.month_name(locale=time_locale).iloc[-1])\\n\\n    def test_strftime(self):\\n        # GH 10086\\n        ser = Series(date_range(\"20130101\", periods=5))\\n        result = ser.dt.strftime(\"%Y/%m/%d\")\\n        expected = Series(\\n            [\"2013/01/01\", \"2013/01/02\", \"2013/01/03\", \"2013/01/04\", \"2013/01/05\"]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n        ser = Series(date_range(\"2015-02-03 11:22:33.4567\", periods=5))\\n        result = ser.dt.strftime(\"%Y/%m/%d %H-%M-%S\")\\n        expected = Series(\\n            [\\n                \"2015/02/03 11-22-33\",\\n                \"2015/02/04 11-22-33\",\\n                \"2015/02/05 11-22-33\",\\n                \"2015/02/06 11-22-33\",\\n                \"2015/02/07 11-22-33\",\\n            ]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n        ser = Series(period_range(\"20130101\", periods=5))\\n        result = ser.dt.strftime(\"%Y/%m/%d\")\\n        expected = Series(\\n            [\"2013/01/01\", \"2013/01/02\", \"2013/01/03\", \"2013/01/04\", \"2013/01/05\"]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n        ser = Series(period_range(\"2015-02-03 11:22:33.4567\", periods=5, freq=\"s\"))\\n        result = ser.dt.strftime(\"%Y/%m/%d %H-%M-%S\")\\n        expected = Series(\\n            [\\n                \"2015/02/03 11-22-33\",\\n                \"2015/02/03 11-22-34\",\\n                \"2015/02/03 11-22-35\",\\n                \"2015/02/03 11-22-36\",\\n                \"2015/02/03 11-22-37\",\\n            ]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_strftime_dt64_days(self):\\n        ser = Series(date_range(\"20130101\", periods=5))\\n        ser.iloc[0] = pd.NaT\\n        result = ser.dt.strftime(\"%Y/%m/%d\")\\n        expected = Series(\\n            [np.nan, \"2013/01/02\", \"2013/01/03\", \"2013/01/04\", \"2013/01/05\"]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n        datetime_index = date_range(\"20150301\", periods=5)\\n        result = datetime_index.strftime(\"%Y/%m/%d\")\\n\\n        expected = Index(\\n            [\"2015/03/01\", \"2015/03/02\", \"2015/03/03\", \"2015/03/04\", \"2015/03/05\"],\\n        )\\n        # dtype may be S10 or U10 depending on python version\\n        tm.assert_index_equal(result, expected)\\n\\n    def test_strftime_period_days(self, using_infer_string):\\n        period_index = period_range(\"20150301\", periods=5)\\n        result = period_index.strftime(\"%Y/%m/%d\")\\n        expected = Index(\\n            [\"2015/03/01\", \"2015/03/02\", \"2015/03/03\", \"2015/03/04\", \"2015/03/05\"],\\n            dtype=\"=U10\",\\n        )\\n        if using_infer_string:\\n            expected = expected.astype(StringDtype(na_value=np.nan))\\n        tm.assert_index_equal(result, expected)\\n\\n    def test_strftime_dt64_microsecond_resolution(self):\\n        ser = Series([datetime(2013, 1, 1, 2, 32, 59), datetime(2013, 1, 2, 14, 32, 1)])\\n        result = ser.dt.strftime(\"%Y-%m-%d %H:%M:%S\")\\n        expected = Series([\"2013-01-01 02:32:59\", \"2013-01-02 14:32:01\"])\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_strftime_period_hours(self):\\n        ser = Series(period_range(\"20130101\", periods=4, freq=\"h\"))\\n        result = ser.dt.strftime(\"%Y/%m/%d %H:%M:%S\")\\n        expected = Series(\\n            [\\n                \"2013/01/01 00:00:00\",\\n                \"2013/01/01 01:00:00\",\\n                \"2013/01/01 02:00:00\",\\n                \"2013/01/01 03:00:00\",\\n            ]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_strftime_period_minutes(self):\\n        ser = Series(period_range(\"20130101\", periods=4, freq=\"ms\"))\\n        result = ser.dt.strftime(\"%Y/%m/%d %H:%M:%S.%l\")\\n        expected = Series(\\n            [\\n                \"2013/01/01 00:00:00.000\",\\n                \"2013/01/01 00:00:00.001\",\\n                \"2013/01/01 00:00:00.002\",\\n                \"2013/01/01 00:00:00.003\",\\n            ]\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n    @pytest.mark.parametrize(\\n        \"data\",\\n        [\\n            DatetimeIndex([\"2019-01-01\", pd.NaT]),\\n            PeriodIndex([\"2019-01-01\", pd.NaT], dtype=\"period[D]\"),\\n        ],\\n    )\\n    def test_strftime_nat(self, data):\\n        # GH 29578\\n        ser = Series(data)\\n        result = ser.dt.strftime(\"%Y-%m-%d\")\\n        expected = Series([\"2019-01-01\", np.nan])\\n        tm.assert_series_equal(result, expected)\\n\\n    @pytest.mark.parametrize(\\n        \"data\", [DatetimeIndex([pd.NaT]), PeriodIndex([pd.NaT], dtype=\"period[D]\")]\\n    )\\n    def test_strftime_all_nat(self, data):\\n        # https://github.com/pandas-dev/pandas/issues/45858\\n        ser = Series(data)\\n        with tm.assert_produces_warning(None):\\n            result = ser.dt.strftime(\"%Y-%m-%d\")\\n        expected = Series([np.nan], dtype=\"str\")\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_valid_dt_with_missing_values(self):\\n        # GH 8689\\n        ser = Series(date_range(\"20130101\", periods=5, freq=\"D\"))\\n        ser.iloc[2] = pd.NaT\\n\\n        for attr in [\"microsecond\", \"nanosecond\", \"second\", \"minute\", \"hour\", \"day\"]:\\n            expected = getattr(ser.dt, attr).copy()\\n            expected.iloc[2] = np.nan\\n            result = getattr(ser.dt, attr)\\n            tm.assert_series_equal(result, expected)\\n\\n        result = ser.dt.date\\n        expected = Series(\\n            [\\n                date(2013, 1, 1),\\n                date(2013, 1, 2),\\n                pd.NaT,\\n                date(2013, 1, 4),\\n                date(2013, 1, 5),\\n            ],\\n            dtype=\"object\",\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n        result = ser.dt.time\\n        expected = Series([time(0), time(0), pd.NaT, time(0), time(0)], dtype=\"object\")\\n        tm.assert_series_equal(result, expected)\\n\\n    def test_dt_accessor_api(self):\\n        # GH 9322\\n        from pandas.core.indexes.accessors import (\\n            CombinedDatetimelikeProperties,\\n            DatetimeProperties,\\n        )\\n\\n        assert Series.dt is CombinedDatetimelikeProperties\\n\\n        ser = Series(date_range(\"2000-01-01\", periods=3))\\n        assert isinstance(ser.dt, DatetimeProperties)\\n\\n    @pytest.mark.parametrize(\\n        \"data\",\\n        [\\n            np.arange(5),\\n            list(\"abcde\"),\\n            np.random.default_rng(2).standard_normal(5),\\n        ],\\n    )\\n    def test_dt_accessor_invalid(self, data):\\n        # GH#9322 check that series with incorrect dtypes don\\'t have attr\\n        ser = Series(data)\\n        with pytest.raises(AttributeError, match=\"only use .dt accessor\"):\\n            ser.dt\\n        assert not hasattr(ser, \"dt\")\\n\\n    def test_dt_accessor_updates_on_inplace(self):\\n        ser = Series(date_range(\"2018-01-01\", periods=10))\\n        ser[2] = None\\n        result = ser.fillna(pd.Timestamp(\"2018-01-01\"), inplace=True)\\n        assert result is ser\\n        result = ser.dt.date\\n        assert result[0] == result[2]\\n\\n    def test_date_tz(self):\\n        # GH11757\\n        rng = DatetimeIndex(\\n            [\"2014-04-04 23:56\", \"2014-07-18 21:24\", \"2015-11-22 22:14\"],\\n            tz=\"US/Eastern\",\\n        )\\n        ser = Series(rng)\\n        expected = Series([date(2014, 4, 4), date(2014, 7, 18), date(2015, 11, 22)])\\n        tm.assert_series_equal(ser.dt.date, expected)\\n        tm.assert_series_equal(ser.apply(lambda x: x.date()), expected)\\n\\n    def test_dt_timetz_accessor(self, tz_naive_fixture):\\n        # GH21358\\n        tz = maybe_get_tz(tz_naive_fixture)\\n\\n        dtindex = DatetimeIndex(\\n            [\"2014-04-04 23:56\", \"2014-07-18 21:24\", \"2015-11-22 22:14\"], tz=tz\\n        )\\n        ser = Series(dtindex)\\n        expected = Series(\\n            [time(23, 56, tzinfo=tz), time(21, 24, tzinfo=tz), time(22, 14, tzinfo=tz)]\\n        )\\n        result = ser.dt.timetz\\n        tm.assert_series_equal(result, expected)\\n\\n    @pytest.mark.parametrize(\\n        \"input_series, expected_output\",\\n        [\\n            [[\"2020-01-01\"], [[2020, 1, 3]]],\\n            [[pd.NaT], [[None, None, None]]],\\n            [[\"2019-12-31\", \"2019-12-29\"], [[2020, 1, 2], [2019, 52, 7]]],\\n            [[\"2010-01-01\", pd.NaT], [[2009, 53, 5], [None, None, None]]],\\n            # see GH#36032\\n            [[\"2016-01-08\", \"2016-01-04\"], [[2016, 1, 5], [2016, 1, 1]]],\\n            [[\"2016-01-07\", \"2016-01-01\"], [[2016, 1, 4], [2015, 53, 5]]],\\n        ],\\n    )\\n    def test_isocalendar(self, input_series, expected_output):\\n        result = pd.to_datetime(Series(input_series)).dt.isocalendar()\\n        expected_frame = DataFrame(\\n            expected_output, columns=[\"year\", \"week\", \"day\"], dtype=\"UInt32\"\\n        )\\n        tm.assert_frame_equal(result, expected_frame)\\n\\n    def test_hour_index(self):\\n        dt_series = Series(\\n            date_range(start=\"2021-01-01\", periods=5, freq=\"h\"),\\n            index=[2, 6, 7, 8, 11],\\n            dtype=\"category\",\\n        )\\n        result = dt_series.dt.hour\\n        expected = Series(\\n            [0, 1, 2, 3, 4],\\n            dtype=\"int32\",\\n            index=[2, 6, 7, 8, 11],\\n        )\\n        tm.assert_series_equal(result, expected)\\n\\n\\nclass TestSeriesPeriodValuesDtAccessor:\\n    @pytest.mark.parametrize(\\n        \"input_vals\",\\n        [\\n            [Period(\"2016-01\", freq=\"M\"), Period(\"2016-02\", freq=\"M\")],\\n            [Period(\"2016-01-01\", freq=\"D\"), Period(\"2016-01-02\", freq=\"D\")],\\n            [\\n                Period(\"2016-01-01 00:00:00\", freq=\"h\"),\\n                Period(\"2016-01-01 01:00:00\", freq=\"h\"),\\n            ],\\n            [\\n                Period(\"2016-01-01 00:00:00\", freq=\"M\"),\\n                Period(\"2016-01-01 00:01:00\", freq=\"M\"),\\n            ],\\n            [\\n                Period(\"2016-01-01 00:00:00\", freq=\"s\"),\\n                Period(\"2016-01-01 00:00:01\", freq=\"s\"),\\n            ],\\n        ],\\n    )\\n    def test_end_time_timevalues(self, input_vals):\\n        # GH#17157\\n        # Check that the time part of the Period is adjusted by end_time\\n        # when using the dt accessor on a Series\\n        dtype = pd.PeriodDtype(input_vals[0].freq)\\n        input_vals = PeriodArray._from_sequence(np.asarray(input_vals), dtype=dtype)\\n\\n        ser = Series(input_vals)\\n        result = ser.dt.end_time\\n        expected = ser.apply(lambda x: x.end_time)\\n        tm.assert_series_equal(result, expected)\\n\\n    @pytest.mark.parametrize(\"input_vals\", [(\"2001\"), (\"NaT\")])\\n    def test_to_period(self, input_vals):\\n        # GH#21205\\n        expected = Series([input_vals], dtype=\"Period[D]\")\\n        result = Series([input_vals], dtype=\"datetime64[ns]\").dt.to_period(\"D\")\\n        tm.assert_series_equal(result, expected)\\n\\n\\ndef test_normalize_pre_epoch_dates():\\n    # GH: 36294\\n    ser = pd.to_datetime(Series([\"1969-01-01 09:00:00\", \"2016-01-01 09:00:00\"]))\\n    result = ser.dt.normalize()\\n    expected = pd.to_datetime(Series([\"1969-01-01\", \"2016-01-01\"]))\\n    tm.assert_series_equal(result, expected)\\n\\n\\ndef test_day_attribute_non_nano_beyond_int32():\\n    # GH 52386\\n    data = np.array(\\n        [\\n            136457654736252,\\n            134736784364431,\\n            245345345545332,\\n            223432411,\\n            2343241,\\n            3634548734,\\n            23234,\\n        ],\\n        dtype=\"timedelta64[s]\",\\n    )\\n    ser = Series(data)\\n    result = ser.dt.days\\n    expected = Series([1579371003, 1559453522, 2839645203, 2586, 27, 42066, 0])\\n    tm.assert_series_equal(result, expected)\\n'), python_type_coordinate=None, exit_suppression=None, runtime_dispatch_receiver=None)",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/series/accessors/test_dt_accessor.py"
+      ],
+      "requested": "genuine runtime-dependent operand"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "RuntimeEffect / Floor / Construction / py.sequence_concat operand=ComprehensionValue(term=_Ctor(name='py.listcomp', args=(_Ctor(name='py.fstring', args=(_ConstStr(value='QE-', sort=PrimitiveSort(name='String')), _Ctor(name='py.format', args=(_Ctor(name='py.iter_elem', args=(_Ctor(name='python:import_alias', args=(_ConstStr(value='MONTHS', sort=PrimitiveSort(name='String')), _ConstStr(value='MONTHS', sort=PrimitiveSort(name='String')))),)), _ConstStr(value='', sort=PrimitiveSort(name='String')), _ConstInt(value=-1, sort=PrimitiveSort(name='Int')))))), _Ctor(name='python:import_alias', args=(_ConstStr(value='MONTHS', sort=PrimitiveSort(name='String')), _ConstStr(value='MONTHS', sort=PrimitiveSort(name='String'))))))) / genuine runtime-dependent operand",
+      "observed": "py.sequence_concat operand=ComprehensionValue(term=_Ctor(name='py.listcomp', args=(_Ctor(name='py.fstring', args=(_ConstStr(value='QE-', sort=PrimitiveSort(name='String')), _Ctor(name='py.format', args=(_Ctor(name='py.iter_elem', args=(_Ctor(name='python:import_alias', args=(_ConstStr(value='MONTHS', sort=PrimitiveSort(name='String')), _ConstStr(value='MONTHS', sort=PrimitiveSort(name='String')))),)), _ConstStr(value='', sort=PrimitiveSort(name='String')), _ConstInt(value=-1, sort=PrimitiveSort(name='Int')))))), _Ctor(name='python:import_alias', args=(_ConstStr(value='MONTHS', sort=PrimitiveSort(name='String')), _ConstStr(value='MONTHS', sort=PrimitiveSort(name='String')))))))",
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/tests/tseries/frequencies/test_inference.py"
       ],
       "requested": "genuine runtime-dependent operand"
     },
@@ -98,11 +779,11 @@
       "count": 1,
       "gap_kind": "Floor",
       "gap_locus": "Construction",
-      "label": "SequentialDigBody / Floor / Construction / Return / reduced guarded returns with an unguarded fallback",
-      "observed": "Return",
+      "label": "SequentialDigBody / Floor / Construction / If / reduced guarded returns with an unguarded fallback",
+      "observed": "If",
       "owner": "SequentialDigBody",
       "representative_files": [
-        "pandas/tests/tools/test_to_datetime.py"
+        "pandas/tests/window/moments/test_moments_consistency_ewm.py"
       ],
       "requested": "reduced guarded returns with an unguarded fallback"
     },
@@ -110,13 +791,25 @@
       "count": 1,
       "gap_kind": "Floor",
       "gap_locus": "Construction",
-      "label": "SequentialDigBody / Floor / Construction / Try / reduced guarded returns with an unguarded fallback",
-      "observed": "Try",
-      "owner": "SequentialDigBody",
+      "label": "TemporalContext / Floor / Construction / ArrowDtype / value",
+      "observed": "ArrowDtype",
+      "owner": "TemporalContext",
       "representative_files": [
-        "pandas/tests/reshape/merge/test_merge_asof.py"
+        "pandas/core/arrays/arrow/array.py"
       ],
-      "requested": "reduced guarded returns with an unguarded fallback"
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / attrs / value",
+      "observed": "attrs",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/core/generic.py"
+      ],
+      "requested": "value"
     },
     {
       "count": 1,
@@ -133,6 +826,150 @@
     {
       "count": 1,
       "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / f / value",
+      "observed": "f",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/tests/io/test_pickle.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / f2 / value",
+      "observed": "f2",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "numpy/_core/tests/test_ufunc.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / first_non_nan_element / value",
+      "observed": "first_non_nan_element",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/core/tools/datetimes.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / freq / value",
+      "observed": "freq",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/core/arrays/datetimelike.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / loads / value",
+      "observed": "loads",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/io/pytables.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / max_value / value",
+      "observed": "max_value",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/tests/groupby/aggregate/test_aggregate.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / mgr_locs / value",
+      "observed": "mgr_locs",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/core/internals/blocks.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / mtch / value",
+      "observed": "mtch",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "numpy/f2py/tests/test_crackfortran.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / name / value",
+      "observed": "name",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/core/series.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / pa / value",
+      "observed": "pa",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/core/arrays/string_.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / tz / value",
+      "observed": "tz",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/core/arrays/datetimes.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "TemporalContext / Floor / Construction / values_multi / value",
+      "observed": "values_multi",
+      "owner": "TemporalContext",
+      "representative_files": [
+        "pandas/core/reshape/pivot.py"
+      ],
+      "requested": "value"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
       "gap_locus": "Projection",
       "label": "WithSugar manager result / Floor / Projection / Incomplete / force callsite floor",
       "observed": "Incomplete",
@@ -141,6 +978,174 @@
         "pandas/tests/io/test_sql.py"
       ],
       "requested": "force callsite floor"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "add / Floor / Construction / NativeCallableValue / stand on the addition floor",
+      "observed": "NativeCallableValue",
+      "owner": "add",
+      "representative_files": [
+        "pandas/tests/groupby/test_reductions.py"
+      ],
+      "requested": "stand on the addition floor"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "bitwise_invert / Floor / Construction / TrueBoolLiteralSugar / stand on the bitwise-invert floor",
+      "observed": "TrueBoolLiteralSugar",
+      "owner": "bitwise_invert",
+      "representative_files": [
+        "pandas/tests/computation/test_eval.py"
+      ],
+      "requested": "stand on the bitwise-invert floor"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "bitwise_or / Floor / Construction / PredicateValue / stand on the runtime bitwise or floor",
+      "observed": "PredicateValue",
+      "owner": "bitwise_or",
+      "representative_files": [
+        "pandas/core/arrays/sparse/array.py"
+      ],
+      "requested": "stand on the runtime bitwise or floor"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "bitwise_xor / Floor / Construction / CallSiteValue / stand on the runtime bitwise xor floor",
+      "observed": "CallSiteValue",
+      "owner": "bitwise_xor",
+      "representative_files": [
+        "pandas/core/ops/array_ops.py"
+      ],
+      "requested": "stand on the runtime bitwise xor floor"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "delitem / Floor / Construction / GuardedValue / stand on the subscript-delete floor",
+      "observed": "GuardedValue",
+      "owner": "delitem",
+      "representative_files": [
+        "pandas/io/parsers/readers.py"
+      ],
+      "requested": "stand on the subscript-delete floor"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "multiply / Floor / Construction / TermValue / stand on the multiplication floor",
+      "observed": "TermValue",
+      "owner": "multiply",
+      "representative_files": [
+        "pandas/tests/indexes/test_old_base.py"
+      ],
+      "requested": "stand on the multiplication floor"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "multiply / Floor / Construction / TupleValue / stand on the multiplication floor",
+      "observed": "TupleValue",
+      "owner": "multiply",
+      "representative_files": [
+        "numpy/_core/tests/test_array_coercion.py"
+      ],
+      "requested": "stand on the multiplication floor"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Projection",
+      "label": "pandas/tests/indexes/interval/test_indexing.py:350:14 / Floor / Projection / ScopeRebind / project this floor value to a term",
+      "observed": "ScopeRebind",
+      "owner": "pandas/tests/indexes/interval/test_indexing.py:350:14",
+      "representative_files": [
+        "pandas/tests/indexes/interval/test_indexing.py"
+      ],
+      "requested": "project this floor value to a term"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Projection",
+      "label": "pandas/tests/indexes/interval/test_interval.py:179:8 / Floor / Projection / ScopeRebind / project this floor value to a term",
+      "observed": "ScopeRebind",
+      "owner": "pandas/tests/indexes/interval/test_interval.py:179:8",
+      "representative_files": [
+        "pandas/tests/indexes/interval/test_interval.py"
+      ],
+      "requested": "project this floor value to a term"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Projection",
+      "label": "pandas/tests/indexes/multi/test_analytics.py:111:10 / Floor / Projection / ScopeRebind / project this floor value to a term",
+      "observed": "ScopeRebind",
+      "owner": "pandas/tests/indexes/multi/test_analytics.py:111:10",
+      "representative_files": [
+        "pandas/tests/indexes/multi/test_analytics.py"
+      ],
+      "requested": "project this floor value to a term"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Projection",
+      "label": "pandas/tests/indexes/period/test_setops.py:339:17 / Floor / Projection / ScopeRebind / project this floor value to a term",
+      "observed": "ScopeRebind",
+      "owner": "pandas/tests/indexes/period/test_setops.py:339:17",
+      "representative_files": [
+        "pandas/tests/indexes/period/test_setops.py"
+      ],
+      "requested": "project this floor value to a term"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Projection",
+      "label": "pandas/tests/indexes/test_base.py:646:15 / Floor / Projection / ScopeRebind / project this floor value to a term",
+      "observed": "ScopeRebind",
+      "owner": "pandas/tests/indexes/test_base.py:646:15",
+      "representative_files": [
+        "pandas/tests/indexes/test_base.py"
+      ],
+      "requested": "project this floor value to a term"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Projection",
+      "label": "pandas/tests/reshape/concat/test_datetimes.py:108:19 / Floor / Projection / ScopeRebind / project this floor value to a term",
+      "observed": "ScopeRebind",
+      "owner": "pandas/tests/reshape/concat/test_datetimes.py:108:19",
+      "representative_files": [
+        "pandas/tests/reshape/concat/test_datetimes.py"
+      ],
+      "requested": "project this floor value to a term"
+    },
+    {
+      "count": 1,
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "label": "power / Floor / Construction / TermValue / stand on the power floor",
+      "observed": "TermValue",
+      "owner": "power",
+      "representative_files": [
+        "pandas/plotting/_matplotlib/converter.py"
+      ],
+      "requested": "stand on the power floor"
     }
   ],
   "hang_at_max_bound_count": 0,
@@ -150,19 +1155,102 @@
   "other_count": 0,
   "owner_families": [
     {
-      "count": 2,
+      "count": 31,
+      "owner": "TemporalContext",
+      "representative_files": [
+        "numpy/_core/tests/test_ufunc.py",
+        "numpy/f2py/tests/test_crackfortran.py",
+        "pandas/core/arrays/arrow/array.py",
+        "pandas/core/arrays/datetimelike.py",
+        "pandas/core/arrays/datetimes.py"
+      ]
+    },
+    {
+      "count": 26,
+      "owner": "RuntimeEffect",
+      "representative_files": [
+        "pandas/core/arrays/categorical.py",
+        "pandas/core/arrays/interval.py",
+        "pandas/core/dtypes/cast.py",
+        "pandas/core/indexes/base.py",
+        "pandas/core/indexes/range.py"
+      ]
+    },
+    {
+      "count": 17,
       "owner": "SequentialDigBody",
       "representative_files": [
-        "pandas/tests/tools/test_to_datetime.py",
-        "pandas/tests/reshape/merge/test_merge_asof.py"
+        "pandas/tests/arrays/categorical/test_repr.py",
+        "pandas/tests/dtypes/cast/test_find_common_type.py",
+        "pandas/tests/dtypes/test_dtypes.py",
+        "pandas/tests/frame/methods/test_to_timestamp.py",
+        "pandas/tests/frame/test_repr.py"
+      ]
+    },
+    {
+      "count": 12,
+      "owner": "FunctionCallable",
+      "representative_files": [
+        "pandas/_testing/asserters.py",
+        "pandas/core/indexes/period.py",
+        "pandas/io/sql.py",
+        "pandas/plotting/_matplotlib/boxplot.py",
+        "pandas/plotting/_matplotlib/hist.py"
+      ]
+    },
+    {
+      "count": 6,
+      "owner": "multiply",
+      "representative_files": [
+        "numpy/_core/tests/test_array_coercion.py",
+        "pandas/core/arrays/base.py",
+        "pandas/io/formats/format.py",
+        "pandas/tests/arithmetic/test_numeric.py",
+        "pandas/tests/indexes/test_old_base.py"
+      ]
+    },
+    {
+      "count": 4,
+      "owner": "ImportAliasValue",
+      "representative_files": [
+        "pandas/tests/apply/test_frame_apply.py",
+        "pandas/tests/frame/test_reductions.py",
+        "pandas/tests/indexes/period/test_period.py",
+        "pandas/tests/reductions/test_reductions.py"
+      ]
+    },
+    {
+      "count": 3,
+      "owner": "ConstructorCallSugar",
+      "representative_files": [
+        "pandas/core/indexes/multi.py",
+        "pandas/tests/extension/test_arrow.py",
+        "pandas/tests/frame/methods/test_astype.py"
+      ]
+    },
+    {
+      "count": 3,
+      "owner": "WithSugar",
+      "representative_files": [
+        "pandas/tests/io/parser/common/test_chunksize.py",
+        "pandas/tests/io/parser/test_textreader.py",
+        "pandas/tests/io/pytables/test_store.py"
       ]
     },
     {
       "count": 2,
-      "owner": "RuntimeEffect",
+      "owner": "RaiseSugar",
       "representative_files": [
-        "pandas/tests/indexing/test_loc.py",
-        "pandas/tests/reshape/merge/test_merge.py"
+        "pandas/core/groupby/groupby.py",
+        "pandas/core/resample.py"
+      ]
+    },
+    {
+      "count": 2,
+      "owner": "append_with",
+      "representative_files": [
+        "pandas/core/reshape/reshape.py",
+        "pandas/tests/window/test_rolling_functions.py"
       ]
     },
     {
@@ -174,6 +1262,83 @@
     },
     {
       "count": 1,
+      "owner": "bitwise_or",
+      "representative_files": [
+        "pandas/core/arrays/sparse/array.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "bitwise_xor",
+      "representative_files": [
+        "pandas/core/ops/array_ops.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "delitem",
+      "representative_files": [
+        "pandas/io/parsers/readers.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "power",
+      "representative_files": [
+        "pandas/plotting/_matplotlib/converter.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "bitwise_invert",
+      "representative_files": [
+        "pandas/tests/computation/test_eval.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "add",
+      "representative_files": [
+        "pandas/tests/groupby/test_reductions.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "pandas/tests/indexes/interval/test_indexing.py:350:14",
+      "representative_files": [
+        "pandas/tests/indexes/interval/test_indexing.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "pandas/tests/indexes/interval/test_interval.py:179:8",
+      "representative_files": [
+        "pandas/tests/indexes/interval/test_interval.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "pandas/tests/indexes/multi/test_analytics.py:111:10",
+      "representative_files": [
+        "pandas/tests/indexes/multi/test_analytics.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "pandas/tests/indexes/period/test_setops.py:339:17",
+      "representative_files": [
+        "pandas/tests/indexes/period/test_setops.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "pandas/tests/indexes/test_base.py:646:15",
+      "representative_files": [
+        "pandas/tests/indexes/test_base.py"
+      ]
+    },
+    {
+      "count": 1,
       "owner": "WithSugar manager result",
       "representative_files": [
         "pandas/tests/io/test_sql.py"
@@ -181,54 +1346,123 @@
     },
     {
       "count": 1,
-      "owner": "ConstructorCallSugar",
+      "owner": "pandas/tests/reshape/concat/test_datetimes.py:108:19",
       "representative_files": [
-        "pandas/tests/extension/test_arrow.py"
-      ]
-    },
-    {
-      "count": 1,
-      "owner": "TemporalContext",
-      "representative_files": [
-        "pandas/tests/frame/test_constructors.py"
+        "pandas/tests/reshape/concat/test_datetimes.py"
       ]
     }
   ],
-  "owner_family_count": 6,
+  "owner_family_count": 24,
   "owners": {
-    "ConstructorCallSugar": 1,
+    "ConstructorCallSugar": 3,
     "FormatDunderCallSugar callsite receiver": 1,
-    "RuntimeEffect": 2,
-    "SequentialDigBody": 2,
-    "TemporalContext": 1,
-    "WithSugar manager result": 1
+    "FunctionCallable": 12,
+    "ImportAliasValue": 4,
+    "RaiseSugar": 2,
+    "RuntimeEffect": 26,
+    "SequentialDigBody": 17,
+    "TemporalContext": 31,
+    "WithSugar": 3,
+    "WithSugar manager result": 1,
+    "add": 1,
+    "append_with": 2,
+    "bitwise_invert": 1,
+    "bitwise_or": 1,
+    "bitwise_xor": 1,
+    "delitem": 1,
+    "multiply": 6,
+    "pandas/tests/indexes/interval/test_indexing.py:350:14": 1,
+    "pandas/tests/indexes/interval/test_interval.py:179:8": 1,
+    "pandas/tests/indexes/multi/test_analytics.py:111:10": 1,
+    "pandas/tests/indexes/period/test_setops.py:339:17": 1,
+    "pandas/tests/indexes/test_base.py:646:15": 1,
+    "pandas/tests/reshape/concat/test_datetimes.py:108:19": 1,
+    "power": 1
   },
-  "perf_candidate_count": 0,
-  "perf_candidates": [],
+  "perf_candidate_count": 1,
+  "perf_candidates": [
+    "pandas/core/arrays/masked.py"
+  ],
   "ranked_B_owners": [
     {
       "cause_class": "B",
       "cause_class_label": "hidden-panic",
       "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
-      "file_count": 2,
-      "owner": "RuntimeEffect",
+      "file_count": 31,
+      "owner": "TemporalContext",
       "rank": 1
     },
     {
       "cause_class": "B",
       "cause_class_label": "hidden-panic",
       "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
-      "file_count": 2,
-      "owner": "SequentialDigBody",
+      "file_count": 26,
+      "owner": "RuntimeEffect",
       "rank": 2
     },
     {
       "cause_class": "B",
       "cause_class_label": "hidden-panic",
       "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
-      "file_count": 1,
-      "owner": "ConstructorCallSugar",
+      "file_count": 17,
+      "owner": "SequentialDigBody",
       "rank": 3
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 12,
+      "owner": "FunctionCallable",
+      "rank": 4
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 6,
+      "owner": "multiply",
+      "rank": 5
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 4,
+      "owner": "ImportAliasValue",
+      "rank": 6
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 3,
+      "owner": "ConstructorCallSugar",
+      "rank": 7
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 3,
+      "owner": "WithSugar",
+      "rank": 8
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 2,
+      "owner": "RaiseSugar",
+      "rank": 9
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 2,
+      "owner": "append_with",
+      "rank": 10
     },
     {
       "cause_class": "B",
@@ -236,15 +1470,7 @@
       "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
       "file_count": 1,
       "owner": "FormatDunderCallSugar callsite receiver",
-      "rank": 4
-    },
-    {
-      "cause_class": "B",
-      "cause_class_label": "hidden-panic",
-      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
-      "file_count": 1,
-      "owner": "TemporalContext",
-      "rank": 5
+      "rank": 11
     },
     {
       "cause_class": "B",
@@ -252,10 +1478,189 @@
       "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
       "file_count": 1,
       "owner": "WithSugar manager result",
-      "rank": 6
+      "rank": 12
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "add",
+      "rank": 13
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "bitwise_invert",
+      "rank": 14
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "bitwise_or",
+      "rank": 15
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "bitwise_xor",
+      "rank": 16
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "delitem",
+      "rank": 17
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "pandas/tests/indexes/interval/test_indexing.py:350:14",
+      "rank": 18
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "pandas/tests/indexes/interval/test_interval.py:179:8",
+      "rank": 19
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "pandas/tests/indexes/multi/test_analytics.py:111:10",
+      "rank": 20
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "pandas/tests/indexes/period/test_setops.py:339:17",
+      "rank": 21
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "pandas/tests/indexes/test_base.py:646:15",
+      "rank": 22
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "pandas/tests/reshape/concat/test_datetimes.py:108:19",
+      "rank": 23
+    },
+    {
+      "cause_class": "B",
+      "cause_class_label": "hidden-panic",
+      "dispatch": "typed FactoryPanic owner \u2014 fold into factory-panic lane",
+      "file_count": 1,
+      "owner": "power",
+      "rank": 24
+    }
+  ],
+  "timeout_sugar_hotspots": [
+    {
+      "file_count": 16,
+      "sugar": "MethodCallSugar"
+    },
+    {
+      "file_count": 6,
+      "sugar": "NameSugar"
+    },
+    {
+      "file_count": 5,
+      "sugar": "ListLiteralSugar"
+    },
+    {
+      "file_count": 3,
+      "sugar": "BlockSugar"
+    },
+    {
+      "file_count": 3,
+      "sugar": "KeywordCallSugar"
+    },
+    {
+      "file_count": 2,
+      "sugar": "lift_file_payload"
+    },
+    {
+      "file_count": 2,
+      "sugar": "Block"
+    },
+    {
+      "file_count": 2,
+      "sugar": "ConstructorCallSugar"
+    },
+    {
+      "file_count": 2,
+      "sugar": "AssignSugar"
+    },
+    {
+      "file_count": 2,
+      "sugar": "PrimitiveLiteral"
+    },
+    {
+      "file_count": 1,
+      "sugar": "BoolOpSugar"
+    },
+    {
+      "file_count": 1,
+      "sugar": "IsinstanceCallSugar"
+    },
+    {
+      "file_count": 1,
+      "sugar": "IfSugar"
+    },
+    {
+      "file_count": 1,
+      "sugar": "StatementFunctionDefSugar"
+    },
+    {
+      "file_count": 1,
+      "sugar": "RaiseSugar"
+    },
+    {
+      "file_count": 1,
+      "sugar": "SubscriptSugar"
+    },
+    {
+      "file_count": 1,
+      "sugar": "Subscript"
+    },
+    {
+      "file_count": 1,
+      "sugar": "ExprSugar"
+    },
+    {
+      "file_count": 1,
+      "sugar": "With"
+    },
+    {
+      "file_count": 1,
+      "sugar": "Name"
     }
   ],
   "verdict_counts": {
-    "completes-with-panic": 8
+    "completes-at-bound": 120,
+    "completes-with-panic": 120
   }
 }
