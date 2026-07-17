@@ -103,6 +103,17 @@ class TrueBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
 
         return TermValue(1).subtract(other, site)
 
+    def bitwise_xor(self, other, site):
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+
+        if type(other) is TrueBoolLiteralSugar:
+            return Complete(FalseBoolLiteralSugar(site=site))
+        if type(other) is FalseBoolLiteralSugar:
+            return Complete(TrueBoolLiteralSugar(site=site))
+        return super().bitwise_xor(other, site)
+
     def is_identical(self, other, site):
         # True is a singleton: True is True folds True; True is False folds False.
         # Anything else emits identity (the general case).
