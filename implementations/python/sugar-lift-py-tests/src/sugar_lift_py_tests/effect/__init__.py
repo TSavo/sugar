@@ -46,6 +46,7 @@ from .sequence_concatenation_runtime_effect import SequenceConcatenationRuntimeE
 from .source_oracle_effect import SourceOracleEffect
 from .subscript_store_runtime_effect import SubscriptStoreRuntimeEffect
 from .subscript_result_runtime_effect import SubscriptResultRuntimeEffect
+from .subtract_runtime_effect import SubtractRuntimeEffect, runtime_subtract
 from .type_error_runtime_effect import TypeErrorRuntimeEffect
 from .try_handler_dispatch_runtime_effect import TryHandlerDispatchRuntimeEffect
 
@@ -94,6 +95,8 @@ __all__ = [
     "SourceOracleEffect",
     "SubscriptStoreRuntimeEffect",
     "SubscriptResultRuntimeEffect",
+    "SubtractRuntimeEffect",
+    "runtime_subtract",
     "TypeErrorRuntimeEffect",
     "TryHandlerDispatchRuntimeEffect",
     "effect_kind",

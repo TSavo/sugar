@@ -26,3 +26,12 @@ class NativeCallableValue(FloorValue):
             [str_const(self.qualified_name)],
             symbol_kind="coordinate",
         )
+
+    def subtract(self, other, site):
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+        if type(other) is CallSiteValue:
+            from sugar_lift_py_tests.effect import runtime_subtract
+
+            return runtime_subtract(self, other, site)
+        return super().subtract(other, site)
