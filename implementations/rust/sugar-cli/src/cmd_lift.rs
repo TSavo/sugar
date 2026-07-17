@@ -4069,6 +4069,20 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
         out.push_str(&render_report_plan_roll_call(report));
         tracing::info!(rendered_bytes = out.len(), "report section completed");
     }
+    // #4319: accounting lines after provenance/census, before factory greens.
+    if let Some(coverage) = &report.lift_coverage {
+        let span = tracing::info_span!("report_section", section = "lift_coverage_accounting");
+        let _guard = span.enter();
+        tracing::info!("report section started");
+        out.push_str(&render_lift_coverage_accounting(
+            coverage,
+            report.project_root.as_deref(),
+        ));
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        tracing::info!(rendered_bytes = out.len(), "report section completed");
+    }
     {
         let span = tracing::info_span!("report_section", section = "universe_visual");
         let _guard = span.enter();
@@ -4231,13 +4245,14 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
         }
         tracing::info!(rendered_bytes = out.len(), "report section completed");
     }
-    // The constructed factory/universe report leads. The Minority Report is
-    // the complete remainder and renders only after the proven code.
+    // #4319: factory/universe greens lead; the Minority Report (un-spoken-for
+    // remainder) renders only after the proven walk. Accounting already ran
+    // after census above.
     if let Some(coverage) = &report.lift_coverage {
         let span = tracing::info_span!("report_section", section = "minority_report");
         let _guard = span.enter();
         tracing::info!("report section started");
-        out.push_str(&render_lift_coverage_human(
+        out.push_str(&render_lift_coverage_minority(
             coverage,
             report.project_root.as_deref(),
         ));
@@ -7787,20 +7802,33 @@ fn report_unit_test_fact_count(report: &LiftSourceReport) -> usize {
     audit_facts.max(contract_facts)
 }
 
-/// Human render of #4013 dual-axis lift coverage.
+/// Human render of #4013 dual-axis lift coverage (accounting + Minority + crime2).
 ///
-/// Default accounting (assertions) has **no section title** — it *is* the report.
+/// Assembly order for full reports is **not** this concat: #4319 requires
+/// accounting lines after provenance/census, factory/universe greens next,
+/// and the Minority Report only after the proven walk. Callers that assemble
+/// the full report use [`render_lift_coverage_accounting`] then later
+/// [`render_lift_coverage_minority`]. This combined helper remains for unit
+/// tests and direct dual-axis dumps that do not interleave the factory walk.
+///
+/// Default accounting (assertions) has **no section title**.
 /// The exception alone is named, and its name is the literal string `Minority Report`.
 /// Crime 2 (forged warrant) is RED when dig floors lack a warranting assert stamp.
 ///
 /// When `project_root` is set, unaccounted loci print **actual source lines** from
 /// disk (not a one-line preview summary). That is the product surface for `--visual`.
 fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> String {
+    let mut out = render_lift_coverage_accounting(coverage, project_root);
+    out.push_str(&render_lift_coverage_minority(coverage, project_root));
+    out
+}
+
+/// Dual-axis accounting lines + silent residue (#4013). No section title —
+/// these lines sit after provenance/census and before the factory walk (#4319).
+fn render_lift_coverage_accounting(coverage: &Value, project_root: Option<&Path>) -> String {
     let mut out = String::new();
     let totals = coverage.get("totals").cloned().unwrap_or(Value::Null);
     let assertions = coverage.get("assertions").cloned().unwrap_or(Value::Null);
-    let minority = coverage.get("minority").cloned().unwrap_or(Value::Null);
-    let crime2 = coverage.get("crime2").cloned().unwrap_or(Value::Null);
     let stated = totals
         .get("stated")
         .and_then(Value::as_u64)
@@ -7838,21 +7866,6 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
                 .and_then(Value::as_u64)
         })
         .unwrap_or(silent_n);
-    let min_present = totals
-        .get("minority_present")
-        .and_then(Value::as_u64)
-        .or_else(|| minority.get("present").and_then(Value::as_u64))
-        .unwrap_or(0);
-    let min_dug = totals
-        .get("minority_dug")
-        .and_then(Value::as_u64)
-        .or_else(|| minority.get("dug").and_then(Value::as_u64))
-        .unwrap_or(0);
-    let min_un = totals
-        .get("minority_un_asserted")
-        .and_then(Value::as_u64)
-        .or_else(|| minority.get("un_asserted").and_then(Value::as_u64))
-        .unwrap_or(0);
     // Default report body — no section-title qualifier.
     // #4013: conservation triple is first-class (onDisk/accounted/delta).
     out.push_str(&format!(
@@ -7883,10 +7896,9 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
             }
         }
     }
-    // #4320 standing law: never cut to N; no `(+N more)` elision markers in the
-    // dual-axis coverage report. Silent residue, Minority bodies, and Crime 2
-    // forged warrants each list every locus. Size compression may cluster by
-    // family later, but every body/locus must still appear.
+    // #4320 standing law: never cut to N; no `(+N more)` elision of silent
+    // residue loci. Size compression may cluster by family later, but every
+    // locus must still appear.
     if silent_n > 0 || delta > 0 {
         out.push_str("  silent residue (RED — lifter walked past these asserts):\n");
         if let Some(silent) = assertions.get("silent_loci").and_then(Value::as_array) {
@@ -7901,6 +7913,33 @@ fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> 
             }
         }
     }
+    out
+}
+
+/// Minority Report + Crime 2 — the named exception after the factory walk (#4319).
+///
+/// #4320 standing law: never cut to N; every un-asserted body and forged-warrant
+/// locus is listed. Exception alone is named — literal header, no other wording.
+fn render_lift_coverage_minority(coverage: &Value, project_root: Option<&Path>) -> String {
+    let mut out = String::new();
+    let totals = coverage.get("totals").cloned().unwrap_or(Value::Null);
+    let minority = coverage.get("minority").cloned().unwrap_or(Value::Null);
+    let crime2 = coverage.get("crime2").cloned().unwrap_or(Value::Null);
+    let min_present = totals
+        .get("minority_present")
+        .and_then(Value::as_u64)
+        .or_else(|| minority.get("present").and_then(Value::as_u64))
+        .unwrap_or(0);
+    let min_dug = totals
+        .get("minority_dug")
+        .and_then(Value::as_u64)
+        .or_else(|| minority.get("dug").and_then(Value::as_u64))
+        .unwrap_or(0);
+    let min_un = totals
+        .get("minority_un_asserted")
+        .and_then(Value::as_u64)
+        .or_else(|| minority.get("un_asserted").and_then(Value::as_u64))
+        .unwrap_or(0);
     // Exception alone is named — literal header, no other wording.
     if min_un > 0 || min_present > 0 {
         out.push_str("Minority Report\n");
@@ -8092,6 +8131,13 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
     trace_lift_source_report("render_source_report_human.start", report);
     let mut out = String::new();
     out.push_str(&render_report_plan_roll_call(report));
+    // #4319: dual-axis accounting after census, before factory greens.
+    if let Some(coverage) = &report.lift_coverage {
+        out.push_str(&render_lift_coverage_accounting(
+            coverage,
+            report.project_root.as_deref(),
+        ));
+    }
     for diagnostic in &report.diagnostics {
         if diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus") {
             if let Some(message) = diagnostic.get("message").and_then(Value::as_str) {
@@ -8229,6 +8275,13 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
     if report.audits.is_empty() && report.contracts.is_empty() && report.source_mementos.is_empty()
     {
         out.push_str("no source audits emitted\n");
+        // #4319: Minority Report still follows the factory walk on this exit.
+        if let Some(coverage) = &report.lift_coverage {
+            out.push_str(&render_lift_coverage_minority(
+                coverage,
+                report.project_root.as_deref(),
+            ));
+        }
         trace_lift_render_checkpoint("render_source_report_human.end", out.len());
         return out;
     }
@@ -8602,9 +8655,10 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         }
     }
 
-    // Proven factory rows lead; the complete un-asserted remainder follows.
+    // #4319: proven factory rows already rendered; Minority Report is the
+    // complete un-asserted remainder (accounting was emitted after census).
     if let Some(coverage) = &report.lift_coverage {
-        out.push_str(&render_lift_coverage_human(
+        out.push_str(&render_lift_coverage_minority(
             coverage,
             report.project_root.as_deref(),
         ));
@@ -16533,17 +16587,88 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
     #[test]
     fn visual_factory_report_renders_before_minority_report() {
+        // #4319 residual of #4324: provenance/census → accounting → factory greens
+        // → Minority Report. #4324 dragged whole coverage (including accounting)
+        // after the walk; accounting must lead the greens, Minority trails them.
         let mut report = minimal_source_report();
         report.lift_coverage = Some(serde_json::json!({
-            "totals": {"stated": 0, "accounted": 0, "silently_unaccounted": 0,
-                "minority_present": 1, "minority_dug": 0, "minority_un_asserted": 1},
+            "totals": {
+                "stated": 1, "accounted": 0, "silently_unaccounted": 1,
+                "onDisk": 1, "delta": 1,
+                "minority_present": 1, "minority_dug": 0, "minority_un_asserted": 1
+            },
+            "assertions": {
+                "stated": 1, "silently_unaccounted": 1,
+                "silent_loci": [{"file": "t.py", "line": 2, "preview": "assert 0"}]
+            },
             "minority": {"present": 1, "dug": 0, "un_asserted": 1,
                 "un_asserted_loci": [{"file": "t.py", "line": 1, "name": "orphan"}]}
         }));
+        report.factory_walk = vec![serde_json::json!({
+            "file": "t.py", "line": 1, "status": "warranted", "verdict": "complete",
+            "requested_role": "Term", "ast_kind": "expr", "selected": "const",
+            "output": "value", "term": "1"
+        })];
         let rendered = render_report_visual(&report, None);
+        let accounting = rendered
+            .find("onDisk=1 accounted=0 delta=1")
+            .unwrap_or_else(|| panic!("accounting line missing:\n{rendered}"));
+        let factory = rendered
+            .find("factory visual:")
+            .unwrap_or_else(|| panic!("factory visual missing:\n{rendered}"));
+        let minority = rendered
+            .find("Minority Report")
+            .unwrap_or_else(|| panic!("Minority Report missing:\n{rendered}"));
         assert!(
-            rendered.find("factory visual:").unwrap() < rendered.find("Minority Report").unwrap(),
-            "factory report must lead the Minority Report:\n{rendered}"
+            accounting < factory && factory < minority,
+            "required order: accounting < factory greens < Minority Report; \
+             positions accounting={accounting} factory={factory} minority={minority}:\n{rendered}"
+        );
+        // Accounting must not be re-emitted after the factory walk (split render).
+        let after_factory = &rendered[factory..];
+        assert!(
+            !after_factory.contains("onDisk=1 accounted=0 delta=1"),
+            "accounting must not trail the factory walk:\n{after_factory}"
+        );
+    }
+
+    #[test]
+    fn human_report_order_accounting_factory_then_minority() {
+        // #4319 human path twin of visual_factory_report_renders_before_minority_report.
+        let mut report = minimal_source_report();
+        report.lift_coverage = Some(serde_json::json!({
+            "totals": {
+                "stated": 1, "accounted": 0, "silently_unaccounted": 1,
+                "onDisk": 1, "delta": 1,
+                "minority_present": 1, "minority_dug": 0, "minority_un_asserted": 1
+            },
+            "minority": {"present": 1, "dug": 0, "un_asserted": 1,
+                "un_asserted_loci": [{"file": "t.py", "line": 1, "name": "orphan"}]}
+        }));
+        report.factory_walk = vec![serde_json::json!({
+            "file": "t.py", "line": 1, "status": "warranted", "verdict": "complete",
+            "requested_role": "Term", "ast_kind": "expr", "selected": "const",
+            "output": "value", "term": "1"
+        })];
+        let rendered = render_source_report_human(&report);
+        let accounting = rendered
+            .find("onDisk=1 accounted=0 delta=1")
+            .unwrap_or_else(|| panic!("accounting line missing:\n{rendered}"));
+        let factory = rendered
+            .find("factory whole-walk:")
+            .unwrap_or_else(|| panic!("factory whole-walk missing:\n{rendered}"));
+        let minority = rendered
+            .find("Minority Report")
+            .unwrap_or_else(|| panic!("Minority Report missing:\n{rendered}"));
+        assert!(
+            accounting < factory && factory < minority,
+            "required order: accounting < factory whole-walk < Minority Report; \
+             positions accounting={accounting} factory={factory} minority={minority}:\n{rendered}"
+        );
+        let after_factory = &rendered[factory..];
+        assert!(
+            !after_factory.contains("onDisk=1 accounted=0 delta=1"),
+            "accounting must not trail the factory walk:\n{after_factory}"
         );
     }
 
