@@ -1295,8 +1295,17 @@ def _module_import_temporal(
     from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.temporal import TemporalContext
 
-    temporal = TemporalContext.empty().bind_value(
-        "__file__", StringValue(filename or module.filename)
+    temporal = (
+        TemporalContext.empty()
+        .bind_value("__file__", StringValue(filename or module.filename))
+        .bind_value(
+            "__builtins__",
+            ImportAliasValue(
+                name="builtins",
+                bound_name="__builtins__",
+                import_target="builtins",
+            ),
+        )
     )
     # Same ClassDef enrollment as audit_context name_resolver: without bare
     # class nodes, module-seed FunctionCallable dig bodies fall ConstructorCallSugar
