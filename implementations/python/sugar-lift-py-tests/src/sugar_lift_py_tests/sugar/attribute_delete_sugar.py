@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import ObjectValue, StringValue
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -36,11 +36,11 @@ class AttributeDeleteSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def witnesses(cls):
         prefix = (
-            "class Box:\n"
-            "    def __delattr__(self, name):\n"
-            "        return 1\n\n"
             "def A():\n"
+            "    class Box:\n"
+            "        pass\n"
             "    box = Box()\n"
+            "    box.value = 1\n"
             "    del box.value\n"
             "    return 1\n\n"
         )
@@ -52,6 +52,18 @@ class AttributeDeleteSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx=None) -> Outcome:
+        from sugar_lift_py_tests.sugar.attribute_sugar import (
+            _receiver_name_from_body,
+            _temporal_lookup,
+        )
+        from sugar_lift_py_tests.sugar.delete_sugar import DeletedBindings
+
+        receiver_name = _receiver_name_from_body(self.receiver)
+        if receiver_name is not None:
+            key = f"{receiver_name}.{self.name}"
+            if _temporal_lookup(ctx, key) is not None:
+                return Complete(DeletedBindings((key,)))
+
         return self.receiver.reduce(ctx).and_then(
             lambda receiver: self._delete(receiver, ctx)
         )
