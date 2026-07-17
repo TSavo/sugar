@@ -79,6 +79,22 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
     def _finish_name(self, receiver, name, ctx):
         if isinstance(name, StringValue):
             return self._finish_static(receiver, name.value, ctx)
+        from sugar_lift_py_tests.effect.runtime_effect import is_lift_time_decidable
+
+        name_term = name.to_term(owner="GetattrBuiltinSugar dynamic name")
+        if is_lift_time_decidable(name_term):
+            from sugar_lift_py_tests.factory import factory_panic_gap
+
+            factory_panic_gap(
+                owner=type(self).__name__,
+                blame=str(self.site),
+                observed=f"{type(name).__name__}({name_term!r})",
+                requested="statically enumerated attribute name",
+                fix=(
+                    "enumerate the finite attribute-name faces and project each "
+                    "one, or keep this missing construction loud"
+                ),
+            )
         return Incomplete(
             GetattrRuntimeEffect(
                 f"getattr runtime boundary: attribute name expression `{self.dynamic_observed}` is runtime; blame={self.site}",
