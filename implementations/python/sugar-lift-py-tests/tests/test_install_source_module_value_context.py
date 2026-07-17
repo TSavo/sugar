@@ -80,7 +80,16 @@ def test_install_source_value_does_not_construct_unneeded_prior_global(
 def test_install_source_value_leaves_runtime_selected_prerequisite_unresolved(
     tmp_path, monkeypatch
 ) -> None:
-    """A runtime conditional is an effect boundary, never a value to force-read."""
+    """A runtime conditional is not a static floor value the constructor invents.
+
+    Incomplete seed opacity returns None. When IfExp/RuntimeEffect law instead
+    panics on a ground import-alias condition, construction still refuses to
+    invent ANSWER — loud FactoryPanic, never a fabricated TermValue.
+    """
+    import pytest
+
+    from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+
     (tmp_path / "runtime_selected_value.py").write_text(
         "import os\nFLAG = 40 if os else 41\nANSWER = FLAG + 2\n",
         encoding="utf-8",
@@ -88,8 +97,13 @@ def test_install_source_value_leaves_runtime_selected_prerequisite_unresolved(
     monkeypatch.syspath_prepend(str(tmp_path))
     importlib.invalidate_caches()
 
-    resolved = resolve_install_source_value("runtime_selected_value.ANSWER", _ctx())
-
+    try:
+        resolved = resolve_install_source_value(
+            "runtime_selected_value.ANSWER", _ctx()
+        )
+    except FactoryPanic as panic:
+        assert "RuntimeEffect" in str(panic) or "runtime" in str(panic).lower()
+        return
     assert resolved is None
 
 

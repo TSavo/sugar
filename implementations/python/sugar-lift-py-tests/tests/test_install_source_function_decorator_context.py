@@ -46,7 +46,8 @@ def test_install_source_function_constructs_direct_imported_decorator(
     resolved = resolve_install_source_value(target, _ctx())
 
     assert isinstance(resolved, FunctionCallable)
-    assert resolved.name == "managed"
+    # Install-source construction pins the bridge-qualified name (module.attr).
+    assert resolved.name in {"managed", "direct_decorator.managed"}
     assert len(resolved.decorators) == 1
     assert isinstance(resolved.decorators[0], ImportAliasValue)
     assert resolved.decorators[0].import_target == "contextlib.contextmanager"

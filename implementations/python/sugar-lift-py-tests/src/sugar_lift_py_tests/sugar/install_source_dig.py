@@ -32,6 +32,121 @@ from sugar_lift_python_source.source_tables import parsed_tree
 
 INSTALLED_SOURCE_INDEX_CAPACITY = 64
 
+# Construction identity for install-source *values*. SourceOracle is not
+# extended: it remains the interface for source text. This wraps its CID so
+# construction is correctness — once a name is built from pinned source, that
+# floor value *is* the system and is never rebuilt for the same identity.
+# Capacity is resident ownership only (eviction recomputes; not invalidation).
+INSTALL_SOURCE_VALUE_CAPACITY = 256
+_MISSING = object()
+
+
+class InstallSourceValueOracle:
+    """The one constructor for source-backed named floor values.
+
+    **Does not extend SourceOracle.** SourceOracle
+    (``installed_module_source``) is the sole interface for source text. This
+    type *wraps* that pin and is the sole constructor for the floor value of a
+    cited ``module.attr``.
+
+    Construction is correctness because no other constructor exists: dig, seed,
+    and import-alias resolution must enter through :meth:`resolve`. Same
+    SourceOracle CID + name is one identity; the published floor value *is* the
+    system for that identity.
+
+    Publishing rules:
+      - Complete construct (value or proven absence) is published under the key.
+      - Cycle breaks (``_resolving``) return None without publishing.
+      - FactoryPanic propagates and never publishes.
+    """
+
+    __slots__ = ("_capacity", "_table", "construct_count", "hit_count")
+
+    def __init__(self, capacity: int = INSTALL_SOURCE_VALUE_CAPACITY) -> None:
+        from collections import OrderedDict
+
+        self._capacity = max(int(capacity), 1)
+        self._table: OrderedDict[tuple[str, str], Any] = OrderedDict()
+        self.construct_count = 0
+        self.hit_count = 0
+
+    def identity_key(self, import_target: str) -> tuple[str, str] | None:
+        """Construction identity: SourceOracle content CID + name.
+
+        Wraps SourceOracle — does not re-discover or re-parse modules.
+        """
+        if "." not in import_target:
+            return None
+        module_name, attr = import_target.rsplit(".", 1)
+        installed = installed_module_source(module_name)
+        if installed is not None:
+            _source, _sourcefile, source_cid = installed
+            return (str(source_cid), attr)
+        # Native extension / absent module: stabilize on the qualified name only.
+        return ("target", import_target)
+
+    def resolve(
+        self,
+        import_target: str,
+        ctx: Any,
+        *,
+        _resolving: frozenset[str] = frozenset(),
+    ) -> Any:
+        """Sole construction entry for install-source named values."""
+        if "." not in import_target or import_target in _resolving:
+            # Cycle break or ill-formed name: never publish.
+            return None
+        key = self.identity_key(import_target)
+        from sugar_lift_py_tests.engine_log import reduction_span
+
+        if key is not None:
+            known = self._lookup(key)
+            if known is not _MISSING:
+                with reduction_span(
+                    sugar=import_target,
+                    role="dig.resolve_value.hit",
+                    site=import_target,
+                ):
+                    return known
+
+        with reduction_span(
+            sugar=import_target,
+            role="dig.resolve_value",
+            site=import_target,
+        ):
+            self.construct_count += 1
+            value = _construct_install_source_value(
+                import_target, ctx, _resolving=_resolving
+            )
+        # Publish completed answers only. FactoryPanic never reaches here.
+        if key is not None:
+            self._publish(key, value)
+        return value
+
+    def _lookup(self, key: tuple[str, str]) -> Any:
+        value = self._table.get(key, _MISSING)
+        if value is _MISSING:
+            return _MISSING
+        self._table.move_to_end(key)
+        self.hit_count += 1
+        return value
+
+    def _publish(self, key: tuple[str, str], value: Any) -> None:
+        if key in self._table:
+            self._table.move_to_end(key)
+        self._table[key] = value
+        while len(self._table) > self._capacity:
+            self._table.popitem(last=False)
+
+    def clear(self) -> None:
+        self._table.clear()
+        self.construct_count = 0
+        self.hit_count = 0
+
+
+# Process-lifetime sole constructor (wraps SourceOracle; never a second door).
+INSTALL_SOURCE_VALUE_ORACLE = InstallSourceValueOracle()
+
 
 @dataclass(frozen=True)
 class _InstalledDefinition:
@@ -818,30 +933,27 @@ def _ctx_with_required_module_bindings_impl(
 def resolve_install_source_value(
     import_target: str, ctx, *, _resolving: frozenset[str] = frozenset()
 ):
-    """Construct a cited module-level imported name from its Python source.
+    """Public door: the sole constructor for install-source named floor values.
 
     A source-backed import is statically knowable. Find the defining statement,
     construct the module globals its RHS needs, and send all values through the
     ordinary factory. Any missing Sugar or floor arm propagates its FactoryPanic;
     this function never converts a dig gap into a runtime effect.
+
+    Construction is correctness: SourceOracle is the only source constructor;
+    :class:`InstallSourceValueOracle` is the only floor constructor for cited
+    install-source names. Callers must not factory-build ``module.attr`` outside
+    this door.
     """
-    if "." not in import_target or import_target in _resolving:
-        return None
-    from sugar_lift_py_tests.engine_log import reduction_span
-
-    with reduction_span(
-        sugar=import_target,
-        role="dig.resolve_value",
-        site=import_target,
-    ):
-        return _resolve_install_source_value_impl(
-            import_target, ctx, _resolving=_resolving
-        )
+    return INSTALL_SOURCE_VALUE_ORACLE.resolve(
+        import_target, ctx, _resolving=_resolving
+    )
 
 
-def _resolve_install_source_value_impl(
+def _construct_install_source_value(
     import_target: str, ctx, *, _resolving: frozenset[str] = frozenset()
 ):
+    """Internal construct body — only :meth:`InstallSourceValueOracle.resolve` calls this."""
     resolving = _resolving | {import_target}
     native = _resolve_qualified_native_callable(import_target, resolving=_resolving)
     if native is not None:
