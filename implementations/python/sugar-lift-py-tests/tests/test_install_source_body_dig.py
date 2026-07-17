@@ -223,6 +223,93 @@ def test_sequential_dig_constructs_guarded_early_return_with_fallback() -> None:
     assert outcome.value == GuardedValue(guard, TermValue(7), TermValue(0))
 
 
+def test_sequential_dig_constructs_guarded_raise_with_fallback() -> None:
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.floor import BlockValue, GuardedRaise
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import atomic, make_var, num
+    from sugar_lift_py_tests.outcome import Complete
+
+    guard = atomic("py.eq", [make_var("z"), num(0)])
+    raised = RaiseEffect(
+        exception_name="ValueError",
+        blame="vendor/pkg/repro.py:2:8",
+        source_sha256="0" * 64,
+    )
+
+    class _GuardedRaiseStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(BlockValue((GuardedRaise(guards=(guard,), effect=raised),)))
+
+    class _FallbackReturnStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(ReturnValue(TermValue(7)))
+
+    outcome = SequentialDigBody(
+        (_GuardedRaiseStatement(), _FallbackReturnStatement())
+    ).desugar()
+
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, GuardedValue)
+    assert outcome.value.guard == guard
+    assert "py.exceptional_exit" in repr(outcome.value.when_true.to_term(owner="test"))
+    assert outcome.value.when_false == TermValue(7)
+
+
+def test_sequential_dig_guarded_raise_with_state_stays_loud() -> None:
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.floor import BlockValue, GuardedRaise, ScopeRebind
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import atomic, make_var, num
+    from sugar_lift_py_tests.outcome import Complete
+
+    guard = atomic("py.eq", [make_var("z"), num(0)])
+
+    class _MixedStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+
+            class _MixedOutcome:
+                def contribution(self):
+                    return (
+                        GuardedRaise(
+                            guards=(guard,),
+                            effect=RaiseEffect(
+                                "ValueError",
+                                "vendor/pkg/repro.py:2:8",
+                                "0" * 64,
+                            ),
+                        ),
+                        ScopeRebind("state", TermValue(9)),
+                    )
+
+                def extend_scope(self, current):
+                    return current
+
+            return _MixedOutcome()
+
+    class _FallbackReturnStatement:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(ReturnValue(TermValue(7)))
+
+    with pytest.raises(FactoryPanic):
+        SequentialDigBody((_MixedStatement(), _FallbackReturnStatement())).desugar()
+
+
 def test_sequential_dig_mixed_guarded_exit_and_state_stays_loud() -> None:
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn

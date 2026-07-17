@@ -1652,6 +1652,10 @@ class SequentialDigBody:
     fn_site: Any = None
 
     def desugar(self, ctx: Any = None):
+        from sugar_lift_py_tests.floor.exceptional_exit_value import (
+            ExceptionalExitValue,
+        )
+        from sugar_lift_py_tests.floor.guarded_raise import GuardedRaise
         from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.return_value import ReturnValue
@@ -1659,7 +1663,7 @@ class SequentialDigBody:
         from sugar_lift_py_tests.outcome import Complete
 
         cur = ctx
-        guarded_returns = []
+        guarded_exits = []
         for stmt in self.statements:
             outcome = stmt.reduce(cur)
             from sugar_lift_py_tests.outcome import Incomplete as _Inc
@@ -1669,28 +1673,35 @@ class SequentialDigBody:
             cur = outcome.extend_scope(cur)
             contribution = tuple(outcome.contribution())
             guarded = tuple(
-                item for item in contribution if isinstance(item, GuardedReturn)
+                item
+                for item in contribution
+                if isinstance(item, (GuardedReturn, GuardedRaise))
             )
             non_returns = tuple(
                 item
                 for item in contribution
-                if not isinstance(item, (GuardedReturn, ReturnValue))
+                if not isinstance(item, (GuardedReturn, GuardedRaise, ReturnValue))
             )
-            if (guarded_returns or guarded) and non_returns:
+            if (guarded_exits or guarded) and non_returns:
                 return self._control_flow_gap()
             for item in contribution:
                 # Exact unguarded return only — GuardedReturn is multi-exit.
                 if type(item) is ReturnValue:
                     value = item.value
-                    for prior in reversed(guarded_returns):
+                    for prior in reversed(guarded_exits):
                         guard = (
                             prior.guards[0]
                             if len(prior.guards) == 1
                             else and_(list(prior.guards))
                         )
-                        value = GuardedValue(guard, prior.value, value)
+                        selected = (
+                            prior.value
+                            if isinstance(prior, GuardedReturn)
+                            else ExceptionalExitValue(prior.effect)
+                        )
+                        value = GuardedValue(guard, selected, value)
                     return Complete(value)
-            guarded_returns.extend(guarded)
+            guarded_exits.extend(guarded)
             follow = getattr(outcome, "follow", None)
             if callable(follow):
                 step = follow()
