@@ -13,7 +13,7 @@ from sugar_lift_py_tests.effect import RuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -24,6 +24,48 @@ def test_literal_ifexp_true_branch_reduces() -> None:
 
 def test_literal_ifexp_false_branch_reduces() -> None:
     assert reduce_value("1 if False else 2") == TermValue(2)
+
+
+def test_ground_nonzero_term_condition_selects_true_branch() -> None:
+    ctx = FactoryBuildContext(filename="if_exp.py", catalog=default_catalog())
+    body = ctx.build_body(
+        ast.parse("left if flag else right", mode="eval").body,
+        SugarRole.TERM,
+    )
+    reduce_ctx = replace(
+        ReduceContext.root(owner="if-exp-ground-true"),
+        temporal=(
+            TemporalContext.empty()
+            .bind_value("flag", TermValue(1))
+            .bind_value("left", TermValue(11))
+            .bind_value("right", TermValue(22))
+        ),
+    )
+
+    outcome = body.reduce(reduce_ctx)
+
+    assert outcome == Complete(TermValue(11))
+
+
+def test_ground_zero_term_condition_selects_false_branch() -> None:
+    ctx = FactoryBuildContext(filename="if_exp.py", catalog=default_catalog())
+    body = ctx.build_body(
+        ast.parse("left if flag else right", mode="eval").body,
+        SugarRole.TERM,
+    )
+    reduce_ctx = replace(
+        ReduceContext.root(owner="if-exp-ground-false"),
+        temporal=(
+            TemporalContext.empty()
+            .bind_value("flag", TermValue(0))
+            .bind_value("left", TermValue(11))
+            .bind_value("right", TermValue(22))
+        ),
+    )
+
+    outcome = body.reduce(reduce_ctx)
+
+    assert outcome == Complete(TermValue(22))
 
 
 def test_literal_ifexp_bad_twin_flips(tmp_path: Path) -> None:
@@ -58,6 +100,46 @@ def test_literal_ifexp_bad_twin_flips(tmp_path: Path) -> None:
         )
     )
 
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+
+def test_ground_bound_ifexp_bad_twin_flips(tmp_path: Path) -> None:
+    truthful = run_source_through_real_solver(
+        tmp_path / "if-exp-ground-truthful",
+        "def A():\n"
+        "    flag = 1\n"
+        "    return 11 if flag else 22\n"
+        "\n"
+        "def test_if_exp_ground_truthful():\n"
+        "    assert A() == 11\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "if-exp-ground-lying",
+        "def A():\n"
+        "    flag = 1\n"
+        "    return 11 if flag else 22\n"
+        "\n"
+        "def test_if_exp_ground_lying():\n"
+        "    assert A() == 22\n",
+    )
+    print(
+        json.dumps(
+            {
+                "truthful": truthful.prove_doc,
+                "lying": lying.prove_doc,
+                "selected": {
+                    "truthful": truthful.selected_sugars,
+                    "lying": lying.selected_sugars,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+    assert "IfExpSugar" in truthful.selected_sugars
+    assert "IfExpSugar" in lying.selected_sugars
     assert truthful.verdict == "sat"
     assert lying.verdict == "unsat"
 
