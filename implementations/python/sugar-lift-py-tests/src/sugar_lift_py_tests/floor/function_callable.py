@@ -307,14 +307,11 @@ class FunctionCallable(FloorValue):
                 binding_ok = False
             bound_values = tuple(bound_list) if binding_ok else None
         if bound_values is None:
-            runtime_keyword_expansion = (
-                len(keyword_expansions) == 1
-                and (
-                    type(keyword_expansion) is SymbolicValue
-                    or (
-                        type(keyword_expansion) is CallSiteValue
-                        and keyword_expansion.body is None
-                    )
+            runtime_keyword_expansion = len(keyword_expansions) == 1 and (
+                type(keyword_expansion) is SymbolicValue
+                or (
+                    type(keyword_expansion) is CallSiteValue
+                    and keyword_expansion.body is None
                 )
             )
             if runtime_keyword_expansion:

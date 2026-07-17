@@ -109,13 +109,9 @@ def test_constructed_list_plus_ground_comprehension_constructs_exact_coordinate(
 
 
 def test_ground_comprehension_prefix_cites_only_runtime_right_operand() -> None:
-    site = SourceFragment.from_source(
-        "[1] + [x for x in range(2)]", "mixed-concat.py"
-    )
+    site = SourceFragment.from_source("[1] + [x for x in range(2)]", "mixed-concat.py")
     ground = ComprehensionValue(ctor("py.listcomp", [num(1)]))
-    runtime = ComprehensionValue(
-        ctor("py.listcomp", [ctor("call:range", [num(2)])])
-    )
+    runtime = ComprehensionValue(ctor("py.listcomp", [ctor("call:range", [num(2)])]))
 
     outcome = ground.add(runtime, site)
 

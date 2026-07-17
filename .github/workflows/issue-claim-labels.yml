@@ -17,6 +17,10 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            // Claim contract (dispatch-discoverable lanes):
+            // CLAIMED -> in-progress + fleet:lane (+ kit/idd/north-star when title/body are fatal-corpus/python)
+            // RELEASED|COMPLETED -> drop in-progress + fleet:lane; restore available
+            // A bare "in-progress" without fleet:lane is illegal for fleet claims.
             const firstLine = context.payload.comment.body
               .split(/\r?\n/, 1)[0]
               .trim();
@@ -29,41 +33,74 @@ jobs:
             }
 
             const issue_number = context.issue.number;
+            const title = context.payload.issue.title || "";
+            const body = context.payload.issue.body || "";
             const current = new Set(
               context.payload.issue.labels.map(label =>
                 typeof label === "string" ? label : label.name
               )
             );
 
-            if (claimed) {
-              if (!current.has("in-progress")) {
-                await github.rest.issues.addLabels({
-                  ...context.repo,
-                  issue_number,
-                  labels: ["in-progress"],
-                });
-              }
-              if (current.has("available")) {
-                await github.rest.issues.removeLabel({
-                  ...context.repo,
-                  issue_number,
-                  name: "available",
-                });
-              }
-              return;
-            }
+            const isPythonFatal =
+              /^fatal-corpus\b/i.test(title) ||
+              /\bkit:python\b/i.test(body) ||
+              current.has("kit:python");
 
-            if (current.has("in-progress")) {
-              await github.rest.issues.removeLabel({
-                ...context.repo,
-                issue_number,
-                name: "in-progress",
-              });
-            }
-            if (!current.has("available")) {
+            async function ensureLabels(labels) {
+              const missing = labels.filter(name => !current.has(name));
+              if (missing.length === 0) return;
               await github.rest.issues.addLabels({
                 ...context.repo,
                 issue_number,
-                labels: ["available"],
+                labels: missing,
               });
+              for (const name of missing) current.add(name);
             }
+
+            async function dropLabel(name) {
+              if (!current.has(name)) return;
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number,
+                  name,
+                });
+              } catch (err) {
+                if (err.status !== 404) throw err;
+              }
+              current.delete(name);
+            }
+
+            if (claimed) {
+              // Always: claimed lanes are dispatchable worker work.
+              const required = ["in-progress", "fleet:lane"];
+              if (isPythonFatal) {
+                required.push("kit:python", "idd", "north-star");
+              }
+              await ensureLabels(required);
+              await dropLabel("available");
+
+              // Body orientation: fatal-corpus claims must name loci / hard law.
+              // Soft warning via comment when thin; labels still applied so dispatch works.
+              if (/^fatal-corpus\b/i.test(title)) {
+                const hasLocus =
+                  /\b(owner|observed|requested|locus|File\s*\||Hard law)\b/i.test(body) ||
+                  /```[\s\S]*\|[\s\S]*\|/.test(body) ||
+                  body.length >= 280;
+                if (!hasLocus) {
+                  core.warning(
+                    `Issue #${issue_number} CLAIMED with thin body; fleet:lane restored but orientation is scarce`
+                  );
+                }
+              }
+              core.info(
+                `CLAIMED #${issue_number}: ensured ${[...current].sort().join(", ")}`
+              );
+              return;
+            }
+
+            // RELEASED / COMPLETED
+            await dropLabel("in-progress");
+            await dropLabel("fleet:lane");
+            await ensureLabels(["available"]);
+            core.info(`RELEASED/COMPLETED #${issue_number}: restored available`);

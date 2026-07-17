@@ -449,9 +449,7 @@ def test_pyarrow_list_length_max_as_py_is_warranted_runtime_sequence_count() -> 
     assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
     assert "pyarrow list-length maximum" in outcome.reason
     assert outcome.effect.witness.operand == count.term
-    assert outcome.effect.witness.operation == ctor(
-        "py.sequence_repeat", [count.term]
-    )
+    assert outcome.effect.witness.operation == ctor("py.sequence_repeat", [count.term])
     with pytest.raises(FactoryPanic, match="genuine runtime-dependent operand"):
         runtime_effect_evidence("py.sequence_repeat", TermValue(4), _SITE)
 
