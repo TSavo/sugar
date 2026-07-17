@@ -21,6 +21,7 @@ class GuardedFaces(FloorValue):
     then_exits: bool
     else_exits: bool
     joined_bindings: tuple = ()
+    guarded_bindings: tuple = ()
 
     def contribution(self):
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
@@ -54,6 +55,8 @@ class GuardedFaces(FloorValue):
         temporal = ctx.temporal
         for name, value in self.joined_bindings:
             temporal = temporal.bind_value(name, value)
+        for guard, name, value in self.guarded_bindings:
+            temporal = temporal.bind_guarded(guard, name, value)
         return replace(ctx, temporal=temporal)
 
     def follow_rest(self):

@@ -118,7 +118,10 @@ class PredicateValue(FloorValue):
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, complete_value
 
-        then_record, then_scope = then.sugar.reduce_with_scope(ctx)
+        then_ctx = ctx
+        if ctx is not None:
+            then_ctx = ctx.with_temporal(ctx.temporal.activate_guard(self.formula))
+        then_record, then_scope = then.sugar.reduce_with_scope(then_ctx)
         then_own = then_record.contribution()
         then_effect = _conditional_effect(then_own, self.formula)
         if then_effect is not None:
@@ -128,9 +131,14 @@ class PredicateValue(FloorValue):
         else_entries = ()
         else_exits = False
         joined_bindings = ()
+        guarded_bindings = ()
         joined_effects = ()
         if else_body is not None:
-            else_record, else_scope = else_body.sugar.reduce_with_scope(ctx)
+            else_guard = not_(self.formula)
+            else_ctx = ctx
+            if ctx is not None:
+                else_ctx = ctx.with_temporal(ctx.temporal.activate_guard(else_guard))
+            else_record, else_scope = else_body.sugar.reduce_with_scope(else_ctx)
             else_own = else_record.contribution()
             else_effect = _conditional_effect(else_own, not_(self.formula))
             if else_effect is not None:
@@ -148,6 +156,10 @@ class PredicateValue(FloorValue):
                 joined_bindings, joined_effects = self._surviving_bindings(
                     surviving_scope, ctx
                 )
+        elif not then_exits and then_ctx is not None:
+            guarded_bindings, joined_effects = self._guarded_bindings(
+                self.formula, then_scope, then_ctx
+            )
         return Complete(
             GuardedFaces(
                 guard=self.formula,
@@ -155,8 +167,31 @@ class PredicateValue(FloorValue):
                 then_exits=then_exits,
                 else_exits=else_exits,
                 joined_bindings=joined_bindings,
+                guarded_bindings=guarded_bindings,
             )
         )
+
+    def _guarded_bindings(self, guard, branch_scope, before_scope):
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        before = {
+            binding.name: binding.value for binding in before_scope.temporal.bindings
+        }
+        after = {
+            binding.name: binding.value for binding in branch_scope.temporal.bindings
+        }
+        bindings = []
+        effects = []
+        for name, binding in sorted(after.items()):
+            if before.get(name) is binding:
+                continue
+            answer = binding.answer(branch_scope)
+            if isinstance(answer, Incomplete):
+                effects.append(answer.guarded(guard))
+                continue
+            assert isinstance(answer, Complete)
+            bindings.append((guard, name, answer.value))
+        return tuple(bindings), tuple(effects)
 
     def _joined_bindings(self, then_scope, else_scope, ctx):
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue

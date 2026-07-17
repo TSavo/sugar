@@ -8,13 +8,14 @@ from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
 from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 
-from .temporal_binding import TemporalBinding
+from .temporal_binding import GuardedTemporalBinding, TemporalBinding
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 
 @dataclass(frozen=True)
 class TemporalContext:
     bindings: tuple[TemporalBinding, ...] = ()
+    guarded_bindings: tuple[GuardedTemporalBinding, ...] = ()
 
     @classmethod
     def empty(cls) -> "TemporalContext":
@@ -73,14 +74,56 @@ class TemporalContext:
             self.value_for(name)
         deleted = frozenset(names)
         return TemporalContext(
-            tuple(binding for binding in self.bindings if binding.name not in deleted)
+            tuple(binding for binding in self.bindings if binding.name not in deleted),
+            tuple(
+                binding
+                for binding in self.guarded_bindings
+                if binding.binding.name not in deleted
+            ),
         )
+
+    def bind_guarded(
+        self,
+        guard,
+        name: str,
+        value: FloorValue,
+        *,
+        blame: str | None = None,
+    ) -> "TemporalContext":
+        remaining = tuple(
+            candidate
+            for candidate in self.guarded_bindings
+            if not (candidate.guard == guard and candidate.binding.name == name)
+        )
+        return TemporalContext(
+            self.bindings,
+            remaining
+            + (GuardedTemporalBinding(guard, TemporalBinding(name, value, blame)),),
+        )
+
+    def activate_guard(self, guard) -> "TemporalContext":
+        """Expose exactly the bindings warranted by this branch condition."""
+        active = self
+        for candidate in self.guarded_bindings:
+            if candidate.guard == guard:
+                active = active._bind_value(
+                    candidate.binding.name,
+                    candidate.binding.value,
+                    blame=candidate.binding.blame,
+                )
+        return active
 
     def _bind_value(
         self, name: str, value: FloorValue, *, blame: str | None = None
     ) -> "TemporalContext":
         remaining = tuple(binding for binding in self.bindings if binding.name != name)
-        return TemporalContext(remaining + (TemporalBinding(name, value, blame),))
+        guarded = tuple(
+            binding for binding in self.guarded_bindings if binding.binding.name != name
+        )
+        return TemporalContext(
+            remaining + (TemporalBinding(name, value, blame),),
+            guarded,
+        )
 
     def bind_with(self, operation, ctx):
         return operation.bind_context(self, ctx)

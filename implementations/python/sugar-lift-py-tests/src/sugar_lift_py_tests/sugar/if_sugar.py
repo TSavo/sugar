@@ -50,11 +50,29 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
         prefix = (
             "def A(z):\n" "    if z == 1:\n" "        return 7\n" "    return 0\n" "\n"
         )
-        return _call_pair(
-            name="if_return",
-            owner_sugar="IfSugar",
-            truthful=prefix + "def test_a():\n    assert A(1) == 7\n",
-            lying=prefix + "def test_a():\n    assert A(1) == 0\n",
+        repeated = (
+            "def A(z):\n"
+            "    if z == 1:\n"
+            "        answer = 7\n"
+            "    if z == 1:\n"
+            "        return answer\n"
+            "    return 0\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="if_return",
+                owner_sugar="IfSugar",
+                truthful=prefix + "def test_a():\n    assert A(1) == 7\n",
+                lying=prefix + "def test_a():\n    assert A(1) == 0\n",
+            ),
+            _call_pair(
+                name="if_repeated_guard_binding",
+                owner_sugar="IfSugar",
+                truthful=repeated + "def test_a():\n    assert A(1) == 7\n",
+                lying=repeated + "def test_a():\n    assert A(1) == 8\n",
+                family="repeated-guard-binding",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
