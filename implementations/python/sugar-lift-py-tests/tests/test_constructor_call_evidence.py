@@ -246,6 +246,61 @@ def test_source_backed_imported_inherited_constructor_builds_base_fields(
     assert _field_values(outcome.value) == {"value": TermValue(7)}
 
 
+def test_dotted_imported_reexport_base_constructs_exact_inherited_object(
+    tmp_path, monkeypatch
+) -> None:
+    (tmp_path / "base_impl.py").write_text(
+        "class Root:\n" "    pass\n" "\n" "class Base(Root):\n" "    pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "base_facade.py").write_text(
+        "from base_impl import Base\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    temporal = TemporalContext.empty().bind_value(
+        "facade",
+        ImportAliasValue(
+            "base_facade",
+            "facade",
+            import_target="base_facade",
+        ),
+    )
+
+    outcome = _outcome(
+        "class Child(facade.Base):\n" "    pass\n",
+        "Child()",
+        temporal=temporal,
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert outcome.value.class_name == "Child"
+    assert _field_values(outcome.value) == {}
+
+
+def test_unresolved_dotted_imported_base_stays_loud() -> None:
+    temporal = TemporalContext.empty().bind_value(
+        "facade",
+        ImportAliasValue(
+            "missing_facade",
+            "facade",
+            import_target="missing_facade",
+        ),
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class Child(facade.Base):\n" "    pass\n",
+            "Child()",
+            temporal=temporal,
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "statically resolved inherited constructor"
+
+
 def test_unresolved_inherited_constructor_panics_instead_of_faking_runtime() -> None:
     with pytest.raises(FactoryPanic) as raised:
         _outcome(
