@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .runtime_effect import RuntimeEffect, runtime_effect_witness
+from .runtime_effect import RuntimeEffect, runtime_effect_evidence
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,6 @@ def runtime_modulo(left, right, site):
         ModuloRuntimeEffect(
             "modulo depends on runtime __mod__/__rmod__ dispatch; "
             f"left={type(left).__name__} right={type(right).__name__} site={site}",
-            witness=runtime_effect_witness("py.modulo", operand, site),
+            **runtime_effect_evidence("py.modulo", operand, site),
         )
     )

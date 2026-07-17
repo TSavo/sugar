@@ -305,22 +305,24 @@ class TermValue(FloorValue):
 
     def modulo(self, other, site):
         # A number stands on the modulo floor: the remainder. A concrete zero
-        # divisor is a runtime effect (the program halts), not a lift-side gap.
+        # divisor is decidable at lift time, so it cannot mint runtime-effect
+        # evidence. Keep the missing exact exception construction loud.
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete, Incomplete
+            from sugar_lift_py_tests.outcome import Complete
 
             if other.value == 0:
-                from sugar_lift_py_tests.effect import (
-                    ModuloByZeroRuntimeEffect,
-                    runtime_effect_evidence,
-                )
-
-                return Incomplete(
-                    ModuloByZeroRuntimeEffect(
-                        f"modulo by zero runtime boundary: the divisor is "
-                        f"concretely 0; owner=TermValue.modulo site={site}",
-                        **runtime_effect_evidence("py.modulo", other, site),
-                    )
+                self._floor_gap(
+                    owner="modulo",
+                    blame=site,
+                    observed=(
+                        f"left={type(self).__name__} right={type(other).__name__} "
+                        "divisor=0"
+                    ),
+                    requested="construct exact modulo-by-zero exception",
+                    fix=(
+                        "construct the exact ZeroDivisionError evidence; a "
+                        "decidable zero divisor cannot mint RuntimeEffect"
+                    ),
                 )
             return Complete(TermValue(self.value % other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue

@@ -11,7 +11,7 @@ import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-from sugar_lift_py_tests.effect import ModuloByZeroRuntimeEffect, ModuloRuntimeEffect
+from sugar_lift_py_tests.effect import ModuloRuntimeEffect
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
@@ -56,10 +56,9 @@ def test_modulo_folds_collapsed_number() -> None:
     )
 
 
-def test_modulo_by_zero_is_runtime_effect() -> None:
-    outcome = _term("1 % 0")
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, ModuloByZeroRuntimeEffect)
+def test_modulo_by_zero_stays_a_loud_decidable_construction_gap() -> None:
+    with pytest.raises(FactoryPanic, match="owner=modulo"):
+        _term("1 % 0")
 
 
 def test_unowned_string_modulo_operand_panics_for_free() -> None:
@@ -83,6 +82,7 @@ def test_term_modulo_opaque_call_result_is_witnessed() -> None:
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, ModuloRuntimeEffect)
     operand = ctor("%", [TermValue(15).to_term(owner="test"), right.term])
+    assert outcome.effect.runtime_operand.term == operand
     assert outcome.effect.witness.operand == operand
     assert outcome.effect.witness.operation == ctor("py.modulo", [operand])
     assert outcome.effect.witness.locus == "t.py:1:0"
