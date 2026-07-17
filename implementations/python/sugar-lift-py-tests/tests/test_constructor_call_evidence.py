@@ -314,6 +314,55 @@ def test_unresolved_multiple_inheritance_mro_stays_loud_construction_panic() -> 
     json.dumps(raised.value.info.to_json())
 
 
+def test_native_imported_multiple_inheritance_uses_runtime_call_operand() -> None:
+    from sugar_lift_py_tests.effect import ConstructorRuntimeEffect
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+
+    temporal = (
+        TemporalContext.empty()
+        .bind_value(
+            "native",
+            ImportAliasValue(
+                "pandas._libs.index",
+                "native",
+                import_target="pandas._libs.index",
+            ),
+        )
+        .bind_value("value", SymbolicValue(make_var("value")))
+    )
+
+    outcome = _outcome(
+        "class Child(native.BaseMultiIndexCodesEngine, native.ObjectEngine):\n"
+        "    pass\n",
+        "Child(value)",
+        temporal=temporal,
+    )
+
+    assert type(outcome) is Incomplete
+    assert type(outcome.effect) is ConstructorRuntimeEffect
+    assert outcome.effect.runtime_operand.term.args[1] == make_var("value")
+
+
+def test_native_imported_multiple_inheritance_ground_wrong_twin_stays_loud() -> None:
+    temporal = TemporalContext.empty().bind_value(
+        "native",
+        ImportAliasValue(
+            "pandas._libs.index",
+            "native",
+            import_target="pandas._libs.index",
+        ),
+    )
+
+    with pytest.raises(FactoryPanic, match="owner=RuntimeEffect"):
+        _outcome(
+            "class Child(native.BaseMultiIndexCodesEngine, native.ObjectEngine):\n"
+            "    pass\n",
+            "Child(1)",
+            temporal=temporal,
+        )
+
+
 def test_runtime_selected_base_keeps_authenticated_constructor_effect() -> None:
     from sugar_lift_py_tests.effect import ConstructorRuntimeEffect
 
