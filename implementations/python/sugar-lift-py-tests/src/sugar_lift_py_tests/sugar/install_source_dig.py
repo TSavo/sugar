@@ -1346,7 +1346,7 @@ class ContextualizedDigBody:
     body: object
     base_context: Any
 
-    def desugar(self, ctx: Any = None):
+    def _reduce_context(self, ctx: Any = None):
         reduce_ctx = self.base_context
         if ctx is not None:
             temporal = self.base_context.temporal
@@ -1357,7 +1357,39 @@ class ContextualizedDigBody:
                     blame=binding.blame,
                 )
             reduce_ctx = ctx.with_temporal(temporal)
+        return reduce_ctx
+
+    def desugar(self, ctx: Any = None):
+        reduce_ctx = self._reduce_context(ctx)
         return self.body.reduce(reduce_ctx)
+
+    def scope_after(self, ctx: Any):
+        """Thread a straight-line callback body and retain its exact rebinds."""
+        from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        sequential = getattr(self.body, "sugar", None)
+        if not isinstance(sequential, SequentialDigBody):
+            factory_panic_gap(
+                owner="FunctionCallable",
+                blame="<callback>",
+                observed=type(sequential).__name__,
+                requested="straight-line callback body",
+                fix="construct SequentialDigBody callback scope or panic loudly",
+            )
+        cur = self._reduce_context(ctx)
+        for statement in sequential.statements:
+            outcome = statement.reduce(cur)
+            if isinstance(outcome, Incomplete) or not outcome.follow().continues:
+                factory_panic_gap(
+                    owner="FunctionCallable",
+                    blame=str(getattr(statement, "audit_row", "<callback>")),
+                    observed=type(outcome).__name__,
+                    requested="decidable callback scope update",
+                    fix="construct the callback statement or panic loudly",
+                )
+            cur = outcome.extend_scope(cur)
+        return cur
 
 
 def _contextualized_dig_body(body, base_context):
