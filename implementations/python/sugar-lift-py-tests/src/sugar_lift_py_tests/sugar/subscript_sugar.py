@@ -43,13 +43,21 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        # Concrete list index folds: truthful rides 20, lying asserts 21.
-        prefix = "def A(z):\n    xs = [10, 20, 30]\n    return xs[1]\n\n"
+        # The ground failing bounds check contributes exact exceptional-exit
+        # testimony on one path; the continuing path gives the solver a
+        # verdict-bearing truthful/lying pair.
+        prefix = (
+            "def A(z):\n"
+            "    if z < 0:\n"
+            "        return [][0]\n"
+            "    return z\n"
+            "\n"
+        )
         return _call_pair(
             name="subscript_return",
             owner_sugar="SubscriptSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 20\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 21\n",
+            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
         )
 
     def desugar(self, ctx: Any = None) -> Outcome:

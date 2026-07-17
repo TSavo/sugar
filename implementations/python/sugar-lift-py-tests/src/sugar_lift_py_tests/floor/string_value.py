@@ -179,7 +179,7 @@ class StringValue(FloorValue):
                 ground_index_error,
             )
 
-            ground_index_error(
+            return ground_index_error(
                 owner="StringValue.subscript",
                 operation="string subscript",
                 index=i,

@@ -231,7 +231,7 @@ class ListValue(FloorValue):
                 ground_index_error,
             )
 
-            ground_index_error(
+            return ground_index_error(
                 owner="ListValue.subscript",
                 operation="list subscript",
                 index=i,
@@ -259,7 +259,7 @@ class ListValue(FloorValue):
                 ground_index_error,
             )
 
-            ground_index_error(
+            return ground_index_error(
                 owner="ListValue.setitem",
                 operation="list assignment",
                 index=i,
@@ -325,7 +325,7 @@ class ListValue(FloorValue):
                 ground_index_error,
             )
 
-            ground_index_error(
+            return ground_index_error(
                 owner="ListValue.delitem",
                 operation="list deletion",
                 index=i,
