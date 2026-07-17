@@ -9,6 +9,7 @@ from sugar_lift_py_tests.sugar.witnesses import (
     SugarWitnessPair,
     WitnessSource,
     _call_pair,
+    typed_red_effect_witness,
 )
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
@@ -106,6 +107,15 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
                 + "    assert -(value == 1) and (value != 1)\n",
                 lying=predicate_minus_prefix
                 + "    assert -(value == 1) and (value == 1)\n",
+            ),
+            typed_red_effect_witness(
+                name="runtime_callsite_unary_plus",
+                owner_sugar=cls.__name__,
+                source="from time import time\n\ndef A():\n    return +time()\n",
+                effect_class="UnaryPlusRuntimeEffect",
+                reason_needle="opaque call result's __pos__ dispatch",
+                blame_needle="test_witness.py:4:11",
+                wrong_reason_needle="owner=CallSiteValue.unary_plus",
             ),
         )
 

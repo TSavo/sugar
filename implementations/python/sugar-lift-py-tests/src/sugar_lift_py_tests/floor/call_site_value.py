@@ -94,6 +94,17 @@ class CallSiteValue(FloorValue):
 
         return SymbolicValue(self.term).unary_minus(site)
 
+    def unary_plus(self, site):
+        dug = self._dig_floor_or_none(None, owner="CallSiteValue.unary_plus")
+        if dug is not None and dug is not self:
+            return dug.unary_plus(site)
+        if self.body is not None:
+            return super().unary_plus(site)
+
+        from sugar_lift_py_tests.effect import runtime_unary_plus
+
+        return runtime_unary_plus(self, site)
+
     def absolute(self, site):
         """Cite ``abs(call(...))`` without claiming the call's concrete value."""
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
