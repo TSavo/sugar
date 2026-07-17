@@ -117,6 +117,24 @@ class MultiplyOpSugar(Sugar, role=SugarRole.TERM):
                     "    assert A() == 9\n"
                 ),
             ),
+            _call_pair(
+                name="numpy_maxdims_tuple_repetition_return",
+                owner_sugar="MultiplyOpSugar",
+                truthful=(
+                    "from numpy._core import _multiarray_umath as ncu\n\n"
+                    "def A():\n"
+                    "    return len((1,) * ncu.MAXDIMS)\n\n"
+                    "def test_a():\n"
+                    "    assert A() == 64\n"
+                ),
+                lying=(
+                    "from numpy._core import _multiarray_umath as ncu\n\n"
+                    "def A():\n"
+                    "    return len((1,) * ncu.MAXDIMS)\n\n"
+                    "def test_a():\n"
+                    "    assert A() == 63\n"
+                ),
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

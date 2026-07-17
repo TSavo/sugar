@@ -230,6 +230,7 @@ class TermValue(FloorValue):
 
             return Complete(TermValue(self.value * other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
@@ -237,6 +238,8 @@ class TermValue(FloorValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
+        if isinstance(other, GuardedValue):
+            return other.map_from_left("multiply", self, site)
         if type(other) in (CallSiteValue, ImportAliasValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
         if type(other) is OpaqueOpCallsite and other.callee == "len":
