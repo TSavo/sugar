@@ -143,7 +143,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
 
                 factory_panic_gap(
                     owner="TrySugar",
-                    blame=str(self.site),
+                    blame=self.site,
                     observed="dynamic except handler without type body",
                     requested="runtime handler dispatch operand",
                     fix="construct the handler expression or keep this FactoryPanic",

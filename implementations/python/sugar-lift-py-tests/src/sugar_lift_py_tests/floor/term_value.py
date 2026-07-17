@@ -499,7 +499,7 @@ class TermValue(FloorValue):
                     f"TermValue.__bytes__ is not defined for {type(self.value).__name__}; "
                     f"blame={operation.blame}",
                     witness=runtime_effect_witness(
-                        "py.bytes", type(self.value).__name__, operation.blame
+                        "py.bytes", type(self.value).__name__, operation
                     ),
                 )
             )

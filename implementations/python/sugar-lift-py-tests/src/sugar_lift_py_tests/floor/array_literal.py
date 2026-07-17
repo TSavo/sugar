@@ -52,7 +52,7 @@ class ArrayLiteral(FloorValue):
                 "__getattribute__ hooks at runtime. Keep as typed red until a "
                 f"narrower attribute floor owns the shape. blame={operation.blame}",
                 witness=runtime_effect_witness(
-                    "py.getattr", operation.name, operation.blame
+                    "py.getattr", operation.name, operation
                 ),
             )
         )

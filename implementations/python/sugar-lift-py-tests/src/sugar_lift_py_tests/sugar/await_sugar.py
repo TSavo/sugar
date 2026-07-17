@@ -83,7 +83,7 @@ class AwaitSugar(Sugar, role=SugarRole.TERM):
     def _finish(self, value, ctx):
         operation = AwaitOperation(
             owner=type(self).__name__,
-            blame=str(self.site),
+            blame=self.site,
         )
         recorder = None if ctx is None else getattr(ctx, "record_operation", None)
         if recorder is not None:

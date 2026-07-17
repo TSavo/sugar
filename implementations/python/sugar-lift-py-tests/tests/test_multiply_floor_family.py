@@ -4,6 +4,7 @@ import pytest
 
 from factory_reduce import reduce_value
 
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.effect import (
     SequenceRepetitionRuntimeEffect,
     SubscriptStoreRuntimeEffect,
@@ -21,6 +22,8 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.ir import atomic, ctor, make_var, num
 from sugar_lift_py_tests.outcome import Incomplete
+
+_SITE = SourceFragment.from_source("xs * n\n", "runtime_repeat.py").statements()[0]
 
 
 @pytest.mark.parametrize(
@@ -110,9 +113,9 @@ def test_runtime_list_repetition_count_is_a_named_typed_effect(
     items = ListValue((TermValue(7),))
 
     outcome = (
-        count.multiply(items, "runtime_repeat.py:2:11")
+        count.multiply(items, _SITE)
         if reversed_operands
-        else items.multiply(count, "runtime_repeat.py:2:11")
+        else items.multiply(count, _SITE)
     )
 
     assert isinstance(outcome, Incomplete)
@@ -131,7 +134,7 @@ def test_len_result_is_a_warranted_runtime_list_repetition_count() -> None:
         computed=None,
     )
 
-    outcome = ListValue((TermValue(7),)).multiply(count, "runtime_repeat.py:2:11")
+    outcome = ListValue((TermValue(7),)).multiply(count, _SITE)
 
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
@@ -149,7 +152,7 @@ def test_opaque_non_index_result_remains_a_loud_list_repetition_gap() -> None:
     )
 
     with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
-        ListValue((TermValue(7),)).multiply(count, "runtime_repeat.py:2:11")
+        ListValue((TermValue(7),)).multiply(count, _SITE)
 
 
 @pytest.mark.parametrize(
@@ -161,7 +164,7 @@ def test_opaque_non_index_result_remains_a_loud_list_repetition_gap() -> None:
             parameters=(),
             term=ctor("call:ndim", [make_var("array")]),
             body=None,
-            site="runtime_repeat.py:2:11",
+            site=_SITE,
         ),
         CallSiteValue(
             target_name="max",
@@ -169,14 +172,14 @@ def test_opaque_non_index_result_remains_a_loud_list_repetition_gap() -> None:
             parameters=(),
             term=ctor("call:max", [num(0), make_var("runtime_n")]),
             body=None,
-            site="runtime_repeat.py:2:11",
+            site=_SITE,
         ),
     ),
 )
 def test_integer_warranted_callsite_is_a_runtime_list_repetition_count(
     count: CallSiteValue,
 ) -> None:
-    outcome = ListValue((TermValue(7),)).multiply(count, "runtime_repeat.py:2:11")
+    outcome = ListValue((TermValue(7),)).multiply(count, _SITE)
 
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
@@ -191,11 +194,11 @@ def test_unwarranted_callsite_remains_a_loud_list_repetition_gap() -> None:
         parameters=(),
         term=ctor("call:make_count", [make_var("value")]),
         body=None,
-        site="runtime_repeat.py:2:11",
+        site=_SITE,
     )
 
     with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
-        ListValue((TermValue(7),)).multiply(count, "runtime_repeat.py:2:11")
+        ListValue((TermValue(7),)).multiply(count, _SITE)
 
 
 @pytest.mark.parametrize(
@@ -245,7 +248,9 @@ def test_guarded_descendant_preserves_the_typed_store_effect() -> None:
         SubscriptStoreRuntimeEffect(
             "symbolic store",
             witness=runtime_effect_witness(
-                "py.setitem", make_var("runtime_index"), "t.py:1:0"
+                "py.setitem",
+                make_var("runtime_index"),
+                SourceFragment.from_source("x[i] = 1\n", "t.py").statements()[0],
             ),
         )
     )

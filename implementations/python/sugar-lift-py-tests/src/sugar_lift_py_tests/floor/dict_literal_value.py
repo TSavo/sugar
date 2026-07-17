@@ -53,7 +53,7 @@ class DictLiteralValue(FloorValue):
             # Bare folded count; BuiltinCallSugar wrap re-attaches call:len.
             return Complete(TermValue(len(self.entries)))
         return _call_method_effect(
-            blame=operation.blame,
+            site=operation,
             observed=f"DictLiteralValue.{operation.name}",
         )
 
@@ -72,7 +72,7 @@ class DictLiteralValue(FloorValue):
             if stored_key == key_term:
                 return Complete(_term_to_floor(stored_value))
         return _subscript_effect(
-            blame=operation.blame,
+            site=operation,
             observed="DictLiteralValue[missing-key]",
         )
 
@@ -83,7 +83,7 @@ class DictLiteralValue(FloorValue):
 
 def _call_method_effect(
     *,
-    blame: str,
+    site,
     observed: str,
 ):
     from sugar_lift_py_tests.outcome import Incomplete
@@ -94,15 +94,15 @@ def _call_method_effect(
             f"{observed} has no reduced floor semantics in this tranche. "
             "Python dictionary method results can expose runtime view/mutation "
             "semantics; keep as typed red until a narrower vendor-cited "
-            f"reduction owns the shape. blame={blame}",
-            witness=runtime_effect_witness("py.call_method", observed, blame),
+            f"reduction owns the shape. blame={site}",
+            witness=runtime_effect_witness("py.call_method", observed, site),
         )
     )
 
 
 def _subscript_effect(
     *,
-    blame: str,
+    site,
     observed: str,
 ):
     from sugar_lift_py_tests.outcome import Incomplete
@@ -113,8 +113,8 @@ def _subscript_effect(
             f"{observed} has no statically matching entry. Python dictionary "
             "lookup can raise KeyError or depend on runtime __hash__/__eq__; "
             "keep as typed red until a narrower vendor-cited reduction owns "
-            f"the shape. blame={blame}",
-            witness=runtime_effect_witness("py.subscript", observed, blame),
+            f"the shape. blame={site}",
+            witness=runtime_effect_witness("py.subscript", observed, site),
         )
     )
 

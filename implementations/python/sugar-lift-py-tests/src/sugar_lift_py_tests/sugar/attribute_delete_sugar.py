@@ -66,7 +66,7 @@ class AttributeDeleteSugar(Sugar, role=SugarRole.STATEMENT):
                     "__delete__",
                     (receiver,),
                     owner=type(self).__name__,
-                    blame=str(self.site),
+                    blame=self.site,
                     ctx=ctx,
                 )
             if receiver.has_method("__delattr__"):
@@ -74,12 +74,12 @@ class AttributeDeleteSugar(Sugar, role=SugarRole.STATEMENT):
                     "__delattr__",
                     (StringValue(self.name),),
                     owner=type(self).__name__,
-                    blame=str(self.site),
+                    blame=self.site,
                     ctx=ctx,
                 )
         return receiver._floor_gap(
             owner=type(self).__name__,
-            blame=str(self.site),
+            blame=self.site,
             observed=f"{type(receiver).__name__}.{self.name}",
             requested="attribute deletion data-model method",
             fix="construct __delete__ or __delattr__",

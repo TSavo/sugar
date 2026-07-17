@@ -125,15 +125,20 @@ class _NoReturnStatement:
 
 def test_sequential_dig_runtime_selected_return_is_a_named_effect() -> None:
     from sugar_lift_py_tests.effect import ConditionalExpressionRuntimeEffect
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.outcome import Incomplete
 
-    outcome = SequentialDigBody((_NoReturnStatement(),)).desugar()
+    fn_site = SourceFragment.from_source(
+        "def f(x):\n    if x:\n        return 1\n", "numpy/_core/repro.py"
+    ).statements()[0]
+    outcome = SequentialDigBody((_NoReturnStatement(),), fn_site=fn_site).desugar()
 
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, ConditionalExpressionRuntimeEffect)
     assert "numpy/_core/repro.py:17:4" in outcome.reason
     assert "If" in outcome.reason
     assert "runtime control flow" in outcome.reason
+    assert outcome.effect.witness.site is fn_site
 
 
 def test_sequential_dig_propagates_a_named_runtime_effect() -> None:
@@ -144,11 +149,12 @@ def test_sequential_dig_propagates_a_named_runtime_effect() -> None:
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.outcome import Incomplete
 
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    site = SourceFragment.from_source("x / y\n", "numpy/_core/repro.py").statements()[0]
     effect = DivisionByZeroRuntimeEffect(
         "numpy/_core/repro.py:21:8 division denominator is runtime-dependent",
-        witness=runtime_effect_witness(
-            "py.divide", make_var("denominator"), "numpy/_core/repro.py:21:8"
-        ),
+        witness=runtime_effect_witness("py.divide", make_var("denominator"), site),
     )
 
     class EffectStatement:

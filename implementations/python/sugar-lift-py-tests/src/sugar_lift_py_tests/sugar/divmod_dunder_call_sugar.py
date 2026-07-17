@@ -81,7 +81,7 @@ class DivmodDunderCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar
                 "__divmod__",
                 (right,),
                 owner=type(self).__name__,
-                blame=str(self.site),
+                blame=self.site,
                 ctx=ctx,
             )
         if isinstance(right, ObjectValue) and right.has_method("__rdivmod__"):
@@ -89,7 +89,7 @@ class DivmodDunderCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar
                 "__rdivmod__",
                 (left,),
                 owner=type(self).__name__,
-                blame=str(self.site),
+                blame=self.site,
                 ctx=ctx,
             )
         from sugar_lift_py_tests.floor import CallSiteValue

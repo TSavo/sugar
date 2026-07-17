@@ -28,3 +28,26 @@ def test_every_named_runtime_effect_construction_passes_a_witness() -> None:
 def test_runtime_effect_witness_has_no_default() -> None:
     witness = inspect.signature(RuntimeEffect).parameters["witness"]
     assert witness.default is inspect.Parameter.empty
+
+
+def test_no_runtime_effect_witness_helper_passes_a_string_locus_literal() -> None:
+    """String loci are fabricated addresses — the door demands SourceFragment."""
+    fabricated: list[str] = []
+    for path in PACKAGE.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = None
+            if isinstance(node.func, ast.Name):
+                name = node.func.id
+            if name != "runtime_effect_witness":
+                continue
+            if len(node.args) < 3:
+                continue
+            site = node.args[2]
+            if isinstance(site, ast.Constant) and isinstance(site.value, str):
+                fabricated.append(
+                    f"{path.relative_to(PACKAGE)}:{node.lineno}:string-locus"
+                )
+    assert fabricated == []

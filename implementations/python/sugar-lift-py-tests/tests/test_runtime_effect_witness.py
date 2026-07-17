@@ -63,3 +63,32 @@ def test_source_fragment_normalizes_absolute_filename_at_the_door() -> None:
 def test_source_fragment_passes_pseudo_filenames_untouched() -> None:
     fragment = SourceFragment.from_source("x = 1", "<contract>")
     assert fragment.filename == "<contract>"
+
+
+def test_string_locus_cannot_mint_a_runtime_effect_witness() -> None:
+    from sugar_lift_py_tests.effect import runtime_effect_witness
+
+    with pytest.raises(TypeError, match="SourceFragment"):
+        runtime_effect_witness("py.divide", make_var("x"), "t.py:1:0")
+
+
+def test_arbitrary_object_operand_cannot_fabricate_a_witness_term() -> None:
+    from sugar_lift_py_tests.effect import runtime_effect_witness
+
+    site = SourceFragment.from_source("x = 1", "t.py").statements()[0]
+    with pytest.raises(TypeError, match="ground primitive"):
+        runtime_effect_witness("py.runtime", object(), site)
+
+
+def test_operation_carrying_fragment_blame_resolves_as_site() -> None:
+    from sugar_lift_py_tests.effect import runtime_effect_witness
+
+    site = SourceFragment.from_source("x.y", "t.py").statements()[0]
+
+    class _Op:
+        blame = site
+        name = "y"
+
+    witness = runtime_effect_witness("py.getattr", "y", _Op())
+    assert witness.site is site
+    assert witness.locus == "t.py:1:0"

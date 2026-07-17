@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.effect import (
     ConditionalExpressionRuntimeEffect,
     RuntimeEffectWitness,
@@ -12,7 +13,7 @@ from sugar_lift_py_tests.floor import (
     PredicateValue,
     StringValue,
 )
-from sugar_lift_py_tests.ir import _Connective, atomic
+from sugar_lift_py_tests.ir import _Connective, atomic, ctor, make_var
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
@@ -22,13 +23,15 @@ from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSug
 class _EffectValue(FloorValue):
     @staticmethod
     def _effect(reason: str) -> ConditionalExpressionRuntimeEffect:
-        operand = atomic("runtime-operand", [])
+        operand = make_var("runtime_operand")
         return ConditionalExpressionRuntimeEffect(
             reason,
             witness=RuntimeEffectWitness(
-                operation=operand,
+                operation=ctor("py.ifexp.select", [operand]),
                 operand=operand,
-                site="t.py:1:0",
+                site=SourceFragment.from_source(
+                    "x if c else y\n", "t.py"
+                ).statements()[0],
             ),
         )
 

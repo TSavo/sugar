@@ -111,7 +111,7 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
         factory_panic(
             FactoryGapInfo(
                 owner="UnaryOpSugar",
-                blame=str(self.site),
+                blame=self.site,
                 observed=self.op,
                 requested="known unary op",
                 fix="extend UnaryOpSugar._apply for this operator",
@@ -122,7 +122,7 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
                 role="term",
                 status=FactoryAuditStatus.SUGAR_GAP,
                 observed=self.op,
-                blame=str(self.site),
+                blame=self.site,
                 selected=None,
                 candidates=[],
                 message=f"unowned unary op {self.op}",

@@ -137,7 +137,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                     "__index__",
                     (),
                     owner=type(self).__name__,
-                    blame=str(self.site),
+                    blame=self.site,
                     ctx=ctx,
                 )
             numpy_value = _numpy_literal_call(source_name, source_values)

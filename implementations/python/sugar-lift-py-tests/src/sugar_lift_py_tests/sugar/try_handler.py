@@ -40,6 +40,6 @@ class TryHandler:
             self.bound_name,
             SymbolicValue(exception_term),
             owner="TryHandler",
-            blame=str(self.site),
+            blame=self.site,
         )
         return self.body.reduce(handler_ctx)

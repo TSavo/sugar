@@ -131,7 +131,7 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
         if self.unclassified_mutation:
             factory_panic_gap(
                 owner="WhileSugar",
-                blame=str(self.site),
+                blame=self.site,
                 observed="nonlocal mutation",
                 requested="classifiable loop-carried local state",
                 fix="rewrite attribute or subscript mutation as explicit carried locals",
@@ -141,7 +141,7 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
         if any(value is None for value in values):
             factory_panic_gap(
                 owner="WhileSugar",
-                blame=str(self.site),
+                blame=self.site,
                 observed=self.carried,
                 requested="statically bound loop-carried locals",
                 fix="bind every carried local before currying the loop",

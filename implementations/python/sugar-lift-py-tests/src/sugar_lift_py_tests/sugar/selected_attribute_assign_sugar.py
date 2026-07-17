@@ -79,7 +79,7 @@ class SelectedAttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
                     "__set__",
                     (receiver, value),
                     owner=type(self).__name__,
-                    blame=str(self.site),
+                    blame=self.site,
                     ctx=ctx,
                 )
             if receiver.has_method("__setattr__"):
@@ -87,12 +87,12 @@ class SelectedAttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
                     "__setattr__",
                     (StringValue(self.field_name), value),
                     owner=type(self).__name__,
-                    blame=str(self.site),
+                    blame=self.site,
                     ctx=ctx,
                 )
             factory_panic_gap(
                 owner=type(self).__name__,
-                blame=str(self.site),
+                blame=self.site,
                 observed="ObjectValue",
                 requested="citable selected-receiver attribute store",
                 fix="add the real object-state construction arm",
@@ -112,7 +112,7 @@ class SelectedAttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
 
         factory_panic_gap(
             owner=type(self).__name__,
-            blame=str(self.site),
+            blame=self.site,
             observed=type(receiver).__name__,
             requested="citable selected-receiver attribute store",
             fix="add the real receiver-specific construction arm",

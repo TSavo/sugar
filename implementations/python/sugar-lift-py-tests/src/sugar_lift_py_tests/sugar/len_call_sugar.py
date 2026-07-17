@@ -83,7 +83,7 @@ class LenCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
 
         if isinstance(value, ObjectValue):
             return value.call_method_value(
-                "__len__", (), owner=type(self).__name__, blame=str(self.site), ctx=ctx
+                "__len__", (), owner=type(self).__name__, blame=self.site, ctx=ctx
             )
         from sugar_lift_py_tests.floor import ArrayLiteral, OpaqueOpCallsite, TermValue
         from sugar_lift_py_tests.outcome import Complete

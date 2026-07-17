@@ -73,7 +73,7 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
 
             factory_panic_gap(
                 owner="RaiseSugar",
-                blame=str(self.site),
+                blame=self.site,
                 observed="absolute source locus",
                 requested="workspace-relative source locus",
                 fix="route the source through the workspace-relative lift door",
@@ -84,7 +84,7 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
 
             factory_panic_gap(
                 owner="RaiseSugar",
-                blame=str(self.site),
+                blame=self.site,
                 observed="raise ... from ...",
                 requested="an explicit exception-cause floor",
                 fix="construct and carry the cause separately from the raised exception",
@@ -111,7 +111,7 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
 
             factory_panic_gap(
                 owner="RaiseSugar",
-                blame=str(self.site),
+                blame=self.site,
                 observed=type(value).__name__,
                 requested="constructed exception floor",
                 fix=(

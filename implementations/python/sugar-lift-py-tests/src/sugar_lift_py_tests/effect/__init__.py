@@ -26,7 +26,13 @@ from .key_error_runtime_effect import KeyErrorRuntimeEffect
 from .modulo_by_zero_runtime_effect import ModuloByZeroRuntimeEffect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .raise_effect import RaiseEffect
-from .runtime_effect import RuntimeEffect, RuntimeEffectWitness, runtime_effect_witness
+from .runtime_effect import (
+    RuntimeEffect,
+    RuntimeEffectWitness,
+    operand_term,
+    resolve_runtime_effect_site,
+    runtime_effect_witness,
+)
 from .sequence_repetition_runtime_effect import SequenceRepetitionRuntimeEffect
 from .sequence_concatenation_runtime_effect import SequenceConcatenationRuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
@@ -63,6 +69,8 @@ __all__ = [
     "RaiseEffect",
     "RuntimeEffect",
     "RuntimeEffectWitness",
+    "operand_term",
+    "resolve_runtime_effect_site",
     "runtime_effect_witness",
     "SequenceRepetitionRuntimeEffect",
     "SequenceConcatenationRuntimeEffect",

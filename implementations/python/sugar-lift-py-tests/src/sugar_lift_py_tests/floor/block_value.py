@@ -104,7 +104,7 @@ class BlockValue(FloorValue):
                     f"statically; keep as typed red until branch-wise {kind} "
                     f"floors own this shape. blame={operation.blame}",
                     witness=runtime_effect_witness(
-                        f"py.block_{kind}", op_label, operation.blame
+                        f"py.block_{kind}", op_label, operation
                     ),
                 )
             )
@@ -118,7 +118,7 @@ class BlockValue(FloorValue):
                     f"`{type(exit_value).__name__}`, not a FloorValue; "
                     f"blame={operation.blame}",
                     witness=runtime_effect_witness(
-                        f"py.block_{kind}", op_label, operation.blame
+                        f"py.block_{kind}", op_label, operation
                     ),
                 )
             )

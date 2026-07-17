@@ -66,7 +66,7 @@ class BoolOpSugar(Sugar, role=SugarRole.TERM):
             factory_panic(
                 FactoryGapInfo(
                     owner="BoolOpSugar",
-                    blame=str(self.site),
+                    blame=self.site,
                     observed="BoolOp",
                     requested="at least one operand",
                     fix="BoolOp with empty values is not Python",
