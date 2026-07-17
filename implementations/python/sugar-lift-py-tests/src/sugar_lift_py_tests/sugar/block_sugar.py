@@ -49,24 +49,46 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        return Complete(BlockValue(self._collect(self.statements, ctx)))
+        entries, _final_ctx, can_fall_through, fall_through = self._collect_iterative(
+            self.statements, ctx
+        )
+        return Complete(
+            BlockValue(
+                entries,
+                fall_through=fall_through,
+                can_fall_through=can_fall_through,
+            )
+        )
 
     def reduce_with_scope(self, ctx: object):
         """Reduce once, returning both the record and its terminal context."""
-        statements, final_ctx = self._collect_with_scope(self.statements, ctx)
-        return BlockValue(statements), final_ctx
+        statements, final_ctx, can_fall_through, fall_through = (
+            self._collect_with_scope(self.statements, ctx)
+        )
+        return (
+            BlockValue(
+                statements,
+                fall_through=fall_through,
+                can_fall_through=can_fall_through,
+            ),
+            final_ctx,
+        )
 
     def _collect_with_scope(self, statements: tuple, ctx: object):
         return self._collect_iterative(statements, ctx)
 
     def _collect(self, statements: tuple, ctx: object) -> tuple:
-        entries, _final_ctx = self._collect_iterative(statements, ctx)
+        entries, _final_ctx, _can_fall_through, _fall_through = self._collect_iterative(
+            statements, ctx
+        )
         return entries
 
     def _collect_iterative(self, statements: tuple, ctx: object):
         entries: list[object] = []
         transforms = []
+        fall_through = []
         final_ctx = ctx
+        can_fall_through = True
 
         for index, head in enumerate(statements):
             outcome = head.reduce(final_ctx)
@@ -79,6 +101,7 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
 
             follow = outcome.follow()
             if not follow.continues:
+                can_fall_through = False
                 tail = statements[index + 1 :] if follow.keeps_rest else ()
                 for transform in reversed(transforms):
                     tail = transform(tail)
@@ -86,8 +109,15 @@ class BlockSugar(Sugar, role=SugarRole.STATEMENT):
                 break
             if follow.transform is not None:
                 transforms.append(follow.transform)
+            if follow.continuation_guard is not None:
+                fall_through.append(follow.continuation_guard)
 
-        return tuple(entries), final_ctx
+        return (
+            tuple(entries),
+            final_ctx,
+            can_fall_through,
+            tuple(fall_through) if can_fall_through else (),
+        )
 
     def walk_children(self):
         return self.statements

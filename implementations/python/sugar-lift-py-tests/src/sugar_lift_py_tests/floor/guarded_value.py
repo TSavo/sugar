@@ -31,6 +31,10 @@ class GuardedValue(FloorValue):
             ],
         )
 
+    def answer(self, ctx=None):
+        """Resolve both binding arms when a joined name is read."""
+        return self._map("answer", ctx)
+
     def _map(self, method: str, *args):
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, Incomplete

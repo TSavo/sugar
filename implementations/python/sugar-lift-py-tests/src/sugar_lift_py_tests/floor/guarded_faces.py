@@ -22,6 +22,8 @@ class GuardedFaces(FloorValue):
     else_exits: bool
     joined_bindings: tuple = ()
     guarded_bindings: tuple = ()
+    can_fall_through: bool = True
+    continuation_guard: Formula | None = None
 
     def contribution(self):
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
@@ -64,21 +66,16 @@ class GuardedFaces(FloorValue):
         # both exit -> unreachable (raw, like code after an unguarded return);
         # only then -> tail under not(guard); only else -> tail under guard;
         # neither -> reduce plain.
-        if self.then_exits and self.else_exits:
+        if not self.can_fall_through:
             from sugar_lift_py_tests.outcome.follow_step import FollowStep
 
             return FollowStep.halt(keeps_rest=True)
         from sugar_lift_py_tests.outcome.follow_step import FollowStep
 
-        if self.then_exits:
-            from sugar_lift_py_tests.ir import not_
-
-            guard = not_(self.guard)
+        if self.continuation_guard is not None:
+            guard = self.continuation_guard
             return FollowStep.continue_with(
-                lambda entries: tuple(entry.guarded(guard) for entry in entries)
-            )
-        if self.else_exits:
-            return FollowStep.continue_with(
-                lambda entries: tuple(entry.guarded(self.guard) for entry in entries),
+                lambda entries: tuple(entry.guarded(guard) for entry in entries),
+                continuation_guard=guard,
             )
         return FollowStep.continue_with()

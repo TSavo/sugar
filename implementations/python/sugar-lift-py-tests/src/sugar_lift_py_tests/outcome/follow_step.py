@@ -11,12 +11,20 @@ class FollowStep:
     continues: bool
     keeps_rest: bool = False
     transform: Callable[[tuple], tuple] | None = None
+    continuation_guard: object | None = None
 
     @classmethod
     def continue_with(
-        cls, transform: Callable[[tuple], tuple] | None = None
+        cls,
+        transform: Callable[[tuple], tuple] | None = None,
+        *,
+        continuation_guard: object | None = None,
     ) -> "FollowStep":
-        return cls(continues=True, transform=transform)
+        return cls(
+            continues=True,
+            transform=transform,
+            continuation_guard=continuation_guard,
+        )
 
     @classmethod
     def halt(cls, *, keeps_rest: bool) -> "FollowStep":

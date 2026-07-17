@@ -382,6 +382,10 @@ def _record_can_fall_through(record) -> bool:
     continues *and* some non-exit residual remains (or the record is empty /
     pure support).
     """
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+
+    if isinstance(record, BlockValue):
+        return record.can_fall_through
     if not record.follow_rest().continues:
         return False
     from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces

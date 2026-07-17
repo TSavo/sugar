@@ -17,6 +17,7 @@ class BlockValue(FloorValue):
 
     statements: tuple[object, ...]
     fall_through: tuple = ()
+    can_fall_through: bool = True
 
     def contribution(self):
         # A block inside a record splices: its entries ARE the entries.
