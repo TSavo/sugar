@@ -98,14 +98,26 @@ class GuardedValue(FloorValue):
         false_formula = formula(false_value)
         if true_formula is None or false_formula is None:
             return super().equals(args[0], args[-1])
+        if (
+            type(true_value) is TrueBoolLiteralSugar
+            and type(false_value) is FalseBoolLiteralSugar
+        ):
+            joined_formula = self.guard
+        elif (
+            type(true_value) is FalseBoolLiteralSugar
+            and type(false_value) is TrueBoolLiteralSugar
+        ):
+            joined_formula = not_(self.guard)
+        else:
+            joined_formula = and_(
+                [
+                    implies(self.guard, true_formula),
+                    implies(not_(self.guard), false_formula),
+                ]
+            )
         return Complete(
             PredicateValue(
-                and_(
-                    [
-                        implies(self.guard, true_formula),
-                        implies(not_(self.guard), false_formula),
-                    ]
-                ),
+                joined_formula,
                 args[-1],
                 operand_callsites=(
                     *(
@@ -235,6 +247,9 @@ class GuardedValue(FloorValue):
 
     def equals(self, other, site):
         return self._predicate("equals", other, site)
+
+    def is_identical(self, other, site):  # type: ignore[override]
+        return self._predicate("is_identical", other, site)
 
     def less_than(self, other, site):
         return self._predicate("less_than", other, site)

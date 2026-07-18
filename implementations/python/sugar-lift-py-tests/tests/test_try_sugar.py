@@ -7,6 +7,7 @@ Loud: bare except, else, finally. Multi-type except (A, B) is owned.
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 
 import pytest
 
@@ -24,7 +25,9 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import ctor, str_const
+from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.sugar.try_sugar import TrySugar
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _site(source: str):
@@ -229,6 +232,75 @@ def test_nonterminal_pytest_method_does_not_grant_body_binding() -> None:
     assert raised.value.info.owner == "TemporalContext"
     assert raised.value.info.observed == "result"
     assert raised.value.info.requested == "value"
+
+
+TRY_SUCCESS_SENTINEL = (
+    "def A(op, value):\n"
+    "    exc = None\n"
+    "    try:\n"
+    "        result = op(value)\n"
+    "    except Exception as err:\n"
+    "        exc = err\n"
+)
+
+
+def test_try_success_sentinel_activates_body_only_binding() -> None:
+    source = (
+        TRY_SUCCESS_SENTINEL
+        + "    if exc is None:\n"
+        + "        return result\n"
+        + "    return 0\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "try_success_result.py")
+
+    assert gaps == []
+    assert any(row.post is not None for row in payload.ir)
+
+
+def test_try_exception_sentinel_does_not_activate_body_only_binding() -> None:
+    source = (
+        TRY_SUCCESS_SENTINEL
+        + "    if exc is not None:\n"
+        + "        return result\n"
+        + "    return 0\n"
+    )
+
+    with pytest.raises(FactoryPanic, match="observed=result requested=value"):
+        audit_lift_file(source, "try_exception_result.py", hold_panic=False)
+
+
+def test_try_unrelated_guard_does_not_activate_body_only_binding() -> None:
+    source = (
+        TRY_SUCCESS_SENTINEL
+        + "    if value:\n"
+        + "        return result\n"
+        + "    return 0\n"
+    )
+
+    with pytest.raises(FactoryPanic, match="observed=result requested=value"):
+        audit_lift_file(source, "try_open_guard_result.py", hold_panic=False)
+
+
+def test_try_success_sentinel_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    witnesses = TrySugar.witnesses()
+    pair = next(
+        witness
+        for witness in witnesses
+        if witness.name == "try_success_sentinel_result"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "try-success-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "try-success-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_try_does_not_bind_name_missing_from_a_continuing_handler_path() -> None:
