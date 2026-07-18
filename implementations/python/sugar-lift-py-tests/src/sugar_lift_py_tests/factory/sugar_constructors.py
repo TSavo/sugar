@@ -516,12 +516,19 @@ def _ctx_with_module_global_binds(site: SourceFragment, ctx):
                     continue
                 bound = alias or imported
                 target = f"{module}.{imported}"
+                from sugar_lift_py_tests.sugar.install_source_dig import (
+                    resolve_install_source_value,
+                )
+
+                resolved = resolve_install_source_value(target, folded_ctx)
                 temporal = temporal.bind_value(
                     bound,
                     ImportAliasValue(
                         target,
                         bound,
                         import_target=target,
+                        resolved_value=resolved,
+                        install_source_checked=True,
                     ),
                 )
             folded_ctx = folded_ctx.with_temporal(temporal)

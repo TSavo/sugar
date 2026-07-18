@@ -19,6 +19,7 @@ class ImportAliasValue(FloorValue):
     bound_name: str
     import_target: str | None = None
     resolved_value: FloorValue | None = field(default=None, compare=False)
+    install_source_checked: bool = field(default=False, compare=False)
 
     def extend_scope(self, ctx):
         """Thread the source-stated import binding into following statements."""
@@ -73,6 +74,28 @@ class ImportAliasValue(FloorValue):
             import_target=qualified,
         )
 
+    def qualified_attribute(self, attribute: str, site) -> ImportAliasValue | None:
+        """Construct an exact coordinate for a concrete imported object member.
+
+        ``from pandas import Timestamp`` fixes the receiver identity before
+        lift.  When that exact target resolves to a module or class and Python
+        receives a static requested name, ``getattr(Timestamp, "now")`` is the
+        inert coordinate ``pandas.Timestamp.now``.  The coordinate records the
+        requested lookup; it does not claim that Python lookup succeeds.
+        An unavailable receiver returns ``None`` to the caller's loud floor.
+        """
+        target = self.import_target or self.name
+        receiver = _resolve_qualified_import_object(target)
+        if receiver is None:
+            return None
+        del site
+        qualified = f"{target}.{attribute}"
+        return ImportAliasValue(
+            qualified,
+            attribute,
+            import_target=qualified,
+        )
+
     def truth(self, site):
         """Construct decidable truthiness for an import binding.
 
@@ -92,6 +115,10 @@ class ImportAliasValue(FloorValue):
 
         if self.resolved_value is not None:
             return self.resolved_value.truth(site)
+
+        coordinate = self._checked_constant_coordinate()
+        if coordinate is not None:
+            return coordinate.truth(site)
 
         if _import_alias_binds_module(self):
             return Complete(TrueBoolLiteralSugar(site=site))
@@ -126,13 +153,25 @@ class ImportAliasValue(FloorValue):
         return self.py_subscript_coordinate(index, site)
 
     def getattr_static(self, name: str, site):
-        """Resolve builtin getattr through the imported-module floor boundary."""
-        return _runtime_alias_effect_at_site(
-            self,
-            shape=f"getattr({self.bound_name}, {name!r})",
-            site=site,
-            replacement="ImportedModuleGetattrEffect",
+        """Keep an unresolvable ground alias lookup loud."""
+        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
+        target = self.import_target or self.name
+        factory_panic_gap(
+            owner="ImportAliasValue",
+            blame=site,
+            observed=f"{target}.{name}",
+            requested="qualified import attribute coordinate",
+            fix=(
+                f"Resolve imported receiver `{target}` to a concrete module/class "
+                f"before constructing `{target}.{name}`. A ground static getattr "
+                "cannot mint RuntimeEffect authority."
+            ),
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
         )
+        raise AssertionError("factory_panic_gap returned")
 
     def guarded(self, formula):
         del formula
@@ -198,7 +237,8 @@ class ImportAliasValue(FloorValue):
         )
 
     def _binary_runtime_effect(self, other, site, operator):
-        if self.resolved_value is not None:
+        resolved = self.resolved_value or self._checked_constant_coordinate()
+        if resolved is not None:
             methods = {
                 "+": "add",
                 "-": "subtract",
@@ -208,7 +248,7 @@ class ImportAliasValue(FloorValue):
                 "&": "bitwise_and",
                 "^": "bitwise_xor",
             }
-            return getattr(self.resolved_value, methods[operator])(other, site)
+            return getattr(resolved, methods[operator])(other, site)
         return _runtime_alias_effect_at_site(
             self,
             shape=f"{self.bound_name} {operator} ...",
@@ -228,6 +268,8 @@ class ImportAliasValue(FloorValue):
         )
 
     def call_method_with(self, operation: Any, ctx: object):
+        if self.resolved_value is not None:
+            return self.resolved_value.call_method_with(operation, ctx)
         del ctx
         return _runtime_alias_effect(
             self,
@@ -237,6 +279,8 @@ class ImportAliasValue(FloorValue):
         )
 
     def subscript_with(self, operation: Any, ctx: object):
+        if self.resolved_value is not None:
+            return self.resolved_value.subscript_with(operation, ctx)
         del ctx
         return _runtime_alias_effect(
             self,
@@ -246,6 +290,8 @@ class ImportAliasValue(FloorValue):
         )
 
     def contains_with(self, operation: Any, ctx: object):
+        if self.resolved_value is not None:
+            return self.resolved_value.contains_with(operation, ctx)
         del ctx
         return _runtime_alias_effect(
             self,
@@ -255,6 +301,8 @@ class ImportAliasValue(FloorValue):
         )
 
     def attribute_assign_with(self, operation: Any, ctx: object):
+        if self.resolved_value is not None:
+            return self.resolved_value.attribute_assign_with(operation, ctx)
         del ctx
         return _runtime_alias_effect(
             self,
@@ -264,12 +312,40 @@ class ImportAliasValue(FloorValue):
         )
 
     def binary_operator_with(self, operation: Any, ctx: object):
+        if self.resolved_value is not None:
+            return self.resolved_value.binary_operator_with(operation, ctx)
         del ctx
         return _runtime_alias_effect(
             self,
             operation=operation,
             shape=f"{self.bound_name} {operation.operator} ...",
             replacement="ImportedModuleBinaryEffect",
+        )
+
+    def _checked_constant_coordinate(self):
+        """Construct a coordinate only after the source door checked this target."""
+        if not self.install_source_checked:
+            return None
+        import inspect
+        from types import ModuleType
+
+        target = self.import_target or self.name
+        value = _resolve_qualified_import_object(target)
+        if (
+            value is None
+            or isinstance(value, ModuleType)
+            or inspect.isclass(value)
+            or callable(value)
+        ):
+            return None
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return SymbolicValue(
+            ctor(
+                "python:import_alias",
+                [str_const(self.bound_name), str_const(target)],
+            )
         )
 
 
@@ -287,6 +363,26 @@ def _import_alias_binds_module(value: ImportAliasValue) -> bool:
         return importlib.util.find_spec(target) is not None
     except (ImportError, ModuleNotFoundError, ValueError, AttributeError):
         return False
+
+
+def _resolve_qualified_import_object(target: str) -> object | None:
+    """Resolve one qualified import target without guessing split ownership."""
+    import importlib
+
+    parts = target.split(".")
+    for module_length in range(len(parts), 0, -1):
+        module_name = ".".join(parts[:module_length])
+        try:
+            value: object = importlib.import_module(module_name)
+        except (ImportError, ModuleNotFoundError):
+            continue
+        for attribute in parts[module_length:]:
+            sentinel = object()
+            value = getattr(value, attribute, sentinel)
+            if value is sentinel:
+                return None
+        return value
+    return None
 
 
 def _runtime_alias_effect(

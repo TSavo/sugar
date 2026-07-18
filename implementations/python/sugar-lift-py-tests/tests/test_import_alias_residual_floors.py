@@ -8,6 +8,8 @@ import pytest
 
 from sugar_lift_py_tests.effect import ImportedModuleRuntimeEffect
 from sugar_lift_py_tests.factory import FactoryPanic
+from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
+from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.floor import (
     FunctionCallable,
     ImportAliasValue,
@@ -456,6 +458,124 @@ def test_numpy_setup_reexport_getattr_constructs_exact_import_coordinate() -> No
 
     assert isinstance(resolved, ImportAliasValue)
     assert resolved.import_target == "numpy._core.sum"
+
+
+def test_qualified_imported_class_getattr_constructs_exact_coordinate() -> None:
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+    alias = ImportAliasValue(
+        "Timestamp",
+        "Timestamp",
+        import_target="pandas.Timestamp",
+    )
+    sugar = GetattrBuiltinSugar(None, "now", None, None, _SITE)  # type: ignore[arg-type]
+
+    outcome = sugar._finish_static(alias, "now", ctx)
+    resolved = complete_value(outcome, owner="qualified imported class getattr")
+
+    assert isinstance(resolved, ImportAliasValue)
+    assert resolved.to_term(owner="test") == ctor(
+        "python:import_alias",
+        [
+            str_const("now"),
+            str_const("pandas.Timestamp.now"),
+        ],
+    )
+
+
+def test_genuinely_unresolvable_imported_receiver_stays_loud() -> None:
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+    alias = ImportAliasValue(
+        "Missing",
+        "Missing",
+        import_target="no_such_package.Missing",
+    )
+    sugar = GetattrBuiltinSugar(None, "not_a_real_attribute", None, None, _SITE)  # type: ignore[arg-type]
+
+    with pytest.raises(FactoryPanic) as caught:
+        sugar._finish_static(alias, "not_a_real_attribute", ctx)
+
+    assert caught.value.info.owner == "ImportAliasValue"
+    assert caught.value.info.requested == "qualified import attribute coordinate"
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "pandas.core.computation.check.NUMEXPR_INSTALLED",
+        "pandas.compat.HAS_PYARROW",
+    ],
+)
+def test_source_backed_import_flag_constructs_truth(target: str) -> None:
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+    resolved = resolve_install_source_value(target, ctx)
+
+    assert resolved is not None
+    alias = ImportAliasValue(
+        target.rsplit(".", 1)[-1],
+        target.rsplit(".", 1)[-1],
+        import_target=target,
+        resolved_value=resolved,
+    )
+    truth = alias.truth(_SITE)
+
+    assert not isinstance(truth, Incomplete)
+    complete_value(truth, owner="source-backed imported flag truth")
+
+
+@pytest.mark.parametrize(
+    ("module", "name"),
+    [
+        ("pandas.core.computation.check", "NUMEXPR_INSTALLED"),
+        ("pandas.compat", "HAS_PYARROW"),
+    ],
+)
+def test_module_seed_constructs_source_backed_import_flag_truth(
+    module: str,
+    name: str,
+) -> None:
+    source = (
+        f"from {module} import {name}\n\n" "def test_flag():\n" f"    assert {name}\n"
+    )
+
+    payload = lift_file_payload(source, "imported_flag.py")
+
+    assert len(payload.ir) == 1
+    assert payload.effects == []
+    axis = account_lift_coverage(
+        census_source(source, file="imported_flag.py"),
+        payload.to_rpc(),
+    ).assertions.to_json()
+    assert axis["stated"] == 1
+    assert axis["lifted_cited"] + axis["refused_loud"] == 1
+    assert axis["silently_unaccounted"] == 0
+
+
+@pytest.mark.parametrize(
+    "import_statement",
+    [
+        "from pandas.core.computation.check import NUMEXPR_INSTALLED",
+        ("from pandas.compat import " "HAS_PYARROW, PYARROW_MIN_VERSION"),
+    ],
+)
+def test_function_local_import_constructs_source_backed_flag_truth(
+    import_statement: str,
+) -> None:
+    flag = (
+        "NUMEXPR_INSTALLED"
+        if "NUMEXPR_INSTALLED" in import_statement
+        else "HAS_PYARROW"
+    )
+    source = "def test_flag():\n" f"    {import_statement}\n" f"    assert {flag}\n"
+
+    payload = lift_file_payload(source, "function_imported_flag.py")
+    axis = account_lift_coverage(
+        census_source(source, file="function_imported_flag.py"),
+        payload.to_rpc(),
+    ).assertions.to_json()
+
+    assert axis["stated"] == 1
+    assert axis["lifted_cited"] + axis["refused_loud"] == 1
+    assert axis["silently_unaccounted"] == 0
 
 
 def test_imported_source_getattr_witness_truthful_sat_and_lying_unsat(
