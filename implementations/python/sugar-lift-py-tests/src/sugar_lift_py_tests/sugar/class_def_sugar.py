@@ -68,11 +68,30 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             "    return 1\n"
             "\n"
         )
-        return _call_pair(
-            name="class_def_return",
-            owner_sugar="ClassDefSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        class_local_default = (
+            "def B(z):\n"
+            "    class C:\n"
+            "        def prior(value):\n"
+            "            return value\n"
+            "        def later(self, callback=prior):\n"
+            "            return callback\n"
+            "    return z\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="class_def_return",
+                owner_sugar="ClassDefSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            _call_pair(
+                name="class_local_default_binding_return",
+                owner_sugar="ClassDefSugar",
+                truthful=class_local_default + "def test_b():\n    assert B(5) == 5\n",
+                lying=class_local_default + "def test_b():\n    assert B(5) == 6\n",
+                family="class-local-default-binding",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

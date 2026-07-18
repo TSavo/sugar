@@ -1931,6 +1931,25 @@ def audit_lift_file(
         )
         try:
             lexical_temporal = module_temporal
+            # Definition roots are audited independently, but Python evaluates
+            # method decorators/defaults while executing the enclosing class
+            # body. Reconstruct only earlier class-local definitions that the
+            # root actually loads; later definitions and unrelated loud
+            # declarations must not leak into this lexical frame.
+            class_local_uses = {
+                name.id
+                for fragment in (
+                    *stmt.function_decorators(),
+                    *stmt.function_defaults(),
+                    *(
+                        default
+                        for default in stmt.function_keyword_only_defaults()
+                        if default is not None
+                    ),
+                )
+                for name in ast.walk(fragment.node)
+                if isinstance(name, ast.Name) and isinstance(name.ctx, ast.Load)
+            }
             for class_stmt in module.statements():
                 if class_stmt.observed != "ClassDef":
                     continue
@@ -1940,7 +1959,16 @@ def audit_lift_file(
                 for item in body:
                     if item.node is stmt.node:
                         break
-                    if item.observed != "Assign" or item.assign_target_name() is None:
+                    if item.observed == "Assign":
+                        if item.assign_target_name() is None:
+                            continue
+                    elif item.observed == "FunctionDef":
+                        if item.function_name() not in class_local_uses:
+                            continue
+                    elif item.observed == "ClassDef":
+                        if item.class_name() not in class_local_uses:
+                            continue
+                    else:
                         continue
                     seed_ctx = FactoryBuildContext(
                         filename=filename,
