@@ -218,7 +218,9 @@ def format_report(offenders: list[Offender]) -> str:
         "By kind (replacement plan applies to every locus of that kind):",
     ]
     for kind, count in by_kind.most_common():
-        plan = _REPLACEMENT.get(kind, "Promote into an explicit Sugar; delete from factory/.")
+        plan = _REPLACEMENT.get(
+            kind, "Promote into an explicit Sugar; delete from factory/."
+        )
         lines.append(f"  {count:4d}  {kind}")
         lines.append(f"        → {plan}")
     lines.append("")

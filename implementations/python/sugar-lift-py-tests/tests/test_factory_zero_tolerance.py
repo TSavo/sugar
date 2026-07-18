@@ -58,8 +58,7 @@ def test_current_factory_has_zero_behavior_construction_side_doors() -> None:
     assert offenders == [], (
         "factory/ may only select a registered Sugar or raise FactoryPanic; "
         f"R_factory_behavior_side_doors={len(offenders)}; "
-        "promote every behavior constructor to Sugar:\n"
-        + format_offenders(offenders)
+        "promote every behavior constructor to Sugar:\n" + format_offenders(offenders)
     )
 
 
