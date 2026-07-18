@@ -12,6 +12,7 @@ from sugar_lift_py_tests.factory import (
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import ObjectMethodValue
 from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.sugar.constructor_strategy import (
     ConstructorStrategy,
     RuntimeConstructorStrategy,
@@ -195,6 +196,19 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
             "    return CheckedCall('callable').f\n"
             "\n"
         )
+        ordinary_call_prefix = (
+            "def prepare(value):\n"
+            "    return value\n"
+            "\n"
+            "class Prepared:\n"
+            "    def __init__(self, value):\n"
+            "        prepare(value)\n"
+            "        self.value = value\n"
+            "\n"
+            "def M():\n"
+            "    return Prepared(7).value\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="constructor_field_return",
@@ -325,6 +339,17 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
                 lying=super_setattr_prefix
                 + "def test_super_setattr():\n"
                 + "    assert L() == 'suppressed'\n",
+                family="source-body-constructor",
+            ),
+            _call_pair(
+                name="source_body_constructor_ordinary_call",
+                owner_sugar=cls.__name__,
+                truthful=ordinary_call_prefix
+                + "def test_ordinary_call():\n"
+                + "    assert M() == 7\n",
+                lying=ordinary_call_prefix
+                + "def test_ordinary_call():\n"
+                + "    assert M() == 8\n",
                 family="source-body-constructor",
             ),
         )
@@ -1324,6 +1349,66 @@ class ObjectInitApply:
 
 
 @dataclass(frozen=True)
+class OrdinaryInitializerCallApply:
+    """Evaluate a factory-recognized plain call used as an initializer statement."""
+
+    value: SugarBody
+    site: object
+
+    def desugar(self, ctx=None) -> Outcome:
+        from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+        from sugar_lift_py_tests.floor import (
+            CallSiteValue,
+            ExceptionalExitValue,
+            GuardedValue,
+            SupportValue,
+        )
+        from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_value
+
+        outcome = self.value.reduce(ctx)
+        if isinstance(outcome, Incomplete):
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed=type(outcome.effect).__name__,
+                requested="decidable ordinary initializer call",
+                fix="construct the call result or leave the initializer loud",
+            )
+        value = complete_value(outcome, owner="ConstructorCallSugar")
+        if not isinstance(value, CallSiteValue) or value.body is None:
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed=type(value).__name__,
+                requested="source-backed ordinary initializer call",
+                fix="attach and reduce the callable body or leave the initializer loud",
+            )
+        reduced = value._dig_floor_or_none(
+            ctx,
+            owner="ConstructorCallSugar.ordinary_initializer_call",
+        )
+        if reduced is None:
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed=f"opaque {value.target_name} call",
+                requested="decidable ordinary initializer call",
+                fix="construct the callable body result or leave the initializer loud",
+            )
+        if isinstance(reduced, ExceptionalExitValue):
+            return Complete(reduced)
+        if isinstance(reduced, GuardedValue):
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed="guarded ordinary initializer call result",
+                requested="decidable ordinary initializer call",
+                fix="resolve the call's guarded exit or leave the initializer loud",
+            )
+        return Complete(SupportValue())
+
+
+@dataclass(frozen=True)
 class SuperSetAttrApply:
     """Construct exact ``super().__setattr__("name", value)`` self state."""
 
@@ -1642,6 +1727,8 @@ def _constructor_initializer_factory_context(
         )
         if call is None:
             return False
+        if call.kind == "ordinary_call":
+            return True
         if call.kind == "explicit_base":
             return True
         if call.kind == "super_setattr":
@@ -1664,6 +1751,11 @@ def _constructor_initializer_factory_context(
         )
         if call is None:
             raise AssertionError("initializer claim constructed an unrecognized site")
+        if call.kind == "ordinary_call":
+            return OrdinaryInitializerCallApply(
+                value=build_ctx.build_body(call.call, SugarRole.TERM),
+                site=site,
+            )
         if call.kind == "explicit_base":
             return ExprSugar.new(site, build_ctx)
         if call.kind == "super_setattr":
