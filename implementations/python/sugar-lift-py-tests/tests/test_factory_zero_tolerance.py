@@ -11,8 +11,9 @@ _SCANNER = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_SCANNER)
 
 scan_source = _SCANNER.scan_source
-scan_factory = _SCANNER.scan_factory
+scan_package = _SCANNER.scan_package
 format_offenders = _SCANNER.format_offenders
+evaluate_ratchet = _SCANNER.evaluate_ratchet
 
 
 def test_scanner_names_every_forbidden_factory_construction_class() -> None:
@@ -27,7 +28,7 @@ class IncompleteFunctionBody(Exception):
 class Visitor(ast.NodeVisitor):
     pass
 
-def side_doors(node, body, ctx, temporal):
+def classify_demo(node, body, ctx, temporal):
     isinstance(node, ast.If)
     ast.walk(node)
     ctor("py.value", [])
@@ -36,11 +37,17 @@ def side_doors(node, body, ctx, temporal):
     temporal.bind_value("x", node)
 """
 
-    assert [(row.line, row.kind) for row in scan_source(source, "factory/demo.py")] == [
+    assert [
+        (row.line, row.kind)
+        for row in scan_source(
+            source,
+            "factory/source_fragment.py",
+            scope="factory",
+        )
+    ] == [
         (6, "non-contract-third-result"),
         (9, "semantic-ast-classification"),
-        (13, "semantic-ast-classification"),
-        (14, "semantic-ast-classification"),
+        (12, "semantic-ast-classification"),
         (15, "ir-construction"),
         (16, "floor-value-construction"),
         (17, "sugar-body-reduction"),
@@ -48,19 +55,119 @@ def side_doors(node, body, ctx, temporal):
     ]
 
 
-def test_current_factory_has_zero_behavior_construction_side_doors() -> None:
-    """Stable-zero gate: red while any factory behavior-construction site remains.
+def test_structural_source_fragment_child_projection_is_allowed() -> None:
+    source = """
+import ast
 
-    R is measured (not authored). Promote each locus into Sugar; re-run until R==0.
-    """
-    offenders = scan_factory(_KIT / "src" / "sugar_lift_py_tests" / "factory")
+def binop_left(self):
+    self._require(ast.BinOp)
+    assert isinstance(self.node, ast.BinOp)
+    return SourceFragment.from_node(self.node.left, self.filename)
+"""
 
-    assert offenders == [], (
-        "factory/ may only select a registered Sugar or raise FactoryPanic; "
-        f"R_factory_behavior_side_doors={len(offenders)}; "
-        "promote every behavior constructor to Sugar:\n"
-        + format_offenders(offenders)
+    assert (
+        scan_source(
+            source,
+            "factory/source_fragment.py",
+            scope="factory",
+        )
+        == []
     )
+
+
+def test_semantic_factory_and_leaf_sugar_classifiers_are_loud() -> None:
+    factory = """
+import ast
+
+def classify_loop_control_scope(self):
+    return any(isinstance(node, ast.Break) for node in ast.walk(self.node))
+"""
+    match_sugar = """
+import ast
+
+def _match_ground(pattern, subject):
+    if isinstance(pattern, ast.MatchValue):
+        return pattern.value == subject
+"""
+    subscript = """
+import ast
+
+def _structural_target(node):
+    while isinstance(node, ast.Subscript):
+        node = node.value
+    return node
+"""
+
+    assert [
+        row.kind
+        for row in scan_source(
+            factory,
+            "factory/source_fragment.py",
+            scope="factory",
+        )
+    ] == ["semantic-ast-classification"]
+    assert [
+        row.kind
+        for row in scan_source(
+            match_sugar,
+            "sugar/match_sugar.py",
+            scope="sugar",
+        )
+    ] == ["semantic-ast-classification"]
+    assert [
+        row.kind
+        for row in scan_source(
+            subscript,
+            "sugar/subscript_assign_sugar.py",
+            scope="sugar",
+        )
+    ] == ["semantic-ast-classification"]
+
+
+def test_install_source_dig_resolution_ast_is_not_construction() -> None:
+    source = """
+import ast
+
+def resolve_external_source(node):
+    return [child for child in ast.walk(node) if isinstance(child, ast.Name)]
+"""
+
+    assert (
+        scan_source(
+            source,
+            "sugar/install_source_dig.py",
+            scope="sugar",
+        )
+        == []
+    )
+
+
+def test_current_factory_respects_behavior_side_door_ratchet() -> None:
+    """Current debt may fall, but it may never rise above the recorded R."""
+    offenders = scan_package(_KIT / "src" / "sugar_lift_py_tests")
+    baseline = _SCANNER.read_baseline(_KIT / "factory_zero_tolerance_baseline.json")
+
+    assert not any(
+        row.path == "sugar/install_source_dig.py"
+        and row.kind == "semantic-ast-classification"
+        for row in offenders
+    )
+
+    passes, message = evaluate_ratchet(len(offenders), baseline)
+    assert passes, message + "\n" + format_offenders(offenders)
+
+
+def test_ratchet_allows_baseline_and_monotonic_decrease() -> None:
+    assert evaluate_ratchet(42, 42)[0]
+    passes, message = evaluate_ratchet(41, 42)
+    assert passes
+    assert "lower the recorded baseline to 41" in message
+
+
+def test_ratchet_rejects_new_side_door() -> None:
+    passes, message = evaluate_ratchet(43, 42)
+    assert not passes
+    assert "increased by 1" in message
 
 
 def test_scanner_report_names_r_and_replacement_plans() -> None:
@@ -72,7 +179,7 @@ def test_scanner_report_names_r_and_replacement_plans() -> None:
             ),
         ]
     )
-    assert "R_factory_behavior_side_doors = 2" in report
+    assert "R_behavior_side_doors = 2" in report
     assert "ir-construction" in report
     assert "Promote IR operand" in report or "sugar_lift_py_tests.ir" in report
     assert "non-contract-third-result" in report
