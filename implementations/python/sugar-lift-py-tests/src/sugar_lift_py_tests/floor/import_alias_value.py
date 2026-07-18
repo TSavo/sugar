@@ -60,9 +60,12 @@ class ImportAliasValue(FloorValue):
             # ``import package.submodule`` binds ``package``.  An explicit
             # alias (``as sub``) binds the full stated module instead.
             module_name = head
+        if module_name.startswith("."):
+            # Relative import spellings are not free-standing module coordinates.
+            return None
         try:
             module = importlib.import_module(module_name)
-        except ImportError:
+        except (ImportError, ModuleNotFoundError, TypeError, ValueError):
             return None
         candidate = getattr(module, attribute, None)
         if not inspect.isclass(candidate):
@@ -369,12 +372,15 @@ def _resolve_qualified_import_object(target: str) -> object | None:
     """Resolve one qualified import target without guessing split ownership."""
     import importlib
 
+    if not target or target.startswith("."):
+        # Relative spellings need a package context; bare coordinates do not.
+        return None
     parts = target.split(".")
     for module_length in range(len(parts), 0, -1):
         module_name = ".".join(parts[:module_length])
         try:
             value: object = importlib.import_module(module_name)
-        except (ImportError, ModuleNotFoundError):
+        except (ImportError, ModuleNotFoundError, TypeError, ValueError):
             continue
         for attribute in parts[module_length:]:
             sentinel = object()

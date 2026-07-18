@@ -1534,9 +1534,19 @@ class SourceFragment:
         return self.node.name  # type: ignore[attr-defined]
 
     def alias_bound_name(self) -> str:
-        """Return the local binding name for an alias node."""
+        """Return the local binding name for an alias node.
+
+        ``import package.sub as x`` binds ``x``. Bare ``import package.sub``
+        binds the root package name ``package`` (Python import semantics).
+        ImportFrom aliases never carry dotted symbol names, so the root split
+        is a no-op there.
+        """
         self._require(ast.alias)
-        return self.node.asname or self.node.name  # type: ignore[attr-defined]
+        asname = self.node.asname  # type: ignore[attr-defined]
+        if asname is not None:
+            return asname
+        name = self.node.name  # type: ignore[attr-defined]
+        return name.split(".", 1)[0]
 
     # --- function decorators ----------------------------------------------
 
