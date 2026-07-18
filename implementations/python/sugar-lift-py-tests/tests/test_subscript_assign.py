@@ -42,13 +42,13 @@ def _build(source: str):
 def test_subscript_assign_rebinds_concrete_list_post_state() -> None:
     assert compose_block(
         "    xs = [1, 2, 3]\n    xs[1] = 9\n    return xs[1]\n"
-    ) == BlockValue((ReturnValue(TermValue(9)),))
+    ) == BlockValue((ReturnValue(TermValue(9)),), can_fall_through=False)
 
 
 def test_subscript_assign_rebinds_concrete_dict_post_state() -> None:
     assert compose_block(
         '    d = {"k": 1}\n    d["k"] = 9\n    return d["k"]\n'
-    ) == BlockValue((ReturnValue(TermValue(9)),))
+    ) == BlockValue((ReturnValue(TermValue(9)),), can_fall_through=False)
 
 
 def test_nested_subscript_assign_rebuilds_the_root_post_state() -> None:
