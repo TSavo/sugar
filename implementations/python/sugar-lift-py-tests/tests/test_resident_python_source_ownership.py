@@ -83,6 +83,79 @@ def test_installed_source_resolvers_return_fresh_ast_nodes(
     assert first_method.node is not second_method.node
 
 
+def test_class_method_resolution_does_not_materialize_unrelated_siblings(
+    tmp_path, monkeypatch
+) -> None:
+    """One class method lookup must not deepcopy every function in its module."""
+    module_name = "targeted_class_method_fixture"
+    helpers = "".join(
+        f"def unrelated_{index}():\n    return {index}\n\n" for index in range(100)
+    )
+    (tmp_path / f"{module_name}.py").write_text(
+        helpers
+        + "class Owner:\n"
+        + "    def method(self, value):\n"
+        + "        return value\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    install_source_dig._installed_source_index.cache_clear()
+
+    def mass_materialization_is_forbidden(_index):
+        raise AssertionError("class method lookup materialized every sibling")
+
+    monkeypatch.setattr(
+        install_source_dig,
+        "_materialize_index_definitions",
+        mass_materialization_is_forbidden,
+    )
+
+    method = install_source_dig.resolve_install_source_class_method(
+        f"{module_name}.Owner", "method"
+    )
+
+    assert method is not None
+    assert method.function_name() == "method"
+
+
+def test_imported_function_resolution_does_not_materialize_unrelated_siblings(
+    tmp_path, monkeypatch
+) -> None:
+    """One imported function lookup must not deepcopy every sibling."""
+    module_name = "targeted_imported_function_fixture"
+    helpers = "".join(
+        f"def unrelated_{index}():\n    return {index}\n\n" for index in range(100)
+    )
+    (tmp_path / f"{module_name}.py").write_text(
+        helpers + "def target(value):\n    return value\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    install_source_dig._installed_source_index.cache_clear()
+
+    def mass_materialization_is_forbidden(_index):
+        raise AssertionError("function lookup materialized every sibling")
+
+    monkeypatch.setattr(
+        install_source_dig,
+        "_materialize_index_definitions",
+        mass_materialization_is_forbidden,
+    )
+    ctx = type(
+        "Ctx",
+        (),
+        {
+            "name_resolver": {},
+            "from_imports": {"target": (module_name, "target")},
+        },
+    )()
+
+    function = install_source_dig.resolve_call_funcdef("target", ctx)
+
+    assert function is not None
+    assert function.function_name() == "target"
+
+
 def test_cached_audit_seed_panics_are_immutable_data_without_exception_graphs(
     monkeypatch,
 ) -> None:

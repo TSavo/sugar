@@ -351,6 +351,10 @@ def run_child_at_bound(
             log_path = Path(name)
         env["SUGAR_ENGINE_LOG"] = str(log_path)
         env["SUGAR_ENGINE_PROGRESS"] = "1"
+        # A bounded observer must not become the timeout it is measuring.
+        # Heartbeats/cycles/errors stay immediate and structured; high-volume
+        # debug enter/exit traces remain opt-in for unbounded profiling.
+        env.setdefault("SUGAR_ENGINE_TRACE_EVENTS", "0")
         # Fast heartbeats under short discovery bounds so 10s kills still have stacks.
         env.setdefault("SUGAR_ENGINE_HEARTBEAT_SECONDS", "2")
     started = time.monotonic()
