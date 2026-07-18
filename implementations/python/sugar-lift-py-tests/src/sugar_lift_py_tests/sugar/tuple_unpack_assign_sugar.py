@@ -111,17 +111,13 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
                     SugarBody(TupleNameStore(first, projection), SugarRole.STATEMENT)
                 )
             elif kind == "subscript":
-                target_receiver = first.subscript_receiver()
                 stores.append(
                     SugarBody(
-                        SubscriptAssignSugar(
-                            receiver=ctx.build_body(target_receiver, SugarRole.TERM),
-                            receiver_coordinate=target_receiver.dotted_expr_name(),
-                            index=ctx.build_body(
-                                first.subscript_index(), SugarRole.TERM
-                            ),
-                            value=projection,
-                            site=site,
+                        SubscriptAssignSugar.from_target(
+                            first,
+                            projection,
+                            site,
+                            ctx,
                         ),
                         SugarRole.STATEMENT,
                     )

@@ -54,6 +54,14 @@ def test_chained_mixed_targets_reuse_existing_store_owners() -> None:
         SubscriptAssignSugar.__name__,
         "ChainedNameStore",
     ]
+    subscript = next(
+        store.sugar
+        for store in built.sugar.stores
+        if isinstance(store.sugar, SubscriptAssignSugar)
+    )
+    assert subscript.receiver_coordinate == "items"
+    assert subscript.structural_root is None
+    assert subscript.structural_indices == ()
 
 
 @pytest.mark.parametrize(

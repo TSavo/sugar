@@ -53,17 +53,64 @@ def test_subscript_tuple_unpack_reuses_the_existing_store_owner() -> None:
         SubscriptAssignSugar,
         SubscriptAssignSugar,
     ]
-    assert [store.sugar.receiver_name for store in built.sugar.stores] == [
+    assert [store.sugar.receiver_coordinate for store in built.sugar.stores] == [
         "labels",
         "shape",
     ]
+    # One-door construction: structural fields are always present (empty for
+    # non-nested leaves). A missing-arg TypeError is bare residual, not green.
+    for store in built.sugar.stores:
+        assert store.sugar.structural_root is None
+        assert store.sugar.structural_root_coordinate is None
+        assert store.sugar.structural_indices == ()
+
+
+def test_rot90_style_axes_swap_unpack_constructs_subscript_stores() -> None:
+    """numpy.lib.rot90: ``(axes_list[a], axes_list[b]) = (axes_list[b], axes_list[a])``.
+
+    Pre-fix residual bare TypeError: unpack rebuilt SubscriptAssignSugar without
+    structural_* fields after they became required. Construction must succeed;
+    further reduction may advance to a named FactoryPanic, never a bare TypeError.
+    """
+    built = _build(
+        "(axes_list[axes[0]], axes_list[axes[1]]) = (axes_list[axes[1]], axes_list[axes[0]])"
+    )
+    assert isinstance(built.sugar, TupleUnpackAssignSugar)
+    assert all(
+        isinstance(store.sugar, SubscriptAssignSugar) for store in built.sugar.stores
+    )
+    for store in built.sugar.stores:
+        assert store.sugar.receiver_coordinate == "axes_list"
+        assert store.sugar.structural_root is None
+        assert store.sugar.structural_indices == ()
+
+
+def test_chained_subscript_targets_construct_through_the_one_door() -> None:
+    """Multi-target ``a[i] = b[j] = value`` must not bare-TypeError on structural_*.
+
+    Pre-fix residual rebuilt ``SubscriptAssignSugar`` without the required
+    nested-path fields; the one-door ``from_target`` constructor ends that class.
+    """
+    built = _build("left[0] = right[0] = value")
+    from sugar_lift_py_tests.sugar.chained_assign_sugar import ChainedAssignSugar
+
+    assert isinstance(built.sugar, ChainedAssignSugar)
+    assert [type(store.sugar) for store in built.sugar.stores] == [
+        SubscriptAssignSugar,
+        SubscriptAssignSugar,
+    ]
+    for store in built.sugar.stores:
+        assert store.sugar.structural_root is None
+        assert store.sugar.structural_indices == ()
 
 
 @pytest.mark.parametrize(
     "source",
     (
-        "head, *tail = values",
-        "left[0] = right[0] = value",
+        # Chained multi-target with a tuple leaf stays unowned (not ChainedAssign).
+        "x = y = (a, b) = z",
+        # Dynamic attribute root is still outside NestedAttribute / AttributeAssign.
+        "f().x = g().y = value",
     ),
 )
 def test_adjacent_unowned_assignment_shapes_stay_loud(source: str) -> None:
