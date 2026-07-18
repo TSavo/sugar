@@ -7926,6 +7926,7 @@ fn report_unit_test_fact_count(report: &LiftSourceReport) -> usize {
 ///
 /// When `project_root` is set, unaccounted loci print **actual source lines** from
 /// disk (not a one-line preview summary). That is the product surface for `--visual`.
+#[cfg(test)]
 fn render_lift_coverage_human(coverage: &Value, project_root: Option<&Path>) -> String {
     let mut out = render_lift_coverage_accounting(coverage, project_root);
     out.push_str(&render_lift_coverage_minority(coverage, project_root));

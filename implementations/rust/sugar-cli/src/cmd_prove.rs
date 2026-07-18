@@ -22,9 +22,9 @@ use sugar_verifier::{
     LegacyZ3Fallback, MementoCid, PlanArtifactInput, ProofRunArtifact, RunnerConfig, SolversConfig,
 };
 
-use crate::component_plan::{
-    self, ComponentPlan, ComponentPlanOptions, PlanIntent, PlannedLiftManifest,
-};
+#[cfg(test)]
+use crate::component_plan::PlannedLiftManifest;
+use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlanIntent};
 use crate::project_config::{read_project_config, ProjectConfig, WitnessEntry};
 use crate::report_fmt;
 use crate::report_witness::{
@@ -389,6 +389,7 @@ enum ProveFace {
 }
 
 impl ProveFace {
+    #[cfg(test)]
     fn face_label(&self) -> String {
         match self {
             ProveFace::Kit(_) => "Kit".to_string(),
@@ -453,6 +454,7 @@ fn resolve_prove_face(project_root: &Path, component_plan: &ComponentPlan) -> Pr
 /// Single-surface fold candidate, or `None` when the plan is not exactly one
 /// lift (zero or multi). Used by the #3901 instrument and tests that pin
 /// the multi-surface non-drop law without going through rendezvous.
+#[cfg(test)]
 fn single_surface_fold_manifest(component_plan: &ComponentPlan) -> Option<&PlannedLiftManifest> {
     let [planned] = component_plan.lift_manifests.as_slice() else {
         return None;
