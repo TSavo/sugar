@@ -690,6 +690,80 @@ def test_nested_callable_body_bearing_callsite_expansion_stays_loud() -> None:
         )
 
 
+def test_nested_callable_digs_body_bearing_keyword_expansion() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def options():\n"
+        "        return {'x': 1, 'y': 2}\n"
+        "    def inner(**kwargs):\n"
+        "        return kwargs['x'] + kwargs['y']\n"
+        "    return inner(**options())\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.parameters == ("kwargs",)
+    assert callsite.arg_values == (
+        DictValue(
+            (
+                (StringValue("x"), TermValue(1)),
+                (StringValue("y"), TermValue(2)),
+            )
+        ),
+    )
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="diggable keyword expansion", project_callsite=False
+    ) == TermValue(3)
+
+
+def test_nested_callable_merges_multiple_constructed_keyword_expansions() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(**kwargs):\n"
+        "        return kwargs['x'] + kwargs['y']\n"
+        "    return inner(**{'x': 1}, **{'y': 2})\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.arg_values == (
+        DictValue(
+            (
+                (StringValue("x"), TermValue(1)),
+                (StringValue("y"), TermValue(2)),
+            )
+        ),
+    )
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="multi keyword expansion", project_callsite=False
+    ) == TermValue(3)
+
+
+def test_nested_callable_keyword_expansion_key_collision_is_static_type_error() -> None:
+    site = SourceFragment.from_source(
+        "inner(flag=1, **options)\n", "nested.py"
+    ).statements()[0]
+    callable_value = FunctionCallable(
+        name="inner",
+        parameters=("kwargs",),
+        parameter_kinds=("var-keyword",),
+        body=object(),
+    )
+    expansion = DictValue(((StringValue("flag"), TermValue(2)),))
+
+    outcome = callable_value.callsite(
+        (TermValue(1), expansion),
+        ("flag", "**"),
+        site,
+    )
+
+    value = complete_value(outcome, owner="keyword expansion collision")
+    assert isinstance(value, RaiseValue)
+    assert value.effect.exception_name == "TypeError"
+
+
 def test_nested_callable_expands_constructed_starred_args_with_keywords() -> None:
     universe = _root_universe(
         "def outer():\n"
@@ -798,6 +872,32 @@ def test_default_keyword_expansion_witness_truthful_sat_and_lying_unsat(
         witness
         for witness in StatementFunctionDefSugar.witnesses()
         if witness.name == "statement_function_def_default_keyword_expansion_return"
+    )
+
+    report = evaluate_seed_witnesses((witness,), tmp_path)
+
+    assert report.is_zero
+
+
+def test_diggable_keyword_expansion_witness_truthful_sat_and_lying_unsat(
+    tmp_path,
+) -> None:
+    witness = next(
+        witness
+        for witness in StatementFunctionDefSugar.witnesses()
+        if witness.name == "statement_function_def_diggable_keyword_expansion_return"
+    )
+
+    report = evaluate_seed_witnesses((witness,), tmp_path)
+
+    assert report.is_zero
+
+
+def test_multi_keyword_expansion_witness_truthful_sat_and_lying_unsat(tmp_path) -> None:
+    witness = next(
+        witness
+        for witness in StatementFunctionDefSugar.witnesses()
+        if witness.name == "statement_function_def_multi_keyword_expansion_return"
     )
 
     report = evaluate_seed_witnesses((witness,), tmp_path)

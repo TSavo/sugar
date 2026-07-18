@@ -82,6 +82,20 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
             "        inner(z, extra=1)\n"
             "    return z\n\n"
         )
+        diggable_expansion_prefix = (
+            "def A():\n"
+            "    def options():\n"
+            '        return {"value": 5}\n'
+            "    def inner(**kwargs):\n"
+            '        return kwargs["value"]\n'
+            "    return inner(**options())\n\n"
+        )
+        multi_expansion_prefix = (
+            "def A():\n"
+            "    def inner(**kwargs):\n"
+            '        return kwargs["left"] + kwargs["right"]\n'
+            '    return inner(**{"left": 2}, **{"right": 3})\n\n'
+        )
         decorated_callable_prefix = (
             "def A(z):\n"
             "    def decorate(func):\n"
@@ -144,6 +158,26 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                     decorated_callable_prefix
                     + "def test_a():\n"
                     + "    assert A(3) == 8\n"
+                ),
+            ),
+            _call_pair(
+                name="statement_function_def_diggable_keyword_expansion_return",
+                owner_sugar="StatementFunctionDefSugar",
+                truthful=(
+                    diggable_expansion_prefix + "def test_a():\n    assert A() == 5\n"
+                ),
+                lying=(
+                    diggable_expansion_prefix + "def test_a():\n    assert A() == 6\n"
+                ),
+            ),
+            _call_pair(
+                name="statement_function_def_multi_keyword_expansion_return",
+                owner_sugar="StatementFunctionDefSugar",
+                truthful=(
+                    multi_expansion_prefix + "def test_a():\n    assert A() == 5\n"
+                ),
+                lying=(
+                    multi_expansion_prefix + "def test_a():\n    assert A() == 6\n"
                 ),
             ),
         )
