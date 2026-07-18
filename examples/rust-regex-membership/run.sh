@@ -22,7 +22,7 @@
 # GOOD suite:  matching subjects -> str.in_re SAT -> consistency DISCHARGED.
 #              includes const-string and concat! patterns (composition proof).
 # BAD suite:   a non-matching subject ("Alice!" vs ^[a-z][a-z0-9_]{2,15}$) ->
-#              str.in_re UNSAT -> consistency REFUSED. THE TEETH (z3 membership).
+#              str.in_re UNSAT -> consistency UNSATISFIED. THE TEETH (z3 membership).
 # NONREGULAR:  a backreference / lookahead is not a regular language -> REFUSED BY
 #              NAME at lift time; NO str.in-regex row (the floor stands), the lift
 #              gap names the offending feature.
@@ -42,7 +42,7 @@ echo "SCOPE: re.is_match(s) ⟺ str.in_re(s, R); the pattern literal lowers to a
 echo "SCOPE: COMPOSITIONAL pattern operand (inline literal / const-string / concat!); format! bails as the frontier."
 echo "SCOPE: SAME ProofIR atom as the Java @Pattern pass — str.in-regex(subject, raw-regex); meet by CID."
 echo "SCOPE: GOOD: matching subjects -> str.in_re SAT -> discharged."
-echo "SCOPE: BAD: a non-matching subject -> str.in_re UNSAT -> refused (membership teeth)."
+echo "SCOPE: BAD: a non-matching subject -> str.in_re UNSAT -> unsatisfied (membership teeth)."
 echo "SCOPE: NONREGULAR: backref/lookahead refused BY NAME at lift time; no str.in-regex row, the floor stands."
 
 echo
@@ -104,11 +104,20 @@ PY
     if [ "$statuses" = "MISSING" ]; then
       echo "FAIL[$suite]: no membership consistency rows found"; exit 1
     fi
+    # Covering-universe teeth (good twin): at least one ground str.in-regex row must
+    # DISCHARGE via z3 str.in_re SAT. All-refused is NOT success — that is the vacuity
+    # shape #3590 originally observed before the covering-universe exception. Refuse
+    # any unsatisfied (would mean a matching subject was wrongly refuted).
+    if ! echo "$statuses" | grep -q 'discharged'; then
+      echo "FAIL[$suite]: expected a discharged membership row (str.in_re SAT), got: $statuses"; exit 1
+    fi
     if echo "$statuses" | grep -q 'unsatisfied'; then
-      echo "FAIL[$suite]: expected all membership rows discharged, got: $statuses"; exit 1
+      echo "FAIL[$suite]: matching subject must not be unsatisfied, got: $statuses"; exit 1
     fi
     echo "OK[$suite]: matching subjects are MEMBERS of the walked regular language -> discharged."
   else
+    # Covering-universe teeth (bad twin): a non-matching subject must be REFUTED
+    # (status unsatisfied = z3 str.in_re UNSAT). Vacuous refused is not the teeth.
     if ! echo "$statuses" | grep -q 'unsatisfied'; then
       echo "FAIL[$suite]: expected a refuted (unsatisfied) membership row, got: $statuses"; exit 1
     fi
