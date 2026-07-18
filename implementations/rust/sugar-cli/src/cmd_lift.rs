@@ -389,13 +389,12 @@ pub fn run(args: LiftArgs) -> u8 {
                 if let Err(error) =
                     attach_report_implications(&mut report, &project_root, [surface.clone()])
                 {
-                    // Construction panics during implication enumeration must not
-                    // erase the rest of the visual wall. Loud on stderr; call book
-                    // stays empty until the join path can answer.
-                    eprintln!(
-                        "{}: {error} (continuing report without call book)",
-                        "error".red().bold()
-                    );
+                    // #5152 / #5104: FactoryPanic (or any hole) during implication
+                    // enumeration is a real construction gap — EXIT_USER_ERROR,
+                    // never soft-continue with an empty call book that paints
+                    // false missing/undecidable/refused showcase verdicts.
+                    eprintln!("{}: {error}", "error".red().bold());
+                    return EXIT_USER_ERROR;
                 }
                 trace_lift_source_report("after_source_report_from_lift_response", &report);
                 let prove_with = if args.prove {
@@ -890,10 +889,9 @@ fn run_configured_lift_report_graph(
             project_root,
             plugins.iter().map(|plugin| plugin.surface.clone()),
         ) {
-            eprintln!(
-                "{}: {error} (continuing report without call book)",
-                "error".red().bold()
-            );
+            // #5152: implication-enumeration FactoryPanic stays loud.
+            eprintln!("{}: {error}", "error".red().bold());
+            return EXIT_USER_ERROR;
         }
         // Rebase file paths in source mementos and contract sourceWarrants
         // using workspace_override from plan mementos.  In the proof path
@@ -1032,10 +1030,9 @@ fn run_configured_lift_report_graph(
         project_root,
         plugins.iter().map(|plugin| plugin.surface.clone()),
     ) {
-        eprintln!(
-            "{}: {error} (continuing report without call book)",
-            "error".red().bold()
-        );
+        // #5152: implication-enumeration FactoryPanic stays loud.
+        eprintln!("{}: {error}", "error".red().bold());
+        return EXIT_USER_ERROR;
     }
     trace_lift_source_report("after_source_report_from_lift_response", &report);
 
@@ -1189,10 +1186,9 @@ fn run_configured_lift_report_response(
         project_root,
         plugins.iter().map(|plugin| plugin.surface.clone()),
     ) {
-        eprintln!(
-            "{}: {error} (continuing report without call book)",
-            "error".red().bold()
-        );
+        // #5152: implication-enumeration FactoryPanic stays loud.
+        eprintln!("{}: {error}", "error".red().bold());
+        return EXIT_USER_ERROR;
     }
     trace_lift_source_report("after_source_report_from_lift_response", &report);
 
@@ -17844,6 +17840,55 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
         let swallowed_green_twin = minimal_source_report();
         assert!(!source_report_has_hard_failures(&swallowed_green_twin));
+    }
+
+    /// #5152: #5104 demoted implication-enumeration FactoryPanic into soft-
+    /// continue ("continuing report without call book"). That string must never
+    /// reappear — every `attach_report_implications` Err path returns
+    /// EXIT_USER_ERROR instead.
+    #[test]
+    fn implication_enumeration_panic_is_not_swallowed_by_report_door() {
+        let source = include_str!("cmd_lift.rs");
+        let production = source
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap_or(source);
+        assert!(
+            !production.contains("continuing report without call book"),
+            "#5104 soft-continue phrase must stay deleted from production cmd_lift.rs"
+        );
+        // Each Err arm near attach_report_implications must return EXIT_USER_ERROR.
+        let mut remaining = production;
+        let mut call_sites = 0usize;
+        let mut hard_returns = 0usize;
+        while let Some(idx) = remaining.find("attach_report_implications") {
+            let line_start = remaining[..idx].rfind('\n').map(|i| i + 1).unwrap_or(0);
+            let line = remaining[line_start..].lines().next().unwrap_or("");
+            // Skip the function definition and comments.
+            if line.trim_start().starts_with("fn ")
+                || line.trim_start().starts_with("//")
+                || line.trim_start().starts_with("///")
+                || line.trim_start().starts_with('*')
+            {
+                remaining = &remaining[idx + "attach_report_implications".len()..];
+                continue;
+            }
+            call_sites += 1;
+            let after = &remaining[idx..];
+            let window = &after[..after.len().min(800)];
+            if window.contains("return EXIT_USER_ERROR") {
+                hard_returns += 1;
+            }
+            remaining = &remaining[idx + "attach_report_implications".len()..];
+        }
+        assert_eq!(
+            call_sites, 4,
+            "expected four report-door attach_report_implications call sites; got {call_sites}"
+        );
+        assert_eq!(
+            hard_returns, 4,
+            "each attach_report_implications Err arm must return EXIT_USER_ERROR (got {hard_returns})"
+        );
     }
 
     #[test]
