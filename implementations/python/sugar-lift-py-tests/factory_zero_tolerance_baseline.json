@@ -1,5 +1,0 @@
-{
-  "R_behavior_side_doors": 20,
-  "deprecated": true,
-  "note": "NOT an enforcement gate. R>0 ⇒ CI red via factory_zero_tolerance.py without --baseline-file. Delete this file when R_behavior_side_doors reaches 0. Keep only as a historical snapshot until then."
-}
