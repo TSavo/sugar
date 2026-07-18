@@ -1,4 +1,4 @@
-name: Factory zero-tolerance ratchet
+name: Factory zero-tolerance (R>0 red)
 
 on:
   pull_request:
@@ -18,9 +18,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Enumerate factory behavior-construction side doors
+      # Law: R_behavior_side_doors > 0 ⇒ CI red.
+      # Do NOT pass --baseline-file. A ratchet that greens at R=42 is not zero-tolerance.
+      - name: Enumerate factory behavior-construction side doors (stable zero)
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/factory_zero_tolerance.py
-          --baseline-file
-          implementations/python/sugar-lift-py-tests/factory_zero_tolerance_baseline.json
+      - name: Ownership-law census (unenrolled / broad owns)
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/factory_ownership_law.py

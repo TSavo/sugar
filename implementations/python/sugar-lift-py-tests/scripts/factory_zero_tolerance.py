@@ -380,16 +380,19 @@ def main() -> int:
     parser.add_argument(
         "--baseline-file",
         type=Path,
-        help="JSON ratchet baseline; counts at or below it pass",
+        help=(
+            "DEPRECATED for enforcement. If set, only prints a ratchet advisory; "
+            "exit code is still red while R > 0 (R>0 ⇒ CI red). "
+            "Delete the baseline file once R==0."
+        ),
     )
     args = parser.parse_args()
     offenders = scan_package(args.package_root)
-    if args.baseline_file is not None:
+    if args.baseline_file is not None and args.baseline_file.exists():
         baseline = read_baseline(args.baseline_file)
-        passes, status = evaluate_ratchet(len(offenders), baseline)
-        print(status)
-        print(format_report(offenders))
-        return 0 if passes else 1
+        _, status = evaluate_ratchet(len(offenders), baseline)
+        print("ADVISORY (not the gate):", status)
+    # Hard law: R > 0 ⇒ red. No baseline may convert non-zero debt into green.
     if offenders:
         print(
             "FACTORY ZERO-TOLERANCE RED: "

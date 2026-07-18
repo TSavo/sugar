@@ -13,7 +13,6 @@ _SPEC.loader.exec_module(_SCANNER)
 scan_source = _SCANNER.scan_source
 scan_package = _SCANNER.scan_package
 format_offenders = _SCANNER.format_offenders
-evaluate_ratchet = _SCANNER.evaluate_ratchet
 
 
 def test_scanner_names_every_forbidden_factory_construction_class() -> None:
@@ -142,10 +141,13 @@ def resolve_external_source(node):
     )
 
 
-def test_current_factory_respects_behavior_side_door_ratchet() -> None:
-    """Current debt may fall, but it may never rise above the recorded R."""
+def test_current_behavior_side_doors_are_stable_zero() -> None:
+    """Law: R_behavior_side_doors > 0 ⇒ red. No baseline may green non-zero debt.
+
+    Install-source dig AST inspection remains exempt only for re-entry classification
+    (see scanner scope rules); every other reported locus is debt.
+    """
     offenders = scan_package(_KIT / "src" / "sugar_lift_py_tests")
-    baseline = _SCANNER.read_baseline(_KIT / "factory_zero_tolerance_baseline.json")
 
     assert not any(
         row.path == "sugar/install_source_dig.py"
@@ -153,21 +155,12 @@ def test_current_factory_respects_behavior_side_door_ratchet() -> None:
         for row in offenders
     )
 
-    passes, message = evaluate_ratchet(len(offenders), baseline)
-    assert passes, message + "\n" + format_offenders(offenders)
-
-
-def test_ratchet_allows_baseline_and_monotonic_decrease() -> None:
-    assert evaluate_ratchet(42, 42)[0]
-    passes, message = evaluate_ratchet(41, 42)
-    assert passes
-    assert "lower the recorded baseline to 41" in message
-
-
-def test_ratchet_rejects_new_side_door() -> None:
-    passes, message = evaluate_ratchet(43, 42)
-    assert not passes
-    assert "increased by 1" in message
+    assert offenders == [], (
+        "R>0 ⇒ CI red. Factory may only select Sugar | FactoryPanic; "
+        f"R_behavior_side_doors={len(offenders)}; promote each locus into Sugar "
+        "and delete factory/sugar helpers (do not relocate):\n"
+        + format_offenders(offenders)
+    )
 
 
 def test_scanner_report_names_r_and_replacement_plans() -> None:
