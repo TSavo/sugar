@@ -82,6 +82,17 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
             "        inner(z, extra=1)\n"
             "    return z\n\n"
         )
+        decorated_callable_prefix = (
+            "def A(z):\n"
+            "    def decorate(func):\n"
+            "        def wrapper(value):\n"
+            "            return func(value, 4)\n"
+            "        return wrapper\n"
+            "    @decorate\n"
+            "    def add(value, increment):\n"
+            "        return value + increment\n"
+            "    return add(z)\n\n"
+        )
         return (
             _call_pair(
                 name="statement_function_def_return",
@@ -119,6 +130,20 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 ),
                 lying=(
                     unexpected_keyword_prefix + "def test_a():\n    assert A(5) == 6\n"
+                ),
+            ),
+            _call_pair(
+                name="statement_function_def_decorated_callable_substitution",
+                owner_sugar="StatementFunctionDefSugar",
+                truthful=(
+                    decorated_callable_prefix
+                    + "def test_a():\n"
+                    + "    assert A(3) == 7\n"
+                ),
+                lying=(
+                    decorated_callable_prefix
+                    + "def test_a():\n"
+                    + "    assert A(3) == 8\n"
                 ),
             ),
         )
