@@ -334,17 +334,13 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete, Incomplete
 
             if other.value == 0:
-                from sugar_lift_py_tests.effect import (
-                    DivisionByZeroRuntimeEffect,
-                    runtime_effect_evidence,
+                from sugar_lift_py_tests.floor.ground_exception_exit import (
+                    ground_exception_exit,
                 )
 
-                return Incomplete(
-                    DivisionByZeroRuntimeEffect(
-                        f"division by zero runtime boundary: the divisor is "
-                        f"concretely 0; owner=TermValue.divide site={site}",
-                        **runtime_effect_evidence("py.divide", other, site),
-                    )
+                return ground_exception_exit(
+                    exception_name="ZeroDivisionError",
+                    site=site,
                 )
             return Complete(TermValue(self.value / other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue

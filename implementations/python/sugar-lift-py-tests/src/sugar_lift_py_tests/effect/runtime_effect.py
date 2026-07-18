@@ -130,6 +130,11 @@ def is_lift_time_decidable(term: Term) -> bool:
         # call executes, even when every argument to that call is ground.
         if term.name.startswith("call:"):
             return False
+        # Handler selection records whether Python raised this exception while
+        # executing the guarded operation. The exception class coordinate may
+        # be ground, but the occurrence testimony is runtime-by-nature.
+        if term.name == "py.except":
+            return False
         return all(is_lift_time_decidable(arg) for arg in term.args)
     raise TypeError(f"unknown RuntimeEffect operand term: {term!r}")
 

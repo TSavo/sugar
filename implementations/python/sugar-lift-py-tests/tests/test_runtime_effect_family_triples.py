@@ -50,9 +50,11 @@ def _condition(source: str):
 # --- DivisionByZero ---
 
 
-def test_division_by_zero_ground_wrong_twin_panics() -> None:
-    with pytest.raises(FactoryPanic):
-        _term("1 / 0")
+def test_division_by_zero_ground_constructs_exact_exceptional_exit() -> None:
+    outcome = _term("1 / 0")
+
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "ZeroDivisionError"
 
 
 def test_division_static_sibling_constructs() -> None:
