@@ -16,7 +16,8 @@ Full twin execution (truthful SAT / lying UNSAT / typed red effect) remains the
 existing sugar-witness machinery; this census keeps the ownership *gap* loud and
 counts it as R until enrolled.
 
-Exit 1 while R_ownership > 0.
+Exit 1 while R_ownership > 0. Missing roots and source read/parse failures are
+reported separately as ``auditor_errors`` and also exit red.
 """
 
 from __future__ import annotations
@@ -140,13 +141,69 @@ def _has_typed_red_effect_witness(witnesses: ast.FunctionDef | None) -> bool:
 
 def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
     offenders: list[OwnershipOffender] = []
-    for path in sorted(sugar_root.rglob("*.py")):
+    try:
+        resolved_root = sugar_root.resolve()
+    except OSError as error:
+        return [
+            OwnershipOffender(
+                sugar_root.as_posix(),
+                0,
+                "auditor-root-error",
+                "-",
+                f"could not resolve scan root: {error}",
+            )
+        ]
+    if not resolved_root.is_dir():
+        return [
+            OwnershipOffender(
+                sugar_root.as_posix(),
+                0,
+                "auditor-root-error",
+                "-",
+                "scan root is not a directory",
+            )
+        ]
+    try:
+        paths = sorted(resolved_root.rglob("*.py"))
+    except OSError as error:
+        return [
+            OwnershipOffender(
+                sugar_root.as_posix(),
+                0,
+                "auditor-root-error",
+                "-",
+                f"could not enumerate scan root: {error}",
+            )
+        ]
+    for path in paths:
         if path.name.startswith("_") and path.name != "__init__.py":
             continue
-        relative = f"sugar/{path.relative_to(sugar_root).as_posix()}"
+        relative = f"sugar/{path.relative_to(resolved_root).as_posix()}"
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except SyntaxError:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            offenders.append(
+                OwnershipOffender(
+                    relative,
+                    0,
+                    "auditor-read-error",
+                    "-",
+                    f"could not read source: {error}",
+                )
+            )
+            continue
+        try:
+            tree = ast.parse(source, filename=str(path))
+        except SyntaxError as error:
+            offenders.append(
+                OwnershipOffender(
+                    relative,
+                    int(error.lineno or 0),
+                    "auditor-parse-error",
+                    "-",
+                    f"ast.parse failed: {error.msg}",
+                )
+            )
             continue
         owned_sugars: list[tuple[str, ast.FunctionDef, ast.FunctionDef | None]] = []
         for node in tree.body:
@@ -233,8 +290,15 @@ def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
 
 def format_report(offenders: list[OwnershipOffender]) -> str:
     by_kind = Counter(row.kind for row in offenders)
+    ownership_offenders = [
+        row for row in offenders if not row.kind.startswith("auditor-")
+    ]
+    auditor_errors = [
+        row for row in offenders if row.kind.startswith("auditor-")
+    ]
     lines = [
-        f"R_ownership = {len(offenders)}",
+        f"R_ownership = {len(ownership_offenders)}",
+        f"auditor_errors = {len(auditor_errors)}",
         "Law: every selected Sugar arm produces cited construction or genuine typed "
         "runtime effect under a bad twin; unsupported shapes leave factory with no "
         "candidate → FactoryPanic. Soft Incomplete after broad owns is illegal.",
@@ -265,7 +329,12 @@ def main() -> int:
     args = parser.parse_args()
     offenders = scan_sugar_tree(args.sugar_root)
     if offenders:
-        print("OWNERSHIP-LAW RED: " f"{len(offenders)} owns/witness gaps")
+        print(
+            "OWNERSHIP-LAW RED: "
+            f"{sum(not row.kind.startswith('auditor-') for row in offenders)} "
+            "owns/witness gaps; "
+            f"auditor_errors={sum(row.kind.startswith('auditor-') for row in offenders)}"
+        )
         print(format_report(offenders))
         return 1
     print("OWNERSHIP-LAW GREEN: R_ownership = 0")

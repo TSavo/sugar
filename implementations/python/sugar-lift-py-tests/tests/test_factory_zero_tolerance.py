@@ -240,3 +240,48 @@ def test_scanner_report_names_r_and_replacement_plans() -> None:
     assert "Promote IR operand" in report or "sugar_lift_py_tests.ir" in report
     assert "non-contract-third-result" in report
     assert "Sugar | FactoryPanic" in report
+
+
+def test_scanner_reports_missing_root_as_auditor_error(tmp_path: Path) -> None:
+    offenders = scan_package(tmp_path / "missing")
+
+    assert [(row.line, row.kind) for row in offenders] == [
+        (0, "auditor-root-error")
+    ]
+
+
+def test_scanner_reports_parse_error_as_auditor_error(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    factory = package / "factory"
+    factory.mkdir(parents=True)
+    (factory / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+
+    offenders = scan_package(package)
+
+    assert [(row.path, row.line, row.kind) for row in offenders] == [
+        ("factory/broken.py", 1, "auditor-parse-error")
+    ]
+
+
+def test_scanner_reports_read_error_as_auditor_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    package = tmp_path / "package"
+    factory = package / "factory"
+    factory.mkdir(parents=True)
+    broken = factory / "broken.py"
+    broken.write_text("pass\n", encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def fail_target(path: Path, *args, **kwargs) -> str:
+        if path == broken:
+            raise OSError("planted unreadable source")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_target)
+
+    offenders = scan_package(package)
+
+    assert [(row.path, row.line, row.kind) for row in offenders] == [
+        ("factory/broken.py", 0, "auditor-read-error")
+    ]

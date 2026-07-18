@@ -87,3 +87,51 @@ def test_current_repository_factory_panic_catch_law() -> None:
         f"R_factory_panic_catches_outside_audit={len(offenders)}:\n"
         + _SCANNER.format_report(offenders)
     )
+
+
+def test_scanner_reports_missing_root_as_auditor_error(tmp_path: Path) -> None:
+    offenders = _SCANNER.scan_repository(tmp_path / "missing")
+
+    assert {(row.path, row.line, row.kind) for row in offenders} == {
+        ("src/sugar_lift_py_tests", 0, "auditor-root-error"),
+        ("scripts", 0, "auditor-root-error"),
+    }
+
+
+def test_scanner_reports_parse_error_as_auditor_error(tmp_path: Path) -> None:
+    package = tmp_path / "src" / "sugar_lift_py_tests"
+    package.mkdir(parents=True)
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+
+    offenders = _SCANNER.scan_repository(tmp_path)
+
+    assert [(row.path, row.line, row.kind) for row in offenders] == [
+        ("scripts/broken.py", 1, "auditor-parse-error")
+    ]
+
+
+def test_scanner_reports_read_error_as_auditor_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    package = tmp_path / "src" / "sugar_lift_py_tests"
+    package.mkdir(parents=True)
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    broken = scripts / "broken.py"
+    broken.write_text("pass\n", encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def fail_target(path: Path, *args, **kwargs) -> str:
+        if path == broken:
+            raise OSError("planted unreadable source")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_target)
+
+    offenders = _SCANNER.scan_repository(tmp_path)
+
+    assert [(row.path, row.line, row.kind) for row in offenders] == [
+        ("scripts/broken.py", 0, "auditor-read-error")
+    ]
