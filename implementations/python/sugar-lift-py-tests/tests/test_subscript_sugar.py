@@ -30,6 +30,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.ir import ctor, make_var, num, py_eq
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.sugar.slice_subscript_sugar import SliceSubscriptSugar
 from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -69,6 +70,38 @@ def test_list_subscript_out_of_range_constructs_exact_indexerror_exit() -> None:
 
 def test_list_subscript_in_range_discrimination_returns_element() -> None:
     assert _outcome("[1,2][0]").value == TermValue(1)
+
+
+def test_none_slice_constructs_exact_typeerror_exit() -> None:
+    outcome = _outcome("None[:]")
+
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
+    assert outcome.value.effect.blame == "t.py:1:0"
+    assert isinstance(outcome.value.exception, ExceptionValue)
+    assert outcome.value.exception.exception_name == "TypeError"
+
+
+def test_none_slice_typeerror_short_circuits_outer_expression() -> None:
+    outcome = _outcome("None[:].not_a_real_method()")
+
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "TypeError"
+
+
+def test_concrete_list_slice_remains_covered() -> None:
+    outcome = _outcome("[1, 2][:]")
+
+    assert isinstance(outcome.value, CallSiteValue)
+    assert outcome.value.target_name == "py.subscript"
+
+
+def test_unsupported_ground_slice_receiver_stays_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome("3[:]")
+
+    assert raised.value.info.owner == "subscript"
+    assert raised.value.info.observed == "TermValue"
 
 
 def test_ground_indexerror_short_circuits_outer_expression() -> None:
@@ -136,6 +169,21 @@ def test_ground_indexerror_witness_truthful_sat_lying_unsat(tmp_path: Path) -> N
     lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
 
     assert "SubscriptSugar" in truthful.selected_sugars
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_none_slice_typeerror_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = SliceSubscriptSugar.witnesses()
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert "SliceSubscriptSugar" in truthful.selected_sugars
     assert truthful.verdict == pair.truthful.expected == "sat"
     assert lying.verdict == pair.lying.expected == "unsat"
 
