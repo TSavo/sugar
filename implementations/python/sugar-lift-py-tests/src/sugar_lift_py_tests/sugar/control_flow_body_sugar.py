@@ -64,9 +64,7 @@ class ControlFlowBodySugar(
         ``select_control_flow_body_sugar``, which rewrites the encoder special
         case to ``EncoderBodySugar`` after selection.
         """
-        from sugar_lift_py_tests.factory.sugar_constructors import (
-            IncompleteFunctionBody,
-        )
+        from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
         from sugar_lift_py_tests.floor import (
             BlockValue,
             EncodedStringValue,
@@ -90,7 +88,17 @@ class ControlFlowBodySugar(
 
         block_outcome = body.reduce(ctx)
         if isinstance(block_outcome, Incomplete):
-            raise IncompleteFunctionBody(block_outcome)
+            factory_panic_gap(
+                owner="ControlFlowBodySugar.new",
+                blame=site,
+                observed=site.observed,
+                requested=SugarRole.CONTROL_FLOW_BODY.value,
+                fix=(
+                    "construct the body in its owning statement Sugars or narrow "
+                    "ControlFlowBodySugar.owns so the factory None arm panics"
+                ),
+                selected=cls.__name__,
+            )
         block_value = complete_value(block_outcome, owner="function body")
         if type(block_value) is not BlockValue:
             raise TypeError(
@@ -184,6 +192,44 @@ class ControlFlowBodySugar(
             statements=self.statements,
         )
 
+    @staticmethod
+    def build_context(site, ctx):
+        """Bind a function's lexical module and symbolic formal coordinates."""
+        from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.ir import make_var
+        from sugar_lift_py_tests.sugar.statement_function_def_sugar import (
+            StatementFunctionDefSugar,
+        )
+        from sugar_lift_py_tests.temporal import TemporalContext, bind_temporal
+
+        module_temporal = getattr(ctx, "module_temporal", None)
+        body_ctx = ctx.with_temporal(
+            module_temporal if module_temporal is not None else TemporalContext()
+        )
+        body_ctx = StatementFunctionDefSugar.module_context_for(site, body_ctx)
+        for param_name in site.function_params():
+            body_ctx = bind_temporal(
+                body_ctx,
+                param_name,
+                SymbolicValue(make_var(param_name)),
+                owner="ControlFlowBodySugar.formal_binds",
+                blame=f"{getattr(site, 'filename', '')}:{getattr(site, 'line', 0)}",
+            )
+        return body_ctx
+
+    @staticmethod
+    def build_bridge_body(site, ctx):
+        """Build the exact single-return bridge through the registered term Sugar."""
+        body_frags = site.function_body()
+        if len(body_frags) != 1:
+            raise TypeError("ControlFlowBodySugar bridge requires one statement")
+        body_frag = body_frags[0]
+        if body_frag.observed != "Return" or body_frag.return_value() is None:
+            raise TypeError("ControlFlowBodySugar bridge requires a valued return")
+        return ControlFlowBodySugar.build_context(site, ctx).build_body(
+            body_frag.return_value(), SugarRole.TERM
+        )
+
     def _clauses(self) -> list[Formula]:
         clauses: list[Formula] = []
         for guards, ret_term in self.paths:
@@ -222,17 +268,14 @@ class ControlFlowBodySugar(
 def select_control_flow_body_sugar(site, ctx) -> FunctionBodyUniverse:
     """Select the registered call-body Sugar through the ordinary factory door.
 
-    Formal/module binding remains a separate factory-promotion lane (#5206).
-    This selector supplies that dig context, then lets the catalog build
+    Formal/module binding is owned by ``ControlFlowBodySugar`` (#5206).
+    This selector supplies that Sugar-owned context, then lets the catalog build
     ``ControlFlowBodySugar``. Encoder bodies rewrite to ``EncoderBodySugar``
     after selection so dig consumers keep the prior FunctionBodyUniverse shape.
     """
     from sugar_lift_py_tests.factory.build import build_node
-    from sugar_lift_py_tests.factory.sugar_constructors import (
-        _ctx_with_formal_binds,
-    )
 
-    body_ctx = _ctx_with_formal_binds(site, ctx)
+    body_ctx = ControlFlowBodySugar.build_context(site, ctx)
     result = build_node(
         site,
         filename=body_ctx.filename,

@@ -14,11 +14,11 @@ from __future__ import annotations
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.factory.sugar_constructors import (
-    _ctx_with_formal_binds,
-    build_control_flow_body_sugar,
-)
 from sugar_lift_py_tests.floor import SymbolicValue
+from sugar_lift_py_tests.sugar.control_flow_body_sugar import (
+    ControlFlowBodySugar,
+    select_control_flow_body_sugar as build_control_flow_body_sugar,
+)
 
 
 def _tag(fn: SourceFragment, source: str, path: str) -> SourceFragment:
@@ -56,7 +56,7 @@ def test_local_assign_shadows_module_global_in_body_dig() -> None:
     )
 
     # Pre-walk: module seed is present (install-source free-name path).
-    body_ctx = _ctx_with_formal_binds(fn, ctx)
+    body_ctx = ControlFlowBodySugar.build_context(fn, ctx)
     global_binds = [b for b in body_ctx.temporal.bindings if b.name == "GLOBAL"]
     assert global_binds, "module GLOBAL must seed before body walk"
     seeded = global_binds[-1].value
@@ -82,7 +82,7 @@ def test_formal_shadows_module_global_on_formal_binds() -> None:
         catalog=default_catalog(),
         name_resolver={"f": fn.node},
     )
-    body_ctx = _ctx_with_formal_binds(fn, ctx)
+    body_ctx = ControlFlowBodySugar.build_context(fn, ctx)
     global_binds = [b for b in body_ctx.temporal.bindings if b.name == "GLOBAL"]
     assert global_binds, global_binds
     # Last bind for GLOBAL must be the formal (SymbolicValue), not module constant.

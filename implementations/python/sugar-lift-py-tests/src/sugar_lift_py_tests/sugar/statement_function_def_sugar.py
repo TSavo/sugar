@@ -47,6 +47,243 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
             site=site,
         )
 
+    @staticmethod
+    def _module_source_for_site(site, ctx) -> tuple[str, str] | None:
+        del ctx
+        if site.observed != "FunctionDef":
+            return None
+        sugar_file = getattr(site.node, "_sugar_file", None)
+        sugar_source = getattr(site.node, "_sugar_source", None)
+        bridge_name = getattr(site.node, "_sugar_bridge_name", None)
+        if not (
+            isinstance(sugar_file, str)
+            and sugar_file
+            and isinstance(sugar_source, str)
+            and sugar_source
+        ):
+            return None
+        if bridge_name is not None and not (
+            isinstance(bridge_name, str)
+            and "." in bridge_name
+            and bridge_name.rsplit(".", 1)[-1] == site.function_name()
+        ):
+            return None
+        return sugar_source, sugar_file
+
+    @classmethod
+    def _names_in_fragment(cls, site) -> list[str]:
+        if site.observed == "Name":
+            return [site.name_id()]
+        if site.observed == "Call":
+            names: list[str] = []
+            receiver = site.call_receiver()
+            if receiver is not None:
+                names.extend(cls._names_in_fragment(receiver))
+            else:
+                target = site.call_target_name()
+                if target is not None:
+                    names.append(target)
+            for arg in site.call_args():
+                names.extend(cls._names_in_fragment(arg))
+            for keyword in site.call_keywords():
+                names.extend(cls._names_in_fragment(keyword.keyword_value()))
+            return names
+        if site.observed == "Attribute":
+            return cls._names_in_fragment(site.attr_receiver())
+        if site.observed == "keyword":
+            return cls._names_in_fragment(site.keyword_value())
+        names = []
+        for child in site.fragments():
+            names.extend(cls._names_in_fragment(child))
+        return names
+
+    @staticmethod
+    def _module_level_declarations_before(root, fn) -> list:
+        declarations: list = []
+        fn_name = fn.function_name()
+        top_level = [
+            statement
+            for fragment in root.fragments()
+            for statement in fragment.statements()
+        ]
+        for index, statement in enumerate(top_level):
+            candidates = (
+                [statement]
+                if statement.observed == "FunctionDef"
+                else [
+                    nested
+                    for nested in statement.walk()
+                    if nested.observed == "FunctionDef"
+                ]
+            )
+            if any(
+                candidate.function_name() == fn_name
+                and (
+                    (fn.line and candidate.line == fn.line)
+                    or (not fn.line and candidate.col == fn.col)
+                )
+                for candidate in candidates
+            ):
+                declarations.extend(
+                    later
+                    for later in top_level[index + 1 :]
+                    if later.observed == "ClassDef"
+                )
+                return declarations
+            if (
+                statement.observed == "Assign"
+                and statement.assign_target_name() is not None
+            ):
+                declarations.append(statement)
+            elif statement.observed == "AnnAssign":
+                try:
+                    statement.annassign_target_id()
+                except TypeError:
+                    continue
+                if statement.annassign_value() is not None:
+                    declarations.append(statement)
+            elif statement.observed in ("Import", "ImportFrom", "Try", "ClassDef"):
+                declarations.append(statement)
+        return []
+
+    @classmethod
+    def _module_declaration_bound_names(cls, statement) -> set[str]:
+        if statement.observed == "Assign":
+            name = statement.assign_target_name()
+            return set() if name is None else {name}
+        if statement.observed == "AnnAssign":
+            try:
+                return {statement.annassign_target_id()}
+            except TypeError:
+                return set()
+        if statement.observed == "Import":
+            return {
+                alias or imported.split(".", 1)[0]
+                for imported, alias in statement.import_names()
+            }
+        if statement.observed == "ImportFrom":
+            return {
+                alias or imported
+                for imported, alias in statement.importfrom_names()
+                if imported != "*"
+            }
+        if statement.observed == "Try":
+            return cls._try_module_bound_names(statement)
+        if statement.observed == "ClassDef":
+            from sugar_lift_py_tests.sugar.class_def_sugar import ClassDefSugar
+
+            base_names = statement.class_base_names()
+            if (
+                not ClassDefSugar.decorators_preserve_identity(statement)
+                or statement.class_keywords()
+                or any(base_name is None for base_name in base_names)
+            ):
+                return set()
+            return {statement.class_name()}
+        return set()
+
+    @classmethod
+    def _try_module_bound_names(cls, statement) -> set[str]:
+        names: set[str] = set()
+        suites = [statement.try_body()]
+        suites.extend(
+            handler.except_handler_body() for handler in statement.try_handlers()
+        )
+        orelse = statement.try_orelse()
+        if orelse is not None:
+            suites.append(orelse)
+        for suite in suites:
+            for child in suite.statements():
+                names.update(cls._module_declaration_bound_names(child))
+        return names
+
+    @classmethod
+    def module_context_for(cls, site, ctx):
+        """Replay demanded module declarations through their registered Sugars."""
+        from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+        from sugar_lift_py_tests.outcome import Incomplete, complete_value
+
+        loaded = cls._module_source_for_site(site, ctx)
+        if loaded is None:
+            return ctx
+        source, filename = loaded
+        try:
+            root = SourceFragment.from_source(source, filename)
+        except SyntaxError:
+            return ctx
+        declarations = cls._module_level_declarations_before(root, site)
+        if not declarations:
+            return ctx
+
+        needed: set[str] = set()
+        for body_stmt in site.function_body():
+            needed.update(cls._names_in_fragment(body_stmt))
+        needed -= set(site.function_params())
+        if not needed:
+            return ctx
+
+        selected: list = []
+        needed_work = set(needed)
+        for prior in reversed(declarations):
+            owned = cls._module_declaration_bound_names(prior)
+            wanted = owned & needed_work
+            if not wanted:
+                continue
+            selected.append(prior)
+            needed_work.difference_update(wanted)
+            if prior.observed == "Assign":
+                needed_work.update(cls._names_in_fragment(prior.assign_value()))
+            elif prior.observed == "AnnAssign":
+                value = prior.annassign_value()
+                if value is not None:
+                    needed_work.update(cls._names_in_fragment(value))
+            elif prior.observed == "Try":
+                needed_work.update(cls._names_in_fragment(prior))
+        selected.reverse()
+
+        folded_ctx = ctx
+        for prior in selected:
+            if prior.observed == "ImportFrom" and (
+                prior.importfrom_level() or not prior.importfrom_module()
+            ):
+                continue
+            body = folded_ctx.build_body(prior, SugarRole.STATEMENT)
+            if prior.observed == "Import":
+                from sugar_lift_py_tests.sugar.import_sugar import ImportSugar
+
+                if not isinstance(body.sugar, ImportSugar):
+                    raise TypeError(
+                        f"Import statement selected {type(body.sugar).__name__}"
+                    )
+                outcome = body.sugar.desugar_module_context(folded_ctx)
+            elif prior.observed == "ClassDef":
+                from sugar_lift_py_tests.sugar.class_def_sugar import ClassDefSugar
+
+                if not isinstance(body.sugar, ClassDefSugar):
+                    raise TypeError(f"ClassDef selected {type(body.sugar).__name__}")
+                outcome = body.sugar.desugar_module_context(folded_ctx)
+            else:
+                outcome = body.reduce(folded_ctx)
+            if isinstance(outcome, Incomplete):
+                from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+                factory_panic_gap(
+                    owner="StatementFunctionDefSugar.module_context_for",
+                    blame=prior,
+                    observed=prior.observed,
+                    requested="module-binding",
+                    fix=(
+                        "construct this dependency in its owning Sugar or narrow "
+                        "owns() so the factory None arm panics"
+                    ),
+                    selected=type(body.sugar).__name__,
+                )
+            complete_value(
+                outcome, owner="StatementFunctionDefSugar.module_context_for"
+            )
+            folded_ctx = outcome.extend_scope(folded_ctx)
+        return folded_ctx
+
     @classmethod
     def witnesses(cls):
         prefix = (
@@ -176,9 +413,7 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 truthful=(
                     multi_expansion_prefix + "def test_a():\n    assert A() == 5\n"
                 ),
-                lying=(
-                    multi_expansion_prefix + "def test_a():\n    assert A() == 6\n"
-                ),
+                lying=(multi_expansion_prefix + "def test_a():\n    assert A() == 6\n"),
             ),
         )
 
@@ -244,15 +479,12 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
             contextmanager_exit_contract_for_fragment,
             resolve_contextmanager_exit_contract,
         )
-        from sugar_lift_py_tests.factory.sugar_constructors import (
-            _ctx_with_module_global_binds,
-        )
 
         callable_body = self.body
         site = cast(Any, self.site)
         contextmanager_contract = contextmanager_exit_contract_for_fragment(site)
         if isinstance(self.body.sugar, BlockSugar):
-            body_ctx = _ctx_with_module_global_binds(site, ctx)
+            body_ctx = type(self).module_context_for(site, ctx)
             callable_body = _contextualized_dig_body(
                 SugarBody(
                     sugar=SequentialDigBody(

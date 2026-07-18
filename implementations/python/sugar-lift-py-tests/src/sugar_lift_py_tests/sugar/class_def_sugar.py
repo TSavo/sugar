@@ -40,15 +40,68 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             return False
         # Decorated classes construct only when the existing factory recognizer
         # authenticates every decorator as identity-preserving.
-        if site.class_decorators():
-            from sugar_lift_py_tests.factory.sugar_constructors import (
-                _class_decorators_preserve_identity,
-            )
-
-            if not _class_decorators_preserve_identity(site):
-                return False
+        if site.class_decorators() and not cls.decorators_preserve_identity(site):
+            return False
         if site.class_keywords():
             return False
+        return True
+
+    @staticmethod
+    def decorators_preserve_identity(statement) -> bool:
+        """Recognize source contracts whose decorator returns the same class."""
+        identity_exports = {
+            ("pandas.core.indexes.extension", "inherit_names"),
+            ("pandas.util._decorators", "set_module"),
+            ("pandas.api.extensions", "register_dataframe_accessor"),
+            ("pandas.api.extensions", "register_index_accessor"),
+            ("pandas.api.extensions", "register_series_accessor"),
+        }
+        from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+        try:
+            root = SourceFragment.from_source(
+                statement.source, statement.filename or ""
+            )
+        except (SyntaxError, TypeError):
+            return False
+        authenticated_names: set[str] = set()
+        authenticated_modules: dict[str, str] = {}
+        declarations = [
+            declaration
+            for fragment in root.fragments()
+            for declaration in fragment.statements()
+        ]
+        for declaration in declarations:
+            if declaration.observed == "ImportFrom":
+                module = declaration.importfrom_module()
+                for imported, alias in declaration.importfrom_names():
+                    if (module, imported) in identity_exports:
+                        authenticated_names.add(alias or imported)
+            elif declaration.observed == "Import":
+                for imported, alias in declaration.import_names():
+                    authenticated_modules[alias or imported.split(".", 1)[0]] = imported
+        for decorator in statement.class_decorators():
+            if decorator.observed == "Name":
+                receiver = decorator
+            elif decorator.observed == "Call":
+                receiver = decorator.call_func()
+            else:
+                return False
+            if receiver is None:
+                return False
+            dotted = receiver.dotted_expr_name()
+            if dotted in authenticated_names:
+                continue
+            if dotted is None:
+                return False
+            head, separator, tail = dotted.partition(".")
+            module = authenticated_modules.get(head)
+            if not separator or module is None:
+                return False
+            qualified = f"{module}.{tail}"
+            export_module, _, export_name = qualified.rpartition(".")
+            if (export_module, export_name) not in identity_exports:
+                return False
         return True
 
     @classmethod
@@ -124,6 +177,27 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
     def desugar(self, ctx: object = None) -> Outcome:
         # Reduce bases left-to-right, then thread the body under the same scope.
         return self._collect_bases(self.bases, (), ctx)
+
+    def desugar_module_context(self, ctx: object) -> Outcome:
+        """Construct the executed module's inert class binding coordinate."""
+        from sugar_lift_py_tests.floor import BlockValue
+        from sugar_lift_py_tests.floor.local_exception_class_value import (
+            module_class_value,
+        )
+
+        base_names = tuple(
+            base_name
+            for base_name in self.site.class_base_names()
+            if base_name is not None
+        )
+        return Complete(
+            module_class_value(
+                name=self.name,
+                base_names=base_names,
+                temporal=ctx.temporal,
+                record=BlockValue(()),
+            )
+        )
 
     def _collect_bases(
         self, remaining: tuple, accumulated: tuple, ctx: object

@@ -7,7 +7,6 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.factory.sugar_constructors import _ctx_with_formal_binds
 from sugar_lift_py_tests.sugar.control_flow_body_sugar import ControlFlowBodySugar
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -59,7 +58,7 @@ def test_control_flow_function_body_is_selected_through_its_sugar_role() -> None
     )
     fn = next(site for site in root.walk() if site.observed == "FunctionDef")
     ctx = FactoryBuildContext(filename="promotion.py", catalog=default_catalog())
-    body_ctx = _ctx_with_formal_binds(fn, ctx)
+    body_ctx = ControlFlowBodySugar.build_context(fn, ctx)
 
     result = build_node(
         fn,
@@ -79,6 +78,8 @@ def test_control_flow_function_body_is_selected_through_its_sugar_role() -> None
 
 
 def test_factory_top_has_no_control_flow_construction_helpers() -> None:
+    if not _FACTORY_CONSTRUCTORS.exists():
+        return
     tree = ast.parse(_FACTORY_CONSTRUCTORS.read_text(encoding="utf-8"))
     function_names = {
         node.name for node in tree.body if isinstance(node, ast.FunctionDef)
