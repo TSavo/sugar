@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from dataclasses import replace
 
+import pytest
+
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context import FactoryBuildContext, ReduceContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
@@ -34,6 +36,29 @@ def test_factory_selects_match_sugar() -> None:
     assert result.audit_row.selected == "MatchSugar"
 
 
+@pytest.mark.parametrize(
+    ("source", "selected"),
+    (
+        ("match 2:\n    case 2:\n        pass\n", "MatchValuePatternSugar"),
+        ("match None:\n    case None:\n        pass\n", "MatchSingletonPatternSugar"),
+        ("match 2:\n    case 1 | 2:\n        pass\n", "MatchOrPatternSugar"),
+        ("match 2:\n    case captured:\n        pass\n", "MatchAsPatternSugar"),
+    ),
+)
+def test_factory_selects_match_pattern_sugar(source: str, selected: str) -> None:
+    match_node = ast.parse(source).body[0]
+    pattern = match_node.cases[0].pattern
+
+    result = build_node(
+        pattern,
+        filename="match_case.py",
+        role=SugarRole.PATTERN,
+        ctx=FactoryBuildContext(filename="match_case.py", catalog=default_catalog()),
+    )
+
+    assert result.audit_row.selected == selected
+
+
 def test_ground_match_selects_first_matching_literal_case() -> None:
     result = _match_statement(
         "match 2:\n"
@@ -62,6 +87,25 @@ def test_ground_match_uses_wildcard_when_literals_do_not_match() -> None:
     outcome = result.sugar.desugar(ReduceContext.root(owner="match-test"))
 
     assert outcome == Complete(BlockValue((ReturnValue(TermValue(30)),)))
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        "match None:\n    case None:\n        return 7\n",
+        "match 2:\n    case 1 | 2:\n        return 7\n",
+        "match 2:\n    case 2 as captured:\n        return captured\n",
+    ),
+)
+def test_recognized_pattern_sugars_select_ground_case(source: str) -> None:
+    result = _match_statement(source)
+
+    outcome = result.sugar.desugar(ReduceContext.root(owner="match-test"))
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value.statements == (
+        ReturnValue(TermValue(7 if "captured" not in source else 2)),
+    )
 
 
 def test_ground_false_guard_continues_to_next_case() -> None:
@@ -104,12 +148,10 @@ def test_runtime_selected_match_stays_named_and_loud() -> None:
 
 
 def test_ground_unsupported_pattern_stays_loud() -> None:
-    result = _match_statement("match 1:\n" "    case int():\n" "        return 1\n")
-
     try:
-        result.sugar.desugar(ReduceContext.root(owner="match-test"))
+        _match_statement("match 1:\n" "    case int():\n" "        return 1\n")
     except FactoryPanic as raised:
-        assert raised.info.owner == "MatchSugar"
+        assert raised.info.owner == "python.factory"
         assert raised.info.observed == "MatchClass"
     else:
         raise AssertionError("unsupported ground pattern must remain loud")

@@ -241,6 +241,11 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
 EXPECTED_WITNESS_OWNER_DELEGATIONS: dict[str, str] = {
     "EqualityOpSugar": "ObjectEqualityTermSugar",
     "InequalityOpSugar": "ObjectEqualityTermSugar",
+    # Pattern recognizers are exercised by MatchSugar's verdict/effect twins.
+    "MatchValuePatternSugar": "MatchSugar",
+    "MatchSingletonPatternSugar": "MatchSugar",
+    "MatchOrPatternSugar": "MatchSugar",
+    "MatchAsPatternSugar": "MatchSugar",
 }
 
 

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair, typed_red_effect_witness
@@ -13,7 +11,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 @dataclass(frozen=True)
 class MatchCase:
-    pattern: ast.pattern
+    pattern: SugarBody
     guard: SugarBody | None
     body: SugarBody
 
@@ -39,26 +37,19 @@ class MatchSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def new(cls, site, ctx) -> "MatchSugar":
-        from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-
-        def fragment(node):
-            return SourceFragment.from_node(node, site.filename, source=site.source)
-
         return cls(
-            subject=ctx.build_body(fragment(site.node.subject), SugarRole.TERM),
+            subject=ctx.build_body(site.match_subject(), SugarRole.TERM),
             cases=tuple(
                 MatchCase(
-                    pattern=case.pattern,
+                    pattern=ctx.build_body(pattern, SugarRole.PATTERN),
                     guard=(
-                        ctx.build_body(fragment(case.guard), SugarRole.TERM)
-                        if case.guard is not None
+                        ctx.build_body(guard, SugarRole.TERM)
+                        if guard is not None
                         else None
                     ),
-                    body=ctx.build_body(
-                        fragment(Block.of(case.body)), SugarRole.STATEMENT
-                    ),
+                    body=ctx.build_body(body, SugarRole.STATEMENT),
                 )
-                for case in site.node.cases
+                for pattern, guard, body in site.match_cases()
             ),
             site=site,
         )
@@ -108,7 +99,9 @@ class MatchSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _select(self, subject, cases: tuple[MatchCase, ...], ctx) -> Outcome:
-        known, subject_value = _ground_value(subject)
+        from sugar_lift_py_tests.sugar.match_pattern_sugar import ground_match_value
+
+        known, subject_value = ground_match_value(subject)
         if not known:
             return _runtime_selection(
                 subject,
@@ -124,9 +117,33 @@ class MatchSugar(Sugar, role=SugarRole.STATEMENT):
 
             return Complete(BlockValue(()))
         case, *rest = cases
-        matched, capture = _match_ground(case.pattern, subject_value, self.site)
-        if not matched:
-            return self._select_ground(subject, subject_value, tuple(rest), ctx)
+        return case.pattern.reduce(ctx).and_then(
+            lambda pattern: pattern.select_ground(
+                subject_value,
+                matched=lambda capture: self._select_matched(
+                    case,
+                    capture,
+                    subject,
+                    subject_value,
+                    tuple(rest),
+                    ctx,
+                ),
+                missed=lambda: self._select_ground(
+                    subject, subject_value, tuple(rest), ctx
+                ),
+                ctx=ctx,
+            )
+        )
+
+    def _select_matched(
+        self,
+        case,
+        capture,
+        subject,
+        subject_value,
+        rest,
+        ctx,
+    ) -> Outcome:
         case_ctx = ctx
         if capture is not None:
             from sugar_lift_py_tests.floor import ScopeRebind
@@ -182,64 +199,9 @@ class MatchSugar(Sugar, role=SugarRole.STATEMENT):
                 for case in self.cases
                 for child in ((case.guard,) if case.guard is not None else ())
             ),
+            *(case.pattern for case in self.cases),
             *(case.body for case in self.cases),
         )
-
-
-def _ground_value(value) -> tuple[bool, object]:
-    from sugar_lift_py_tests.floor import NoneValue, StringValue, TermValue
-    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-        FalseBoolLiteralSugar,
-    )
-    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
-
-    if type(value) is TermValue or type(value) is StringValue:
-        return True, value.value
-    if type(value) is TrueBoolLiteralSugar:
-        return True, True
-    if type(value) is FalseBoolLiteralSugar:
-        return True, False
-    if type(value) is NoneValue:
-        return True, None
-    return False, None
-
-
-def _match_ground(
-    pattern: ast.pattern, subject: object, site
-) -> tuple[bool, str | None]:
-    if isinstance(pattern, ast.MatchValue):
-        if not isinstance(pattern.value, ast.Constant):
-            _unsupported_pattern(pattern, site)
-        return subject == pattern.value.value, None
-    if isinstance(pattern, ast.MatchSingleton):
-        return subject is pattern.value, None
-    if isinstance(pattern, ast.MatchOr):
-        for arm in pattern.patterns:
-            matched, capture = _match_ground(arm, subject, site)
-            if matched:
-                return True, capture
-        return False, None
-    if isinstance(pattern, ast.MatchAs):
-        if pattern.pattern is None:
-            return True, pattern.name
-        matched, capture = _match_ground(pattern.pattern, subject, site)
-        return matched, pattern.name if matched and pattern.name else capture
-    _unsupported_pattern(pattern, site)
-
-
-def _unsupported_pattern(pattern: ast.pattern, site) -> None:
-    from sugar_lift_py_tests.factory import factory_panic_gap
-
-    factory_panic_gap(
-        owner="MatchSugar",
-        blame=site,
-        observed=type(pattern).__name__,
-        requested="constructible ground match pattern",
-        fix=(
-            f"construct `{type(pattern).__name__}` matching from reduced pattern "
-            "evidence; do not classify a ground construction gap as runtime"
-        ),
-    )
 
 
 def _runtime_selection(operand, site, reason: str) -> Incomplete:

@@ -15,6 +15,9 @@ class SugarRole(str, Enum):
     # each own their statement shape. Their OUTCOME is a category (a comment's is
     # Support); the role is just the dispatch key, parallel to TERM for expressions.
     STATEMENT = "statement"
+    # Match-case patterns are neither expressions nor statements. Giving them
+    # their own factory role makes raw ast.pattern classification unnecessary.
+    PATTERN = "pattern"
 
     def __str__(self) -> str:
         return self.value
