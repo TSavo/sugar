@@ -149,6 +149,58 @@ def build_box():
     )
 
 
+def test_format_symbolic_receiver_constructs_format_coordinate() -> None:
+    """#5156: format(symbolic, spec) names call:__format__ — never RuntimeEffect."""
+    from sugar_lift_py_tests.ir import make_var
+    from factory_reduce import reduce_value
+
+    value = reduce_value(
+        'format(x, "brief")',
+        binds={"x": SymbolicValue(make_var("x"))},
+    )
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == "__format__"
+    assert fol(floor_to_term(value, owner="symbolic format")) == fol(
+        ctor(
+            "call:__format__",
+            [make_var("x"), str_const("brief")],
+            symbol_kind="method-coordinate",
+        )
+    )
+
+
+def test_format_native_callable_constructs_format_coordinate() -> None:
+    """#5156: format(native, spec) constructs the data-model coordinate."""
+    from sugar_lift_py_tests.floor import NativeCallableValue
+    from sugar_lift_py_tests.floor.string_value import StringValue as SV
+
+    class _Site:
+        def __str__(self) -> str:
+            return "t.py:1:0"
+
+    native = NativeCallableValue("pandas.NA", "pandas")
+    outcome = native.format_data_model(SV(""), _Site(), None)
+    value = complete_value(outcome, owner="native format")
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == "__format__"
+    assert fol(floor_to_term(value, owner="native format")) == fol(
+        ctor(
+            "call:__format__",
+            [
+                ctor(
+                    "python:native_callable",
+                    [str_const("pandas.NA")],
+                    symbol_kind="coordinate",
+                ),
+                str_const(""),
+            ],
+            symbol_kind="method-coordinate",
+        )
+    )
+
+
 def test_format_callsite_body_construction_gap_stays_loud() -> None:
     source = """\
 def build():
