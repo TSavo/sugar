@@ -789,6 +789,211 @@ def test_sequential_dig_consumes_state_guarded_by_terminal_face() -> None:
     )
 
 
+def test_sequential_dig_consumes_state_guarded_by_exact_nested_exit() -> None:
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.factory.build import default_catalog
+    from sugar_lift_py_tests.floor import (
+        GuardedFaces,
+        GuardedReturn,
+        GuardedScopeRebind,
+    )
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import and_, make_var, not_
+    from sugar_lift_py_tests.outcome import Complete
+
+    outer = make_var("outer")
+    nested = make_var("nested")
+    outer_nested = and_([outer, nested])
+    outer_not_nested = and_([outer, not_(nested)])
+
+    class _NestedTerminalState:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                GuardedFaces(
+                    guard=outer,
+                    entries=(
+                        GuardedScopeRebind(
+                            (outer_nested,),
+                            "answer",
+                            TermValue(7),
+                        ),
+                        GuardedReturn((outer_nested,), TermValue(7)),
+                        GuardedScopeRebind(
+                            (outer_not_nested,),
+                            "answer",
+                            TermValue(8),
+                        ),
+                        GuardedReturn((outer_not_nested,), TermValue(8)),
+                    ),
+                    then_exits=True,
+                    else_exits=False,
+                    can_fall_through=True,
+                    continuation_guard=not_(outer),
+                )
+            )
+
+    class _Fallback:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(ReturnValue(TermValue(0)))
+
+    ctx = FactoryBuildContext(filename="repro.py", catalog=default_catalog())
+    outcome = SequentialDigBody((_NestedTerminalState(), _Fallback())).desugar(ctx)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == GuardedValue(
+        outer_nested,
+        TermValue(7),
+        GuardedValue(
+            outer_not_nested,
+            TermValue(8),
+            TermValue(0),
+        ),
+    )
+
+
+def test_sequential_dig_consumes_raw_tail_guarded_by_terminal_face() -> None:
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.factory.build import default_catalog
+    from sugar_lift_py_tests.floor import GuardedFaces, GuardedReturn
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import make_var, not_
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    guard = make_var("terminal")
+
+    class _RawTail:
+        def desugar(self, ctx=None):
+            del ctx
+            raise AssertionError("guarded unreachable tail must not reduce")
+
+        def walk_children(self):
+            return ()
+
+    raw = SugarBody(_RawTail(), SugarRole.STATEMENT)
+
+    class _TerminalFace:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                GuardedFaces(
+                    guard=guard,
+                    entries=(
+                        GuardedReturn((guard,), TermValue(7)),
+                        raw.guarded(guard),
+                    ),
+                    then_exits=True,
+                    else_exits=False,
+                    can_fall_through=True,
+                    continuation_guard=not_(guard),
+                )
+            )
+
+    class _Fallback:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(ReturnValue(TermValue(0)))
+
+    ctx = FactoryBuildContext(filename="repro.py", catalog=default_catalog())
+    outcome = SequentialDigBody((_TerminalFace(), _Fallback())).desugar(ctx)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == GuardedValue(guard, TermValue(7), TermValue(0))
+
+
+def test_sequential_dig_raw_tail_on_continuing_face_stays_loud() -> None:
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+    from sugar_lift_py_tests.factory import FactoryPanic
+    from sugar_lift_py_tests.factory.build import default_catalog
+    from sugar_lift_py_tests.floor import GuardedFaces, GuardedReturn
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import make_var, not_
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    guard = make_var("terminal")
+
+    class _RawTail:
+        def desugar(self, ctx=None):
+            del ctx
+            raise AssertionError("raw continuing tail must stay loud")
+
+        def walk_children(self):
+            return ()
+
+    raw = SugarBody(_RawTail(), SugarRole.STATEMENT)
+
+    class _MixedFace:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                GuardedFaces(
+                    guard=guard,
+                    entries=(
+                        GuardedReturn((guard,), TermValue(7)),
+                        raw.guarded(not_(guard)),
+                    ),
+                    then_exits=True,
+                    else_exits=False,
+                    can_fall_through=True,
+                    continuation_guard=not_(guard),
+                )
+            )
+
+    class _Fallback:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(ReturnValue(TermValue(0)))
+
+    ctx = FactoryBuildContext(filename="repro.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic, match="owner=SequentialDigBody"):
+        SequentialDigBody((_MixedFace(), _Fallback())).desugar(ctx)
+
+
+def test_nested_terminal_fallback_witness_refutes_wrong_twin(tmp_path) -> None:
+    from sugar_lift_py_tests.sugar.if_sugar import IfSugar
+    from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+
+    pair = next(
+        witness
+        for witness in IfSugar.witnesses()
+        if witness.name == "if_nested_terminal_fallback"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "nested-terminal-truthful",
+        pair.truthful.source,
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "nested-terminal-lying",
+        pair.lying.source,
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+
 def test_sequential_dig_continuing_face_state_stays_loud() -> None:
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
     from sugar_lift_py_tests.factory.build import default_catalog

@@ -82,9 +82,9 @@ class SugarBody(Generic[ReductionT_co]):
         return ()
 
     def guarded(self, formula):
-        # Raw, unreached sugar stays raw under any guard.
-        del formula
-        return self
+        # Preserve why this raw body is unreachable.  Sequential reducers may
+        # consume it only when constructed exits cover this exact guard.
+        return GuardedRawSugarBody(self, (formula,))
 
     def mint_contribution(self, name, formals):
         # Raw, unreached sugar mints nothing.
@@ -201,3 +201,34 @@ class SugarBody(Generic[ReductionT_co]):
         for child in self.sugar.walk_children():
             rows.extend(child.factory_audit_rows())
         return tuple(rows)
+
+
+@dataclass(frozen=True)
+class GuardedRawSugarBody:
+    """An unreduced body carried under constructed control-flow guards."""
+
+    body: SugarBody
+    guards: tuple
+
+    def guarded(self, formula):
+        return GuardedRawSugarBody(self.body, (*self.guards, formula))
+
+    def inv_contribution(self):
+        return ()
+
+    def post_contribution(self):
+        return ()
+
+    def mint_contribution(self, name, formals):
+        del name, formals
+        return ()
+
+    def edge_contribution(self, source_contract):
+        del source_contract
+        return ()
+
+    def factory_walk_rows(self):
+        return self.body.factory_walk_rows()
+
+    def factory_audit_rows(self):
+        return self.body.factory_audit_rows()
