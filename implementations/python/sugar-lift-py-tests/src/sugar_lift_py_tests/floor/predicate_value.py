@@ -105,6 +105,10 @@ class PredicateValue(FloorValue):
         )
 
     def bitwise_or(self, other, site):
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if type(other) is SymbolicValue:
+            return SymbolicValue(self.to_term(owner=str(site))).bitwise_or(other, site)
         if type(other) is not PredicateValue:
             return super().bitwise_or(other, site)
         del site

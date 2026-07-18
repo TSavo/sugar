@@ -57,12 +57,11 @@ def test_add_folds_concrete_literals():
     assert fol(reduce_term("2 + 3")) == fol(num(5))
 
 
-def test_ground_floor_division_by_zero_stays_loud():
-    with pytest.raises(
-        FactoryPanic,
-        match="construct exact floor-division-by-zero exception",
-    ):
-        _reduce_outcome_with_log("1 // 0")
+def test_ground_floor_division_by_zero_constructs_exact_exit():
+    outcome, _operation_log = _reduce_outcome_with_log("1 // 0")
+
+    assert outcome.value.effect.exception_name == "ZeroDivisionError"
+    assert outcome.value.exception.exception_name == "ZeroDivisionError"
 
 
 def test_term_floor_division_constructs_symbolic_divisor_coordinate():

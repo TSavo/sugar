@@ -1,7 +1,6 @@
 """The `%` operator (ModuloOpSugar): reduce left, reduce right, ask left for the
-remainder by right (the modulo floor). Numbers fold; modulo by a concrete zero is
-a runtime effect (Incomplete), not a lift-side panic. String formatting stays
-unowned for free."""
+remainder by right (the modulo floor). Numbers fold; modulo by a concrete zero
+constructs its exact exceptional exit. String formatting stays unowned for free."""
 
 from __future__ import annotations
 
@@ -56,9 +55,11 @@ def test_modulo_folds_collapsed_number() -> None:
     )
 
 
-def test_modulo_by_zero_stays_a_loud_decidable_construction_gap() -> None:
-    with pytest.raises(FactoryPanic, match="owner=modulo"):
-        _term("1 % 0")
+def test_modulo_by_zero_constructs_exact_exceptional_exit() -> None:
+    outcome = _term("1 % 0")
+
+    assert outcome.value.effect.exception_name == "ZeroDivisionError"
+    assert outcome.value.exception.exception_name == "ZeroDivisionError"
 
 
 def test_unowned_string_modulo_operand_panics_for_free() -> None:
