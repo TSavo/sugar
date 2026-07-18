@@ -115,6 +115,17 @@ class CallSiteValue(FloorValue):
             PredicateValue(py_truthy(self.term), site, operand_callsites=(self,))
         )
 
+    def is_identical(self, other, site):
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+
+        if self.target_name == "except" and isinstance(other, NoneValue):
+            return Complete(FalseBoolLiteralSugar(site))
+        return super().is_identical(other, site)
+
     def bitwise_invert(self, site):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 

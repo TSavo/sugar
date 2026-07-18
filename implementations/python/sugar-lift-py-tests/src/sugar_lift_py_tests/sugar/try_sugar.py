@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.ir import Formula
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
@@ -39,7 +40,7 @@ class _ReducedPath:
 
     record: object
     scope: object
-    guard: object | None
+    guard: Formula | None
 
     @property
     def continues(self) -> bool:
@@ -144,6 +145,18 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
             "        return 7\n"
             "\n"
         )
+        success_sentinel_prefix = (
+            "def A(value):\n"
+            "    exc = None\n"
+            "    try:\n"
+            "        result = 1\n"
+            "    except ValueError as err:\n"
+            "        exc = err\n"
+            "    if exc is None:\n"
+            "        result\n"
+            "    return 1\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="try_return",
@@ -157,6 +170,17 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
                 truthful=target_prefix + "def test_b():\n    assert B(5) == 7\n",
                 lying=target_prefix + "def test_b():\n    assert B(5) == 8\n",
                 family="try-else-except-target",
+            ),
+            _call_pair(
+                name="try_success_sentinel_result",
+                owner_sugar="TrySugar",
+                truthful=success_sentinel_prefix
+                + "def test_a():\n"
+                + "    assert A(7) == 1\n",
+                lying=success_sentinel_prefix
+                + "def test_a():\n"
+                + "    assert A(7) == 2\n",
+                family="try-success-sentinel-result",
             ),
         )
 
@@ -466,6 +490,7 @@ def _join_continuing_path_scopes(
 ) -> tuple:
     """Construct scope effects testified on every reduced continuing path."""
     from sugar_lift_py_tests.floor import GuardedValue, ScopeRebind
+    from sugar_lift_py_tests.floor.scope_rebind import GuardedTemporalRebind
     from sugar_lift_py_tests.outcome import Complete, Incomplete
 
     continuing = tuple(path for path in paths if path.continues)
@@ -480,6 +505,7 @@ def _join_continuing_path_scopes(
     common_names = set(per_path[0])
     for bindings in per_path[1:]:
         common_names.intersection_update(bindings)
+    all_names = set().union(*(set(bindings) for bindings in per_path))
 
     entries: list[object] = []
     for name in sorted(common_names):
@@ -526,4 +552,25 @@ def _join_continuing_path_scopes(
         ):
             joined = GuardedValue(path.guard, value, joined)
         entries.append(ScopeRebind(name, joined))
+    for name in sorted(all_names - common_names):
+        if name in before:
+            continue
+        owners = tuple(
+            (path, bindings[name])
+            for path, bindings in zip(continuing, per_path, strict=True)
+            if name in bindings
+        )
+        if len(owners) != 1:
+            continue
+        path, value = owners[0]
+        if path.guard is None:
+            continue
+        outcome = (
+            value.answer(path.scope) if hasattr(value, "answer") else Complete(value)
+        )
+        if isinstance(outcome, Incomplete):
+            entries.append(outcome.guarded(path.guard))
+            continue
+        assert isinstance(outcome, Complete)
+        entries.append(GuardedTemporalRebind(path.guard, name, outcome.value))
     return tuple(entries)

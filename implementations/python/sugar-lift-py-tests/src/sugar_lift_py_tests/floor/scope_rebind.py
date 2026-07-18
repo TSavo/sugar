@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from sugar_lift_py_tests.ir import Formula
+
 from .floor_value import FloorValue
 
 
@@ -84,3 +86,30 @@ class GuardedScopeRebind(FloorValue):
 
     def guarded(self, formula):
         return GuardedScopeRebind((formula, *self.guards), self.name, self.value)
+
+
+@dataclass(frozen=True)
+class GuardedTemporalRebind(FloorValue):
+    """A name constructed on exactly one authenticated continuing path."""
+
+    guard: Formula
+    name: str
+    value: FloorValue
+
+    def contribution(self):  # type: ignore[override]
+        return ()
+
+    def extend_scope(self, ctx):
+        return replace(
+            ctx,
+            temporal=ctx.temporal.bind_guarded(self.guard, self.name, self.value),
+        )
+
+    def guarded(self, formula):  # type: ignore[override]
+        from sugar_lift_py_tests.ir import and_
+
+        return GuardedTemporalRebind(
+            and_([formula, self.guard]),
+            self.name,
+            self.value,
+        )
