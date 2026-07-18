@@ -85,17 +85,20 @@ class ListCompSugar(Sugar, role=SugarRole.TERM):
         return self._coordinate(ctx, iterable)
 
     def _collect_finite(self, remaining, accumulated, ctx):
-        from sugar_lift_py_tests.floor import ListValue, ScopeRebind
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.floor import ListValue, RaiseValue, ScopeRebind
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        if not remaining:
-            return Complete(ListValue(accumulated))
-        item, *rest = remaining
         name = self.clauses[0].bindings[0][0]
-        item_ctx = ScopeRebind(name, item).extend_scope(ctx)
-        return self.elt_body.reduce(item_ctx).and_then(
-            lambda value: self._collect_finite(tuple(rest), (*accumulated, value), ctx)
-        )
+        collected = list(accumulated)
+        for item in remaining:
+            item_ctx = ScopeRebind(name, item).extend_scope(ctx)
+            outcome = self.elt_body.reduce(item_ctx)
+            if isinstance(outcome, Incomplete):
+                return outcome
+            if isinstance(outcome.value, RaiseValue):
+                return outcome
+            collected.append(outcome.value)
+        return Complete(ListValue(tuple(collected)))
 
     def _coordinate(self, ctx, first_iterable=None) -> Outcome:
         from sugar_lift_py_tests.ir import ctor

@@ -25,9 +25,11 @@ from sugar_lift_py_tests.floor import (
     NoneValue,
     StringValue,
     SymbolicValue,
+    TermValue,
 )
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.list_comp_sugar import ListCompSugar
 
 
@@ -104,6 +106,23 @@ def test_finite_list_comprehension_constructs_each_conditional_element() -> None
     )
 
     assert value == ListValue((StringValue("date"), NoneValue()))
+
+
+def test_deep_finite_list_comprehension_collects_without_python_recursion() -> None:
+    """A finite member spine is heap-bounded, not Python-stack-bounded."""
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    result = build_node(
+        ast.parse("[x for x in xs]", mode="eval").body,
+        filename="t.py",
+        role=SugarRole.TERM,
+        ctx=ctx,
+    )
+    assert isinstance(result.sugar, ListCompSugar)
+    elements = tuple(TermValue(index) for index in range(5_000))
+
+    outcome = result.sugar._collect_finite(elements, (), ctx)
+
+    assert outcome == Complete(ListValue(elements))
 
 
 def test_finite_list_comprehension_witness_truthful_sat_lying_unsat(
