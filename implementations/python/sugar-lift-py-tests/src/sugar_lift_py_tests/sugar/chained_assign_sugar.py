@@ -123,14 +123,7 @@ def _target_store(target, value, site, ctx) -> SugarBody:
     if target.observed == "Name":
         store = ChainedNameStore(target.name_id(), value)
     elif target.observed == "Subscript":
-        receiver = target.subscript_receiver()
-        store = SubscriptAssignSugar(
-            receiver=ctx.build_body(receiver, SugarRole.TERM),
-            receiver_coordinate=receiver.dotted_expr_name(),
-            index=ctx.build_body(target.subscript_index(), SugarRole.TERM),
-            value=value,
-            site=site,
-        )
+        store = SubscriptAssignSugar.from_target(target, value, site, ctx)
     else:
         path = _attribute_path(target)
         if path is None:

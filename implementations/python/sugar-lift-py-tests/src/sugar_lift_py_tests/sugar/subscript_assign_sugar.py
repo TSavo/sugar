@@ -40,8 +40,13 @@ class SubscriptAssignSugar(Sugar, role=SugarRole.STATEMENT):
         return len(targets) == 1 and targets[0].observed == "Subscript"
 
     @classmethod
-    def new(cls, site, ctx) -> "SubscriptAssignSugar":
-        target = site.assign_targets()[0]
+    def from_target(cls, target, value: SugarBody, site, ctx) -> "SubscriptAssignSugar":
+        """One door for every subscript-store construction.
+
+        Direct Assign, chained multi-target Assign, and tuple-unpack leaves all
+        build through this constructor so structural nested-path fields stay
+        required and cannot drift back into a bare TypeError.
+        """
         receiver = target.subscript_receiver()
         structural = _structural_target(target, ctx)
         return cls(
@@ -53,8 +58,18 @@ class SubscriptAssignSugar(Sugar, role=SugarRole.STATEMENT):
             ),
             structural_indices=structural[2] if structural is not None else (),
             index=ctx.build_body(target.subscript_index(), SugarRole.TERM),
-            value=ctx.build_body(site.assign_value(), SugarRole.TERM),
+            value=value,
             site=site,
+        )
+
+    @classmethod
+    def new(cls, site, ctx) -> "SubscriptAssignSugar":
+        target = site.assign_targets()[0]
+        return cls.from_target(
+            target,
+            ctx.build_body(site.assign_value(), SugarRole.TERM),
+            site,
+            ctx,
         )
 
     @classmethod
