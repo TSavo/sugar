@@ -1,4 +1,4 @@
-name: Factory zero-tolerance (R>0 red)
+name: Python sole-construction floors (R>0 red)
 
 on:
   pull_request:
@@ -10,21 +10,25 @@ permissions:
   contents: read
 
 jobs:
-  factory-zero-tolerance:
-    name: factory-zero-tolerance
+  python-sole-construction-floors:
+    name: python-sole-construction-floors
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # Law: R_behavior_side_doors > 0 ⇒ CI red.
-      # Do NOT pass --baseline-file. A ratchet that greens at R=42 is not zero-tolerance.
-      - name: Enumerate factory behavior-construction side doors (stable zero)
+      # Permanent floors — baseline-free. R > 0 ⇒ CI red on every axis.
+      # See docs/contributing/python-sole-construction.md
+      - name: R_behavior_side_doors = 0
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/factory_zero_tolerance.py
-      - name: Ownership-law census (unenrolled / broad owns)
+      - name: R_ownership = 0
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/factory_ownership_law.py
+      - name: R_factory_panic_catches_outside_audit = 0
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/factory_panic_catch_law.py
