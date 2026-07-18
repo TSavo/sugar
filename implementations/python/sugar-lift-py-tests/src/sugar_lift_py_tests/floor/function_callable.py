@@ -87,6 +87,14 @@ class FunctionCallable(FloorValue):
 
         return Complete(ScopeRebinds(updates))
 
+    def callable_application_with(self, operation, ctx):
+        del ctx
+        return self.callsite(
+            operation.arguments,
+            operation.keyword_names,
+            operation.site,
+        )
+
     def callsite(
         self,
         arg_values,
