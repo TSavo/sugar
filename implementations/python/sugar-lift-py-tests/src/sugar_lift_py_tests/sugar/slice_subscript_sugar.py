@@ -70,14 +70,20 @@ class SliceSubscriptSugar(Sugar, role=SugarRole.TERM, comes_before=("SubscriptSu
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A(z):\n" "    xs = [10, 20, 30, 40]\n" "    return xs[1:3]\n" "\n"
+        prefix = (
+            "def A(z):\n"
+            "    if z < 0:\n"
+            "        return None[:]\n"
+            "    return z\n"
+            "\n"
+        )
         return _call_pair(
             name="slice_subscript_return",
             owner_sugar="SliceSubscriptSugar",
-            # Coordinate path: discriminate on a surrounding return face
-            # that does not require ground slice fold.
-            truthful=prefix + "def test_a():\n    assert A(5) is not None\n",
-            lying=prefix + "def test_a():\n    assert A(5) is None\n",
+            # The negative path contributes exact TypeError exceptional-exit
+            # testimony; the continuing path carries the solver verdict.
+            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
         )
 
     def desugar(self, ctx: Any = None) -> Outcome:

@@ -19,6 +19,38 @@ class NoneValue(FloorValue):
 
         return Complete(FalseBoolLiteralSugar(site=site))
 
+    def subscript(self, index, site):
+        """Construct Python's exact ground ``None[...]`` exceptional exit."""
+        import hashlib
+        from pathlib import Path
+
+        from sugar_lift_py_tests.effect import RaiseEffect
+        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        del index
+        if Path(site.filename).is_absolute():
+            factory_panic_gap(
+                owner="ground_type_error",
+                blame=site,
+                observed="absolute source locus",
+                requested="workspace-relative source locus",
+                fix="route the source through the workspace-relative lift door",
+            )
+        source_sha256 = (
+            hashlib.sha256(site.source.encode()).hexdigest()
+            if site.source is not None
+            else None
+        )
+        exception = ExceptionValue("TypeError", (), site)
+        return Complete(
+            RaiseValue(
+                RaiseEffect("TypeError", str(site), source_sha256),
+                exception=exception,
+            )
+        )
+
     def less_than(self, other, site):
         # None orders against nothing: any ground comparison is TypeError -- a
         # recognized runtime halt. Symbolic falls to super() emit.
