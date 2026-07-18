@@ -103,6 +103,21 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
             "    return IndexType('int64').name\n"
             "\n"
         )
+        super_source_body_prefix = (
+            "class Type:\n"
+            "    def __init__(self, name):\n"
+            "        self.name = name\n"
+            "\n"
+            "class IndexType(Type):\n"
+            "    def __init__(self, dtype):\n"
+            "        name = f'index({dtype})'\n"
+            "        self.dtype = dtype\n"
+            "        super().__init__(name)\n"
+            "\n"
+            "def F():\n"
+            "    return IndexType('int64').name\n"
+            "\n"
+        )
         asserted_source_body_prefix = (
             "class Checked:\n"
             "    def __init__(self):\n"
@@ -155,6 +170,17 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
                 lying=source_body_prefix
                 + "def test_source_body():\n"
                 + "    assert D() == 'index(float64)'\n",
+                family="source-body-constructor",
+            ),
+            _call_pair(
+                name="source_body_constructor_super_init",
+                owner_sugar=cls.__name__,
+                truthful=super_source_body_prefix
+                + "def test_super_source_body():\n"
+                + "    assert F() == 'index(int64)'\n",
+                lying=super_source_body_prefix
+                + "def test_super_source_body():\n"
+                + "    assert F() == 'index(float64)'\n",
                 family="source-body-constructor",
             ),
             _call_pair(
@@ -338,7 +364,13 @@ def _strategy_from_init(
         return bytesio
     if _source_initializer_needs_statement_door(init, params[0]):
         source_strategy = _source_body_constructor_strategy(
-            site, ctx, target, init, methods, class_fields
+            site,
+            ctx,
+            target,
+            init,
+            methods,
+            class_fields,
+            class_site=class_site,
         )
         if source_strategy is not None:
             return source_strategy
@@ -437,21 +469,33 @@ def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
         if isinstance(node, ast.Assert):
             needs_statement_door = True
             continue
-        if (
-            isinstance(node, ast.Expr)
-            and isinstance(node.value, ast.Call)
-            and not node.value.keywords
-            and isinstance(node.value.func, ast.Attribute)
-            and node.value.func.attr == "__init__"
-            and isinstance(node.value.func.value, ast.Call)
-            and isinstance(node.value.func.value.func, ast.Name)
-            and node.value.func.value.func.id == "super"
-            and not node.value.func.value.args
-            and not node.value.func.value.keywords
-        ):
+        if _is_exact_super_init_node(node):
+            # super().__init__(...) carries base self-state that the field-only
+            # path cannot recover. Force the ordinary-statement door.
+            needs_statement_door = True
             continue
         return False
     return needs_statement_door
+
+
+def _is_exact_super_init_node(node) -> bool:
+    """Exact zero-arg ``super().__init__(...)`` expression statement shape."""
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and not node.value.keywords
+        and isinstance(node.value.func, ast.Attribute)
+        and node.value.func.attr == "__init__"
+        and isinstance(node.value.func.value, ast.Call)
+        and isinstance(node.value.func.value.func, ast.Name)
+        and node.value.func.value.func.id == "super"
+        and not node.value.func.value.args
+        and not node.value.func.value.keywords
+    )
+
+
+def _is_exact_super_init_fragment(statement) -> bool:
+    return _is_exact_super_init_node(statement.node)
 
 
 def _source_bytesio_strategy(
@@ -941,7 +985,13 @@ def _constructor_from_mro_entry(site, ctx, target: str, class_site, methods, ent
             and not strategy.arity_error
         ):
             source_strategy = _source_body_constructor_strategy(
-                site, ctx, target, init, methods, class_fields
+                site,
+                ctx,
+                target,
+                init,
+                methods,
+                class_fields,
+                class_site=class_site,
             )
             if source_strategy is not None:
                 return source_strategy
@@ -950,9 +1000,15 @@ def _constructor_from_mro_entry(site, ctx, target: str, class_site, methods, ent
 
 
 def _source_body_constructor_strategy(
-    site, ctx, target: str, init, methods, class_fields
+    site, ctx, target: str, init, methods, class_fields, *, class_site=None
 ):
-    """Construct an imported initializer through the ordinary statement door."""
+    """Construct an initializer through the ordinary statement door.
+
+    Exact ``super().__init__(...)`` statements are expanded into the static
+    base ``__init__`` body so constructed self state includes base fields
+    (e.g. ``Type.__init__`` binding ``self.name``). Unresolvable super remains
+    unconstructed — no empty-success SupportValue arm.
+    """
     if class_fields or not init.function_has_simple_positional_params():
         return None
     params = tuple(init.function_params())
@@ -968,6 +1024,16 @@ def _source_body_constructor_strategy(
     from sugar_lift_py_tests.sugar.install_source_dig import build_dig_body
 
     body = build_dig_body(init, ctx)
+    if body is None:
+        return None
+    body = _rewrite_super_inits_in_constructor_body(
+        body,
+        init=init,
+        class_site=class_site,
+        target=target,
+        ctx=ctx,
+        self_name=params[0],
+    )
     if body is None:
         return None
     arguments = [ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()]
@@ -987,6 +1053,281 @@ def _source_body_constructor_strategy(
         has_assertion=any(
             statement.observed == "Assert" for statement in init.function_body()
         ),
+    )
+
+
+@dataclass(frozen=True)
+class SuperInitApply:
+    """Apply a dug base ``__init__`` body at an exact ``super().__init__(...)``.
+
+    Not a catalog sugar: ConstructorCallSugar synthesizes it when the static
+    MRO resolves a source base initializer. ``desugar`` recovers the base
+    ``self.*`` rebinds as ``ScopeRebinds`` so the constructor scope keeps the
+    exact object state.
+    """
+
+    base_body: object
+    base_parameters: tuple[str, ...]
+    arguments: tuple
+    self_name: str
+    site: object
+
+    def desugar(self, ctx=None) -> Outcome:
+        from sugar_lift_py_tests.floor.call_site_value import _ctx_with_curried_args
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+        from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_value
+        from sugar_lift_py_tests.sugar.install_source_dig import ContextualizedDigBody
+
+        if ctx is None:
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed="super().__init__",
+                requested="constructor self scope for base initializer",
+                fix="apply super().__init__ only inside a constructor scope",
+            )
+        self_value = ctx.temporal.value_if_bound(self.self_name)
+        if self_value is None:
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed=f"unbound {self.self_name}",
+                requested="constructor self for super().__init__",
+                fix=f"bind `{self.self_name}` before expanding super().__init__",
+            )
+        values = []
+        for argument in self.arguments:
+            outcome = argument.reduce(ctx)
+            if isinstance(outcome, Incomplete):
+                return outcome
+            values.append(complete_value(outcome, owner="super().__init__ argument"))
+        if len(self.base_parameters) != 1 + len(values):
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed=(
+                    f"super().__init__ arity {len(values)} for base params "
+                    f"{self.base_parameters}"
+                ),
+                requested="matching super().__init__ argument count",
+                fix="construct the exact base __init__ arity or leave super loud",
+            )
+        contextualized = self.base_body.sugar
+        if not isinstance(contextualized, ContextualizedDigBody):
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed=type(contextualized).__name__,
+                requested="dug base __init__ body",
+                fix="dig the static base __init__ before expanding super()",
+            )
+        curried = _ctx_with_curried_args(
+            ctx, self.base_parameters, (self_value, *values)
+        )
+        final_ctx, assertions, terminal = contextualized.initializer_scope_after(
+            curried
+        )
+        if terminal is not None:
+            return Complete(terminal)
+        if assertions:
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed="base __init__ assertion",
+                requested="assertion-free super().__init__ expansion",
+                fix=(
+                    "construct super() base initializers that assert through the "
+                    "constructor assertion face, or leave this super loud"
+                ),
+            )
+        base_self = self.base_parameters[0]
+        field_prefix = f"{base_self}."
+        bindings = tuple(
+            (
+                f"{self.self_name}.{binding.name.removeprefix(field_prefix)}",
+                binding.value,
+            )
+            for binding in final_ctx.temporal.bindings
+            if binding.name.startswith(field_prefix)
+        )
+        return Complete(ScopeRebinds(bindings))
+
+
+def _resolve_super_init_for_class(class_site, target: str, ctx):
+    """First defining ``__init__`` after ``target`` on the static MRO, or a tag.
+
+    Returns:
+      - a FunctionDef SourceFragment for a source base ``__init__``
+      - ``"object"`` when only ``object.__init__`` remains (empty apply)
+      - ``None`` when super cannot be resolved statically
+    """
+    if class_site is None:
+        return None
+    mro = _static_constructor_mro(target, class_site, ctx)
+    if mro is None:
+        # Single local base still admits super when C3 is unavailable for other
+        # reasons only if the sole base is a local ClassDef with diggable init.
+        bases = class_site.class_bases()
+        if len(bases) != 1:
+            return None
+        base = bases[0]
+        if base.observed != "Name":
+            return None
+        resolved = (ctx.name_resolver or {}).get(base.name_id())
+        if resolved is None:
+            from sugar_lift_py_tests.floor import ImportAliasValue
+
+            bound = ctx.temporal.value_if_bound(base.name_id())
+            if isinstance(bound, ImportAliasValue) and bound.import_target is not None:
+                from sugar_lift_py_tests.sugar.install_source_dig import (
+                    resolve_install_source_class_method,
+                )
+
+                init = resolve_install_source_class_method(
+                    bound.import_target, "__init__"
+                )
+                return init if init is not None else None
+            return None
+        resolved_site = SourceFragment.from_node(resolved, ctx.filename)
+        if resolved_site.observed != "ClassDef":
+            return None
+        init = next(
+            (
+                statement
+                for statement in resolved_site.class_body()
+                if statement.observed == "FunctionDef"
+                and statement.function_name() == "__init__"
+            ),
+            None,
+        )
+        return init if init is not None else "object"
+
+    for entry in mro[1:]:
+        if entry[0] == "local":
+            _kind, _name, entry_site = entry
+            init = next(
+                (
+                    statement
+                    for statement in entry_site.class_body()
+                    if statement.observed == "FunctionDef"
+                    and statement.function_name() == "__init__"
+                ),
+                None,
+            )
+            if init is not None:
+                return init
+            continue
+        if entry[0] == "import":
+            _kind, import_target = entry
+            if import_target in {"builtins.object", "object"}:
+                return "object"
+            from sugar_lift_py_tests.sugar.install_source_dig import (
+                resolve_install_source_class_method,
+            )
+
+            init = resolve_install_source_class_method(import_target, "__init__")
+            if init is not None:
+                return init
+            continue
+    return "object"
+
+
+def _rewrite_super_inits_in_constructor_body(
+    body, *, init, class_site, target: str, ctx, self_name: str
+):
+    """Replace exact super().__init__ dig statements with SuperInitApply.
+
+    Returns the rewritten contextualized body, or None when a super call is
+    present but cannot be constructed (keeps the constructor loud).
+    """
+    from dataclasses import replace as dc_replace
+
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        ContextualizedDigBody,
+        SequentialDigBody,
+        build_dig_body,
+    )
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    contextualized = getattr(body, "sugar", None)
+    if not isinstance(contextualized, ContextualizedDigBody):
+        return body
+    sequential = getattr(contextualized.body, "sugar", None)
+    if not isinstance(sequential, SequentialDigBody):
+        return body
+    frags = tuple(init.function_body())
+    dig_statements = sequential.statements
+    if len(frags) != len(dig_statements):
+        return body
+
+    if not any(_is_exact_super_init_fragment(fragment) for fragment in frags):
+        return body
+
+    base_init = _resolve_super_init_for_class(class_site, target, ctx)
+    if base_init is None:
+        return None
+
+    base_body = None
+    base_parameters: tuple[str, ...] = ()
+    if base_init != "object":
+        if not base_init.function_has_simple_positional_params():
+            return None
+        base_parameters = tuple(base_init.function_params())
+        if not base_parameters:
+            return None
+        base_body = build_dig_body(base_init, ctx)
+        if base_body is None:
+            return None
+
+    rewritten = []
+    for fragment, dig_statement in zip(frags, dig_statements, strict=True):
+        if not _is_exact_super_init_fragment(fragment):
+            rewritten.append(dig_statement)
+            continue
+        call = fragment.expr_value()
+        super_args = tuple(
+            ctx.build_body(argument, SugarRole.TERM) for argument in call.call_args()
+        )
+        if base_init == "object":
+            if super_args:
+                return None
+            # object.__init__ is a no-op; drop the statement rather than minting
+            # SupportValue success over missing base state.
+            continue
+        if len(base_parameters) != 1 + len(super_args):
+            return None
+        rewritten.append(
+            SugarBody(
+                sugar=SuperInitApply(
+                    base_body=base_body,
+                    base_parameters=base_parameters,
+                    arguments=super_args,
+                    self_name=self_name,
+                    site=fragment,
+                ),
+                role=SugarRole.STATEMENT,
+            )
+        )
+    new_sequential = SequentialDigBody(
+        statements=tuple(rewritten),
+        fn_site=sequential.fn_site,
+        contextmanager_yield=sequential.contextmanager_yield,
+    )
+    new_core = SugarBody(sugar=new_sequential, role=contextualized.body.role)
+    return SugarBody(
+        sugar=dc_replace(contextualized, body=new_core),
+        role=body.role,
+        audit_row=body.audit_row,
     )
 
 
