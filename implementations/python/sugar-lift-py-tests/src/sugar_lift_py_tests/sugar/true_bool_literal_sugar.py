@@ -27,7 +27,7 @@ class TrueBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
 
     @classmethod
     def owns(cls, site) -> bool:
-        return site.observed == "PrimitiveLiteral" and site.literal_value() is True
+        return site.observed == "Constant" and site.literal_value() is True
 
     @classmethod
     def new(cls, site, ctx) -> "TrueBoolLiteralSugar":

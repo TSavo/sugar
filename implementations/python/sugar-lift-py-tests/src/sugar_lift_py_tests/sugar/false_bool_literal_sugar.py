@@ -28,7 +28,7 @@ class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
 
     @classmethod
     def owns(cls, site) -> bool:
-        return site.observed == "PrimitiveLiteral" and site.literal_value() is False
+        return site.observed == "Constant" and site.literal_value() is False
 
     @classmethod
     def new(cls, site, ctx) -> "FalseBoolLiteralSugar":

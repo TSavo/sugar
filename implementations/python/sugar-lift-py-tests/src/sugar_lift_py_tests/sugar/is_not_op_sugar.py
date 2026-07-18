@@ -36,14 +36,14 @@ class IsNotOpSugar(Sugar, role=SugarRole.TERM):
         non_none_operand = None
         if (
             left.observed == "Name"
-            and right.observed == "PrimitiveLiteral"
+            and right.observed == "Constant"
             and right.literal_value() is None
         ):
             non_none_binding = left.name_id()
             non_none_operand = "left"
         elif (
             right.observed == "Name"
-            and left.observed == "PrimitiveLiteral"
+            and left.observed == "Constant"
             and left.literal_value() is None
         ):
             non_none_binding = right.name_id()

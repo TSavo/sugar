@@ -33,7 +33,7 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
     @classmethod
     def new(cls, site, ctx):
         receiver, name = site.call_args()
-        literal = name.literal_value() if name.observed == "PrimitiveLiteral" else None
+        literal = name.literal_value() if name.observed == "Constant" else None
         return cls(
             ctx.build_body(receiver, SugarRole.TERM),
             literal if isinstance(literal, str) else None,

@@ -27,11 +27,16 @@ def test_factory_builds_true_and_false_literals() -> None:
 
 
 class _Branch:
+    sugar = None
+
     def __init__(self, tag: str) -> None:
         self.tag = tag
+        self.sugar = self
 
-    def reduce(self, ctx: object = None) -> str:
-        return self.tag
+    def reduce_with_scope(self, ctx):
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(BlockValue((StringValue(self.tag),))), ctx
 
 
 def test_bool_floor_dispatches_through_the_literal() -> None:
@@ -42,8 +47,12 @@ def test_bool_floor_dispatches_through_the_literal() -> None:
     false_lit = _build("False", ctx)
 
     # the literal IS the dispatcher: no fork at the call site.
-    assert true_lit.desugar(ctx).binary_conditional(then, else_, ctx) == "then"
-    assert false_lit.desugar(ctx).binary_conditional(then, else_, ctx) == "else"
+    assert true_lit.desugar(ctx).binary_conditional(
+        then, else_, ctx
+    ).value == BlockValue((StringValue("then"),))
+    assert false_lit.desugar(ctx).binary_conditional(
+        then, else_, ctx
+    ).value == BlockValue((StringValue("else"),))
 
 
 class _ScopedBranch:

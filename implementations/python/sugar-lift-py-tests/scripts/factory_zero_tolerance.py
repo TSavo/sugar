@@ -183,7 +183,9 @@ def _factory_function_drives_semantics(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
     path: str,
 ) -> bool:
-    return path == "factory/source_fragment.py" and node.name.startswith("classify_")
+    return (
+        path == "factory/source_fragment.py" and node.name.startswith("classify_")
+    ) or (path == "factory/node_kind.py" and node.name == "of")
 
 
 def _function_constructs_behavior(

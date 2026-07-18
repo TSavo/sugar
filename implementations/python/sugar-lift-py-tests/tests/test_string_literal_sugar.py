@@ -1,4 +1,4 @@
-"""A string literal (`"abc"`) is a PrimitiveLiteral. Int/float own numbers; this
+"""A string literal (`"abc"`) is a Constant. Int/float own numbers; this
 sugar owns `type(...) is str` and reduces to StringValue -- the string as a term."""
 
 from __future__ import annotations

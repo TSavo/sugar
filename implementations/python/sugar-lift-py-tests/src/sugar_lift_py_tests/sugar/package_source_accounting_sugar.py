@@ -262,9 +262,7 @@ def _structural_status(fragment: SourceFragment) -> tuple[str, str]:
         )
     if fragment.observed == "Expr":
         value = fragment.expr_value()
-        if value.observed == "PrimitiveLiteral" and isinstance(
-            value.literal_value(), str
-        ):
+        if value.observed == "Constant" and isinstance(value.literal_value(), str):
             return "inactive", "docstring metadata is inactive at runtime"
     return "unclassified", "not classified by any emitted Python source warrant"
 
