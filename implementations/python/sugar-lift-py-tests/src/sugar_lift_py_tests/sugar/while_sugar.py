@@ -31,13 +31,10 @@ def _carried_names(site) -> tuple[str, ...]:
 
 
 def _while_carried_names(site) -> tuple[str, ...]:
-    # Import lazily because ForSugar shares the loop-control helpers from this
-    # module.  A while's test is evaluated at every iteration boundary, so a
-    # stored local read there is prior-state even when the body assigns it
-    # before any body-local read.
-    from sugar_lift_py_tests.sugar.for_sugar import _loop_carried_names
-
-    return _loop_carried_names(site, entry_reads=(site.node.test,))
+    # A while's test is evaluated at every iteration boundary, so a stored
+    # local read there is prior-state even when the body assigns it before any
+    # body-local read.
+    return site.loop_carried_names(entry_reads=(site.while_test(),))
 
 
 def _has_loop_control(site) -> bool:

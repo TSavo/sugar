@@ -1853,6 +1853,218 @@ class SourceFragment:
         self._require(ast.While)
         return len(self.node.orelse)  # type: ignore[attr-defined]
 
+    def own_scope_stored_names(self) -> "tuple[str, ...]":
+        """Names stored by this fragment without crossing a lexical owner.
+
+        SourceFragment is the factory's grammar boundary. Consumers ask it for
+        scope testimony instead of growing private AST visitors beside a sugar.
+        """
+        from .block import Block
+
+        names: list[str] = []
+
+        class OwnScopeStores(ast.NodeVisitor):
+            def visit_Name(self, node: ast.Name) -> None:
+                if isinstance(node.ctx, ast.Store) and node.id not in names:
+                    names.append(node.id)
+
+            def stop_at_nested_owner(self, node: ast.AST) -> None:
+                del node
+
+            visit_Lambda = stop_at_nested_owner
+            visit_FunctionDef = stop_at_nested_owner
+            visit_AsyncFunctionDef = stop_at_nested_owner
+            visit_ClassDef = stop_at_nested_owner
+            visit_ListComp = stop_at_nested_owner
+            visit_SetComp = stop_at_nested_owner
+            visit_DictComp = stop_at_nested_owner
+            visit_GeneratorExp = stop_at_nested_owner
+
+        roots = self.node.body if isinstance(self.node, Block) else (self.node,)
+        visitor = OwnScopeStores()
+        for root in roots:
+            visitor.visit(root)
+        return tuple(names)
+
+    def loop_carried_names(
+        self,
+        *,
+        target_name: str | None = None,
+        entry_reads: "tuple[SourceFragment, ...]" = (),
+    ) -> "tuple[str, ...]":
+        """Stored locals whose prior value can be read in one loop iteration.
+
+        This is factory-owned control-flow recognition. A store alone is not a
+        carried input; nested lexical owners do not contribute candidates.
+        """
+        self._require(ast.For, ast.While)
+        if target_name is None and isinstance(self.node, ast.For):
+            target_name = self.for_target_name()
+        candidates_list: list[str] = []
+
+        class CandidateStores(ast.NodeVisitor):
+            def add(self, name: str) -> None:
+                if name != target_name and name not in candidates_list:
+                    candidates_list.append(name)
+
+            def visit_Name(self, node: ast.Name) -> None:
+                if isinstance(node.ctx, ast.Store):
+                    self.add(node.id)
+
+            def visit_Subscript(self, node: ast.Subscript) -> None:
+                if isinstance(node.ctx, ast.Store) and isinstance(node.value, ast.Name):
+                    self.add(node.value.id)
+                self.generic_visit(node)
+
+            def stop_at_nested_owner(self, node: ast.AST) -> None:
+                del node
+
+            visit_Lambda = stop_at_nested_owner
+            visit_FunctionDef = stop_at_nested_owner
+            visit_AsyncFunctionDef = stop_at_nested_owner
+            visit_ClassDef = stop_at_nested_owner
+            visit_ListComp = stop_at_nested_owner
+            visit_SetComp = stop_at_nested_owner
+            visit_DictComp = stop_at_nested_owner
+            visit_GeneratorExp = stop_at_nested_owner
+
+        for statement in self.node.body:  # type: ignore[attr-defined]
+            CandidateStores().visit(statement)
+        candidates = tuple(candidates_list)
+        candidate_set = set(candidates)
+        carried: set[str] = set()
+
+        def note_loads(node: ast.AST | None, assigned: set[str]) -> None:
+            if node is None:
+                return
+            for child in ast.walk(node):
+                if (
+                    isinstance(child, ast.Name)
+                    and isinstance(child.ctx, ast.Load)
+                    and child.id in candidate_set
+                    and child.id not in assigned
+                ):
+                    carried.add(child.id)
+
+        def stored_names(node: ast.AST) -> set[str]:
+            return {
+                child.id
+                for child in ast.walk(node)
+                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+            }
+
+        def scan_block(statements, assigned: set[str]) -> set[str] | None:
+            current = set(assigned)
+            for statement in statements:
+                result = scan_statement(statement, current)
+                if result is None:
+                    return None
+                current = result
+            return current
+
+        def merge_fallthrough(*arms: set[str] | None) -> set[str] | None:
+            live = [arm for arm in arms if arm is not None]
+            if not live:
+                return None
+            merged = set(live[0])
+            for arm in live[1:]:
+                merged.intersection_update(arm)
+            return merged
+
+        def scan_statement(statement: ast.stmt, assigned: set[str]):
+            current = set(assigned)
+            if isinstance(statement, ast.Assign):
+                note_loads(statement.value, current)
+                for target in statement.targets:
+                    if not isinstance(target, (ast.Name, ast.Tuple, ast.List)):
+                        note_loads(target, current)
+                    current.update(stored_names(target))
+                return current
+            if isinstance(statement, ast.AnnAssign):
+                note_loads(statement.annotation, current)
+                note_loads(statement.value, current)
+                if not isinstance(statement.target, (ast.Name, ast.Tuple, ast.List)):
+                    note_loads(statement.target, current)
+                current.update(stored_names(statement.target))
+                return current
+            if isinstance(statement, ast.AugAssign):
+                note_loads(statement.target, current)
+                if (
+                    isinstance(statement.target, ast.Name)
+                    and statement.target.id in candidate_set
+                    and statement.target.id not in current
+                ):
+                    carried.add(statement.target.id)
+                note_loads(statement.value, current)
+                current.update(stored_names(statement.target))
+                return current
+            if isinstance(statement, ast.If):
+                note_loads(statement.test, current)
+                return merge_fallthrough(
+                    scan_block(statement.body, current),
+                    scan_block(statement.orelse, current),
+                )
+            if isinstance(statement, (ast.For, ast.AsyncFor)):
+                note_loads(statement.iter, current)
+                nested = set(current)
+                nested.update(stored_names(statement.target))
+                scan_block(statement.body, nested)
+                scan_block(statement.orelse, current)
+                return current
+            if isinstance(statement, ast.While):
+                note_loads(statement.test, current)
+                scan_block(statement.body, current)
+                scan_block(statement.orelse, current)
+                return current
+            if isinstance(statement, ast.Try):
+                body = scan_block(statement.body, current)
+                normal = (
+                    scan_block(statement.orelse, body) if body is not None else None
+                )
+                handlers = [
+                    scan_block(handler.body, current) for handler in statement.handlers
+                ]
+                merged = merge_fallthrough(normal, *handlers)
+                if statement.finalbody:
+                    return (
+                        scan_block(statement.finalbody, merged)
+                        if merged is not None
+                        else None
+                    )
+                return merged
+            if isinstance(statement, (ast.With, ast.AsyncWith)):
+                for item in statement.items:
+                    note_loads(item.context_expr, current)
+                    if item.optional_vars is not None:
+                        current.update(stored_names(item.optional_vars))
+                return scan_block(statement.body, current)
+            if isinstance(statement, ast.Match):
+                note_loads(statement.subject, current)
+                arms = []
+                for case in statement.cases:
+                    arm = set(current)
+                    arm.update(stored_names(case.pattern))
+                    note_loads(case.guard, arm)
+                    arms.append(scan_block(case.body, arm))
+                return merge_fallthrough(current, *arms)
+            if isinstance(statement, (ast.Break, ast.Continue, ast.Return, ast.Raise)):
+                note_loads(getattr(statement, "value", None), current)
+                note_loads(getattr(statement, "exc", None), current)
+                note_loads(getattr(statement, "cause", None), current)
+                return None
+
+            note_loads(statement, current)
+            current.update(stored_names(statement))
+            return current
+
+        for entry_read in entry_reads:
+            note_loads(entry_read.node, set())
+        scan_block(
+            self.node.body,  # type: ignore[attr-defined]
+            {target_name} if target_name is not None else set(),
+        )
+        return tuple(name for name in candidates if name in carried)
+
     def unparse(self) -> str:
         """Return a canonical source-text representation of this node (via ast.unparse).
 

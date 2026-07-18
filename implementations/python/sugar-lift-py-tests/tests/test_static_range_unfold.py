@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ast
+import inspect
 from pathlib import Path
 
+import sugar_lift_py_tests.sugar.for_sugar as for_sugar_module
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import build_node
 from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkStatus
@@ -11,6 +13,14 @@ from sugar_lift_py_tests.idd.sugar_witness_instruments import (
     DEFAULT_SUGAR_WITNESS_SEEDS,
 )
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+
+
+def test_for_sugar_has_no_inline_ast_shape_classifiers() -> None:
+    source = inspect.getsource(for_sugar_module)
+
+    assert "ast." not in source
+    assert "_static_iterable_elements" not in source
+    assert "OwnScopeStores" not in source
 
 
 def test_static_range_unfolds_mid_loop_first_binding_across_iterations() -> None:
@@ -30,15 +40,15 @@ def test_static_range_unfolds_mid_loop_first_binding_across_iterations() -> None
 def test_symbolic_range_keeps_deferred_curry() -> None:
     node = ast.parse("for i in range(stop):\n    if i:\n        break\n").body[0]
     sugar = build_node(node, filename="symbolic.py", role=SugarRole.STATEMENT).sugar
-    assert sugar.static_elements is None
+    assert type(sugar.iterable.sugar).__name__ == "CallSugar"
     assert sugar.curried is True
 
 
-def test_verified_large_static_range_constructs_concrete_elements() -> None:
+def test_verified_large_static_range_uses_call_sugar_recognizer() -> None:
     node = ast.parse("for i in range(1000):\n    pass\n").body[0]
     sugar = build_node(node, filename="large.py", role=SugarRole.STATEMENT).sugar
 
-    assert len(sugar.static_elements) == 1000
+    assert type(sugar.iterable.sugar).__name__ == "CallSugar"
 
 
 def test_large_static_range_unfold_is_stack_safe() -> None:
@@ -72,10 +82,10 @@ def test_large_static_range_projects_the_callable_loop_floor() -> None:
     assert "call:loop:large.py:3:4" in str(payload.ir[0].post)
 
 
-def test_literal_tuple_is_structurally_static() -> None:
+def test_literal_tuple_uses_tuple_literal_recognizer() -> None:
     node = ast.parse("for i in (1, 2, 3):\n    pass\n").body[0]
     sugar = build_node(node, filename="tuple.py", role=SugarRole.STATEMENT).sugar
-    assert len(sugar.static_elements) == 3
+    assert type(sugar.iterable.sugar).__name__ == "TupleLiteralSugar"
 
 
 def test_large_static_unfold_witness_refutes_wrong_twin(tmp_path: Path) -> None:

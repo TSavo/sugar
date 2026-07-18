@@ -11,7 +11,13 @@ import pytest
 
 from factory_reduce import compose_block, reduce_value
 
-from sugar_lift_py_tests.floor import CallSiteValue, InvValue, SymbolicValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    InvValue,
+    ListValue,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import ctor, make_var, num, py_eq, str_const
 
 
@@ -19,6 +25,12 @@ def test_call_reduces_to_its_coordinate() -> None:
     value = reduce_value("f(3)")
     assert isinstance(value, CallSiteValue)
     assert value.term == ctor("call:f", [num(3)])
+
+
+def test_range_call_constructs_finite_elements_at_call_sugar_owner() -> None:
+    value = reduce_value("range(1, 6, 2)")
+
+    assert value == ListValue((TermValue(1), TermValue(3), TermValue(5)))
 
 
 def test_symbolic_argument_rides_into_the_coordinate() -> None:
