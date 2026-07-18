@@ -123,6 +123,28 @@ def _structural_target(node):
     ] == ["semantic-ast-classification"]
 
 
+def test_node_kind_semantic_literal_classifier_is_loud() -> None:
+    source = """
+import ast
+
+class NodeKind:
+    @classmethod
+    def of(cls, node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, str)):
+            return cls.PRIMITIVE_LITERAL
+        return cls(type(node).__name__)
+"""
+
+    assert [
+        row.kind
+        for row in scan_source(
+            source,
+            "factory/node_kind.py",
+            scope="factory",
+        )
+    ] == ["semantic-ast-classification"]
+
+
 def test_install_source_dig_resolution_ast_is_not_construction() -> None:
     source = """
 import ast

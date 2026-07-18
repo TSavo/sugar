@@ -1,4 +1,4 @@
-"""A float literal (`3.5`) is a PrimitiveLiteral on the collapsed Number floor.
+"""A float literal (`3.5`) is a Constant reduced to the Number floor.
 IntLiteralSugar owns only `type(...) is int`; this sugar owns `type(...) is float`.
 Two literal syntaxes, one number -- and ordering/equals ride for free."""
 

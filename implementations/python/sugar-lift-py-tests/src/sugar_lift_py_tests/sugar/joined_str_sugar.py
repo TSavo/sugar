@@ -50,7 +50,7 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
         # Factory-build each FormattedValue inner expr; literal text is data.
         parts: list[_JoinedPart] = []
         for part in site.joined_str_values():
-            if part.observed in {"PrimitiveLiteral", "Constant"}:
+            if part.observed == "Constant":
                 value = part.literal_value()
                 if type(value) is str:
                     parts.append(_LiteralPart(value))

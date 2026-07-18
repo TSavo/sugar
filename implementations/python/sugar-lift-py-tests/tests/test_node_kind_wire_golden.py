@@ -1,11 +1,8 @@
-"""Golden byte-identity: the NodeKind flip must not move a single wire byte.
+"""Golden wire projection for structural NodeKind observations.
 
-`observed` now returns NodeKind (StrEnum) instead of a bare str. The string
-projection ("Name", "PrimitiveLiteral", ...) IS the wire format across
-factory_gap_info, build.py, and lift_rpc DTOs. These hashes were generated
-under the pre-flip baseline (origin/main d203da11f) and MUST match post-flip;
-the flip was verified both ways (baseline and NodeKind builds produce the
-same digests).
+The string projection ("Name", "Constant", ...) is the wire format across
+factory_gap_info, build.py, and lift_rpc DTOs. Semantic literal ownership is
+carried by the selected Sugar, not by a fabricated factory node kind.
 """
 
 from __future__ import annotations
@@ -35,8 +32,8 @@ def broken(xs):
     return None
 """
 
-_PAYLOAD_SHA256 = "d3d2e1553f4b02c86ae5581443d1e1e190bb7bcd2125685820fe466cd4fff9af"
-_RECOVERED_SHA256 = "ff6d1f9b937a6ca428e1a03788980ad0904e1d32cfa90b82c91ac1c77f761463"
+_PAYLOAD_SHA256 = "84779f488c3b5e9649f61352853bbf66c343bd0dd76d5e2599b533be90a125f4"
+_RECOVERED_SHA256 = "fbb0b7662e8045d0f0804f60bd4f094f56c1951626bb0c2913ff52c71a39240c"
 
 
 def test_lift_report_payload_bytes_unchanged_by_nodekind_flip() -> None:

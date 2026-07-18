@@ -38,7 +38,7 @@ def test_statement_breaks_into_its_terms():
 def test_term_breaks_into_its_subterms():
     # `x + 1` -> Name(x), the literal 1 (the operator is not a term)
     binop = _module("z = x + 1\n").fragments()[0].statements()[0].terms()[1]
-    assert [t.observed for t in binop.terms()] == ["Name", "PrimitiveLiteral"]
+    assert [t.observed for t in binop.terms()] == ["Name", "Constant"]
 
 
 def test_if_breaks_into_its_test_term_and_branch_blocks():

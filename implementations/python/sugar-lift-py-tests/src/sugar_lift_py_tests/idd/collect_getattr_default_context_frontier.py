@@ -106,7 +106,7 @@ def _is_getattr_default(fragment: SourceFragment) -> bool:
 
 
 def _field_name(fragment: SourceFragment, source: str) -> str:
-    if fragment.observed == "PrimitiveLiteral":
+    if fragment.observed == "Constant":
         value = fragment.literal_value()
         if isinstance(value, str):
             return value

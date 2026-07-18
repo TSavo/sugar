@@ -24,7 +24,7 @@ def field_keyword_predicate(
         if kw_frag.keyword_arg_name() != "ge":
             continue
         val_frag = kw_frag.keyword_value()
-        if val_frag.observed != "PrimitiveLiteral":
+        if val_frag.observed != "Constant":
             continue
         val = val_frag.literal_value()
         if not isinstance(val, int):

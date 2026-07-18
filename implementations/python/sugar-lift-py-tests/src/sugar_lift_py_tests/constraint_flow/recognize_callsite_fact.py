@@ -33,7 +33,7 @@ def recognize_callsite_fact(
         left_frag.observed == "Attribute"
         and left_frag.attr_receiver().observed == "Call"
         and left_frag.attr_receiver().call_func().observed == "Name"
-        and right_frag.observed == "PrimitiveLiteral"
+        and right_frag.observed == "Constant"
         and isinstance(right_frag.literal_value(), int)
     ):
         return None

@@ -74,7 +74,7 @@ class AbsCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",)):
 
 
 def _numeric_operand_shape(arg) -> bool:
-    if arg.observed == "PrimitiveLiteral":
+    if arg.observed == "Constant":
         return type(arg.literal_value()) in {int, float}
     return arg.observed in {
         "Name",

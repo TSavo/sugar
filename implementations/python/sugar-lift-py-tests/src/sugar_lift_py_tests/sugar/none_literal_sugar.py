@@ -18,7 +18,7 @@ class NoneLiteralSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def owns(cls, site) -> bool:
-        return site.observed == "PrimitiveLiteral" and site.literal_value() is None
+        return site.observed == "Constant" and site.literal_value() is None
 
     @classmethod
     def new(cls, site, ctx) -> "NoneLiteralSugar":

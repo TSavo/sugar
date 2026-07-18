@@ -65,7 +65,7 @@ class MatchValuePatternSugar(Sugar, role=SugarRole.PATTERN):
     def new(cls, site, ctx) -> "MatchValuePatternSugar":
         del ctx
         value = site.match_value()
-        if value.observed in {"PrimitiveLiteral", "Constant"}:
+        if value.observed == "Constant":
             return cls(expected=value.literal_value(), supported=True, site=site)
         return cls(expected=None, supported=False, site=site)
 

@@ -1,20 +1,16 @@
 """NodeKind / OperatorKind -- the typed observation vocabulary.
 
-`SourceFragment.observed` historically returned `type(node).__name__` as a bare
-string, breeding ~339 stringly comparisons across src/. These StrEnums are the
-cure: each member's value IS the historical wire string, so `NodeKind.NAME ==
-"Name"` stays True, membership in mixed sets works, and json.dumps serializes
-the exact bytes the wire already speaks. `NodeKind.of(node)` is the ONE door
-from an ast node to its kind; an unobservable node panics loudly (ladder rung:
-panic > auditor) naming the missing member.
+`SourceFragment.observed` returns the structural AST class as a typed StrEnum.
+Semantic distinctions inside a structural class belong to registered Sugars,
+not this factory vocabulary.
 
 The ast-derived members are generated mechanically from `ast.__dict__` so new
 Python versions extend the vocabulary without edits. Two members are NOT ast
 class names and are first-class citizens of the observation vocabulary:
 
-- ``PRIMITIVE_LITERAL`` ("PrimitiveLiteral"): the collapsed `ast.Constant`
-  holding a primitive value (int|float|str|bool|None). Non-primitive constants
-  (bytes, Ellipsis, complex) remain ``CONSTANT``.
+- ``PRIMITIVE_LITERAL`` ("PrimitiveLiteral"): retained as a legacy wire member;
+  new observations report structural ``CONSTANT`` and literal Sugars own the
+  value classification.
 - ``BLOCK`` ("Block"): the synthetic suite node (factory/block.py), previously
   an accident of `type(node).__name__`, now an explicit member.
 """
@@ -73,16 +69,9 @@ class NodeKind(StrEnum):
     def of(cls, node: object) -> "NodeKind":
         """The one door from a node to its observed kind.
 
-        Collapses primitive `ast.Constant` to PRIMITIVE_LITERAL (float IS a
-        primitive literal: Int embeds in Real losslessly); everything else maps
-        by class name. An unknown class name is a totality-floor violation and
-        panics naming the missing member.
+        Maps only by structural class name. An unknown class name is a
+        totality-floor violation and panics naming the missing member.
         """
-        if isinstance(node, ast.Constant) and isinstance(
-            node.value,
-            (int, float, str, bool, type(None)),
-        ):
-            return cls.PRIMITIVE_LITERAL
         node_type = type(node)
         cached = _NODE_KIND_CACHE.get(node_type)
         if cached is not None:

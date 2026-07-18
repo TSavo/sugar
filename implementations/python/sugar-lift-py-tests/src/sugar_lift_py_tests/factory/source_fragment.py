@@ -452,12 +452,8 @@ class SourceFragment:
 
     @property
     def observed(self) -> "NodeKind":
-        # float IS a primitive literal: the numeric type is COLLAPSED -- Int embeds in
-        # Real losslessly (3 and 3.0 are the same number), so 3.0 == 3 is reflexively
-        # true and there is no Int/Real split at the value level (the SMT sort is an
-        # emission-time inference: stay Int unless you meet a Real, then ride up).
-        # NodeKind.of owns that collapse; NodeKind is a StrEnum so every existing
-        # string comparison and wire projection keeps working byte-identically.
+        # Structural observation only. Semantic distinctions within ast.Constant
+        # belong to the literal Sugar recognizers selected by the factory.
         return NodeKind.of(self.node)
 
     def __str__(self) -> str:
@@ -471,8 +467,6 @@ class SourceFragment:
 
     @property
     def suggested_sugar_module(self) -> str:
-        if self.observed == "PrimitiveLiteral":
-            return "sugar_lift_py_tests.sugar.primitive_literal_sugar"
         name = re.sub(r"(?<!^)(?=[A-Z])", "_", self.observed).lower()
         return f"sugar_lift_py_tests.sugar.{name}.{name}_sugar"
 
@@ -500,7 +494,7 @@ class SourceFragment:
         return _dotted_expr_name(self.node)
 
     def literal_value(self):
-        """Return the Python value (int|str|bool|None) for a Constant/PrimitiveLiteral node."""
+        """Return the Python value carried by a Constant node."""
         self._require(ast.Constant)
         return self.node.value  # type: ignore[attr-defined]
 
@@ -654,7 +648,7 @@ class SourceFragment:
             and zero_arg_super
             and not call.call_has_keywords()
             and len(arguments) == 2
-            and arguments[0].observed == "PrimitiveLiteral"
+            and arguments[0].observed == "Constant"
             and isinstance(arguments[0].literal_value(), str)
         ):
             return InitializerCallSite(

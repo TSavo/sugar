@@ -41,7 +41,7 @@ _COMPARE_TERMS = {
 def can_symbolic_term(site) -> bool:
     if site.observed == "Name":
         return True
-    if site.observed == "PrimitiveLiteral":
+    if site.observed == "Constant":
         return site.literal_value() is None or isinstance(
             site.literal_value(),
             (bool, int, float, str),
@@ -130,7 +130,7 @@ def symbolic_term(
     name_resolver = name_resolver or {}
     if site.observed == "Name":
         return make_var(site.name_id())
-    if site.observed == "PrimitiveLiteral":
+    if site.observed == "Constant":
         value = site.literal_value()
         if isinstance(value, bool):
             return bool_const(value)
@@ -518,7 +518,7 @@ def _real_part_term(value: float) -> Term:
 
 
 def _negated_numeric_literal(site) -> Term | None:
-    if site.observed != "PrimitiveLiteral":
+    if site.observed != "Constant":
         return None
     value = site.literal_value()
     if isinstance(value, bool):

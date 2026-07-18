@@ -95,7 +95,7 @@ def _translate_term(fragment: SourceFragment, available_names: list[str]):
             return bool_const(False)
         return make_var(name)
 
-    if observed == "PrimitiveLiteral":
+    if observed == "Constant":
         value = fragment.literal_value()
         if isinstance(value, bool):
             return bool_const(value)
@@ -109,7 +109,7 @@ def _translate_term(fragment: SourceFragment, available_names: list[str]):
 
     if observed == "UnaryOp" and fragment.operator_kind() == "USub":
         operand = fragment.unaryop_operand()
-        if operand.observed == "PrimitiveLiteral":
+        if operand.observed == "Constant":
             value = operand.literal_value()
             if isinstance(value, int):
                 return num(-value)

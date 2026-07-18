@@ -2235,7 +2235,7 @@ def method_body_is_attachable(fn_site) -> bool:
 
 def _return_expr_attachable(rv) -> bool:
     obs = rv.observed
-    if obs in ("Name", "Constant", "PrimitiveLiteral", "JoinedStr"):
+    if obs in ("Name", "Constant", "JoinedStr"):
         return True
     if obs == "Attribute":
         recv = rv.attr_receiver()

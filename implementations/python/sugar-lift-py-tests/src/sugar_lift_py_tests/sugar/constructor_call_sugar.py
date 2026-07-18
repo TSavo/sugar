@@ -541,7 +541,7 @@ def _strategy_from_init(
     for stmt in init.function_body():
         if (
             stmt.observed == "Expr"
-            and stmt.expr_value().observed == "PrimitiveLiteral"
+            and stmt.expr_value().observed == "Constant"
             and isinstance(stmt.expr_value().literal_value(), str)
         ):
             continue
@@ -619,7 +619,7 @@ def _source_initializer_requires_body_reduction(
     for statement in init.function_body():
         if (
             statement.observed == "Expr"
-            and statement.expr_value().observed == "PrimitiveLiteral"
+            and statement.expr_value().observed == "Constant"
             and isinstance(statement.expr_value().literal_value(), str)
         ):
             continue
@@ -699,7 +699,7 @@ def _source_bytesio_strategy(
         for statement in init.function_body()
         if not (
             statement.observed == "Expr"
-            and statement.expr_value().observed == "PrimitiveLiteral"
+            and statement.expr_value().observed == "Constant"
             and isinstance(statement.expr_value().literal_value(), str)
         )
     )
@@ -806,7 +806,7 @@ def _generated_strategy(
             continue
         if (
             statement.observed == "Expr"
-            and statement.expr_value().observed == "PrimitiveLiteral"
+            and statement.expr_value().observed == "Constant"
             and isinstance(statement.expr_value().literal_value(), str)
         ):
             continue

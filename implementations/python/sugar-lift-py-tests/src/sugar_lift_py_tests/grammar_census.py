@@ -28,14 +28,14 @@ def _strip_doc(body: List[SourceFragment]) -> List[SourceFragment]:
         for s in body
         if not (
             s.observed == "Expr"
-            and s.expr_value().observed == "PrimitiveLiteral"
+            and s.expr_value().observed == "Constant"
             and isinstance(s.expr_value().literal_value(), str)
         )
     ]
 
 
 def _is_literalish(node: SourceFragment) -> bool:
-    return node.observed == "PrimitiveLiteral"
+    return node.observed == "Constant"
 
 
 def classify(fn: SourceFragment) -> Tuple[str, List[str]]:
@@ -112,7 +112,7 @@ def classify(fn: SourceFragment) -> Tuple[str, List[str]]:
         return "return-call-other", flags
     if v.observed == "Subscript" and v.subscript_receiver().observed == "Name":
         return "return-table-subscript", flags
-    if v.observed == "PrimitiveLiteral":
+    if v.observed == "Constant":
         return "return-constant", flags
     if v.observed == "Name":
         return "return-name", flags

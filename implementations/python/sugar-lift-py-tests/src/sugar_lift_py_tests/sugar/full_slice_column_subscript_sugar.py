@@ -45,10 +45,7 @@ class FullSliceColumnSubscriptSugar(
         ):
             return False
         column = elements[1]
-        return (
-            column.observed == "PrimitiveLiteral"
-            and type(column.literal_value()) is int
-        )
+        return column.observed == "Constant" and type(column.literal_value()) is int
 
     @classmethod
     def new(cls, site, ctx) -> "FullSliceColumnSubscriptSugar":
