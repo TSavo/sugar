@@ -70,19 +70,35 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def owns(cls, site) -> bool:
+        """Own any single-tuple Assign whose leaves are name-rooted stores.
+
+        ``new`` already builds Name / Attribute / nested-Attribute / Subscript
+        leaves via the ordinary store owners. ``owns`` must match that partition:
+        previously only flat Name leaves were claimed, so every
+        ``a[i], b[j] = …`` / ``obj.x, obj.y = …`` / nested ``(a, b), c = …``
+        site fell through to python.factory (dominant post-#5250 mass). Starred
+        leaves stay with SequenceUnpackAssignSugar; unrooted call receivers stay
+        unowned and panic.
+        """
         if site.observed != "Assign":
             return False
         targets = site.assign_targets()
         if len(targets) != 1 or targets[0].observed != "Tuple":
             return False
         elements = targets[0].tuple_elts()
-        if not elements or not all(element.observed == "Name" for element in elements):
+        if not elements:
+            return False
+        # Structural claim: every leaf must be a static name-rooted store.
+        # _target_leaves returns None for Starred / call-rooted / unknown.
+        leaves = _target_leaves(targets[0])
+        if not leaves:
             return False
         value = site.assign_value()
         if value.observed in {"Tuple", "List"}:
             values = (
                 value.tuple_elts() if value.observed == "Tuple" else value.list_elts()
             )
+            # Top-level arity only (nested structure is projected by path).
             return len(values) == len(elements)
         return True
 

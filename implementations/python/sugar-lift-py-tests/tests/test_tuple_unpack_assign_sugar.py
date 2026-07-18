@@ -166,8 +166,11 @@ def test_sequence_unpack_runtime_effect_has_typed_red_bad_twin() -> None:
 @pytest.mark.parametrize(
     "source",
     (
-        "dayfrac, (whole, days) = (0.5, (1, 2))",
+        # Literal top-level arity mismatch stays unowned.
         "dayfrac, days = (0.5,)",
+        # Call-rooted store leaves are not static name-rooted addresses.
+        "f().x, days = values",
+        "items[0].name, days = values",
     ),
 )
 def test_unowned_tuple_unpack_shape_reaches_the_loud_none_arm(source: str) -> None:
@@ -178,15 +181,39 @@ def test_unowned_tuple_unpack_shape_reaches_the_loud_none_arm(source: str) -> No
         build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
 
 
-def test_tuple_unpack_owns_only_one_flat_all_name_target_with_matching_literal_arity() -> (
+def test_starred_tuple_unpack_is_owned_by_sequence_unpack_not_tuple_unpack() -> None:
+    """Starred leaves are SequenceUnpack's partition; TupleUnpack must not claim them."""
+    assert not TupleUnpackAssignSugar.owns(_site("dayfrac, *days = values"))
+    node = ast.parse("dayfrac, *days = values").body[0]
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    built = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    from sugar_lift_py_tests.sugar.sequence_unpack_assign_sugar import (
+        SequenceUnpackAssignSugar,
+    )
+
+    assert isinstance(built.sugar, SequenceUnpackAssignSugar)
+
+
+def test_tuple_unpack_owns_name_rooted_store_leaves_with_matching_literal_arity() -> (
     None
 ):
+    # Flat names (original partition).
     assert TupleUnpackAssignSugar.owns(_site("dayfrac, days = _math.modf(days)"))
+    # Nested name leaves (path-projected).
+    assert TupleUnpackAssignSugar.owns(_site("dayfrac, (whole, days) = values"))
+    # Attribute / subscript leaves — dominant python.factory mass (#5254).
+    assert TupleUnpackAssignSugar.owns(_site("obj.dayfrac, days = values"))
+    assert TupleUnpackAssignSugar.owns(_site("parts[0], days = values"))
+    assert TupleUnpackAssignSugar.owns(
+        _site(
+            "axes_list[axes[0]], axes_list[axes[1]] = "
+            "(axes_list[axes[1]], axes_list[axes[0]])"
+        )
+    )
+    # Still refused.
     assert not TupleUnpackAssignSugar.owns(_site("dayfrac, *days = values"))
-    assert not TupleUnpackAssignSugar.owns(_site("dayfrac, (whole, days) = values"))
-    assert not TupleUnpackAssignSugar.owns(_site("obj.dayfrac, days = values"))
-    assert not TupleUnpackAssignSugar.owns(_site("parts[0], days = values"))
     assert not TupleUnpackAssignSugar.owns(_site("dayfrac, days = (0.5,)"))
+    assert not TupleUnpackAssignSugar.owns(_site("f().x, days = values"))
 
     node = ast.parse("dayfrac, days = _math.modf(days)").body[0]
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
