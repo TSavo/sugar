@@ -5,6 +5,10 @@ from enum import Enum
 
 class SugarRole(str, Enum):
     TERM = "term"
+    # A resolved FunctionDef selected as the executable body of a callsite dig.
+    # This is distinct from DEFINITION: definitions mint universes, while a
+    # control-flow body owns the callable's composed return paths.
+    CONTROL_FLOW_BODY = "control-flow-body"
     # A definition selected as an audit root. Its body becomes a universe or
     # testimony. Executable def statements use STATEMENT and bind a callable.
     DEFINITION = "definition"

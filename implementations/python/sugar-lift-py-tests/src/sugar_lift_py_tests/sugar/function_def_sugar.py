@@ -45,7 +45,9 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
 
     @classmethod
     def new(cls, site, ctx) -> "FunctionDefSugar":
-        # The body is factory-built as ONE Block (audited), never reduced here.
+        # The definition selects its explicit callable-body Sugar. That owner
+        # builds the Block child through the catalog; FunctionDefSugar no
+        # longer reaches around it to construct the body directly.
         formals = list(site.function_params())
         vararg = site.function_vararg_name()
         kwarg = site.function_kwarg_name()
@@ -74,7 +76,7 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
             ),
             vararg_formal=vararg,
             kwarg_formal=kwarg,
-            body=ctx.build_body(site.function_body_block(), SugarRole.STATEMENT),
+            body=ctx.build_body(site, SugarRole.CONTROL_FLOW_BODY),
             site=site,
         )
 
@@ -126,9 +128,7 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
         # after module execution, so it sees the completed module statement
         # catalog instead of inheriting that eager prefix.
         temporal = (
-            ctx.module_temporal
-            if ctx.module_temporal is not None
-            else ctx.temporal
+            ctx.module_temporal if ctx.module_temporal is not None else ctx.temporal
         )
         for formal in self.formals:
             temporal = temporal.bind_value(formal, SymbolicValue(make_var(formal)))
