@@ -77,7 +77,9 @@ sugar_bx_init() {
   SUGAR_BX_LOCAL=0
   local local_host; local_host="$(hostname 2>/dev/null || true)"
   if [[ "${BCARGO_FORCE_REMOTE:-0}" != 1 && -n "$local_host" ]]; then
-    local a="${local_host,,}" b="${SUGAR_BX_HOST,,}"
+    local a b
+    a="$(printf '%s' "$local_host" | tr '[:upper:]' '[:lower:]')"
+    b="$(printf '%s' "$SUGAR_BX_HOST" | tr '[:upper:]' '[:lower:]')"
     if [[ "$a" == "$b" ]]; then
       SUGAR_BX_LOCAL=1
       # Run directly in the current checkout: no scratch root, no sync.
