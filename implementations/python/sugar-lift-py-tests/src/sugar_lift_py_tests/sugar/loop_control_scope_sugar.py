@@ -20,6 +20,7 @@ class LoopControlScopeSugar(Sugar):
     own_scope_stored_names = LoopControlScopeRecognition.own_scope_stored_names
     loop_stored_names = LoopControlScopeRecognition.loop_stored_names
     loop_carried_names = LoopControlScopeRecognition.loop_carried_names
+    loop_append_rebind_names = LoopControlScopeRecognition.loop_append_rebind_names
     has_unclassified_loop_mutation = (
         LoopControlScopeRecognition.has_unclassified_loop_mutation
     )

@@ -163,7 +163,7 @@ class LoopControlScopeRecognition:
     ) -> tuple[str, ...]:
         if target_name is None and isinstance(site.node, ast.For):
             target_name = site.for_target_name()
-        candidates_list: list[str] = []
+        candidates_list: list[str] = list(cls.loop_append_rebind_names(site))
 
         class CandidateStores(ast.NodeVisitor):
             def add(self, name: str) -> None:
@@ -327,6 +327,42 @@ class LoopControlScopeRecognition:
             {target_name} if target_name is not None else set(),
         )
         return tuple(name for name in candidates if name in carried)
+
+    @classmethod
+    def loop_append_rebind_names(cls, site) -> tuple[str, ...]:
+        """Names rebound by the exact call shape owned by AppendCallSugar."""
+        names: list[str] = []
+
+        class AppendRebinds(ast.NodeVisitor):
+            def visit_Call(self, node: ast.Call) -> None:
+                target = node.func
+                if (
+                    isinstance(target, ast.Attribute)
+                    and target.attr == "append"
+                    and isinstance(target.value, ast.Name)
+                    and len(node.args) == 1
+                    and not node.keywords
+                    and target.value.id not in names
+                ):
+                    names.append(target.value.id)
+                self.generic_visit(node)
+
+            def stop_at_nested_owner(self, node: ast.AST) -> None:
+                del node
+
+            visit_Lambda = stop_at_nested_owner
+            visit_FunctionDef = stop_at_nested_owner
+            visit_AsyncFunctionDef = stop_at_nested_owner
+            visit_ClassDef = stop_at_nested_owner
+            visit_ListComp = stop_at_nested_owner
+            visit_SetComp = stop_at_nested_owner
+            visit_DictComp = stop_at_nested_owner
+            visit_GeneratorExp = stop_at_nested_owner
+
+        visitor = AppendRebinds()
+        for statement in site.node.body:
+            visitor.visit(statement)
+        return tuple(names)
 
     @classmethod
     def while_definite_break_output_names(cls, site) -> tuple[str, ...]:
