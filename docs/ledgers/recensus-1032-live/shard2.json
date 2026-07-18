@@ -1,0 +1,2602 @@
+{
+  "package_versions": {
+    "numpy": "2.5.1",
+    "pandas": "3.0.3"
+  },
+  "shard": {
+    "index": 2,
+    "count": 3
+  },
+  "census": {
+    "assertions_total": 7626,
+    "files_total": 609,
+    "files_with_assertions": 350,
+    "files_without_assertions": 259
+  },
+  "terminal_categories": {
+    "bare-exception": 11,
+    "completed": 271,
+    "factory-construction-panic": 66,
+    "timeout-or-hang": 2
+  },
+  "category_representatives": {
+    "bare-exception": [
+      "numpy/_core/tests/test_function_base.py",
+      "numpy/_core/tests/test_multiarray.py",
+      "numpy/_core/tests/test_nditer.py",
+      "numpy/_core/tests/test_shape_base.py",
+      "numpy/_core/tests/test_stringdtype.py",
+      "numpy/linalg/_linalg.py",
+      "numpy/linalg/tests/test_linalg.py",
+      "numpy/ma/core.py",
+      "numpy/random/_examples/cffi/extending.py",
+      "pandas/tests/scalar/timedelta/methods/test_as_unit.py"
+    ],
+    "completed": [
+      "numpy/_core/tests/test_api.py",
+      "numpy/_core/tests/test_array_coercion.py",
+      "numpy/_core/tests/test_arrayobject.py",
+      "numpy/_core/tests/test_casting_unittests.py",
+      "numpy/_core/tests/test_datetime.py",
+      "numpy/_core/tests/test_dlpack.py",
+      "numpy/_core/tests/test_errstate.py",
+      "numpy/_core/tests/test_hashtable.py",
+      "numpy/_core/tests/test_numerictypes.py",
+      "numpy/_core/tests/test_protocols.py"
+    ],
+    "factory-construction-panic": [
+      "numpy/_core/tests/test_cpu_features.py",
+      "numpy/_core/tests/test_mem_overlap.py",
+      "numpy/_core/tests/test_scalarinherit.py",
+      "numpy/_core/tests/test_umath.py",
+      "numpy/f2py/crackfortran.py",
+      "numpy/f2py/symbolic.py",
+      "numpy/f2py/tests/test_array_from_pyobj.py",
+      "numpy/f2py/tests/test_symbolic.py",
+      "numpy/tests/test_ctypeslib.py",
+      "numpy/typing/tests/test_runtime.py"
+    ],
+    "timeout-or-hang": [
+      "numpy/random/tests/test_generator_mt19937.py",
+      "numpy/random/tests/test_randomstate.py"
+    ]
+  },
+  "factory_panic_front_count": 54,
+  "factory_panic_fronts": [
+    {
+      "owner": "AppendCallSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "CallSiteValue(py.subscript)",
+      "requested": "classified append contract",
+      "label": "AppendCallSugar / Floor / Construction / CallSiteValue(py.subscript) / classified append contract",
+      "count": 5,
+      "representative_files": [
+        "pandas/core/frame.py",
+        "pandas/io/excel/_base.py",
+        "pandas/io/html.py",
+        "pandas/io/orc.py",
+        "pandas/tests/io/xml/test_to_xml.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "result",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / result / value",
+      "count": 4,
+      "representative_files": [
+        "pandas/core/groupby/groupby.py",
+        "pandas/core/strings/accessor.py",
+        "pandas/tests/extension/base/dim2.py",
+        "pandas/tests/extension/base/ops.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "expected",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / expected / value",
+      "count": 3,
+      "representative_files": [
+        "pandas/tests/frame/methods/test_at_time.py",
+        "pandas/tests/indexes/datetimes/test_date_range.py",
+        "pandas/tests/series/methods/test_sort_index.py"
+      ]
+    },
+    {
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "PrescribedWindowIndexer.__init__ contains Expr",
+      "requested": "constructed source initializer",
+      "label": "ConstructorCallSugar / Constructor / AST / PrescribedWindowIndexer.__init__ contains Expr / constructed source initializer",
+      "count": 2,
+      "representative_files": [
+        "pandas/tests/window/test_numba.py",
+        "pandas/tests/window/test_rolling.py"
+      ]
+    },
+    {
+      "owner": "RaiseSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "CallSiteValue",
+      "requested": "constructed exception floor",
+      "label": "RaiseSugar / Floor / Construction / CallSiteValue / constructed exception floor",
+      "count": 2,
+      "representative_files": [
+        "numpy/f2py/tests/test_symbolic.py",
+        "pandas/tests/test_errors.py"
+      ]
+    },
+    {
+      "owner": "WithSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "raise-carrying callsite with-body",
+      "requested": "dig manager().__exit__ exception suppression contract",
+      "label": "WithSugar / Floor / Construction / raise-carrying callsite with-body / dig manager().__exit__ exception suppression contract",
+      "count": 2,
+      "representative_files": [
+        "pandas/tests/io/excel/test_xlrd.py",
+        "pandas/tests/io/parser/common/test_file_buffer_url.py"
+      ]
+    },
+    {
+      "owner": "AppendCallSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "CallSiteValue(pandas.IntervalIndex)",
+      "requested": "classified append contract",
+      "label": "AppendCallSugar / Floor / Construction / CallSiteValue(pandas.IntervalIndex) / classified append contract",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/indexes/interval/test_interval.py"
+      ]
+    },
+    {
+      "owner": "AppendCallSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "CallSiteValue(pandas.RangeIndex)",
+      "requested": "classified append contract",
+      "label": "AppendCallSugar / Floor / Construction / CallSiteValue(pandas.RangeIndex) / classified append contract",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/indexes/ranges/test_range.py"
+      ]
+    },
+    {
+      "owner": "AppendCallSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "CallSiteValue(pandas.core.indexes.api.Index)",
+      "requested": "classified append contract",
+      "label": "AppendCallSugar / Floor / Construction / CallSiteValue(pandas.core.indexes.api.Index) / classified append contract",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/indexes/test_base.py"
+      ]
+    },
+    {
+      "owner": "AppendCallSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "CallSiteValue(pandas.core.indexes.period.period_range)",
+      "requested": "classified append contract",
+      "label": "AppendCallSugar / Floor / Construction / CallSiteValue(pandas.core.indexes.period.period_range) / classified append contract",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/indexes/period/test_setops.py"
+      ]
+    },
+    {
+      "owner": "CallSiteValue.truth",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "ground callsite term _Ctor(name='py.subscript', args=(_Ctor(name='py.iter_elem', args=(_Ctor(name='array', args=(_Ctor(name='array', args=(_ConstInt(value=1, sort=PrimitiveSort(name='Int')), _ConstStr(value='2012-01-01', sort=PrimitiveSort(name='String')), _ConstReal(value='1.0', sort=PrimitiveSort(name='Real')))), _Ctor(name='array', args=(_ConstInt(value=2, sort=PrimitiveSort(name='Int')), _ConstStr(value='2012-01-02', sort=PrimitiveSort(name='String')), _ConstReal(value='2.0', sort=PrimitiveSort(name='Real')))), _Ctor(name='array', args=(_ConstInt(value=3, sort=PrimitiveSort(name='Int')), _Ctor(name='None', args=()), _ConstReal(value='3.0', sort=PrimitiveSort(name='Real')))))),)), _ConstInt(value=1, sort=PrimitiveSort(name='Int'))))",
+      "requested": "constructed lift-time truth value",
+      "label": "CallSiteValue.truth / Floor / Construction / ground callsite term _Ctor(name='py.subscript', args=(_Ctor(name='py.iter_elem', args=(_Ctor(name='array', args=(_Ctor(name='array', args=(_ConstInt(value=1, sort=PrimitiveSort(name='Int')), _ConstStr(value='2012-01-01', sort=PrimitiveSort(name='String')), _ConstReal(value='1.0', sort=PrimitiveSort(name='Real')))), _Ctor(name='array', args=(_ConstInt(value=2, sort=PrimitiveSort(name='Int')), _ConstStr(value='2012-01-02', sort=PrimitiveSort(name='String')), _ConstReal(value='2.0', sort=PrimitiveSort(name='Real')))), _Ctor(name='array', args=(_ConstInt(value=3, sort=PrimitiveSort(name='Int')), _Ctor(name='None', args=()), _ConstReal(value='3.0', sort=PrimitiveSort(name='Real')))))),)), _ConstInt(value=1, sort=PrimitiveSort(name='Int')))) / constructed lift-time truth value",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/groupby/aggregate/test_other.py"
+      ]
+    },
+    {
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "ArrowExtensionArray.__init__ contains If",
+      "requested": "constructed source initializer",
+      "label": "ConstructorCallSugar / Constructor / AST / ArrowExtensionArray.__init__ contains If / constructed source initializer",
+      "count": 1,
+      "representative_files": [
+        "pandas/core/arrays/arrow/array.py"
+      ]
+    },
+    {
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "B bases=('A', 'np.float64')",
+      "requested": "statically resolved inherited constructor",
+      "label": "ConstructorCallSugar / Constructor / AST / B bases=('A', 'np.float64') / statically resolved inherited constructor",
+      "count": 1,
+      "representative_files": [
+        "numpy/_core/tests/test_scalarinherit.py"
+      ]
+    },
+    {
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "BooleanArray.__init__ contains If",
+      "requested": "constructed source initializer",
+      "label": "ConstructorCallSugar / Constructor / AST / BooleanArray.__init__ contains If / constructed source initializer",
+      "count": 1,
+      "representative_files": [
+        "pandas/core/arrays/boolean.py"
+      ]
+    },
+    {
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "CSSToExcelConverter.__init__ contains If",
+      "requested": "constructed source initializer",
+      "label": "ConstructorCallSugar / Constructor / AST / CSSToExcelConverter.__init__ contains If / constructed source initializer",
+      "count": 1,
+      "representative_files": [
+        "pandas/io/formats/excel.py"
+      ]
+    },
+    {
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "Expr.__init__ contains Assert",
+      "requested": "constructed source initializer",
+      "label": "ConstructorCallSugar / Constructor / AST / Expr.__init__ contains Assert / constructed source initializer",
+      "count": 1,
+      "representative_files": [
+        "numpy/f2py/symbolic.py"
+      ]
+    },
+    {
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "IntervalArray bases=('IntervalMixin', 'ExtensionArray')",
+      "requested": "statically resolved inherited constructor",
+      "label": "ConstructorCallSugar / Constructor / AST / IntervalArray bases=('IntervalMixin', 'ExtensionArray') / statically resolved inherited constructor",
+      "count": 1,
+      "representative_files": [
+        "pandas/core/arrays/interval.py"
+      ]
+    },
+    {
+      "owner": "ForElseSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "['offset', 'expected', 's', 'w']",
+      "requested": "statically bound loop-carried locals",
+      "label": "ForElseSugar / Floor / Construction / ['offset', 'expected', 's', 'w'] / statically bound loop-carried locals",
+      "count": 1,
+      "representative_files": [
+        "numpy/_core/tests/test_mem_overlap.py"
+      ]
+    },
+    {
+      "owner": "ForSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "nonlocal mutation",
+      "requested": "classifiable loop-carried local state",
+      "label": "ForSugar / Floor / Construction / nonlocal mutation / classifiable loop-carried local state",
+      "count": 1,
+      "representative_files": [
+        "numpy/_core/tests/test_cpu_features.py"
+      ]
+    },
+    {
+      "owner": "FormatDunderCallSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "SymbolicValue",
+      "requested": "format data-model method",
+      "label": "FormatDunderCallSugar / Floor / Construction / SymbolicValue / format data-model method",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/io/formats/test_to_string.py"
+      ]
+    },
+    {
+      "owner": "GetattrBuiltinSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "CallSiteValue(_Ctor(name='py.subscript', args=(_Ctor(name='py.iter_elem', args=(_Ctor(name='array', args=(_Ctor(name='tuple', args=(_ConstStr(value='__add__', sort=PrimitiveSort(name='String')), _ConstStr(value='\\\\+', sort=PrimitiveSort(name='String')))), _Ctor(name='tuple', args=(_ConstStr(value='__sub__', sort=PrimitiveSort(name='String')), _ConstStr(value='-', sort=PrimitiveSort(name='String')))), _Ctor(name='tuple', args=(_ConstStr(value='__mul__', sort=PrimitiveSort(name='String')), _ConstStr(value='\\\\*', sort=PrimitiveSort(name='String')))), _Ctor(name='tuple', args=(_ConstStr(value='__truediv__', sort=PrimitiveSort(name='String')), _ConstStr(value='/', sort=PrimitiveSort(name='String')))))),)), _ConstInt(value=0, sort=PrimitiveSort(name='Int')))))",
+      "requested": "statically enumerated attribute name",
+      "label": "GetattrBuiltinSugar / Floor / Construction / CallSiteValue(_Ctor(name='py.subscript', args=(_Ctor(name='py.iter_elem', args=(_Ctor(name='array', args=(_Ctor(name='tuple', args=(_ConstStr(value='__add__', sort=PrimitiveSort(name='String')), _ConstStr(value='\\\\+', sort=PrimitiveSort(name='String')))), _Ctor(name='tuple', args=(_ConstStr(value='__sub__', sort=PrimitiveSort(name='String')), _ConstStr(value='-', sort=PrimitiveSort(name='String')))), _Ctor(name='tuple', args=(_ConstStr(value='__mul__', sort=PrimitiveSort(name='String')), _ConstStr(value='\\\\*', sort=PrimitiveSort(name='String')))), _Ctor(name='tuple', args=(_ConstStr(value='__truediv__', sort=PrimitiveSort(name='String')), _ConstStr(value='/', sort=PrimitiveSort(name='String')))))),)), _ConstInt(value=0, sort=PrimitiveSort(name='Int'))))) / statically enumerated attribute name",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/arrays/categorical/test_operators.py"
+      ]
+    },
+    {
+      "owner": "ImportAliasValue",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "pandas.NaT",
+      "requested": "dig installed import source before applying floor operation",
+      "label": "ImportAliasValue / Floor / Construction / pandas.NaT / dig installed import source before applying floor operation",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/scalar/test_nat.py"
+      ]
+    },
+    {
+      "owner": "ImportAliasValue",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "pandas.Series",
+      "requested": "dig installed import source before applying floor operation",
+      "label": "ImportAliasValue / Floor / Construction / pandas.Series / dig installed import source before applying floor operation",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/series/test_arithmetic.py"
+      ]
+    },
+    {
+      "owner": "ImportAliasValue",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "pandas._libs.tslibs.NaT",
+      "requested": "dig installed import source before applying floor operation",
+      "label": "ImportAliasValue / Floor / Construction / pandas._libs.tslibs.NaT / dig installed import source before applying floor operation",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/indexes/timedeltas/test_indexing.py"
+      ]
+    },
+    {
+      "owner": "RuntimeEffect",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "RuntimeEffect operand=_Ctor(name='py.not', args=(_Ctor(name='py.and', args=(_Ctor(name='py.implies', args=(_Ctor(name='py.not', args=(_Ctor(name='py.except', args=(_ConstStr(value='ImportError', sort=PrimitiveSort(name='String')),)),)), _Ctor(name='py.and', args=()))), _Ctor(name='py.implies', args=(_Ctor(name='py.not', args=(_Ctor(name='py.not', args=(_Ctor(name='py.except', args=(_ConstStr(value='ImportError', sort=PrimitiveSort(name='String')),)),)),)), _Ctor(name='py.not', args=(_Ctor(name='py.and', args=()),)))))),))",
+      "requested": "genuine runtime-dependent operand",
+      "label": "RuntimeEffect / Floor / Construction / RuntimeEffect operand=_Ctor(name='py.not', args=(_Ctor(name='py.and', args=(_Ctor(name='py.implies', args=(_Ctor(name='py.not', args=(_Ctor(name='py.except', args=(_ConstStr(value='ImportError', sort=PrimitiveSort(name='String')),)),)), _Ctor(name='py.and', args=()))), _Ctor(name='py.implies', args=(_Ctor(name='py.not', args=(_Ctor(name='py.not', args=(_Ctor(name='py.except', args=(_ConstStr(value='ImportError', sort=PrimitiveSort(name='String')),)),)),)), _Ctor(name='py.not', args=(_Ctor(name='py.and', args=()),)))))),)) / genuine runtime-dependent operand",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/io/test_parquet.py"
+      ]
+    },
+    {
+      "owner": "RuntimeEffect",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "py.divide operand=TermValue(value=0)",
+      "requested": "genuine runtime-dependent operand",
+      "label": "RuntimeEffect / Floor / Construction / py.divide operand=TermValue(value=0) / genuine runtime-dependent operand",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/io/excel/test_readers.py"
+      ]
+    },
+    {
+      "owner": "RuntimeEffect",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "py.setitem operand=ListValue(elements=(DictValue(entries=((StringValue(value='name'), StringValue(value='idx')), (StringValue(value='type'), StringValue(value='integer')))), DictValue(entries=((StringValue(value='name'), StringValue(value='A')), (StringValue(value='type'), StringValue(value='integer')))), DictValue(entries=((StringValue(value='name'), StringValue(value='B')), (StringValue(value='type'), StringValue(value='string')))), DictValue(entries=((StringValue(value='name'), StringValue(value='C')), (StringValue(value='type'), StringValue(value='datetime')))), DictValue(entries=((StringValue(value='name'), StringValue(value='D')), (StringValue(value='type'), StringValue(value='duration'))))))",
+      "requested": "genuine runtime-dependent operand",
+      "label": "RuntimeEffect / Floor / Construction / py.setitem operand=ListValue(elements=(DictValue(entries=((StringValue(value='name'), StringValue(value='idx')), (StringValue(value='type'), StringValue(value='integer')))), DictValue(entries=((StringValue(value='name'), StringValue(value='A')), (StringValue(value='type'), StringValue(value='integer')))), DictValue(entries=((StringValue(value='name'), StringValue(value='B')), (StringValue(value='type'), StringValue(value='string')))), DictValue(entries=((StringValue(value='name'), StringValue(value='C')), (StringValue(value='type'), StringValue(value='datetime')))), DictValue(entries=((StringValue(value='name'), StringValue(value='D')), (StringValue(value='type'), StringValue(value='duration')))))) / genuine runtime-dependent operand",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/io/json/test_json_table_schema.py"
+      ]
+    },
+    {
+      "owner": "SequentialDigBody",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "If",
+      "requested": "reduced guarded returns with an unguarded fallback",
+      "label": "SequentialDigBody / Floor / Construction / If / reduced guarded returns with an unguarded fallback",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/io/formats/style/test_to_latex.py"
+      ]
+    },
+    {
+      "owner": "SequentialDigBody",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "Return",
+      "requested": "reduced guarded returns with an unguarded fallback",
+      "label": "SequentialDigBody / Floor / Construction / Return / reduced guarded returns with an unguarded fallback",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/arrays/categorical/test_astype.py"
+      ]
+    },
+    {
+      "owner": "SequentialDigBody",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "Try",
+      "requested": "reduced guarded returns with an unguarded fallback",
+      "label": "SequentialDigBody / Floor / Construction / Try / reduced guarded returns with an unguarded fallback",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/config/test_localization.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "_AnnotatedAlias",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / _AnnotatedAlias / value",
+      "count": 1,
+      "representative_files": [
+        "numpy/typing/tests/test_runtime.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "_imp",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / _imp / value",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/series/methods/test_astype.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "argc",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / argc / value",
+      "count": 1,
+      "representative_files": [
+        "pandas/core/tools/datetimes.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "c_forward_pointer",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / c_forward_pointer / value",
+      "count": 1,
+      "representative_files": [
+        "numpy/tests/test_ctypeslib.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "data_rv",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / data_rv / value",
+      "count": 1,
+      "representative_files": [
+        "numpy/_core/tests/test_umath.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "ids",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / ids / value",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/strings/conftest.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "lidx",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / lidx / value",
+      "count": 1,
+      "representative_files": [
+        "pandas/core/reshape/merge.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "max_value",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / max_value / value",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/groupby/aggregate/test_aggregate.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "name",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / name / value",
+      "count": 1,
+      "representative_files": [
+        "pandas/core/series.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "pa",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / pa / value",
+      "count": 1,
+      "representative_files": [
+        "pandas/core/arrays/string_.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "s",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / s / value",
+      "count": 1,
+      "representative_files": [
+        "pandas/io/pytables.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "show",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / show / value",
+      "count": 1,
+      "representative_files": [
+        "numpy/f2py/crackfortran.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "tups",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / tups / value",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/arrays/sparse/test_dtype.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "tz",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / tz / value",
+      "count": 1,
+      "representative_files": [
+        "pandas/core/arrays/datetimes.py"
+      ]
+    },
+    {
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "values",
+      "requested": "value",
+      "label": "TemporalContext / Floor / Construction / values / value",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/extension/test_categorical.py"
+      ]
+    },
+    {
+      "owner": "WhileSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "nonlocal mutation",
+      "requested": "classifiable loop-carried local state",
+      "label": "WhileSugar / Floor / Construction / nonlocal mutation / classifiable loop-carried local state",
+      "count": 1,
+      "representative_files": [
+        "pandas/io/parsers/python_parser.py"
+      ]
+    },
+    {
+      "owner": "add",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "ComprehensionValue",
+      "requested": "stand on the addition floor",
+      "label": "add / Floor / Construction / ComprehensionValue / stand on the addition floor",
+      "count": 1,
+      "representative_files": [
+        "pandas/plotting/_matplotlib/core.py"
+      ]
+    },
+    {
+      "owner": "bitwise_invert",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "TrueBoolLiteralSugar",
+      "requested": "stand on the bitwise-invert floor",
+      "label": "bitwise_invert / Floor / Construction / TrueBoolLiteralSugar / stand on the bitwise-invert floor",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/computation/test_eval.py"
+      ]
+    },
+    {
+      "owner": "bitwise_or",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "TermValue",
+      "requested": "stand on the runtime bitwise or floor",
+      "label": "bitwise_or / Floor / Construction / TermValue / stand on the runtime bitwise or floor",
+      "count": 1,
+      "representative_files": [
+        "numpy/f2py/tests/test_array_from_pyobj.py"
+      ]
+    },
+    {
+      "owner": "multiply",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "FalseBoolLiteralSugar",
+      "requested": "stand on the multiplication floor",
+      "label": "multiply / Floor / Construction / FalseBoolLiteralSugar / stand on the multiplication floor",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/arithmetic/test_string.py"
+      ]
+    },
+    {
+      "owner": "multiply",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "ListValue",
+      "requested": "stand on the multiplication floor",
+      "label": "multiply / Floor / Construction / ListValue / stand on the multiplication floor",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/generic/test_generic.py"
+      ]
+    },
+    {
+      "owner": "python.factory",
+      "gap_kind": "Sugar",
+      "gap_locus": "AST",
+      "observed": "ClassDef",
+      "requested": "statement",
+      "label": "python.factory / Sugar / AST / ClassDef / statement",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/test_register_accessor.py"
+      ]
+    },
+    {
+      "owner": "python.factory",
+      "gap_kind": "Sugar",
+      "gap_locus": "AST",
+      "observed": "Delete",
+      "requested": "statement",
+      "label": "python.factory / Sugar / AST / Delete / statement",
+      "count": 1,
+      "representative_files": [
+        "pandas/core/computation/scope.py"
+      ]
+    },
+    {
+      "owner": "truth",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "DictValue",
+      "requested": "stand as a condition",
+      "label": "truth / Floor / Construction / DictValue / stand as a condition",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/io/test_http_headers.py"
+      ]
+    }
+  ],
+  "R_live_factory_panic_files": 66,
+  "owner_family_count": 20,
+  "owner_families": [
+    {
+      "owner": "TemporalContext",
+      "count": 22,
+      "representative_files": [
+        "numpy/_core/tests/test_umath.py",
+        "numpy/f2py/crackfortran.py",
+        "numpy/tests/test_ctypeslib.py",
+        "numpy/typing/tests/test_runtime.py",
+        "pandas/core/arrays/datetimes.py"
+      ]
+    },
+    {
+      "owner": "AppendCallSugar",
+      "count": 9,
+      "representative_files": [
+        "pandas/core/frame.py",
+        "pandas/io/excel/_base.py",
+        "pandas/io/html.py",
+        "pandas/io/orc.py",
+        "pandas/tests/indexes/interval/test_interval.py"
+      ]
+    },
+    {
+      "owner": "ConstructorCallSugar",
+      "count": 8,
+      "representative_files": [
+        "numpy/_core/tests/test_scalarinherit.py",
+        "numpy/f2py/symbolic.py",
+        "pandas/core/arrays/arrow/array.py",
+        "pandas/core/arrays/boolean.py",
+        "pandas/core/arrays/interval.py"
+      ]
+    },
+    {
+      "owner": "SequentialDigBody",
+      "count": 3,
+      "representative_files": [
+        "pandas/tests/arrays/categorical/test_astype.py",
+        "pandas/tests/config/test_localization.py",
+        "pandas/tests/io/formats/style/test_to_latex.py"
+      ]
+    },
+    {
+      "owner": "ImportAliasValue",
+      "count": 3,
+      "representative_files": [
+        "pandas/tests/indexes/timedeltas/test_indexing.py",
+        "pandas/tests/scalar/test_nat.py",
+        "pandas/tests/series/test_arithmetic.py"
+      ]
+    },
+    {
+      "owner": "RuntimeEffect",
+      "count": 3,
+      "representative_files": [
+        "pandas/tests/io/excel/test_readers.py",
+        "pandas/tests/io/json/test_json_table_schema.py",
+        "pandas/tests/io/test_parquet.py"
+      ]
+    },
+    {
+      "owner": "RaiseSugar",
+      "count": 2,
+      "representative_files": [
+        "numpy/f2py/tests/test_symbolic.py",
+        "pandas/tests/test_errors.py"
+      ]
+    },
+    {
+      "owner": "python.factory",
+      "count": 2,
+      "representative_files": [
+        "pandas/core/computation/scope.py",
+        "pandas/tests/test_register_accessor.py"
+      ]
+    },
+    {
+      "owner": "multiply",
+      "count": 2,
+      "representative_files": [
+        "pandas/tests/arithmetic/test_string.py",
+        "pandas/tests/generic/test_generic.py"
+      ]
+    },
+    {
+      "owner": "WithSugar",
+      "count": 2,
+      "representative_files": [
+        "pandas/tests/io/excel/test_xlrd.py",
+        "pandas/tests/io/parser/common/test_file_buffer_url.py"
+      ]
+    },
+    {
+      "owner": "ForSugar",
+      "count": 1,
+      "representative_files": [
+        "numpy/_core/tests/test_cpu_features.py"
+      ]
+    },
+    {
+      "owner": "ForElseSugar",
+      "count": 1,
+      "representative_files": [
+        "numpy/_core/tests/test_mem_overlap.py"
+      ]
+    },
+    {
+      "owner": "bitwise_or",
+      "count": 1,
+      "representative_files": [
+        "numpy/f2py/tests/test_array_from_pyobj.py"
+      ]
+    },
+    {
+      "owner": "WhileSugar",
+      "count": 1,
+      "representative_files": [
+        "pandas/io/parsers/python_parser.py"
+      ]
+    },
+    {
+      "owner": "add",
+      "count": 1,
+      "representative_files": [
+        "pandas/plotting/_matplotlib/core.py"
+      ]
+    },
+    {
+      "owner": "GetattrBuiltinSugar",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/arrays/categorical/test_operators.py"
+      ]
+    },
+    {
+      "owner": "bitwise_invert",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/computation/test_eval.py"
+      ]
+    },
+    {
+      "owner": "CallSiteValue.truth",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/groupby/aggregate/test_other.py"
+      ]
+    },
+    {
+      "owner": "FormatDunderCallSugar",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/io/formats/test_to_string.py"
+      ]
+    },
+    {
+      "owner": "truth",
+      "count": 1,
+      "representative_files": [
+        "pandas/tests/io/test_http_headers.py"
+      ]
+    }
+  ],
+  "owners": {
+    "TemporalContext": 22,
+    "AppendCallSugar": 9,
+    "ConstructorCallSugar": 8,
+    "SequentialDigBody": 3,
+    "ImportAliasValue": 3,
+    "RuntimeEffect": 3,
+    "RaiseSugar": 2,
+    "python.factory": 2,
+    "multiply": 2,
+    "WithSugar": 2,
+    "ForSugar": 1,
+    "ForElseSugar": 1,
+    "bitwise_or": 1,
+    "WhileSugar": 1,
+    "add": 1,
+    "GetattrBuiltinSugar": 1,
+    "bitwise_invert": 1,
+    "CallSiteValue.truth": 1,
+    "FormatDunderCallSugar": 1,
+    "truth": 1
+  },
+  "completed_effect_front_count": 18,
+  "completed_effect_fronts": [
+    {
+      "effect": "GetattrRuntimeEffect",
+      "file_count": 48,
+      "occurrence_count": 479,
+      "representative_files": [
+        "numpy/_core/tests/test_arrayobject.py",
+        "numpy/_core/tests/test_numerictypes.py",
+        "numpy/f2py/tests/test_return_character.py",
+        "numpy/f2py/tests/test_return_logical.py",
+        "pandas/tests/apply/test_series_apply.py"
+      ],
+      "reason_examples": [
+        "getattr runtime boundary: attribute name expression `Name` is runtime; blame=numpy/_core/tests/test_arrayobject.py:194:28",
+        "getattr runtime boundary: attribute name expression `Attribute` is runtime; blame=numpy/_core/tests/test_numerictypes.py:575:15",
+        "getattr runtime boundary: receiver reduced to CallSiteValue; Python resolves attributes at runtime; blame=numpy/f2py/tests/test_return_character.py:43:28",
+        "getattr runtime boundary: receiver reduced to CallSiteValue; Python resolves attributes at runtime; blame=numpy/f2py/tests/test_return_character.py:48:28",
+        "getattr runtime boundary: receiver reduced to CallSiteValue; Python resolves attributes at runtime; blame=numpy/f2py/tests/test_return_logical.py:60:28"
+      ]
+    },
+    {
+      "effect": "ConditionalExpressionRuntimeEffect",
+      "file_count": 49,
+      "occurrence_count": 149,
+      "representative_files": [
+        "numpy/_core/tests/test_casting_unittests.py",
+        "numpy/f2py/tests/test_inplace.py",
+        "numpy/fft/tests/test_pocketfft.py",
+        "numpy/lib/tests/test_loadtxt.py",
+        "pandas/tests/apply/test_frame_transform.py"
+      ],
+      "reason_examples": [
+        "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/_core/tests/test_casting_unittests.py:622:14",
+        "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/f2py/tests/test_inplace.py:22:12",
+        "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/fft/tests/test_pocketfft.py:112:15",
+        "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/fft/tests/test_pocketfft.py:455:15",
+        "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/lib/tests/test_loadtxt.py:217:26"
+      ]
+    },
+    {
+      "effect": "SubscriptStoreRuntimeEffect",
+      "file_count": 14,
+      "occurrence_count": 79,
+      "representative_files": [
+        "pandas/tests/arithmetic/test_numeric.py",
+        "pandas/tests/copy_view/test_chained_assignment_deprecation.py",
+        "pandas/tests/copy_view/test_indexing.py",
+        "pandas/tests/frame/indexing/test_indexing.py",
+        "pandas/tests/frame/methods/test_info.py"
+      ],
+      "reason_examples": [
+        "subscript store completed on a runtime-selected receiver whose post-state has no structural coordinate; site=pandas/tests/arithmetic/test_numeric.py:486:8",
+        "subscript store completed on a runtime-selected receiver whose post-state has no structural coordinate; site=pandas/tests/copy_view/test_chained_assignment_deprecation.py:24:8; effect occurs under branch condition _Connective(kind='not', operands=(_Atomic(name='py.eq', args=(_Ctor(name='call:python_implementation', args=(_Ctor(name='python:import_alias', args=(_ConstStr(value='platform', sort=PrimitiveSort(name='String')), _ConstStr(value='platform', sort=PrimitiveSort(name='String')))),)), _ConstStr(value='PyPy', sort=PrimitiveSort(name='String')))),))",
+        "subscript store completed on a runtime-selected receiver whose post-state has no structural coordinate; site=pandas/tests/copy_view/test_chained_assignment_deprecation.py:36:8",
+        "subscript store completed on a runtime-selected receiver whose post-state has no structural coordinate; site=pandas/tests/copy_view/test_chained_assignment_deprecation.py:46:8",
+        "subscript store completed on a runtime-selected receiver whose post-state has no structural coordinate; site=pandas/tests/copy_view/test_chained_assignment_deprecation.py:56:8"
+      ]
+    },
+    {
+      "effect": "SequenceRepetitionRuntimeEffect",
+      "file_count": 16,
+      "occurrence_count": 23,
+      "representative_files": [
+        "numpy/_core/tests/test_array_coercion.py",
+        "numpy/_core/tests/test_dlpack.py",
+        "pandas/tests/arithmetic/test_numeric.py",
+        "pandas/tests/extension/base/reshaping.py",
+        "pandas/tests/frame/methods/test_values.py"
+      ],
+      "reason_examples": [
+        "sequence repetition by symbolic count: TupleValue depends on runtime __index__/length semantics; site=numpy/_core/tests/test_array_coercion.py:222:28",
+        "sequence repetition by symbolic count: TupleValue depends on runtime __index__/length semantics; site=numpy/_core/tests/test_array_coercion.py:521:35",
+        "sequence repetition by symbolic count: TupleValue depends on runtime __index__/length semantics; site=numpy/_core/tests/test_dlpack.py:112:16",
+        "sequence repetition by integer-warranted len(...) result: ListValue depends on runtime __index__/length semantics; site=pandas/tests/arithmetic/test_numeric.py:1138:22",
+        "sequence repetition by integer-warranted len(...) result: ListValue depends on runtime __index__/length semantics; site=pandas/tests/extension/base/reshaping.py:168:32"
+      ]
+    },
+    {
+      "effect": "CallResultTypeRuntimeEffect",
+      "file_count": 6,
+      "occurrence_count": 16,
+      "representative_files": [
+        "pandas/tests/arithmetic/test_numeric.py",
+        "pandas/tests/arrays/sparse/test_accessor.py",
+        "pandas/tests/generic/test_to_xarray.py",
+        "pandas/tests/plotting/frame/test_frame.py",
+        "pandas/tests/plotting/frame/test_frame_legend.py"
+      ],
+      "reason_examples": [
+        "call-result type runtime boundary: `Day(...)` has no cited return-type/native tester coordinate; Python must execute the call before its result can serve as an isinstance type operand; site=pandas/tests/arithmetic/test_numeric.py:304:13; effect occurs under branch condition _Connective(kind='not', operands=(_Connective(kind='or', operands=(_Atomic(name='identity', args=(_Ctor(name='call:type', args=(_Var(name='three_days'),)), _Ctor(name='python:import_alias', args=(_ConstStr(value='timedelta', sort=PrimitiveSort(name='String')), _ConstStr(value='timedelta', sort=PrimitiveSort(name='String')))))), _Connective(kind='and', operands=(_Atomic(name='adt.is_python_type', args=(_Var(name='three_days'), _Ctor(name='python:type', args=(_ConstStr(value='Timedelta', sort=PrimitiveSort(name='String')),)))), _Atomic(name='py.eq', args=(_Ctor(name='call:unit', args=(_Var(name='three_days'),)), _ConstStr(value='us', sort=PrimitiveSort(name='String')))))))),)); effect occurs under branch condition _Connective(kind='not', operands=(_Atomic(name='adt.is_python_type', args=(_Var(name='three_days'), _Ctor(name='python:type', args=(_ConstStr(value='numpy.timedelta64', sort=PrimitiveSort(name='String')),)))),))",
+        "call-result type runtime boundary: `coo_matrix(...)` has no cited return-type/native tester coordinate; Python must execute the call before its result can serve as an isinstance type operand; site=pandas/tests/arrays/sparse/test_accessor.py:89:15",
+        "call-result type runtime boundary: `SparseFrameAccessor(...)` has no cited return-type/native tester coordinate; Python must execute the call before its result can serve as an isinstance type operand; site=pandas/tests/arrays/sparse/test_accessor.py:254:15",
+        "call-result type runtime boundary: `Dataset(...)` has no cited return-type/native tester coordinate; Python must execute the call before its result can serve as an isinstance type operand; site=pandas/tests/generic/test_to_xarray.py:54:15; effect occurs under branch condition _Connective(kind='not', operands=(_Atomic(name='py.lt', args=(_Ctor(name='call:pandas.util.version.Version', args=(_Ctor(name='call:__version__', args=(_Ctor(name='call:importorskip', args=(_Ctor(name='python:import_alias', args=(_ConstStr(value='pytest', sort=PrimitiveSort(name='String')), _ConstStr(value='pytest', sort=PrimitiveSort(name='String')))), _ConstStr(value='xarray', sort=PrimitiveSort(name='String')))),)),)), _Ctor(name='call:pandas.util.version.Version', args=(_ConstStr(value='2025.9.0', sort=PrimitiveSort(name='String')),)))),)); effect occurs under branch condition _Connective(kind='not', operands=(_Atomic(name='py.eq', args=(_Ctor(name='call:len', args=(_Var(name='index_flat'),)), _ConstInt(value=0, sort=PrimitiveSort(name='Int')))),))",
+        "call-result type runtime boundary: `Dataset(...)` has no cited return-type/native tester coordinate; Python must execute the call before its result can serve as an isinstance type operand; site=pandas/tests/generic/test_to_xarray.py:67:15"
+      ]
+    },
+    {
+      "effect": "PowerRuntimeEffect",
+      "file_count": 5,
+      "occurrence_count": 11,
+      "representative_files": [
+        "pandas/tests/arithmetic/test_numeric.py",
+        "pandas/tests/arrays/integer/test_arithmetic.py",
+        "pandas/tests/frame/methods/test_cov_corr.py",
+        "pandas/tests/frame/methods/test_reset_index.py",
+        "pandas/tests/frame/test_arithmetic.py"
+      ],
+      "reason_examples": [
+        "power dispatch depends on the runtime call result's __pow__; owner=CallSiteValue.power site=pandas/tests/arithmetic/test_numeric.py:847:31",
+        "power dispatch depends on the runtime call result's __pow__; owner=CallSiteValue.power site=pandas/tests/arithmetic/test_numeric.py:1424:17",
+        "power dispatch depends on the runtime call result's __pow__; owner=CallSiteValue.power site=pandas/tests/arithmetic/test_numeric.py:1482:17",
+        "power dispatch depends on the runtime call result's __pow__; owner=CallSiteValue.power site=pandas/tests/arrays/integer/test_arithmetic.py:107:13",
+        "power dispatch depends on the runtime call result's __pow__; owner=CallSiteValue.power site=pandas/tests/arrays/integer/test_arithmetic.py:158:13"
+      ]
+    },
+    {
+      "effect": "SequenceConcatenationRuntimeEffect",
+      "file_count": 8,
+      "occurrence_count": 11,
+      "representative_files": [
+        "numpy/lib/tests/test_histograms.py",
+        "pandas/tests/frame/methods/test_fillna.py",
+        "pandas/tests/indexes/datetimes/methods/test_unique.py",
+        "pandas/tests/indexes/multi/test_duplicates.py",
+        "pandas/tests/io/formats/style/test_format.py"
+      ],
+      "reason_examples": [
+        "sequence concatenation depends on runtime comprehension members; owner=ComprehensionValue.add site=numpy/lib/tests/test_histograms.py:272:23",
+        "string concatenation depends on runtime str() content; owner=StringValue.add site=pandas/tests/frame/methods/test_fillna.py:588:16",
+        "sequence concatenation depends on runtime comprehension members; owner=ComprehensionValue.add site=pandas/tests/indexes/datetimes/methods/test_unique.py:58:10",
+        "sequence concatenation depends on runtime comprehension members; owner=ComprehensionValue.add site=pandas/tests/indexes/datetimes/methods/test_unique.py:66:10",
+        "sequence concatenation depends on runtime comprehension members; owner=ComprehensionValue.add site=pandas/tests/indexes/multi/test_duplicates.py:218:8"
+      ]
+    },
+    {
+      "effect": "CallableArgumentBindingRuntimeEffect",
+      "file_count": 5,
+      "occurrence_count": 6,
+      "representative_files": [
+        "pandas/tests/plotting/frame/test_frame.py",
+        "pandas/tests/plotting/test_hist_method.py",
+        "pandas/tests/reshape/merge/test_merge_asof.py",
+        "pandas/tests/reshape/test_cut.py",
+        "pandas/tests/reshape/test_qcut.py"
+      ],
+      "reason_examples": [
+        "call argument binding depends on the runtime keys of an opaque **mapping expansion; site=pandas/tests/plotting/frame/test_frame.py:1755:13",
+        "call argument binding depends on the runtime keys of an opaque **mapping expansion; site=pandas/tests/plotting/test_hist_method.py:53:12",
+        "call argument binding depends on the runtime keys of an opaque **mapping expansion; site=pandas/tests/plotting/test_hist_method.py:861:19",
+        "call argument binding depends on the runtime keys of an opaque **mapping expansion; site=pandas/tests/reshape/merge/test_merge_asof.py:3413:13",
+        "call argument binding depends on the runtime keys of an opaque **mapping expansion; site=pandas/tests/reshape/test_cut.py:395:17"
+      ]
+    },
+    {
+      "effect": "SequenceUnpackRuntimeEffect",
+      "file_count": 1,
+      "occurrence_count": 5,
+      "representative_files": [
+        "pandas/tests/frame/methods/test_info.py"
+      ],
+      "reason_examples": [
+        "sequence unpack runtime boundary: runtime-dependent sequence length; site=pandas/tests/frame/methods/test_info.py:199:4"
+      ]
+    },
+    {
+      "effect": "DictUnpackRuntimeEffect",
+      "file_count": 2,
+      "occurrence_count": 4,
+      "representative_files": [
+        "pandas/tests/frame/indexing/test_indexing.py",
+        "pandas/tests/series/indexing/test_indexing.py"
+      ],
+      "reason_examples": [
+        "dict display keys and values depend on a runtime mapping; site=pandas/tests/frame/indexing/test_indexing.py:1423:12",
+        "dict display keys and values depend on a runtime mapping; site=pandas/tests/frame/indexing/test_indexing.py:1436:23",
+        "dict display keys and values depend on a runtime mapping; site=pandas/tests/series/indexing/test_indexing.py:401:19"
+      ]
+    },
+    {
+      "effect": "UnaryPlusRuntimeEffect",
+      "file_count": 2,
+      "occurrence_count": 4,
+      "representative_files": [
+        "pandas/tests/arrays/integer/test_arithmetic.py",
+        "pandas/tests/frame/test_unary.py"
+      ],
+      "reason_examples": [
+        "unary plus depends on the opaque call result's __pos__ dispatch; site=pandas/tests/arrays/integer/test_arithmetic.py:312:47",
+        "unary plus depends on the opaque call result's __pos__ dispatch; site=pandas/tests/frame/test_unary.py:104:30",
+        "unary plus depends on the opaque call result's __pos__ dispatch; site=pandas/tests/frame/test_unary.py:117:30",
+        "unary plus depends on the opaque call result's __pos__ dispatch; site=pandas/tests/frame/test_unary.py:149:17"
+      ]
+    },
+    {
+      "effect": "SubscriptResultRuntimeEffect",
+      "file_count": 2,
+      "occurrence_count": 3,
+      "representative_files": [
+        "pandas/tests/frame/indexing/test_indexing.py",
+        "pandas/tests/frame/indexing/test_where.py"
+      ],
+      "reason_examples": [
+        "predicate subscript runtime boundary: PredicateValue runtime result shape may be a scalar boolean or an indexable array; keep as typed red until the producing operation carries container shape evidence. site=pandas/tests/frame/indexing/test_indexing.py:702:35",
+        "predicate subscript runtime boundary: PredicateValue runtime result shape may be a scalar boolean or an indexable array; keep as typed red until the producing operation carries container shape evidence. site=pandas/tests/frame/indexing/test_where.py:142:15; effect occurs under branch condition _Connective(kind='not', operands=(_Atomic(name='identity', args=(_Var(name='where_frame'), _Var(name='float_string_frame'))),))",
+        "predicate subscript runtime boundary: PredicateValue runtime result shape may be a scalar boolean or an indexable array; keep as typed red until the producing operation carries container shape evidence. site=pandas/tests/frame/indexing/test_where.py:217:15; effect occurs under branch condition _Connective(kind='not', operands=(_Atomic(name='identity', args=(_Var(name='where_frame'), _Var(name='float_string_frame'))),))"
+      ]
+    },
+    {
+      "effect": "SubtractRuntimeEffect",
+      "file_count": 3,
+      "occurrence_count": 3,
+      "representative_files": [
+        "numpy/_core/tests/test_datetime.py",
+        "pandas/tests/frame/test_query_eval.py",
+        "pandas/tests/tseries/offsets/test_offsets.py"
+      ],
+      "reason_examples": [
+        "subtraction depends on runtime __sub__/__rsub__ dispatch; left=TermValue right=CallSiteValue site=numpy/_core/tests/test_datetime.py:1563:29",
+        "subtraction depends on runtime __sub__/__rsub__ dispatch; left=TermValue right=CallSiteValue site=pandas/tests/frame/test_query_eval.py:140:18",
+        "subtraction depends on runtime __sub__/__rsub__ dispatch; left=NativeCallableValue right=CallSiteValue site=pandas/tests/tseries/offsets/test_offsets.py:206:15"
+      ]
+    },
+    {
+      "effect": "AppendRuntimeEffect",
+      "file_count": 1,
+      "occurrence_count": 2,
+      "representative_files": [
+        "pandas/tests/indexes/datetimelike_/test_drop_duplicates.py"
+      ],
+      "reason_examples": [
+        "append runtime boundary: symbolic receiver has no constructed list post-state; value=_Var(name='idx'); site=pandas/tests/indexes/datetimelike_/test_drop_duplicates.py:21:18; effect occurs under branch condition _Connective(kind='not', operands=(_Atomic(name='adt.is_python_type', args=(_Var(name='idx'), _Ctor(name='python:type', args=(_ConstStr(value='PeriodIndex', sort=PrimitiveSort(name='String')),)))),))",
+        "append runtime boundary: symbolic receiver has no constructed list post-state; value=_Ctor(name='py.subscript', args=(_Var(name='idx'), _Ctor(name='py.slice', args=(_Ctor(name='None', args=()), _ConstInt(value=5, sort=PrimitiveSort(name='Int')), _Ctor(name='None', args=()))))); site=pandas/tests/indexes/datetimelike_/test_drop_duplicates.py:57:14"
+      ]
+    },
+    {
+      "effect": "BitwiseXorRuntimeEffect",
+      "file_count": 2,
+      "occurrence_count": 2,
+      "representative_files": [
+        "pandas/tests/arrays/integer/test_arithmetic.py",
+        "pandas/tests/frame/test_logical_ops.py"
+      ],
+      "reason_examples": [
+        "bitwise xor depends on the opaque call result's __xor__/__rxor__ dispatch; site=pandas/tests/arrays/integer/test_arithmetic.py:343:13",
+        "bitwise xor depends on the opaque call result's __xor__/__rxor__ dispatch; site=pandas/tests/frame/test_logical_ops.py:203:17"
+      ]
+    },
+    {
+      "effect": "DynamicTypeOperandRuntimeEffect",
+      "file_count": 2,
+      "occurrence_count": 2,
+      "representative_files": [
+        "pandas/tests/arithmetic/test_numeric.py",
+        "pandas/tests/tseries/offsets/test_ticks.py"
+      ],
+      "reason_examples": [
+        "dynamic isinstance type operand runtime boundary: Python must resolve _Var(name='index_or_series') as a type or raise TypeError; site=pandas/tests/arithmetic/test_numeric.py:1168:40",
+        "dynamic isinstance type operand runtime boundary: Python must resolve _Var(name='cls') as a type or raise TypeError; site=pandas/tests/tseries/offsets/test_ticks.py:260:19; effect occurs under branch condition _Connective(kind='not', operands=(_Atomic(name='identity', args=(_Var(name='cls'), _Ctor(name='python:import_alias', args=(_ConstStr(value='Nano', sort=PrimitiveSort(name='String')), _ConstStr(value='Nano', sort=PrimitiveSort(name='String')))))),))"
+      ]
+    },
+    {
+      "effect": "MatrixMultiplyRuntimeEffect",
+      "file_count": 1,
+      "occurrence_count": 1,
+      "representative_files": [
+        "pandas/tests/test_col.py"
+      ],
+      "reason_examples": [
+        "matrix multiplication depends on the opaque right operand's runtime __rmatmul__ dispatch; site=pandas/tests/test_col.py:113:11"
+      ]
+    },
+    {
+      "effect": "ModuloRuntimeEffect",
+      "file_count": 1,
+      "occurrence_count": 1,
+      "representative_files": [
+        "pandas/tests/arithmetic/test_numeric.py"
+      ],
+      "reason_examples": [
+        "modulo depends on runtime __mod__/__rmod__ dispatch; left=TermValue right=CallSiteValue site=pandas/tests/arithmetic/test_numeric.py:885:21"
+      ]
+    }
+  ],
+  "terminal_rows": [
+    {
+      "file": "numpy/_core/tests/test_cpu_features.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "numpy/_core/tests/test_cpu_features.py",
+        "gap": {
+          "blame": "numpy/_core/tests/test_cpu_features.py:114:8",
+          "fix": "rewrite attribute or subscript mutation as explicit carried locals",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "nonlocal mutation",
+          "owner": "ForSugar",
+          "requested": "classifiable loop-carried local state"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=ForSugar blame=numpy/_core/tests/test_cpu_features.py:114:8 observed=nonlocal mutation requested=classifiable loop-carried local state fix=rewrite attribute or subscript mutation as explicit carried locals"
+      }
+    },
+    {
+      "file": "numpy/_core/tests/test_function_base.py",
+      "category": "bare-exception",
+      "returncode": 3,
+      "testimony": {
+        "exception_type": "TypeError",
+        "file": "numpy/_core/tests/test_function_base.py",
+        "outcome": "exception",
+        "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+      },
+      "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+    },
+    {
+      "file": "numpy/_core/tests/test_mem_overlap.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "numpy/_core/tests/test_mem_overlap.py",
+        "gap": {
+          "blame": "numpy/_core/tests/test_mem_overlap.py:459:4",
+          "fix": "bind every carried local before currying the loop",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": [
+            "offset",
+            "expected",
+            "s",
+            "w"
+          ],
+          "owner": "ForElseSugar",
+          "requested": "statically bound loop-carried locals"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=ForElseSugar blame=numpy/_core/tests/test_mem_overlap.py:459:4 observed=('offset', 'expected', 's', 'w') requested=statically bound loop-carried locals fix=bind every carried local before currying the loop"
+      }
+    },
+    {
+      "file": "numpy/_core/tests/test_multiarray.py",
+      "category": "bare-exception",
+      "returncode": 3,
+      "testimony": {
+        "exception_type": "TypeError",
+        "file": "numpy/_core/tests/test_multiarray.py",
+        "outcome": "exception",
+        "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+      },
+      "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+    },
+    {
+      "file": "numpy/_core/tests/test_nditer.py",
+      "category": "bare-exception",
+      "returncode": 3,
+      "testimony": {
+        "exception_type": "TypeError",
+        "file": "numpy/_core/tests/test_nditer.py",
+        "outcome": "exception",
+        "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+      },
+      "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+    },
+    {
+      "file": "numpy/_core/tests/test_scalarinherit.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "numpy/_core/tests/test_scalarinherit.py",
+        "gap": {
+          "blame": "numpy/_core/tests/test_scalarinherit.py:35:12",
+          "fix": "construct the exact multiple-inheritance MRO for `B`",
+          "gap_kind": "Constructor",
+          "gap_locus": "AST",
+          "observed": "B bases=('A', 'np.float64')",
+          "owner": "ConstructorCallSugar",
+          "requested": "statically resolved inherited constructor"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Constructor for this AST: owner=ConstructorCallSugar blame=numpy/_core/tests/test_scalarinherit.py:35:12 observed=B bases=('A', 'np.float64') requested=statically resolved inherited constructor fix=construct the exact multiple-inheritance MRO for `B`"
+      }
+    },
+    {
+      "file": "numpy/_core/tests/test_shape_base.py",
+      "category": "bare-exception",
+      "returncode": 3,
+      "testimony": {
+        "exception_type": "TypeError",
+        "file": "numpy/_core/tests/test_shape_base.py",
+        "outcome": "exception",
+        "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+      },
+      "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+    },
+    {
+      "file": "numpy/_core/tests/test_stringdtype.py",
+      "category": "bare-exception",
+      "returncode": 3,
+      "testimony": {
+        "exception_type": "KeyError",
+        "file": "numpy/_core/tests/test_stringdtype.py",
+        "outcome": "exception",
+        "reason": "'numpy._core'"
+      },
+      "reason": "'numpy._core'"
+    },
+    {
+      "file": "numpy/_core/tests/test_umath.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "numpy/_core/tests/test_umath.py",
+        "gap": {
+          "blame": "numpy/_core/tests/test_umath.py:2091:52",
+          "fix": "bind `data_rv` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "data_rv",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=numpy/_core/tests/test_umath.py:2091:52 observed=data_rv requested=value fix=bind `data_rv` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "numpy/f2py/crackfortran.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "numpy/f2py/crackfortran.py",
+        "gap": {
+          "blame": "numpy/f2py/crackfortran.py:358:38",
+          "fix": "bind `show` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "show",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=numpy/f2py/crackfortran.py:358:38 observed=show requested=value fix=bind `show` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "numpy/f2py/symbolic.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "numpy/f2py/symbolic.py",
+        "gap": {
+          "blame": "numpy/f2py/symbolic.py:816:15",
+          "fix": "construct `Expr.__init__` statement Assert exactly or leave this constructor loud",
+          "gap_kind": "Constructor",
+          "gap_locus": "AST",
+          "observed": "Expr.__init__ contains Assert",
+          "owner": "ConstructorCallSugar",
+          "requested": "constructed source initializer"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Constructor for this AST: owner=ConstructorCallSugar blame=numpy/f2py/symbolic.py:816:15 observed=Expr.__init__ contains Assert requested=constructed source initializer fix=construct `Expr.__init__` statement Assert exactly or leave this constructor loud"
+      }
+    },
+    {
+      "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "numpy/f2py/tests/test_array_from_pyobj.py",
+        "gap": {
+          "blame": "numpy/f2py/tests/test_array_from_pyobj.py:76:16",
+          "fix": "write more Floor: implement TermValue.bitwise_or",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "TermValue",
+          "owner": "bitwise_or",
+          "requested": "stand on the runtime bitwise or floor"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=bitwise_or blame=numpy/f2py/tests/test_array_from_pyobj.py:76:16 observed=TermValue requested=stand on the runtime bitwise or floor fix=write more Floor: implement TermValue.bitwise_or"
+      }
+    },
+    {
+      "file": "numpy/f2py/tests/test_symbolic.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "numpy/f2py/tests/test_symbolic.py",
+        "gap": {
+          "blame": ".venv-recensus/lib/python3.12/site-packages/numpy/f2py/symbolic.py:1070:4",
+          "fix": "construct an exact ExceptionValue before raise; do not substitute arbitrary call coordinates",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "CallSiteValue",
+          "owner": "RaiseSugar",
+          "requested": "constructed exception floor"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=RaiseSugar blame=.venv-recensus/lib/python3.12/site-packages/numpy/f2py/symbolic.py:1070:4 observed=CallSiteValue requested=constructed exception floor fix=construct an exact ExceptionValue before raise; do not substitute arbitrary call coordinates"
+      }
+    },
+    {
+      "file": "numpy/linalg/_linalg.py",
+      "category": "bare-exception",
+      "returncode": 3,
+      "testimony": {
+        "exception_type": "TypeError",
+        "file": "numpy/linalg/_linalg.py",
+        "outcome": "exception",
+        "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+      },
+      "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+    },
+    {
+      "file": "numpy/linalg/tests/test_linalg.py",
+      "category": "bare-exception",
+      "returncode": 3,
+      "testimony": {
+        "exception_type": "TypeError",
+        "file": "numpy/linalg/tests/test_linalg.py",
+        "outcome": "exception",
+        "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+      },
+      "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+    },
+    {
+      "file": "numpy/ma/core.py",
+      "category": "bare-exception",
+      "returncode": 3,
+      "testimony": {
+        "exception_type": "TypeError",
+        "file": "numpy/ma/core.py",
+        "outcome": "exception",
+        "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+      },
+      "reason": "the 'package' argument is required to perform a relative import for '.overrides'"
+    },
+    {
+      "file": "numpy/random/_examples/cffi/extending.py",
+      "category": "bare-exception",
+      "returncode": 3,
+      "testimony": {
+        "exception_type": "KeyError",
+        "file": "numpy/random/_examples/cffi/extending.py",
+        "outcome": "exception",
+        "reason": "'numpy.random'"
+      },
+      "reason": "'numpy.random'"
+    },
+    {
+      "file": "numpy/random/tests/test_generator_mt19937.py",
+      "category": "timeout-or-hang",
+      "reason": "child exceeded 10s"
+    },
+    {
+      "file": "numpy/random/tests/test_randomstate.py",
+      "category": "timeout-or-hang",
+      "reason": "child exceeded 10s"
+    },
+    {
+      "file": "numpy/tests/test_ctypeslib.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "numpy/tests/test_ctypeslib.py",
+        "gap": {
+          "blame": "numpy/tests/test_ctypeslib.py:143:8",
+          "fix": "bind `c_forward_pointer` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "c_forward_pointer",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=numpy/tests/test_ctypeslib.py:143:8 observed=c_forward_pointer requested=value fix=bind `c_forward_pointer` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "numpy/typing/tests/test_runtime.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "numpy/typing/tests/test_runtime.py",
+        "gap": {
+          "blame": "../../../../../usr/lib/python3.12/typing.py:2354:22",
+          "fix": "bind `_AnnotatedAlias` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "_AnnotatedAlias",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=../../../../../usr/lib/python3.12/typing.py:2354:22 observed=_AnnotatedAlias requested=value fix=bind `_AnnotatedAlias` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/core/arrays/arrow/array.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/core/arrays/arrow/array.py",
+        "gap": {
+          "blame": "pandas/core/arrays/arrow/array.py:3286:12",
+          "fix": "construct `ArrowExtensionArray.__init__` statement If exactly or leave this constructor loud",
+          "gap_kind": "Constructor",
+          "gap_locus": "AST",
+          "observed": "ArrowExtensionArray.__init__ contains If",
+          "owner": "ConstructorCallSugar",
+          "requested": "constructed source initializer"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Constructor for this AST: owner=ConstructorCallSugar blame=pandas/core/arrays/arrow/array.py:3286:12 observed=ArrowExtensionArray.__init__ contains If requested=constructed source initializer fix=construct `ArrowExtensionArray.__init__` statement If exactly or leave this constructor loud"
+      }
+    },
+    {
+      "file": "pandas/core/arrays/boolean.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/core/arrays/boolean.py",
+        "gap": {
+          "blame": "pandas/core/arrays/boolean.py:151:19",
+          "fix": "construct `BooleanArray.__init__` statement If exactly or leave this constructor loud",
+          "gap_kind": "Constructor",
+          "gap_locus": "AST",
+          "observed": "BooleanArray.__init__ contains If",
+          "owner": "ConstructorCallSugar",
+          "requested": "constructed source initializer"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Constructor for this AST: owner=ConstructorCallSugar blame=pandas/core/arrays/boolean.py:151:19 observed=BooleanArray.__init__ contains If requested=constructed source initializer fix=construct `BooleanArray.__init__` statement If exactly or leave this constructor loud"
+      }
+    },
+    {
+      "file": "pandas/core/arrays/datetimes.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/core/arrays/datetimes.py",
+        "gap": {
+          "blame": "pandas/core/arrays/datetimes.py:634:5",
+          "fix": "bind `tz` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "tz",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/core/arrays/datetimes.py:634:5 observed=tz requested=value fix=bind `tz` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/core/arrays/interval.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/core/arrays/interval.py",
+        "gap": {
+          "blame": "pandas/core/arrays/interval.py:1269:20",
+          "fix": "construct the exact multiple-inheritance MRO for `IntervalArray`",
+          "gap_kind": "Constructor",
+          "gap_locus": "AST",
+          "observed": "IntervalArray bases=('IntervalMixin', 'ExtensionArray')",
+          "owner": "ConstructorCallSugar",
+          "requested": "statically resolved inherited constructor"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Constructor for this AST: owner=ConstructorCallSugar blame=pandas/core/arrays/interval.py:1269:20 observed=IntervalArray bases=('IntervalMixin', 'ExtensionArray') requested=statically resolved inherited constructor fix=construct the exact multiple-inheritance MRO for `IntervalArray`"
+      }
+    },
+    {
+      "file": "pandas/core/arrays/string_.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/core/arrays/string_.py",
+        "gap": {
+          "blame": "pandas/core/arrays/string_.py:375:19",
+          "fix": "bind `pa` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "pa",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/core/arrays/string_.py:375:19 observed=pa requested=value fix=bind `pa` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/core/computation/scope.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/core/computation/scope.py",
+        "gap": {
+          "blame": "pandas/core/computation/scope.py:313:12",
+          "fix": "create sugar_lift_py_tests.sugar.delete.delete_sugar",
+          "gap_kind": "Sugar",
+          "gap_locus": "AST",
+          "observed": "Delete",
+          "owner": "python.factory",
+          "requested": "statement"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Sugar for this AST: owner=python.factory blame=pandas/core/computation/scope.py:313:12 observed=Delete requested=statement fix=create sugar_lift_py_tests.sugar.delete.delete_sugar"
+      }
+    },
+    {
+      "file": "pandas/core/frame.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/core/frame.py",
+        "gap": {
+          "blame": ".venv-recensus/lib/python3.12/site-packages/pandas/io/common.py:850:16",
+          "fix": "prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "CallSiteValue(py.subscript)",
+          "owner": "AppendCallSugar",
+          "requested": "classified append contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=AppendCallSugar blame=.venv-recensus/lib/python3.12/site-packages/pandas/io/common.py:850:16 observed=CallSiteValue(py.subscript) requested=classified append contract fix=prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result"
+      }
+    },
+    {
+      "file": "pandas/core/groupby/groupby.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/core/groupby/groupby.py",
+        "gap": {
+          "blame": "pandas/core/groupby/groupby.py:6164:15",
+          "fix": "bind `result` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "result",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/core/groupby/groupby.py:6164:15 observed=result requested=value fix=bind `result` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/core/reshape/merge.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/core/reshape/merge.py",
+        "gap": {
+          "blame": "pandas/core/reshape/merge.py:2156:11",
+          "fix": "bind `lidx` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "lidx",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/core/reshape/merge.py:2156:11 observed=lidx requested=value fix=bind `lidx` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/core/series.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/core/series.py",
+        "gap": {
+          "blame": "pandas/core/series.py:741:5",
+          "fix": "bind `name` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "name",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/core/series.py:741:5 observed=name requested=value fix=bind `name` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/core/strings/accessor.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/core/strings/accessor.py",
+        "gap": {
+          "blame": "pandas/core/strings/accessor.py:4774:11",
+          "fix": "bind `result` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "result",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/core/strings/accessor.py:4774:11 observed=result requested=value fix=bind `result` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/core/tools/datetimes.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/core/tools/datetimes.py",
+        "gap": {
+          "blame": "pandas/core/tools/datetimes.py:1070:44",
+          "fix": "bind `argc` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "argc",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/core/tools/datetimes.py:1070:44 observed=argc requested=value fix=bind `argc` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/io/excel/_base.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/io/excel/_base.py",
+        "gap": {
+          "blame": ".venv-recensus/lib/python3.12/site-packages/pandas/io/common.py:850:16",
+          "fix": "prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "CallSiteValue(py.subscript)",
+          "owner": "AppendCallSugar",
+          "requested": "classified append contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=AppendCallSugar blame=.venv-recensus/lib/python3.12/site-packages/pandas/io/common.py:850:16 observed=CallSiteValue(py.subscript) requested=classified append contract fix=prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result"
+      }
+    },
+    {
+      "file": "pandas/io/formats/excel.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/io/formats/excel.py",
+        "gap": {
+          "blame": "pandas/io/formats/excel.py:561:34",
+          "fix": "construct `CSSToExcelConverter.__init__` statement If exactly or leave this constructor loud",
+          "gap_kind": "Constructor",
+          "gap_locus": "AST",
+          "observed": "CSSToExcelConverter.__init__ contains If",
+          "owner": "ConstructorCallSugar",
+          "requested": "constructed source initializer"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Constructor for this AST: owner=ConstructorCallSugar blame=pandas/io/formats/excel.py:561:34 observed=CSSToExcelConverter.__init__ contains If requested=constructed source initializer fix=construct `CSSToExcelConverter.__init__` statement If exactly or leave this constructor loud"
+      }
+    },
+    {
+      "file": "pandas/io/html.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/io/html.py",
+        "gap": {
+          "blame": ".venv-recensus/lib/python3.12/site-packages/pandas/io/common.py:850:16",
+          "fix": "prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "CallSiteValue(py.subscript)",
+          "owner": "AppendCallSugar",
+          "requested": "classified append contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=AppendCallSugar blame=.venv-recensus/lib/python3.12/site-packages/pandas/io/common.py:850:16 observed=CallSiteValue(py.subscript) requested=classified append contract fix=prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result"
+      }
+    },
+    {
+      "file": "pandas/io/orc.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/io/orc.py",
+        "gap": {
+          "blame": ".venv-recensus/lib/python3.12/site-packages/pandas/io/common.py:850:16",
+          "fix": "prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "CallSiteValue(py.subscript)",
+          "owner": "AppendCallSugar",
+          "requested": "classified append contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=AppendCallSugar blame=.venv-recensus/lib/python3.12/site-packages/pandas/io/common.py:850:16 observed=CallSiteValue(py.subscript) requested=classified append contract fix=prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result"
+      }
+    },
+    {
+      "file": "pandas/io/parsers/python_parser.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/io/parsers/python_parser.py",
+        "gap": {
+          "blame": "pandas/io/parsers/python_parser.py:224:20",
+          "fix": "rewrite attribute or subscript mutation as explicit carried locals",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "nonlocal mutation",
+          "owner": "WhileSugar",
+          "requested": "classifiable loop-carried local state"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=WhileSugar blame=pandas/io/parsers/python_parser.py:224:20 observed=nonlocal mutation requested=classifiable loop-carried local state fix=rewrite attribute or subscript mutation as explicit carried locals"
+      }
+    },
+    {
+      "file": "pandas/io/pytables.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/io/pytables.py",
+        "gap": {
+          "blame": "pandas/io/pytables.py:1282:12",
+          "fix": "bind `s` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "s",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/io/pytables.py:1282:12 observed=s requested=value fix=bind `s` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/plotting/_matplotlib/core.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/plotting/_matplotlib/core.py",
+        "gap": {
+          "blame": "pandas/plotting/_matplotlib/core.py:903:20",
+          "fix": "write more Floor: implement ComprehensionValue.add",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "ComprehensionValue",
+          "owner": "add",
+          "requested": "stand on the addition floor"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=add blame=pandas/plotting/_matplotlib/core.py:903:20 observed=ComprehensionValue requested=stand on the addition floor fix=write more Floor: implement ComprehensionValue.add"
+      }
+    },
+    {
+      "file": "pandas/tests/arithmetic/test_string.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/arithmetic/test_string.py",
+        "gap": {
+          "blame": "pandas/tests/arithmetic/test_string.py:162:8",
+          "fix": "write more Floor: implement FalseBoolLiteralSugar.multiply",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "FalseBoolLiteralSugar",
+          "owner": "multiply",
+          "requested": "stand on the multiplication floor"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=multiply blame=pandas/tests/arithmetic/test_string.py:162:8 observed=FalseBoolLiteralSugar requested=stand on the multiplication floor fix=write more Floor: implement FalseBoolLiteralSugar.multiply"
+      }
+    },
+    {
+      "file": "pandas/tests/arrays/categorical/test_astype.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/arrays/categorical/test_astype.py",
+        "gap": {
+          "blame": ".venv-recensus/lib/python3.12/site-packages/pandas/core/construction.py:400:4",
+          "fix": "construct the exact reduced return selection; unimplemented control-flow machinery must panic, never mint RuntimeEffect",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "Return",
+          "owner": "SequentialDigBody",
+          "requested": "reduced guarded returns with an unguarded fallback"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=SequentialDigBody blame=.venv-recensus/lib/python3.12/site-packages/pandas/core/construction.py:400:4 observed=Return requested=reduced guarded returns with an unguarded fallback fix=construct the exact reduced return selection; unimplemented control-flow machinery must panic, never mint RuntimeEffect"
+      }
+    },
+    {
+      "file": "pandas/tests/arrays/categorical/test_operators.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/arrays/categorical/test_operators.py",
+        "gap": {
+          "blame": "pandas/tests/arrays/categorical/test_operators.py:371:16",
+          "fix": "enumerate the finite attribute-name faces and project each one, or keep this missing construction loud",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "CallSiteValue(_Ctor(name='py.subscript', args=(_Ctor(name='py.iter_elem', args=(_Ctor(name='array', args=(_Ctor(name='tuple', args=(_ConstStr(value='__add__', sort=PrimitiveSort(name='String')), _ConstStr(value='\\\\+', sort=PrimitiveSort(name='String')))), _Ctor(name='tuple', args=(_ConstStr(value='__sub__', sort=PrimitiveSort(name='String')), _ConstStr(value='-', sort=PrimitiveSort(name='String')))), _Ctor(name='tuple', args=(_ConstStr(value='__mul__', sort=PrimitiveSort(name='String')), _ConstStr(value='\\\\*', sort=PrimitiveSort(name='String')))), _Ctor(name='tuple', args=(_ConstStr(value='__truediv__', sort=PrimitiveSort(name='String')), _ConstStr(value='/', sort=PrimitiveSort(name='String')))))),)), _ConstInt(value=0, sort=PrimitiveSort(name='Int')))))",
+          "owner": "GetattrBuiltinSugar",
+          "requested": "statically enumerated attribute name"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=GetattrBuiltinSugar blame=pandas/tests/arrays/categorical/test_operators.py:371:16 observed=CallSiteValue(_Ctor(name='py.subscript', args=(_Ctor(name='py.iter_elem', args=(_Ctor(name='array', args=(_Ctor(name='tuple', args=(_ConstStr(value='__add__', sort=PrimitiveSort(name='String')), _ConstStr(value='\\\\+', sort=PrimitiveSort(name='String')))), _Ctor(name='tuple', args=(_ConstStr(value='__sub__', sort=PrimitiveSort(name='String')), _ConstStr(value='-', sort=PrimitiveSort(name='String')))), _Ctor(name='tuple', args=(_ConstStr(value='__mul__', sort=PrimitiveSort(name='String')), _ConstStr(value='\\\\*', sort=PrimitiveSort(name='String')))), _Ctor(name='tuple', args=(_ConstStr(value='__truediv__', sort=PrimitiveSort(name='String')), _ConstStr(value='/', sort=PrimitiveSort(name='String')))))),)), _ConstInt(value=0, sort=PrimitiveSort(name='Int'))))) requested=statically enumerated attribute name fix=enumerate the finite attribute-name faces and "
+      }
+    },
+    {
+      "file": "pandas/tests/arrays/sparse/test_dtype.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/arrays/sparse/test_dtype.py",
+        "gap": {
+          "blame": "pandas/tests/arrays/sparse/test_dtype.py:93:4",
+          "fix": "bind `tups` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "tups",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/tests/arrays/sparse/test_dtype.py:93:4 observed=tups requested=value fix=bind `tups` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/tests/computation/test_eval.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/computation/test_eval.py",
+        "gap": {
+          "blame": "pandas/tests/computation/test_eval.py:589:69",
+          "fix": "write more Floor: implement TrueBoolLiteralSugar.bitwise_invert",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "TrueBoolLiteralSugar",
+          "owner": "bitwise_invert",
+          "requested": "stand on the bitwise-invert floor"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=bitwise_invert blame=pandas/tests/computation/test_eval.py:589:69 observed=TrueBoolLiteralSugar requested=stand on the bitwise-invert floor fix=write more Floor: implement TrueBoolLiteralSugar.bitwise_invert"
+      }
+    },
+    {
+      "file": "pandas/tests/config/test_localization.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/config/test_localization.py",
+        "gap": {
+          "blame": ".venv-recensus/lib/python3.12/site-packages/pandas/_config/localization.py:50:4",
+          "fix": "construct the exact reduced return selection; unimplemented control-flow machinery must panic, never mint RuntimeEffect",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "Try",
+          "owner": "SequentialDigBody",
+          "requested": "reduced guarded returns with an unguarded fallback"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=SequentialDigBody blame=.venv-recensus/lib/python3.12/site-packages/pandas/_config/localization.py:50:4 observed=Try requested=reduced guarded returns with an unguarded fallback fix=construct the exact reduced return selection; unimplemented control-flow machinery must panic, never mint RuntimeEffect"
+      }
+    },
+    {
+      "file": "pandas/tests/extension/base/dim2.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/extension/base/dim2.py",
+        "gap": {
+          "blame": "pandas/tests/extension/base/dim2.py:225:30",
+          "fix": "bind `result` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "result",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/tests/extension/base/dim2.py:225:30 observed=result requested=value fix=bind `result` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/tests/extension/base/ops.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/extension/base/ops.py",
+        "gap": {
+          "blame": "pandas/tests/extension/base/ops.py:234:39",
+          "fix": "bind `result` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "result",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/tests/extension/base/ops.py:234:39 observed=result requested=value fix=bind `result` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/tests/extension/test_categorical.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/extension/test_categorical.py",
+        "gap": {
+          "blame": "pandas/tests/extension/test_categorical.py:39:11",
+          "fix": "bind `values` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "values",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/tests/extension/test_categorical.py:39:11 observed=values requested=value fix=bind `values` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/tests/frame/methods/test_at_time.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/frame/methods/test_at_time.py",
+        "gap": {
+          "blame": "pandas/tests/frame/methods/test_at_time.py:119:8",
+          "fix": "bind `expected` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "expected",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/tests/frame/methods/test_at_time.py:119:8 observed=expected requested=value fix=bind `expected` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/tests/generic/test_generic.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/generic/test_generic.py",
+        "gap": {
+          "blame": "pandas/tests/generic/test_generic.py:30:22",
+          "fix": "write more Floor: implement ListValue.multiply",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "ListValue",
+          "owner": "multiply",
+          "requested": "stand on the multiplication floor"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=multiply blame=pandas/tests/generic/test_generic.py:30:22 observed=ListValue requested=stand on the multiplication floor fix=write more Floor: implement ListValue.multiply"
+      }
+    },
+    {
+      "file": "pandas/tests/groupby/aggregate/test_aggregate.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/groupby/aggregate/test_aggregate.py",
+        "gap": {
+          "blame": "pandas/tests/groupby/aggregate/test_aggregate.py:1531:30",
+          "fix": "bind `max_value` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "max_value",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/tests/groupby/aggregate/test_aggregate.py:1531:30 observed=max_value requested=value fix=bind `max_value` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/tests/groupby/aggregate/test_other.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/groupby/aggregate/test_other.py",
+        "gap": {
+          "blame": "pandas/tests/groupby/aggregate/test_other.py:65:13",
+          "fix": "construct the concrete callsite/comprehension result before truth(); a ground coordinate cannot mint RuntimeEffect authority",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "ground callsite term _Ctor(name='py.subscript', args=(_Ctor(name='py.iter_elem', args=(_Ctor(name='array', args=(_Ctor(name='array', args=(_ConstInt(value=1, sort=PrimitiveSort(name='Int')), _ConstStr(value='2012-01-01', sort=PrimitiveSort(name='String')), _ConstReal(value='1.0', sort=PrimitiveSort(name='Real')))), _Ctor(name='array', args=(_ConstInt(value=2, sort=PrimitiveSort(name='Int')), _ConstStr(value='2012-01-02', sort=PrimitiveSort(name='String')), _ConstReal(value='2.0', sort=PrimitiveSort(name='Real')))), _Ctor(name='array', args=(_ConstInt(value=3, sort=PrimitiveSort(name='Int')), _Ctor(name='None', args=()), _ConstReal(value='3.0', sort=PrimitiveSort(name='Real')))))),)), _ConstInt(value=1, sort=PrimitiveSort(name='Int'))))",
+          "owner": "CallSiteValue.truth",
+          "requested": "constructed lift-time truth value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=CallSiteValue.truth blame=pandas/tests/groupby/aggregate/test_other.py:65:13 observed=ground callsite term _Ctor(name='py.subscript', args=(_Ctor(name='py.iter_elem', args=(_Ctor(name='array', args=(_Ctor(name='array', args=(_ConstInt(value=1, sort=PrimitiveSort(name='Int')), _ConstStr(value='2012-01-01', sort=PrimitiveSort(name='String')), _ConstReal(value='1.0', sort=PrimitiveSort(name='Real')))), _Ctor(name='array', args=(_ConstInt(value=2, sort=PrimitiveSort(name='Int')), _ConstStr(value='2012-01-02', sort=PrimitiveSort(name='String')), _ConstReal(value='2.0', sort=PrimitiveSort(name='Real')))), _Ctor(name='array', args=(_ConstInt(value=3, sort=PrimitiveSort(name='Int')), _Ctor(name='None', args=()), _ConstReal(value='3.0', sort=PrimitiveSort(name='Real')))))),)), _ConstInt(value=1, sort=PrimitiveSort(name='Int')))) requested=constructed lift-time truth value fix=construct the concrete callsite/comprehension result before truth(); a gro"
+      }
+    },
+    {
+      "file": "pandas/tests/indexes/datetimes/test_date_range.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/indexes/datetimes/test_date_range.py",
+        "gap": {
+          "blame": "pandas/tests/indexes/datetimes/test_date_range.py:744:38",
+          "fix": "bind `expected` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "expected",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/tests/indexes/datetimes/test_date_range.py:744:38 observed=expected requested=value fix=bind `expected` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/tests/indexes/interval/test_interval.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/indexes/interval/test_interval.py",
+        "gap": {
+          "blame": "pandas/tests/indexes/interval/test_interval.py:177:19",
+          "fix": "prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "CallSiteValue(pandas.IntervalIndex)",
+          "owner": "AppendCallSugar",
+          "requested": "classified append contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=AppendCallSugar blame=pandas/tests/indexes/interval/test_interval.py:177:19 observed=CallSiteValue(pandas.IntervalIndex) requested=classified append contract fix=prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result"
+      }
+    },
+    {
+      "file": "pandas/tests/indexes/period/test_setops.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/indexes/period/test_setops.py",
+        "gap": {
+          "blame": "pandas/tests/indexes/period/test_setops.py:338:18",
+          "fix": "prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "CallSiteValue(pandas.core.indexes.period.period_range)",
+          "owner": "AppendCallSugar",
+          "requested": "classified append contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=AppendCallSugar blame=pandas/tests/indexes/period/test_setops.py:338:18 observed=CallSiteValue(pandas.core.indexes.period.period_range) requested=classified append contract fix=prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result"
+      }
+    },
+    {
+      "file": "pandas/tests/indexes/ranges/test_range.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/indexes/ranges/test_range.py",
+        "gap": {
+          "blame": "pandas/tests/indexes/ranges/test_range.py:670:13",
+          "fix": "prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "CallSiteValue(pandas.RangeIndex)",
+          "owner": "AppendCallSugar",
+          "requested": "classified append contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=AppendCallSugar blame=pandas/tests/indexes/ranges/test_range.py:670:13 observed=CallSiteValue(pandas.RangeIndex) requested=classified append contract fix=prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result"
+      }
+    },
+    {
+      "file": "pandas/tests/indexes/test_base.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/indexes/test_base.py",
+        "gap": {
+          "blame": "pandas/tests/indexes/test_base.py:645:17",
+          "fix": "prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "CallSiteValue(pandas.core.indexes.api.Index)",
+          "owner": "AppendCallSugar",
+          "requested": "classified append contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=AppendCallSugar blame=pandas/tests/indexes/test_base.py:645:17 observed=CallSiteValue(pandas.core.indexes.api.Index) requested=classified append contract fix=prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result"
+      }
+    },
+    {
+      "file": "pandas/tests/indexes/timedeltas/test_indexing.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/indexes/timedeltas/test_indexing.py",
+        "gap": {
+          "blame": "pandas/tests/indexes/timedeltas/test_indexing.py:346:17",
+          "fix": "route `NaT + ...` through install_source_dig for source `/home/tsavo/remote/fatal-recensus-refresh-320b87cc/sugar/.venv-recensus/lib/python3.12/site-packages/pandas/_libs/tslibs/__init__.py`",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "pandas._libs.tslibs.NaT",
+          "owner": "ImportAliasValue",
+          "requested": "dig installed import source before applying floor operation"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=ImportAliasValue blame=pandas/tests/indexes/timedeltas/test_indexing.py:346:17 observed=pandas._libs.tslibs.NaT requested=dig installed import source before applying floor operation fix=route `NaT + ...` through install_source_dig for source `/home/tsavo/remote/fatal-recensus-refresh-320b87cc/sugar/.venv-recensus/lib/python3.12/site-packages/pandas/_libs/tslibs/__init__.py`"
+      }
+    },
+    {
+      "file": "pandas/tests/io/excel/test_readers.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/io/excel/test_readers.py",
+        "gap": {
+          "blame": "pandas/tests/io/excel/test_readers.py:819:64",
+          "fix": "RuntimeEffect requires a genuine runtime-dependent operand; _ConstInt(value=0, sort=PrimitiveSort(name='Int')) is ground/decidable at lift time. Construction-gap prose and ground values cannot mint RuntimeEffect authority. replacement=construct the exact result or FactoryPanic loudly. A decidable operand or construction-gap description must construct the exact result or panic; it cannot mint a RuntimeEffect.",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "py.divide operand=TermValue(value=0)",
+          "owner": "RuntimeEffect",
+          "requested": "genuine runtime-dependent operand"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=RuntimeEffect blame=pandas/tests/io/excel/test_readers.py:819:64 observed=py.divide operand=TermValue(value=0) requested=genuine runtime-dependent operand fix=RuntimeEffect requires a genuine runtime-dependent operand; _ConstInt(value=0, sort=PrimitiveSort(name='Int')) is ground/decidable at lift time. Construction-gap prose and ground values cannot mint RuntimeEffect authority. replacement=construct the exact result or FactoryPanic loudly. A decidable operand or construction-gap description must construct the exact result or panic; it cannot mint a RuntimeEffect."
+      }
+    },
+    {
+      "file": "pandas/tests/io/excel/test_xlrd.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/io/excel/test_xlrd.py",
+        "gap": {
+          "blame": ".venv-recensus/lib/python3.12/site-packages/pandas/io/excel/_base.py:1452:4",
+          "fix": "attach the exact __exit__ method body before reducing a raising with-body",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "raise-carrying callsite with-body",
+          "owner": "WithSugar",
+          "requested": "dig manager().__exit__ exception suppression contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=WithSugar blame=.venv-recensus/lib/python3.12/site-packages/pandas/io/excel/_base.py:1452:4 observed=raise-carrying callsite with-body requested=dig manager().__exit__ exception suppression contract fix=attach the exact __exit__ method body before reducing a raising with-body"
+      }
+    },
+    {
+      "file": "pandas/tests/io/formats/style/test_to_latex.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/io/formats/style/test_to_latex.py",
+        "gap": {
+          "blame": ".venv-recensus/lib/python3.12/site-packages/pandas/io/formats/style_render.py:2452:4",
+          "fix": "construct the exact reduced return selection; unimplemented control-flow machinery must panic, never mint RuntimeEffect",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "If",
+          "owner": "SequentialDigBody",
+          "requested": "reduced guarded returns with an unguarded fallback"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=SequentialDigBody blame=.venv-recensus/lib/python3.12/site-packages/pandas/io/formats/style_render.py:2452:4 observed=If requested=reduced guarded returns with an unguarded fallback fix=construct the exact reduced return selection; unimplemented control-flow machinery must panic, never mint RuntimeEffect"
+      }
+    },
+    {
+      "file": "pandas/tests/io/formats/test_to_string.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/io/formats/test_to_string.py",
+        "gap": {
+          "blame": "pandas/tests/io/formats/test_to_string.py:1113:20",
+          "fix": "construct __format__",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "SymbolicValue",
+          "owner": "FormatDunderCallSugar",
+          "requested": "format data-model method"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=FormatDunderCallSugar blame=pandas/tests/io/formats/test_to_string.py:1113:20 observed=SymbolicValue requested=format data-model method fix=construct __format__"
+      }
+    },
+    {
+      "file": "pandas/tests/io/json/test_json_table_schema.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/io/json/test_json_table_schema.py",
+        "gap": {
+          "blame": "pandas/tests/io/json/test_json_table_schema.py:75:12",
+          "fix": "RuntimeEffect requires a genuine runtime-dependent operand; _Ctor(name='array', args=(_Ctor(name='python:dict', args=(_Ctor(name='python:dict_entry', args=(_ConstStr(value='name', sort=PrimitiveSort(name='String')), _ConstStr(value='idx', sort=PrimitiveSort(name='String')))), _Ctor(name='python:dict_entry', args=(_ConstStr(value='type', sort=PrimitiveSort(name='String')), _ConstStr(value='integer', sort=PrimitiveSort(name='String')))))), _Ctor(name='python:dict', args=(_Ctor(name='python:dict_entry', args=(_ConstStr(value='name', sort=PrimitiveSort(name='String')), _ConstStr(value='A', sort=PrimitiveSort(name='String')))), _Ctor(name='python:dict_entry', args=(_ConstStr(value='type', sort=PrimitiveSort(name='String')), _ConstStr(value='integer', sort=PrimitiveSort(name='String')))))), _Ctor(name='python:dict', args=(_Ctor(name='python:dict_entry', args=(_ConstStr(value='name', sort=PrimitiveSort(name='String')), _ConstStr(value='B', sort=PrimitiveSort(name='String')))), _Ctor(name='python:dict_entry', args=(_ConstStr(value='type', sort=PrimitiveSort(name='String')), _ConstStr(value='string', sort=PrimitiveSort(name='String')))))), _Ctor(name='python:dict', args=(_Ctor(name='python:dict_entry', args=(_ConstStr(value='name', sort=PrimitiveSort(name='String')), _ConstStr(value='C', sort=PrimitiveSort(name='String')))), _Ctor(name='python:dict_entry', args=(_ConstStr(value='type', sort=PrimitiveSort(name='String')), _ConstStr(value='datetime', sort=PrimitiveSort(name='String')))))), _Ctor(name='python:dict', args=(_Ctor(name='python:dict_entry', args=(_ConstStr(value='name', sort=PrimitiveSort(name='String')), _ConstStr(value='D', sort=PrimitiveSort(name='String')))), _Ctor(name='python:dict_entry', args=(_ConstStr(value='type', sort=PrimitiveSort(name='String')), _ConstStr(value='duration', sort=PrimitiveSort(name='String')))))))) is ground/decidable at lift time. Construction-gap prose and ground values cannot mint RuntimeEffect authority. replacement=construct the exact result or FactoryPanic loudly. A decidable operand or construction-gap description must construct the exact result or panic; it cannot mint a RuntimeEffect.",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "py.setitem operand=ListValue(elements=(DictValue(entries=((StringValue(value='name'), StringValue(value='idx')), (StringValue(value='type'), StringValue(value='integer')))), DictValue(entries=((StringValue(value='name'), StringValue(value='A')), (StringValue(value='type'), StringValue(value='integer')))), DictValue(entries=((StringValue(value='name'), StringValue(value='B')), (StringValue(value='type'), StringValue(value='string')))), DictValue(entries=((StringValue(value='name'), StringValue(value='C')), (StringValue(value='type'), StringValue(value='datetime')))), DictValue(entries=((StringValue(value='name'), StringValue(value='D')), (StringValue(value='type'), StringValue(value='duration'))))))",
+          "owner": "RuntimeEffect",
+          "requested": "genuine runtime-dependent operand"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=RuntimeEffect blame=pandas/tests/io/json/test_json_table_schema.py:75:12 observed=py.setitem operand=ListValue(elements=(DictValue(entries=((StringValue(value='name'), StringValue(value='idx')), (StringValue(value='type'), StringValue(value='integer')))), DictValue(entries=((StringValue(value='name'), StringValue(value='A')), (StringValue(value='type'), StringValue(value='integer')))), DictValue(entries=((StringValue(value='name'), StringValue(value='B')), (StringValue(value='type'), StringValue(value='string')))), DictValue(entries=((StringValue(value='name'), StringValue(value='C')), (StringValue(value='type'), StringValue(value='datetime')))), DictValue(entries=((StringValue(value='name'), StringValue(value='D')), (StringValue(value='type'), StringValue(value='duration')))))) requested=genuine runtime-dependent operand fix=RuntimeEffect requires a genuine runtime-dependent operand; _Ctor(name='array', args=(_Ctor(name='python:dict', args"
+      }
+    },
+    {
+      "file": "pandas/tests/io/parser/common/test_file_buffer_url.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/io/parser/common/test_file_buffer_url.py",
+        "gap": {
+          "blame": "pandas/tests/io/parser/common/test_file_buffer_url.py:418:8",
+          "fix": "attach the exact __exit__ method body before reducing a raising with-body",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "raise-carrying callsite with-body",
+          "owner": "WithSugar",
+          "requested": "dig manager().__exit__ exception suppression contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=WithSugar blame=pandas/tests/io/parser/common/test_file_buffer_url.py:418:8 observed=raise-carrying callsite with-body requested=dig manager().__exit__ exception suppression contract fix=attach the exact __exit__ method body before reducing a raising with-body"
+      }
+    },
+    {
+      "file": "pandas/tests/io/test_http_headers.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/io/test_http_headers.py",
+        "gap": {
+          "blame": "pandas/tests/io/test_http_headers.py:138:8",
+          "fix": "write more Floor: implement DictValue.truth",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "DictValue",
+          "owner": "truth",
+          "requested": "stand as a condition"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=truth blame=pandas/tests/io/test_http_headers.py:138:8 observed=DictValue requested=stand as a condition fix=write more Floor: implement DictValue.truth"
+      }
+    },
+    {
+      "file": "pandas/tests/io/test_parquet.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/io/test_parquet.py",
+        "gap": {
+          "blame": "pandas/tests/io/test_parquet.py:309:8",
+          "fix": "RuntimeEffect requires a genuine runtime-dependent operand; _Ctor(name='py.not', args=(_Ctor(name='py.and', args=(_Ctor(name='py.implies', args=(_Ctor(name='py.not', args=(_Ctor(name='py.except', args=(_ConstStr(value='ImportError', sort=PrimitiveSort(name='String')),)),)), _Ctor(name='py.and', args=()))), _Ctor(name='py.implies', args=(_Ctor(name='py.not', args=(_Ctor(name='py.not', args=(_Ctor(name='py.except', args=(_ConstStr(value='ImportError', sort=PrimitiveSort(name='String')),)),)),)), _Ctor(name='py.not', args=(_Ctor(name='py.and', args=()),)))))),)) is ground/decidable at lift time. Construction-gap prose and ground values cannot mint RuntimeEffect authority. replacement=construct the exact result or FactoryPanic loudly. A decidable operand or construction-gap description must construct the exact result or panic; it cannot mint a RuntimeEffect.",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "RuntimeEffect operand=_Ctor(name='py.not', args=(_Ctor(name='py.and', args=(_Ctor(name='py.implies', args=(_Ctor(name='py.not', args=(_Ctor(name='py.except', args=(_ConstStr(value='ImportError', sort=PrimitiveSort(name='String')),)),)), _Ctor(name='py.and', args=()))), _Ctor(name='py.implies', args=(_Ctor(name='py.not', args=(_Ctor(name='py.not', args=(_Ctor(name='py.except', args=(_ConstStr(value='ImportError', sort=PrimitiveSort(name='String')),)),)),)), _Ctor(name='py.not', args=(_Ctor(name='py.and', args=()),)))))),))",
+          "owner": "RuntimeEffect",
+          "requested": "genuine runtime-dependent operand"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=RuntimeEffect blame=pandas/tests/io/test_parquet.py:309:8 observed=RuntimeEffect operand=_Ctor(name='py.not', args=(_Ctor(name='py.and', args=(_Ctor(name='py.implies', args=(_Ctor(name='py.not', args=(_Ctor(name='py.except', args=(_ConstStr(value='ImportError', sort=PrimitiveSort(name='String')),)),)), _Ctor(name='py.and', args=()))), _Ctor(name='py.implies', args=(_Ctor(name='py.not', args=(_Ctor(name='py.not', args=(_Ctor(name='py.except', args=(_ConstStr(value='ImportError', sort=PrimitiveSort(name='String')),)),)),)), _Ctor(name='py.not', args=(_Ctor(name='py.and', args=()),)))))),)) requested=genuine runtime-dependent operand fix=RuntimeEffect requires a genuine runtime-dependent operand; _Ctor(name='py.not', args=(_Ctor(name='py.and', args=(_Ctor(name='py.implies', args=(_Ctor(name='py.not', args=(_Ctor(name='py.except', args=(_ConstStr(value='ImportError', sort=PrimitiveSort(name='String')),)),)), _Ctor(name='py.and', args=()))), _Ct"
+      }
+    },
+    {
+      "file": "pandas/tests/io/xml/test_to_xml.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/io/xml/test_to_xml.py",
+        "gap": {
+          "blame": ".venv-recensus/lib/python3.12/site-packages/pandas/io/common.py:850:16",
+          "fix": "prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "CallSiteValue(py.subscript)",
+          "owner": "AppendCallSugar",
+          "requested": "classified append contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=AppendCallSugar blame=.venv-recensus/lib/python3.12/site-packages/pandas/io/common.py:850:16 observed=CallSiteValue(py.subscript) requested=classified append contract fix=prove that the call result is a mutable list and rebind it, or construct the exact non-mutating append result"
+      }
+    },
+    {
+      "file": "pandas/tests/scalar/test_nat.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/scalar/test_nat.py",
+        "gap": {
+          "blame": "pandas/tests/scalar/test_nat.py:155:8",
+          "fix": "route `getattr(NaT, 'astimezone')` through install_source_dig for source `/home/tsavo/remote/fatal-recensus-refresh-320b87cc/sugar/.venv-recensus/lib/python3.12/site-packages/pandas/__init__.py`",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "pandas.NaT",
+          "owner": "ImportAliasValue",
+          "requested": "dig installed import source before applying floor operation"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=ImportAliasValue blame=pandas/tests/scalar/test_nat.py:155:8 observed=pandas.NaT requested=dig installed import source before applying floor operation fix=route `getattr(NaT, 'astimezone')` through install_source_dig for source `/home/tsavo/remote/fatal-recensus-refresh-320b87cc/sugar/.venv-recensus/lib/python3.12/site-packages/pandas/__init__.py`"
+      }
+    },
+    {
+      "file": "pandas/tests/scalar/timedelta/methods/test_as_unit.py",
+      "category": "bare-exception",
+      "returncode": 3,
+      "testimony": {
+        "exception_type": "TypeError",
+        "file": "pandas/tests/scalar/timedelta/methods/test_as_unit.py",
+        "outcome": "exception",
+        "reason": "module, class, method, function, traceback, frame, or code object was expected, got cython_function_or_method"
+      },
+      "reason": "module, class, method, function, traceback, frame, or code object was expected, got cython_function_or_method"
+    },
+    {
+      "file": "pandas/tests/scalar/timestamp/test_timestamp.py",
+      "category": "bare-exception",
+      "returncode": 3,
+      "testimony": {
+        "exception_type": "TypeError",
+        "file": "pandas/tests/scalar/timestamp/test_timestamp.py",
+        "outcome": "exception",
+        "reason": "module, class, method, function, traceback, frame, or code object was expected, got cython_function_or_method"
+      },
+      "reason": "module, class, method, function, traceback, frame, or code object was expected, got cython_function_or_method"
+    },
+    {
+      "file": "pandas/tests/series/methods/test_astype.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/series/methods/test_astype.py",
+        "gap": {
+          "blame": "../../../../../usr/lib/python3.12/importlib/__init__.py:19:27",
+          "fix": "bind `_imp` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "_imp",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=../../../../../usr/lib/python3.12/importlib/__init__.py:19:27 observed=_imp requested=value fix=bind `_imp` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/tests/series/methods/test_sort_index.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/series/methods/test_sort_index.py",
+        "gap": {
+          "blame": "pandas/tests/series/methods/test_sort_index.py:337:39",
+          "fix": "bind `expected` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "expected",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/tests/series/methods/test_sort_index.py:337:39 observed=expected requested=value fix=bind `expected` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/tests/series/test_arithmetic.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/series/test_arithmetic.py",
+        "gap": {
+          "blame": "pandas/tests/series/test_arithmetic.py:81:18",
+          "fix": "route `getattr(Series, 'radd')` through install_source_dig for source `/home/tsavo/remote/fatal-recensus-refresh-320b87cc/sugar/.venv-recensus/lib/python3.12/site-packages/pandas/__init__.py`",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "pandas.Series",
+          "owner": "ImportAliasValue",
+          "requested": "dig installed import source before applying floor operation"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=ImportAliasValue blame=pandas/tests/series/test_arithmetic.py:81:18 observed=pandas.Series requested=dig installed import source before applying floor operation fix=route `getattr(Series, 'radd')` through install_source_dig for source `/home/tsavo/remote/fatal-recensus-refresh-320b87cc/sugar/.venv-recensus/lib/python3.12/site-packages/pandas/__init__.py`"
+      }
+    },
+    {
+      "file": "pandas/tests/strings/conftest.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/strings/conftest.py",
+        "gap": {
+          "blame": "pandas/tests/strings/conftest.py:99:81",
+          "fix": "bind `ids` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "ids",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/tests/strings/conftest.py:99:81 observed=ids requested=value fix=bind `ids` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "pandas/tests/test_errors.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/test_errors.py",
+        "gap": {
+          "blame": "pandas/tests/test_errors.py:65:8",
+          "fix": "construct an exact ExceptionValue before raise; do not substitute arbitrary call coordinates",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "CallSiteValue",
+          "owner": "RaiseSugar",
+          "requested": "constructed exception floor"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=RaiseSugar blame=pandas/tests/test_errors.py:65:8 observed=CallSiteValue requested=constructed exception floor fix=construct an exact ExceptionValue before raise; do not substitute arbitrary call coordinates"
+      }
+    },
+    {
+      "file": "pandas/tests/test_register_accessor.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/test_register_accessor.py",
+        "gap": {
+          "blame": "pandas/tests/test_register_accessor.py:99:8",
+          "fix": "create sugar_lift_py_tests.sugar.class_def.class_def_sugar",
+          "gap_kind": "Sugar",
+          "gap_locus": "AST",
+          "observed": "ClassDef",
+          "owner": "python.factory",
+          "requested": "statement"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Sugar for this AST: owner=python.factory blame=pandas/tests/test_register_accessor.py:99:8 observed=ClassDef requested=statement fix=create sugar_lift_py_tests.sugar.class_def.class_def_sugar"
+      }
+    },
+    {
+      "file": "pandas/tests/window/test_numba.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/window/test_numba.py",
+        "gap": {
+          "blame": "pandas/tests/window/test_numba.py:627:12",
+          "fix": "construct `PrescribedWindowIndexer.__init__` statement Expr exactly or leave this constructor loud",
+          "gap_kind": "Constructor",
+          "gap_locus": "AST",
+          "observed": "PrescribedWindowIndexer.__init__ contains Expr",
+          "owner": "ConstructorCallSugar",
+          "requested": "constructed source initializer"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Constructor for this AST: owner=ConstructorCallSugar blame=pandas/tests/window/test_numba.py:627:12 observed=PrescribedWindowIndexer.__init__ contains Expr requested=constructed source initializer fix=construct `PrescribedWindowIndexer.__init__` statement Expr exactly or leave this constructor loud"
+      }
+    },
+    {
+      "file": "pandas/tests/window/test_rolling.py",
+      "category": "factory-construction-panic",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/window/test_rolling.py",
+        "gap": {
+          "blame": "pandas/tests/window/test_rolling.py:2094:12",
+          "fix": "construct `PrescribedWindowIndexer.__init__` statement Expr exactly or leave this constructor loud",
+          "gap_kind": "Constructor",
+          "gap_locus": "AST",
+          "observed": "PrescribedWindowIndexer.__init__ contains Expr",
+          "owner": "ConstructorCallSugar",
+          "requested": "constructed source initializer"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Constructor for this AST: owner=ConstructorCallSugar blame=pandas/tests/window/test_rolling.py:2094:12 observed=PrescribedWindowIndexer.__init__ contains Expr requested=constructed source initializer fix=construct `PrescribedWindowIndexer.__init__` statement Expr exactly or leave this constructor loud"
+      }
+    }
+  ]
+}
