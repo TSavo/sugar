@@ -203,24 +203,44 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
         from sugar_lift_py_tests.factory.source_fragment import SourceFragment
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
-        loaded = cls._module_source_for_site(site, ctx)
-        if loaded is None:
-            return ctx
-        source, filename = loaded
-        try:
-            root = SourceFragment.from_source(source, filename)
-        except SyntaxError:
-            return ctx
-        declarations = cls._module_level_declarations_before(root, site)
-        if not declarations:
-            return ctx
-
         needed: set[str] = set()
         for body_stmt in site.function_body():
             needed.update(cls._names_in_fragment(body_stmt))
         needed -= set(site.function_params())
         if not needed:
             return ctx
+
+        # The file gateway has already constructed the execution-order prefix
+        # into module_temporal. Capture exact demanded values from that frame
+        # instead of reparsing and replaying their declarations once per
+        # FunctionDef. Missing/forward names still take the constructor below.
+        folded_ctx = ctx
+        module_temporal = ctx.module_temporal
+        if module_temporal is not None:
+            captured = {
+                name: value
+                for name in needed
+                if (value := module_temporal.value_if_bound(name)) is not None
+            }
+            temporal = folded_ctx.temporal
+            for name, value in captured.items():
+                temporal = temporal.bind_value(name, value)
+            folded_ctx = folded_ctx.with_temporal(temporal)
+            needed.difference_update(captured)
+            if not needed:
+                return folded_ctx
+
+        loaded = cls._module_source_for_site(site, ctx)
+        if loaded is None:
+            return folded_ctx
+        source, filename = loaded
+        try:
+            root = SourceFragment.from_source(source, filename)
+        except SyntaxError:
+            return folded_ctx
+        declarations = cls._module_level_declarations_before(root, site)
+        if not declarations:
+            return folded_ctx
 
         selected: list = []
         needed_work = set(needed)
@@ -241,7 +261,6 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 needed_work.update(cls._names_in_fragment(prior))
         selected.reverse()
 
-        folded_ctx = ctx
         for prior in selected:
             if prior.observed == "ImportFrom" and (
                 prior.importfrom_level() or not prior.importfrom_module()

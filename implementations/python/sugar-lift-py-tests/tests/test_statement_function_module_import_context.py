@@ -70,6 +70,57 @@ def test_untagged_statement_callable_does_not_borrow_module_imports() -> None:
     assert body.sugar.base_context.temporal.value_if_bound("com") is None
 
 
+def test_statement_callable_reuses_constructed_module_binding_without_replay(
+    monkeypatch,
+) -> None:
+    source = (
+        "import provider_alpha as com\n"
+        "def select(value):\n"
+        "    return com.any_none(value)\n"
+    )
+    root = SourceFragment.from_source(source, "/installed/module.py")
+    fn = next(
+        fragment for fragment in root.walk() if fragment.observed == "FunctionDef"
+    )
+    fn.node._sugar_source = source  # type: ignore[attr-defined]
+    fn.node._sugar_file = "/installed/module.py"  # type: ignore[attr-defined]
+    fn.node._sugar_bridge_name = "installed.module.select"  # type: ignore[attr-defined]
+    com = ImportAliasValue(
+        "provider_alpha",
+        "com",
+        import_target="provider_alpha",
+    )
+    catalog = default_catalog()
+    base = FactoryBuildContext(filename="consumer.py", catalog=catalog)
+    module_temporal = base.temporal.bind_value("com", com)
+    ctx = FactoryBuildContext(
+        filename="consumer.py",
+        catalog=catalog,
+        temporal=base.temporal,
+        module_temporal=module_temporal,
+    )
+    original = SourceFragment.from_source
+    replay_count = 0
+
+    def counted_from_source(cls, source_text, filename):
+        nonlocal replay_count
+        replay_count += 1
+        return original(source_text, filename)
+
+    monkeypatch.setattr(
+        SourceFragment,
+        "from_source",
+        classmethod(counted_from_source),
+    )
+    sugar = StatementFunctionDefSugar.new(fn, ctx)
+    value = complete_value(sugar.desugar(ctx), owner="constructed module binding reuse")
+
+    assert isinstance(value, FunctionCallable)
+    assert value.body is not None
+    assert value.body.sugar.base_context.temporal.value_if_bound("com") == com
+    assert replay_count == 0
+
+
 def test_installed_statement_callable_captures_needed_forward_module_class() -> None:
     callable_value = _statement_callable(
         "def select(value):\n"
