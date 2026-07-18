@@ -218,6 +218,26 @@ def test_dataclass_decorated_class_witness_truthful_sat_wrong_twin_unsat(
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_typed_dict_total_class_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in ClassDefSugar.witnesses()
+        if witness.name == "typed_dict_total_class_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "typed-dict-total-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "typed-dict-total-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_owns_plain_class_not_decorated_metaclass_or_function() -> None:
     """(3) owns plain class; not decorated, metaclass, or FunctionDef."""
     assert ClassDefSugar.owns(_site("class C:\n    pass\n")) is True
@@ -287,6 +307,58 @@ def test_same_named_local_dataclasses_namespace_stays_unowned() -> None:
     site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
 
     assert ClassDefSugar.owns(site) is False
+
+
+@pytest.mark.parametrize(
+    ("module", "total"),
+    (("typing", "False"), ("typing_extensions", "True")),
+)
+def test_owns_authenticated_typed_dict_total_class(module: str, total: str) -> None:
+    source = (
+        f"from {module} import TypedDict\n"
+        f"class Payload(TypedDict, total={total}):\n"
+        "    value: int\n"
+    )
+    site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is True
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    result = build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert result.audit_row.selected == "ClassDefSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        (
+            "class TypedDict:\n"
+            "    pass\n"
+            "class Payload(TypedDict, total=False):\n"
+            "    value: int\n"
+        ),
+        (
+            "from typing_extensions import TypedDict\n"
+            "flag = False\n"
+            "class Payload(TypedDict, total=flag):\n"
+            "    value: int\n"
+        ),
+        (
+            "from typing_extensions import TypedDict\n"
+            'class Payload(TypedDict, extra="forbid"):\n'
+            "    value: int\n"
+        ),
+    ),
+)
+def test_unsupported_typed_dict_total_partition_stays_loud(source: str) -> None:
+    node = ast.parse(source).body[-1]
+    site = SourceFragment.from_node(node, "t.py", source=source)
+    assert ClassDefSugar.owns(site) is False
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic) as raised:
+        build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert raised.value.info.observed == "ClassDef"
 
 
 def test_same_named_local_dataclass_decorator_stays_unowned() -> None:

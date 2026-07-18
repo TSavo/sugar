@@ -31,6 +31,7 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
 
     name: str
     bases: tuple[SugarBody, ...]
+    class_options: tuple[SugarBody, ...]
     body: SugarBody
     site: object = dataclass_field(compare=False)
 
@@ -43,7 +44,11 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
         if site.class_decorators() and not cls.decorators_preserve_identity(site):
             return False
         if site.class_keywords():
-            return False
+            from sugar_lift_py_tests.factory.class_definition import (
+                recognize_typed_dict_total_class,
+            )
+
+            return recognize_typed_dict_total_class(site) is not None
         return True
 
     @staticmethod
@@ -102,11 +107,20 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def new(cls, site, ctx) -> "ClassDefSugar":
-        # Bases (TERM) and body block (STATEMENT). Never reduce here.
+        from sugar_lift_py_tests.factory.class_definition import (
+            recognize_typed_dict_total_class,
+        )
+
+        recognized = recognize_typed_dict_total_class(site)
         return cls(
             name=site.class_name(),
             bases=tuple(
                 ctx.build_body(base, SugarRole.TERM) for base in site.class_bases()
+            ),
+            class_options=(
+                ()
+                if recognized is None
+                else (ctx.build_body(recognized.total_value, SugarRole.TERM),)
             ),
             body=ctx.build_body(site.class_body_block(), SugarRole.STATEMENT),
             site=site,
@@ -155,6 +169,15 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             "    return z\n"
             "\n"
         )
+        typed_dict_total = (
+            "from typing_extensions import TypedDict\n"
+            "\n"
+            "def E(z):\n"
+            "    class Payload(TypedDict, total=False):\n"
+            "        value: int\n"
+            "    return z\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="class_def_return",
@@ -189,6 +212,15 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                 + "    assert D(5) == 6\n",
                 family="identity-decorated-class",
             ),
+            _call_pair(
+                name="typed_dict_total_class_return",
+                owner_sugar="ClassDefSugar",
+                truthful=typed_dict_total
+                + "def test_e():\n"
+                + "    assert E(5) == 5\n",
+                lying=typed_dict_total + "def test_e():\n" + "    assert E(5) == 6\n",
+                family="typed-dict-total-class",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -220,12 +252,22 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
         self, remaining: tuple, accumulated: tuple, ctx: object
     ) -> Outcome:
         if not remaining:
-            return self.body.reduce(ctx).and_then(
-                lambda record: Complete(self._class_value(accumulated, record))
-            )
+            return self._reduce_class_options(self.class_options, accumulated, ctx)
         head, *rest = remaining
         return head.reduce(ctx).and_then(
             lambda base: self._collect_bases(tuple(rest), (*accumulated, base), ctx)
+        )
+
+    def _reduce_class_options(
+        self, remaining: tuple[SugarBody, ...], bases: tuple, ctx: object
+    ) -> Outcome:
+        if not remaining:
+            return self.body.reduce(ctx).and_then(
+                lambda record: Complete(self._class_value(bases, record))
+            )
+        head, *rest = remaining
+        return head.reduce(ctx).and_then(
+            lambda _value: self._reduce_class_options(tuple(rest), bases, ctx)
         )
 
     def _class_value(self, bases: tuple, record: object):
@@ -256,4 +298,4 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
         return ClassValue(name=self.name, bases=bases, record=record)
 
     def walk_children(self):
-        return (*self.bases, self.body)
+        return (*self.bases, *self.class_options, self.body)
