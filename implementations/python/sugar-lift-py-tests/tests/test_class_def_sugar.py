@@ -178,6 +178,26 @@ def test_class_local_default_witness_truthful_sat_wrong_twin_unsat(
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_accessor_decorated_class_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in ClassDefSugar.witnesses()
+        if witness.name == "accessor_decorated_class_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "accessor-decorated-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "accessor-decorated-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_owns_plain_class_not_decorated_metaclass_or_function() -> None:
     """(3) owns plain class; not decorated, metaclass, or FunctionDef."""
     assert ClassDefSugar.owns(_site("class C:\n    pass\n")) is True
@@ -193,6 +213,30 @@ def test_owns_plain_class_not_decorated_metaclass_or_function() -> None:
         c.name == "ClassDefSugar"
         for c in catalog.candidates_for(SugarRole.STATEMENT, plain)
     )
+
+
+def test_owns_authenticated_pandas_accessor_decorated_class() -> None:
+    source = (
+        "import pandas as pd\n"
+        '@pd.api.extensions.register_series_accessor("bad")\n'
+        "class Bad:\n"
+        "    pass\n"
+    )
+    site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is True
+
+
+def test_unknown_qualified_decorated_class_stays_unowned() -> None:
+    source = (
+        "import provider as p\n"
+        "@p.decorators.replace\n"
+        "class Replaced:\n"
+        "    pass\n"
+    )
+    site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is False
 
 
 def test_decorated_class_is_a_loud_factory_gap() -> None:

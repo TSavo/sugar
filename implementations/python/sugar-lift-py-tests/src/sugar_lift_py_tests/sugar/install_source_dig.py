@@ -56,8 +56,8 @@ class InstallSourceValueOracle:
     system for that identity.
 
     Publishing rules:
-      - Complete construct (value or proven absence) is published under the key.
-      - Cycle breaks (``_resolving``) return None without publishing.
+      - Complete constructed values are published under the key.
+      - Unresolved ``None`` and cycle breaks return without publishing.
       - FactoryPanic propagates and never publishes.
     """
 
@@ -133,6 +133,8 @@ class InstallSourceValueOracle:
         return value
 
     def _publish(self, key: tuple[str, str], value: Any) -> None:
+        if value is None:
+            return
         if key in self._table:
             self._table.move_to_end(key)
         self._table[key] = value

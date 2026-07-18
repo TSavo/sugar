@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import replace
+import importlib
 import os
 from pathlib import Path
 import subprocess
@@ -10,7 +11,13 @@ import sys
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
-from sugar_lift_py_tests.floor import DictValue, StringValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import (
+    DictValue,
+    ImportAliasValue,
+    StringValue,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar.dict_literal_sugar import DictLiteralSugar
@@ -56,6 +63,55 @@ def test_runtime_mapping_unpack_yields_named_witnessed_effect() -> None:
     assert type(outcome.effect).__name__ == "DictUnpackRuntimeEffect"
     assert outcome.effect.witness.operation.name == "py.dict_unpack"
     assert outcome.effect.witness.locus == "vendor.py:1:0"
+
+
+def test_resolved_import_alias_dict_unpack_merges_at_lift_time() -> None:
+    built, ctx = _build("{**mapping}")
+    ctx = replace(
+        ctx,
+        temporal=ctx.temporal.bind_value(
+            "mapping",
+            ImportAliasValue(
+                name="provider.mapping",
+                bound_name="mapping",
+                import_target="provider.mapping",
+                resolved_value=DictValue(((StringValue("answer"), TermValue(42)),)),
+                install_source_checked=True,
+            ),
+        ),
+    )
+
+    outcome = built.sugar.desugar(ctx)
+
+    assert outcome == Complete(DictValue(((StringValue("answer"), TermValue(42)),)))
+
+
+def test_source_checked_import_alias_dict_unpack_reenters_install_source_dig(
+    tmp_path, monkeypatch
+) -> None:
+    (tmp_path / "provider.py").write_text(
+        'mapping = {"answer": 42}\n', encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    built, ctx = _build("{**mapping}")
+    ctx = replace(
+        ctx,
+        temporal=ctx.temporal.bind_value(
+            "mapping",
+            ImportAliasValue(
+                name="mapping",
+                bound_name="mapping",
+                import_target="provider.mapping",
+                resolved_value=None,
+                install_source_checked=True,
+            ),
+        ),
+    )
+
+    outcome = built.sugar.desugar(ctx)
+
+    assert outcome == Complete(DictValue(((StringValue("answer"), TermValue(42)),)))
 
 
 def test_dict_unpack_owner_is_disjoint_from_call_kwargs_unpack() -> None:

@@ -25,6 +25,7 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.factory.sugar_constructors import (
     IncompleteFunctionBody,
+    _class_decorators_preserve_identity,
     _ctx_with_formal_binds,
     build_control_flow_body_sugar,
 )
@@ -141,6 +142,22 @@ def test_installed_source_body_binds_prior_identity_decorated_class() -> None:
     body_ctx = _ctx_with_formal_binds(fn, ctx)
 
     assert body_ctx.temporal.value_for("Result").name == "Result"
+
+
+def test_pandas_accessor_registrar_is_authenticated_identity_decorator() -> None:
+    src = (
+        "import pandas as pd\n"
+        '@pd.api.extensions.register_series_accessor("bad")\n'
+        "class Bad:\n"
+        "    pass\n"
+    )
+    statement = next(
+        fragment
+        for fragment in SourceFragment.from_source(src, "vendor.py").walk()
+        if fragment.observed == "ClassDef"
+    )
+
+    assert _class_decorators_preserve_identity(statement) is True
 
 
 def test_installed_source_body_rejects_prior_unknown_decorated_class() -> None:

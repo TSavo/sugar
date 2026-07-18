@@ -38,9 +38,15 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
     def owns(cls, site) -> bool:
         if site.observed != "ClassDef":
             return False
-        # Decorators and metaclass keywords stay loud gaps this arm.
+        # Decorated classes construct only when the existing factory recognizer
+        # authenticates every decorator as identity-preserving.
         if site.class_decorators():
-            return False
+            from sugar_lift_py_tests.factory.sugar_constructors import (
+                _class_decorators_preserve_identity,
+            )
+
+            if not _class_decorators_preserve_identity(site):
+                return False
         if site.class_keywords():
             return False
         return True
@@ -78,6 +84,18 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             "    return z\n"
             "\n"
         )
+        accessor_decorated = (
+            "import pandas as pd\n"
+            "\n"
+            '@pd.api.extensions.register_series_accessor("_sugar_witness_5194")\n'
+            "class Accessor:\n"
+            "    def __init__(self, obj):\n"
+            "        self.obj = obj\n"
+            "\n"
+            "def C():\n"
+            "    return 7\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="class_def_return",
@@ -91,6 +109,15 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                 truthful=class_local_default + "def test_b():\n    assert B(5) == 5\n",
                 lying=class_local_default + "def test_b():\n    assert B(5) == 6\n",
                 family="class-local-default-binding",
+            ),
+            _call_pair(
+                name="accessor_decorated_class_return",
+                owner_sugar="ClassDefSugar",
+                truthful=accessor_decorated
+                + "def test_c():\n"
+                + "    assert C() == 7\n",
+                lying=accessor_decorated + "def test_c():\n" + "    assert C() == 8\n",
+                family="identity-decorated-class",
             ),
         )
 
