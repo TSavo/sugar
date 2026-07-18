@@ -5,7 +5,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.ir import Formula
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _call_pair, typed_red_effect_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -186,6 +186,21 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
                 "def test_a():\n"
                 "    assert f() == 8\n",
                 family="module-try-dependency-prefix",
+            ),
+            typed_red_effect_witness(
+                name="try_runtime_handler_dispatch",
+                owner_sugar=cls.__name__,
+                source=(
+                    "def A(selector):\n"
+                    "    try:\n"
+                    "        return 1\n"
+                    "    except selector.error():\n"
+                    "        return 2\n"
+                ),
+                effect_class="TryHandlerDispatchRuntimeEffect",
+                reason_needle="try handler dispatch runtime boundary",
+                blame_needle="test_witness.py:2:4",
+                wrong_reason_needle="owner=TrySugar",
             ),
         )
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _call_pair, typed_red_effect_witness
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -119,12 +119,23 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
     def witnesses(cls):
         # Pure-literal f-string folds to the concrete string face.
         prefix = "def A():\n" "    return f'numpy-totality'\n" "\n"
-        return _call_pair(
-            name="joined_str_literal_return",
-            owner_sugar="JoinedStrSugar",
-            family="python-formatted-string-literal",
-            truthful=prefix + "def test_a():\n    assert A() == 'numpy-totality'\n",
-            lying=prefix + "def test_a():\n    assert A() == 'wrong-totality'\n",
+        return (
+            _call_pair(
+                name="joined_str_literal_return",
+                owner_sugar="JoinedStrSugar",
+                family="python-formatted-string-literal",
+                truthful=prefix + "def test_a():\n    assert A() == 'numpy-totality'\n",
+                lying=prefix + "def test_a():\n    assert A() == 'wrong-totality'\n",
+            ),
+            typed_red_effect_witness(
+                name="joined_str_dynamic_format_spec",
+                owner_sugar=cls.__name__,
+                source="def A(x, width):\n    return f'{x:{width}}'\n",
+                effect_class="DynamicFormatRuntimeEffect",
+                reason_needle="formatted string literal has a dynamic format spec",
+                blame_needle="test_witness.py:2:11",
+                wrong_reason_needle="owner=JoinedStrSugar",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

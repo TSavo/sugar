@@ -25,8 +25,10 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import ctor, str_const
+from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.sugar.try_sugar import TrySugar
+from sugar_lift_py_tests.sugar.witnesses import SugarRedEffectWitnessPair
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
@@ -175,6 +177,22 @@ def test_runtime_selected_handler_type_is_a_named_effect() -> None:
     assert len(outcome.statements) == 1
     assert isinstance(outcome.statements[0], Incomplete)
     assert isinstance(outcome.statements[0].effect, TryHandlerDispatchRuntimeEffect)
+
+
+def test_runtime_selected_handler_effect_has_a_refuting_bad_twin(tmp_path) -> None:
+    witness = next(
+        row
+        for row in TrySugar.witnesses()
+        if row.name == "try_runtime_handler_dispatch"
+    )
+
+    assert isinstance(witness, SugarRedEffectWitnessPair)
+    assert witness.truthful.expected_match is True
+    assert witness.lying.expected_match is False
+    assert (
+        witness.truthful.expectation.effect_class == "TryHandlerDispatchRuntimeEffect"
+    )
+    assert evaluate_seed_witnesses((witness,), tmp_path).is_zero
 
 
 def test_try_threads_binding_from_only_reduced_continuing_path() -> None:
