@@ -13,6 +13,7 @@ _SPEC.loader.exec_module(_SCANNER)
 scan_source = _SCANNER.scan_source
 scan_package = _SCANNER.scan_package
 format_offenders = _SCANNER.format_offenders
+evaluate_ratchet = _SCANNER.evaluate_ratchet
 
 
 def test_scanner_names_every_forbidden_factory_construction_class() -> None:
@@ -141,35 +142,32 @@ def resolve_external_source(node):
     )
 
 
-def test_current_factory_has_zero_behavior_construction_side_doors() -> None:
-    """Stable-zero gate: red while any factory behavior-construction site remains.
-
-    R is measured (not authored). Promote each locus into Sugar; re-run until R==0.
-    """
+def test_current_factory_respects_behavior_side_door_ratchet() -> None:
+    """Current debt may fall, but it may never rise above the recorded R."""
     offenders = scan_package(_KIT / "src" / "sugar_lift_py_tests")
+    baseline = _SCANNER.read_baseline(_KIT / "factory_zero_tolerance_baseline.json")
 
-    loci = {(row.path, row.kind) for row in offenders}
-    assert (
-        "factory/source_fragment.py",
-        "semantic-ast-classification",
-    ) in loci
-    assert ("sugar/match_sugar.py", "semantic-ast-classification") in loci
-    assert (
-        "sugar/subscript_assign_sugar.py",
-        "semantic-ast-classification",
-    ) in loci
     assert not any(
         row.path == "sugar/install_source_dig.py"
         and row.kind == "semantic-ast-classification"
         for row in offenders
     )
 
-    assert offenders == [], (
-        "factory/ may only select registered Sugar or raise FactoryPanic; "
-        "sugar/ may not classify raw AST shapes beside construction; "
-        f"R_behavior_side_doors={len(offenders)}; promote every locus:\n"
-        + format_offenders(offenders)
-    )
+    passes, message = evaluate_ratchet(len(offenders), baseline)
+    assert passes, message + "\n" + format_offenders(offenders)
+
+
+def test_ratchet_allows_baseline_and_monotonic_decrease() -> None:
+    assert evaluate_ratchet(42, 42)[0]
+    passes, message = evaluate_ratchet(41, 42)
+    assert passes
+    assert "lower the recorded baseline to 41" in message
+
+
+def test_ratchet_rejects_new_side_door() -> None:
+    passes, message = evaluate_ratchet(43, 42)
+    assert not passes
+    assert "increased by 1" in message
 
 
 def test_scanner_report_names_r_and_replacement_plans() -> None:

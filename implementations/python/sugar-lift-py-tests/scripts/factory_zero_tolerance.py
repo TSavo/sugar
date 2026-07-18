@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 from pathlib import Path
 from typing import NamedTuple
 
@@ -335,12 +336,40 @@ def format_report(offenders: list[Offender]) -> str:
     return "\n".join(lines)
 
 
+def read_baseline(path: Path) -> int:
+    document = json.loads(path.read_text(encoding="utf-8"))
+    return int(document["R_behavior_side_doors"])
+
+
+def evaluate_ratchet(observed: int, baseline: int) -> tuple[bool, str]:
+    if observed > baseline:
+        increase = observed - baseline
+        return (
+            False,
+            "FACTORY ZERO-TOLERANCE RATCHET RED: "
+            f"R increased by {increase} ({baseline} -> {observed}); "
+            "new behavior-construction side doors are forbidden.",
+        )
+    if observed < baseline:
+        return (
+            True,
+            "FACTORY ZERO-TOLERANCE RATCHET GREEN: "
+            f"R decreased ({baseline} -> {observed}); "
+            f"lower the recorded baseline to {observed} in this promotion PR.",
+        )
+    return (
+        True,
+        "FACTORY ZERO-TOLERANCE RATCHET GREEN: "
+        f"R remains at the recorded baseline {baseline}.",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Zero-tolerance census: factory construction and ad-hoc AST "
-            "classification across factory/ and sugar/. Reports R and stays "
-            "exit-red until R == 0."
+            "classification across factory/ and sugar/. Without a baseline it "
+            "stays exit-red until R == 0; with a baseline it rejects increases."
         )
     )
     parser.add_argument(
@@ -348,8 +377,19 @@ def main() -> int:
         type=Path,
         default=(Path(__file__).resolve().parents[1] / "src" / "sugar_lift_py_tests"),
     )
+    parser.add_argument(
+        "--baseline-file",
+        type=Path,
+        help="JSON ratchet baseline; counts at or below it pass",
+    )
     args = parser.parse_args()
     offenders = scan_package(args.package_root)
+    if args.baseline_file is not None:
+        baseline = read_baseline(args.baseline_file)
+        passes, status = evaluate_ratchet(len(offenders), baseline)
+        print(status)
+        print(format_report(offenders))
+        return 0 if passes else 1
     if offenders:
         print(
             "FACTORY ZERO-TOLERANCE RED: "

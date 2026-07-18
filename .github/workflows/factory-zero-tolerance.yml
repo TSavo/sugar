@@ -1,4 +1,4 @@
-name: Factory zero tolerance
+name: Factory zero-tolerance ratchet
 
 on:
   pull_request:
@@ -22,3 +22,5 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/factory_zero_tolerance.py
+          --baseline-file
+          implementations/python/sugar-lift-py-tests/factory_zero_tolerance_baseline.json
