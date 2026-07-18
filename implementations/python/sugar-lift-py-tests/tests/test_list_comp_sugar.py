@@ -1,8 +1,9 @@
 """ListCompSugar: [elt for target in iter if conds] is py.listcomp(...).
 
-Single-generator simple-Name target. Carries elt + iter (+ conditions) on the
-comprehension coordinate -- never enumerates the iterable, never drops pieces.
-Multi-generator and tuple-target stay loud FactoryPanic gaps.
+Single-generator simple-Name target. Symbolic/opaque iterables carry elt +
+iter (+ conditions) on the comprehension coordinate — never invent members.
+Finite ListValue/TupleValue iterables construct each member (set/dict comps
+already do). Multi-generator and tuple-target stay loud FactoryPanic gaps.
 """
 
 from __future__ import annotations
@@ -25,8 +26,8 @@ from sugar_lift_py_tests.floor import (
     StringValue,
     SymbolicValue,
 )
-from sugar_lift_py_tests.ir import ctor, make_var, num
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
+from sugar_lift_py_tests.ir import ctor, make_var, num
 from sugar_lift_py_tests.sugar.list_comp_sugar import ListCompSugar
 
 
@@ -97,6 +98,7 @@ def test_condition_rides_the_coordinate() -> None:
 
 
 def test_finite_list_comprehension_constructs_each_conditional_element() -> None:
+    """#5147 pandas/numpy shape: row[i] truth inside a finite listcomp."""
     value = reduce_value(
         '[row[1] if row[1] else None for row in [[1, "date"], [2, None]]]'
     )

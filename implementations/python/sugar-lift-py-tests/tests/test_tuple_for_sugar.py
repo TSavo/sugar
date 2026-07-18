@@ -35,6 +35,24 @@ def test_pair_target_binds_both_iter_element_projections() -> None:
     assert returned.value.term == ctor("py.subscript", [element, num(0)])
 
 
+def test_finite_tuple_for_unfolds_and_constructs_target_truth() -> None:
+    """#5147 format.py shape: ``for flag, n, m in [[False, 22, 128], ...]: if flag:``."""
+    from sugar_lift_py_tests.floor import BlockValue, TermValue
+
+    block = compose_block(
+        "    for is_fortran_array, dtype_space, expected_header_length in [\n"
+        "        [False, 22, 128], [False, 23, 192], [True, 23, 128], [True, 24, 192]\n"
+        "    ]:\n"
+        "        if is_fortran_array:\n"
+        "            return 1\n"
+        "    return 0\n"
+    )
+
+    assert isinstance(block, BlockValue)
+    returns = [entry for entry in block.statements if isinstance(entry, ReturnValue)]
+    assert any(entry.value == TermValue(1) for entry in returns)
+
+
 def test_starred_target_stays_loud() -> None:
     source = "for a, *rest in rows:\n    pass\n"
     ctx = FactoryBuildContext(filename="vendor.py", catalog=default_catalog())

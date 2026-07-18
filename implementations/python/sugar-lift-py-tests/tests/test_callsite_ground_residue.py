@@ -75,6 +75,22 @@ def test_ground_callsite_truth_panics_before_runtime_effect_authority() -> None:
     assert caught.value.info.owner == "CallSiteValue.truth"
 
 
+def test_ground_import_alias_subscript_truth_constructs_true() -> None:
+    """#5147: ``np.number[Any]`` is a GenericAlias face — always truthy."""
+    from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
+    from sugar_lift_py_tests.outcome import complete_value
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    number = ImportAliasValue("numpy.number", "number", import_target="numpy.number")
+    any_alias = ImportAliasValue("typing.Any", "Any", import_target="typing.Any")
+    site = SourceFragment.from_source("number[Any]\n", "t.py").statements()[0]
+    value = complete_value(number.subscript(any_alias, site), owner="test")
+
+    truth = complete_value(value.truth(site), owner="test")
+
+    assert isinstance(truth, TrueBoolLiteralSugar)
+
+
 def test_runtime_derived_callsite_truth_remains_a_predicate() -> None:
     site = SourceFragment.from_source("answer(value)\n", "t.py").statements()[0]
     value = CallSiteValue(

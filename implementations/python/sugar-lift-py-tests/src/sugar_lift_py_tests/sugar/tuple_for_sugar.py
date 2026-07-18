@@ -81,8 +81,32 @@ class TupleForSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def _bind_targets_and_body(self, iterable, ctx: object) -> Outcome:
-        from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, ScopeRebind
+        from sugar_lift_py_tests.floor import (
+            ArrayLiteral,
+            BlockValue,
+            CallSiteValue,
+            ComprehensionValue,
+            ListValue,
+            ScopeRebind,
+            TupleValue,
+        )
         from sugar_lift_py_tests.ir import ctor, num
+
+        # Finite concrete sequences construct each iteration — same door as
+        # ForSugar. Ground py.subscript(iter_elem(...), i) targets cannot mint
+        # truth/RuntimeEffect authority (#5147 format.py / TupleFor representatives).
+        elements = None
+        if type(iterable) in (ListValue, TupleValue):
+            elements = iterable.elements
+        elif type(iterable) is ArrayLiteral:
+            elements = iterable.items
+        elif (
+            type(iterable) is ComprehensionValue
+            and iterable.finite_elements is not None
+        ):
+            elements = iterable.finite_elements
+        if elements is not None:
+            return self._unfold_values(elements, ctx)
 
         element = CallSiteValue(
             target_name="iter_elem",
@@ -131,8 +155,71 @@ class TupleForSugar(Sugar, role=SugarRole.STATEMENT):
             )
         )
 
+    def _unfold_values(self, values, ctx: object) -> Outcome:
+        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.floor import BlockValue
+        from sugar_lift_py_tests.sugar.for_sugar import (
+            STATIC_UNFOLD_LIMIT,
+            _post_loop_bindings,
+        )
+
+        if len(values) > STATIC_UNFOLD_LIMIT:
+            factory_panic_gap(
+                owner="TupleForSugar",
+                blame=self.site,
+                observed=f"finite iterable length {len(values)}",
+                requested="static tuple-for unfold within budget",
+                fix=(
+                    f"tuple-for over {len(values)} elements exceeds "
+                    f"STATIC_UNFOLD_LIMIT={STATIC_UNFOLD_LIMIT}; project through "
+                    "callable floors or shrink the constructed iterable"
+                ),
+            )
+
+        accumulated = []
+        current_ctx = ctx
+        for value in values:
+            parts = _unpack_tuple_element(value, arity=len(self.names), site=self.site)
+            temporal = current_ctx.temporal
+            for name, part in zip(self.names, parts):
+                temporal = temporal.bind_value(name, part)
+            iteration_ctx = current_ctx.with_temporal(temporal)
+            record, current_ctx = self.body.sugar.reduce_with_scope(iteration_ctx)
+            accumulated.extend(record.contribution())
+        bindings = _post_loop_bindings(ctx, current_ctx)
+        return Complete(BlockValue((*accumulated, *bindings)))
+
     def walk_children(self):
         return (self.iterable, self.body)
+
+
+def _unpack_tuple_element(value, *, arity: int, site) -> tuple:
+    """Project one constructed sequence element into flat tuple-for targets.
+
+    Only concrete ListValue/TupleValue/ArrayLiteral members of matching arity
+    unfold. Opaque residual stays loud at the construction door.
+    """
+    from sugar_lift_py_tests.factory import factory_panic_gap
+    from sugar_lift_py_tests.floor import ArrayLiteral, ListValue, TupleValue
+
+    parts = None
+    if type(value) in (ListValue, TupleValue):
+        parts = value.elements
+    elif type(value) is ArrayLiteral:
+        parts = value.items
+    if parts is None or len(parts) != arity:
+        factory_panic_gap(
+            owner="TupleForSugar",
+            blame=site,
+            observed=type(value).__name__,
+            requested=f"finite sequence of length {arity} for tuple-for unpack",
+            fix=(
+                "construct each tuple-for iterable member as ListValue/TupleValue "
+                f"with exactly {arity} elements before unfold; opaque or wrong-arity "
+                "members cannot project target bindings"
+            ),
+        )
+    return parts
 
 
 def _proves_nonempty_nditer(iterable) -> bool:
