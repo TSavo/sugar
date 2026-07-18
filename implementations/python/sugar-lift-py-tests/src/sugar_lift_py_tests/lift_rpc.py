@@ -1222,10 +1222,10 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     rows (no post, no contract). Enumeration is functions by design: module
     statements no FunctionDefSugar owns are not lifted here.
 
-    A definition-local FactoryPanic is recovered only as a mandatory red
-    factory-walk row so independent definitions remain report-legible. The
-    diagnostic `RecoveredAuditDto` lane remains disjoint and can never be
-    returned from this door.
+    FactoryPanic is process-terminal here (#5238): no soft continue into a
+    partial report payload. Only the per-file corpus audit membrane may hold
+    panic to emit a loud red row. The diagnostic ``RecoveredAuditDto`` lane
+    remains disjoint and is never returned from this door.
     """
     from sugar_lift_py_tests.ir import constructor_symbol_kinds, term_intern_scope
 
@@ -1404,21 +1404,12 @@ def _module_import_temporal(
                     temporal=temporal,
                     module_temporal=temporal,
                 )
-                try:
-                    resolved_value = resolve_install_source_value(
-                        import_target, import_ctx
-                    )
-                except FactoryPanic as panic:
-                    if recovered_panics is None:
-                        raise
-                    recovered_panics.append(
-                        _SeedPanicEvidence(
-                            locus=f"{stmt.filename}:{stmt.line}:{stmt.col}",
-                            demanded_source=import_target,
-                            info=panic.info,
-                        )
-                    )
-                    resolved_value = None
+                # FactoryPanic is process-terminal in production (#5238). Only
+                # the per-file corpus audit membrane may hold it for a loud red
+                # row; seed construction must never soft-continue into opacity.
+                resolved_value = resolve_install_source_value(
+                    import_target, import_ctx
+                )
                 temporal = temporal.bind_value(
                     bound,
                     ImportAliasValue(
@@ -1455,19 +1446,8 @@ def _module_import_temporal(
                 module_temporal=temporal,
                 name_resolver=module_function_resolver,
             )
-            try:
-                outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
-            except FactoryPanic as panic:
-                if recovered_panics is None:
-                    raise
-                recovered_panics.append(
-                    _SeedPanicEvidence(
-                        locus=f"{stmt.filename}:{stmt.line}:{stmt.col}",
-                        demanded_source=f"try:{stmt.line}:{stmt.col}",
-                        info=panic.info,
-                    )
-                )
-                continue
+            # FactoryPanic propagates (#5238); no seed soft-continue.
+            outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
             if isinstance(outcome, Incomplete):
                 continue
             temporal = outcome.extend_scope(ctx).temporal
@@ -1479,17 +1459,8 @@ def _module_import_temporal(
                 module_temporal=temporal,
                 name_resolver=module_function_resolver,
             )
-            try:
-                callable_value = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
-            except FactoryPanic:
-                if recovered_panics is None:
-                    raise
-                # A FunctionDef owns its body panic. Module seeding only needs
-                # to leave the failed callable unbound; the per-definition
-                # audit records the locus exactly once. Projecting it here as a
-                # module seed would duplicate the same independent panic when
-                # the function leaf is audited.
-                continue
+            # FunctionDef owns body panics; seed must not swallow them (#5238).
+            callable_value = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
             if isinstance(callable_value, Incomplete):
                 continue
             temporal = callable_value.extend_scope(ctx).temporal
@@ -1501,19 +1472,7 @@ def _module_import_temporal(
                     temporal=temporal,
                     module_temporal=temporal,
                 )
-                try:
-                    outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
-                except FactoryPanic as panic:
-                    if recovered_panics is None:
-                        raise
-                    recovered_panics.append(
-                        _SeedPanicEvidence(
-                            locus=f"{stmt.filename}:{stmt.line}:{stmt.col}",
-                            demanded_source=f"assert:{stmt.line}:{stmt.col}",
-                            info=panic.info,
-                        )
-                    )
-                    continue
+                outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
                 if isinstance(outcome, Incomplete):
                     continue
                 if assertion_sink is not None:
@@ -1543,22 +1502,9 @@ def _module_import_temporal(
                 catalog=catalog,
                 temporal=temporal,
             )
-            try:
-                outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
-            except FactoryPanic as panic:
-                if recovered_panics is None:
-                    raise
-                binding_label = name if name is not None else "multi-target"
-                recovered_panics.append(
-                    _SeedPanicEvidence(
-                        locus=f"{stmt.filename}:{stmt.line}:{stmt.col}",
-                        demanded_source=f"binding:{binding_label}",
-                        info=panic.info,
-                    )
-                )
-                continue
-            # #4203: no soft TypeError continue past seed construction. Incomplete
-            # leaves the binding unbound; FactoryPanic is recovery-gated above.
+            # #5238: FactoryPanic is process-terminal; no seed recovery soft path.
+            # Incomplete leaves the binding unbound without inventing a value.
+            outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
             if isinstance(outcome, Incomplete):
                 continue
             temporal = outcome.extend_scope(ctx).temporal
@@ -1848,12 +1794,15 @@ def audit_lift_file(
     target_memento: Optional[Dict[str, Any]] = None,
     audit_context: Optional[_AuditFileContext] = None,
 ) -> tuple[LiftReportPayloadDto, list[AuditOnlyGap]] | RecoveredAuditDto:
-    """Lift normally, or enumerate panics as a disjoint recovered audit.
+    """Lift normally. FactoryPanic is process-terminal (#5238).
 
-    The public audit door is fail-fast. ``recover_panics=True`` may continue
-    only into a ``RecoveredAuditDto`` with no IR lane. The private report-door
-    flag preserves independent completed definitions but projects every held
-    panic as a mandatory red factory-walk row.
+    The public audit door is fail-fast: production, report, and diagnostic
+    paths re-raise ``FactoryPanic`` rather than soft-continuing into opacity
+    or a partial payload. Per-file corpus audit membranes
+    (``audit_only/``, ``idd/live_factory_panic_isolation``) are the only
+    lawful holders for loud red rows. ``recover_panics=True`` may still
+    return a ProofIR-free ``RecoveredAuditDto`` for non-panic residuals
+    (typed effects, conservation), but never by catching FactoryPanic.
     """
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
@@ -2191,6 +2140,10 @@ def audit_lift_file(
                 },
             )
         except FactoryPanic as panic:
+            # #5238: production + report doors hard-fail on FactoryPanic.
+            # Soft continue into a partial payload is forbidden dig/report
+            # opacity. Only the per-file corpus audit membrane may hold panic
+            # to emit a loud red row (see audit_only/, idd/ isolation).
             _TRANSPORT_LOG.info(
                 "definition_gap",
                 extra={
@@ -2201,47 +2154,10 @@ def audit_lift_file(
                     "elapsed_ms": round(
                         (time.monotonic() - definition_started) * 1000, 3
                     ),
+                    "blame": getattr(panic.info, "blame", None),
                 },
             )
-            if not (recover_panics or _recover_report_panics):
-                raise
-            # Both recovery doors preserve the same typed panic and red-row
-            # evidence. Only the report door may return the partial payload;
-            # diagnostic recovery remains ProofIR-free below.
-            gap = gap_from_factory_panic(label, panic)
-            gaps.append(gap)
-            recovered_owner_span = None
-            if _recover_report_panics:
-                recovered_owner_span = (
-                    stmt.line,
-                    int(getattr(stmt.node, "end_lineno", stmt.line) or stmt.line),
-                )
-            payload.factory_walk.append(
-                _factory_walk_red_from_gap(
-                    gap,
-                    recovered_owner_span=recovered_owner_span,
-                )
-            )
-            if recover_panics:
-                recovered_panics.append(
-                    RecoveredFactoryPanicDto(
-                        locus=label,
-                        demanded_source=f"definition:{stmt.function_name()}",
-                        terminal_gap_locus=panic.info.blame,
-                        reason=panic.info.message,
-                        gap=panic.info.to_json(),
-                    )
-                )
-                from sugar_lift_py_tests.idd.lift_coverage_census import (
-                    body_owner_descendant_loci,
-                )
-
-                for descendant in body_owner_descendant_loci(stmt.node, file=filename):
-                    suppressed_descendants.append(
-                        SuppressedAuditLocusDto(
-                            locus=f"{descendant.file}:{descendant.line}:{descendant.col}"
-                        )
-                    )
+            raise
     # Conservation is a file-level accounting pass. A keyed leaf contributes
     # only its recovered audit vector; rerunning whole-file conservation for
     # every leaf is both semantically duplicate and quadratic.

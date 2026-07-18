@@ -675,7 +675,7 @@ class CallSiteValue(FloorValue):
         """Dig body when present; redispatch op on dug floor; else SymbolicValue join.
 
         No invent of concrete sums. Ctx is None-tolerant (add(site) has no ctx).
-        Mid-dig FactoryPanic → treat as opaque (same as dig_floor soft path).
+        Mid-dig FactoryPanic propagates (process-terminal; never dig opacity).
         """
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
@@ -918,21 +918,13 @@ class CallSiteValue(FloorValue):
             )
         token = _ACTIVE_DIG_DEMAND.set(active_demand + 1)
         try:
-            try:
-                outcome = _reduce_callsite_body(
-                    body, reduce_ctx, blame=self.target_name
-                )
-            finally:
-                _ACTIVE_DIG_DEMAND.reset(token)
-        except Exception as exc:
-            # FactoryPanic mid-dig: opaque residual, not process-terminal for dig_floor.
-            from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-
-            if isinstance(exc, FactoryPanic):
-                if exc.info.observed == "callsite value demand budget exhausted":
-                    raise
-                return None
-            raise
+            outcome = _reduce_callsite_body(
+                body, reduce_ctx, blame=self.target_name
+            )
+        finally:
+            _ACTIVE_DIG_DEMAND.reset(token)
+        # FactoryPanic is BaseException and process-terminal: dig must not convert
+        # it into opacity/None (python-sole-construction; #5238).
         if isinstance(outcome, Incomplete):
             if incomplete_outcome is not None:
                 incomplete_outcome.append(outcome)

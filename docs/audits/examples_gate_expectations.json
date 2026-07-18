@@ -394,9 +394,9 @@
     {
       "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "PR #3691 opened the covering-universe exception (lone ground str.in-regex membership genuinely decides via z3 regex-as-language); good/'s membership rows now genuinely discharge (matching subjects, SAT) and bad/'s contradiction row is genuinely unsatisfied, while any plain-EUF lone row stays honestly vacuous-refused named by 'no covering universe joins the left-operand term'. Oracle re-grade (this lane) rewrote the run.sh consistency check to gate GOOD on discharged+named-vacuous rows only and assert BAD carries a genuine unsatisfied row, superseding the pre-#3691 all-discharged/all-refuse oracle that mis-graded prove-refused/expected-discharge-rows. GRADED BY REASONING against merged verifier tests: the script builds the CLI via cargo directly (not bin/sugarbin), so it was not executed in this lane; pending CI confirmation.",
+      "grounds": "EXECUTED GREEN on main-tip worktree (HEAD-aligned): examples/regex-showcase/run.sh SELF-CHECK PASSED (~77s). Prove/verify oracle (PR #3694) grades three honest terminal shapes under sole-construction: genuine discharge (covering-universe str.in-regex / is_match membership, PR #3691), genuine unsatisfied (contradiction twin), and NAMED vacuous-refused residue (`no covering universe joins the left-operand term`). Observed: good -> 1 discharged + 21 named vacuous-refused + witness discharged/verified durable; bad -> 1 unsatisfied consistency + witness unsatisfied (lying discharge cannot flip). Supersedes prove-refused/expected-discharge-rows (#3585); retires graded-by-reasoning pin.",
       "last_observed_rc": 0,
-      "last_observed_seconds": 8.337,
+      "last_observed_seconds": 77.15,
       "name": "examples/regex-showcase/run.sh"
     },
     {
@@ -412,10 +412,11 @@
     {
       "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "Stale #3608 shape superseded by the live #3590 membership-refutation work order, which PR #3691 closed: the vacuity guard now opens a covering-universe exception for lone ground str.in-regex membership, so good/'s matching-subject rows genuinely discharge (str.in_re SAT) and bad/'s non-matching-subject row is genuinely unsatisfied (str.in_re UNSAT, the membership teeth); the run.sh oracle already gated on exactly these two terminal shapes pre-merge and needed no code change in this lane. GRADED BY REASONING against merged verifier tests (lone_ground_regex_membership_matching_subject_discharges / _nonmatching_subject_is_refuted): the script builds the CLI via cargo directly (not bin/sugarbin), so it was not executed in this lane; pending CI confirmation.",
+      "grounds": "LIVE EXECUTED GREEN on current main (2026-07-18, #3590 drain): examples/rust-regex-membership/run.sh exits 0 via bin/sugarbin. Root cause of verdict-drift/membership-refutation was the lone-fact vacuity guard refusing ground str.in-regex rows before they reached z3; PR #3691 opened the covering-universe exception so a pinned ground subject is decided by string/regex theory (matching -> discharged, non-matching Alice! -> unsatisfied). Live prove rows: good has discharged membership rows for inline/const/concat/find (str.in_re SAT); bad has unsatisfied on method:is_match(s:Alice!, pattern) (str.in_re UNSAT, the teeth); nonregular refuses backref/lookahead by name with no membership atom. Oracle tightened: good now REQUIRES at least one discharged (all-refused is no longer silent success). Shell deleted: graded-by-reasoning pin + weak good-oracle (no discharged check).",
       "last_observed_rc": 0,
-      "last_observed_seconds": 6.438,
-      "name": "examples/rust-regex-membership/run.sh"
+      "last_observed_seconds": 30.0,
+      "name": "examples/rust-regex-membership/run.sh",
+      "work_order_issue": 3590
     },
     {
       "expected": "GREEN",
@@ -428,9 +429,9 @@
     {
       "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "#3585 residue: this showcase's oracle gates GOOD/BAD on the witness-package row's discharge/refuse status and the durable witness-dimension recompute, never on the consistency rows -- it does not depend on the vacuity-guard covering-universe path PR #3691 opened, so it needed no code change in this lane. Prior live recensus already observed it promoted GREEN independent of the regex-membership fix. GRADED BY REASONING: the script builds the CLI via cargo directly (not bin/sugarbin), so it was not re-executed in this lane; pending CI confirmation.",
+      "grounds": "EXECUTED GREEN on main-tip worktree (HEAD-aligned): examples/rust-witness-showcase/run.sh SELF-CHECK PASSED (~49s). Oracle gates only the witness-package axis (prove discharge/refuse + durable witness-dimension package AND recompute paths), never consistency rows. Observed: good -> witness discharged + verified via package and content-address:recompute; bad -> witness unsatisfied (1/N outcomes failed) and lying SUGAR_WITNESS_DISCHARGE_CARGO_TEST cannot flip green. Independent of vacuity covering-universe path. Closes #3585 residue; retires graded-by-reasoning pin.",
       "last_observed_rc": 0,
-      "last_observed_seconds": 5.226,
+      "last_observed_seconds": 48.59,
       "name": "examples/rust-witness-showcase/run.sh"
     },
     {
