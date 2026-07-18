@@ -6,7 +6,10 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import DictValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import (
+    _call_pair,
+    typed_red_effect_witness,
+)
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -43,11 +46,22 @@ class DictLiteralSugar(Sugar, role=SugarRole.TERM):
         # A bare dict literal reduces as a statement body step, then returns z.
         # The pair discriminates on the returned face -- the dict itself is present.
         prefix = 'def A(z):\n    {"k": 1}\n    return z\n\n'
-        return _call_pair(
-            name="dict_literal_return",
-            owner_sugar="DictLiteralSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        return (
+            _call_pair(
+                name="dict_literal_return",
+                owner_sugar="DictLiteralSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            ),
+            typed_red_effect_witness(
+                name="dict_unpack_runtime_effect",
+                owner_sugar=cls.__name__,
+                source="def A(mapping):\n    return {**mapping}\n",
+                effect_class="DictUnpackRuntimeEffect",
+                reason_needle="depend on a runtime mapping",
+                blame_needle="test_witness.py",
+                wrong_reason_needle="owner=WrongSugar",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
