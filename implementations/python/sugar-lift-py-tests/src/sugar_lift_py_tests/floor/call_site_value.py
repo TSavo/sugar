@@ -93,10 +93,18 @@ class CallSiteValue(FloorValue):
 
     def truth(self, site):
         # A callsite EMITS py.truthy over its term, carrying itself as an operand.
+        # Ground (lift-time-decidable) coordinates must construct, never mint
+        # RuntimeEffect authority via py.truthy (#4993 / #5147).
         from sugar_lift_py_tests.effect import is_lift_time_decidable
         from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import py_truthy
+        from sugar_lift_py_tests.outcome import Complete
 
         if is_lift_time_decidable(self.term):
+            constructed = self._construct_decidable_truth(site)
+            if constructed is not None:
+                return constructed
             factory_panic_gap(
                 owner="CallSiteValue.truth",
                 blame=site,
@@ -107,13 +115,33 @@ class CallSiteValue(FloorValue):
                     "truth(); a ground coordinate cannot mint RuntimeEffect authority"
                 ),
             )
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import Complete
-
         return Complete(
             PredicateValue(py_truthy(self.term), site, operand_callsites=(self,))
         )
+
+    def _construct_decidable_truth(self, site):
+        """Construct truth for a ground callsite, or return None to stay loud.
+
+        - Dug body answers with its own truth.
+        - ``import_alias[import_alias]`` is a typing GenericAlias / type face —
+          always truthy in Python (``bool(np.number[Any]) is True``).
+        Unconstructable ground residual returns None so the caller panics.
+        """
+        dug = self._dig_floor_or_none(None, owner="CallSiteValue.truth")
+        if dug is not None and dug is not self:
+            return dug.truth(site)
+
+        if self.target_name == "py.subscript" and len(self.arg_values) == 2:
+            from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.outcome import Complete
+
+            receiver, index = self.arg_values
+            if type(receiver) is ImportAliasValue and type(index) is ImportAliasValue:
+                return Complete(TrueBoolLiteralSugar(site=site))
+        return None
 
     def is_identical(self, other, site):
         from sugar_lift_py_tests.floor.none_value import NoneValue
