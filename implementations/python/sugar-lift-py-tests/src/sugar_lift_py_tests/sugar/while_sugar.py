@@ -9,59 +9,6 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
-def _carried_names(site) -> tuple[str, ...]:
-    import ast
-
-    names: list[str] = []
-    for node in ast.walk(site.node):
-        if (
-            isinstance(node, ast.Name)
-            and isinstance(node.ctx, ast.Store)
-            and node.id not in names
-        ):
-            names.append(node.id)
-        if (
-            isinstance(node, ast.Subscript)
-            and isinstance(node.ctx, ast.Store)
-            and isinstance(node.value, ast.Name)
-            and node.value.id not in names
-        ):
-            names.append(node.value.id)
-    return tuple(names)
-
-
-def _while_carried_names(site) -> tuple[str, ...]:
-    # A while's test is evaluated at every iteration boundary, so a stored
-    # local read there is prior-state even when the body assigns it before any
-    # body-local read.
-    return site.loop_carried_names(entry_reads=(site.while_test(),))
-
-
-def _has_loop_control(site) -> bool:
-    import ast
-
-    return any(
-        isinstance(node, (ast.Break, ast.Continue)) for node in ast.walk(site.node)
-    )
-
-
-def _has_unclassified_mutation(site) -> bool:
-    import ast
-
-    for node in ast.walk(site.node):
-        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
-            for target in targets:
-                if isinstance(target, (ast.Name, ast.Tuple)):
-                    continue
-                if isinstance(target, ast.Subscript) and isinstance(
-                    target.value, ast.Name
-                ):
-                    continue
-                return True
-    return False
-
-
 @dataclass(frozen=True)
 class WhileSugar(Sugar, role=SugarRole.STATEMENT):
     """`while <test>: <body>` -- thread the body, carry the test coordinate.
@@ -80,6 +27,7 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
     test: SugarBody
     body: SugarBody
     carried: tuple[str, ...]
+    deferred_outputs: tuple[str, ...]
     curried: bool
     unclassified_mutation: bool
     site: object = dataclass_field(compare=False)
@@ -99,9 +47,10 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
         return cls(
             test=ctx.build_body(site.while_test(), SugarRole.TERM),
             body=ctx.build_body(site.while_body_block(), SugarRole.STATEMENT),
-            carried=_while_carried_names(site),
-            curried=_has_loop_control(site),
-            unclassified_mutation=_has_unclassified_mutation(site),
+            carried=site.loop_carried_names(entry_reads=(site.while_test(),)),
+            deferred_outputs=site.while_definite_break_output_names(),
+            curried=site.has_loop_control(),
+            unclassified_mutation=site.has_unclassified_loop_mutation(),
             site=site,
         )
 
@@ -125,6 +74,9 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
             "    return value\n"
             "\n"
         )
+        definite_output_prefix = (
+            "def test_c():\n" "    while True:\n" "        out = 7\n" "        break\n"
+        )
         return (
             _call_pair(
                 name="while_return",
@@ -137,6 +89,13 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
                 owner_sugar="WhileSugar",
                 truthful=carried_prefix + "def test_b():\n    assert B(5) == 1\n",
                 lying=carried_prefix + "def test_b():\n    assert B(5) == 0\n",
+            ),
+            _call_pair(
+                name="while_true_definite_output",
+                owner_sugar="WhileSugar",
+                truthful=definite_output_prefix + "    assert out == 7\n",
+                lying=definite_output_prefix + "    assert out == 8\n",
+                family="while-definite-output",
             ),
         )
 
@@ -171,10 +130,11 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
                 requested="statically bound loop-carried locals",
                 fix="bind every carried local before currying the loop",
             )
+        output_names = tuple(dict.fromkeys((*self.carried, *self.deferred_outputs)))
         name = f"loop:{self.site}"
         body = _contextualized_dig_body(
             SugarBody(
-                sugar=CurriedLoopBody(self.body, self.carried), role=SugarRole.TERM
+                sugar=CurriedLoopBody(self.body, output_names), role=SugarRole.TERM
             ),
             ctx,
         )
@@ -185,7 +145,7 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
             body=body,
         )
         callsite = callable_value.callsite(values, (), self.site).value
-        return Complete(CurriedLoopScope(callsite, self.carried))
+        return Complete(CurriedLoopScope(callsite, output_names))
 
     def walk_children(self):
         return (self.test, self.body)

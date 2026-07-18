@@ -7,11 +7,6 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
-from sugar_lift_py_tests.sugar.while_sugar import (
-    _carried_names,
-    _has_loop_control,
-    _has_unclassified_mutation,
-)
 
 STATIC_UNFOLD_LIMIT = 1024
 
@@ -62,8 +57,8 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             iterable=ctx.build_body(site.for_iter(), SugarRole.TERM),
             body=ctx.build_body(site.for_body_block(), SugarRole.STATEMENT),
             carried=site.loop_carried_names(target_name=target_name),
-            curried=_has_loop_control(site),
-            unclassified_mutation=_has_unclassified_mutation(site),
+            curried=site.has_loop_control(),
+            unclassified_mutation=site.has_unclassified_loop_mutation(),
             deferred_outputs=_finite_loop_output_names(site, target_name),
             site=site,
         )

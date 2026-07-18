@@ -24,6 +24,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.sugar.for_sugar import ForSugar
 from sugar_lift_py_tests.sugar.while_sugar import WhileSugar
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
@@ -181,6 +182,70 @@ def test_while_test_read_makes_a_stored_name_loop_carried() -> None:
     assert built.sugar.carried == ("active",)
 
 
+def test_literal_true_while_projects_names_assigned_before_every_break() -> None:
+    recovered = audit_lift_file(
+        "def result(value):\n"
+        "    while True:\n"
+        "        out = value\n"
+        "        if value:\n"
+        "            break\n"
+        "        value = 1\n"
+        "    return out\n",
+        "while_output.py",
+        recover_panics=True,
+    )
+
+    assert [
+        panic.gap
+        for panic in recovered.panics
+        if panic.gap.get("owner") == "TemporalContext"
+    ] == []
+
+
+def test_nonliteral_while_does_not_invent_a_post_loop_binding() -> None:
+    recovered = audit_lift_file(
+        "def result(active):\n"
+        "    while active:\n"
+        "        out = 1\n"
+        "        break\n"
+        "    return out\n",
+        "while_output_wrong_order.py",
+        recover_panics=True,
+    )
+    temporal = [
+        panic.gap
+        for panic in recovered.panics
+        if panic.gap.get("owner") == "TemporalContext"
+    ]
+
+    assert temporal
+    assert {gap["observed"] for gap in temporal} == {"out"}
+
+
+def test_unrecognized_break_path_does_not_invent_a_post_loop_binding() -> None:
+    recovered = audit_lift_file(
+        "def result(active):\n"
+        "    while True:\n"
+        "        if active:\n"
+        "            out = 1\n"
+        "            break\n"
+        "        match active:\n"
+        "            case _:\n"
+        "                break\n"
+        "    return out\n",
+        "while_output_unrecognized_break.py",
+        recover_panics=True,
+    )
+    temporal = [
+        panic.gap
+        for panic in recovered.panics
+        if panic.gap.get("owner") == "TemporalContext"
+    ]
+
+    assert temporal
+    assert {gap["observed"] for gap in temporal} == {"out"}
+
+
 def test_unbound_prior_value_stays_a_loud_while_gap() -> None:
     with pytest.raises(FactoryPanic) as raised:
         compose_block("    while ready:\n        total += 1\n        break\n")
@@ -202,6 +267,26 @@ def test_while_loop_carried_witness_truthful_sat_wrong_twin_unsat(
     )
     lying = run_source_through_real_solver(
         tmp_path / "while-carried-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+    assert "WhileSugar" in truthful.selected_sugars
+    assert "WhileSugar" in lying.selected_sugars
+
+
+def test_while_true_definite_output_witness_refutes(tmp_path: Path) -> None:
+    pair = next(
+        pair
+        for pair in WhileSugar.witnesses()
+        if pair.name == "while_true_definite_output"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "while-output-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "while-output-lying", pair.lying.source
     )
 
     assert truthful.verdict == pair.truthful.expected == "sat"

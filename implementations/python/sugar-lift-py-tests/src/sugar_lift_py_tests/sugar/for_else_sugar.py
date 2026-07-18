@@ -7,10 +7,6 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
-from sugar_lift_py_tests.sugar.while_sugar import (
-    _carried_names,
-    _has_unclassified_mutation,
-)
 
 
 @dataclass(frozen=True)
@@ -47,10 +43,10 @@ class ForElseSugar(Sugar, role=SugarRole.STATEMENT):
             body=ctx.build_body(site.for_body_block(), SugarRole.STATEMENT),
             else_body=ctx.build_body(site.for_orelse_block(), SugarRole.STATEMENT),
             carried=tuple(
-                name for name in _carried_names(site) if name not in target_names
+                name for name in site.loop_stored_names() if name not in target_names
             ),
             has_break=_has_break(site),
-            unclassified_mutation=_has_unclassified_mutation(site),
+            unclassified_mutation=site.has_unclassified_loop_mutation(),
             site=site,
         )
 

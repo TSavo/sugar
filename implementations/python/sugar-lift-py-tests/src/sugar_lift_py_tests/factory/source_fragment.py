@@ -2065,6 +2065,173 @@ class SourceFragment:
         )
         return tuple(name for name in candidates if name in carried)
 
+    def loop_stored_names(self) -> "tuple[str, ...]":
+        """Names or name-rooted subscripts stored anywhere in this loop."""
+        self._require(ast.For, ast.While)
+        names: list[str] = []
+        for node in ast.walk(self.node):
+            if (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Store)
+                and node.id not in names
+            ):
+                names.append(node.id)
+            if (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.ctx, ast.Store)
+                and isinstance(node.value, ast.Name)
+                and node.value.id not in names
+            ):
+                names.append(node.value.id)
+        return tuple(names)
+
+    def has_loop_control(self) -> bool:
+        """Whether this loop contains break/continue control."""
+        self._require(ast.For, ast.While)
+        return any(
+            isinstance(node, (ast.Break, ast.Continue)) for node in ast.walk(self.node)
+        )
+
+    def has_unclassified_loop_mutation(self) -> bool:
+        """Whether this loop stores through an unsupported nonlocal address."""
+        self._require(ast.For, ast.While)
+        for node in ast.walk(self.node):
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else (node.target,)
+                )
+                for target in targets:
+                    if isinstance(target, (ast.Name, ast.Tuple)):
+                        continue
+                    if isinstance(target, ast.Subscript) and isinstance(
+                        target.value, ast.Name
+                    ):
+                        continue
+                    return True
+        return False
+
+    def while_definite_break_output_names(self) -> "tuple[str, ...]":
+        """Names assigned on every exit from an exact ``while True``.
+
+        This is the factory-owned execution-order recognizer for post-loop
+        bindings. A nonliteral test may execute zero times and therefore
+        constructs no output. Nested-loop breaks remain owned by their nested
+        loop and do not count as exits from this While.
+        """
+        self._require(ast.While)
+        if not (
+            isinstance(self.node.test, ast.Constant)  # type: ignore[attr-defined]
+            and self.node.test.value is True  # type: ignore[attr-defined]
+        ):
+            return ()
+
+        break_bindings: list[set[str]] = []
+        outer_break_count = 0
+
+        class OuterBreakCounter(ast.NodeVisitor):
+            def visit_Break(self, node: ast.Break) -> None:
+                nonlocal outer_break_count
+                outer_break_count += 1
+
+            def stop_at_nested_owner(self, node: ast.AST) -> None:
+                del node
+
+            visit_For = stop_at_nested_owner
+            visit_AsyncFor = stop_at_nested_owner
+            visit_While = stop_at_nested_owner
+            visit_Lambda = stop_at_nested_owner
+            visit_FunctionDef = stop_at_nested_owner
+            visit_AsyncFunctionDef = stop_at_nested_owner
+            visit_ClassDef = stop_at_nested_owner
+
+        break_counter = OuterBreakCounter()
+        for statement in self.node.body:  # type: ignore[attr-defined]
+            break_counter.visit(statement)
+
+        def stored_names(node: ast.AST) -> set[str]:
+            return {
+                child.id
+                for child in ast.walk(node)
+                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+            }
+
+        def merge_fallthrough(*arms: set[str] | None) -> set[str] | None:
+            live = [arm for arm in arms if arm is not None]
+            if not live:
+                return None
+            merged = set(live[0])
+            for arm in live[1:]:
+                merged.intersection_update(arm)
+            return merged
+
+        def scan_block(
+            statements: list[ast.stmt], assigned: set[str]
+        ) -> set[str] | None:
+            current = set(assigned)
+            for statement in statements:
+                result = scan_statement(statement, current)
+                if result is None:
+                    return None
+                current = result
+            return current
+
+        def scan_statement(statement: ast.stmt, assigned: set[str]) -> set[str] | None:
+            current = set(assigned)
+            if isinstance(statement, ast.Assign):
+                for target in statement.targets:
+                    current.update(stored_names(target))
+                return current
+            if isinstance(statement, ast.AnnAssign):
+                if statement.value is not None:
+                    current.update(stored_names(statement.target))
+                return current
+            if isinstance(statement, ast.AugAssign):
+                # AugAssign requires a prior value; it cannot create a missing
+                # post-loop binding.
+                return current
+            if isinstance(statement, ast.If):
+                return merge_fallthrough(
+                    scan_block(statement.body, current),
+                    scan_block(statement.orelse, current),
+                )
+            if isinstance(statement, ast.Break):
+                break_bindings.append(current)
+                return None
+            if isinstance(statement, (ast.Continue, ast.Return, ast.Raise)):
+                return None
+            if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+                # Nested loops own their own break statements and may execute
+                # zero times, so they add no definite outer-loop binding.
+                return current
+            if isinstance(statement, ast.Try):
+                body = scan_block(statement.body, current)
+                normal = (
+                    scan_block(statement.orelse, body) if body is not None else None
+                )
+                handlers = [
+                    scan_block(handler.body, current) for handler in statement.handlers
+                ]
+                merged = merge_fallthrough(normal, *handlers)
+                if statement.finalbody:
+                    return (
+                        scan_block(statement.finalbody, merged)
+                        if merged is not None
+                        else None
+                    )
+                return merged
+            if isinstance(statement, (ast.With, ast.AsyncWith)):
+                return scan_block(statement.body, current)
+            return current
+
+        scan_block(self.node.body, set())  # type: ignore[attr-defined]
+        if not break_bindings or len(break_bindings) != outer_break_count:
+            return ()
+        definite = set(break_bindings[0])
+        for binding_set in break_bindings[1:]:
+            definite.intersection_update(binding_set)
+        ordered = self.while_body_block().own_scope_stored_names()
+        return tuple(name for name in ordered if name in definite)
+
     def unparse(self) -> str:
         """Return a canonical source-text representation of this node (via ast.unparse).
 
