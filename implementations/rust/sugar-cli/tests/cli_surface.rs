@@ -1219,6 +1219,106 @@ done
     );
 }
 
+/// #5152 / #5104: when implication enumeration raises a FactoryPanic (or any
+/// sugar.enumerate hole), the report door must EXIT_USER_ERROR — never soft-
+/// continue with an empty call book that paints false showcase verdicts.
+///
+/// Surface is deliberately non-python so the kit_source identity gate cannot
+/// mask the implication-enumeration door under test.
+#[test]
+fn lift_report_hard_fails_when_implication_enumeration_factory_panics() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let project = dir.path().join("project");
+    let manifest_dir = project.join(".sugar/lift/java");
+    fs::create_dir_all(&manifest_dir).expect("create manifest dir");
+    fs::write(
+        project.join(".sugar/config.toml"),
+        r#"[[plugins]]
+name = "java"
+kind = "lift"
+surface = "java"
+emit = "ir-document"
+"#,
+    )
+    .expect("write project config");
+
+    let plugin = dir.path().join("java.sh");
+    write_executable(
+        &plugin,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+while IFS= read -r line; do
+  if [[ "$line" == *'"method":"initialize"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"java","protocol_version":"pep/1.7.0","capabilities":{}}}'
+  elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true},{"name":"sugar.enumerate","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+  elif [[ "$line" == *'"method":"sugar.enumerate"'* ]]; then
+    # Typed FactoryPanic on the implication-enumeration path — same wire as a
+    # mandatory construction hole. Report must not swallow this into EXIT_OK.
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"error":{"code":-32603,"message":"FACTORY PANIC: write more Floor for this Construction","data":{"exception_type":"FactoryPanic","stage":"dispatch","diagnostic":{"owner":"enumerate-fixture","blame":"fixture.java:1:0","observed":"missing","requested":"value","fix":"construct the missing Floor","gap_kind":"Floor","gap_locus":"Construction"}}}}'
+  elif [[ "$line" == *'"method":"lift"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"contract","name":"caller","outBinding":"out","post":{"kind":"atomic","name":"caller_post","args":[]}}],"sourceLedger":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[],"sourceMementos":[],"diagnostics":[],"callEdges":[{"kind":"call-edge","schemaVersion":"1","sourceContract":"caller","targetSymbol":"call:callee","targetContract":null,"targetContractCid":null,"callSiteLocus":{"file":"App.java","line":2,"column":11}}]}}'
+  elif [[ "$line" == *'"method":"shutdown"'* ]]; then
+    printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":null}'
+    exit 0
+  fi
+done
+"#,
+    );
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!("name = \"java\"\ncommand = [\"{}\"]\n", plugin.display()),
+    )
+    .expect("write manifest");
+
+    // Both plain report and visual report doors share attach_report_implications;
+    // each must hard-fail, never soft-continue with empty call book.
+    let modes: [(&str, &[&str]); 2] = [
+        ("report-json", &["--report", "--json"]),
+        ("report-visual", &["--report", "--visual"]),
+    ];
+    for (label, args) in modes {
+        let mut cmd = Command::new(sugar_bin());
+        cmd.arg("lift");
+        for arg in args {
+            cmd.arg(arg);
+        }
+        cmd.arg(&project);
+        let output = output_retrying_etxtbsy(&mut cmd);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output.status.code().unwrap_or(255);
+        assert_eq!(
+            code, 2,
+            "implication-enumeration FactoryPanic must EXIT_USER_ERROR (2) under {label}; got {code}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("continuing report without call book"),
+            "#5104 soft-continue must stay deleted under {label}; stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("lift.implications")
+                || stderr.contains("FactoryPanic")
+                || stderr.contains("FACTORY PANIC")
+                || stderr.contains("enumerate"),
+            "stderr must name the enumeration hole under {label}; stderr:\n{stderr}"
+        );
+        // Partial report with empty demandedQuestions is the false-green paint
+        // that #5152 forbids: if JSON still parsed, it must not claim success.
+        if let Ok(report) = serde_json::from_str::<serde_json::Value>(&stdout) {
+            let demanded = report
+                .get("demandedQuestions")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            assert!(
+                demanded == 0,
+                "if any JSON leaked on hard-fail, call book must not pretend to be filled: {report:#}"
+            );
+        }
+    }
+}
+
 #[test]
 fn lift_report_python_assertions_join_source_guard_preconditions() {
     if !python_blake3_available() {
