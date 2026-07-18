@@ -59,9 +59,7 @@ def _integer(mapping: Mapping[str, Any], key: str) -> int:
     return value if isinstance(value, int) else 0
 
 
-def silent_offenders(
-    report: Mapping[str, Any], *, file: str
-) -> list[SilentOffender]:
+def silent_offenders(report: Mapping[str, Any], *, file: str) -> list[SilentOffender]:
     coverage = _mapping(report.get("liftCoverage"))
     ledger = _mapping(report.get("sourceLedger"))
     factory_summary = _mapping(report.get("factoryAuditSummary"))
@@ -113,19 +111,23 @@ def silent_offenders(
             )
         )
 
+    loud_conservation_loci = {
+        str(row.get("gap_locus"))
+        for raw in factory_summary.get("factoryWalk", [])
+        if isinstance(raw, Mapping)
+        for row in (raw,)
+        if row.get("verdict") == "gap"
+        and row.get("status") == "unresolved"
+        and row.get("gap_kind") == "Conservation"
+        and isinstance(row.get("gap_locus"), str)
+    }
     violations = conservation.get("violations")
     if isinstance(violations, list):
         for raw in violations:
-            locus = (
-                str(raw.get("locus") or file)
-                if isinstance(raw, Mapping)
-                else file
-            )
-            reason = (
-                str(raw.get("reason") or "")
-                if isinstance(raw, Mapping)
-                else ""
-            )
+            locus = str(raw.get("locus") or file) if isinstance(raw, Mapping) else file
+            if locus in loud_conservation_loci:
+                continue
+            reason = str(raw.get("reason") or "") if isinstance(raw, Mapping) else ""
             offenders.append(
                 SilentOffender(
                     file=locus,
@@ -185,9 +187,7 @@ def _python_paths(roots: Sequence[Path]) -> list[Path]:
         {
             path
             for root in roots
-            for path in (
-                root.rglob("*.py") if root.is_dir() else (root,)
-            )
+            for path in (root.rglob("*.py") if root.is_dir() else (root,))
             if path.is_file() and "__pycache__" not in path.parts
         }
     )
@@ -295,11 +295,14 @@ def audit_paths(
                 sorted(paths),
             )
         )
-    offenders = tuple(
-        offender for row in rows for offender in row.offenders
-    )
+    offenders = tuple(offender for row in rows for offender in row.offenders)
     for row in rows:
-        if row.category in {"factory-panic", "timeout", "non-native-red", "native-crash"}:
+        if row.category in {
+            "factory-panic",
+            "timeout",
+            "non-native-red",
+            "native-crash",
+        }:
             print(f"LOUD {row.category} row: {row.file}", flush=True)
     return AuditSummary(
         discovered=len(rows),

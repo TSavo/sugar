@@ -6,7 +6,6 @@ import importlib.util
 from pathlib import Path
 import pytest
 
-
 _KIT = Path(__file__).resolve().parents[1]
 _SCANNER_PATH = _KIT / "scripts" / "silent_zero_tolerance.py"
 _SPEC = importlib.util.spec_from_file_location("silent_zero_tolerance", _SCANNER_PATH)
@@ -51,8 +50,37 @@ def test_fully_spoken_report_is_zero() -> None:
             "totals": {"silently_unaccounted": 0},
             "conservation": {"delta": 0},
         },
+        "factoryAuditSummary": {"sourceFactoryConservation": {"violations": []}},
+    }
+
+    assert _SCANNER.silent_offenders(report, file="spoken.py") == []
+
+
+def test_conservation_violation_with_matching_loud_gap_is_not_silent() -> None:
+    locus = "spoken.py:7:12:ListComp"
+    report = {
+        "sourceLedger": {"unclassified_source": 0},
+        "liftCoverage": {
+            "totals": {"silently_unaccounted": 0},
+            "conservation": {"delta": 0},
+        },
         "factoryAuditSummary": {
-            "sourceFactoryConservation": {"violations": []}
+            "factoryWalk": [
+                {
+                    "verdict": "gap",
+                    "status": "unresolved",
+                    "gap_kind": "Conservation",
+                    "gap_locus": locus,
+                }
+            ],
+            "sourceFactoryConservation": {
+                "violations": [
+                    {
+                        "locus": locus,
+                        "reason": "source body owner disappeared",
+                    }
+                ]
+            },
         },
     }
 
@@ -74,24 +102,19 @@ def test_negative_conservation_delta_trips_floor() -> None:
             "totals": {"silently_unaccounted": 0},
             "conservation": {"delta": -2},
         },
-        "factoryAuditSummary": {
-            "sourceFactoryConservation": {"violations": []}
-        },
+        "factoryAuditSummary": {"sourceFactoryConservation": {"violations": []}},
     }
 
     offenders = _SCANNER.silent_offenders(report, file="over-accounted.py")
 
-    assert [(row.kind, row.count) for row in offenders] == [
-        ("silent-assertion", 2)
-    ]
+    assert [(row.kind, row.count) for row in offenders] == [("silent-assertion", 2)]
 
 
 def test_production_roots_cover_package_and_corpus_tooling(tmp_path: Path) -> None:
     roots = _SCANNER.production_roots(tmp_path)
 
     assert roots == (
-        tmp_path
-        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
+        tmp_path / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
         tmp_path / "implementations/python/sugar-lift-py-tests/scripts",
     )
 
