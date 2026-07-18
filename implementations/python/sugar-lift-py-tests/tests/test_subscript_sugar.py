@@ -144,8 +144,8 @@ def test_dict_subscript_folds_to_value() -> None:
     assert reduce_value('{"k":9}["k"]') == TermValue(9)
 
 
-def test_dict_subscript_missing_key_ground_wrong_twin_panics() -> None:
-    with pytest.raises(FactoryPanic):
+def test_dict_subscript_missing_key_stays_loud_without_exact_provenance() -> None:
+    with pytest.raises(FactoryPanic, match="owner=dict.subscript"):
         _outcome('{"k":9}["missing"]')
 
 

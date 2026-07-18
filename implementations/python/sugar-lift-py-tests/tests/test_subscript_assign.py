@@ -51,6 +51,26 @@ def test_subscript_assign_rebinds_concrete_dict_post_state() -> None:
     ) == BlockValue((ReturnValue(TermValue(9)),))
 
 
+def test_nested_subscript_assign_rebuilds_the_root_post_state() -> None:
+    outcome = compose_block(
+        '    expected = {"fields": [{"name": "old"}]}\n'
+        '    expected["fields"][0] = {"name": "new"}\n'
+        '    return expected["fields"][0]["name"]\n'
+    )
+
+    assert outcome.statements == (ReturnValue(StringValue("new")),)
+
+
+def test_nested_subscript_assign_witness_truthful_sat_lying_unsat(tmp_path) -> None:
+    witness = next(
+        pair
+        for pair in SubscriptAssignSugar.witnesses()
+        if pair.name == "subscript_assign_nested_post_state"
+    )
+
+    assert evaluate_seed_witnesses((witness,), tmp_path).is_zero
+
+
 def test_symbolic_subscript_assign_rebinds_through_py_setitem() -> None:
     """Part of #4103: name-bound symbolic store rebinds, never Incomplete poison."""
     outcome = compose_block(

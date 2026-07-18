@@ -62,14 +62,37 @@ def test_divide_is_true_division() -> None:
     )
 
 
-def test_divide_by_zero_ground_wrong_twin_panics() -> None:
-    with pytest.raises(FactoryPanic):
-        _term("1 / 0")
+def test_divide_by_zero_constructs_exact_exceptional_exit() -> None:
+    from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
+
+    outcome = _term("1 / 0")
+
+    assert isinstance(outcome.value, RaiseValue)
+    assert outcome.value.effect.exception_name == "ZeroDivisionError"
+    assert isinstance(outcome.value.exception, ExceptionValue)
+    assert outcome.value.exception.exception_name == "ZeroDivisionError"
 
 
 def test_divide_by_zero_halts_block_like_os_exit() -> None:
-    with pytest.raises(FactoryPanic):
-        compose_block("    1 / 0\n    return 2\n")
+    block = compose_block("    1 / 0\n    return 2\n")
+
+    assert len(block.statements) == 1
+    assert block.statements[0].effect.exception_name == "ZeroDivisionError"
+
+
+def test_divide_by_zero_witness_truthful_sat_lying_unsat(tmp_path) -> None:
+    from sugar_lift_py_tests.idd.sugar_witness_instruments import (
+        evaluate_seed_witnesses,
+    )
+    from sugar_lift_py_tests.sugar.divide_op_sugar import DivideOpSugar
+
+    witness = next(
+        pair
+        for pair in DivideOpSugar.witnesses()
+        if pair.name == "ground_zero_division_exit"
+    )
+
+    assert evaluate_seed_witnesses((witness,), tmp_path).is_zero
 
 
 def test_string_divide_panics_for_free() -> None:

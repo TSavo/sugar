@@ -13,8 +13,8 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 class DivideOpSugar(Sugar, role=SugarRole.TERM):
     """The `/` operator. It reduces both sides and asks the left to divide by the
     right (the division floor). True division on the collapsed Number; a concrete
-    zero divisor is a runtime effect. Its own sugar, its own type; the value owns
-    the answer, no fork."""
+    zero divisor constructs the exact exceptional exit. Its own sugar, its own
+    type; the value owns the answer, no fork."""
 
     left: SugarBody
     right: SugarBody
@@ -71,6 +71,26 @@ class DivideOpSugar(Sugar, role=SugarRole.TERM):
                     "    if value < 0:\n"
                     "        return fail() / 2\n"
                     "    return value\n\n"
+                    "def test_a():\n"
+                    "    assert A(5) == 6\n"
+                ),
+            ),
+            _call_pair(
+                name="ground_zero_division_exit",
+                owner_sugar="DivideOpSugar",
+                truthful=(
+                    "def A(z):\n"
+                    "    if z < 0:\n"
+                    "        return 1 / 0\n"
+                    "    return z\n\n"
+                    "def test_a():\n"
+                    "    assert A(5) == 5\n"
+                ),
+                lying=(
+                    "def A(z):\n"
+                    "    if z < 0:\n"
+                    "        return 1 / 0\n"
+                    "    return z\n\n"
                     "def test_a():\n"
                     "    assert A(5) == 6\n"
                 ),

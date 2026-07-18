@@ -88,17 +88,18 @@ class DictValue(FloorValue):
                         return Complete(value)
                     if type(key) is TermValue and key.value == index.value:
                         return Complete(value)
-            from sugar_lift_py_tests.effect import (
-                KeyErrorRuntimeEffect,
-                runtime_effect_evidence,
-            )
+            from sugar_lift_py_tests.factory import factory_panic_gap
 
-            return Incomplete(
-                KeyErrorRuntimeEffect(
-                    f"dict key missing runtime boundary: "
-                    f"key={index!r}; owner=DictValue.subscript site={site}",
-                    **runtime_effect_evidence("py.subscript", index, site),
-                )
+            factory_panic_gap(
+                owner="dict.subscript",
+                blame=site,
+                observed=f"missing concrete key {index!r}",
+                requested="exact dictionary post-state or exceptional exit",
+                fix=(
+                    "carry exact dictionary provenance and intervening mutation "
+                    "testimony before deciding KeyError; otherwise keep the "
+                    "missing post-state construction loud"
+                ),
             )
         return self.py_subscript_coordinate(index, site)
 

@@ -13,7 +13,8 @@ from sugar_lift_py_tests.effect import (
     runtime_effect_evidence,
 )
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.ir import ctor, make_var
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.ir import ctor, make_var, str_const
 
 
 def test_runtime_effect_requires_operation_operand_and_site_witness() -> None:
@@ -110,3 +111,23 @@ def test_operation_carrying_fragment_blame_resolves_as_site() -> None:
     )
     assert witness.site is site
     assert witness.locus == "t.py:1:0"
+
+
+def test_import_exception_predicate_is_a_genuine_runtime_operand() -> None:
+    """Import availability is runtime evidence even with a ground class name."""
+    condition = ctor("py.except", [str_const("ImportError")])
+
+    operand = genuine_runtime_operand("py.ifexp.select", condition)
+
+    assert operand.term == condition
+
+
+def test_ground_boolean_constructor_still_cannot_mint_runtime_authority() -> None:
+    site = SourceFragment.from_source("x = True\n", "t.py").statements()[0]
+
+    with pytest.raises(FactoryPanic, match="ground/decidable"):
+        runtime_effect_evidence(
+            "py.ifexp.select",
+            ctor("py.not", [ctor("py.and", [])]),
+            site,
+        )
