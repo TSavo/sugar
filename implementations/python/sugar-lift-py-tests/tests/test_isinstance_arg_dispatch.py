@@ -13,11 +13,21 @@ from sugar_lift_py_tests.effect import CallResultTypeRuntimeEffect
 from sugar_lift_py_tests.factory import default_catalog
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
+    GuardedValue,
     ImportAliasValue,
     PredicateValue,
     SymbolicValue,
 )
-from sugar_lift_py_tests.ir import atomic, ctor, make_var, or_, str_const
+from sugar_lift_py_tests.ir import (
+    and_,
+    atomic,
+    ctor,
+    implies,
+    make_var,
+    not_,
+    or_,
+    str_const,
+)
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.temporal import TemporalContext
 
@@ -75,6 +85,42 @@ def test_tuple_of_citable_types_is_native_tester_disjunction() -> None:
         ]
     )
     assert "call:isinstance" not in repr(value)
+
+
+def test_guarded_type_operand_preserves_both_type_coordinate_faces() -> None:
+    guard = atomic("selected_type_face", [])
+    value = reduce_value(
+        "isinstance(x, ExpectedType)",
+        {
+            "x": SymbolicValue(make_var("x")),
+            "ExpectedType": GuardedValue(
+                guard,
+                ImportAliasValue("FirstType", "FirstType"),
+                ImportAliasValue("SecondType", "SecondType"),
+            ),
+        },
+    )
+
+    assert value == PredicateValue(
+        and_(
+            [
+                implies(
+                    guard,
+                    _tester(
+                        make_var("x"),
+                        ctor("python:type", [str_const("FirstType")]),
+                    ),
+                ),
+                implies(
+                    not_(guard),
+                    _tester(
+                        make_var("x"),
+                        ctor("python:type", [str_const("SecondType")]),
+                    ),
+                ),
+            ]
+        )
+    )
 
 
 def test_known_contract_call_result_emits_native_tester_atom() -> None:
@@ -155,5 +201,6 @@ def test_dispatch_receivers_declare_explicit_type_tester_arms() -> None:
 
     assert "test_python_type" in ImportAliasValue.__dict__
     assert "test_python_type" in CallSiteValue.__dict__
+    assert "test_python_type" in GuardedValue.__dict__
     assert "python_type_coordinate" in CallSiteValue.__dataclass_fields__
     assert "test_python_type" in TupleValue.__dict__
