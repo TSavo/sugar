@@ -210,6 +210,134 @@ def test_source_initializer_with_arbitrary_expression_stays_loud() -> None:
     assert raised.value.info.requested == "constructed source initializer"
 
 
+def test_pass_only_constructor_builds_empty_object() -> None:
+    """MyTz-shaped: ``pass`` is exact no-op construction, not RuntimeEffect."""
+    outcome = _outcome(
+        "class MyTz:\n" "    def __init__(self) -> None:\n" "        pass\n",
+        "MyTz()",
+        filename="constructor_pass_only.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert outcome.value.class_name == "MyTz"
+    assert _field_values(outcome.value) == {}
+
+
+def test_pass_before_field_constructor_keeps_self_state() -> None:
+    outcome = _outcome(
+        "class Box:\n"
+        "    def __init__(self, x):\n"
+        "        pass\n"
+        "        self.x = x\n",
+        "Box(3)",
+        filename="constructor_pass_field.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert _field_values(outcome.value) == {"x": TermValue(3)}
+
+
+def test_if_else_self_assign_constructor_selects_branch() -> None:
+    """CSS-shaped: decidable if/else self binds through the statement door."""
+    true_outcome = _outcome(
+        "class Gate:\n"
+        "    def __init__(self, flag, value):\n"
+        "        if flag:\n"
+        "            self.value = value\n"
+        "        else:\n"
+        "            self.value = 0\n",
+        "Gate(True, 7)",
+        filename="constructor_if_true.py",
+    )
+    false_outcome = _outcome(
+        "class Gate:\n"
+        "    def __init__(self, flag, value):\n"
+        "        if flag:\n"
+        "            self.value = value\n"
+        "        else:\n"
+        "            self.value = 0\n",
+        "Gate(False, 7)",
+        filename="constructor_if_false.py",
+    )
+
+    assert type(true_outcome) is Complete
+    assert type(true_outcome.value) is ObjectValue
+    assert _field_values(true_outcome.value) == {"value": TermValue(7)}
+    assert type(false_outcome) is Complete
+    assert type(false_outcome.value) is ObjectValue
+    assert _field_values(false_outcome.value) == {"value": TermValue(0)}
+
+
+def test_if_raise_guard_constructor_builds_or_exits() -> None:
+    ok = _outcome(
+        "class Periodish:\n"
+        "    def __init__(self, values, dtype=None):\n"
+        "        if dtype is None:\n"
+        "            raise ValueError('dtype is not specified')\n"
+        "        self.values = values\n"
+        "        self.dtype = dtype\n",
+        "Periodish([1], 'D')",
+        filename="constructor_if_raise_ok.py",
+    )
+    bad = _outcome(
+        "class Periodish:\n"
+        "    def __init__(self, values, dtype=None):\n"
+        "        if dtype is None:\n"
+        "            raise ValueError('dtype is not specified')\n"
+        "        self.values = values\n"
+        "        self.dtype = dtype\n",
+        "Periodish([1])",
+        filename="constructor_if_raise_bad.py",
+    )
+
+    assert type(ok) is Complete
+    assert type(ok.value) is ObjectValue
+    assert "values" in _field_values(ok.value)
+    assert _field_values(ok.value)["dtype"] == StringValue("D")
+    assert type(bad) is Complete
+    assert type(bad.value) is ExceptionalExitValue
+    assert bad.value.effect.exception_name == "ValueError"
+
+
+def test_import_then_field_constructor_binds_module() -> None:
+    """PyArrowImpl-shaped import then self field through the statement door."""
+    outcome = _outcome(
+        "class Bound:\n"
+        "    def __init__(self):\n"
+        "        import math\n"
+        "        self.api = math\n"
+        "        self.tag = 7\n",
+        "Bound()",
+        filename="constructor_import_field.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    fields = _field_values(outcome.value)
+    assert fields["tag"] == TermValue(7)
+    assert type(fields["api"]) is ImportAliasValue
+
+
+def test_importfrom_then_field_constructor_binds_name() -> None:
+    outcome = _outcome(
+        "class Bound:\n"
+        "    def __init__(self, con):\n"
+        "        from collections import Counter\n"
+        "        self.con = con\n"
+        "        self.meta = Counter\n",
+        "Bound(1)",
+        filename="constructor_importfrom_field.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    fields = _field_values(outcome.value)
+    assert fields["con"] == TermValue(1)
+    assert type(fields["meta"]) is ImportAliasValue
+
+
 def test_static_inherited_constructor_builds_base_fields() -> None:
     outcome = _outcome(
         "class Base:\n"
