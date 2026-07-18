@@ -196,6 +196,34 @@ def test_source_initializer_unresolved_super_stays_loud() -> None:
     assert raised.value.info.requested == "constructed source initializer"
 
 
+def test_source_initializer_super_setattr_constructs_ground_field() -> None:
+    outcome = _outcome(
+        "class CheckedCall:\n"
+        "    def __init__(self, f):\n"
+        '        super().__setattr__("f", f)\n',
+        "CheckedCall('callable')",
+        filename="constructor_super_setattr.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert _field_values(outcome.value) == {"f": StringValue("callable")}
+
+
+def test_source_initializer_super_setattr_non_ground_name_stays_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class CheckedCall:\n"
+            "    def __init__(self, name, value):\n"
+            "        super().__setattr__(name, value)\n",
+            "CheckedCall('f', 'callable')",
+            filename="constructor_super_setattr_non_ground.py",
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "constructed source initializer"
+
+
 def test_source_initializer_assert_constructs_exceptional_exit_face() -> None:
     outcome = _outcome(
         "class MockRequest:\n"
@@ -1050,6 +1078,23 @@ def test_zero_arg_self_method_constructor_truthful_sat_wrong_twin_unsat(
         for witness in ConstructorCallSugar.witnesses()
         if isinstance(witness, SugarWitnessPair)
         and witness.name == "source_body_constructor_zero_arg_self_method"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_super_setattr_constructor_truthful_sat_wrong_twin_unsat(tmp_path) -> None:
+    pair = next(
+        witness
+        for witness in ConstructorCallSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "source_body_constructor_super_setattr"
     )
 
     truthful = run_source_through_real_solver(

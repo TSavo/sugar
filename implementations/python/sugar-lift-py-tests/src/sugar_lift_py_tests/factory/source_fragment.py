@@ -604,9 +604,10 @@ class SourceFragment:
         """Recognize constructor-body calls at the factory grammar boundary.
 
         This is the one recognizer for ``super().__init__(...)``,
-        authenticated ``DeclaredBase.__init__(self, ...)``, and exact
-        zero-argument ``self.method()`` statements. Consumers receive typed
-        testimony and never reopen the AST.
+        authenticated ``DeclaredBase.__init__(self, ...)``, exact
+        ``super().__setattr__("name", value)``, and exact zero-argument
+        ``self.method()`` statements. Consumers receive typed testimony and
+        never reopen the AST.
         """
         if not isinstance(self.node, ast.Expr) or not isinstance(
             self.node.value, ast.Call
@@ -619,6 +620,26 @@ class SourceFragment:
         call_receiver = call.call_receiver()
         if call_receiver is None:
             return None
+        zero_arg_super = (
+            call_receiver.observed == "Call"
+            and call_receiver.call_target_name() == "super"
+            and not call_receiver.call_args()
+            and not call_receiver.call_has_keywords()
+        )
+        arguments = call.call_args()
+        if (
+            target == "__setattr__"
+            and zero_arg_super
+            and not call.call_has_keywords()
+            and len(arguments) == 2
+            and arguments[0].observed == "PrimitiveLiteral"
+            and isinstance(arguments[0].literal_value(), str)
+        ):
+            return InitializerCallSite(
+                kind="super_setattr",
+                call=call,
+                target=arguments[0].literal_value(),
+            )
         if (
             target != "__init__"
             and not call.call_args()
@@ -633,14 +654,8 @@ class SourceFragment:
             )
         if target != "__init__":
             return None
-        if (
-            call_receiver.observed == "Call"
-            and call_receiver.call_target_name() == "super"
-            and not call_receiver.call_args()
-            and not call_receiver.call_has_keywords()
-        ):
+        if zero_arg_super:
             return InitializerCallSite(kind="super", call=call, target="super")
-        arguments = call.call_args()
         base_coordinate = call_receiver.dotted_expr_name()
         if (
             not call.call_has_keywords()
