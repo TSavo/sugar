@@ -448,10 +448,44 @@ class FunctionCallable(FloorValue):
 
         current = replace(self, decorators=())
         for decorator in reversed(self.decorators):
+            if isinstance(decorator, CallSiteValue) and (
+                _implementation_preserving_decorator_factory(decorator.target_name)
+            ):
+                # NEP-18 array-function wrappers (and their partial aliases) are
+                # not soft-continue: under default dispatch the public API body
+                # is exactly the decorated implementation. Override routing via
+                # `__array_function__` stays unmodeled as its own construction.
+                # #5152 sugar.enumerate implication fold panics here when the
+                # decorator CallSiteValue is body-less (functools.partial of
+                # overrides.array_function_dispatch).
+                continue
             if isinstance(decorator, CallSiteValue):
+                factory_name = decorator.target_name
+                if decorator.body is None:
+                    factory_panic_gap(
+                        owner=f"FunctionCallable decorator factory:{factory_name}",
+                        blame=str(site),
+                        observed=(
+                            f"missing callsite body for decorator factory "
+                            f"`{factory_name}`"
+                        ),
+                        requested=(
+                            "decorator callable floor or implementation-preserving "
+                            "decorator contract"
+                        ),
+                        fix=(
+                            f"construct a factory-built body for `{factory_name}`, "
+                            f"resolve partial/import aliases to the real "
+                            f"FunctionCallable, or enroll an implementation-"
+                            f"preserving contract when the public API body is "
+                            f"exactly the decorated implementation (see "
+                            f"array_function_dispatch); never soft-continue "
+                            f"implication enumeration"
+                        ),
+                    )
                 decorator = decorator.force_floor(
                     None,
-                    owner="FunctionCallable decorator factory",
+                    owner=f"FunctionCallable decorator factory:{factory_name}",
                     project_callsite=False,
                 )
             if not isinstance(decorator, FunctionCallable):
@@ -478,11 +512,17 @@ class FunctionCallable(FloorValue):
             assert isinstance(applied, CallSiteValue)
             if applied.body is None:
                 factory_panic_gap(
-                    owner="FunctionCallable",
+                    owner=f"FunctionCallable decorator application:{applied.target_name}",
                     blame=str(site),
-                    observed="missing decorator callsite body",
+                    observed=(
+                        f"missing decorator callsite body for "
+                        f"`{applied.target_name}`"
+                    ),
                     requested="decorator result substitution",
-                    fix="construct the decorator body or panic loudly",
+                    fix=(
+                        f"construct the decorator body for `{applied.target_name}` "
+                        f"or panic loudly; never soft-continue"
+                    ),
                 )
             assert applied.body is not None
             result = complete_value(
@@ -503,6 +543,16 @@ class FunctionCallable(FloorValue):
                 # typing.cast is runtime identity. Its second operand is the
                 # exact callable produced by the decorator body.
                 current = result.arg_values[1]
+            elif (
+                isinstance(result, CallSiteValue)
+                and _array_function_dispatcher_ctor(result.target_name)
+                and len(result.arg_values) == 2
+                and isinstance(result.arg_values[1], FunctionCallable)
+            ):
+                # Digging the real array_function_dispatch body lands on the C
+                # `_ArrayFunctionDispatcher(dispatcher, implementation)` ctor.
+                # Default-dispatch public API body is the implementation.
+                current = result.arg_values[1]
             else:
                 current = force_floor(
                     result,
@@ -519,6 +569,28 @@ class FunctionCallable(FloorValue):
                     fix="construct the decorator return callable or panic loudly",
                 )
         return current
+
+
+# Bare names and trailing segments of qualified decorator-factory targets whose
+# application leaves the decorated FunctionCallable as the public-API body under
+# default dispatch. Enrollment is existence: a new identity-preserving factory
+# must land here with a pin, not as a silent continue.
+_IMPLEMENTATION_PRESERVING_DECORATOR_FACTORIES = frozenset(
+    {
+        "array_function_dispatch",
+        "array_function_from_dispatcher",
+        "array_function_from_c_func_and_dispatcher",
+    }
+)
+
+
+def _implementation_preserving_decorator_factory(target_name: str) -> bool:
+    bare = target_name.rsplit(".", 1)[-1]
+    return bare in _IMPLEMENTATION_PRESERVING_DECORATOR_FACTORIES
+
+
+def _array_function_dispatcher_ctor(target_name: str) -> bool:
+    return target_name.rsplit(".", 1)[-1] == "_ArrayFunctionDispatcher"
 
 
 def _guarded_dict_value(value) -> bool:

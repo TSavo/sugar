@@ -128,6 +128,117 @@ def test_decorator_result_projects_static_typing_cast_callable() -> None:
     ) == TermValue(7)
 
 
+def _function_callable_with_body(name: str = "inner") -> FunctionCallable:
+    """Minimal nested def whose statement reduction yields a FunctionCallable."""
+    universe = _root_universe(
+        "def outer():\n"
+        f"    def {name}(value):\n"
+        "        return value\n"
+        f"    return {name}(3)\n"
+    )
+    defined = universe.record.statements[0]
+    assert isinstance(defined, FunctionCallable)
+    assert defined.body is not None
+    return defined
+
+
+def test_array_function_dispatch_preserves_implementation_callsite() -> None:
+    """#5152: body-less NEP-18 decorator factories must not abort enumerate.
+
+    The live numpy hole is ``@array_function_dispatch(...)`` via functools.partial,
+    so the decorator CallSiteValue arrives with body=None. Default-dispatch public
+    API body is the implementation — construct that, never soft-continue.
+    """
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.ir import ctor
+
+    site = SourceFragment.from_source("rot90(m)\n", "call.py").statements()[0]
+    impl = _function_callable_with_body("rot90")
+    decorator = CallSiteValue(
+        target_name="array_function_dispatch",
+        arg_values=(
+            FunctionCallable(name="_rot90_dispatcher", parameters=("m",)),
+        ),
+        parameters=(),
+        term=ctor(
+            "call:array_function_dispatch",
+            [],
+            symbol_kind="coordinate",
+        ),
+        body=None,
+        site=site,
+    )
+    decorated = replace(impl, decorators=(decorator,))
+    applied = decorated._apply_decorators(site)
+    assert isinstance(applied, FunctionCallable)
+    assert applied.decorators == ()
+    assert applied.body is not None
+    assert applied.name == "rot90"
+
+    callsite = complete_value(
+        decorated.callsite((TermValue(1),), (), site),
+        owner="array_function_dispatch enumerate pin",
+    )
+    assert isinstance(callsite, CallSiteValue)
+    assert callsite.body is not None
+    assert callsite.target_name == "rot90"
+    ctx = FactoryBuildContext(filename="call.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="array_function_dispatch floor", project_callsite=False
+    ) == TermValue(1)
+
+
+def test_array_function_from_c_func_and_dispatcher_preserves_implementation() -> None:
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.ir import ctor
+
+    site = SourceFragment.from_source("vdot(a)\n", "call.py").statements()[0]
+    impl = _function_callable_with_body("vdot")
+    decorator = CallSiteValue(
+        target_name="array_function_from_c_func_and_dispatcher",
+        arg_values=(),
+        parameters=(),
+        term=ctor(
+            "call:array_function_from_c_func_and_dispatcher",
+            [],
+            symbol_kind="coordinate",
+        ),
+        body=None,
+        site=site,
+    )
+    decorated = replace(impl, decorators=(decorator,))
+    applied = decorated._apply_decorators(site)
+    assert applied.decorators == ()
+    assert applied.body is not None
+
+
+def test_unknown_decorator_factory_missing_body_names_owner() -> None:
+    """Residual body-less decorator factories stay loud with the factory name."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.ir import ctor
+
+    site = SourceFragment.from_source("f()\n", "call.py").statements()[0]
+    impl = _function_callable_with_body("inner")
+    unknown = CallSiteValue(
+        target_name="mystery_wrap",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:mystery_wrap", [], symbol_kind="coordinate"),
+        body=None,
+        site=site,
+    )
+    decorated = replace(impl, decorators=(unknown,))
+    with pytest.raises(FactoryPanic) as raised:
+        decorated.callsite((TermValue(1),), (), site)
+    info = raised.value.info
+    assert info.owner == "FunctionCallable decorator factory:mystery_wrap"
+    assert "mystery_wrap" in str(info.observed)
+    assert "never soft-continue" in info.fix
+
+
 def test_callable_merges_explicit_keyword_into_guarded_static_mapping() -> None:
     site = SourceFragment.from_source(
         "inner(obj='left', **options)\n", "nested.py"
