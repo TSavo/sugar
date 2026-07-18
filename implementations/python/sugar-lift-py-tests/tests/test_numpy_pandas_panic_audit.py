@@ -238,10 +238,50 @@ def test_lift_command_uses_cached_audit_workspace(
     assert panic_audit_module._run_command(command, ROOT).returncode == 0
 
     assert len(commands) == 2
+    assert commands[0][1:3] == ["lift", "--audit-frontier"]
+    assert "--visual" not in commands[0]
     assert commands[0][-1] == commands[1][-1]
     cached_workspace = Path(commands[0][-1])
     assert cached_workspace.is_dir()
     assert cached_workspace.parent.parent == cache_root
+
+
+def test_audit_subprocess_times_out_the_current_file_loudly(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SUGAR_PANIC_AUDIT_FILE_TIMEOUT_SECS", "0.1")
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import json, os, time\n"
+            "with open(os.environ['SUGAR_KIT_LOG'], 'a') as handle:\n"
+            "    handle.write(json.dumps({"
+            "'stage': 'enumerate.request', "
+            "'level_name': 'facts', "
+            "'at': {'file': 'numpy/slow.py'}"
+            "}) + '\\n')\n"
+            "time.sleep(30)\n"
+        ),
+    ]
+
+    result = panic_audit_module._run_subprocess(command, tmp_path)
+
+    assert result.returncode == 124
+    assert "audit file timed out and panicked" in result.stderr
+    assert "owner=idd.collect_panic_audit" in result.stderr
+    assert "blame=numpy/slow.py" in result.stderr
+    assert "observed=audit-file-timeout" in result.stderr
+    assert "requested=bounded-file-audit" in result.stderr
+    records = panic_audit_module.extract_panic_records(
+        panic_audit_module.LiftTarget("numpy-all", tmp_path),
+        result.stdout,
+        result.stderr,
+    )
+    assert len(records) == 1
+    assert records[0].kind == "unexpected"
+    assert records[0].owner == "idd.collect_panic_audit"
+    assert records[0].blame == "numpy/slow.py"
 
 
 def test_cli_exits_red_until_numpy_pandas_have_zero_panics(monkeypatch, capsys) -> None:

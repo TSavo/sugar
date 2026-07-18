@@ -6,6 +6,8 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +23,7 @@ from ..sugar_binary import SugarBinaryResolutionError, resolve_sugar_binary
 RunCommand = Callable[[List[str], Path], CommandResult]
 PackagePathResolver = Callable[[str], Path]
 _CACHE_VERSION = "sugar-python-panic-audit-workspace-v2"
+_DEFAULT_FILE_TIMEOUT_SECONDS = 15.0
 
 
 @dataclass(frozen=True)
@@ -171,10 +174,8 @@ def _run_command(command: List[str], cwd: Path) -> CommandResult:
     if _is_visual_lift_command(command):
         target = Path(command[-1])
         audit_workspace = _cached_audit_workspace(target, cwd).workspace
-        visual = _run_subprocess([*command[:-1], str(audit_workspace)], cwd)
-        if visual.returncode == 0:
-            return visual
         frontier_path = audit_workspace / ".sugar/panic-audit-frontier.json"
+        frontier_path.unlink(missing_ok=True)
         frontier = _run_subprocess(
             [
                 command[0],
@@ -222,13 +223,126 @@ def _run_subprocess(command: List[str], cwd: Path) -> CommandResult:
     # ONE door: when sugar is invoked against a staged audit workspace, pin
     # SUGAR_HOME so ambient checkout/.sugar components cannot pollute the lift.
     env = _hermetic_env_for_sugar_command(command)
+    timeout_seconds = _audit_file_timeout_seconds()
+    configured_log = env.get("SUGAR_KIT_LOG")
+    if configured_log:
+        return _run_subprocess_with_file_watchdog(
+            command,
+            cwd,
+            env,
+            Path(configured_log),
+            timeout_seconds,
+        )
+    with tempfile.TemporaryDirectory(prefix="sugar-panic-audit-") as tmp:
+        transport_log = Path(tmp) / "kit-transport.jsonl"
+        env["SUGAR_KIT_LOG"] = os.fspath(transport_log)
+        return _run_subprocess_with_file_watchdog(
+            command,
+            cwd,
+            env,
+            transport_log,
+            timeout_seconds,
+        )
+
+
+def _audit_file_timeout_seconds() -> float:
+    raw = os.environ.get("SUGAR_PANIC_AUDIT_FILE_TIMEOUT_SECS")
+    if raw is None:
+        return _DEFAULT_FILE_TIMEOUT_SECONDS
     try:
-        completed = subprocess.run(
-            command, cwd=cwd, text=True, capture_output=True, check=False, env=env
+        value = float(raw)
+    except ValueError:
+        return _DEFAULT_FILE_TIMEOUT_SECONDS
+    return value if value > 0 else _DEFAULT_FILE_TIMEOUT_SECONDS
+
+
+def _run_subprocess_with_file_watchdog(
+    command: List[str],
+    cwd: Path,
+    env: dict[str, str],
+    transport_log: Path,
+    timeout_seconds: float,
+) -> CommandResult:
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
         )
     except FileNotFoundError as exc:
         return CommandResult(127, "", f"unable to execute {command[0]}: {exc}")
-    return CommandResult(completed.returncode, completed.stdout, completed.stderr)
+
+    current_file: Optional[str] = None
+    current_file_started = time.monotonic()
+    try:
+        log_offset = transport_log.stat().st_size
+    except OSError:
+        log_offset = 0
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=0.05)
+            assert process.returncode is not None
+            return CommandResult(process.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            observed_file, log_offset = _latest_transport_file(
+                transport_log, log_offset
+            )
+            if observed_file is not None and observed_file != current_file:
+                current_file = observed_file
+                current_file_started = time.monotonic()
+            if current_file is None:
+                continue
+            if time.monotonic() - current_file_started < timeout_seconds:
+                continue
+
+            process.terminate()
+            try:
+                stdout, stderr = process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate()
+            timeout_row = (
+                "audit file timed out and panicked "
+                "owner=idd.collect_panic_audit "
+                f"blame={current_file} "
+                "observed=audit-file-timeout "
+                "requested=bounded-file-audit "
+                "fix=optimize or construct a bounded lift for this source"
+            )
+            combined_stderr = f"{stderr.rstrip()}\n{timeout_row}\n"
+            return CommandResult(124, stdout, combined_stderr)
+
+
+def _latest_transport_file(
+    transport_log: Path, offset: int
+) -> tuple[Optional[str], int]:
+    try:
+        with transport_log.open("r", encoding="utf-8") as handle:
+            handle.seek(offset)
+            lines = handle.readlines()
+            new_offset = handle.tell()
+    except OSError:
+        return None, offset
+
+    latest: Optional[str] = None
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("stage") == "lift.workspace.file":
+            file_name = row.get("file")
+        elif row.get("stage") == "enumerate.request":
+            at = row.get("at")
+            file_name = at.get("file") if isinstance(at, dict) else None
+        else:
+            file_name = None
+        if isinstance(file_name, str) and file_name:
+            latest = file_name
+    return latest, new_offset
 
 
 def _hermetic_env_for_sugar_command(command: List[str]) -> dict:
