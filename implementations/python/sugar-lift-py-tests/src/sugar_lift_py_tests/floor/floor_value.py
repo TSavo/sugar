@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from sugar_lift_py_tests.operations.callable_map_operation import (
         CallableMapOperation,
     )
+    from sugar_lift_py_tests.callable_application import CallableApplication
     from sugar_lift_py_tests.operations.callsite_projection_operation import (
         CallsiteProjectionOperation,
     )
@@ -338,6 +339,16 @@ class FloorValue:
     ) -> Outcome:
         del ctx
         return self._operation_construction_gap(operation, "bitwise_with")
+
+    def callable_application_with(
+        self,
+        operation: CallableApplication,
+        ctx: FactoryBuildContext | None,
+    ) -> Outcome:
+        del ctx
+        return self._operation_construction_gap(
+            operation, "callable_application_with"
+        )
 
     def call_method_with(
         self, operation: MethodCallOperation, ctx: FactoryBuildContext | None
@@ -1306,10 +1317,10 @@ class FloorValue:
 
         observed = type(self).__name__
         owner = getattr(operation, "owner", type(operation).__name__)
-        blame = getattr(operation, "blame", observed)
+        blame = getattr(operation, "blame", getattr(operation, "site", observed))
         info = FactoryGapInfo(
             owner=owner,
-            blame=str(site),
+            blame=str(blame),
             observed=observed,
             requested=method_name,
             fix=f"add {method_name} to {observed} or emit a real effect",
@@ -1322,7 +1333,7 @@ class FloorValue:
                 role=method_name,
                 status=FactoryAuditStatus.FLOOR_GAP,
                 observed=observed,
-                blame=str(site),
+                blame=str(blame),
                 selected=None,
                 candidates=[],
                 message=info.message,

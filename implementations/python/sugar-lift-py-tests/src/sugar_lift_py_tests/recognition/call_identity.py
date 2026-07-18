@@ -31,3 +31,15 @@ class CallIdentityRecognition:
     @staticmethod
     def is_method_call(site) -> bool:
         return site.call_function().observed == "Attribute"
+
+    @staticmethod
+    def is_computed_callable(site) -> bool:
+        """Recognize calls whose callable is itself a constructed expression.
+
+        Name, attribute, subscript, and call-result callees have dedicated Call
+        family owners.  Conditional and binary expressions instead need their
+        callable value built through the term factory before application.
+        """
+        if site.observed != "Call":
+            return False
+        return site.call_function().observed in {"IfExp", "BinOp"}
