@@ -86,6 +86,16 @@ class KeywordCallSugar(
             "    return inner(*(4, 5), flag=6)\n"
             "\n"
         )
+        partial = (
+            "import functools\n"
+            "\n"
+            "def A(z):\n"
+            "    def add(left, right):\n"
+            "        return left + right\n"
+            "    plus_one = functools.partial(add, right=1)\n"
+            "    return z\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="keyword_call_return",
@@ -99,6 +109,13 @@ class KeywordCallSugar(
                 truthful=starred + "def test_a():\n    assert A() == 5\n",
                 lying=starred + "def test_a():\n    assert A() == 6\n",
                 family="constructed-starred-keyword-call",
+            ),
+            _call_pair(
+                name="keyword_call_functools_partial_return",
+                owner_sugar="KeywordCallSugar",
+                truthful=partial + "def test_a():\n    assert A(4) == 4\n",
+                lying=partial + "def test_a():\n    assert A(4) == 5\n",
+                family="functools-partial-callsite-body",
             ),
         )
 
@@ -181,6 +198,49 @@ class KeywordCallSugar(
                             "construct a static string option key and local "
                             "FunctionCallable callback or panic loudly"
                         ),
+                    )
+
+            partial_receiver = pos_values[0] if self.receiver is not None else None
+            if (
+                self.target_name == "partial"
+                and isinstance(partial_receiver, ImportAliasValue)
+                and partial_receiver.import_target == "functools"
+                and pos_values[1:]
+            ):
+                from sugar_lift_py_tests.floor import (
+                    CallSiteValue,
+                    PartialFunctionCallable,
+                )
+
+                target, *bound_positional = pos_values[1:]
+                if isinstance(target, ImportAliasValue):
+                    target = target.resolved_value
+                elif (
+                    isinstance(target, CallSiteValue)
+                    and len(target.arg_values) == 1
+                    and isinstance(target.arg_values[0], ImportAliasValue)
+                    and target.arg_values[0].import_target
+                ):
+                    from sugar_lift_py_tests.sugar.install_source_dig import (
+                        resolve_install_source_value,
+                    )
+
+                    target = resolve_install_source_value(
+                        (
+                            f"{target.arg_values[0].import_target}."
+                            f"{target.target_name}"
+                        ),
+                        ctx,
+                    )
+                if isinstance(target, FunctionCallable):
+                    return Complete(
+                        PartialFunctionCallable(
+                            name=f"partial({target.name})",
+                            target=target,
+                            bound_positional=tuple(bound_positional),
+                            bound_keyword_names=tuple(name for name, _ in kw_pairs),
+                            bound_keyword_values=tuple(value for _, value in kw_pairs),
+                        )
                     )
 
             # Exact exception constructors with kwargs still construct

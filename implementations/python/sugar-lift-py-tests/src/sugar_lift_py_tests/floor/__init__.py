@@ -31,6 +31,7 @@ from .floor_dispatch_surface import (
 )
 from .floor_value import BASE_CONSTRUCTION_GAP_METHOD_NAMES, FloorValue
 from .function_callable import FunctionCallable
+from .partial_function_callable import PartialFunctionCallable
 from .guarded_raise import GuardedRaise
 from .guarded_loop_control import GuardedLoopControl
 from .guarded_faces import GuardedFaces
@@ -88,6 +89,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ExceptionClassValue,
     LocalExceptionClassValue,
     FunctionCallable,
+    PartialFunctionCallable,
     GuardedRaise,
     GuardedLoopControl,
     GuardedFaces,
@@ -157,6 +159,7 @@ __all__ = [
     "FloorDispatchSurface",
     "FloorValue",
     "FunctionCallable",
+    "PartialFunctionCallable",
     "GuardedRaise",
     "GuardedLoopControl",
     "GuardedFaces",
