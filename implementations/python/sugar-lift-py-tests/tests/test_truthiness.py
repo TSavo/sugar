@@ -18,6 +18,7 @@ from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     BlockValue,
+    DictValue,
     FloorValue,
     RaiseValue,
     ReturnValue,
@@ -26,7 +27,16 @@ from sugar_lift_py_tests.floor import (
     UniverseValue,
 )
 from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
-from sugar_lift_py_tests.ir import and_, eq, implies, make_var, not_, num, py_truthy
+from sugar_lift_py_tests.ir import (
+    and_,
+    bool_const,
+    eq,
+    implies,
+    make_var,
+    not_,
+    num,
+    py_truthy,
+)
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -56,6 +66,19 @@ def test_empty_string_is_false() -> None:
 def test_none_is_false() -> None:
     block = compose_block("    if None:\n        return 1\n    return 2\n")
     assert block == BlockValue((ReturnValue(TermValue(2)),))
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (DictValue(()), False),
+        (DictValue(((TermValue(1), TermValue(2)),)), True),
+    ],
+)
+def test_dict_truth_is_decided_by_entry_count(value: DictValue, expected: bool) -> None:
+    outcome = complete_value(value.truth("t.py:1:3"), owner="test")
+
+    assert outcome.to_term(owner="test") == bool_const(expected)
 
 
 def test_assert_nonzero_folds_true_to_support() -> None:
@@ -118,6 +141,21 @@ def test_ground_false_assertion_witness_truthful_sat_lying_unsat(
         "\n"
         "def test_assertion_exit():\n"
         "    assert A(5) == 6\n",
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+
+def test_dict_truth_witness_truthful_sat_lying_unsat(tmp_path: Path) -> None:
+    seeds = Path(__file__).parent / "witness_seeds"
+    truthful = run_source_through_real_solver(
+        tmp_path / "dict-truthful",
+        (seeds / "truth_predicate_dict_truthful.py").read_text(),
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "dict-lying",
+        (seeds / "truth_predicate_dict_lying.py").read_text(),
     )
 
     assert truthful.verdict == "sat"
