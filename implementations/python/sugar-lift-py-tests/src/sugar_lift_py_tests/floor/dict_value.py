@@ -16,6 +16,22 @@ class DictValue(FloorValue):
 
     entries: tuple
 
+    def truth(self, site):
+        """A constructed dict is truthy exactly when it has an entry."""
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return Complete(
+            TrueBoolLiteralSugar(site=site)
+            if self.entries
+            else FalseBoolLiteralSugar(site=site)
+        )
+
     def length(self, site):
         del site
         from sugar_lift_py_tests.floor.term_value import TermValue
