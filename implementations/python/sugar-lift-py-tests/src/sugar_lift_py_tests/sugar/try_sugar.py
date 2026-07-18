@@ -176,6 +176,17 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
                 + "    assert A(7) == 2\n",
                 family="try-success-sentinel-result",
             ),
+            _call_pair(
+                name="module_try_dependency_prefix",
+                owner_sugar="TrySugar",
+                truthful="from temporal_try_origin import f\n"
+                "def test_a():\n"
+                "    assert f() == 7\n",
+                lying="from temporal_try_origin import f\n"
+                "def test_a():\n"
+                "    assert f() == 8\n",
+                family="module-try-dependency-prefix",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
