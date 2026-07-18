@@ -46,11 +46,34 @@ class BoolOpSugar(Sugar, role=SugarRole.TERM):
             "    return 0\n"
             "\n"
         )
-        return _call_pair(
-            name="bool_op_return",
-            owner_sugar="BoolOpSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+        guarded_rhs = (
+            "def B(p, q):\n"
+            "    if p:\n"
+            "        if q:\n"
+            "            result = 7\n"
+            "        else:\n"
+            "            result = 8\n"
+            "    else:\n"
+            "        q = False\n"
+            "    if p and result > 0:\n"
+            "        return 1\n"
+            "    return 0\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="bool_op_return",
+                owner_sugar="BoolOpSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            ),
+            _call_pair(
+                name="bool_op_rhs_guard_activation",
+                owner_sugar="BoolOpSugar",
+                truthful=guarded_rhs + "def test_b():\n    assert B(1, 1) == 1\n",
+                lying=guarded_rhs + "def test_b():\n    assert B(1, 1) == 0\n",
+                family="rhs-guard-activation",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -95,7 +118,11 @@ class BoolOpSugar(Sugar, role=SugarRole.TERM):
 
         # A predicate already stands as a condition -- cannot ground-fold; emit.
         if type(presented) is PredicateValue:
-            return self._emit_coordinate_from(value, index, scoped)
+            return self._emit_coordinate_from(
+                value,
+                index,
+                self._rhs_context(presented, scoped),
+            )
 
         # Ask the truth floor; True/False literals own the short-circuit faces.
         return value.truth(self.site).and_then(
@@ -126,7 +153,24 @@ class BoolOpSugar(Sugar, role=SugarRole.TERM):
                 return self._reduce_from(index + 1, ctx)
 
         # Symbolic / non-ground standing: emit the conjunction coordinate.
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+
+        if type(presented_standing) is PredicateValue:
+            ctx = self._rhs_context(presented_standing, ctx)
         return self._emit_coordinate_from(value, index, ctx)
+
+    def _rhs_context(self, predicate, ctx):
+        """Apply the branch fact required for Python to evaluate the RHS."""
+        from sugar_lift_py_tests.ir import not_
+
+        guard = predicate.formula if self.kind == "and" else not_(predicate.formula)
+        temporal = ctx.temporal.activate_guard(guard)
+        refinements = (
+            predicate.then_bindings if self.kind == "and" else predicate.else_bindings
+        )
+        for name, value in refinements:
+            temporal = temporal.bind_value(name, value)
+        return ctx.with_temporal(temporal)
 
     def _emit_coordinate_from(self, first, index: int, ctx: object) -> Outcome:
         # Reduce the remaining operands under any walrus binds from earlier

@@ -24,6 +24,7 @@ from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_covera
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
+from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.if_sugar import IfSugar
 from sugar_lift_py_tests.sugar.not_in_op_sugar import NotInOpSugar
 from sugar_lift_py_tests.sugar.test_function_def_sugar import (
@@ -109,6 +110,77 @@ def test_different_guard_does_not_activate_prior_one_arm_binding() -> None:
 
     with pytest.raises(FactoryPanic, match="observed=s requested=value"):
         audit_lift_file(source, "different_guard.py", hold_panic=False)
+
+
+def test_and_rhs_activates_binding_guarded_by_truthy_left_operand() -> None:
+    source = (
+        "def f(p):\n"
+        "    if p:\n"
+        "        result = 7\n"
+        "    if p and result == 7:\n"
+        "        return 1\n"
+        "    return 0\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "and_rhs_guard.py")
+
+    assert gaps == []
+    assert any(row.post is not None for row in payload.ir)
+
+
+def test_and_rhs_activates_true_face_binding_across_explicit_else() -> None:
+    source = (
+        "def f(p, q):\n"
+        "    if p:\n"
+        "        if q:\n"
+        "            result = 7\n"
+        "        else:\n"
+        "            result = 8\n"
+        "    else:\n"
+        "        q = False\n"
+        "    if p and result > 0:\n"
+        "        return 1\n"
+        "    return 0\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "and_rhs_explicit_else.py")
+
+    assert gaps == []
+    assert any(row.post is not None for row in payload.ir)
+
+
+def test_or_rhs_does_not_activate_truthy_left_binding() -> None:
+    source = (
+        "def f(p):\n"
+        "    if p:\n"
+        "        result = 7\n"
+        "    if p or result == 7:\n"
+        "        return 1\n"
+        "    return 0\n"
+    )
+
+    with pytest.raises(FactoryPanic, match="observed=result requested=value"):
+        audit_lift_file(source, "or_rhs_wrong_guard.py")
+
+
+def test_boolop_rhs_guard_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in BoolOpSugar.witnesses()
+        if witness.name == "bool_op_rhs_guard_activation"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "boolop-rhs-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "boolop-rhs-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_repeated_guard_binding_stays_unbound_after_guarded_region() -> None:

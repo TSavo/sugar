@@ -221,9 +221,11 @@ class PredicateValue(FloorValue):
                 entry.guarded(not_(self.formula)) for entry in else_own
             )
             if not then_exits and not else_exits:
-                joined_bindings, joined_effects = self._joined_bindings(
-                    then_scope, else_scope, ctx
-                )
+                (
+                    joined_bindings,
+                    guarded_bindings,
+                    joined_effects,
+                ) = self._joined_bindings(then_scope, else_scope, ctx)
             elif then_exits != else_exits:
                 surviving_scope = else_scope if then_exits else then_scope
                 joined_bindings, joined_effects = self._surviving_bindings(
@@ -321,6 +323,7 @@ class PredicateValue(FloorValue):
             binding.name: binding.value for binding in else_scope.temporal.bindings
         }
         joined = []
+        guarded = []
         effects = []
         for name in sorted(then_bindings.keys() & else_bindings.keys()):
             then_binding = then_bindings[name]
@@ -359,7 +362,21 @@ class PredicateValue(FloorValue):
                     ),
                 )
             )
-        return tuple(joined), tuple(effects)
+        for branch_guard, branch_scope, branch_bindings, absent_bindings in (
+            (self.formula, then_scope, then_bindings, else_bindings),
+            (not_(self.formula), else_scope, else_bindings, then_bindings),
+        ):
+            for name in sorted(branch_bindings.keys() - absent_bindings.keys()):
+                binding = branch_bindings[name]
+                if name in before:
+                    continue
+                answer = binding.answer(branch_scope)
+                if isinstance(answer, Incomplete):
+                    effects.append(answer.guarded(branch_guard))
+                    continue
+                assert isinstance(answer, Complete)
+                guarded.append((branch_guard, name, answer.value))
+        return tuple(joined), tuple(guarded), tuple(effects)
 
     def _surviving_bindings(self, surviving_scope, ctx):
         from sugar_lift_py_tests.outcome import Complete, Incomplete
