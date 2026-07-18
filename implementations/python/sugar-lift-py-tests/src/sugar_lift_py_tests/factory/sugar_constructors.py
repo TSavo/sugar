@@ -253,7 +253,13 @@ def _module_source_for_site(site: SourceFragment, ctx) -> tuple[str, str] | None
 
 
 def _names_in_fragment(site: SourceFragment) -> list[str]:
-    """Collect bare Name identifiers under ``site`` (free + bound uses)."""
+    """Collect bare Name identifiers under ``site`` (free + bound uses).
+
+    Bare-name callees are free names the body demands — exception constructors
+    such as ``raise OpError(...)`` load ``OpError`` at the call target, not
+    only in arguments. Method receivers stay via ``call_receiver()``; attribute
+    tails are not free names.
+    """
     if site.observed == "Name":
         return [site.name_id()]
     if site.observed == "Call":
@@ -261,6 +267,11 @@ def _names_in_fragment(site: SourceFragment) -> list[str]:
         receiver = site.call_receiver()
         if receiver is not None:
             names.extend(_names_in_fragment(receiver))
+        else:
+            # Plain ``Name(...)`` callee: the target is a free load.
+            target = site.call_target_name()
+            if target is not None:
+                names.append(target)
         for arg in site.call_args():
             names.extend(_names_in_fragment(arg))
         for keyword in site.call_keywords():
