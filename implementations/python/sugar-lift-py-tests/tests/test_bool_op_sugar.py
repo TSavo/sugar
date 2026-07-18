@@ -6,6 +6,7 @@ symbolic emits the py.and / py.or coordinate -- never a constant pick."""
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 
 import pytest
 from factory_reduce import reduce_value
@@ -15,6 +16,7 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.floor import NoneValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def test_and_folds_to_the_right_operand_value() -> None:
@@ -76,3 +78,20 @@ def test_bool_op_does_not_own_compare_or_binop() -> None:
         ctx=ctx,
     )
     assert binop.audit_row.selected != "BoolOpSugar"
+
+
+def test_short_circuit_subscript_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    seeds = Path(__file__).parent / "witness_seeds"
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful",
+        (seeds / "boolop_short_circuit_subscript_truthful.py").read_text(),
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying",
+        (seeds / "boolop_short_circuit_subscript_lying.py").read_text(),
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
