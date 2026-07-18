@@ -6,6 +6,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import (
+    _call_pair,
     _call_return_pair,
     typed_red_effect_witness,
 )
@@ -60,6 +61,27 @@ class IsinstanceCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
                 body="isinstance(1, int)",
                 truthful="True",
                 lying="False",
+            ),
+            _call_pair(
+                name="isinstance_qualified_concrete_class",
+                owner_sugar="IsinstanceCallSugar",
+                truthful=(
+                    "import datetime\n\n"
+                    "def A(z):\n"
+                    "    return isinstance(z, datetime.datetime)\n\n"
+                    "def test_a():\n"
+                    "    assert A(5) == True\n"
+                    "    assert A(5) == True\n"
+                ),
+                lying=(
+                    "import datetime\n\n"
+                    "def A(z):\n"
+                    "    return isinstance(z, datetime.datetime)\n\n"
+                    "def test_a():\n"
+                    "    assert A(5) == True\n"
+                    "    assert A(5) == False\n"
+                ),
+                family="qualified-concrete-class",
             ),
             typed_red_effect_witness(
                 name="isinstance_dynamic_type_operand",
