@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import pytest
 
 
 _KIT = Path(__file__).resolve().parents[1]
@@ -64,3 +65,37 @@ def test_missing_accounting_is_silent() -> None:
     assert [(row.kind, row.count) for row in offenders] == [
         ("missing-accounting-testimony", 1)
     ]
+
+
+def test_negative_conservation_delta_trips_floor() -> None:
+    report = {
+        "sourceLedger": {"unclassified_source": 0},
+        "liftCoverage": {
+            "totals": {"silently_unaccounted": 0},
+            "conservation": {"delta": -2},
+        },
+        "factoryAuditSummary": {
+            "sourceFactoryConservation": {"violations": []}
+        },
+    }
+
+    offenders = _SCANNER.silent_offenders(report, file="over-accounted.py")
+
+    assert [(row.kind, row.count) for row in offenders] == [
+        ("silent-assertion", 2)
+    ]
+
+
+def test_production_roots_cover_package_and_corpus_tooling(tmp_path: Path) -> None:
+    roots = _SCANNER.production_roots(tmp_path)
+
+    assert roots == (
+        tmp_path
+        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
+        tmp_path / "implementations/python/sugar-lift-py-tests/scripts",
+    )
+
+
+def test_empty_surface_is_loud(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="no Python source files"):
+        _SCANNER.require_python_paths((tmp_path / "missing",))
