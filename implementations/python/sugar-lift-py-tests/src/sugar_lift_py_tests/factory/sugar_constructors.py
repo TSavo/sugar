@@ -252,6 +252,32 @@ def _module_source_for_site(site: SourceFragment, ctx) -> tuple[str, str] | None
     return sugar_source, sugar_file
 
 
+def module_loader_temporal(filename: str, *, demanded=None, temporal=None):
+    """Construct Python's source-module loader prefix from authenticated path testimony.
+
+    Full module traversal receives the complete prefix. Install-source function
+    reconstruction passes its loaded-name demand so unrelated implicit names do
+    not widen that function's minimal temporal.
+    """
+    from sugar_lift_py_tests.floor import ImportAliasValue, StringValue
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    result = TemporalContext.empty() if temporal is None else temporal
+    names = {"__file__", "__builtins__"} if demanded is None else set(demanded)
+    if "__file__" in names:
+        result = result.bind_value("__file__", StringValue(filename))
+    if "__builtins__" in names:
+        result = result.bind_value(
+            "__builtins__",
+            ImportAliasValue(
+                name="builtins",
+                bound_name="__builtins__",
+                import_target="builtins",
+            ),
+        )
+    return result
+
+
 def _names_in_fragment(site: SourceFragment) -> list[str]:
     """Collect bare Name identifiers under ``site`` (free + bound uses).
 
@@ -487,16 +513,22 @@ def _ctx_with_module_global_binds(site: SourceFragment, ctx):
     except SyntaxError:
         return ctx
 
-    declarations = _module_level_declarations_before(root, site)
-    if not declarations:
-        return ctx
-
     needed: set[str] = set()
     for body_stmt in site.function_body():
         needed.update(_names_in_fragment(body_stmt))
     needed -= set(site.function_params())
     if not needed:
         return ctx
+
+    declarations = _module_level_declarations_before(root, site)
+    if not declarations:
+        return ctx.with_temporal(
+            module_loader_temporal(
+                filename,
+                demanded=needed,
+                temporal=ctx.temporal,
+            )
+        )
 
     selected: list[SourceFragment] = []
     needed_work = set(needed)
@@ -523,7 +555,17 @@ def _ctx_with_module_global_binds(site: SourceFragment, ctx):
             needed_work.update(_names_in_fragment(prior))
     selected.reverse()
 
-    folded_ctx = ctx
+    # A selected statement may itself demand an implicit loader binding. Seed
+    # the authenticated module-loader prefix only after the reverse statement
+    # closure has exposed those transitive names.
+    folded_ctx = ctx.with_temporal(
+        module_loader_temporal(
+            filename,
+            demanded=needed_work,
+            temporal=ctx.temporal,
+        )
+    )
+
     for prior in selected:
         if prior.observed == "Import":
             temporal = folded_ctx.temporal

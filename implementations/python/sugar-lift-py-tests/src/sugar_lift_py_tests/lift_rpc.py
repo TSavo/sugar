@@ -1297,26 +1297,14 @@ def _module_import_temporal(
         BlockValue,
         ClassValue,
         ImportAliasValue,
-        StringValue,
     )
+    from sugar_lift_py_tests.factory.sugar_constructors import module_loader_temporal
     from sugar_lift_py_tests.floor.local_exception_class_value import (
         module_class_value,
     )
     from sugar_lift_py_tests.outcome import Incomplete
-    from sugar_lift_py_tests.temporal import TemporalContext
 
-    temporal = (
-        TemporalContext.empty()
-        .bind_value("__file__", StringValue(filename or module.filename))
-        .bind_value(
-            "__builtins__",
-            ImportAliasValue(
-                name="builtins",
-                bound_name="__builtins__",
-                import_target="builtins",
-            ),
-        )
-    )
+    temporal = module_loader_temporal(filename or module.filename)
     # Same ClassDef enrollment as audit_context name_resolver: without bare
     # class nodes, module-seed FunctionCallable dig bodies fall ConstructorCallSugar
     # → opaque CallSugar for `Box()`, so dunder bridges never attach method bodies

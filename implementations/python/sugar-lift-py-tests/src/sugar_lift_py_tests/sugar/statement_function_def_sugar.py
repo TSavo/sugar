@@ -176,9 +176,18 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 truthful=(
                     multi_expansion_prefix + "def test_a():\n    assert A() == 5\n"
                 ),
-                lying=(
-                    multi_expansion_prefix + "def test_a():\n    assert A() == 6\n"
-                ),
+                lying=(multi_expansion_prefix + "def test_a():\n    assert A() == 6\n"),
+            ),
+            _call_pair(
+                name="statement_function_def_module_loader_file",
+                owner_sugar="StatementFunctionDefSugar",
+                truthful="from module_loader_origin import f\n"
+                "def test_loader_file():\n"
+                "    assert f() == True\n",
+                lying="from module_loader_origin import f\n"
+                "def test_loader_file():\n"
+                "    assert f() == False\n",
+                family="module-loader-prefix",
             ),
         )
 

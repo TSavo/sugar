@@ -30,11 +30,14 @@ from sugar_lift_py_tests.factory.sugar_constructors import (
     build_control_flow_body_sugar,
 )
 from sugar_lift_py_tests.outcome import Incomplete
-from sugar_lift_py_tests.floor import ImportAliasValue, SymbolicValue
+from sugar_lift_py_tests.floor import ImportAliasValue, StringValue, SymbolicValue
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.sugar.call_sugar import (
     _module_sibling_function_nodes,
     _resolve_install_source_funcdef,
+)
+from sugar_lift_py_tests.sugar.statement_function_def_sugar import (
+    StatementFunctionDefSugar,
 )
 from sugar_lift_py_tests.sugar.try_sugar import TrySugar
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
@@ -330,6 +333,98 @@ def test_installed_source_try_cannot_load_later_module_dependency() -> None:
 
     with pytest.raises(FactoryPanic, match=r"bind `seed` before reducing NameSugar"):
         _ctx_with_formal_binds(fn, ctx)
+
+
+def test_installed_source_body_binds_authenticated_module_file() -> None:
+    src = "def f():\n    return __file__\n"
+    root = SourceFragment.from_source(src, "/vendor/pkg/origin.py")
+    fn = next(
+        fragment
+        for fragment in root.walk()
+        if fragment.observed == "FunctionDef" and fragment.function_name() == "f"
+    )
+    _tag_install_source(fn, src, "/vendor/pkg/origin.py", "vendor.pkg.origin.f")
+    ctx = FactoryBuildContext(
+        filename="consumer.py",
+        catalog=default_catalog(),
+        name_resolver={"vendor.pkg.origin.f": fn.node},
+    )
+
+    body_ctx = _ctx_with_formal_binds(fn, ctx)
+
+    assert body_ctx.temporal.value_for("__file__") == StringValue(
+        "/vendor/pkg/origin.py"
+    )
+
+
+def test_module_try_dependency_binds_authenticated_module_file() -> None:
+    """Loader names discovered through a selected statement join are available."""
+    src = (
+        "try:\n"
+        "    alias = __file__\n"
+        "except ValueError:\n"
+        '    alias = "fallback"\n'
+        "def f():\n"
+        "    return alias\n"
+    )
+    root = SourceFragment.from_source(src, "/vendor/pkg/origin.py")
+    fn = next(
+        fragment
+        for fragment in root.walk()
+        if fragment.observed == "FunctionDef" and fragment.function_name() == "f"
+    )
+    _tag_install_source(fn, src, "/vendor/pkg/origin.py", "vendor.pkg.origin.f")
+    ctx = FactoryBuildContext(
+        filename="consumer.py",
+        catalog=default_catalog(),
+        name_resolver={"vendor.pkg.origin.f": fn.node},
+    )
+
+    body_ctx = _ctx_with_formal_binds(fn, ctx)
+
+    assert body_ctx.temporal.value_for("alias")
+
+
+def test_untagged_source_body_cannot_invent_module_file() -> None:
+    src = "def f():\n    return __file__\n"
+    root = SourceFragment.from_source(src, "/unowned/origin.py")
+    fn = next(
+        fragment
+        for fragment in root.walk()
+        if fragment.observed == "FunctionDef" and fragment.function_name() == "f"
+    )
+    ctx = FactoryBuildContext(
+        filename="consumer.py",
+        catalog=default_catalog(),
+        name_resolver={"f": fn.node},
+    )
+
+    body_ctx = _ctx_with_formal_binds(fn, ctx)
+
+    with pytest.raises(FactoryPanic, match=r"bind `__file__` before reducing"):
+        body_ctx.temporal.value_for("__file__")
+
+
+def test_module_loader_file_witness_refutes_wrong_twin(tmp_path: Path) -> None:
+    pair = next(
+        witness
+        for witness in StatementFunctionDefSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "statement_function_def_module_loader_file"
+    )
+    origin = "def f():\n    return __file__ == __file__\n"
+    truthful_project = tmp_path / "truthful"
+    truthful_project.mkdir()
+    (truthful_project / "module_loader_origin.py").write_text(origin, encoding="utf-8")
+    lying_project = tmp_path / "lying"
+    lying_project.mkdir()
+    (lying_project / "module_loader_origin.py").write_text(origin, encoding="utf-8")
+
+    truthful = run_source_through_real_solver(truthful_project, pair.truthful.source)
+    lying = run_source_through_real_solver(lying_project, pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_module_try_dependency_prefix_witness_refutes_wrong_twin(
