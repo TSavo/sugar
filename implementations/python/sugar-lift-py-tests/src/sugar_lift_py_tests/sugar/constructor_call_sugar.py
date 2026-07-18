@@ -128,6 +128,40 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
             "    return Checked().value\n"
             "\n"
         )
+        if_source_body_prefix = (
+            "class Gate:\n"
+            "    def __init__(self, flag, value):\n"
+            "        if flag:\n"
+            "            self.value = value\n"
+            "        else:\n"
+            "            self.value = 0\n"
+            "\n"
+            "def G():\n"
+            "    return Gate(True, 7).value\n"
+            "\n"
+        )
+        import_source_body_prefix = (
+            "class Bound:\n"
+            "    def __init__(self):\n"
+            "        import math\n"
+            "        self.tag = 7\n"
+            "\n"
+            "def H():\n"
+            "    return Bound().tag\n"
+            "\n"
+        )
+        pass_source_body_prefix = (
+            "class Empty:\n"
+            "    def __init__(self):\n"
+            "        pass\n"
+            "\n"
+            "    def marker(self):\n"
+            "        return 7\n"
+            "\n"
+            "def I():\n"
+            "    return Empty().marker()\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="constructor_field_return",
@@ -192,6 +226,39 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
                 lying=asserted_source_body_prefix
                 + "def test_asserted_source_body():\n"
                 + "    assert E() == 2\n",
+                family="source-body-constructor",
+            ),
+            _call_pair(
+                name="source_body_constructor_if_branch",
+                owner_sugar=cls.__name__,
+                truthful=if_source_body_prefix
+                + "def test_if_source_body():\n"
+                + "    assert G() == 7\n",
+                lying=if_source_body_prefix
+                + "def test_if_source_body():\n"
+                + "    assert G() == 8\n",
+                family="source-body-constructor",
+            ),
+            _call_pair(
+                name="source_body_constructor_import_bind",
+                owner_sugar=cls.__name__,
+                truthful=import_source_body_prefix
+                + "def test_import_source_body():\n"
+                + "    assert H() == 7\n",
+                lying=import_source_body_prefix
+                + "def test_import_source_body():\n"
+                + "    assert H() == 8\n",
+                family="source-body-constructor",
+            ),
+            _call_pair(
+                name="source_body_constructor_pass_only",
+                owner_sugar=cls.__name__,
+                truthful=pass_source_body_prefix
+                + "def test_pass_source_body():\n"
+                + "    assert I() == 7\n",
+                lying=pass_source_body_prefix
+                + "def test_pass_source_body():\n"
+                + "    assert I() == 8\n",
                 family="source-body-constructor",
             ),
         )
@@ -382,6 +449,10 @@ def _strategy_from_init(
             and isinstance(stmt.expr_value().literal_value(), str)
         ):
             continue
+        if stmt.observed == "Pass":
+            # Exact no-op: empty body and pass-before-fields are field-only
+            # constructors (MyTz-shaped), not RuntimeEffect weakenings.
+            continue
         if (
             stmt.observed == "Assign"
             and stmt.assign_target_attribute_receiver_name() == params[0]
@@ -431,9 +502,12 @@ def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
     """Admit the exact ordinary-statement initializer subset.
 
     The field-only fast path cannot carry a local assignment into a later
-    ``self`` assignment. Route that decidable data flow through the existing
-    source-body constructor. The only expression admitted is the exact
-    zero-argument ``super().__init__(...)`` tail; arbitrary calls stay loud.
+    ``self`` assignment, nor branch/import/raise control. Route that decidable
+    data flow through the existing source-body constructor.
+
+    Admitted non-field statements: local assignment, annotated self bind,
+    assert, if, raise, import, import-from, exact ``super().__init__(...)``,
+    and pass (no-op). Arbitrary expression calls stay loud.
     """
 
     needs_statement_door = False
@@ -444,6 +518,9 @@ def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
             and isinstance(node.value, ast.Constant)
             and isinstance(node.value.value, str)
         ):
+            continue
+        if isinstance(node, ast.Pass):
+            # No-op support; field-only still handles pass-only / pass+fields.
             continue
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
@@ -467,6 +544,11 @@ def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
             needs_statement_door = True
             continue
         if isinstance(node, ast.Assert):
+            needs_statement_door = True
+            continue
+        if isinstance(node, (ast.If, ast.Raise, ast.Import, ast.ImportFrom)):
+            # Branch, exceptional exit, and module bind are ordinary dig
+            # statements. Dig constructs them or stays loud — never empty-success.
             needs_statement_door = True
             continue
         if _is_exact_super_init_node(node):
