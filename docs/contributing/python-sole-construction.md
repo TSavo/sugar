@@ -27,12 +27,14 @@ No other outcome is permitted.
 | `R_silent = 0` | No silent lines / unspoken mass (coverage / silent-drop instruments) |
 | `R_native_crashes = 0` | No process crashes on corpus |
 | `R_factory_panic_catches_outside_audit = 0` | Only the per-file corpus audit membrane may catch `FactoryPanic`, and only to emit a **loud red row** |
+| `R_vendor_special_case = 0` | Sugar/factory/recognition dispatch on source shape, never vendor module or class identity |
 
 Scripts:
 
 - `scripts/factory_zero_tolerance.py` → `R_behavior_side_doors`
 - `scripts/factory_ownership_law.py` → `R_ownership`
 - `scripts/factory_panic_catch_law.py` → `R_factory_panic_catches_outside_audit`
+- `scripts/vendor_special_case_law.py` → `R_vendor_special_case`
 
 CI: `.github/workflows/factory-zero-tolerance.yml` (no baselines, no allowlists).
 
