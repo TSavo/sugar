@@ -365,24 +365,30 @@ def _class_decorators_preserve_identity(statement: SourceFragment) -> bool:
     identity_exports = {
         ("pandas.core.indexes.extension", "inherit_names"),
         ("pandas.util._decorators", "set_module"),
+        ("pandas.api.extensions", "register_dataframe_accessor"),
+        ("pandas.api.extensions", "register_index_accessor"),
+        ("pandas.api.extensions", "register_series_accessor"),
     }
     try:
         root = SourceFragment.from_source(statement.source, statement.filename or "")
-    except SyntaxError:
+    except (SyntaxError, TypeError):
         return False
     authenticated_names: set[str] = set()
+    authenticated_modules: dict[str, str] = {}
     declarations = [
         declaration
         for fragment in root.fragments()
         for declaration in fragment.statements()
     ]
     for declaration in declarations:
-        if declaration.observed != "ImportFrom":
-            continue
-        module = declaration.importfrom_module()
-        for imported, alias in declaration.importfrom_names():
-            if (module, imported) in identity_exports:
-                authenticated_names.add(alias or imported)
+        if declaration.observed == "ImportFrom":
+            module = declaration.importfrom_module()
+            for imported, alias in declaration.importfrom_names():
+                if (module, imported) in identity_exports:
+                    authenticated_names.add(alias or imported)
+        elif declaration.observed == "Import":
+            for imported, alias in declaration.import_names():
+                authenticated_modules[alias or imported.split(".", 1)[0]] = imported
     for decorator in statement.class_decorators():
         if decorator.observed == "Name":
             receiver = decorator
@@ -390,11 +396,20 @@ def _class_decorators_preserve_identity(statement: SourceFragment) -> bool:
             receiver = decorator.call_func()
         else:
             return False
-        if (
-            receiver is None
-            or receiver.observed != "Name"
-            or receiver.name_id() not in authenticated_names
-        ):
+        if receiver is None:
+            return False
+        dotted = receiver.dotted_expr_name()
+        if dotted in authenticated_names:
+            continue
+        if dotted is None:
+            return False
+        head, separator, tail = dotted.partition(".")
+        module = authenticated_modules.get(head)
+        if not separator or module is None:
+            return False
+        qualified = f"{module}.{tail}"
+        export_module, _, export_name = qualified.rpartition(".")
+        if (export_module, export_name) not in identity_exports:
             return False
     return True
 

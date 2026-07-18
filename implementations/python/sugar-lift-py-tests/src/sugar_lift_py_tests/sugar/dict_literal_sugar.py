@@ -75,6 +75,13 @@ class DictLiteralSugar(Sugar, role=SugarRole.TERM):
         )
 
     def _merge_expansion(self, expansion, rest, accumulated, ctx) -> Outcome:
+        from sugar_lift_py_tests.floor import ImportAliasValue
+
+        if (
+            isinstance(expansion, ImportAliasValue)
+            and expansion.resolved_value is not None
+        ):
+            expansion = expansion.resolved_value
         if isinstance(expansion, DictValue):
             merged = accumulated
             for key, value in expansion.entries:
