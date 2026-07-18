@@ -35,6 +35,8 @@ from sugar_lift_py_tests.sugar.call_sugar import (
     _module_sibling_function_nodes,
     _resolve_install_source_funcdef,
 )
+from sugar_lift_py_tests.sugar.try_sugar import TrySugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
@@ -256,6 +258,93 @@ def test_installed_source_try_optional_import_binds_name() -> None:
     assert isinstance(value, GuardedValue)
     assert isinstance(value.when_false, NoneValue)
     assert isinstance(value.when_true, ImportAliasValue)
+
+
+def test_installed_source_try_loads_earlier_module_dependency() -> None:
+    src = (
+        "seed = 7\n"
+        "try:\n"
+        "    alias = seed\n"
+        "except ValueError:\n"
+        "    alias = 7\n"
+        "def f():\n"
+        "    return alias\n"
+    )
+    root = SourceFragment.from_source(src, "/ordered/mod.py")
+    fn = next(
+        fragment
+        for fragment in root.walk()
+        if fragment.observed == "FunctionDef" and fragment.function_name() == "f"
+    )
+    _tag_install_source(fn, src, "/ordered/mod.py", "ordered.mod.f")
+    ctx = FactoryBuildContext(
+        filename="consumer.py",
+        catalog=default_catalog(),
+        name_resolver={"ordered.mod.f": fn.node},
+    )
+
+    body_ctx = _ctx_with_formal_binds(fn, ctx)
+
+    assert body_ctx.temporal.value_for("alias") is not None
+
+
+def test_installed_source_try_cannot_load_later_module_dependency() -> None:
+    src = (
+        "try:\n"
+        "    alias = seed\n"
+        "except ValueError:\n"
+        "    alias = 7\n"
+        "seed = 7\n"
+        "def f():\n"
+        "    return alias\n"
+    )
+    root = SourceFragment.from_source(src, "/wrong_order/mod.py")
+    fn = next(
+        fragment
+        for fragment in root.walk()
+        if fragment.observed == "FunctionDef" and fragment.function_name() == "f"
+    )
+    _tag_install_source(fn, src, "/wrong_order/mod.py", "wrong_order.mod.f")
+    ctx = FactoryBuildContext(
+        filename="consumer.py",
+        catalog=default_catalog(),
+        name_resolver={"wrong_order.mod.f": fn.node},
+    )
+
+    with pytest.raises(FactoryPanic, match=r"bind `seed` before reducing NameSugar"):
+        _ctx_with_formal_binds(fn, ctx)
+
+
+def test_module_try_dependency_prefix_witness_refutes_wrong_twin(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in TrySugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "module_try_dependency_prefix"
+    )
+    truthful_project = tmp_path / "truthful"
+    truthful_project.mkdir()
+    origin = (
+        "seed = 7\n"
+        "try:\n"
+        "    alias = seed\n"
+        "finally:\n"
+        "    marker = 1\n"
+        "def f():\n"
+        "    return alias\n"
+    )
+    (truthful_project / "temporal_try_origin.py").write_text(origin, encoding="utf-8")
+    lying_project = tmp_path / "lying"
+    lying_project.mkdir()
+    (lying_project / "temporal_try_origin.py").write_text(origin, encoding="utf-8")
+
+    truthful = run_source_through_real_solver(truthful_project, pair.truthful.source)
+    lying = run_source_through_real_solver(lying_project, pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_minimal_module_global_without_sugar_tag_does_not_seed() -> None:

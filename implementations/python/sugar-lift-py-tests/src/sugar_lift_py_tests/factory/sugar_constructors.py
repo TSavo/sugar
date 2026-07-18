@@ -498,6 +498,14 @@ def _ctx_with_module_global_binds(site: SourceFragment, ctx):
             value = prior.annassign_value()
             if value is not None:
                 needed_work.update(_names_in_fragment(value))
+        elif prior.observed == "Try":
+            # The statement catalog selected this Try because one of its
+            # continuing paths binds a name demanded by the function. Complete
+            # that selection from the Try's own source-fragment testimony:
+            # earlier declarations it loads must be replayed before TrySugar.
+            # The reverse one-pass walk deliberately cannot select a dependency
+            # declared after the Try, preserving module execution order.
+            needed_work.update(_names_in_fragment(prior))
     selected.reverse()
 
     folded_ctx = ctx
