@@ -14,7 +14,7 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 class ForElseSugar(Sugar, role=SugarRole.STATEMENT):
     """A loop ``else`` is the curried body projected through its no-break face."""
 
-    target_names: tuple[str, ...]
+    target_paths: tuple[tuple[tuple[int, ...], str], ...]
     iterable: SugarBody
     body: SugarBody
     else_body: SugarBody
@@ -27,20 +27,29 @@ class ForElseSugar(Sugar, role=SugarRole.STATEMENT):
     def owns(cls, site) -> bool:
         if site.observed != "For" or site.for_orelse_count() == 0:
             return False
+        return cls._recognized_target_paths(site) is not None
+
+    @staticmethod
+    def _recognized_target_paths(
+        site,
+    ) -> tuple[tuple[tuple[int, ...], str], ...] | None:
+        """Normalize every construction-closed target through binding recognition."""
         name = site.for_target_name()
+        if name is not None:
+            return (((), name),)
         names = site.for_flat_tuple_target_names()
-        return name is not None or names is not None
+        if names is not None:
+            return tuple(((index,), name) for index, name in enumerate(names))
+        return site.for_nested_tuple_target_paths()
 
     @classmethod
     def new(cls, site, ctx) -> "ForElseSugar":
-        name = site.for_target_name()
-        target_names = (
-            (name,) if name is not None else site.for_flat_tuple_target_names()
-        )
-        assert target_names is not None
+        target_paths = cls._recognized_target_paths(site)
+        assert target_paths is not None
+        target_names = tuple(name for _, name in target_paths)
         scope = LoopControlScopeSugar.classify(site)
         return cls(
-            target_names=tuple(target_names),
+            target_paths=target_paths,
             iterable=ctx.build_body(site.for_iter(), SugarRole.TERM),
             body=ctx.build_body(site.for_body_block(), SugarRole.STATEMENT),
             else_body=ctx.build_body(site.for_orelse_block(), SugarRole.STATEMENT),
@@ -62,11 +71,27 @@ class ForElseSugar(Sugar, role=SugarRole.STATEMENT):
             "        return 1\n"
             "    return 0\n\n"
         )
-        return _call_pair(
-            name="for_else_no_break_return",
-            owner_sugar=cls.__name__,
-            truthful=prefix + "def test_a():\n    assert A([]) == 1\n",
-            lying=prefix + "def test_a():\n    assert A([]) == 0\n",
+        nested_prefix = (
+            "def B(items):\n"
+            "    for index, (left, right) in items:\n"
+            "        pass\n"
+            "    else:\n"
+            "        return 1\n"
+            "    return 0\n\n"
+        )
+        return (
+            _call_pair(
+                name="for_else_no_break_return",
+                owner_sugar=cls.__name__,
+                truthful=prefix + "def test_a():\n    assert A([]) == 1\n",
+                lying=prefix + "def test_a():\n    assert A([]) == 0\n",
+            ),
+            _call_pair(
+                name="nested_tuple_for_else_no_break_return",
+                owner_sugar=cls.__name__,
+                truthful=nested_prefix + "def test_b():\n    assert B([]) == 1\n",
+                lying=nested_prefix + "def test_b():\n    assert B([]) == 0\n",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -105,21 +130,25 @@ class ForElseSugar(Sugar, role=SugarRole.STATEMENT):
             site=self.site,
         )
         body_ctx = ctx
-        if len(self.target_names) == 1:
-            body_ctx = ScopeRebind(self.target_names[0], element).extend_scope(body_ctx)
-        else:
-            temporal = body_ctx.temporal
-            for index, name in enumerate(self.target_names):
-                projection = CallSiteValue(
+        temporal = body_ctx.temporal
+        for path, name in self.target_paths:
+            term = element.term
+            for index in path:
+                term = ctor("py.subscript", [term, num(index)])
+            projection = (
+                element
+                if not path
+                else CallSiteValue(
                     target_name="py.subscript",
                     arg_values=(element,),
                     parameters=(),
-                    term=ctor("py.subscript", [element.term, num(index)]),
+                    term=term,
                     body=None,
                     site=self.site,
                 )
-                temporal = temporal.bind_value(name, projection)
-            body_ctx = body_ctx.with_temporal(temporal)
+            )
+            temporal = temporal.bind_value(name, projection)
+        body_ctx = body_ctx.with_temporal(temporal)
 
         if self.unclassified_mutation:
             factory_panic_gap(

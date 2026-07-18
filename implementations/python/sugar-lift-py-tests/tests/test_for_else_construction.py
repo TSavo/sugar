@@ -16,7 +16,9 @@ from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import LoopElseValue, SymbolicValue
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.outcome import complete_value
+from sugar_lift_py_tests.sugar.for_else_sugar import ForElseSugar
 from sugar_lift_py_tests.temporal import TemporalContext
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _site(source: str) -> SourceFragment:
@@ -51,12 +53,57 @@ def _build(source: str, ctx: FactoryBuildContext | None = None):
     (
         "for item in items:\n    if item:\n        break\nelse:\n    return 1\n",
         "for left, right in items:\n    if left:\n        break\nelse:\n    return 1\n",
+        (
+            "for index, (left, right) in items:\n"
+            "    if left:\n"
+            "        break\n"
+            "else:\n"
+            "    return 1\n"
+        ),
     ),
 )
 def test_for_else_shapes_have_one_owner(source: str) -> None:
     candidates = default_catalog().candidates_for(SugarRole.STATEMENT, _site(source))
 
     assert [candidate.name for candidate in candidates] == ["ForElseSugar"]
+
+
+def test_nested_tuple_for_else_binds_recursive_projection() -> None:
+    source = (
+        "for index, (left, right) in items:\n"
+        "    if right:\n"
+        "        break\n"
+        "else:\n"
+        "    return 1\n"
+    )
+    ctx = _ctx(items=SymbolicValue(make_var("items")))
+    built = _build(source, ctx)
+
+    assert built.sugar.target_paths == (
+        ((0,), "index"),
+        ((1, 0), "left"),
+        ((1, 1), "right"),
+    )
+
+
+def test_nested_tuple_for_else_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in ForElseSugar.witnesses()
+        if witness.name == "nested_tuple_for_else_no_break_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert "ForElseSugar" in truthful.selected_sugars
+    assert truthful.verdict == "sat"
+    assert "ForElseSugar" in lying.selected_sugars
+    assert lying.verdict == "unsat"
 
 
 def test_for_else_projects_the_loop_curry_without_break_substitution() -> None:
