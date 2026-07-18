@@ -121,6 +121,78 @@ class RaiseSugar(Sugar, role=SugarRole.STATEMENT):
                 RaiseValue(effect, scope=ctx),
                 ctx,
             )
+        if isinstance(value, CallSiteValue) and value.body is not None:
+            dug = value._dig_floor_or_none(
+                ctx,
+                owner="RaiseSugar exception expression",
+                preserve_opaque_leaf=True,
+            )
+            if dug is not None and dug is not value:
+                return self._constructed_raise(dug, ctx, source_sha256)
+        if isinstance(value, CallSiteValue) and "." in value.target_name:
+            from sugar_lift_py_tests.floor import ExceptionClassValue
+            from sugar_lift_py_tests.sugar.install_source_dig import (
+                resolve_install_source_value,
+            )
+
+            exception_class = resolve_install_source_value(value.target_name, ctx)
+            if isinstance(exception_class, ExceptionClassValue):
+                return self._constructed_raise(
+                    ExceptionValue(
+                        exception_name=exception_class.name,
+                        arguments=value.arg_values,
+                        site=self.site,
+                    ),
+                    ctx,
+                    source_sha256,
+                )
+        from sugar_lift_py_tests.floor import ExceptionalExitValue, GuardedValue
+
+        if isinstance(value, ExceptionalExitValue):
+            # Evaluating the exception expression already raised. The outer
+            # ``raise`` is unreachable: preserve the exact inner class, locus,
+            # and source hash instead of manufacturing a second exit.
+            return Complete(RaiseValue(value.effect, scope=ctx))
+        if isinstance(value, GuardedValue):
+            when_true = self._constructed_raise(
+                value.when_true,
+                ctx,
+                source_sha256,
+            )
+            when_false = self._constructed_raise(
+                value.when_false,
+                ctx,
+                source_sha256,
+            )
+            if (
+                isinstance(when_true.value, RaiseValue)
+                and isinstance(when_false.value, RaiseValue)
+                and when_true.value.effect == when_false.value.effect
+            ):
+                exception = (
+                    when_true.value.exception
+                    if when_true.value.exception == when_false.value.exception
+                    else None
+                )
+                return Complete(
+                    RaiseValue(
+                        when_true.value.effect,
+                        scope=ctx,
+                        exception=exception,
+                    )
+                )
+            from sugar_lift_py_tests.factory import factory_panic_gap
+
+            factory_panic_gap(
+                owner="RaiseSugar",
+                blame=self.site,
+                observed="GuardedValue with divergent exception exits",
+                requested="one exact reduced exceptional exit",
+                fix=(
+                    "construct the guarded exceptional-exit join without "
+                    "discarding either class/locus, or leave the raise loud"
+                ),
+            )
         if not isinstance(value, ExceptionValue):
             from sugar_lift_py_tests.factory import factory_panic_gap
 

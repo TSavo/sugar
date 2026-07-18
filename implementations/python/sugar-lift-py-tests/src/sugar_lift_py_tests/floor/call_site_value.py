@@ -666,6 +666,7 @@ class CallSiteValue(FloorValue):
         *,
         owner: str,
         incomplete_outcome: list | None = None,
+        preserve_opaque_leaf: bool = False,
         seen: frozenset[str] = frozenset(),
         depth: int = 0,
         budget: int = _FORCE_FLOOR_BUDGET,
@@ -698,7 +699,7 @@ class CallSiteValue(FloorValue):
                 ),
             )
         if (body := self.body) is None:
-            return None
+            return self if preserve_opaque_leaf else None
         if len(self.parameters) != len(self.arg_values):
             return None
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
@@ -743,6 +744,7 @@ class CallSiteValue(FloorValue):
             return value._dig_floor_or_none(
                 reduce_ctx,
                 owner=owner,
+                preserve_opaque_leaf=preserve_opaque_leaf,
                 seen=seen | {key},
                 depth=depth + 1,
                 budget=budget,
