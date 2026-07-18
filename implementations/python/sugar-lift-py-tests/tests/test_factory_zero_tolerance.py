@@ -49,9 +49,31 @@ def side_doors(node, body, ctx, temporal):
 
 
 def test_current_factory_has_zero_behavior_construction_side_doors() -> None:
+    """Stable-zero gate: red while any factory behavior-construction site remains.
+
+    R is measured (not authored). Promote each locus into Sugar; re-run until R==0.
+    """
     offenders = scan_factory(_KIT / "src" / "sugar_lift_py_tests" / "factory")
 
     assert offenders == [], (
         "factory/ may only select a registered Sugar or raise FactoryPanic; "
-        "promote every behavior constructor to Sugar:\n" + format_offenders(offenders)
+        f"R_factory_behavior_side_doors={len(offenders)}; "
+        "promote every behavior constructor to Sugar:\n"
+        + format_offenders(offenders)
     )
+
+
+def test_scanner_report_names_r_and_replacement_plans() -> None:
+    report = _SCANNER.format_report(
+        [
+            _SCANNER.Offender("factory/sugar_constructors.py", 17, "ir-construction"),
+            _SCANNER.Offender(
+                "factory/sugar_constructors.py", 10, "non-contract-third-result"
+            ),
+        ]
+    )
+    assert "R_factory_behavior_side_doors = 2" in report
+    assert "ir-construction" in report
+    assert "Promote IR operand" in report or "sugar_lift_py_tests.ir" in report
+    assert "non-contract-third-result" in report
+    assert "Sugar | FactoryPanic" in report

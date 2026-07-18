@@ -147,12 +147,97 @@ def scan_factory(factory_root: Path) -> list[Offender]:
     return sorted(offenders)
 
 
+# Replacement plan per crime kind. Green for a site means this plan is
+# realized and the factory line is deleted — not wrapped, not allowlisted.
+_REPLACEMENT: dict[str, str] = {
+    "ir-construction": (
+        "Promote IR operand/guard minting into the Sugar that owns the shape "
+        "(e.g. CompareSugar / NameSugar / PrimitiveLiteralSugar / a dedicated "
+        "control-flow guard Sugar). Factory must not import sugar_lift_py_tests.ir "
+        "or call make_var/num/eq/not_."
+    ),
+    "floor-value-construction": (
+        "Construct floor values only inside Sugar/floor after the factory hands "
+        "finished children (SymbolicValue via formal/name Sugar; ImportAliasValue "
+        "via ImportFromSugar; BlockValue via Block statement Sugar). Delete "
+        "direct floor constructors from factory/."
+    ),
+    "floor-projection": (
+        "complete_value / floor_to_term / to_term belong to Sugar.desugar or "
+        "floor algebra, never to factory helpers. Move projection into the "
+        "owning Sugar reduce path."
+    ),
+    "sugar-body-reduction": (
+        "Factory selects Sugar; it does not call body.reduce. Reduction is "
+        "Sugar-owned desugar after claim.new. Delete .reduce from factory/."
+    ),
+    "temporal-binding-construction": (
+        "TemporalContext / bind_temporal / with_temporal are Sugar/floor "
+        "territory (formal binds, module seeds, scope rebind Sugars). Factory "
+        "must not mint or mutate temporal bindings."
+    ),
+    "control-flow-interpretation": (
+        "Statement walks that interpret Return/If/observed control flow belong "
+        "to ControlFlowBodySugar (or equivalent), selected by the catalog — not "
+        "to factory sugar_constructors walks."
+    ),
+    "sugar-construction": (
+        "Only catalog claim.new constructs a Sugar. Delete build_*_sugar "
+        "helpers and direct FooSugar(...) assembly in factory/."
+    ),
+    "non-contract-third-result": (
+        "Factory contract is Sugar | FactoryPanic only. IncompleteFunctionBody "
+        "(or any third result) must become FactoryPanic at the factory boundary "
+        "or Incomplete inside a Sugar reduce — never a factory-defined soft path."
+    ),
+    "semantic-ast-classification": (
+        "Structural observed-kind exposure may live only as a pure SourceFragment "
+        "gateway API; semantic loop/control classification "
+        "(classify_loop_control_scope, scope store walks, NodeVisitor shape "
+        "classifiers) promotes to ForSugar / WhileSugar / LoopControlSugar. "
+        "No semantic classify inside factory/."
+    ),
+}
+
+
 def format_offenders(offenders: list[Offender]) -> str:
     return "\n".join(f"{row.path}:{row.line}:{row.kind}" for row in offenders)
 
 
+def format_report(offenders: list[Offender]) -> str:
+    """Full red report: R, kind tallies with replacement plans, then loci."""
+    from collections import Counter
+
+    by_kind = Counter(row.kind for row in offenders)
+    by_file = Counter(row.path for row in offenders)
+    lines = [
+        f"R_factory_behavior_side_doors = {len(offenders)}",
+        "Lawful factory actions: select registered Sugar | FactoryPanic.",
+        "No allowlist. Compare consecutive runs for Delta R.",
+        "",
+        "By kind (replacement plan applies to every locus of that kind):",
+    ]
+    for kind, count in by_kind.most_common():
+        plan = _REPLACEMENT.get(kind, "Promote into an explicit Sugar; delete from factory/.")
+        lines.append(f"  {count:4d}  {kind}")
+        lines.append(f"        → {plan}")
+    lines.append("")
+    lines.append("By file:")
+    for path, count in by_file.most_common():
+        lines.append(f"  {count:4d}  {path}")
+    lines.append("")
+    lines.append("Loci:")
+    lines.append(format_offenders(offenders))
+    return "\n".join(lines)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=(
+            "Zero-tolerance census: factory/ may only select Sugar or FactoryPanic. "
+            "Reports R and stays exit-red until R == 0."
+        )
+    )
     parser.add_argument(
         "--factory-root",
         type=Path,
@@ -170,9 +255,10 @@ def main() -> int:
             "FACTORY ZERO-TOLERANCE RED: "
             f"{len(offenders)} behavior-construction side doors"
         )
-        print(format_offenders(offenders))
+        print(format_report(offenders))
         return 1
     print("FACTORY ZERO-TOLERANCE GREEN: 0 behavior-construction side doors")
+    print("R_factory_behavior_side_doors = 0")
     return 0
 
 
