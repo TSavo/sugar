@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import importlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -28,6 +29,32 @@ from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.sugar.constructor_call_sugar import ConstructorCallSugar
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+
+
+def test_constructor_call_sugar_has_no_inline_ast_shape_classifiers() -> None:
+    source_path = (
+        Path(__file__).parents[1]
+        / "src"
+        / "sugar_lift_py_tests"
+        / "sugar"
+        / "constructor_call_sugar.py"
+    )
+    source = source_path.read_text(encoding="utf-8")
+    forbidden = (
+        "ast.",
+        "_is_exact_super_init_node",
+        "_is_exact_super_init_fragment",
+        "_explicit_imported_base_initializer",
+        "_ast_dotted_name",
+        "_source_initializer_needs_statement_door",
+        "needs_statement_door",
+    )
+    offenders = tuple(token for token in forbidden if token in source)
+
+    assert not offenders, (
+        "constructor call AST side doors remain: "
+        f"{offenders}; replacement=SourceFragment.initializer_call_site"
+    )
 
 
 def _outcome(

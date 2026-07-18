@@ -34,6 +34,15 @@ from .block import Block
 from .node_kind import NodeKind, OperatorKind
 
 
+@dataclass(frozen=True)
+class InitializerCallSite:
+    """Factory testimony for a call statement inside ``__init__``."""
+
+    kind: str
+    call: "SourceFragment"
+    target: str | None = None
+
+
 def _is_suite(value) -> bool:
     return (
         isinstance(value, list)
@@ -585,6 +594,67 @@ class SourceFragment:
         """Return True if the Call has a bare ``**kwargs`` expansion keyword."""
         self._require(ast.Call)
         return any(kw.arg is None for kw in self.node.keywords)  # type: ignore[attr-defined]
+
+    def initializer_call_site(
+        self,
+        *,
+        receiver_name: str,
+        declared_bases: "frozenset[str]" = frozenset(),
+    ) -> "InitializerCallSite | None":
+        """Recognize constructor-body calls at the factory grammar boundary.
+
+        This is the one recognizer for ``super().__init__(...)``,
+        authenticated ``DeclaredBase.__init__(self, ...)``, and exact
+        zero-argument ``self.method()`` statements. Consumers receive typed
+        testimony and never reopen the AST.
+        """
+        if not isinstance(self.node, ast.Expr) or not isinstance(
+            self.node.value, ast.Call
+        ):
+            return None
+        call = SourceFragment.from_node(
+            self.node.value, self.filename, source=self.source
+        )
+        target = call.call_target_name()
+        call_receiver = call.call_receiver()
+        if call_receiver is None:
+            return None
+        if (
+            target != "__init__"
+            and not call.call_args()
+            and not call.call_has_keywords()
+            and call_receiver.observed == "Name"
+            and call_receiver.name_id() == receiver_name
+        ):
+            return InitializerCallSite(
+                kind="self_method",
+                call=call,
+                target=target,
+            )
+        if target != "__init__":
+            return None
+        if (
+            call_receiver.observed == "Call"
+            and call_receiver.call_target_name() == "super"
+            and not call_receiver.call_args()
+            and not call_receiver.call_has_keywords()
+        ):
+            return InitializerCallSite(kind="super", call=call, target="super")
+        arguments = call.call_args()
+        base_coordinate = call_receiver.dotted_expr_name()
+        if (
+            not call.call_has_keywords()
+            and arguments
+            and arguments[0].observed == "Name"
+            and arguments[0].name_id() == receiver_name
+            and base_coordinate in declared_bases
+        ):
+            return InitializerCallSite(
+                kind="explicit_base",
+                call=call,
+                target=base_coordinate,
+            )
+        return None
 
     def operator_kind(self) -> "OperatorKind":
         """Return the operator kind for BinOp or UnaryOp (e.g. Add, Not).
@@ -1885,6 +1955,35 @@ class SourceFragment:
         for root in roots:
             visitor.visit(root)
         return tuple(names)
+
+    def binds_name_anywhere(self, name: str) -> bool:
+        """Whether this fragment contains any binding for ``name``.
+
+        Unlike ``own_scope_stored_names``, this deliberately includes nested
+        definitions because class constructor selection must reject a local
+        ``__new__`` no matter which binding spelling introduced it.
+        """
+        for descendant in ast.walk(self.node):
+            if (
+                isinstance(
+                    descendant,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                )
+                and descendant.name == name
+            ):
+                return True
+            if (
+                isinstance(descendant, ast.Name)
+                and isinstance(descendant.ctx, ast.Store)
+                and descendant.id == name
+            ):
+                return True
+            if isinstance(descendant, (ast.Import, ast.ImportFrom)) and any(
+                (alias.asname or alias.name.split(".", 1)[0]) == name
+                for alias in descendant.names
+            ):
+                return True
+        return False
 
     def loop_carried_names(
         self,

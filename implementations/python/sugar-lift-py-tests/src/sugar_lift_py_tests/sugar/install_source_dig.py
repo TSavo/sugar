@@ -2774,7 +2774,13 @@ def _ctx_with_method_module_bindings(fn_site, ctx: Any):
     return seeded if seeded is not None else ctx
 
 
-def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
+def build_dig_body(
+    fn_site,
+    ctx: Any,
+    *,
+    require_attachable: bool = False,
+    oracle_variant: str | None = None,
+):
     """Build diggable body for ``fn_site`` FunctionDef, or None on failure.
 
     Sole constructor for dig body *structure* is :data:`DIG_BODY_ORACLE`. Call
@@ -2794,10 +2800,15 @@ def build_dig_body(fn_site, ctx: Any, *, require_attachable: bool = False):
         role="dig.build_body",
         site=str(site),
     ):
-        return _build_dig_body_impl(fn_site, ctx)
+        return _build_dig_body_impl(fn_site, ctx, oracle_variant=oracle_variant)
 
 
-def _build_dig_body_impl(fn_site, ctx: Any):
+def _build_dig_body_impl(
+    fn_site,
+    ctx: Any,
+    *,
+    oracle_variant: str | None = None,
+):
     from dataclasses import replace
 
     from sugar_lift_py_tests.claim import SugarRole
@@ -2838,6 +2849,8 @@ def _build_dig_body_impl(fn_site, ctx: Any):
         formal_ctx = _ctx_with_formal_binds(fn_site, body_ctx)
         oracle = DIG_BODY_ORACLE
         key = oracle.identity_key(fn_site)
+        if key is not None and oracle_variant is not None:
+            key = (key, oracle_variant)
         core = oracle.get(key) if key is not None else _MISSING
         if core is _MISSING:
             with reduction_span(
