@@ -24,7 +24,7 @@ def module_class_value(*, name: str, base_names: tuple[str, ...], temporal, reco
             LocalExceptionClassValue,
         ) or (
             isinstance(bound, ImportAliasValue)
-            and isinstance(bound.resolved_value, ExceptionClassValue)
+            and isinstance(bound.resolve_value(), ExceptionClassValue)
         ):
             return LocalExceptionClassValue(name=name, bases=(), record=record)
     return ClassValue(name=name, bases=(), record=record)

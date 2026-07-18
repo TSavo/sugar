@@ -1,0 +1,911 @@
+{
+  "discovery_bound_seconds": 30,
+  "note": "Final #5273 dispositions at the unchanged 30-second per-file bound: completed, bounded-loud FactoryPanic, or genuinely-timeout.",
+  "scanned": 47,
+  "terminal_counts": {
+    "completed": 7,
+    "factory-construction-panic": 39,
+    "timeout-or-hang": 1
+  },
+  "terminal_rows": [
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/dialect/oracle/test_dialect.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/dialect/oracle/test_dialect.py",
+        "gap": {
+          "blame": "sqlalchemy/test/dialect/oracle/test_dialect.py:109:12",
+          "fix": "construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "missing callsite body for decorator factory `deprecated_params`",
+          "owner": "FunctionCallable decorator factory:deprecated_params",
+          "requested": "decorator callable floor or implementation-preserving decorator contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=FunctionCallable decorator factory:deprecated_params blame=sqlalchemy/test/dialect/oracle/test_dialect.py:109:12 observed=missing callsite body for decorator factory `deprecated_params` requested=decorator callable floor or implementation-preserving decorator contract fix=construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/dialect/postgresql/test_compiler.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/dialect/postgresql/test_compiler.py",
+        "gap": {
+          "blame": ".venv-5273/lib/python3.12/site-packages/sqlalchemy/sql/coercions.py:132:11",
+          "fix": "bind `util` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "util",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=.venv-5273/lib/python3.12/site-packages/sqlalchemy/sql/coercions.py:132:11 observed=util requested=value fix=bind `util` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/dialect/postgresql/test_dialect.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/dialect/postgresql/test_dialect.py",
+        "gap": {
+          "blame": "sqlalchemy/test/dialect/postgresql/test_dialect.py:937:16",
+          "fix": "write more Floor: implement StringValue.modulo",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "StringValue",
+          "owner": "modulo",
+          "requested": "stand on the modulo floor"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=modulo blame=sqlalchemy/test/dialect/postgresql/test_dialect.py:937:16 observed=StringValue requested=stand on the modulo floor fix=write more Floor: implement StringValue.modulo"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/dialect/postgresql/test_query.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/dialect/postgresql/test_query.py",
+        "gap": {
+          "blame": ".venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/assertions.py:50:38",
+          "fix": "bind `sa_exc` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "sa_exc",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=.venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/assertions.py:50:38 observed=sa_exc requested=value fix=bind `sa_exc` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/dialect/postgresql/test_reflection.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/dialect/postgresql/test_reflection.py",
+        "gap": {
+          "blame": "sqlalchemy/test/dialect/postgresql/test_reflection.py:856:8",
+          "fix": "write more Floor: implement ComprehensionValue.add",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "ComprehensionValue",
+          "owner": "add",
+          "requested": "stand on the addition floor"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=add blame=sqlalchemy/test/dialect/postgresql/test_reflection.py:856:8 observed=ComprehensionValue requested=stand on the addition floor fix=write more Floor: implement ComprehensionValue.add"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/dialect/postgresql/test_types.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/dialect/postgresql/test_types.py",
+        "gap": {
+          "blame": "sqlalchemy/test/dialect/postgresql/test_types.py:621:31",
+          "fix": "bind `typ` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "typ",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=sqlalchemy/test/dialect/postgresql/test_types.py:621:31 observed=typ requested=value fix=bind `typ` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/dialect/sqlite/test_dialect.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/dialect/sqlite/test_dialect.py",
+        "gap": {
+          "blame": ".venv-5273/lib/python3.12/site-packages/sqlalchemy/sql/coercions.py:132:11",
+          "fix": "bind `util` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "util",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=.venv-5273/lib/python3.12/site-packages/sqlalchemy/sql/coercions.py:132:11 observed=util requested=value fix=bind `util` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "completed",
+      "file": "sqlalchemy/test/dialect/sqlite/test_on_conflict.py",
+      "testimony": {
+        "effects": [
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "sqlalchemy.test.dialect.sqlite.test_on_conflict.OnConflictTest.test_on_conflict_do_update_one::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=sqlalchemy/test/dialect/sqlite/test_on_conflict.py:193:17",
+            "status": "runtime-effect"
+          }
+        ],
+        "factory_walk_rows": 253,
+        "facts": 3,
+        "file": "sqlalchemy/test/dialect/sqlite/test_on_conflict.py",
+        "outcome": "completed"
+      },
+      "disposition": "completed"
+    },
+    {
+      "category": "completed",
+      "file": "sqlalchemy/test/dialect/sqlite/test_reflection.py",
+      "testimony": {
+        "effects": [],
+        "factory_walk_rows": 368,
+        "facts": 11,
+        "file": "sqlalchemy/test/dialect/sqlite/test_reflection.py",
+        "outcome": "completed"
+      },
+      "disposition": "completed"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/engine/test_ddlevents.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/engine/test_ddlevents.py",
+        "gap": {
+          "blame": "sqlalchemy/test/engine/test_ddlevents.py:826:17",
+          "fix": "construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "missing callsite body for decorator factory `deprecated_params`",
+          "owner": "FunctionCallable decorator factory:deprecated_params",
+          "requested": "decorator callable floor or implementation-preserving decorator contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=FunctionCallable decorator factory:deprecated_params blame=sqlalchemy/test/engine/test_ddlevents.py:826:17 observed=missing callsite body for decorator factory `deprecated_params` requested=decorator callable floor or implementation-preserving decorator contract fix=construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/engine/test_deprecations.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/engine/test_deprecations.py",
+        "gap": {
+          "blame": ".venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/assertions.py:88:8",
+          "fix": "bind `sa_exc` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "sa_exc",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=.venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/assertions.py:88:8 observed=sa_exc requested=value fix=bind `sa_exc` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/engine/test_logging.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/engine/test_logging.py",
+        "gap": {
+          "blame": "sqlalchemy/test/engine/test_logging.py:210:12",
+          "fix": "write more Floor: implement StringValue.modulo",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "StringValue",
+          "owner": "modulo",
+          "requested": "stand on the modulo floor"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=modulo blame=sqlalchemy/test/engine/test_logging.py:210:12 observed=StringValue requested=stand on the modulo floor fix=write more Floor: implement StringValue.modulo"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/engine/test_parseconnect.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/engine/test_parseconnect.py",
+        "gap": {
+          "blame": "sqlalchemy/test/engine/test_parseconnect.py:350:12",
+          "fix": "construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "missing callsite body for decorator factory `deprecated_params`",
+          "owner": "FunctionCallable decorator factory:deprecated_params",
+          "requested": "decorator callable floor or implementation-preserving decorator contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=FunctionCallable decorator factory:deprecated_params blame=sqlalchemy/test/engine/test_parseconnect.py:350:12 observed=missing callsite body for decorator factory `deprecated_params` requested=decorator callable floor or implementation-preserving decorator contract fix=construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/engine/test_pool.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/engine/test_pool.py",
+        "gap": {
+          "blame": "sqlalchemy/test/engine/test_pool.py:170:12",
+          "fix": "construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "missing callsite body for decorator factory `deprecated_params`",
+          "owner": "FunctionCallable decorator factory:deprecated_params",
+          "requested": "decorator callable floor or implementation-preserving decorator contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=FunctionCallable decorator factory:deprecated_params blame=sqlalchemy/test/engine/test_pool.py:170:12 observed=missing callsite body for decorator factory `deprecated_params` requested=decorator callable floor or implementation-preserving decorator contract fix=construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "timeout-or-hang",
+      "file": "sqlalchemy/test/engine/test_reconnect.py",
+      "testimony": null,
+      "disposition": "genuinely-timeout"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/engine/test_reflection.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/engine/test_reflection.py",
+        "gap": {
+          "blame": ".venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/assertions.py:50:38",
+          "fix": "bind `sa_exc` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "sa_exc",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=.venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/assertions.py:50:38 observed=sa_exc requested=value fix=bind `sa_exc` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/engine/test_transaction.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/engine/test_transaction.py",
+        "gap": {
+          "blame": ".venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/assertions.py:50:38",
+          "fix": "bind `sa_exc` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "sa_exc",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=.venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/assertions.py:50:38 observed=sa_exc requested=value fix=bind `sa_exc` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/ext/asyncio/test_engine.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/ext/asyncio/test_engine.py",
+        "gap": {
+          "blame": "sqlalchemy/test/ext/asyncio/test_engine.py:621:12",
+          "fix": "construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "missing callsite body for decorator factory `deprecated_params`",
+          "owner": "FunctionCallable decorator factory:deprecated_params",
+          "requested": "decorator callable floor or implementation-preserving decorator contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=FunctionCallable decorator factory:deprecated_params blame=sqlalchemy/test/ext/asyncio/test_engine.py:621:12 observed=missing callsite body for decorator factory `deprecated_params` requested=decorator callable floor or implementation-preserving decorator contract fix=construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/ext/asyncio/test_session.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/ext/asyncio/test_session.py",
+        "gap": {
+          "blame": "sqlalchemy/test/ext/asyncio/test_session.py:771:12",
+          "fix": "create sugar_lift_py_tests.sugar.class_def.class_def_sugar",
+          "gap_kind": "Sugar",
+          "gap_locus": "AST",
+          "observed": "ClassDef",
+          "owner": "python.factory",
+          "requested": "statement"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Sugar for this AST: owner=python.factory blame=sqlalchemy/test/ext/asyncio/test_session.py:771:12 observed=ClassDef requested=statement fix=create sugar_lift_py_tests.sugar.class_def.class_def_sugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "completed",
+      "file": "sqlalchemy/test/ext/declarative/test_inheritance.py",
+      "testimony": {
+        "effects": [
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "sqlalchemy.test.ext.declarative.test_inheritance.ConcreteInhTest.test_abs_concrete_extension_warn_concrete_disc_resolves_overlap::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=sqlalchemy/test/ext/declarative/test_inheritance.py:624:16",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "sqlalchemy.test.ext.declarative.test_inheritance.ConcreteExtensionConfigTest.test_abstract_in_hierarchy::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=sqlalchemy/test/ext/declarative/test_inheritance.py:938:16",
+            "status": "runtime-effect"
+          }
+        ],
+        "factory_walk_rows": 410,
+        "facts": 18,
+        "file": "sqlalchemy/test/ext/declarative/test_inheritance.py",
+        "outcome": "completed"
+      },
+      "disposition": "completed"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/ext/declarative/test_reflection.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/ext/declarative/test_reflection.py",
+        "gap": {
+          "blame": ".venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/fixtures/orm.py:209:11",
+          "fix": "bind `orm` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "orm",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=.venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/fixtures/orm.py:209:11 observed=orm requested=value fix=bind `orm` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "completed",
+      "file": "sqlalchemy/test/ext/mypy/plugin_files/other_mapper_props.py",
+      "testimony": {
+        "effects": [],
+        "factory_walk_rows": 1,
+        "facts": 1,
+        "file": "sqlalchemy/test/ext/mypy/plugin_files/other_mapper_props.py",
+        "outcome": "completed"
+      },
+      "disposition": "completed"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/ext/test_associationproxy.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/ext/test_associationproxy.py",
+        "gap": {
+          "blame": "sqlalchemy/test/ext/test_associationproxy.py:166:13",
+          "fix": "RuntimeEffect requires a genuine runtime-dependent operand; _Ctor(name='python:constructor_call', args=(_ConstStr(value='Parent', sort=PrimitiveSort(name='String')),)) is ground/decidable at lift time. Construction-gap prose and ground values cannot mint RuntimeEffect authority. replacement=construct the exact result or FactoryPanic loudly. A decidable operand or construction-gap description must construct the exact result or panic; it cannot mint a RuntimeEffect.",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "py.constructor operand=_Ctor(name='python:constructor_call', args=(_ConstStr(value='Parent', sort=PrimitiveSort(name='String')),))",
+          "owner": "RuntimeEffect",
+          "requested": "genuine runtime-dependent operand"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=RuntimeEffect blame=sqlalchemy/test/ext/test_associationproxy.py:166:13 observed=py.constructor operand=_Ctor(name='python:constructor_call', args=(_ConstStr(value='Parent', sort=PrimitiveSort(name='String')),)) requested=genuine runtime-dependent operand fix=RuntimeEffect requires a genuine runtime-dependent operand; _Ctor(name='python:constructor_call', args=(_ConstStr(value='Parent', sort=PrimitiveSort(name='String')),)) is ground/decidable at lift time. Construction-gap prose and ground values cannot mint RuntimeEffect authority. replacement=construct the exact result or FactoryPanic loudly. A decidable operand or construction-gap description must construct the exact result or panic; it cannot mint a RuntimeEffect."
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/ext/test_automap.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/ext/test_automap.py",
+        "gap": {
+          "blame": "sqlalchemy/test/ext/test_automap.py:691:12",
+          "fix": "construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "missing callsite body for decorator factory `deprecated_params`",
+          "owner": "FunctionCallable decorator factory:deprecated_params",
+          "requested": "decorator callable floor or implementation-preserving decorator contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=FunctionCallable decorator factory:deprecated_params blame=sqlalchemy/test/ext/test_automap.py:691:12 observed=missing callsite body for decorator factory `deprecated_params` requested=decorator callable floor or implementation-preserving decorator contract fix=construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/ext/test_baked.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/ext/test_baked.py",
+        "gap": {
+          "blame": "sqlalchemy/test/ext/test_baked.py:822:12",
+          "fix": "construct the decorator body's runtime-dependent result before applying it; never read an incomplete effect as a completed callable",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "GetattrRuntimeEffect",
+          "owner": "FunctionCallable decorator result:sqlalchemy.orm.strategy_options.loader_unbound_fn",
+          "requested": "completed decorator result substitution"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=FunctionCallable decorator result:sqlalchemy.orm.strategy_options.loader_unbound_fn blame=sqlalchemy/test/ext/test_baked.py:822:12 observed=GetattrRuntimeEffect requested=completed decorator result substitution fix=construct the decorator body's runtime-dependent result before applying it; never read an incomplete effect as a completed callable"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "completed",
+      "file": "sqlalchemy/test/ext/test_extendedattr.py",
+      "testimony": {
+        "effects": [],
+        "factory_walk_rows": 409,
+        "facts": 38,
+        "file": "sqlalchemy/test/ext/test_extendedattr.py",
+        "outcome": "completed"
+      },
+      "disposition": "completed"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/ext/test_horizontal_shard.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/ext/test_horizontal_shard.py",
+        "gap": {
+          "blame": "sqlalchemy/test/ext/test_horizontal_shard.py:91:8",
+          "fix": "create sugar_lift_py_tests.sugar.assign.assign_sugar",
+          "gap_kind": "Sugar",
+          "gap_locus": "AST",
+          "observed": "Assign",
+          "owner": "python.factory",
+          "requested": "statement"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Sugar for this AST: owner=python.factory blame=sqlalchemy/test/ext/test_horizontal_shard.py:91:8 observed=Assign requested=statement fix=create sugar_lift_py_tests.sugar.assign.assign_sugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/ext/test_hybrid.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/ext/test_hybrid.py",
+        "gap": {
+          "blame": "sqlalchemy/test/ext/test_hybrid.py:227:8",
+          "fix": "create sugar_lift_py_tests.sugar.class_def.class_def_sugar",
+          "gap_kind": "Sugar",
+          "gap_locus": "AST",
+          "observed": "ClassDef",
+          "owner": "python.factory",
+          "requested": "statement"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Sugar for this AST: owner=python.factory blame=sqlalchemy/test/ext/test_hybrid.py:227:8 observed=ClassDef requested=statement fix=create sugar_lift_py_tests.sugar.class_def.class_def_sugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "completed",
+      "file": "sqlalchemy/test/ext/test_indexable.py",
+      "testimony": {
+        "effects": [],
+        "factory_walk_rows": 263,
+        "facts": 6,
+        "file": "sqlalchemy/test/ext/test_indexable.py",
+        "outcome": "completed"
+      },
+      "disposition": "completed"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/ext/test_mutable.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/ext/test_mutable.py",
+        "gap": {
+          "blame": "sqlalchemy/test/ext/test_mutable.py:92:8",
+          "fix": "create sugar_lift_py_tests.sugar.assign.assign_sugar",
+          "gap_kind": "Sugar",
+          "gap_locus": "AST",
+          "observed": "Assign",
+          "owner": "python.factory",
+          "requested": "statement"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Sugar for this AST: owner=python.factory blame=sqlalchemy/test/ext/test_mutable.py:92:8 observed=Assign requested=statement fix=create sugar_lift_py_tests.sugar.assign.assign_sugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/ext/test_serializer.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/ext/test_serializer.py",
+        "gap": {
+          "blame": "sqlalchemy/test/ext/test_serializer.py:110:33",
+          "fix": "bind `users` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "users",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=sqlalchemy/test/ext/test_serializer.py:110:33 observed=users requested=value fix=bind `users` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/declarative/test_basic.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/declarative/test_basic.py",
+        "gap": {
+          "blame": "sqlalchemy/test/orm/declarative/test_basic.py:122:12",
+          "fix": "create sugar_lift_py_tests.sugar.class_def.class_def_sugar",
+          "gap_kind": "Sugar",
+          "gap_locus": "AST",
+          "observed": "ClassDef",
+          "owner": "python.factory",
+          "requested": "statement"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Sugar for this AST: owner=python.factory blame=sqlalchemy/test/orm/declarative/test_basic.py:122:12 observed=ClassDef requested=statement fix=create sugar_lift_py_tests.sugar.class_def.class_def_sugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/declarative/test_dc_transforms.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/declarative/test_dc_transforms.py",
+        "gap": {
+          "blame": "sqlalchemy/test/orm/declarative/test_dc_transforms.py:247:8",
+          "fix": "create sugar_lift_py_tests.sugar.class_def.class_def_sugar",
+          "gap_kind": "Sugar",
+          "gap_locus": "AST",
+          "observed": "ClassDef",
+          "owner": "python.factory",
+          "requested": "statement"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Sugar for this AST: owner=python.factory blame=sqlalchemy/test/orm/declarative/test_dc_transforms.py:247:8 observed=ClassDef requested=statement fix=create sugar_lift_py_tests.sugar.class_def.class_def_sugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/declarative/test_dc_transforms_future_anno_sync.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/declarative/test_dc_transforms_future_anno_sync.py",
+        "gap": {
+          "blame": "sqlalchemy/test/orm/declarative/test_dc_transforms_future_anno_sync.py:258:8",
+          "fix": "create sugar_lift_py_tests.sugar.class_def.class_def_sugar",
+          "gap_kind": "Sugar",
+          "gap_locus": "AST",
+          "observed": "ClassDef",
+          "owner": "python.factory",
+          "requested": "statement"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Sugar for this AST: owner=python.factory blame=sqlalchemy/test/orm/declarative/test_dc_transforms_future_anno_sync.py:258:8 observed=ClassDef requested=statement fix=create sugar_lift_py_tests.sugar.class_def.class_def_sugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/declarative/test_inheritance.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/declarative/test_inheritance.py",
+        "gap": {
+          "blame": ".venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/assertions.py:50:38",
+          "fix": "bind `sa_exc` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "sa_exc",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=.venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/assertions.py:50:38 observed=sa_exc requested=value fix=bind `sa_exc` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/declarative/test_mixin.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/declarative/test_mixin.py",
+        "gap": {
+          "blame": "sqlalchemy/test/orm/declarative/test_mixin.py:288:8",
+          "fix": "create sugar_lift_py_tests.sugar.class_def.class_def_sugar",
+          "gap_kind": "Sugar",
+          "gap_locus": "AST",
+          "observed": "ClassDef",
+          "owner": "python.factory",
+          "requested": "statement"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Sugar for this AST: owner=python.factory blame=sqlalchemy/test/orm/declarative/test_mixin.py:288:8 observed=ClassDef requested=statement fix=create sugar_lift_py_tests.sugar.class_def.class_def_sugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "completed",
+      "file": "sqlalchemy/test/orm/declarative/test_tm_future_annotations.py",
+      "testimony": {
+        "effects": [],
+        "factory_walk_rows": 197,
+        "facts": 2,
+        "file": "sqlalchemy/test/orm/declarative/test_tm_future_annotations.py",
+        "outcome": "completed"
+      },
+      "disposition": "completed"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/declarative/test_typed_mapping.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/declarative/test_typed_mapping.py",
+        "gap": {
+          "blame": "sqlalchemy/test/orm/declarative/test_typed_mapping.py:198:8",
+          "fix": "create sugar_lift_py_tests.sugar.class_def.class_def_sugar",
+          "gap_kind": "Sugar",
+          "gap_locus": "AST",
+          "observed": "ClassDef",
+          "owner": "python.factory",
+          "requested": "statement"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Sugar for this AST: owner=python.factory blame=sqlalchemy/test/orm/declarative/test_typed_mapping.py:198:8 observed=ClassDef requested=statement fix=create sugar_lift_py_tests.sugar.class_def.class_def_sugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/dml/test_orm_upd_del_basic.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/dml/test_orm_upd_del_basic.py",
+        "gap": {
+          "blame": "sqlalchemy/test/orm/dml/test_orm_upd_del_basic.py:251:25",
+          "fix": "bind `stmt` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "stmt",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=sqlalchemy/test/orm/dml/test_orm_upd_del_basic.py:251:25 observed=stmt requested=value fix=bind `stmt` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/inheritance/test_assorted_poly.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/inheritance/test_assorted_poly.py",
+        "gap": {
+          "blame": "sqlalchemy/test/orm/inheritance/test_assorted_poly.py:106:12",
+          "fix": "bind `people` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "people",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=sqlalchemy/test/orm/inheritance/test_assorted_poly.py:106:12 observed=people requested=value fix=bind `people` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/inheritance/test_basic.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/inheritance/test_basic.py",
+        "gap": {
+          "blame": "sqlalchemy/test/orm/inheritance/test_basic.py:95:51",
+          "fix": "bind `foo` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "foo",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=sqlalchemy/test/orm/inheritance/test_basic.py:95:51 observed=foo requested=value fix=bind `foo` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/test_deprecations.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/test_deprecations.py",
+        "gap": {
+          "blame": "sqlalchemy/test/orm/test_deprecations.py:168:39",
+          "fix": "construct the decorator body's runtime-dependent result before applying it; never read an incomplete effect as a completed callable",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "GetattrRuntimeEffect",
+          "owner": "FunctionCallable decorator result:sqlalchemy.orm.strategy_options.loader_unbound_fn",
+          "requested": "completed decorator result substitution"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=FunctionCallable decorator result:sqlalchemy.orm.strategy_options.loader_unbound_fn blame=sqlalchemy/test/orm/test_deprecations.py:168:39 observed=GetattrRuntimeEffect requested=completed decorator result substitution fix=construct the decorator body's runtime-dependent result before applying it; never read an incomplete effect as a completed callable"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/test_events.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/test_events.py",
+        "gap": {
+          "blame": "sqlalchemy/test/orm/test_events.py:1008:49",
+          "fix": "construct the decorator body's runtime-dependent result before applying it; never read an incomplete effect as a completed callable",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "GetattrRuntimeEffect",
+          "owner": "FunctionCallable decorator result:sqlalchemy.orm.strategy_options.loader_unbound_fn",
+          "requested": "completed decorator result substitution"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=FunctionCallable decorator result:sqlalchemy.orm.strategy_options.loader_unbound_fn blame=sqlalchemy/test/orm/test_events.py:1008:49 observed=GetattrRuntimeEffect requested=completed decorator result substitution fix=construct the decorator body's runtime-dependent result before applying it; never read an incomplete effect as a completed callable"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/test_joins.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/test_joins.py",
+        "gap": {
+          "blame": "sqlalchemy/test/orm/test_joins.py:2832:21",
+          "fix": "construct the decorator body's runtime-dependent result before applying it; never read an incomplete effect as a completed callable",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "GetattrRuntimeEffect",
+          "owner": "FunctionCallable decorator result:sqlalchemy.orm.strategy_options.loader_unbound_fn",
+          "requested": "completed decorator result substitution"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=FunctionCallable decorator result:sqlalchemy.orm.strategy_options.loader_unbound_fn blame=sqlalchemy/test/orm/test_joins.py:2832:21 observed=GetattrRuntimeEffect requested=completed decorator result substitution fix=construct the decorator body's runtime-dependent result before applying it; never read an incomplete effect as a completed callable"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/test_mapper.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/test_mapper.py",
+        "gap": {
+          "blame": ".venv-5273/lib/python3.12/site-packages/sqlalchemy/orm/base.py:467:11",
+          "fix": "bind `inspection` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "inspection",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=.venv-5273/lib/python3.12/site-packages/sqlalchemy/orm/base.py:467:11 observed=inspection requested=value fix=bind `inspection` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/orm/test_query.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/orm/test_query.py",
+        "gap": {
+          "blame": "sqlalchemy/test/orm/test_query.py:847:19",
+          "fix": "bind `u1` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "u1",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=sqlalchemy/test/orm/test_query.py:847:19 observed=u1 requested=value fix=bind `u1` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    },
+    {
+      "category": "factory-construction-panic",
+      "file": "sqlalchemy/test/sql/test_compare.py",
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/sql/test_compare.py",
+        "gap": {
+          "blame": ".venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/assertions.py:50:38",
+          "fix": "bind `sa_exc` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "sa_exc",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=.venv-5273/lib/python3.12/site-packages/sqlalchemy/testing/assertions.py:50:38 observed=sa_exc requested=value fix=bind `sa_exc` before reducing NameSugar"
+      },
+      "disposition": "bounded-loud"
+    }
+  ],
+  "timeout_count": 1,
+  "timeout_files": [
+    "sqlalchemy/test/engine/test_reconnect.py"
+  ],
+  "disposition_counts": {
+    "bounded-loud": 39,
+    "completed": 7,
+    "genuinely-timeout": 1
+  }
+}

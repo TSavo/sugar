@@ -20,6 +20,22 @@ class ImportAliasValue(FloorValue):
     import_target: str | None = None
     resolved_value: FloorValue | None = field(default=None, compare=False)
     install_source_checked: bool = field(default=False, compare=False)
+    install_source_context: Any = field(default=None, compare=False, repr=False)
+
+    def resolve_value(self):
+        """Construct this source-backed value only when a consumer demands it."""
+        if self.resolved_value is not None:
+            return self.resolved_value
+        if self.install_source_context is None:
+            return None
+        target = self.import_target or self.name
+        if not target or "." not in target:
+            return None
+        from sugar_lift_py_tests.sugar.install_source_dig import (
+            resolve_install_source_value,
+        )
+
+        return resolve_install_source_value(target, self.install_source_context)
 
     def extend_scope(self, ctx):
         """Thread the source-stated import binding into following statements."""
@@ -116,8 +132,9 @@ class ImportAliasValue(FloorValue):
             TrueBoolLiteralSugar,
         )
 
-        if self.resolved_value is not None:
-            return self.resolved_value.truth(site)
+        resolved_value = self.resolve_value()
+        if resolved_value is not None:
+            return resolved_value.truth(site)
 
         coordinate = self._checked_constant_coordinate()
         if coordinate is not None:
@@ -230,8 +247,9 @@ class ImportAliasValue(FloorValue):
         return self._unary_runtime_effect(site, "~")
 
     def format_data_model(self, spec, site, ctx):
-        if self.resolved_value is not None:
-            return self.resolved_value.format_data_model(spec, site, ctx)
+        resolved_value = self.resolve_value()
+        if resolved_value is not None:
+            return resolved_value.format_data_model(spec, site, ctx)
         return _runtime_alias_effect_at_site(
             self,
             shape=f"format({self.bound_name}, ...)",
@@ -240,7 +258,7 @@ class ImportAliasValue(FloorValue):
         )
 
     def _binary_runtime_effect(self, other, site, operator):
-        resolved = self.resolved_value or self._checked_constant_coordinate()
+        resolved = self.resolve_value() or self._checked_constant_coordinate()
         if resolved is not None:
             methods = {
                 "+": "add",
@@ -260,9 +278,10 @@ class ImportAliasValue(FloorValue):
         )
 
     def _unary_runtime_effect(self, site, operator):
-        if self.resolved_value is not None:
+        resolved_value = self.resolve_value()
+        if resolved_value is not None:
             methods = {"-": "unary_minus", "+": "unary_plus", "~": "bitwise_invert"}
-            return getattr(self.resolved_value, methods[operator])(site)
+            return getattr(resolved_value, methods[operator])(site)
         return _runtime_alias_effect_at_site(
             self,
             shape=f"{operator}{self.bound_name}",
@@ -271,8 +290,9 @@ class ImportAliasValue(FloorValue):
         )
 
     def call_method_with(self, operation: Any, ctx: object):
-        if self.resolved_value is not None:
-            return self.resolved_value.call_method_with(operation, ctx)
+        resolved_value = self.resolve_value()
+        if resolved_value is not None:
+            return resolved_value.call_method_with(operation, ctx)
         del ctx
         return _runtime_alias_effect(
             self,
@@ -282,8 +302,9 @@ class ImportAliasValue(FloorValue):
         )
 
     def subscript_with(self, operation: Any, ctx: object):
-        if self.resolved_value is not None:
-            return self.resolved_value.subscript_with(operation, ctx)
+        resolved_value = self.resolve_value()
+        if resolved_value is not None:
+            return resolved_value.subscript_with(operation, ctx)
         del ctx
         return _runtime_alias_effect(
             self,
@@ -293,8 +314,9 @@ class ImportAliasValue(FloorValue):
         )
 
     def contains_with(self, operation: Any, ctx: object):
-        if self.resolved_value is not None:
-            return self.resolved_value.contains_with(operation, ctx)
+        resolved_value = self.resolve_value()
+        if resolved_value is not None:
+            return resolved_value.contains_with(operation, ctx)
         del ctx
         return _runtime_alias_effect(
             self,
@@ -304,8 +326,9 @@ class ImportAliasValue(FloorValue):
         )
 
     def attribute_assign_with(self, operation: Any, ctx: object):
-        if self.resolved_value is not None:
-            return self.resolved_value.attribute_assign_with(operation, ctx)
+        resolved_value = self.resolve_value()
+        if resolved_value is not None:
+            return resolved_value.attribute_assign_with(operation, ctx)
         del ctx
         return _runtime_alias_effect(
             self,
@@ -315,8 +338,9 @@ class ImportAliasValue(FloorValue):
         )
 
     def binary_operator_with(self, operation: Any, ctx: object):
-        if self.resolved_value is not None:
-            return self.resolved_value.binary_operator_with(operation, ctx)
+        resolved_value = self.resolve_value()
+        if resolved_value is not None:
+            return resolved_value.binary_operator_with(operation, ctx)
         del ctx
         return _runtime_alias_effect(
             self,

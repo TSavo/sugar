@@ -221,7 +221,7 @@ class KeywordCallSugar(
 
                 target, *bound_positional = pos_values[1:]
                 if isinstance(target, ImportAliasValue):
-                    target = target.resolved_value
+                    target = target.resolve_value()
                 elif (
                     isinstance(target, CallSiteValue)
                     and len(target.arg_values) == 1
@@ -256,10 +256,10 @@ class KeywordCallSugar(
             # not reclassified by spelling at raise time.
             if self.receiver is None:
                 bound = ctx.temporal.value_if_bound(self.target_name)
-                if isinstance(bound, ImportAliasValue) and isinstance(
-                    bound.resolved_value, ExceptionClassValue
-                ):
-                    bound = bound.resolved_value
+                if isinstance(bound, ImportAliasValue):
+                    resolved_bound = bound.resolve_value()
+                    if isinstance(resolved_bound, ExceptionClassValue):
+                        bound = resolved_bound
                 if type(bound) in (BuiltinExceptionClassValue, ExceptionClassValue):
                     # Positional args first; keyword values follow in source
                     # order. Names ride on the call coordinate via parameters
@@ -271,10 +271,10 @@ class KeywordCallSugar(
                             site=self.site,
                         )
                     )
-                if isinstance(bound, ImportAliasValue) and isinstance(
-                    bound.resolved_value, FunctionCallable
-                ):
-                    bound = bound.resolved_value
+                if isinstance(bound, ImportAliasValue):
+                    resolved_bound = bound.resolve_value()
+                    if isinstance(resolved_bound, FunctionCallable):
+                        bound = resolved_bound
                 # term: call:name(pos..., kw:k=v, ...) — keyword spelling is the
                 # source coordinate even when dig binds defaults under the body.
                 term_args = [

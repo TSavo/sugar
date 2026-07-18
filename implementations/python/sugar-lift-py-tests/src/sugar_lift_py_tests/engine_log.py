@@ -36,13 +36,25 @@ def reduction_span(*, sugar: str, role: str, site: str) -> Iterator[None]:
     try:
         yield
     except BaseException as error:
-        _finish(
-            frame,
-            event="error",
-            level=logging.ERROR,
-            error_type=type(error).__name__,
-            error=str(error),
-        )
+        already_logged = bool(getattr(error, "_sugar_engine_terminal_logged", False))
+        if not already_logged:
+            try:
+                setattr(error, "_sugar_engine_terminal_logged", True)
+            except (AttributeError, TypeError):
+                pass
+            _finish(
+                frame,
+                event="error",
+                level=logging.ERROR,
+                error_type=type(error).__name__,
+                error=str(error),
+            )
+        else:
+            # The deepest owner already emitted the loud structured terminal.
+            # Parent SugarBody frames only unwind; reserializing the same
+            # FactoryPanic at every depth can itself push a bounded audit over
+            # its wall-clock ceiling.
+            _finish(frame, event="propagate", level=logging.DEBUG)
         raise
     else:
         _finish(frame, event="exit", level=logging.DEBUG)
@@ -60,7 +72,7 @@ def _enter(*, sugar: str, role: str, site: str) -> _Frame:
         stack.append(frame)
         _emit(logging.DEBUG, "enter", frame, depth=len(stack), thread_id=thread_id)
         repetitions = sum(item.fingerprint == fingerprint for item in stack)
-        if repetitions >= _CYCLE_THRESHOLD:
+        if repetitions == _CYCLE_THRESHOLD:
             _emit(
                 logging.WARNING,
                 "cycle_suspected",

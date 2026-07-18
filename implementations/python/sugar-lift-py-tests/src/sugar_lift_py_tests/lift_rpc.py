@@ -1394,21 +1394,11 @@ def _module_import_temporal(
                             or mod
                         )
                 import_target = f"{mod}.{name}" if mod else name
-                from sugar_lift_py_tests.sugar.install_source_dig import (
-                    resolve_install_source_value,
-                )
-
                 import_ctx = FactoryBuildContext(
                     filename=stmt.filename,
                     catalog=catalog,
                     temporal=temporal,
                     module_temporal=temporal,
-                )
-                # FactoryPanic is process-terminal in production (#5238). Only
-                # the per-file corpus audit membrane may hold it for a loud red
-                # row; seed construction must never soft-continue into opacity.
-                resolved_value = resolve_install_source_value(
-                    import_target, import_ctx
                 )
                 temporal = temporal.bind_value(
                     bound,
@@ -1416,8 +1406,8 @@ def _module_import_temporal(
                         name,
                         bound,
                         import_target=import_target,
-                        resolved_value=resolved_value,
                         install_source_checked=True,
+                        install_source_context=import_ctx,
                     ),
                 )
         elif observed == "ClassDef":

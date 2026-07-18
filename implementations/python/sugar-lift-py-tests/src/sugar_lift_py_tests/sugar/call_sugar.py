@@ -270,13 +270,14 @@ class CallSugar(Sugar, role=SugarRole.TERM):
 
             imported_callable_target = None
             if isinstance(bound, ImportAliasValue):
-                if isinstance(bound.resolved_value, ExceptionClassValue):
-                    bound = bound.resolved_value
-                elif isinstance(bound.resolved_value, FunctionCallable):
+                resolved_value = bound.resolve_value()
+                if isinstance(resolved_value, ExceptionClassValue):
+                    bound = resolved_value
+                elif isinstance(resolved_value, FunctionCallable):
                     imported_callable_target = bound.import_target or bound.name
-                    bound = bound.resolved_value
-                elif isinstance(bound.resolved_value, NativeCallableValue):
-                    native = bound.resolved_value
+                    bound = resolved_value
+                elif isinstance(resolved_value, NativeCallableValue):
+                    native = resolved_value
                     from sugar_lift_py_tests.sugar.method_call_sugar import (
                         _static_exit_suppression_contract,
                     )

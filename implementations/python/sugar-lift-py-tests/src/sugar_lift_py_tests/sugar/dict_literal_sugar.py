@@ -92,17 +92,7 @@ class DictLiteralSugar(Sugar, role=SugarRole.TERM):
         from sugar_lift_py_tests.floor import ImportAliasValue
 
         if isinstance(expansion, ImportAliasValue):
-            resolved = expansion.resolved_value
-            if (
-                resolved is None
-                and expansion.install_source_checked
-                and expansion.import_target is not None
-            ):
-                from sugar_lift_py_tests.sugar.install_source_dig import (
-                    resolve_install_source_value,
-                )
-
-                resolved = resolve_install_source_value(expansion.import_target, ctx)
+            resolved = expansion.resolve_value()
             if resolved is not None:
                 expansion = resolved
         if isinstance(expansion, DictValue):

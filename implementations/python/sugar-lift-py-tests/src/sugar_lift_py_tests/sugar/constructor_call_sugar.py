@@ -415,7 +415,7 @@ def _has_exact_exception_ancestry(class_site, ctx, seen: frozenset[str] = frozen
             if type(bound) in (BuiltinExceptionClassValue, ExceptionClassValue):
                 return True
             if isinstance(bound, ImportAliasValue) and isinstance(
-                bound.resolved_value, ExceptionClassValue
+                bound.resolve_value(), ExceptionClassValue
             ):
                 return True
             continue

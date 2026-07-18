@@ -42,6 +42,48 @@ def test_engine_heartbeat_reports_the_live_reduction_stack(caplog) -> None:
     assert heartbeat["active_stack"] == ["AwaitSugar|term|t.py:3:11"]
 
 
+def test_cycle_warning_is_loud_once_per_active_recursive_chain(
+    monkeypatch, caplog
+) -> None:
+    caplog.set_level(logging.WARNING, logger="sugar_lift_py_tests.engine")
+    monkeypatch.setattr(engine_log, "_CYCLE_THRESHOLD", 3)
+
+    def recurse(depth: int) -> None:
+        with engine_log.reduction_span(
+            sugar="MethodCallSugar", role="term", site="cycle.py:1:0"
+        ):
+            if depth:
+                recurse(depth - 1)
+
+    recurse(5)
+
+    cycles = [event for event in _events(caplog) if event["event"] == "cycle_suspected"]
+    assert len(cycles) == 1
+    assert cycles[0]["active_repetitions"] == 3
+
+
+def test_one_exception_emits_one_loud_terminal_across_nested_frames(
+    caplog,
+) -> None:
+    caplog.set_level(logging.ERROR, logger="sugar_lift_py_tests.engine")
+
+    try:
+        with engine_log.reduction_span(
+            sugar="BlockSugar", role="statement", site="error.py:1:0"
+        ):
+            with engine_log.reduction_span(
+                sugar="NameSugar", role="term", site="error.py:2:4"
+            ):
+                raise ValueError("one terminal")
+    except ValueError:
+        pass
+
+    errors = [event for event in _events(caplog) if event["event"] == "error"]
+    assert len(errors) == 1
+    assert errors[0]["sugar"] == "NameSugar"
+    assert engine_log._ACTIVE == {}
+
+
 def test_engine_live_log_is_flushed_outside_log_capture(tmp_path) -> None:
     path = tmp_path / "engine.jsonl"
     previous = engine_log._LIVE_HANDLER
