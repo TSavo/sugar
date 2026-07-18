@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import pytest
-
 import ast
+from pathlib import Path
+
+import pytest
 
 from factory_reduce import reduce_value
 
@@ -29,7 +30,10 @@ from sugar_lift_py_tests.ir import (
     str_const,
 )
 from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.sugar.isinstance_call_sugar import IsinstanceCallSugar
+from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
 from sugar_lift_py_tests.temporal import TemporalContext
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _tester(value_term, type_term):
@@ -52,6 +56,89 @@ def test_imported_type_name_emits_native_tester_atom() -> None:
         )
     )
     assert "call:isinstance" not in repr(value)
+
+
+@pytest.mark.parametrize(
+    ("module_name", "class_name"),
+    [
+        ("datetime", "datetime"),
+        ("decimal", "Decimal"),
+        ("collections", "OrderedDict"),
+    ],
+)
+def test_qualified_concrete_class_emits_native_tester_atom(
+    module_name: str,
+    class_name: str,
+) -> None:
+    node = ast.parse(
+        f"isinstance(x, {module_name}.{class_name})",
+        mode="eval",
+    ).body
+    temporal = (
+        TemporalContext.empty()
+        .bind_value("x", SymbolicValue(make_var("x")))
+        .bind_value(module_name, ImportAliasValue(module_name, module_name))
+    )
+    ctx = FactoryBuildContext(
+        filename="qualified_type.py",
+        catalog=default_catalog(),
+        temporal=temporal,
+    )
+
+    outcome = ctx.build_body(node, SugarRole.TERM).reduce(ctx)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value == PredicateValue(
+        _tester(
+            make_var("x"),
+            ctor(
+                "python:type",
+                [str_const(f"{module_name}.{class_name}")],
+            ),
+        )
+    )
+
+
+def test_unknown_local_type_name_stays_loud() -> None:
+    node = ast.parse("isinstance(x, UnknownLocal)", mode="eval").body
+    temporal = TemporalContext.empty().bind_value(
+        "x",
+        SymbolicValue(make_var("x")),
+    )
+    ctx = FactoryBuildContext(
+        filename="unknown_local.py",
+        catalog=default_catalog(),
+        temporal=temporal,
+    )
+
+    with pytest.raises(
+        FactoryPanic,
+        match="owner=TemporalContext.*observed=UnknownLocal.*requested=value",
+    ):
+        ctx.build_body(node, SugarRole.TERM).reduce(ctx)
+
+
+def test_qualified_concrete_class_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in IsinstanceCallSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "isinstance_qualified_concrete_class"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "qualified-class-truthful",
+        pair.truthful.source,
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "qualified-class-lying",
+        pair.lying.source,
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_builtin_type_call_emits_native_tester_atom() -> None:

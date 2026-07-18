@@ -111,8 +111,18 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
         )
 
     def _project_attribute(self, value, ctx: object) -> Outcome:
-        from sugar_lift_py_tests.floor import CallSiteValue, ObjectValue, StringValue
+        from sugar_lift_py_tests.floor import (
+            CallSiteValue,
+            ImportAliasValue,
+            ObjectValue,
+            StringValue,
+        )
         from sugar_lift_py_tests.ir import ctor
+
+        if isinstance(value, ImportAliasValue):
+            qualified_class = value.qualified_class_attribute(self.attr_name)
+            if qualified_class is not None:
+                return Complete(qualified_class)
 
         if isinstance(value, ObjectValue):
             return project_object_attribute(value, self.attr_name, self.site, ctx)

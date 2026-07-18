@@ -42,6 +42,37 @@ class ImportAliasValue(FloorValue):
             site,
         )
 
+    def qualified_class_attribute(self, attribute: str) -> ImportAliasValue | None:
+        """Construct an exact imported class coordinate when Python proves it.
+
+        A module import plus ``inspect.isclass(module.attribute)`` is concrete
+        lift-time evidence for the type object's qualified identity.  A
+        function, constant, missing attribute, or unavailable module does not
+        claim this recognizer and remains on AttributeSugar's existing path.
+        """
+        import importlib
+        import inspect
+
+        module_name = self.import_target or self.name
+        head, separator, _tail = module_name.partition(".")
+        if self.import_target is None and separator and self.bound_name == head:
+            # ``import package.submodule`` binds ``package``.  An explicit
+            # alias (``as sub``) binds the full stated module instead.
+            module_name = head
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            return None
+        candidate = getattr(module, attribute, None)
+        if not inspect.isclass(candidate):
+            return None
+        qualified = f"{module_name}.{attribute}"
+        return ImportAliasValue(
+            qualified,
+            attribute,
+            import_target=qualified,
+        )
+
     def truth(self, site):
         """Construct decidable truthiness for an import binding.
 
