@@ -113,8 +113,9 @@ _ALLOWED_DIRS = ("floor/", "operations/")
 _LADDER_THRESHOLD = 3
 _RATCHETED_NON_PROJECTION_LADDERS = {
     # Control-flow body construction classifies return floor outcomes and the
-    # encoder special case. Keep as a named ratchet until that ownership moves.
-    "factory/sugar_constructors.py:build_control_flow_body_sugar": 4,
+    # encoder special case. Its registered Sugar owns that interpretation; the
+    # factory-side ratchet retired when #5205 promoted the body constructor.
+    "sugar/control_flow_body_sugar.py:new": 4,
     # Block sequencing owns statement effects/binds/returns/raises; it is the
     # sequencing borderline called out in the Task 7 plan.
     "sugar/block_sugar.py:fold_with_context": 6,
