@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.claim import SugarRole
@@ -17,7 +15,12 @@ class ComprehensionClause:
 def supports_clauses(generators) -> bool:
     return bool(generators) and all(
         not generator.comprehension_is_async()
-        and _target_bindings(generator.comprehension_target()) is not None
+        and (
+            generator.comprehension_target()
+            .classify_loop_control_scope()
+            .target_bindings
+            is not None
+        )
         for generator in generators
     )
 
@@ -25,7 +28,11 @@ def supports_clauses(generators) -> bool:
 def build_clauses(generators, ctx) -> tuple[ComprehensionClause, ...]:
     return tuple(
         ComprehensionClause(
-            bindings=_target_bindings(generator.comprehension_target()),
+            bindings=(
+                generator.comprehension_target()
+                .classify_loop_control_scope()
+                .target_bindings
+            ),
             iterable=ctx.build_body(generator.comprehension_iter(), SugarRole.TERM),
             conditions=tuple(
                 ctx.build_body(condition, SugarRole.TERM)
@@ -124,23 +131,6 @@ def _reduce_conditions(conditions, index, ctx, accumulated, finish):
             )
         )
     )
-
-
-def _target_bindings(target):
-    def walk(node, path):
-        if isinstance(node, ast.Name):
-            return ((node.id, path),)
-        if isinstance(node, (ast.Tuple, ast.List)):
-            bindings = []
-            for index, element in enumerate(node.elts):
-                nested = walk(element, (*path, index))
-                if nested is None:
-                    return None
-                bindings.extend(nested)
-            return tuple(bindings)
-        return None
-
-    return walk(target.node, ())
 
 
 def clause_children(clauses):

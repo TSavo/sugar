@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import ast
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.claim import SugarRole
@@ -76,11 +74,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         finalbody = site.try_finalbody()
         if finalbody is None:
             return True
-        return not any(
-            isinstance(node, (ast.Return, ast.Raise, ast.Break, ast.Continue))
-            for statement in finalbody.node.body
-            for node in ast.walk(statement)
-        )
+        return not (finalbody.classify_loop_control_scope().contains_terminal_control)
 
     @classmethod
     def new(cls, site, ctx) -> "TrySugar":

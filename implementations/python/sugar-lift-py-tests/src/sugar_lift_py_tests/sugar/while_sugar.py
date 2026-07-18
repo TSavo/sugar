@@ -44,13 +44,14 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def new(cls, site, ctx) -> "WhileSugar":
         # Test (TERM) and body block (STATEMENT). Never reduce here.
+        scope = site.classify_loop_control_scope(entry_reads=(site.while_test(),))
         return cls(
             test=ctx.build_body(site.while_test(), SugarRole.TERM),
             body=ctx.build_body(site.while_body_block(), SugarRole.STATEMENT),
-            carried=site.loop_carried_names(entry_reads=(site.while_test(),)),
-            deferred_outputs=site.while_definite_break_output_names(),
-            curried=site.has_loop_control(),
-            unclassified_mutation=site.has_unclassified_loop_mutation(),
+            carried=scope.carried_names,
+            deferred_outputs=scope.definite_break_output_names,
+            curried=scope.has_loop_control,
+            unclassified_mutation=scope.has_unclassified_mutation,
             site=site,
         )
 

@@ -52,13 +52,14 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     def new(cls, site, ctx) -> "ForSugar":
         # Iterable (TERM), target name, body block (STATEMENT). Never reduce here.
         target_name = site.for_target_name()
+        scope = site.classify_loop_control_scope(target_name=target_name)
         return cls(
             target_name=target_name,
             iterable=ctx.build_body(site.for_iter(), SugarRole.TERM),
             body=ctx.build_body(site.for_body_block(), SugarRole.STATEMENT),
-            carried=site.loop_carried_names(target_name=target_name),
-            curried=site.has_loop_control(),
-            unclassified_mutation=site.has_unclassified_loop_mutation(),
+            carried=scope.carried_names,
+            curried=scope.has_loop_control,
+            unclassified_mutation=scope.has_unclassified_mutation,
             deferred_outputs=_finite_loop_output_names(site, target_name),
             site=site,
         )

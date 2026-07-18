@@ -37,16 +37,17 @@ class ForElseSugar(Sugar, role=SugarRole.STATEMENT):
             (name,) if name is not None else site.for_flat_tuple_target_names()
         )
         assert target_names is not None
+        scope = site.classify_loop_control_scope()
         return cls(
             target_names=tuple(target_names),
             iterable=ctx.build_body(site.for_iter(), SugarRole.TERM),
             body=ctx.build_body(site.for_body_block(), SugarRole.STATEMENT),
             else_body=ctx.build_body(site.for_orelse_block(), SugarRole.STATEMENT),
             carried=tuple(
-                name for name in site.loop_stored_names() if name not in target_names
+                name for name in scope.stored_names if name not in target_names
             ),
-            has_break=_has_break(site),
-            unclassified_mutation=site.has_unclassified_loop_mutation(),
+            has_break=scope.has_owned_break,
+            unclassified_mutation=scope.has_unclassified_mutation,
             site=site,
         )
 
@@ -170,31 +171,3 @@ class ForElseSugar(Sugar, role=SugarRole.STATEMENT):
 
     def walk_children(self):
         return (self.iterable, self.body, self.else_body)
-
-
-def _has_break(site) -> bool:
-    import ast
-
-    class _LoopOwnedBreakFinder(ast.NodeVisitor):
-        """Find breaks owned by this loop without crossing nested owners."""
-
-        found = False
-
-        def visit_Break(self, node: ast.Break) -> None:
-            self.found = True
-
-        def _stop_at_nested_owner(self, node: ast.AST) -> None:
-            return None
-
-        visit_For = _stop_at_nested_owner
-        visit_AsyncFor = _stop_at_nested_owner
-        visit_While = _stop_at_nested_owner
-        visit_FunctionDef = _stop_at_nested_owner
-        visit_AsyncFunctionDef = _stop_at_nested_owner
-        visit_Lambda = _stop_at_nested_owner
-        visit_ClassDef = _stop_at_nested_owner
-
-    finder = _LoopOwnedBreakFinder()
-    for statement in site.node.body:
-        finder.visit(statement)
-    return finder.found
