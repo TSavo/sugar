@@ -863,6 +863,7 @@ struct ProofReportGate {
 
 /// Report-only gate (no link surface). Prefer
 /// [`proof_report_gate_with_links`] at production faces so #3893 applies.
+#[cfg(test)]
 fn proof_report_gate(report: &sugar_verifier::Report) -> ProofReportGate {
     proof_report_gate_with_links(report, false, false)
 }

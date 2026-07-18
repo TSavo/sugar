@@ -16,7 +16,9 @@ use libsugar::core::{
 };
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 use sugar_ir_types::CompositionBoundaryMemento;
 
 use crate::component_plan::PlannedLiftManifest;
