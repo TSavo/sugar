@@ -1,0 +1,709 @@
+{
+  "schema": "sugar.python.fatal-recensus.v1",
+  "git_sha": "320b87cc13375bbdb887e57d1ff4a46100767390",
+  "measured_utc": "2026-07-18T01:58:38Z",
+  "package_versions": {
+    "numpy": "2.5.1",
+    "pandas": "3.0.3"
+  },
+  "discovery_timeout_seconds": 10,
+  "escalation_bounds_seconds": [
+    60,
+    120,
+    300
+  ],
+  "census": {
+    "assertions_total": 20769,
+    "files_total": 1828,
+    "files_with_assertions": 1032,
+    "files_without_assertions": 796
+  },
+  "terminal_categories_discovery_10s": {
+    "completed": 806,
+    "factory-construction-panic": 189,
+    "bare-exception": 28,
+    "timeout-or-hang": 9,
+    "process-crash-or-overflow": 0
+  },
+  "terminal_categories_post_escalation": {
+    "bare-exception": 28,
+    "completed": 812,
+    "factory-construction-panic": 190,
+    "timeout-or-hang": 2
+  },
+  "headline_post_escalation": {
+    "assertion_bearing_files": 1032,
+    "completed": 812,
+    "typed_factory_panic": 190,
+    "bare_exception": 28,
+    "process_crash": 0,
+    "timeout_at_300s": 2,
+    "transport": 0,
+    "fatal_frontier": 220
+  },
+  "delta_vs_5048": {
+    "completed": -20,
+    "typed_factory_panic": 9,
+    "bare_exception": 13,
+    "process_crash": -4,
+    "timeout": 2,
+    "fatal_frontier": 20
+  },
+  "owners_ranked": [
+    {
+      "owner": "TemporalContext",
+      "files": 58,
+      "representatives": [
+        "numpy/f2py/tests/test_crackfortran.py",
+        "pandas/core/arrays/string_arrow.py",
+        "pandas/core/generic.py"
+      ]
+    },
+    {
+      "owner": "AppendCallSugar",
+      "files": 26,
+      "representatives": [
+        "pandas/io/common.py",
+        "pandas/io/formats/format.py",
+        "pandas/tests/indexes/multi/test_reshape.py"
+      ]
+    },
+    {
+      "owner": "ConstructorCallSugar",
+      "files": 23,
+      "representatives": [
+        "pandas/core/_numba/extensions.py",
+        "pandas/core/arrays/arrow/extension_types.py",
+        "pandas/core/arrays/period.py"
+      ]
+    },
+    {
+      "owner": "multiply",
+      "files": 7,
+      "representatives": [
+        "numpy/_core/tests/test_simd.py",
+        "numpy/_core/tests/test_indexing.py",
+        "numpy/lib/tests/test_nanfunctions.py"
+      ]
+    },
+    {
+      "owner": "ImportAliasValue",
+      "files": 6,
+      "representatives": [
+        "pandas/tests/internals/test_api.py",
+        "pandas/tests/scalar/timestamp/test_constructors.py",
+        "numpy/_core/tests/test_deprecations.py"
+      ]
+    },
+    {
+      "owner": "RuntimeEffect",
+      "files": 5,
+      "representatives": [
+        "pandas/tests/extension/uuid/test_uuid.py",
+        "pandas/tests/groupby/test_apply.py",
+        "pandas/tests/io/excel/test_readers.py"
+      ]
+    },
+    {
+      "owner": "FunctionCallable",
+      "files": 4,
+      "representatives": [
+        "numpy/ma/tests/test_extras.py",
+        "pandas/_testing/asserters.py",
+        "pandas/tests/io/test_feather.py"
+      ]
+    },
+    {
+      "owner": "RaiseSugar",
+      "files": 4,
+      "representatives": [
+        "pandas/core/indexes/period.py",
+        "pandas/core/indexes/base.py",
+        "numpy/f2py/tests/test_symbolic.py"
+      ]
+    },
+    {
+      "owner": "SequentialDigBody",
+      "files": 4,
+      "representatives": [
+        "pandas/core/indexing.py",
+        "pandas/tests/arrays/categorical/test_astype.py",
+        "pandas/tests/config/test_localization.py"
+      ]
+    },
+    {
+      "owner": "add",
+      "files": 4,
+      "representatives": [
+        "pandas/tests/extension/decimal/test_decimal.py",
+        "pandas/core/window/rolling.py",
+        "pandas/tests/groupby/test_reductions.py"
+      ]
+    },
+    {
+      "owner": "WithSugar",
+      "files": 4,
+      "representatives": [
+        "pandas/tests/util/test_util.py",
+        "pandas/tests/io/formats/style/test_style.py",
+        "pandas/tests/io/excel/test_xlrd.py"
+      ]
+    },
+    {
+      "owner": "CallSiteValue.truth",
+      "files": 3,
+      "representatives": [
+        "numpy/_core/tests/test_scalar_methods.py",
+        "numpy/lib/tests/test_format.py",
+        "pandas/tests/groupby/aggregate/test_other.py"
+      ]
+    },
+    {
+      "owner": "bitwise_or",
+      "files": 3,
+      "representatives": [
+        "pandas/core/arrays/sparse/array.py",
+        "pandas/core/arrays/base.py",
+        "numpy/f2py/tests/test_array_from_pyobj.py"
+      ]
+    },
+    {
+      "owner": "truth",
+      "files": 3,
+      "representatives": [
+        "numpy/_core/tests/test_numeric.py",
+        "numpy/testing/tests/test_utils.py",
+        "pandas/tests/io/test_http_headers.py"
+      ]
+    },
+    {
+      "owner": "WhileSugar",
+      "files": 3,
+      "representatives": [
+        "pandas/io/sas/sas7bdat.py",
+        "pandas/io/stata.py",
+        "pandas/io/parsers/python_parser.py"
+      ]
+    },
+    {
+      "owner": "ForSugar.static_unfold",
+      "files": 2,
+      "representatives": [
+        "numpy/_core/tests/test_dtype.py",
+        "numpy/_core/tests/test_scalarmath.py"
+      ]
+    },
+    {
+      "owner": "bitwise_and",
+      "files": 2,
+      "representatives": [
+        "numpy/random/tests/test_smoke.py",
+        "pandas/core/indexes/datetimes.py"
+      ]
+    },
+    {
+      "owner": "unary_minus",
+      "files": 2,
+      "representatives": [
+        "pandas/tests/arithmetic/test_datetime64.py",
+        "pandas/tests/arithmetic/test_timedelta64.py"
+      ]
+    },
+    {
+      "owner": "divide",
+      "files": 2,
+      "representatives": [
+        "pandas/tests/extension/base/methods.py",
+        "pandas/tests/reductions/test_reductions.py"
+      ]
+    },
+    {
+      "owner": "floor_divide",
+      "files": 2,
+      "representatives": [
+        "pandas/tests/indexes/timedeltas/test_arithmetic.py",
+        "pandas/tests/scalar/timedelta/test_arithmetic.py"
+      ]
+    },
+    {
+      "owner": "ForElseSugar",
+      "files": 2,
+      "representatives": [
+        "pandas/_version.py",
+        "numpy/_core/tests/test_mem_overlap.py"
+      ]
+    },
+    {
+      "owner": "ForSugar",
+      "files": 2,
+      "representatives": [
+        "pandas/core/reshape/reshape.py",
+        "numpy/_core/tests/test_cpu_features.py"
+      ]
+    },
+    {
+      "owner": "ImportAliasValue.truth",
+      "files": 2,
+      "representatives": [
+        "pandas/tests/computation/test_compat.py",
+        "pandas/tests/extension/test_arrow.py"
+      ]
+    },
+    {
+      "owner": "FormatDunderCallSugar",
+      "files": 2,
+      "representatives": [
+        "pandas/tests/scalar/test_na_scalar.py",
+        "pandas/tests/io/formats/test_to_string.py"
+      ]
+    },
+    {
+      "owner": "bitwise_invert",
+      "files": 2,
+      "representatives": [
+        "pandas/tests/tools/test_to_numeric.py",
+        "pandas/tests/computation/test_eval.py"
+      ]
+    },
+    {
+      "owner": "python.factory",
+      "files": 2,
+      "representatives": [
+        "pandas/core/computation/scope.py",
+        "pandas/tests/test_register_accessor.py"
+      ]
+    },
+    {
+      "owner": "WithSugar manager result",
+      "files": 1,
+      "representatives": [
+        "numpy/_core/tests/test_overrides.py"
+      ]
+    },
+    {
+      "owner": "subtract",
+      "files": 1,
+      "representatives": [
+        "numpy/testing/_private/utils.py"
+      ]
+    },
+    {
+      "owner": "AttributeSugar",
+      "files": 1,
+      "representatives": [
+        "pandas/tests/extension/test_common.py"
+      ]
+    },
+    {
+      "owner": ".venv-recensus/lib/python3.12/site-packages/pandas/core/frame.py:130:15",
+      "files": 1,
+      "representatives": [
+        "pandas/tests/frame/test_subclass.py"
+      ]
+    },
+    {
+      "owner": "left_shift",
+      "files": 1,
+      "representatives": [
+        "numpy/_core/tests/test_half.py"
+      ]
+    },
+    {
+      "owner": "numpy/f2py/f2py2e.py:642:23",
+      "files": 1,
+      "representatives": [
+        "numpy/f2py/f2py2e.py"
+      ]
+    },
+    {
+      "owner": "modulo",
+      "files": 1,
+      "representatives": [
+        "numpy/polynomial/tests/test_classes.py"
+      ]
+    },
+    {
+      "owner": "pandas/core/internals/managers.py:1399:34",
+      "files": 1,
+      "representatives": [
+        "pandas/core/internals/managers.py"
+      ]
+    },
+    {
+      "owner": "bitwise_xor",
+      "files": 1,
+      "representatives": [
+        "pandas/core/ops/array_ops.py"
+      ]
+    },
+    {
+      "owner": "subscript",
+      "files": 1,
+      "representatives": [
+        "pandas/io/parsers/c_parser_wrapper.py"
+      ]
+    },
+    {
+      "owner": "GetattrBuiltinSugar",
+      "files": 1,
+      "representatives": [
+        "pandas/tests/arrays/categorical/test_operators.py"
+      ]
+    }
+  ],
+  "timeout_escalation": [
+    {
+      "file": "pandas/core/dtypes/cast.py",
+      "category": "completed",
+      "timeout_used": 60,
+      "testimony": {
+        "effects": [],
+        "factory_walk_rows": 770,
+        "facts": 40,
+        "file": "pandas/core/dtypes/cast.py",
+        "outcome": "completed"
+      }
+    },
+    {
+      "file": "pandas/tests/io/test_sql.py",
+      "category": "factory-construction-panic",
+      "timeout_used": 60,
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "pandas/tests/io/test_sql.py",
+        "gap": {
+          "blame": "pandas/tests/io/test_sql.py:1182:32",
+          "fix": "bind `query` before reducing NameSugar",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "query",
+          "owner": "TemporalContext",
+          "requested": "value"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=TemporalContext blame=pandas/tests/io/test_sql.py:1182:32 observed=query requested=value fix=bind `query` before reducing NameSugar"
+      }
+    },
+    {
+      "file": "numpy/random/tests/test_random.py",
+      "category": "completed",
+      "timeout_used": 300,
+      "testimony": {
+        "effects": [
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_random.TestRandint.test_bounds_checking::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_random.py:179:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_random.TestRandint.test_rng_zero_and_extremes::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_random.py:190:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_random.TestRandint.test_full_range::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_random.py:206:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_random.TestRandint.test_respect_dtype_singleton::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_random.py:290:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "CallResultTypeRuntimeEffect",
+            "name": "numpy.random.tests.test_random.TestRandomDist.test_shuffle_no_object_unpacking::runtime-effect",
+            "reason": "call-result type runtime boundary: `Generator(...)` has no cited return-type/native tester coordinate; Python must execute the call before its result can serve as an isinstance type operand; site=numpy/random/tests/test_random.py:555:34",
+            "status": "runtime-effect"
+          }
+        ],
+        "factory_walk_rows": 1126,
+        "facts": 9,
+        "file": "numpy/random/tests/test_random.py",
+        "outcome": "completed"
+      }
+    },
+    {
+      "file": "pandas/tests/dtypes/test_dtypes.py",
+      "category": "completed",
+      "timeout_used": 60,
+      "testimony": {
+        "effects": [
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "pandas.tests.dtypes.test_dtypes.TestIntervalDtype.test_equality_generic::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=pandas/tests/dtypes/test_dtypes.py:788:17",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "pandas.tests.dtypes.test_dtypes.TestIntervalDtype.test_name_repr::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=pandas/tests/dtypes/test_dtypes.py:807:17",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "pandas.tests.dtypes.test_dtypes.TestCategoricalDtypeParametrized.test_str_vs_repr::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=pandas/tests/dtypes/test_dtypes.py:1065:16",
+            "status": "runtime-effect"
+          }
+        ],
+        "factory_walk_rows": 913,
+        "facts": 359,
+        "file": "pandas/tests/dtypes/test_dtypes.py",
+        "outcome": "completed"
+      }
+    },
+    {
+      "file": "pandas/tests/frame/test_block_internals.py",
+      "category": "timeout-or-hang",
+      "timeout_used": 300,
+      "reason": "exceeded 300s"
+    },
+    {
+      "file": "pandas/tests/io/pytables/test_store.py",
+      "category": "completed",
+      "timeout_used": 60,
+      "testimony": {
+        "effects": [
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "pandas.tests.io.pytables.test_store.test_repr::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=pandas/tests/io/pytables/test_store.py:141:14",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "AttributeStoreRuntimeEffect",
+            "name": "pandas.tests.io.pytables.test_store.test_versioning::runtime-effect",
+            "reason": "attribute store dispatch depends on the runtime-selected receiver and its descriptor protocol; field=pandas_version",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "GetattrRuntimeEffect",
+            "name": "pandas.tests.io.pytables.test_store.test_getattr::runtime-effect",
+            "reason": "getattr runtime boundary: receiver reduced to CallSiteValue; Python resolves attributes at runtime; blame=pandas/tests/io/pytables/test_store.py:326:8",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "GetattrRuntimeEffect",
+            "name": "pandas.tests.io.pytables.test_store.test_getattr::runtime-effect",
+            "reason": "getattr runtime boundary: receiver reduced to CallSiteValue; Python resolves attributes at runtime; blame=pandas/tests/io/pytables/test_store.py:326:8",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "GetattrRuntimeEffect",
+            "name": "pandas.tests.io.pytables.test_store.test_getattr::runtime-effect",
+            "reason": "getattr runtime boundary: receiver reduced to CallSiteValue; Python resolves attributes at runtime; blame=pandas/tests/io/pytables/test_store.py:326:8",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "GetattrRuntimeEffect",
+            "name": "pandas.tests.io.pytables.test_store.test_getattr::runtime-effect",
+            "reason": "getattr runtime boundary: receiver reduced to CallSiteValue; Python resolves attributes at runtime; blame=pandas/tests/io/pytables/test_store.py:326:8",
+            "status": "runtime-effect"
+          }
+        ],
+        "factory_walk_rows": 580,
+        "facts": 75,
+        "file": "pandas/tests/io/pytables/test_store.py",
+        "outcome": "completed"
+      }
+    },
+    {
+      "file": "pandas/tests/io/test_stata.py",
+      "category": "timeout-or-hang",
+      "timeout_used": 300,
+      "reason": "exceeded 300s"
+    },
+    {
+      "file": "numpy/random/tests/test_generator_mt19937.py",
+      "category": "completed",
+      "timeout_used": 60,
+      "testimony": {
+        "effects": [
+          {
+            "effect": "SubtractRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestBinomial.test_p_extremely_small::runtime-effect",
+            "reason": "subtraction depends on runtime __sub__/__rsub__ dispatch; left=TermValue right=CallSiteValue site=numpy/random/tests/test_generator_mt19937.py:119:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_bounds_checking::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:359:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_bounds_checking_array::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:384:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_rng_zero_and_extremes::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:400:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_rng_zero_and_extremes_array::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:427:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_full_range::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:457:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_full_range_array::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:472:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_scalar_array_equiv::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:501:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_repeatability_broadcasting::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:557:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_repeatability_32bit_boundary::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:591:28",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_respect_dtype_singleton::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:670:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_respect_dtype_singleton::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:681:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_respect_dtype_singleton::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:681:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestIntegers.test_respect_dtype_array::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:691:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.TestBroadcast.test_multinomial_pval_broadcast::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_generator_mt19937.py:2486:18",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "CallResultTypeRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.test_legacy_pickle::runtime-effect",
+            "reason": "call-result type runtime boundary: `PCG64(...)` has no cited return-type/native tester coordinate; Python must execute the call before its result can serve as an isinstance type operand; site=numpy/random/tests/test_generator_mt19937.py:2828:11",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "CallResultTypeRuntimeEffect",
+            "name": "numpy.random.tests.test_generator_mt19937.test_legacy_pickle::runtime-effect",
+            "reason": "call-result type runtime boundary: `PCG64(...)` has no cited return-type/native tester coordinate; Python must execute the call before its result can serve as an isinstance type operand; site=numpy/random/tests/test_generator_mt19937.py:2828:11",
+            "status": "runtime-effect"
+          }
+        ],
+        "factory_walk_rows": 1862,
+        "facts": 79,
+        "file": "numpy/random/tests/test_generator_mt19937.py",
+        "outcome": "completed"
+      }
+    },
+    {
+      "file": "numpy/random/tests/test_randomstate.py",
+      "category": "completed",
+      "timeout_used": 120,
+      "testimony": {
+        "effects": [
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_randomstate.TestRandint.test_bounds_checking::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_randomstate.py:302:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_randomstate.TestRandint.test_rng_zero_and_extremes::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_randomstate.py:313:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_randomstate.TestRandint.test_full_range::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_randomstate.py:329:19",
+            "status": "runtime-effect"
+          },
+          {
+            "effect": "ConditionalExpressionRuntimeEffect",
+            "name": "numpy.random.tests.test_randomstate.TestRandint.test_respect_dtype_singleton::runtime-effect",
+            "reason": "conditional expression runtime boundary: Python evaluates the condition at runtime before choosing a branch; keep as typed red until IfExpSugar constructs the guarded value. blame=numpy/random/tests/test_randomstate.py:437:19",
+            "status": "runtime-effect"
+          }
+        ],
+        "factory_walk_rows": 1389,
+        "facts": 28,
+        "file": "numpy/random/tests/test_randomstate.py",
+        "outcome": "completed"
+      }
+    }
+  ],
+  "remaining_timeouts_300s": [
+    "pandas/tests/frame/test_block_internals.py",
+    "pandas/tests/io/test_stata.py"
+  ],
+  "bare_exception_files": [
+    "numpy/_core/tests/test_arrayprint.py",
+    "numpy/lib/tests/test_shape_base.py",
+    "numpy/linalg/tests/test_regression.py",
+    "pandas/tests/apply/test_frame_apply.py",
+    "pandas/tests/arrays/string_/test_string.py",
+    "pandas/tests/frame/test_reductions.py",
+    "pandas/tests/scalar/period/test_period.py",
+    "pandas/tests/scalar/timestamp/methods/test_replace.py",
+    "pandas/tests/tseries/frequencies/test_freq_code.py",
+    "numpy/_core/tests/test_longdouble.py",
+    "numpy/_core/tests/test_memmap.py",
+    "numpy/_core/tests/test_multithreading.py",
+    "numpy/lib/tests/test_function_base.py",
+    "numpy/ma/tests/test_core.py",
+    "pandas/core/util/hashing.py",
+    "pandas/tests/scalar/timedelta/test_timedelta.py",
+    "pandas/tests/scalar/timestamp/methods/test_as_unit.py",
+    "numpy/_core/tests/test_function_base.py",
+    "numpy/_core/tests/test_multiarray.py",
+    "numpy/_core/tests/test_nditer.py",
+    "numpy/_core/tests/test_shape_base.py",
+    "numpy/_core/tests/test_stringdtype.py",
+    "numpy/linalg/_linalg.py",
+    "numpy/linalg/tests/test_linalg.py",
+    "numpy/ma/core.py",
+    "numpy/random/_examples/cffi/extending.py",
+    "pandas/tests/scalar/timedelta/methods/test_as_unit.py",
+    "pandas/tests/scalar/timestamp/test_timestamp.py"
+  ]
+}
