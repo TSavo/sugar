@@ -362,19 +362,11 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             if other.value == 0:
-                self._floor_gap(
-                    owner="modulo",
-                    blame=site,
-                    observed=(
-                        f"left={type(self).__name__} right={type(other).__name__} "
-                        "divisor=0"
-                    ),
-                    requested="construct exact modulo-by-zero exception",
-                    fix=(
-                        "construct the exact ZeroDivisionError evidence; a "
-                        "decidable zero divisor cannot mint RuntimeEffect"
-                    ),
+                from sugar_lift_py_tests.floor.ground_zero_division_error import (
+                    ground_zero_division_error,
                 )
+
+                return ground_zero_division_error(site=site)
             return Complete(TermValue(self.value % other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
@@ -389,19 +381,11 @@ class TermValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             if other.value == 0:
-                self._floor_gap(
-                    owner="floor_divide",
-                    blame=site,
-                    observed=(
-                        f"left={type(self).__name__} right={type(other).__name__} "
-                        "divisor=0"
-                    ),
-                    requested="construct exact floor-division-by-zero exception",
-                    fix=(
-                        "construct the exact ZeroDivisionError evidence; a "
-                        "decidable zero divisor cannot mint RuntimeEffect"
-                    ),
+                from sugar_lift_py_tests.floor.ground_zero_division_error import (
+                    ground_zero_division_error,
                 )
+
+                return ground_zero_division_error(site=site)
             return Complete(TermValue(self.value // other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
