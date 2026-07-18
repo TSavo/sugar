@@ -17,7 +17,9 @@ Exception) under production ``src/sugar_lift_py_tests`` is debt unless the
 handler body is pure re-raise on every path (no soft assignment / continue /
 return None after catch).
 
-Exit 1 while R > 0. No baseline. No allowlist of production soft continues.
+Exit 1 while R > 0. Missing roots and source read/parse failures are separate
+``auditor_errors`` and also exit red. No baseline. No allowlist of production
+soft continues.
 """
 
 from __future__ import annotations
@@ -165,13 +167,64 @@ def _soft_continue(handler: ast.ExceptHandler) -> bool:
 
 def scan_package(package_root: Path) -> list[PanicCatchOffender]:
     offenders: list[PanicCatchOffender] = []
-    for path in sorted(package_root.rglob("*.py")):
-        rel = path.relative_to(package_root).as_posix()
+    try:
+        resolved_root = package_root.resolve()
+    except OSError as error:
+        return [
+            PanicCatchOffender(
+                package_root.as_posix(),
+                0,
+                "auditor-root-error",
+                f"could not resolve scan root: {error}",
+            )
+        ]
+    if not resolved_root.is_dir():
+        return [
+            PanicCatchOffender(
+                package_root.as_posix(),
+                0,
+                "auditor-root-error",
+                "scan root is not a directory",
+            )
+        ]
+    try:
+        paths = sorted(resolved_root.rglob("*.py"))
+    except OSError as error:
+        return [
+            PanicCatchOffender(
+                package_root.as_posix(),
+                0,
+                "auditor-root-error",
+                f"could not enumerate scan root: {error}",
+            )
+        ]
+    for path in paths:
+        rel = path.relative_to(resolved_root).as_posix()
         if _is_audit_membrane(rel):
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except SyntaxError:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            offenders.append(
+                PanicCatchOffender(
+                    rel,
+                    0,
+                    "auditor-read-error",
+                    f"could not read source: {error}",
+                )
+            )
+            continue
+        try:
+            tree = ast.parse(source, filename=str(path))
+        except SyntaxError as error:
+            offenders.append(
+                PanicCatchOffender(
+                    rel,
+                    int(error.lineno or 0),
+                    "auditor-parse-error",
+                    f"ast.parse failed: {error.msg}",
+                )
+            )
             continue
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
@@ -243,18 +296,30 @@ def scan_repository(kit_root: Path) -> list[PanicCatchOffender]:
     )
     offenders: list[PanicCatchOffender] = []
     for prefix, root in roots:
-        if not root.is_dir():
-            continue
+        root_offenders = scan_package(root)
         offenders.extend(
-            offender._replace(path=f"{prefix}/{offender.path}")
-            for offender in scan_package(root)
+            offender._replace(
+                path=(
+                    prefix
+                    if offender.kind == "auditor-root-error"
+                    else f"{prefix}/{offender.path}"
+                )
+            )
+            for offender in root_offenders
         )
     return sorted(offenders)
 
 
 def format_report(offenders: list[PanicCatchOffender]) -> str:
+    panic_offenders = [
+        row for row in offenders if not row.kind.startswith("auditor-")
+    ]
+    auditor_errors = [
+        row for row in offenders if row.kind.startswith("auditor-")
+    ]
     lines = [
-        f"R_factory_panic_catches_outside_audit = {len(offenders)}",
+        f"R_factory_panic_catches_outside_audit = {len(panic_offenders)}",
+        f"auditor_errors = {len(auditor_errors)}",
         "Lawful: only per-file corpus / gap-enumeration audit holds FactoryPanic "
         "and emits a loud red row. Production may only pure re-raise.",
         "",
@@ -277,7 +342,9 @@ def main() -> int:
     if offenders:
         print(
             "FACTORY-PANIC-CATCH LAW RED: "
-            f"{len(offenders)} illegal FactoryPanic catches"
+            f"{sum(not row.kind.startswith('auditor-') for row in offenders)} "
+            "illegal FactoryPanic catches; "
+            f"auditor_errors={sum(row.kind.startswith('auditor-') for row in offenders)}"
         )
         print(format_report(offenders))
         return 1

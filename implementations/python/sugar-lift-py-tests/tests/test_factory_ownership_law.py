@@ -130,3 +130,46 @@ def test_ownership_law_stable_zero() -> None:
         f"R_ownership={len(offenders)}; enroll witnesses / narrow owns:\n"
         + _SCANNER.format_report(offenders)
     )
+
+
+def test_scanner_reports_missing_root_as_auditor_error(tmp_path: Path) -> None:
+    offenders = _SCANNER.scan_sugar_tree(tmp_path / "missing")
+
+    assert [(row.line, row.kind, row.sugar) for row in offenders] == [
+        (0, "auditor-root-error", "-")
+    ]
+
+
+def test_scanner_reports_parse_error_as_auditor_error(tmp_path: Path) -> None:
+    sugar = tmp_path / "sugar"
+    sugar.mkdir()
+    (sugar / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+
+    offenders = _SCANNER.scan_sugar_tree(sugar)
+
+    assert [(row.path, row.line, row.kind) for row in offenders] == [
+        ("sugar/broken.py", 1, "auditor-parse-error")
+    ]
+
+
+def test_scanner_reports_read_error_as_auditor_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sugar = tmp_path / "sugar"
+    sugar.mkdir()
+    broken = sugar / "broken.py"
+    broken.write_text("pass\n", encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def fail_target(path: Path, *args, **kwargs) -> str:
+        if path == broken:
+            raise OSError("planted unreadable source")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_target)
+
+    offenders = _SCANNER.scan_sugar_tree(sugar)
+
+    assert [(row.path, row.line, row.kind) for row in offenders] == [
+        ("sugar/broken.py", 0, "auditor-read-error")
+    ]

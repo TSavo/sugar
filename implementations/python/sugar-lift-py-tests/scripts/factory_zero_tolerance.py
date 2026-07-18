@@ -5,7 +5,8 @@ The factory boundary has two lawful actions: select a registered Sugar, or
 raise FactoryPanic. Sugar owns behavior construction, but may not classify raw
 AST shapes beside that construction. Structural SourceFragment child accessors
 and install-source resolution are not semantic construction. This scanner has
-no debt allowlist.
+no debt allowlist. Missing roots and source read/parse failures are separate
+``auditor_errors`` that make the process red without inflating the behavior R.
 """
 
 from __future__ import annotations
@@ -308,17 +309,32 @@ def scan_factory(factory_root: Path) -> list[Offender]:
 
 def scan_package(package_root: Path) -> list[Offender]:
     offenders: list[Offender] = []
+    try:
+        resolved_package = package_root.resolve()
+    except OSError:
+        return [Offender(package_root.as_posix(), 0, "auditor-root-error")]
+    if not resolved_package.is_dir():
+        return [Offender(package_root.as_posix(), 0, "auditor-root-error")]
     for scope in ("factory", "sugar"):
-        root = package_root / scope
-        for path in sorted(root.rglob("*.py")):
-            relative = path.relative_to(package_root).as_posix()
-            offenders.extend(
-                scan_source(
-                    path.read_text(encoding="utf-8"),
-                    relative,
-                    scope=scope,
+        root = resolved_package / scope
+        try:
+            paths = sorted(root.rglob("*.py"))
+        except OSError:
+            offenders.append(Offender(scope, 0, "auditor-root-error"))
+            continue
+        for path in paths:
+            relative = path.relative_to(resolved_package).as_posix()
+            try:
+                source = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                offenders.append(Offender(relative, 0, "auditor-read-error"))
+                continue
+            try:
+                offenders.extend(scan_source(source, relative, scope=scope))
+            except SyntaxError as error:
+                offenders.append(
+                    Offender(relative, int(error.lineno or 0), "auditor-parse-error")
                 )
-            )
     return sorted(offenders)
 
 
@@ -371,6 +387,15 @@ _REPLACEMENT: dict[str, str] = {
         "owning Sugar; delete classify_loop_control_scope and leaf-sugar "
         "Match/Subscript walkers."
     ),
+    "auditor-root-error": (
+        "Restore the configured scan root; an absent surface is never R=0."
+    ),
+    "auditor-read-error": (
+        "Make the source readable by the auditor; unreadable files are not skipped."
+    ),
+    "auditor-parse-error": (
+        "Repair or explicitly classify invalid Python; parse failure is not R=0."
+    ),
 }
 
 
@@ -384,8 +409,15 @@ def format_report(offenders: list[Offender]) -> str:
 
     by_kind = Counter(row.kind for row in offenders)
     by_file = Counter(row.path for row in offenders)
+    behavior_offenders = [
+        row for row in offenders if not row.kind.startswith("auditor-")
+    ]
+    auditor_errors = [
+        row for row in offenders if row.kind.startswith("auditor-")
+    ]
     lines = [
-        f"R_behavior_side_doors = {len(offenders)}",
+        f"R_behavior_side_doors = {len(behavior_offenders)}",
+        f"auditor_errors = {len(auditor_errors)}",
         "Factory: select registered Sugar | FactoryPanic.",
         "Sugar: construct behavior without raw-AST classification side doors.",
         "No allowlist. Compare consecutive runs for Delta R.",
@@ -468,7 +500,9 @@ def main() -> int:
     if offenders:
         print(
             "FACTORY ZERO-TOLERANCE RED: "
-            f"{len(offenders)} behavior-construction side doors"
+            f"{sum(not row.kind.startswith('auditor-') for row in offenders)} "
+            "behavior-construction side doors; "
+            f"auditor_errors={sum(row.kind.startswith('auditor-') for row in offenders)}"
         )
         print(format_report(offenders))
         return 1
