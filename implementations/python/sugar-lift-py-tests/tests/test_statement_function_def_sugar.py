@@ -106,6 +106,28 @@ def test_decorated_callable_wrapper_fills_original_missing_argument() -> None:
     ) == TermValue(7)
 
 
+def test_decorator_result_projects_static_typing_cast_callable() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    from typing import cast\n"
+        "    def decorate(func):\n"
+        "        def wrapper(value):\n"
+        "            return func(value) + 1\n"
+        "        return cast(object, wrapper)\n"
+        "    @decorate\n"
+        "    def doubled(value):\n"
+        "        return value * 2\n"
+        "    return doubled(3)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="decorator typing.cast substitution", project_callsite=False
+    ) == TermValue(7)
+
+
 def test_callable_merges_explicit_keyword_into_guarded_static_mapping() -> None:
     site = SourceFragment.from_source(
         "inner(obj='left', **options)\n", "nested.py"
