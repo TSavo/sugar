@@ -21,6 +21,7 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ListValue,
     ReturnValue,
+    StringValue,
     SymbolicValue,
     TermValue,
 )
@@ -124,7 +125,14 @@ def test_append_on_callsite_rebinds_to_list_append_coordinate() -> None:
     (
         "pandas.DatetimeIndex",
         "pandas.Index",
+        "pandas.IntervalIndex",
+        "pandas.IntervalIndex.from_breaks",
+        "pandas.MultiIndex.from_arrays",
+        "pandas.PeriodIndex",
+        "pandas.RangeIndex",
+        "pandas.core.indexes.api.Index",
         "pandas.core.indexes.datetimes.date_range",
+        "pandas.core.indexes.period.period_range",
         "pandas.core.indexes.timedeltas.timedelta_range",
     ),
 )
@@ -185,8 +193,68 @@ def test_unclassified_callsite_append_contract_stays_loud() -> None:
             binds={"opaque": opaque},
         )
 
-    assert raised.value.info.owner == "AppendCallSugar"
+    assert raised.value.info.owner == "CallSiteValue.append_with"
     assert raised.value.info.requested == "classified append contract"
+
+
+def test_typing_cast_of_finite_list_appends_exact_post_state() -> None:
+    from sugar_lift_py_tests.ir import ctor
+
+    finite_cast = CallSiteValue(
+        target_name="typing.cast",
+        arg_values=(
+            StringValue("list[tuple[str, int]]"),
+            ListValue((TermValue(1),)),
+        ),
+        parameters=(),
+        term=ctor("call:typing.cast", ()),
+        body=None,
+        site="append.py:1",
+    )
+
+    record = compose_block(
+        "    attrs.append(2)\n    return attrs\n",
+        binds={"attrs": finite_cast},
+    )
+
+    assert record.statements == (ReturnValue(ListValue((TermValue(1), TermValue(2)))),)
+
+
+def test_typing_cast_annotation_does_not_bless_opaque_receiver() -> None:
+    from sugar_lift_py_tests.ir import ctor
+
+    opaque = CallSiteValue(
+        target_name="opaque_factory",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:opaque_factory", ()),
+        body=None,
+        site="append.py:1",
+    )
+    lying_cast = CallSiteValue(
+        target_name="typing.cast",
+        arg_values=(StringValue("list[int]"), opaque),
+        parameters=(),
+        term=ctor("call:typing.cast", ()),
+        body=None,
+        site="append.py:1",
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    attrs.append(2)\n    return attrs\n",
+            binds={"attrs": lying_cast},
+        )
+
+    assert raised.value.info.owner == "CallSiteValue.append_with"
+
+
+def test_append_sugar_enrolls_finite_cast_witness() -> None:
+    from sugar_lift_py_tests.sugar.append_call_sugar import AppendCallSugar
+
+    assert any(
+        pair.name == "append_finite_cast_return" for pair in AppendCallSugar.witnesses()
+    )
 
 
 def test_requests_check_compatibility_asserts_lift_through_append() -> None:
