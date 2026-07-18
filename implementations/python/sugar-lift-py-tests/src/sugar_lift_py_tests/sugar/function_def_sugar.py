@@ -121,7 +121,15 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
         from sugar_lift_py_tests.floor import SymbolicValue, UniverseValue
         from sugar_lift_py_tests.ir import make_var
 
-        temporal = ctx.temporal
+        # Defaults and decorators reduce before this point against the exact
+        # definition-prefix temporal.  The function body is deferred until
+        # after module execution, so it sees the completed module statement
+        # catalog instead of inheriting that eager prefix.
+        temporal = (
+            ctx.module_temporal
+            if ctx.module_temporal is not None
+            else ctx.temporal
+        )
         for formal in self.formals:
             temporal = temporal.bind_value(formal, SymbolicValue(make_var(formal)))
         scoped = replace(ctx, temporal=temporal)
