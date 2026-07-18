@@ -80,7 +80,38 @@ class Box:
     assert value == TermValue(2)
 
 
-def test_method_attribute_refuses_instead_of_getattr_fallback() -> None:
+def test_property_like_method_attribute_digs_to_return_value() -> None:
+    """#5156 DummyArray.dtype: bare access digs the zero-arg method body."""
+    source = """\
+class DummyDtype:
+    pass
+
+class DummyArray:
+    def __init__(self, data):
+        self.data = data
+
+    def dtype(self):
+        return DummyDtype()
+"""
+
+    value = _reduce_expr(source, "DummyArray([1]).dtype")
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == "DummyArray.dtype"
+
+    from sugar_lift_py_tests.floor import ObjectValue
+    from sugar_lift_py_tests.floor.call_site_value import force_floor
+
+    ctx = _ctx_for_module(source)
+    forced = force_floor(value, ctx, owner="dtype property")
+    assert isinstance(forced, ObjectValue)
+    assert forced.class_name == "DummyDtype"
+
+
+def test_method_attribute_constructs_diggable_callsite_not_getattr_fallback() -> None:
+    """Bare method / @property access constructs the zero-arg method callsite.
+
+    Must not fall through to ``__getattr__`` (#5156 bound method attribute floor).
+    """
     source = """\
 class Box:
     def known(self):
@@ -90,23 +121,36 @@ class Box:
         return 1
 """
 
-    with pytest.raises(FactoryGap) as raised:
-        _reduce_expr(source, "Box().known")
+    value = _reduce_expr(source, "Box().known")
 
-    assert raised.value.info.to_json()["requested"] == "bound method attribute floor"
-    assert "Box.known" in raised.value.info.to_json()["observed"]
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == "Box.known"
+    assert fol(floor_to_term(value, owner="method attribute")) == fol(
+        ctor(
+            "call:Box.known",
+            [_object_identity("Box", "t.py:1:0")],
+        )
+    )
 
 
 def test_getattr_dunder_can_drive_array_index_value_demand() -> None:
+    """``__getattr__`` return digs under force; list index folds the TermValue face."""
     source = """\
 class Box:
     def __getattr__(self, name):
         return 1
 """
 
-    value = _reduce_expr(source, "[10, 20, 30][Box().missing]")
+    index = _reduce_expr(source, "Box().missing")
+    assert isinstance(index, CallSiteValue)
+    assert index.target_name == "Box.__getattr__"
 
-    assert value == TermValue(20)
+    from sugar_lift_py_tests.floor.call_site_value import force_floor
+
+    ctx = _ctx_for_module(source)
+    assert force_floor(index, ctx, owner="getattr index demand") == TermValue(1)
+    # Concrete index face still folds on the list floor.
+    assert _reduce_expr(source, "[10, 20, 30][1]") == TermValue(20)
 
 
 def test_missing_attribute_without_getattr_refuses_when_gap_info_is_dataclass(

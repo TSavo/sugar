@@ -203,6 +203,30 @@ def test_getattr_static_literal_name_on_object_constructs_or_coordinates() -> No
     assert isinstance(result, BlockValue)
 
 
+def test_getattr_ground_tuple_index_name_constructs_static_face() -> None:
+    """#5156: decidable py.subscript(tuple, i) name folds to one static face."""
+    from factory_reduce import reduce_value
+    from sugar_lift_py_tests.floor import (
+        ObjectField,
+        ObjectValue,
+        StringValue,
+        TermValue,
+        TupleValue,
+    )
+
+    value = reduce_value(
+        "getattr(obj, names[0])",
+        binds={
+            "obj": ObjectValue(
+                class_name="Box",
+                fields=(ObjectField(name="x", value=TermValue(1)),),
+            ),
+            "names": TupleValue((StringValue("x"), StringValue("y"))),
+        },
+    )
+    assert value == TermValue(1)
+
+
 def test_getattr_unsupported_arity_panics_or_is_unowned() -> None:
     # Wrong arity is not a runtime effect — it is unfinished recognition or
     # a loud construction gap. Never mint GetattrRuntimeEffect for it.

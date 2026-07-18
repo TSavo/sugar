@@ -138,12 +138,15 @@ class AttributeSugar(Sugar, role=SugarRole.TERM):
 
         if isinstance(value, ObjectValue):
             if value.has_method(self.attr_name):
-                return value._floor_gap(
+                # Zero-extra-arg enrolled methods (including @property getters)
+                # construct the diggable method callsite. Extra-arg methods stay
+                # loud at call_method_value's arity gap (#5156).
+                return value.call_method_value(
+                    self.attr_name,
+                    (),
                     owner=type(self).__name__,
                     blame=self.site,
-                    observed=f"{value.class_name}.{self.attr_name}",
-                    requested="bound method attribute floor",
-                    fix="construct a bound method value before bare attribute access",
+                    ctx=ctx,
                 )
             if value.has_method("__getattr__"):
                 return value.call_method_value(
@@ -206,12 +209,15 @@ def project_object_attribute(value, attr_name: str, site, ctx) -> Outcome:
         if object_field.name == attr_name:
             return Complete(object_field.value)
     if value.has_method(attr_name):
-        return value._floor_gap(
+        # Bare method / @property access: construct the diggable zero-arg
+        # method callsite (bound-self projection). Extra-arg methods remain
+        # loud at the arity construction gap (#5156).
+        return value.call_method_value(
+            attr_name,
+            (),
             owner="AttributeSugar",
             blame=site,
-            observed=f"{value.class_name}.{attr_name}",
-            requested="bound method attribute floor",
-            fix="construct a bound method value before bare attribute access",
+            ctx=ctx,
         )
     if value.has_method("__getattr__"):
         return value.call_method_value(

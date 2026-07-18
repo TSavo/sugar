@@ -379,6 +379,36 @@ class SymbolicValue(FloorValue):
         # A symbolic receiver stays the py.subscript coordinate regardless of index.
         return self.py_subscript_coordinate(index, site)
 
+    def format_data_model(self, spec, site, ctx):
+        """Construct ``format(symbolic, spec)`` as an exact data-model coordinate.
+
+        A free/opaque receiver has no diggable ``__format__`` body. The spelling
+        is still decidable: name the ``call:__format__(receiver, spec)`` method
+        coordinate without inventing a concrete return string (#5156).
+        """
+        del ctx
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            CallSiteValue(
+                target_name="__format__",
+                arg_values=(self, spec),
+                parameters=(),
+                term=ctor(
+                    "call:__format__",
+                    [
+                        self.to_term(owner=str(site)),
+                        spec.to_term(owner=str(site)),
+                    ],
+                    symbol_kind="method-coordinate",
+                ),
+                body=None,
+                site=site,
+            )
+        )
+
     def project_callsite_with(self, operation, ctx):
         return operation.project_symbolic(self, ctx)
 
