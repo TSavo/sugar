@@ -18,6 +18,7 @@ from sugar_lift_py_tests.sugar.subscript_assign_sugar import SubscriptAssignSuga
 from sugar_lift_py_tests.sugar.tuple_unpack_assign_sugar import (
     TupleUnpackAssignSugar,
 )
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _build(source: str):
@@ -152,3 +153,20 @@ assert returned.value == TermValue({expected})
     lying = run(6)
     assert truthful.returncode == 0, truthful.stderr
     assert lying.returncode == 1, lying.stderr
+
+
+def test_subscript_tuple_unpack_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    seeds = Path(__file__).parent / "witness_seeds"
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful",
+        (seeds / "subscript_tuple_unpack_truthful.py").read_text(),
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "lying",
+        (seeds / "subscript_tuple_unpack_lying.py").read_text(),
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"

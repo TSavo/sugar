@@ -1612,17 +1612,17 @@ def _installed_module_name_from_filename(filename: str) -> str | None:
     """Derive a dotted module only when package boundaries are evidenced."""
     path = Path(filename)
     parts = path.with_suffix("").parts
-    if not path.is_absolute() and len(parts) > 1:
-        relative = list(parts)
-        if relative[-1] == "__init__":
-            relative.pop()
-        return ".".join(relative) or None
     for marker in ("site-packages", "dist-packages"):
         if marker in parts:
             suffix = list(parts[parts.index(marker) + 1 :])
             if suffix and suffix[-1] == "__init__":
                 suffix.pop()
             return ".".join(suffix) or None
+    if not path.is_absolute() and len(parts) > 1:
+        relative = list(parts)
+        if relative[-1] == "__init__":
+            relative.pop()
+        return ".".join(relative) or None
 
     # Local exact sources can prove their package chain with __init__.py files.
     package: list[str] = []

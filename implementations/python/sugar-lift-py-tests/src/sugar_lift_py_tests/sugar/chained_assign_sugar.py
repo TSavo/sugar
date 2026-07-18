@@ -118,7 +118,9 @@ def _target_store(target, value, site, ctx) -> SugarBody:
     from sugar_lift_py_tests.sugar.nested_attribute_assign_sugar import (
         NestedAttributeAssignSugar,
     )
-    from sugar_lift_py_tests.sugar.subscript_assign_sugar import SubscriptAssignSugar
+    from sugar_lift_py_tests.sugar.subscript_assign_sugar import (
+        SubscriptAssignSugar,
+    )
 
     if target.observed == "Name":
         store = ChainedNameStore(target.name_id(), value)
