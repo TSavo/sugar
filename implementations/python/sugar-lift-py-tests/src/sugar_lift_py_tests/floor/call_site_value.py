@@ -216,14 +216,49 @@ class CallSiteValue(FloorValue):
         )
 
     def append_with(self, value, site):
-        """Rebind an opaque list-shaped callsite after ``.append(v)``.
+        """Construct a proven list-shaped callsite after ``.append(v)``.
 
         Concrete ``ListValue`` folds element history. A callsite (for example
         ``s.split(".")[:3]``) has no element history to fold, but the append
         statement still rebinds the name: carry the prior list coordinate and
-        the appended value on ``py.list_append`` so later statements keep a
-        FloorValue. Do not invent members; the coordinate is the post-state.
+        appended value on ``py.list_append`` so later statements keep a
+        FloorValue. A finite value behind ``typing.cast`` keeps its exact
+        history. Unclassified callsites stay loud; a call result is not proof
+        that the receiver is a mutable list.
         """
+        from sugar_lift_py_tests.floor.list_value import ListValue
+
+        def is_constructed_list_callsite(receiver: CallSiteValue) -> bool:
+            if receiver.target_name in {"builtins.list", "list", "split"}:
+                return True
+            return (
+                receiver.target_name == "py.subscript"
+                and bool(receiver.arg_values)
+                and isinstance(receiver.arg_values[0], CallSiteValue)
+                and is_constructed_list_callsite(receiver.arg_values[0])
+            )
+
+        if (
+            self.target_name == "typing.cast"
+            and len(self.arg_values) == 2
+            and isinstance(self.arg_values[1], ListValue)
+        ):
+            return self.arg_values[1].append_with(value, site)
+
+        if not is_constructed_list_callsite(self):
+            from sugar_lift_py_tests.factory import factory_panic_gap
+
+            factory_panic_gap(
+                owner="CallSiteValue.append_with",
+                blame=str(site),
+                observed=f"CallSiteValue({self.target_name})",
+                requested="classified append contract",
+                fix=(
+                    "prove that the call result is a mutable list and construct "
+                    "its post-append state, or leave it loud"
+                ),
+            )
+
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.floor_terms import floor_to_term

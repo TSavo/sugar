@@ -63,6 +63,14 @@ class AppendCallSugar(
             "    return z\n"
             "\n"
         )
+        finite_cast_prefix = (
+            "from typing import cast\n\n"
+            "def A():\n"
+            '    attrs = cast("list[int]", [1])\n'
+            "    attrs.append(2)\n"
+            "    return len(attrs)\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="append_return",
@@ -86,6 +94,15 @@ class AppendCallSugar(
                 + "def test_a():\n"
                 + "    assert A([1, 2], 3) == 2\n",
             ),
+            _call_pair(
+                name="append_finite_cast_return",
+                owner_sugar="AppendCallSugar",
+                truthful=finite_cast_prefix
+                + "def test_a():\n"
+                + "    assert A() == 2\n",
+                lying=finite_cast_prefix + "def test_a():\n" + "    assert A() == 1\n",
+                family="finite-cast-list-append",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -100,26 +117,10 @@ class AppendCallSugar(
         from sugar_lift_py_tests.floor import CallSiteValue
 
         if isinstance(receiver, CallSiteValue):
-            if _is_constructed_list_callsite(receiver):
-                return receiver.append_with(value, self.site).and_then(
-                    lambda updated: Complete(ScopeRebind(self.receiver_name, updated))
-                )
             if receiver.target_name in _PANDAS_INDEX_CALL_TARGETS:
                 return Complete(
                     receiver.linear_method_call("append", (value,), self.site)
                 )
-            from sugar_lift_py_tests.factory import factory_panic_gap
-
-            factory_panic_gap(
-                owner=type(self).__name__,
-                blame=str(self.site),
-                observed=f"CallSiteValue({receiver.target_name})",
-                requested="classified append contract",
-                fix=(
-                    "prove that the call result is a mutable list and rebind it, "
-                    "or construct the exact non-mutating append result"
-                ),
-            )
         return receiver.append_with(value, self.site).and_then(
             lambda updated: Complete(ScopeRebind(self.receiver_name, updated))
         )
@@ -129,21 +130,15 @@ _PANDAS_INDEX_CALL_TARGETS = frozenset(
     {
         "pandas.DatetimeIndex",
         "pandas.Index",
+        "pandas.IntervalIndex",
+        "pandas.IntervalIndex.from_breaks",
+        "pandas.MultiIndex.from_arrays",
+        "pandas.PeriodIndex",
+        "pandas.RangeIndex",
+        "pandas.core.indexes.api.Index",
         "pandas.TimedeltaIndex",
         "pandas.core.indexes.datetimes.date_range",
+        "pandas.core.indexes.period.period_range",
         "pandas.core.indexes.timedeltas.timedelta_range",
     }
 )
-
-
-def _is_constructed_list_callsite(receiver) -> bool:
-    from sugar_lift_py_tests.floor import CallSiteValue
-
-    if receiver.target_name in {"builtins.list", "list", "split"}:
-        return True
-    return (
-        receiver.target_name == "py.subscript"
-        and bool(receiver.arg_values)
-        and isinstance(receiver.arg_values[0], CallSiteValue)
-        and _is_constructed_list_callsite(receiver.arg_values[0])
-    )
