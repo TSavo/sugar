@@ -93,6 +93,7 @@ _NEVER_SUPPRESSING_MANAGERS = {
 _IDENTITY_DECORATORS = {
     key: True
     for key in (
+        ("dataclasses", "dataclass"),
         ("pandas.core.indexes.extension", "inherit_names"),
         ("pandas.util._decorators", "set_module"),
         ("pandas.api.extensions", "register_dataframe_accessor"),
