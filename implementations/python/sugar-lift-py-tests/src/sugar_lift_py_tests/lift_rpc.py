@@ -1222,8 +1222,10 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
     rows (no post, no contract). Enumeration is functions by design: module
     statements no FunctionDefSugar owns are not lifted here.
 
-    Mandatory FactoryPanic is fail-fast here. Diagnostic continuation is a
-    separate `RecoveredAuditDto` lane and can never be returned from this door.
+    A definition-local FactoryPanic is recovered only as a mandatory red
+    factory-walk row so independent definitions remain report-legible. The
+    diagnostic `RecoveredAuditDto` lane remains disjoint and can never be
+    returned from this door.
     """
     from sugar_lift_py_tests.ir import constructor_symbol_kinds, term_intern_scope
 
@@ -1232,7 +1234,11 @@ def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
         _TRANSPORT_LOG.info(
             "lift_file_enter", extra={"stage": "lift_file.audit", "file": filename}
         )
-        payload, _gaps = audit_lift_file(source, filename)
+        payload, _gaps = audit_lift_file(
+            source,
+            filename,
+            _recover_report_panics=True,
+        )
         symbol_kinds = constructor_symbol_kinds()
         _TRANSPORT_LOG.info(
             "lift_file_exit",
@@ -1812,14 +1818,16 @@ def audit_lift_file(
     *,
     hold_panic: Literal[False] = False,
     recover_panics: bool = False,
+    _recover_report_panics: bool = False,
     target_memento: Optional[Dict[str, Any]] = None,
     audit_context: Optional[_AuditFileContext] = None,
 ) -> tuple[LiftReportPayloadDto, list[AuditOnlyGap]] | RecoveredAuditDto:
     """Lift normally, or enumerate panics as a disjoint recovered audit.
 
-    The legacy ``hold_panic`` lane returned partial ``LiftReportPayloadDto``
-    values and is deliberately rejected. Only ``recover_panics=True`` may
-    continue, and that branch returns ``RecoveredAuditDto`` with no IR lane.
+    The public audit door is fail-fast. ``recover_panics=True`` may continue
+    only into a ``RecoveredAuditDto`` with no IR lane. The private report-door
+    flag preserves independent completed definitions but projects every held
+    panic as a mandatory red factory-walk row.
     """
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
@@ -1832,6 +1840,8 @@ def audit_lift_file(
             "hold_panic partial lift artifacts are retired; use "
             "recover_panics=True for a diagnostic-only RecoveredAuditDto"
         )
+    if recover_panics and _recover_report_panics:
+        raise TypeError("diagnostic and report panic recovery are disjoint")
 
     payload = LiftReportPayloadDto(source_ledger={})
     gaps: list[AuditOnlyGap] = []
@@ -2133,12 +2143,25 @@ def audit_lift_file(
                     ),
                 },
             )
-            if not recover_panics:
+            if not (recover_panics or _recover_report_panics):
                 raise
-            # Diagnostic recovery records the panic but never returns `payload`.
+            # Both recovery doors preserve the same typed panic and red-row
+            # evidence. Only the report door may return the partial payload;
+            # diagnostic recovery remains ProofIR-free below.
             gap = gap_from_factory_panic(label, panic)
             gaps.append(gap)
-            payload.factory_walk.append(_factory_walk_red_from_gap(gap))
+            recovered_owner_span = None
+            if _recover_report_panics:
+                recovered_owner_span = (
+                    stmt.line,
+                    int(getattr(stmt.node, "end_lineno", stmt.line) or stmt.line),
+                )
+            payload.factory_walk.append(
+                _factory_walk_red_from_gap(
+                    gap,
+                    recovered_owner_span=recovered_owner_span,
+                )
+            )
             if recover_panics:
                 recovered_panics.append(
                     RecoveredFactoryPanicDto(
@@ -2331,7 +2354,11 @@ def _qualify_factory_walk_owner(rows, start: int, qualified_name: str) -> None:
         rows[index] = dataclasses.replace(row, source_memento=memento)
 
 
-def _factory_walk_red_from_gap(gap: AuditOnlyGap):
+def _factory_walk_red_from_gap(
+    gap: AuditOnlyGap,
+    *,
+    recovered_owner_span: tuple[int, int] | None = None,
+):
     """Project a held FactoryPanic as a factory-walk red row.
 
     status=unclassified serializes to unresolved/verdict=gap so
@@ -2362,6 +2389,20 @@ def _factory_walk_red_from_gap(gap: AuditOnlyGap):
         source_cid=blake3_512_of(b""),
     )
     reason = gap.message or audit.message or "factory gap"
+    extra = {
+        "candidates": list(audit.candidates),
+        "blame": blame,
+        "gap_kind": str(gap.info.get("gap_kind") or ""),
+        "gap_locus": str(gap.info.get("gap_locus") or ""),
+    }
+    if recovered_owner_span is not None:
+        extra.update(
+            {
+                "reportRecoveredPanic": True,
+                "recoveredOwnerStartLine": recovered_owner_span[0],
+                "recoveredOwnerEndLine": recovered_owner_span[1],
+            }
+        )
     return FactoryWalkRedRowDto(
         file=file or "<unknown>",
         line=line,
@@ -2372,12 +2413,7 @@ def _factory_walk_red_from_gap(gap: AuditOnlyGap):
         output=str(audit.status or FactoryAuditStatus.SUGAR_GAP),
         source_memento=memento,
         reason=reason,
-        extra={
-            "candidates": list(audit.candidates),
-            "blame": blame,
-            "gap_kind": str(gap.info.get("gap_kind") or ""),
-            "gap_locus": str(gap.info.get("gap_locus") or ""),
-        },
+        extra=extra,
     )
 
 

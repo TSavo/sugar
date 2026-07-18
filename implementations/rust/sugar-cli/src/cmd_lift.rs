@@ -9134,6 +9134,26 @@ fn source_report_has_hard_failures(report: &LiftSourceReport) -> bool {
         || report.diagnostics.iter().any(|diagnostic| {
             diagnostic.get("kind").and_then(Value::as_str) == Some("no-vendor-test-corpus")
         })
+        || report.factory_walk.iter().any(|row| {
+            row.get("status").and_then(Value::as_str) == Some("unresolved")
+                || row.get("verdict").and_then(Value::as_str) == Some("gap")
+        })
+        || report
+            .lift_coverage
+            .as_ref()
+            .and_then(|coverage| {
+                coverage
+                    .get("totals")
+                    .and_then(|totals| totals.get("silently_unaccounted"))
+                    .or_else(|| {
+                        coverage
+                            .get("assertions")
+                            .and_then(|assertions| assertions.get("silently_unaccounted"))
+                    })
+            })
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
 }
 
 fn vendor_conjoins_from_lift_response(
@@ -17809,6 +17829,32 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             !painted.contains("\u{1b}[32m") && !painted.contains("\x1b[32m"),
             "FACT must not paint green (that's dig-open); got {painted:?}"
         );
+    }
+
+    #[test]
+    fn source_report_recovered_factory_panic_is_a_hard_failure() {
+        let mut truthful = minimal_source_report();
+        truthful.factory_walk = vec![serde_json::json!({
+            "status": "unresolved",
+            "verdict": "gap",
+            "reportRecoveredPanic": true,
+            "reason": "owner=TemporalContext observed=UnknownLocal"
+        })];
+        assert!(source_report_has_hard_failures(&truthful));
+
+        let swallowed_green_twin = minimal_source_report();
+        assert!(!source_report_has_hard_failures(&swallowed_green_twin));
+    }
+
+    #[test]
+    fn source_report_silently_unaccounted_gate_is_a_hard_failure() {
+        let mut report = minimal_source_report();
+        report.lift_coverage = Some(serde_json::json!({
+            "assertions": {"silently_unaccounted": 1},
+            "totals": {"silently_unaccounted": 1}
+        }));
+
+        assert!(source_report_has_hard_failures(&report));
     }
 
     #[test]
