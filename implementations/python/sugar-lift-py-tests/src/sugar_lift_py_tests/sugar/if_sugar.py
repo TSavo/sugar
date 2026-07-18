@@ -85,6 +85,15 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
             "    return answer\n"
             "\n"
         )
+        nested_terminal = (
+            "def A(z):\n"
+            "    if z == 1:\n"
+            "        if z > 0:\n"
+            "            return 7\n"
+            "        return 8\n"
+            "    return 0\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="if_return",
@@ -120,6 +129,13 @@ class IfSugar(Sugar, role=SugarRole.STATEMENT):
                 owner_sugar="IfSugar",
                 truthful=guarded_raise_join + "def test_a():\n    assert A(1) == 7\n",
                 lying=guarded_raise_join + "def test_a():\n    assert A(1) == 8\n",
+                family="reduced-return-selection",
+            ),
+            _call_pair(
+                name="if_nested_terminal_fallback",
+                owner_sugar="IfSugar",
+                truthful=nested_terminal + "def test_a():\n    assert A(1) == 7\n",
+                lying=nested_terminal + "def test_a():\n    assert A(1) == 8\n",
                 family="reduced-return-selection",
             ),
         )

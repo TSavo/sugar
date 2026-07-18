@@ -2295,6 +2295,10 @@ class SequentialDigBody:
         )
         from sugar_lift_py_tests.ir import and_, not_
         from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.recognition.guarded_exit import (
+            GuardedExitRecognition,
+        )
+        from sugar_lift_py_tests.sugar_body import GuardedRawSugarBody
 
         cur = ctx
         guarded_exits = []
@@ -2367,10 +2371,28 @@ class SequentialDigBody:
                     type(item) in support_types
                     or (
                         type(item) is GuardedScopeRebind
-                        and any(
-                            terminal_guard in item.guards
-                            for terminal_guard in terminal_face_guards
+                        and (
+                            any(
+                                terminal_guard in item.guards
+                                for terminal_guard in terminal_face_guards
+                            )
+                            or GuardedExitRecognition.terminal_local_state(
+                                item.guards,
+                                guarded,
+                            )
                         )
+                    )
+                    for item in non_returns
+                )
+            )
+            terminal_raw_tail = (
+                guarded_faces
+                and non_returns
+                and all(
+                    isinstance(item, GuardedRawSugarBody)
+                    and GuardedExitRecognition.terminal_local_state(
+                        item.guards,
+                        guarded,
                     )
                     for item in non_returns
                 )
@@ -2424,6 +2446,7 @@ class SequentialDigBody:
                     joined_faces
                     or support_only_faces
                     or terminal_face_state
+                    or terminal_raw_tail
                     or continuing_block_state
                     or continuation_rebinds
                 )
