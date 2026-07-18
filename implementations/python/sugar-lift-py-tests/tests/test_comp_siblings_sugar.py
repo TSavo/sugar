@@ -13,17 +13,21 @@ import pytest
 from factory_reduce import reduce_value
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     ComprehensionValue,
+    DictValue,
     ObjectField,
     ObjectValue,
     SymbolicValue,
     TermValue,
+    TupleValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.dict_comp_sugar import DictCompSugar
 from sugar_lift_py_tests.sugar.generator_exp_sugar import GeneratorExpSugar
 from sugar_lift_py_tests.sugar.list_comp_sugar import ListCompSugar
@@ -109,6 +113,24 @@ def test_dict_comp_key_and_value_discriminate() -> None:
     assert doubled.term != key_doubled.term
 
 
+def test_deep_finite_dict_comprehension_collects_without_python_recursion() -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    result = build_node(
+        ast.parse("{x: x for x in xs}", mode="eval").body,
+        filename="t.py",
+        role=SugarRole.TERM,
+        ctx=ctx,
+    )
+    assert isinstance(result.sugar, DictCompSugar)
+    elements = tuple(TermValue(index) for index in range(5_000))
+
+    outcome = result.sugar._collect_finite(elements, (), ctx)
+
+    assert outcome == Complete(
+        DictValue(tuple((element, element) for element in elements))
+    )
+
+
 def test_dict_comp_owns_supported_dictcomp_clauses() -> None:
     assert DictCompSugar.owns(_site("{x: x for x in xs}")) is True
     assert DictCompSugar.owns(_site("{a: b for a in A for b in B}")) is True
@@ -144,6 +166,24 @@ def test_genexp_elt_and_iter_discriminate() -> None:
     from_ys = reduce_value("(x for x in ys)", binds=_ys())
     assert plain.term != doubled.term
     assert plain.term != from_ys.term
+
+
+def test_deep_finite_generator_expression_collects_without_python_recursion() -> None:
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    result = build_node(
+        ast.parse("(x for x in xs)", mode="eval").body,
+        filename="t.py",
+        role=SugarRole.TERM,
+        ctx=ctx,
+    )
+    assert isinstance(result.sugar, GeneratorExpSugar)
+    elements = tuple(TermValue(index) for index in range(5_000))
+    iterable = TupleValue(elements)
+
+    outcome = result.sugar._collect_finite(iterable, elements, (), ctx)
+
+    assert isinstance(outcome, Complete)
+    assert outcome.value.finite_elements == elements
 
 
 def test_genexp_owns_supported_genexp_clauses() -> None:

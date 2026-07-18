@@ -70,20 +70,29 @@ class DictCompSugar(Sugar, role=SugarRole.TERM):
         return self._coordinate(ctx, iterable)
 
     def _collect_finite(self, remaining, accumulated, ctx):
-        from sugar_lift_py_tests.floor import DictValue, ScopeRebind
+        from sugar_lift_py_tests.floor import DictValue, RaiseValue, ScopeRebind
+        from sugar_lift_py_tests.outcome import Incomplete
 
-        if not remaining:
-            return Complete(DictValue(accumulated))
-        item, *rest = remaining
         name = self.clauses[0].bindings[0][0]
-        item_ctx = ScopeRebind(name, item).extend_scope(ctx)
-        return self.key_body.reduce(item_ctx).and_then(
-            lambda key: self.value_body.reduce(item_ctx).and_then(
-                lambda value: self._collect_finite(
-                    tuple(rest), self._dict_set(accumulated, key, value), ctx
-                )
+        entries = accumulated
+        for item in remaining:
+            item_ctx = ScopeRebind(name, item).extend_scope(ctx)
+            key_outcome = self.key_body.reduce(item_ctx)
+            if isinstance(key_outcome, Incomplete):
+                return key_outcome
+            if isinstance(key_outcome.value, RaiseValue):
+                return key_outcome
+            value_outcome = self.value_body.reduce(item_ctx)
+            if isinstance(value_outcome, Incomplete):
+                return value_outcome
+            if isinstance(value_outcome.value, RaiseValue):
+                return value_outcome
+            entries = self._dict_set(
+                entries,
+                key_outcome.value,
+                value_outcome.value,
             )
-        )
+        return Complete(DictValue(entries))
 
     @staticmethod
     def _dict_set(entries, key, value):

@@ -180,6 +180,14 @@ def test_constructor_symbol_kind_does_not_change_term_identity_or_wire() -> None
     )
 
 
+def test_term_table_cid_normalizes_lone_surrogate_like_rpc_boundary() -> None:
+    """A pandas lone-surrogate value must not escape as UnicodeEncodeError."""
+    reference = TermTableBuilder().reference(str_const("\ud83d"))
+    safe_canonical = encode_jcs(term_to_value(str_const("\ufffd")))
+
+    assert reference["cid"] == blake3_512_of(safe_canonical.encode("utf-8"))
+
+
 def test_constructor_rejects_unknown_symbol_kind() -> None:
     with pytest.raises(ValueError, match="unknown constructor symbol kind"):
         ctor("call:anything", [], symbol_kind="guessed")

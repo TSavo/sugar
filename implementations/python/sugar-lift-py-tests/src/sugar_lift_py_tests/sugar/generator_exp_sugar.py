@@ -87,32 +87,38 @@ class GeneratorExpSugar(Sugar, role=SugarRole.TERM):
         return self._coordinate(ctx, iterable)
 
     def _collect_finite(self, iterable, remaining, accumulated, ctx):
-        from sugar_lift_py_tests.floor import ComprehensionValue, ScopeRebind
+        from sugar_lift_py_tests.floor import (
+            ComprehensionValue,
+            RaiseValue,
+            ScopeRebind,
+        )
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        if not remaining:
-            return Complete(
-                ComprehensionValue(
-                    ctor(
-                        "py.genexp.finite",
-                        [
-                            iterable.to_term(owner=str(self.site)),
-                            *(
-                                _floor_as_term(value, owner=str(self.site))
-                                for value in accumulated
-                            ),
-                        ],
-                    ),
-                    accumulated,
-                )
-            )
-        item, *rest = remaining
         name = self.clauses[0].bindings[0][0]
-        item_ctx = ScopeRebind(name, item).extend_scope(ctx)
-        return self.elt_body.reduce(item_ctx).and_then(
-            lambda value: self._collect_finite(
-                iterable, tuple(rest), (*accumulated, value), ctx
+        collected = list(accumulated)
+        for item in remaining:
+            item_ctx = ScopeRebind(name, item).extend_scope(ctx)
+            outcome = self.elt_body.reduce(item_ctx)
+            if isinstance(outcome, Incomplete):
+                return outcome
+            if isinstance(outcome.value, RaiseValue):
+                return outcome
+            collected.append(outcome.value)
+        values = tuple(collected)
+        return Complete(
+            ComprehensionValue(
+                ctor(
+                    "py.genexp.finite",
+                    [
+                        iterable.to_term(owner=str(self.site)),
+                        *(
+                            _floor_as_term(value, owner=str(self.site))
+                            for value in values
+                        ),
+                    ],
+                ),
+                values,
             )
         )
 
