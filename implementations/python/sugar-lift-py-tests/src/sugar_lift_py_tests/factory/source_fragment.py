@@ -43,6 +43,20 @@ class InitializerCallSite:
     target: str | None = None
 
 
+@dataclass(frozen=True)
+class LoopControlScopeClassification:
+    """Factory-owned testimony about one loop/control-flow source scope."""
+
+    carried_names: tuple[str, ...]
+    stored_names: tuple[str, ...]
+    has_loop_control: bool
+    has_owned_break: bool
+    has_unclassified_mutation: bool
+    definite_break_output_names: tuple[str, ...]
+    contains_terminal_control: bool
+    target_bindings: tuple[tuple[str, tuple[int, ...]], ...] | None
+
+
 def _is_suite(value) -> bool:
     return (
         isinstance(value, list)
@@ -1937,6 +1951,99 @@ class SourceFragment:
         """Return the number of else statements on a While node."""
         self._require(ast.While)
         return len(self.node.orelse)  # type: ignore[attr-defined]
+
+    def classify_loop_control_scope(
+        self,
+        *,
+        target_name: str | None = None,
+        entry_reads: "tuple[SourceFragment, ...]" = (),
+    ) -> LoopControlScopeClassification:
+        """Classify loop/control-flow scope once at the factory boundary.
+
+        Sugars consume this typed testimony instead of inspecting Python AST
+        shapes beside their construction logic.
+        """
+        is_loop = isinstance(self.node, (ast.For, ast.While))
+        carried_names = (
+            self.loop_carried_names(
+                target_name=target_name,
+                entry_reads=entry_reads,
+            )
+            if is_loop
+            else ()
+        )
+        stored_names = (
+            self.loop_stored_names() if is_loop else self.own_scope_stored_names()
+        )
+
+        class OwnedLoopControl(ast.NodeVisitor):
+            has_break = False
+            has_continue = False
+
+            def visit_Break(self, node: ast.Break) -> None:
+                del node
+                self.has_break = True
+
+            def visit_Continue(self, node: ast.Continue) -> None:
+                del node
+                self.has_continue = True
+
+            def stop_at_nested_owner(self, node: ast.AST) -> None:
+                del node
+
+            visit_For = stop_at_nested_owner
+            visit_AsyncFor = stop_at_nested_owner
+            visit_While = stop_at_nested_owner
+            visit_FunctionDef = stop_at_nested_owner
+            visit_AsyncFunctionDef = stop_at_nested_owner
+            visit_Lambda = stop_at_nested_owner
+            visit_ClassDef = stop_at_nested_owner
+
+        control = OwnedLoopControl()
+        roots = (
+            self.node.body if is_loop or isinstance(self.node, Block) else (self.node,)
+        )  # type: ignore[attr-defined]
+        for root in roots:
+            control.visit(root)
+
+        terminal_types = (ast.Return, ast.Raise, ast.Break, ast.Continue)
+        contains_terminal_control = any(
+            isinstance(descendant, terminal_types)
+            for root in roots
+            for descendant in ast.walk(root)
+        )
+
+        def target_bindings(
+            node: ast.AST, path: tuple[int, ...]
+        ) -> tuple[tuple[str, tuple[int, ...]], ...] | None:
+            if isinstance(node, ast.Name):
+                return ((node.id, path),)
+            if isinstance(node, (ast.Tuple, ast.List)):
+                bindings: list[tuple[str, tuple[int, ...]]] = []
+                for index, element in enumerate(node.elts):
+                    nested = target_bindings(element, (*path, index))
+                    if nested is None:
+                        return None
+                    bindings.extend(nested)
+                return tuple(bindings)
+            return None
+
+        return LoopControlScopeClassification(
+            carried_names=carried_names,
+            stored_names=stored_names,
+            has_loop_control=control.has_break or control.has_continue,
+            has_owned_break=control.has_break,
+            has_unclassified_mutation=(
+                self.has_unclassified_loop_mutation() if is_loop else False
+            ),
+            definite_break_output_names=(
+                self.while_definite_break_output_names()
+                if isinstance(self.node, ast.While)
+                else ()
+            ),
+            contains_terminal_control=contains_terminal_control,
+            target_bindings=target_bindings(self.node, ()),
+        )
 
     def own_scope_stored_names(self) -> "tuple[str, ...]":
         """Names stored by this fragment without crossing a lexical owner.
