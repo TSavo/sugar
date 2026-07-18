@@ -412,10 +412,11 @@
     {
       "expected": "GREEN",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "Stale #3608 shape superseded by the live #3590 membership-refutation work order, which PR #3691 closed: the vacuity guard now opens a covering-universe exception for lone ground str.in-regex membership, so good/'s matching-subject rows genuinely discharge (str.in_re SAT) and bad/'s non-matching-subject row is genuinely unsatisfied (str.in_re UNSAT, the membership teeth); the run.sh oracle already gated on exactly these two terminal shapes pre-merge and needed no code change in this lane. GRADED BY REASONING against merged verifier tests (lone_ground_regex_membership_matching_subject_discharges / _nonmatching_subject_is_refuted): the script builds the CLI via cargo directly (not bin/sugarbin), so it was not executed in this lane; pending CI confirmation.",
+      "grounds": "LIVE EXECUTED GREEN on current main (2026-07-18, #3590 drain): examples/rust-regex-membership/run.sh exits 0 via bin/sugarbin. Root cause of verdict-drift/membership-refutation was the lone-fact vacuity guard refusing ground str.in-regex rows before they reached z3; PR #3691 opened the covering-universe exception so a pinned ground subject is decided by string/regex theory (matching -> discharged, non-matching Alice! -> unsatisfied). Live prove rows: good has discharged membership rows for inline/const/concat/find (str.in_re SAT); bad has unsatisfied on method:is_match(s:Alice!, pattern) (str.in_re UNSAT, the teeth); nonregular refuses backref/lookahead by name with no membership atom. Oracle tightened: good now REQUIRES at least one discharged (all-refused is no longer silent success). Shell deleted: graded-by-reasoning pin + weak good-oracle (no discharged check).",
       "last_observed_rc": 0,
-      "last_observed_seconds": 6.438,
-      "name": "examples/rust-regex-membership/run.sh"
+      "last_observed_seconds": 30.0,
+      "name": "examples/rust-regex-membership/run.sh",
+      "work_order_issue": 3590
     },
     {
       "expected": "NAMED_RED",
