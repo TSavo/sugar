@@ -242,6 +242,10 @@ class GuardedValue(FloorValue):
     def python_isinstance(self, type_name: str, type_term, site):
         return self._predicate("python_isinstance", type_name, type_term, site)
 
+    def test_python_type(self, value, site):
+        """Distribute an ``isinstance`` test over guarded type coordinates."""
+        return self._predicate("test_python_type", value, site)
+
     def callsites(self):
         return (*self.when_true.callsites(), *self.when_false.callsites())
 
