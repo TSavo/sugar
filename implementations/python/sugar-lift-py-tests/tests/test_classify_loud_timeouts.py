@@ -62,6 +62,34 @@ def _timeout(rel: str, bound: int) -> dict[str, Any]:
     }
 
 
+def test_sqlalchemy_is_a_supported_timeout_corpus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[tuple[tuple[str, ...], bool, Path]] = []
+
+    def fake_discover(args) -> int:  # noqa: ANN001
+        captured.append((tuple(args.packages), args.all_python_files, args.source_root))
+        return 0
+
+    monkeypatch.setattr(mod, "run_discover_timeouts", fake_discover)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "classify_loud_timeouts.py",
+            "sqlalchemy",
+            "--all-python-files",
+            "--source-root",
+            "vendor/sqlalchemy",
+            "--discover-timeouts",
+            "unused.json",
+        ],
+    )
+
+    assert mod.main() == 0
+    assert captured == [(("sqlalchemy",), True, Path("vendor/sqlalchemy"))]
+
+
 def test_discovery_finish_is_not_timeout_blob(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[int] = []
 

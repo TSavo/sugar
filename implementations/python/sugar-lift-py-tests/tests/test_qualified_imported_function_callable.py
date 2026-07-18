@@ -12,7 +12,12 @@ from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import CallSiteValue, ImportAliasValue, TermValue
+from sugar_lift_py_tests.floor import (
+    CallSiteValue,
+    FunctionCallable,
+    ImportAliasValue,
+    TermValue,
+)
 from sugar_lift_py_tests.lift_rpc import _module_import_temporal
 from sugar_lift_py_tests.outcome import complete_value
 
@@ -52,6 +57,35 @@ def _consumer_call(source: str, call: str, filename: str = "consumer.py"):
     )
 
 
+def test_module_import_temporal_defers_unused_install_source_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = SourceFragment.from_source(
+        "from example_vendor import used\n" "from example_vendor import unused\n",
+        "consumer.py",
+    ).statements()[0]
+    calls: list[str] = []
+    sentinel = FunctionCallable(name="used")
+
+    def fake_resolve(import_target, ctx, **kwargs):
+        del ctx, kwargs
+        calls.append(import_target)
+        return sentinel
+
+    monkeypatch.setattr(
+        "sugar_lift_py_tests.sugar.install_source_dig." "resolve_install_source_value",
+        fake_resolve,
+    )
+
+    temporal = _module_import_temporal(module, default_catalog())
+    used = temporal.value_for("used")
+
+    assert isinstance(used, ImportAliasValue)
+    assert calls == []
+    assert used.resolve_value() is sentinel
+    assert calls == ["example_vendor.used"]
+
+
 def test_direct_extension_symbol_emits_qualified_bodyless_bridge_without_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -66,7 +100,7 @@ def test_direct_extension_symbol_emits_qualified_bodyless_bridge_without_executi
     alias = temporal.value_for("chosen")
     assert isinstance(alias, ImportAliasValue)
     assert alias.import_target == "fixture_native.exact"
-    assert alias.resolved_value is not None
+    assert alias.install_source_context is not None
     assert isinstance(callsite, CallSiteValue)
     assert callsite.target_name == "fixture_native.exact"
     assert callsite.arg_values == (TermValue(7),)
@@ -98,7 +132,7 @@ def test_reexported_extension_symbol_keeps_ultimate_native_coordinate_without_ex
     alias = temporal.value_for("chosen")
     assert isinstance(alias, ImportAliasValue)
     assert alias.import_target == "fixture_native_reexport.api.exported"
-    assert alias.resolved_value is not None
+    assert alias.install_source_context is not None
     assert isinstance(callsite, CallSiteValue)
     assert callsite.target_name == "fixture_native_reexport.native.exact"
     assert callsite.arg_values == (TermValue(7),)
@@ -132,7 +166,7 @@ def test_literal_all_star_reexport_reaches_exact_function_without_execution(
     alias = temporal.value_for("chosen")
     assert isinstance(alias, ImportAliasValue)
     assert alias.import_target == "fixture_star.api.exact"
-    assert alias.resolved_value is not None
+    assert alias.install_source_context is not None
     assert isinstance(callsite, CallSiteValue)
     assert callsite.target_name == "fixture_star.impl.exact"
     assert callsite.parameters == ("value",)
@@ -180,7 +214,7 @@ def test_package_init_star_reexport_resolves_like_numpy_testing(
     alias = temporal.value_for("chosen")
     assert isinstance(alias, ImportAliasValue)
     assert alias.import_target == "fixture_pkg_star.exact"
-    assert alias.resolved_value is not None
+    assert alias.install_source_context is not None
     assert isinstance(callsite, CallSiteValue)
     assert callsite.target_name == "fixture_pkg_star._private.utils.exact"
     assert callsite.parameters == ("value",)
@@ -273,7 +307,7 @@ def test_reexported_qualified_function_reaches_function_callable_binder_without_
     alias = temporal.value_for("chosen")
     assert isinstance(alias, ImportAliasValue)
     assert alias.import_target == "fixture_alpha.api.exported"
-    assert alias.resolved_value is not None
+    assert alias.install_source_context is not None
     assert isinstance(callsite, CallSiteValue)
     assert callsite.target_name == "fixture_alpha.impl.exact"
     assert callsite.parameters == ("value",)

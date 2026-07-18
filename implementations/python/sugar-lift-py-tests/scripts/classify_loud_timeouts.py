@@ -54,6 +54,7 @@ from sugar_lift_py_tests.idd.factory_panic_fronts import (
     rank_factory_panic_fronts,
 )
 
+SUPPORTED_PACKAGES = (*PACKAGES, "sqlalchemy")
 DEFAULT_DISCOVERY_BOUND = 10
 DEFAULT_ESCALATION_BOUNDS = (60, 120, 300)
 PERF_CANDIDATE_THRESHOLD_SECONDS = 120
@@ -110,6 +111,18 @@ def enumerate_assertion_files(
                 continue
             rows.append((package, path, rel))
     return rows
+
+
+def enumerate_python_files(
+    packages: tuple[str, ...],
+) -> list[tuple[str, Path, str]]:
+    """Return every Python file for vendor walls that census full source trees."""
+    return [
+        (package, path, f"{package}/{path.relative_to(root).as_posix()}")
+        for package in packages
+        for root in (package_root(package),)
+        for path in python_files(root)
+    ]
 
 
 def load_file_list(path: Path) -> list[str]:
@@ -736,6 +749,9 @@ def resolve_candidates(
 ) -> list[tuple[str, Path, str]]:
     """Build the candidate worklist from discovery seed or full package scan."""
     packages = tuple(args.packages) or PACKAGES
+    source_root = Path(args.source_root).resolve() if args.source_root else None
+    if source_root is not None and len(packages) != 1:
+        raise SystemExit("--source-root requires exactly one package")
     if args.files_from:
         rels = load_file_list(Path(args.files_from))
         rows: list[tuple[str, Path, str]] = []
@@ -744,15 +760,37 @@ def resolve_candidates(
             if package not in packages and packages != PACKAGES:
                 # Caller restricted packages; still allow explicit seed rows.
                 pass
-            if package not in PACKAGES:
+            if package not in SUPPORTED_PACKAGES:
                 raise SystemExit(f"unknown package prefix in {rel!r}")
-            path = _resolve_path(package, rel)
+            path = (
+                source_root / rel.split("/", 1)[1]
+                if source_root is not None
+                else _resolve_path(package, rel)
+            )
             if not path.is_file():
                 raise SystemExit(f"missing seed file: {rel} -> {path}")
             rows.append((package, path, rel))
         return rows
 
-    all_rows = enumerate_assertion_files(packages)
+    if source_root is not None:
+        package = packages[0]
+        paths = python_files(source_root)
+        if not args.all_python_files:
+            paths = [path for path in paths if _assert_count(path) > 0]
+        all_rows = [
+            (
+                package,
+                path,
+                f"{package}/{path.relative_to(source_root).as_posix()}",
+            )
+            for path in paths
+        ]
+    else:
+        all_rows = (
+            enumerate_python_files(packages)
+            if args.all_python_files
+            else enumerate_assertion_files(packages)
+        )
     if args.limit is not None:
         return all_rows[: args.limit]
     if args.shard_count > 1:
@@ -784,6 +822,7 @@ def run_discover_timeouts(args: argparse.Namespace) -> int:
     out_path = Path(args.discover_timeouts)
     candidates = resolve_candidates(args)
     timeouts: list[str] = []
+    terminal_rows: list[dict[str, Any]] = []
     terminal_counts: Counter[str] = Counter()
 
     print(
@@ -809,6 +848,13 @@ def run_discover_timeouts(args: argparse.Namespace) -> int:
         )
         category = str(terminal.get("category") or "unknown")
         terminal_counts[category] += 1
+        terminal_rows.append(
+            {
+                "file": rel,
+                "category": category,
+                "testimony": terminal.get("testimony"),
+            }
+        )
         if category == "timeout-or-hang":
             timeouts.append(rel)
             print(
@@ -846,6 +892,7 @@ def run_discover_timeouts(args: argparse.Namespace) -> int:
         "scanned": min(len(candidates), args.max_scan or len(candidates)),
         "timeout_count": len(timeouts),
         "timeout_files": timeouts,
+        "terminal_rows": terminal_rows,
         "terminal_counts": dict(sorted(terminal_counts.items())),
         "note": (
             "Seed for classify_loud_timeouts.py --files-from ... --skip-discovery. "
@@ -1022,7 +1069,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Classify loud-bounded-timeout corpus files (#4894)."
     )
-    parser.add_argument("packages", nargs="*", choices=PACKAGES)
+    parser.add_argument("packages", nargs="*", choices=SUPPORTED_PACKAGES)
+    parser.add_argument(
+        "--all-python-files",
+        action="store_true",
+        help="Scan every Python file, matching full vendor-wall conservation.",
+    )
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        help=(
+            "Explicit source-distribution root for one package; preserves tests, "
+            "examples, and tools omitted from wheels."
+        ),
+    )
     parser.add_argument(
         "--files-from",
         help="Seed list of package/rel paths (txt lines or JSON). Skips full scan.",
