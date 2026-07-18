@@ -47,7 +47,11 @@ def test_ground_match_selects_first_matching_literal_case() -> None:
 
     outcome = result.sugar.desugar(ReduceContext.root(owner="match-test"))
 
-    assert outcome == Complete(BlockValue((ReturnValue(TermValue(20)),)))
+    assert outcome == Complete(
+        BlockValue((ReturnValue(TermValue(20)),), can_fall_through=False)
+    )
+    assert type(result.sugar.cases[0].pattern).__name__ == "MatchValuePatternSugar"
+    assert type(result.sugar.cases[2].pattern).__name__ == "MatchAsPatternSugar"
 
 
 def test_ground_match_uses_wildcard_when_literals_do_not_match() -> None:
@@ -61,7 +65,9 @@ def test_ground_match_uses_wildcard_when_literals_do_not_match() -> None:
 
     outcome = result.sugar.desugar(ReduceContext.root(owner="match-test"))
 
-    assert outcome == Complete(BlockValue((ReturnValue(TermValue(30)),)))
+    assert outcome == Complete(
+        BlockValue((ReturnValue(TermValue(30)),), can_fall_through=False)
+    )
 
 
 def test_ground_false_guard_continues_to_next_case() -> None:
@@ -75,7 +81,9 @@ def test_ground_false_guard_continues_to_next_case() -> None:
 
     outcome = result.sugar.desugar(ReduceContext.root(owner="match-test"))
 
-    assert outcome == Complete(BlockValue((ReturnValue(TermValue(30)),)))
+    assert outcome == Complete(
+        BlockValue((ReturnValue(TermValue(30)),), can_fall_through=False)
+    )
 
 
 def test_runtime_selected_match_stays_named_and_loud() -> None:

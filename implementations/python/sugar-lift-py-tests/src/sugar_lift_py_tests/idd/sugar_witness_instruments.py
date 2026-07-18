@@ -241,6 +241,13 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
 EXPECTED_WITNESS_OWNER_DELEGATIONS: dict[str, str] = {
     "EqualityOpSugar": "ObjectEqualityTermSugar",
     "InequalityOpSugar": "ObjectEqualityTermSugar",
+    # Match pattern sugars are recognition structure; MatchSugar carries the
+    # production witness pairs that exercise each constructible shape.
+    "MatchValuePatternSugar": "MatchSugar",
+    "MatchSingletonPatternSugar": "MatchSugar",
+    "MatchOrPatternSugar": "MatchSugar",
+    "MatchAsPatternSugar": "MatchSugar",
+    "ResidualMatchPatternSugar": "MatchSugar",
 }
 
 
