@@ -8,6 +8,10 @@ from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
+from sugar_lift_py_tests.recognition.delete_targets import (
+    DeleteTargetKind,
+    DeleteTargetRecognition,
+)
 
 
 @dataclass(frozen=True)
@@ -18,10 +22,11 @@ class AttributeDeleteSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def owns(cls, site):
+        targets = DeleteTargetRecognition.statement_targets(site)
         return (
-            site.observed == "Delete"
-            and len(site.delete_targets()) == 1
-            and site.delete_targets()[0].observed == "Attribute"
+            targets is not None
+            and len(targets) == 1
+            and targets[0].kind is DeleteTargetKind.ATTRIBUTE
         )
 
     @classmethod
@@ -52,50 +57,65 @@ class AttributeDeleteSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx=None) -> Outcome:
-        from sugar_lift_py_tests.sugar.attribute_sugar import (
-            _receiver_name_from_body,
-            _temporal_lookup,
-        )
-        from sugar_lift_py_tests.sugar.delete_sugar import DeletedBindings
-
-        receiver_name = _receiver_name_from_body(self.receiver)
-        if receiver_name is not None:
-            key = f"{receiver_name}.{self.name}"
-            if _temporal_lookup(ctx, key) is not None:
-                return Complete(DeletedBindings((key,)))
-
-        return self.receiver.reduce(ctx).and_then(
-            lambda receiver: self._delete(receiver, ctx)
-        )
-
-    def _delete(self, receiver, ctx):
-        if isinstance(receiver, ObjectValue):
-            descriptor = receiver.class_field_value(self.name)
-            if isinstance(descriptor, ObjectValue) and descriptor.has_method(
-                "__delete__"
-            ):
-                return descriptor.call_method_value(
-                    "__delete__",
-                    (receiver,),
-                    owner=type(self).__name__,
-                    blame=self.site,
-                    ctx=ctx,
-                )
-            if receiver.has_method("__delattr__"):
-                return receiver.call_method_value(
-                    "__delattr__",
-                    (StringValue(self.name),),
-                    owner=type(self).__name__,
-                    blame=self.site,
-                    ctx=ctx,
-                )
-        return receiver._floor_gap(
-            owner=type(self).__name__,
-            blame=self.site,
-            observed=f"{type(receiver).__name__}.{self.name}",
-            requested="attribute deletion data-model method",
-            fix="construct __delete__ or __delattr__",
+        return delete_attribute_body(
+            receiver=self.receiver,
+            name=self.name,
+            site=self.site,
+            ctx=ctx,
         )
 
     def walk_children(self):
         return (self.receiver,)
+
+
+def delete_attribute_body(*, receiver, name, site, ctx) -> Outcome:
+    """Dispatch attribute deletion for a factory-built receiver body."""
+    from sugar_lift_py_tests.sugar.attribute_sugar import (
+        _receiver_name_from_body,
+        _temporal_lookup,
+    )
+    from sugar_lift_py_tests.sugar.delete_sugar import DeletedBindings
+
+    receiver_name = _receiver_name_from_body(receiver)
+    if receiver_name is not None:
+        key = f"{receiver_name}.{name}"
+        if _temporal_lookup(ctx, key) is not None:
+            return Complete(DeletedBindings((key,)))
+
+    return receiver.reduce(ctx).and_then(
+        lambda value: delete_attribute_value(
+            receiver=value,
+            name=name,
+            site=site,
+            ctx=ctx,
+        )
+    )
+
+
+def delete_attribute_value(*, receiver, name, site, ctx) -> Outcome:
+    """Use the existing object data-model floor for attribute deletion."""
+    if isinstance(receiver, ObjectValue):
+        descriptor = receiver.class_field_value(name)
+        if isinstance(descriptor, ObjectValue) and descriptor.has_method("__delete__"):
+            return descriptor.call_method_value(
+                "__delete__",
+                (receiver,),
+                owner="AttributeDeleteSugar",
+                blame=site,
+                ctx=ctx,
+            )
+        if receiver.has_method("__delattr__"):
+            return receiver.call_method_value(
+                "__delattr__",
+                (StringValue(name),),
+                owner="AttributeDeleteSugar",
+                blame=site,
+                ctx=ctx,
+            )
+    return receiver._floor_gap(
+        owner="AttributeDeleteSugar",
+        blame=site,
+        observed=f"{type(receiver).__name__}.{name}",
+        requested="attribute deletion data-model method",
+        fix="construct __delete__ or __delattr__",
+    )
