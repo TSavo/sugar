@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, cast
 
@@ -167,28 +166,29 @@ class SubscriptAssignSugar(Sugar, role=SugarRole.STATEMENT):
 
 
 def _structural_target(target, ctx):
-    """Describe a nested subscript lvalue from its cited root and index path."""
-    node = target.node
-    if not isinstance(node, ast.Subscript) or not isinstance(node.value, ast.Subscript):
+    """Describe a nested subscript lvalue from its cited root and index path.
+
+    Nested chains are recognized only through SourceFragment shape accessors
+    (``observed`` / ``subscript_receiver`` / ``subscript_index``). Raw
+    ``ast.Subscript`` walks are the side door this helper closes.
+    """
+    if target.observed != "Subscript":
+        return None
+    if target.subscript_receiver().observed != "Subscript":
         return None
 
-    index_nodes = []
-    cursor = node
-    while isinstance(cursor, ast.Subscript):
-        index_nodes.append(cursor.slice)
-        cursor = cursor.value
-    root = type(target).from_node(cursor, target.filename, source=target.source)
-    root_coordinate = root.dotted_expr_name()
+    index_fragments = []
+    cursor = target
+    while cursor.observed == "Subscript":
+        index_fragments.append(cursor.subscript_index())
+        cursor = cursor.subscript_receiver()
+    root_coordinate = cursor.dotted_expr_name()
     if root_coordinate is None:
         return None
     indices = tuple(
-        ctx.build_body(
-            type(target).from_node(index, target.filename, source=target.source),
-            SugarRole.TERM,
-        )
-        for index in reversed(index_nodes)
+        ctx.build_body(index, SugarRole.TERM) for index in reversed(index_fragments)
     )
-    return ctx.build_body(root, SugarRole.TERM), root_coordinate, indices
+    return ctx.build_body(cursor, SugarRole.TERM), root_coordinate, indices
 
 
 def _collect_structural_indices(
