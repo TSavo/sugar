@@ -56,7 +56,10 @@ def _terminal_name(node: ast.AST) -> str | None:
 
 def _method(class_node: ast.ClassDef, name: str) -> ast.FunctionDef | None:
     for item in class_node.body:
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == name:
+        if (
+            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and item.name == name
+        ):
             return item
     return None
 
@@ -104,6 +107,37 @@ def _has_witness_or_opt_out(witnesses: ast.FunctionDef | None) -> bool:
     return False
 
 
+def _call_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _is_typed_runtime_effect_incomplete(node: ast.Call) -> bool:
+    if _call_name(node) != "Incomplete" or not node.args:
+        return False
+    effect = node.args[0]
+    return isinstance(effect, ast.Call) and (_call_name(effect) or "").endswith(
+        "RuntimeEffect"
+    )
+
+
+def _has_typed_red_effect_witness(witnesses: ast.FunctionDef | None) -> bool:
+    if witnesses is None:
+        return False
+    return any(
+        isinstance(node, ast.Call)
+        and _call_name(node)
+        in {
+            "typed_red_effect_witness",
+            "SugarRedEffectWitnessPair",
+        }
+        for node in ast.walk(witnesses)
+    )
+
+
 def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
     offenders: list[OwnershipOffender] = []
     for path in sorted(sugar_root.rglob("*.py")):
@@ -114,6 +148,7 @@ def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         except SyntaxError:
             continue
+        owned_sugars: list[tuple[str, ast.FunctionDef, ast.FunctionDef | None]] = []
         for node in tree.body:
             if not isinstance(node, ast.ClassDef):
                 continue
@@ -123,11 +158,10 @@ def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
             if owns is None:
                 continue
             # Skip abstract / protocol shells without construction surface.
-            if any(
-                _terminal_name(base) in {"ABC", "Protocol"} for base in node.bases
-            ):
+            if any(_terminal_name(base) in {"ABC", "Protocol"} for base in node.bases):
                 continue
             witnesses = _method(node, "witnesses")
+            owned_sugars.append((node.name, owns, witnesses))
             if not _has_witness_or_opt_out(witnesses):
                 offenders.append(
                     OwnershipOffender(
@@ -154,13 +188,53 @@ def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
                         "Incomplete risk; enroll twin or narrow + FactoryPanic",
                     )
                 )
+        if owned_sugars:
+            owner = ",".join(name for name, _, _ in owned_sugars)
+            incomplete_calls = [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call) and _call_name(node) == "Incomplete"
+            ]
+            for call in incomplete_calls:
+                if _is_typed_runtime_effect_incomplete(call):
+                    continue
+                offenders.append(
+                    OwnershipOffender(
+                        relative,
+                        call.lineno,
+                        "untyped-incomplete-after-owns",
+                        owner,
+                        "owns() selected this module's Sugar, but the selected "
+                        "path manufactures Incomplete without a concrete "
+                        "*RuntimeEffect; unsupported construction must leave no "
+                        "candidate so factory None → FactoryPanic",
+                    )
+                )
+            if any(
+                _is_typed_runtime_effect_incomplete(call) for call in incomplete_calls
+            ):
+                for sugar_name, owns, witnesses in owned_sugars:
+                    if _has_typed_red_effect_witness(witnesses):
+                        continue
+                    offenders.append(
+                        OwnershipOffender(
+                            relative,
+                            owns.lineno,
+                            "unwitnessed-runtime-effect-after-owns",
+                            sugar_name,
+                            "owns() selects a Sugar module that manufactures a "
+                            "typed RuntimeEffect, but witnesses() has no "
+                            "SugarRedEffectWitnessPair / typed_red_effect_witness "
+                            "whose wrong twin refutes the claimed effect",
+                        )
+                    )
     return sorted(offenders)
 
 
 def format_report(offenders: list[OwnershipOffender]) -> str:
     by_kind = Counter(row.kind for row in offenders)
     lines = [
-        f"R_ownership_law = {len(offenders)}",
+        f"R_ownership = {len(offenders)}",
         "Law: every selected Sugar arm produces cited construction or genuine typed "
         "runtime effect under a bad twin; unsupported shapes leave factory with no "
         "candidate → FactoryPanic. Soft Incomplete after broad owns is illegal.",
@@ -172,9 +246,7 @@ def format_report(offenders: list[OwnershipOffender]) -> str:
     lines.append("")
     lines.append("Loci:")
     for row in offenders:
-        lines.append(
-            f"{row.path}:{row.line}:{row.kind}:{row.sugar} — {row.note}"
-        )
+        lines.append(f"{row.path}:{row.line}:{row.kind}:{row.sugar} — {row.note}")
     return "\n".join(lines)
 
 
@@ -193,13 +265,10 @@ def main() -> int:
     args = parser.parse_args()
     offenders = scan_sugar_tree(args.sugar_root)
     if offenders:
-        print(
-            "OWNERSHIP-LAW RED: "
-            f"{len(offenders)} owns/witness gaps"
-        )
+        print("OWNERSHIP-LAW RED: " f"{len(offenders)} owns/witness gaps")
         print(format_report(offenders))
         return 1
-    print("OWNERSHIP-LAW GREEN: R_ownership_law = 0")
+    print("OWNERSHIP-LAW GREEN: R_ownership = 0")
     return 0
 
 
