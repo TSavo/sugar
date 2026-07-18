@@ -177,6 +177,23 @@ class TupleValue(FloorValue):
         runtime_count_kind = None
         if type(other) is SymbolicValue:
             runtime_count_kind = "symbolic count"
+        elif type(other) is CallSiteValue and other.target_name == "ndim":
+            # ndarray.ndim is an integer data-model property. The value depends
+            # on the runtime array, while the __index__ warrant does not.
+            # (numpy/lib/tests/test_nanfunctions.py: (1,) * d.ndim)
+            runtime_count_kind = "integer-warranted callsite ndim"
+        elif type(other) is CallSiteValue and other.target_name == "nlanes":
+            runtime_count_kind = "integer-warranted callsite nlanes"
+        elif type(other) is CallSiteValue and other.target_name == "_AXIS_LEN":
+            runtime_count_kind = "integer-warranted callsite _AXIS_LEN"
+        elif (
+            type(other) is CallSiteValue
+            and other.target_name == "py.subscript"
+            and len(other.arg_values) == 2
+            and type(other.arg_values[0]) is CallSiteValue
+            and other.arg_values[0].target_name == "shape"
+        ):
+            runtime_count_kind = "integer-warranted shape element"
         elif (
             type(other) is CallSiteValue
             and other.target_name == "max"

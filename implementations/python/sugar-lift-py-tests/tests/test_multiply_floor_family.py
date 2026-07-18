@@ -327,6 +327,22 @@ def test_opaque_non_index_result_remains_a_loud_list_repetition_gap() -> None:
             site=_SITE,
         ),
         CallSiteValue(
+            target_name="nlanes",
+            arg_values=(SymbolicValue(make_var("simd")),),
+            parameters=(),
+            term=ctor("call:nlanes", [make_var("simd")]),
+            body=None,
+            site=_SITE,
+        ),
+        CallSiteValue(
+            target_name="_AXIS_LEN",
+            arg_values=(SymbolicValue(make_var("box")),),
+            parameters=(),
+            term=ctor("call:_AXIS_LEN", [make_var("box")]),
+            body=None,
+            site=_SITE,
+        ),
+        CallSiteValue(
             target_name="max",
             arg_values=(TermValue(0), SymbolicValue(make_var("runtime_n"))),
             parameters=(),
@@ -345,6 +361,83 @@ def test_integer_warranted_callsite_is_a_runtime_list_repetition_count(
     assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
     assert "integer-warranted callsite" in outcome.reason
     assert outcome.effect.witness.operand == count.term
+
+
+def test_shape_element_is_a_warranted_runtime_list_repetition_count() -> None:
+    """#5111 residual: Index(["foo"] * mgr.shape[ax]) — shape[i] is an int dim."""
+    site = SourceFragment.from_source(
+        'Index(["foo"] * mgr.shape[ax])\n',
+        "pandas/tests/internals/test_internals.py",
+    ).statements()[0]
+    shape = CallSiteValue(
+        target_name="shape",
+        arg_values=(SymbolicValue(make_var("mgr")),),
+        parameters=(),
+        term=ctor("call:shape", [make_var("mgr")]),
+        body=None,
+        site=site,
+    )
+    count = CallSiteValue(
+        target_name="py.subscript",
+        arg_values=(shape, SymbolicValue(make_var("ax"))),
+        parameters=(),
+        term=ctor("call:py.subscript", [shape.term, make_var("ax")]),
+        body=None,
+        site=site,
+    )
+
+    outcome = ListValue((StringValue("foo"),)).multiply(count, site)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert "integer-warranted shape element" in outcome.reason
+    assert outcome.effect.witness.operand == count.term
+    with pytest.raises(FactoryPanic, match="genuine runtime-dependent operand"):
+        runtime_effect_evidence("py.sequence_repeat", TermValue(2), site)
+
+
+def test_tuple_ndim_is_a_warranted_runtime_repetition_count() -> None:
+    """#5111 residual: (1,) * d.ndim constructs typed runtime testimony, not panic."""
+    site = SourceFragment.from_source(
+        "(1,) * d.ndim\n",
+        "numpy/lib/tests/test_nanfunctions.py",
+    ).statements()[0]
+    count = CallSiteValue(
+        target_name="ndim",
+        arg_values=(SymbolicValue(make_var("d")),),
+        parameters=(),
+        term=ctor("call:ndim", [make_var("d")]),
+        body=None,
+        site=site,
+    )
+
+    outcome = TupleValue((TermValue(1),)).multiply(count, site)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert "integer-warranted callsite ndim" in outcome.reason
+    assert outcome.effect.witness.operand == count.term
+    with pytest.raises(FactoryPanic, match="genuine runtime-dependent operand"):
+        runtime_effect_evidence("py.sequence_repeat", TermValue(4), site)
+
+
+def test_finite_ground_list_repetition_constructs_not_runtime_effect() -> None:
+    """#5111 law: ground literal count constructs; never mints RuntimeEffect."""
+    from sugar_lift_py_tests.effect import genuine_runtime_operand
+
+    items = ListValue((TermValue(0),))
+    small = items.multiply(TermValue(3), _SITE)
+    large = items.multiply(TermValue(100000), _SITE)
+
+    assert isinstance(small, Complete)
+    assert isinstance(small.value, ListValue)
+    assert small.value.elements == (TermValue(0),) * 3
+
+    assert isinstance(large, Complete)
+    assert isinstance(large.value, GroundSequenceRepetitionValue)
+    assert large.value.repetitions == 100000
+    with pytest.raises(TypeError, match="genuine runtime-dependent operand"):
+        genuine_runtime_operand("py.sequence_repeat", TermValue(100000))
 
 
 def test_runtime_max_result_is_a_warranted_tuple_repetition_count() -> None:
