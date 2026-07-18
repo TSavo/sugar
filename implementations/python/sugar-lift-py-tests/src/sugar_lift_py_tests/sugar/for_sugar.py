@@ -39,6 +39,8 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     curried: bool
     unclassified_mutation: bool
     static_elements: tuple[SugarBody, ...] | None
+    finite_deferred: bool
+    deferred_outputs: tuple[str, ...]
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -56,7 +58,9 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def new(cls, site, ctx) -> "ForSugar":
         # Iterable (TERM), target name, body block (STATEMENT). Never reduce here.
-        static_elements = _static_iterable_elements(site.for_iter(), ctx, site)
+        static_elements, finite_deferred = _static_iterable_elements(
+            site.for_iter(), ctx
+        )
         return cls(
             target_name=site.for_target_name(),
             iterable=ctx.build_body(site.for_iter(), SugarRole.TERM),
@@ -65,6 +69,12 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             curried=_has_loop_control(site),
             unclassified_mutation=_has_unclassified_mutation(site),
             static_elements=static_elements,
+            finite_deferred=finite_deferred,
+            deferred_outputs=(
+                _finite_loop_output_names(site, site.for_target_name())
+                if finite_deferred
+                else ()
+            ),
             site=site,
         )
 
@@ -83,7 +93,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         )
         large_static_prefix = (
             "def B():\n"
-            "    for x in range(65):\n"
+            "    for x in range(1025):\n"
             "        pass\n"
             "    return 0\n"
             "\n"
@@ -150,9 +160,10 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         ):
             elements = iterable.finite_elements
         if elements is not None:
-            _enforce_static_unfold_limit(len(elements), self.site)
+            if len(elements) > STATIC_UNFOLD_LIMIT:
+                return self._bind_and_body(iterable, ctx, force_curry=True)
             return self._unfold_values(elements, ctx)
-        return self._bind_and_body(iterable, ctx)
+        return self._bind_and_body(iterable, ctx, force_curry=self.finite_deferred)
 
     def _unfold_static(self, remaining, ctx, entries=()):
         from sugar_lift_py_tests.floor import BlockValue, ScopeRebind
@@ -186,7 +197,9 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         bindings = _post_loop_bindings(ctx, current_ctx)
         return Complete(BlockValue((*accumulated, *bindings)))
 
-    def _bind_and_body(self, iterable, ctx: object) -> Outcome:
+    def _bind_and_body(
+        self, iterable, ctx: object, *, force_curry: bool = False
+    ) -> Outcome:
         from sugar_lift_py_tests.floor import CallSiteValue, ScopeRebind
         from sugar_lift_py_tests.ir import ctor
 
@@ -203,7 +216,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             site=self.site,
         )
         body_ctx = ScopeRebind(self.target_name, elem).extend_scope(ctx)
-        if self.curried:
+        if self.curried or force_curry:
             from sugar_lift_py_tests.floor import (
                 CurriedLoopBody,
                 CurriedLoopScope,
@@ -224,26 +237,28 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
                     fix="rewrite attribute or subscript mutation as explicit carried locals",
                 )
 
+            input_names = self.carried
+            output_names = self.deferred_outputs if force_curry else self.carried
             values = tuple(
-                body_ctx.temporal.value_if_bound(name) for name in self.carried
+                body_ctx.temporal.value_if_bound(name) for name in input_names
             )
             if all(value is not None for value in values):
                 name = f"loop:{self.site}"
                 body = _contextualized_dig_body(
                     SugarBody(
-                        sugar=CurriedLoopBody(self.body, self.carried),
+                        sugar=CurriedLoopBody(self.body, output_names),
                         role=SugarRole.TERM,
                     ),
                     body_ctx,
                 )
                 callable_value = FunctionCallable(
                     name=name,
-                    parameters=self.carried,
-                    parameter_kinds=("positional",) * len(self.carried),
+                    parameters=input_names,
+                    parameter_kinds=("positional",) * len(input_names),
                     body=body,
                 )
                 callsite = callable_value.callsite(values, (), self.site).value
-                return Complete(CurriedLoopScope(callsite, self.carried))
+                return Complete(CurriedLoopScope(callsite, output_names))
             from sugar_lift_py_tests.factory import factory_panic_gap
 
             factory_panic_gap(
@@ -276,7 +291,7 @@ def _post_loop_bindings(initial_ctx, final_ctx):
     )
 
 
-def _static_iterable_elements(iterable_site, ctx, loop_site):
+def _static_iterable_elements(iterable_site, ctx):
     import ast
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
@@ -288,46 +303,77 @@ def _static_iterable_elements(iterable_site, ctx, loop_site):
         and node.func.id == "range"
     ):
         if node.keywords or not 1 <= len(node.args) <= 3:
-            return None
+            return None, False
         if not all(
             isinstance(arg, ast.Constant) and type(arg.value) is int
             for arg in node.args
         ):
-            return None
-        values = tuple(range(*(arg.value for arg in node.args)))
+            return None, False
+        values = range(*(arg.value for arg in node.args))
     elif isinstance(node, ast.Tuple):
         values = tuple(iterable_site.tuple_elts())
     elif isinstance(node, ast.List):
         values = tuple(iterable_site.list_elts())
     else:
-        return None
+        return None, False
 
-    _enforce_static_unfold_limit(len(values), loop_site)
-    return tuple(
-        ctx.build_body(
-            (
-                ast.copy_location(ast.Constant(value=value), node)
-                if not isinstance(value, (ast.AST, SourceFragment))
-                else value
-            ),
-            SugarRole.TERM,
-        )
-        for value in values
+    if len(values) > STATIC_UNFOLD_LIMIT:
+        return None, True
+    return (
+        tuple(
+            ctx.build_body(
+                (
+                    ast.copy_location(ast.Constant(value=value), node)
+                    if not isinstance(value, (ast.AST, SourceFragment))
+                    else value
+                ),
+                SugarRole.TERM,
+            )
+            for value in values
+        ),
+        False,
     )
 
 
-def _enforce_static_unfold_limit(size: int, loop_site) -> None:
-    if size <= STATIC_UNFOLD_LIMIT:
-        return
-    from sugar_lift_py_tests.factory import factory_panic_gap
+def _finite_loop_output_names(site, target_name: str) -> tuple[str, ...]:
+    """Names definitely rebound by a nonempty finite loop callable."""
+    import ast
 
-    factory_panic_gap(
-        owner="ForSugar.static_unfold",
-        blame=loop_site,
-        observed=f"statically finite iterable with {size} elements",
-        requested=f"at most {STATIC_UNFOLD_LIMIT} concrete loop self-applications",
-        fix="reduce the literal iterable size or raise the reviewed unfold cap",
-    )
+    names = [target_name]
+
+    class OwnScopeStores(ast.NodeVisitor):
+        def visit_Name(self, node):
+            if isinstance(node.ctx, ast.Store) and node.id not in names:
+                names.append(node.id)
+
+        def visit_Lambda(self, node):
+            return None
+
+        def visit_FunctionDef(self, node):
+            return None
+
+        def visit_AsyncFunctionDef(self, node):
+            return None
+
+        def visit_ClassDef(self, node):
+            return None
+
+        def visit_ListComp(self, node):
+            return None
+
+        def visit_SetComp(self, node):
+            return None
+
+        def visit_DictComp(self, node):
+            return None
+
+        def visit_GeneratorExp(self, node):
+            return None
+
+    visitor = OwnScopeStores()
+    for statement in site.node.body:
+        visitor.visit(statement)
+    return tuple(names)
 
 
 def _loop_carried_names(
