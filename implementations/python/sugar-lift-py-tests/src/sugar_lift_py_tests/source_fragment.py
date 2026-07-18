@@ -1640,6 +1640,82 @@ class SourceFragment:
             source=self.source,
         )
 
+    # --- match / case patterns --------------------------------------------
+
+    def match_subject(self) -> "SourceFragment":
+        """Return the subject expression for a Match statement."""
+        self._require(ast.Match)
+        return SourceFragment.from_node(
+            self.node.subject, self.filename, source=self.source
+        )  # type: ignore[attr-defined]
+
+    def match_cases(self) -> "list[SourceFragment]":
+        """Return SourceFragments for each ``match_case`` arm."""
+        self._require(ast.Match)
+        return [
+            SourceFragment.from_node(case, self.filename, source=self.source)
+            for case in self.node.cases  # type: ignore[attr-defined]
+        ]
+
+    def match_case_pattern(self) -> "SourceFragment":
+        """Return the pattern fragment for a ``match_case`` arm."""
+        self._require(ast.match_case)
+        return SourceFragment.from_node(
+            self.node.pattern, self.filename, source=self.source
+        )  # type: ignore[attr-defined]
+
+    def match_case_guard(self) -> "SourceFragment | None":
+        """Return the guard expression for a ``match_case`` arm, if any."""
+        self._require(ast.match_case)
+        guard = self.node.guard  # type: ignore[attr-defined]
+        if guard is None:
+            return None
+        return SourceFragment.from_node(guard, self.filename, source=self.source)
+
+    def match_case_body_block(self) -> "SourceFragment":
+        """Return a Block SourceFragment for a ``match_case`` body suite."""
+        from .factory.block import Block
+
+        self._require(ast.match_case)
+        return SourceFragment.from_node(
+            Block.of(self.node.body),  # type: ignore[attr-defined]
+            self.filename,
+            source=self.source,
+        )
+
+    def match_value(self) -> "SourceFragment":
+        """Return the value expression of a MatchValue pattern."""
+        self._require(ast.MatchValue)
+        return SourceFragment.from_node(
+            self.node.value, self.filename, source=self.source
+        )  # type: ignore[attr-defined]
+
+    def match_singleton_value(self):
+        """Return the True/False/None payload of a MatchSingleton pattern."""
+        self._require(ast.MatchSingleton)
+        return self.node.value  # type: ignore[attr-defined]
+
+    def match_or_patterns(self) -> "list[SourceFragment]":
+        """Return SourceFragments for each arm of a MatchOr pattern."""
+        self._require(ast.MatchOr)
+        return [
+            SourceFragment.from_node(pattern, self.filename, source=self.source)
+            for pattern in self.node.patterns  # type: ignore[attr-defined]
+        ]
+
+    def match_as_name(self) -> "str | None":
+        """Return the capture name of a MatchAs pattern (None for bare ``_``)."""
+        self._require(ast.MatchAs)
+        return self.node.name  # type: ignore[attr-defined]
+
+    def match_as_pattern(self) -> "SourceFragment | None":
+        """Return the nested pattern of a MatchAs, if any."""
+        self._require(ast.MatchAs)
+        nested = self.node.pattern  # type: ignore[attr-defined]
+        if nested is None:
+            return None
+        return SourceFragment.from_node(nested, self.filename, source=self.source)
+
     # --- while loops ------------------------------------------------------
 
     def while_test(self) -> "SourceFragment":
