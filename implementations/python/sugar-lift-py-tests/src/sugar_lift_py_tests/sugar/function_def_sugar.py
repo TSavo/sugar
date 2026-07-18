@@ -45,9 +45,10 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
 
     @classmethod
     def new(cls, site, ctx) -> "FunctionDefSugar":
-        # The definition selects its explicit callable-body Sugar. That owner
-        # builds the Block child through the catalog; FunctionDefSugar no
-        # longer reaches around it to construct the body directly.
+        # The body is factory-built as ONE Block (audited), never reduced here.
+        # Callsite digs select ControlFlowBodySugar via CONTROL_FLOW_BODY
+        # (select_control_flow_body_sugar / #5205). DEFINITION stays STATEMENT:
+        # body reduction is deferred until after module execution (_finish).
         formals = list(site.function_params())
         vararg = site.function_vararg_name()
         kwarg = site.function_kwarg_name()
@@ -76,7 +77,7 @@ class FunctionDefSugar(Sugar, role=SugarRole.DEFINITION):
             ),
             vararg_formal=vararg,
             kwarg_formal=kwarg,
-            body=ctx.build_body(site, SugarRole.CONTROL_FLOW_BODY),
+            body=ctx.build_body(site.function_body_block(), SugarRole.STATEMENT),
             site=site,
         )
 
