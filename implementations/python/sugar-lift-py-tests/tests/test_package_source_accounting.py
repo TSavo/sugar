@@ -2,7 +2,37 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sugar_lift_py_tests.lib import lift_source
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.factory import SourceFragment, default_catalog
+from sugar_lift_py_tests.sugar.package_source_accounting_sugar import (
+    PackageSourceAccountingSugar,
+    package_source_audits_for_source,
+    source_ledger_for_source_audits,
+)
+
+
+def test_package_source_accounting_is_a_registered_module_recognizer() -> None:
+    site = SourceFragment.from_source("import os\n", "example.py")
+    candidates = default_catalog().candidates_for(SugarRole.PACKAGE_SOURCE, site)
+
+    assert [candidate.name for candidate in candidates] == [
+        "PackageSourceAccountingSugar"
+    ]
+    assert PackageSourceAccountingSugar.owns(site)
+
+
+def test_package_source_accounting_bad_twin_without_import_has_no_audit(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    audits = package_source_audits_for_source(
+        filename="test_no_package.py",
+        source="def test_no_package():\n    assert 1 == 1\n",
+    )
+
+    assert [
+        audit for audit in audits if audit.get("role") == "python.package-source"
+    ] == []
 
 
 def test_package_source_accounting_emits_structural_package_audit(
@@ -29,20 +59,19 @@ def test_package_source_accounting_emits_structural_package_audit(
     monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_LOCI", "summary")
     monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_SAMPLE_LIMIT", "2")
 
-    report = lift_source(
-        "test_vendorpkg.py",
-        (
+    source_audits = package_source_audits_for_source(
+        filename="test_vendorpkg.py",
+        source=(
             "from vendorpkg.core import f\n"
             "\n"
             "def test_vendor_call():\n"
             "    assert f(1) == 2\n"
         ),
-        memento_file="test_vendorpkg.py",
-    ).payload.to_rpc()
+    )
 
     package_audits = [
         audit
-        for audit in report["sourceAudits"]
+        for audit in source_audits
         if audit.get("role") == "python.package-source"
         and audit.get("package") == "vendorpkg"
     ]
@@ -57,7 +86,8 @@ def test_package_source_accounting_emits_structural_package_audit(
     assert audit["ast_type_counts"]["unclassified"]["Name"] > 0
     assert audit["ast_type_counts"]["unclassified"]["Call"] > 0
     assert audit["ast_type_counts"]["unclassified"]["Assign"] > 0
-    assert report["sourceLedger"]["source_loci"] >= audit["totals"]["source_loci"]
+    ledger = source_ledger_for_source_audits(source_audits)
+    assert ledger["source_loci"] >= audit["totals"]["source_loci"]
 
 
 def test_package_source_accounting_is_opt_in(tmp_path: Path, monkeypatch) -> None:
@@ -67,19 +97,16 @@ def test_package_source_accounting_is_opt_in(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.delenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", raising=False)
 
-    report = lift_source(
-        "test_vendorpkg.py",
-        (
+    source_audits = package_source_audits_for_source(
+        filename="test_vendorpkg.py",
+        source=(
             "import vendorpkg\n"
             "\n"
             "def test_vendor_call():\n"
             "    assert vendorpkg is vendorpkg\n"
         ),
-        memento_file="test_vendorpkg.py",
-    ).payload.to_rpc()
+    )
 
     assert [
-        audit
-        for audit in report["sourceAudits"]
-        if audit.get("role") == "python.package-source"
+        audit for audit in source_audits if audit.get("role") == "python.package-source"
     ] == []

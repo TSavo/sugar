@@ -23,6 +23,10 @@ class SugarRole(str, Enum):
     # MatchSugar consumes recognized pattern sugars, never raw `ast.pattern`
     # isinstance walks. Ground matching is `match_ground`; desugar is identity.
     PATTERN = "pattern"
+    # A module selected for structural package-source testimony. The owning
+    # Sugar recognizes imported package roots and cites every accounted locus;
+    # factory/ never interprets the module's control flow.
+    PACKAGE_SOURCE = "package-source"
 
     def __str__(self) -> str:
         return self.value

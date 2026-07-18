@@ -3,12 +3,18 @@ from __future__ import annotations
 import importlib.util
 import os
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.floor import PackageSourceAccountingValue
 from sugar_lift_py_tests.kit_rpc import SourceAuditDto
+from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 
-from .source_fragment import SourceFragment
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
 _LEDGER_KEYS = (
     "source_loci",
@@ -21,15 +27,72 @@ _LEDGER_KEYS = (
 )
 
 
+@dataclass(frozen=True)
+class PackageSourceAccountingSugar(Sugar, role=SugarRole.PACKAGE_SOURCE):
+    """Recognize and account package-source structure behind the Sugar door.
+
+    This is reporting testimony, not execution: imports select package roots,
+    and each source fragment receives a cited structural classification.  The
+    factory only selects this module owner; it never walks or interprets the
+    module's control flow.
+    """
+
+    site: SourceFragment
+
+    @classmethod
+    def owns(cls, site) -> bool:
+        return site.observed == "Module"
+
+    @classmethod
+    def new(cls, site, ctx) -> "PackageSourceAccountingSugar":
+        del ctx
+        return cls(site=site)
+
+    @classmethod
+    def witnesses(cls) -> NotVerdictBearing:
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name=PackageSourceAccountingValue.__name__,
+            reason="package-source accounting emits cited source-audit testimony",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        del ctx
+        return Complete(
+            PackageSourceAccountingValue(
+                source_audits=tuple(_source_audits_for_module(self.site))
+            )
+        )
+
+
 def package_source_audits_for_source(
     *, source: str, filename: str
 ) -> list[SourceAuditDto]:
     if _package_accounting_mode() != "structural":
         return []
-    try:
-        root_fragment = SourceFragment.from_source(source, filename)
-    except SyntaxError:
-        return []
+    from sugar_lift_py_tests.factory import build_node
+    from sugar_lift_py_tests.outcome import complete_value
+
+    result = build_node(
+        SourceFragment.from_source(source, filename),
+        filename=filename,
+        role=SugarRole.PACKAGE_SOURCE,
+    )
+    value = complete_value(
+        result.sugar.desugar(None),
+        owner=PackageSourceAccountingSugar.__name__,
+    )
+    if not isinstance(value, PackageSourceAccountingValue):
+        raise TypeError(
+            f"{PackageSourceAccountingSugar.__name__} produced "
+            f"{type(value).__name__}, expected {PackageSourceAccountingValue.__name__}"
+        )
+    return list(value.source_audits)
+
+
+def _source_audits_for_module(
+    root_fragment: SourceFragment,
+) -> list[SourceAuditDto]:
     audits: list[SourceAuditDto] = []
     for package in _imported_top_level_packages(root_fragment):
         root = _package_root(package)

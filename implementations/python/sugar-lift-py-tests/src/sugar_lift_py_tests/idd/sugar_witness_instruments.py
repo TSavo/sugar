@@ -233,6 +233,11 @@ EXPECTED_NON_FOL_OPT_OUTS: tuple[NonFolOptOut, ...] = (
         floor_name="SupportValue",
         reason="pass is inert control-flow support",
     ),
+    NonFolOptOut(
+        sugar_name="PackageSourceAccountingSugar",
+        floor_name="PackageSourceAccountingValue",
+        reason="package-source accounting emits cited source-audit testimony",
+    ),
 )
 
 # #4578 moved the opaque equality refusal witnesses to the classifier that
