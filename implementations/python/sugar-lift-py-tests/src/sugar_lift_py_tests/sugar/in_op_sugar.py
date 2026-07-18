@@ -49,12 +49,31 @@ class InOpSugar(Sugar, role=SugarRole.TERM):
             "    return 0\n"
             "\n"
         )
+        assert_domain = (
+            "def B(how):\n"
+            "    assert how in ['first', 'last']\n"
+            "    if how == 'first':\n"
+            "        idxpos = 1\n"
+            "    elif how == 'last':\n"
+            "        idxpos = 2\n"
+            "    return idxpos\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="in_return",
                 owner_sugar="InOpSugar",
                 truthful=prefix + "def test_a():\n    assert A(2) == 1\n",
                 lying=prefix + "def test_a():\n    assert A(2) == 0\n",
+            ),
+            _call_pair(
+                name="in_assert_finite_domain_elif",
+                owner_sugar="InOpSugar",
+                truthful=assert_domain
+                + "def test_b():\n    assert B('first') == 1\n    assert B('last') == 2\n",
+                lying=assert_domain
+                + "def test_b():\n    assert B('first') == 2\n    assert B('last') == 1\n",
+                family="finite-domain-elif",
             ),
         )
 
@@ -91,6 +110,13 @@ class InOpSugar(Sugar, role=SugarRole.TERM):
                 then_bindings = ((name, when_present),)
             if when_absent is not None:
                 else_bindings = ((name, when_absent),)
+        # On the true face of ``x in (<literal domain>)``, x is one of those
+        # literals.  Assert and if/return coverings rebind the coordinate so a
+        # following exclusive if/elif chain can join definite arm values.
+        coordinate = self.site.compare_left().dotted_expr_name()
+        finite_value = finite_membership_value(left, right, self.site)
+        if coordinate and finite_value is not None:
+            then_bindings = (*then_bindings, (coordinate, finite_value))
         return Complete(
             PredicateValue(
                 formula,
@@ -106,6 +132,31 @@ class InOpSugar(Sugar, role=SugarRole.TERM):
 
     def walk_children(self):
         return (self.left, self.right)
+
+
+def finite_membership_value(left, right, site):
+    """Exact finite domain as a GuardedValue tree of the domain elements.
+
+    Accepts literal tuple/list domains whose every element is equality-
+    comparable with ``left``.  Empty domains yield no refinement.
+    """
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.outcome import Complete
+
+    if type(right) not in (TupleValue, ListValue) or not right.elements:
+        return None
+    value = right.elements[-1]
+    for element in reversed(right.elements[:-1]):
+        comparison = left.equals(element, site)
+        if not isinstance(comparison, Complete) or not isinstance(
+            comparison.value, PredicateValue
+        ):
+            return None
+        value = GuardedValue(comparison.value.formula, element, value)
+    return value
 
 
 def _membership_face(value, needle, *, present: bool):
