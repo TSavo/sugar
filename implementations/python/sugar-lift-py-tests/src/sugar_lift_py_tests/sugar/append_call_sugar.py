@@ -71,6 +71,13 @@ class AppendCallSugar(
             "    return len(attrs)\n"
             "\n"
         )
+        finite_copy_prefix = (
+            "def A():\n"
+            "    xs = [1].copy()\n"
+            "    xs.append(2)\n"
+            "    return len(xs)\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="append_return",
@@ -103,6 +110,15 @@ class AppendCallSugar(
                 lying=finite_cast_prefix + "def test_a():\n" + "    assert A() == 1\n",
                 family="finite-cast-list-append",
             ),
+            _call_pair(
+                name="append_finite_copy_return",
+                owner_sugar="AppendCallSugar",
+                truthful=finite_copy_prefix
+                + "def test_a():\n"
+                + "    assert A() == 2\n",
+                lying=finite_copy_prefix + "def test_a():\n" + "    assert A() == 1\n",
+                family="finite-copy-list-append",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -116,11 +132,10 @@ class AppendCallSugar(
     def _append(self, receiver, value) -> Outcome:
         from sugar_lift_py_tests.floor import CallSiteValue
 
-        if isinstance(receiver, CallSiteValue):
-            if receiver.target_name in _PANDAS_INDEX_CALL_TARGETS:
-                return Complete(
-                    receiver.linear_method_call("append", (value,), self.site)
-                )
+        if isinstance(receiver, CallSiteValue) and _is_pandas_index_like(receiver):
+            # Index.append is non-mutating: construct the method coordinate as
+            # the expression face. Do not rebind the receiver name.
+            return Complete(receiver.linear_method_call("append", (value,), self.site))
         return receiver.append_with(value, self.site).and_then(
             lambda updated: Complete(ScopeRebind(self.receiver_name, updated))
         )
@@ -142,3 +157,24 @@ _PANDAS_INDEX_CALL_TARGETS = frozenset(
         "pandas.core.indexes.timedeltas.timedelta_range",
     }
 )
+
+# Methods that return the same Index species when invoked on an Index-like
+# coordinate. Live residual: ``date_range(...).as_unit(unit).append(...)``.
+_PANDAS_INDEX_PRESERVING_METHODS = frozenset({"as_unit"})
+
+
+def _is_pandas_index_like(receiver) -> bool:
+    """True when the callsite is a known Index constructor or Index-preserving chain."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    if not isinstance(receiver, CallSiteValue):
+        return False
+    if receiver.target_name in _PANDAS_INDEX_CALL_TARGETS:
+        return True
+    if (
+        receiver.target_name in _PANDAS_INDEX_PRESERVING_METHODS
+        and receiver.arg_values
+        and isinstance(receiver.arg_values[0], CallSiteValue)
+    ):
+        return _is_pandas_index_like(receiver.arg_values[0])
+    return False
