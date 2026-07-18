@@ -174,7 +174,24 @@ class TupleValue(FloorValue):
                     GroundSequenceRepetitionValue("tuple", self.elements, other.value)
                 )
             return Complete(TupleValue(self.elements * other.value))
+        runtime_count_kind = None
         if type(other) is SymbolicValue:
+            runtime_count_kind = "symbolic count"
+        elif (
+            type(other) is CallSiteValue
+            and other.target_name == "max"
+            and other.arg_values
+            and all(
+                _is_runtime_integer_expression(value)
+                or (type(value) is TermValue and type(value.value) is int)
+                for value in other.arg_values
+            )
+        ):
+            # max preserves one of its operands.  A symbolic integer expression
+            # remains unavailable until Python evaluates the function inputs,
+            # while the ground integer peers preserve the __index__ warrant.
+            runtime_count_kind = "integer-warranted callsite max"
+        if runtime_count_kind is not None:
             from sugar_lift_py_tests.effect import (
                 SequenceRepetitionRuntimeEffect,
                 runtime_effect_evidence,
@@ -183,7 +200,7 @@ class TupleValue(FloorValue):
 
             return Incomplete(
                 SequenceRepetitionRuntimeEffect(
-                    "sequence repetition by symbolic count: TupleValue depends "
+                    f"sequence repetition by {runtime_count_kind}: TupleValue depends "
                     f"on runtime __index__/length semantics; site={site}",
                     **runtime_effect_evidence("py.sequence_repeat", other, site),
                 )
@@ -213,3 +230,18 @@ class TupleValue(FloorValue):
                 site=site,
             )
         return self.py_subscript_coordinate(index, site)
+
+
+def _is_runtime_integer_expression(value) -> bool:
+    """Recognize the exact integer expression carried by NumPy's kron shape test."""
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import _Ctor
+
+    if type(value) is not SymbolicValue or not isinstance(value.term, _Ctor):
+        return False
+    if value.term.name != "-" or len(value.term.args) != 2:
+        return False
+    return all(
+        isinstance(arg, _Ctor) and arg.name == "call:len" and len(arg.args) == 1
+        for arg in value.term.args
+    )

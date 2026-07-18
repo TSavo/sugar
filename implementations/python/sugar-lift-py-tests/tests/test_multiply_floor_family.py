@@ -347,6 +347,112 @@ def test_integer_warranted_callsite_is_a_runtime_list_repetition_count(
     assert outcome.effect.witness.operand == count.term
 
 
+def test_runtime_max_result_is_a_warranted_tuple_repetition_count() -> None:
+    site = SourceFragment.from_source(
+        "(1,) * max(0, len(shape_b) - len(shape_a))\n",
+        "numpy/lib/tests/test_shape_base.py",
+    ).statements()[0]
+    runtime_delta = SymbolicValue(
+        ctor(
+            "-",
+            [
+                ctor("call:len", [make_var("shape_b")]),
+                ctor("call:len", [make_var("shape_a")]),
+            ],
+        )
+    )
+    count = CallSiteValue(
+        target_name="max",
+        arg_values=(TermValue(0), runtime_delta),
+        parameters=(),
+        term=ctor("call:max", [num(0), runtime_delta.term]),
+        body=None,
+        site=site,
+    )
+
+    outcome = TupleValue((TermValue(1),)).multiply(count, site)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert "integer-warranted callsite max" in outcome.reason
+    assert outcome.effect.witness.operand == count.term
+    assert outcome.effect.witness.locus == "numpy/lib/tests/test_shape_base.py:1:0"
+
+
+@pytest.mark.parametrize(
+    "runtime_peer",
+    (
+        StringValue("zero"),
+        SymbolicValue(make_var("unwarranted_runtime_value")),
+    ),
+)
+def test_unwarranted_max_result_stays_loud_on_tuple_repetition_floor(
+    runtime_peer,
+) -> None:
+    count = CallSiteValue(
+        target_name="max",
+        arg_values=(TermValue(0), runtime_peer),
+        parameters=(),
+        term=ctor("call:max", [num(0), runtime_peer.to_term(owner="test")]),
+        body=None,
+        site=_SITE,
+    )
+
+    with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
+        TupleValue((TermValue(1),)).multiply(count, _SITE)
+
+
+def test_numpy_sum_of_runtime_predicate_is_a_warranted_list_repetition_count() -> None:
+    site = SourceFragment.from_source(
+        "[None] * np.sum(index_with_missing.isna())\n",
+        "pandas/tests/indexes/test_common.py",
+    ).statements()[0]
+    runtime_predicate = CallSiteValue(
+        target_name="isna",
+        arg_values=(SymbolicValue(make_var("index")),),
+        parameters=(),
+        term=ctor("call:isna", [make_var("index")]),
+        body=None,
+        site=site,
+    )
+    count = CallSiteValue(
+        target_name="numpy.sum",
+        arg_values=(runtime_predicate,),
+        parameters=(),
+        term=ctor("call:numpy.sum", [runtime_predicate.term]),
+        body=None,
+        site=site,
+    )
+
+    outcome = ListValue((TermValue(None),)).multiply(count, site)
+
+    assert isinstance(outcome, Incomplete)
+    assert isinstance(outcome.effect, SequenceRepetitionRuntimeEffect)
+    assert "integer-warranted numpy.sum boolean count" in outcome.reason
+    assert outcome.effect.witness.operand == count.term
+    assert outcome.effect.witness.locus == "pandas/tests/indexes/test_common.py:1:0"
+
+    with pytest.raises(FactoryPanic, match="genuine runtime-dependent operand"):
+        runtime_effect_evidence("py.sequence_repeat", TermValue(0), site)
+
+
+@pytest.mark.parametrize("target_name", ("sum", "vendor.sum"))
+def test_unqualified_sum_result_stays_loud_on_list_repetition_floor(
+    target_name: str,
+) -> None:
+    count = CallSiteValue(
+        target_name=target_name,
+        arg_values=(SymbolicValue(make_var("values")),),
+        parameters=(),
+        term=ctor(f"call:{target_name}", [make_var("values")]),
+        body=None,
+        site=_SITE,
+    )
+
+    with pytest.raises(FactoryPanic, match="stand on the multiplication floor"):
+        ListValue((TermValue(None),)).multiply(count, _SITE)
+
+
 @pytest.mark.parametrize(
     "count",
     (
