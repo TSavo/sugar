@@ -18,8 +18,15 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import ComprehensionValue, SymbolicValue
+from sugar_lift_py_tests.floor import (
+    ComprehensionValue,
+    ListValue,
+    NoneValue,
+    StringValue,
+    SymbolicValue,
+)
 from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.sugar.list_comp_sugar import ListCompSugar
 
 
@@ -87,6 +94,26 @@ def test_condition_rides_the_coordinate() -> None:
     elem = ctor("py.iter_elem", [make_var("xs")])
     cond = ctor("py.gt", [elem, num(0)])
     assert value.term == ctor("py.listcomp", [elem, make_var("xs"), cond])
+
+
+def test_finite_list_comprehension_constructs_each_conditional_element() -> None:
+    value = reduce_value(
+        '[row[1] if row[1] else None for row in [[1, "date"], [2, None]]]'
+    )
+
+    assert value == ListValue((StringValue("date"), NoneValue()))
+
+
+def test_finite_list_comprehension_witness_truthful_sat_lying_unsat(
+    tmp_path,
+) -> None:
+    witness = next(
+        pair
+        for pair in ListCompSugar.witnesses()
+        if pair.name == "list_comp_finite_conditional"
+    )
+
+    assert evaluate_seed_witnesses((witness,), tmp_path).is_zero
 
 
 # ---------------------------------------------------------------------------
