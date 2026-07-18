@@ -162,7 +162,6 @@ def format_report(offenders: Sequence[SilentOffender]) -> str:
 
 
 def _audit_file(path: Path, *, rel: str) -> tuple[str, tuple[SilentOffender, ...]]:
-    from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
     from sugar_lift_py_tests.idd.lift_coverage_accounting import (
         account_lift_coverage,
     )
@@ -170,10 +169,7 @@ def _audit_file(path: Path, *, rel: str) -> tuple[str, tuple[SilentOffender, ...
     from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
     source = path.read_text(encoding="utf-8", errors="replace")
-    try:
-        payload = lift_file_payload(source, rel)
-    except FactoryPanic:
-        return "factory-panic", ()
+    payload = lift_file_payload(source, rel)
     report = payload.to_rpc()
     report["liftCoverage"] = account_lift_coverage(
         census_source(source, file=rel),
