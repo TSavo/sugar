@@ -198,6 +198,26 @@ def test_accessor_decorated_class_witness_truthful_sat_wrong_twin_unsat(
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_dataclass_decorated_class_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in ClassDefSugar.witnesses()
+        if witness.name == "dataclass_decorated_class_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "dataclass-decorated-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "dataclass-decorated-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_owns_plain_class_not_decorated_metaclass_or_function() -> None:
     """(3) owns plain class; not decorated, metaclass, or FunctionDef."""
     assert ClassDefSugar.owns(_site("class C:\n    pass\n")) is True
@@ -225,6 +245,36 @@ def test_owns_authenticated_pandas_accessor_decorated_class() -> None:
     site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
 
     assert ClassDefSugar.owns(site) is True
+
+
+def test_owns_authenticated_stdlib_dataclass_decorated_class() -> None:
+    source = (
+        "from dataclasses import dataclass\n"
+        "@dataclass\n"
+        "class Dog:\n"
+        "    name: str\n"
+        "    age: int\n"
+    )
+    site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is True
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    result = build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert result.audit_row.selected == "ClassDefSugar"
+
+
+def test_same_named_local_dataclass_decorator_stays_unowned() -> None:
+    source = (
+        "def dataclass(cls):\n"
+        "    return 7\n"
+        "@dataclass\n"
+        "class Dog:\n"
+        "    name: str\n"
+    )
+    site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is False
 
 
 def test_unknown_qualified_decorated_class_stays_unowned() -> None:

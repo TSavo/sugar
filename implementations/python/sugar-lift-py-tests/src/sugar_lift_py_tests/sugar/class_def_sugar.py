@@ -145,6 +145,16 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             "    return 7\n"
             "\n"
         )
+        dataclass_decorated = (
+            "from dataclasses import dataclass\n"
+            "\n"
+            "def D(z):\n"
+            "    @dataclass\n"
+            "    class Point:\n"
+            "        value: int\n"
+            "    return z\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="class_def_return",
@@ -166,6 +176,17 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                 + "def test_c():\n"
                 + "    assert C() == 7\n",
                 lying=accessor_decorated + "def test_c():\n" + "    assert C() == 8\n",
+                family="identity-decorated-class",
+            ),
+            _call_pair(
+                name="dataclass_decorated_class_return",
+                owner_sugar="ClassDefSugar",
+                truthful=dataclass_decorated
+                + "def test_d():\n"
+                + "    assert D(5) == 5\n",
+                lying=dataclass_decorated
+                + "def test_d():\n"
+                + "    assert D(5) == 6\n",
                 family="identity-decorated-class",
             ),
         )
