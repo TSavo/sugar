@@ -88,3 +88,44 @@
 - [ ] Run formatting and `git diff --check`.
 - [ ] Commit as `T Savo <evilgenius@nefariousplan.com>`.
 - [ ] Push and open a draft non-closing PR with `Part of #5207`.
+
+### Task 5: Harden the baseline-free SourceFragment instrument
+
+**Files:**
+- Modify: `implementations/python/sugar-lift-py-tests/scripts/factory_zero_tolerance.py`
+- Modify: `implementations/python/sugar-lift-py-tests/tests/test_factory_zero_tolerance.py`
+
+**Interfaces:**
+- Produces: a live semantic-classifier offender set for `SourceFragment`.
+
+- [ ] Detect meaning-bearing AST classifiers, walkers, and visitors while
+  preserving child-fragment projection as structural.
+- [ ] Run the focused instrument and record the named red set.
+- [ ] Assert only stable zero; add no baseline or accepted-count threshold.
+
+### Task 6: Promote every remaining semantic family
+
+**Files:**
+- Modify: registered annotation, Call, Assign/For/With, Try, BoolOp/format,
+  test-function, constructor, and loop-control Sugars.
+- Modify: `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/source_fragment.py`
+- Modify: focused witness tests for each owning Sugar.
+
+**Interfaces:**
+- Consumes: structural child projections from `SourceFragment`.
+- Produces: Sugar-owned recognizers whose owned cases construct or emit a
+  genuine typed effect.
+
+- [ ] Add a failing good/bad twin for one semantic family.
+- [ ] Move that classifier into its registered Sugar owner and delete the
+  SourceFragment method.
+- [ ] Run the twin and semantic-classifier instrument.
+- [ ] Repeat until the SourceFragment semantic count is zero.
+
+### Task 7: Hardened verification and PR update
+
+- [ ] Run the baseline-free instrument; require SourceFragment semantic zero.
+- [ ] Run bounded named replay, conservation (`silent=0`), discrimination, and
+  fresh provenance-matched witnesses.
+- [ ] Update the inventory with every registered Sugar owner.
+- [ ] Commit as T Savo and update open non-closing PR #5215.
