@@ -190,8 +190,10 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 ExceptionClassValue,
                 ExceptionValue,
                 FunctionCallable,
+                ListValue,
                 LocalExceptionClassValue,
                 NativeCallableValue,
+                TermValue,
             )
             from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.sugar.install_source_dig import (
@@ -206,6 +208,24 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                         exception_name=self.exact_exception_name,
                         arguments=accumulated,
                         site=self.site,
+                    )
+                )
+
+            if (
+                self.target_name == "range"
+                and not self.keyword_names
+                and 1 <= len(accumulated) <= 3
+                and all(
+                    type(value) is TermValue and type(value.value) is int
+                    for value in accumulated
+                )
+            ):
+                return Complete(
+                    ListValue(
+                        tuple(
+                            TermValue(value)
+                            for value in range(*(item.value for item in accumulated))
+                        )
                     )
                 )
 
