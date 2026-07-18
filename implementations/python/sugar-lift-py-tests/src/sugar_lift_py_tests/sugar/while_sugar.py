@@ -20,9 +20,8 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
     name (unlike For). The outcome is the body's BlockValue, which splices
     into the enclosing record.
 
-    Owns only empty-orelse While. Non-empty `else:` stays unowned (loud
-    factory gap) -- never silently drop the orelse. Observed kind must be
-    exactly "While".
+    Owns only empty-orelse While. Non-empty `else:` is WhileElseSugar —
+    never silently drop the orelse. Observed kind must be exactly "While".
     """
 
     test: SugarBody
@@ -45,9 +44,7 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def new(cls, site, ctx) -> "WhileSugar":
         # Test (TERM) and body block (STATEMENT). Never reduce here.
-        scope = LoopControlScopeSugar.classify(
-            site, entry_reads=(site.while_test(),)
-        )
+        scope = LoopControlScopeSugar.classify(site, entry_reads=(site.while_test(),))
         return cls(
             test=ctx.build_body(site.while_test(), SugarRole.TERM),
             body=ctx.build_body(site.while_body_block(), SugarRole.STATEMENT),

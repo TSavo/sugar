@@ -1738,6 +1738,17 @@ class SourceFragment:
         self._require(ast.While)
         return len(self.node.orelse)  # type: ignore[attr-defined]
 
+    def while_orelse_block(self) -> "SourceFragment":
+        """Return the while ``else`` suite as one ordinary Block fragment."""
+        from .factory.block import Block
+
+        self._require(ast.While)
+        return SourceFragment.from_node(
+            Block.of(self.node.orelse),  # type: ignore[attr-defined]
+            self.filename,
+            source=self.source,
+        )
+
     def own_scope_stored_names(self) -> "tuple[str, ...]":
         """Delegate loop/control scope recognition to its owning Sugar."""
         from .sugar.loop_control_scope_sugar import LoopControlScopeSugar

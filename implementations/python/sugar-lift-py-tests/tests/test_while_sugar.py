@@ -1,6 +1,6 @@
 """WhileSugar: while test: body threads the body; test coordinate is reduced.
 
-Empty-orelse While only. Non-empty else: and For stay loud gaps / other arms.
+Empty-orelse While only. Non-empty else: is WhileElseSugar; For is ForSugar.
 """
 
 from __future__ import annotations
@@ -122,15 +122,18 @@ def test_owns_empty_orelse_while_not_for_or_else_or_expr() -> None:
         c.name == "WhileSugar"
         for c in catalog.candidates_for(SugarRole.STATEMENT, simple)
     )
-    assert not list(catalog.candidates_for(SugarRole.STATEMENT, with_else))
+    # Non-empty else is owned by WhileElseSugar, not this arm.
+    assert not any(
+        c.name == "WhileSugar"
+        for c in catalog.candidates_for(SugarRole.STATEMENT, with_else)
+    )
 
 
-def test_while_else_is_a_loud_factory_gap() -> None:
+def test_while_else_is_owned_by_while_else_sugar() -> None:
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
     node = ast.parse("while y:\n    pass\nelse:\n    pass\n").body[0]
-    with pytest.raises(FactoryPanic) as raised:
-        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
-    assert raised.value.info.observed == "While"
+    result = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert result.audit_row.selected == "WhileElseSugar"
 
 
 def test_for_is_not_owned_by_while_sugar() -> None:
