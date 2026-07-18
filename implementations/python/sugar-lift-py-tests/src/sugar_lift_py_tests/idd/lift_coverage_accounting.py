@@ -379,8 +379,9 @@ def _account_assertions(
     # Ground folds with no fact row also refuse-loud until a floor speaks them.
     instrument_engaged = _factory_instrument_engaged(payload)
     instrument_notes = _factory_instrument_notes(payload)
+    recovered_panic_spans = _report_recovered_panic_spans(payload)
 
-    silent: list[AssertLocus] = []  # always empty under this law
+    silent: list[AssertLocus] = []
     lifted_matched: list[AssertLocus] = []
     refused_matched: list[AssertLocus] = []
     for a in asserts:
@@ -389,6 +390,18 @@ def _account_assertions(
             continue
         if _matched(a, refused_keys):
             refused_matched.append(a)
+            continue
+        if any(
+            a.file == file and start_line <= a.line <= end_line
+            for file, start_line, end_line in recovered_panic_spans
+        ):
+            # The report rendered the FactoryPanic loudly, but no assertion
+            # fact exists for this poisoned definition. It therefore cannot
+            # be counted as cited or refused-and-accounted: retain it on the
+            # mandatory silently_unaccounted RED gate until construction
+            # completes. "Silent" is the legacy gate name; the paired factory
+            # row makes the cause visible and source-cited.
+            silent.append(a)
             continue
         # Not lifted: refuse-loud. Never silent.
         refused_matched.append(a)
@@ -418,7 +431,17 @@ def _account_assertions(
         silently_unaccounted=len(silent),
         lifted_loci=[a.to_json() for a in lifted_matched] or lifted_loci,
         refused_loci=[a.to_json() for a in refused_matched] or refused_loci,
-        silent_loci=[a.to_json() for a in silent],
+        silent_loci=[
+            {
+                **a.to_json(),
+                "status": "recovered-factory-panic",
+                "message": (
+                    "claim has no constructed fact because its definition "
+                    "ended in a loudly rendered FactoryPanic"
+                ),
+            }
+            for a in silent
+        ],
         on_disk=[a.to_json() for a in asserts],
     )
 
@@ -450,6 +473,36 @@ def _factory_instrument_engaged(payload: Mapping[str, Any]) -> bool:
         if status in {"unresolved", "unclassified", "floor-gap"} or verdict == "gap":
             return True
     return False
+
+
+def _report_recovered_panic_spans(
+    payload: Mapping[str, Any],
+) -> list[tuple[str, int, int]]:
+    """Definition spans whose report construction ended in FactoryPanic."""
+    summary = (
+        payload.get("factoryAuditSummary") or payload.get("factory_audit_summary") or {}
+    )
+    if not isinstance(summary, Mapping):
+        return []
+    rows = summary.get("factoryWalk") or summary.get("factory_walk") or []
+    spans: list[tuple[str, int, int]] = []
+    for row in rows:
+        if not isinstance(row, Mapping) or row.get("reportRecoveredPanic") is not True:
+            continue
+        file = str(row.get("file") or "")
+        start = row.get("recoveredOwnerStartLine")
+        end = row.get("recoveredOwnerEndLine")
+        if (
+            file
+            and isinstance(start, int)
+            and not isinstance(start, bool)
+            and isinstance(end, int)
+            and not isinstance(end, bool)
+            and start > 0
+            and end >= start
+        ):
+            spans.append((file, start, end))
+    return spans
 
 
 def _factory_instrument_notes(payload: Mapping[str, Any]) -> list[str]:
