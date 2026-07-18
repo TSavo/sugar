@@ -264,6 +264,31 @@ def test_owns_authenticated_stdlib_dataclass_decorated_class() -> None:
     assert result.audit_row.selected == "ClassDefSugar"
 
 
+def test_owns_authenticated_module_qualified_stdlib_dataclass() -> None:
+    source = (
+        "import dataclasses\n"
+        "@dataclasses.dataclass\n"
+        "class Dog:\n"
+        "    name: str\n"
+    )
+    site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is True
+
+
+def test_same_named_local_dataclasses_namespace_stays_unowned() -> None:
+    source = (
+        "class dataclasses:\n"
+        "    dataclass = lambda cls: 7\n"
+        "@dataclasses.dataclass\n"
+        "class Dog:\n"
+        "    name: str\n"
+    )
+    site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is False
+
+
 def test_same_named_local_dataclass_decorator_stays_unowned() -> None:
     source = (
         "def dataclass(cls):\n"
