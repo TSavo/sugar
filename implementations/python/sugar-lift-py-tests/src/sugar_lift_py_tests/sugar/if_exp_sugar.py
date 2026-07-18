@@ -5,7 +5,10 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import (
+    _call_pair,
+    typed_red_effect_witness,
+)
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -38,22 +41,33 @@ class IfExpSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def witnesses(cls):
-        return _call_pair(
-            name="if_exp_literal_condition_return",
-            owner_sugar="IfExpSugar",
-            truthful=(
-                "def A():\n"
-                "    return 1 if True else 2\n"
-                "\n"
-                "def test_a():\n"
-                "    assert A() == 1\n"
+        return (
+            _call_pair(
+                name="if_exp_literal_condition_return",
+                owner_sugar="IfExpSugar",
+                truthful=(
+                    "def A():\n"
+                    "    return 1 if True else 2\n"
+                    "\n"
+                    "def test_a():\n"
+                    "    assert A() == 1\n"
+                ),
+                lying=(
+                    "def A():\n"
+                    "    return 1 if True else 2\n"
+                    "\n"
+                    "def test_a():\n"
+                    "    assert A() == 2\n"
+                ),
             ),
-            lying=(
-                "def A():\n"
-                "    return 1 if True else 2\n"
-                "\n"
-                "def test_a():\n"
-                "    assert A() == 2\n"
+            typed_red_effect_witness(
+                name="if_exp_runtime_effect",
+                owner_sugar=cls.__name__,
+                source=("def A(condition):\n" "    return 1 if condition else 2\n"),
+                effect_class="ConditionalExpressionRuntimeEffect",
+                reason_needle="Python evaluates the condition at runtime",
+                blame_needle="test_witness.py",
+                wrong_reason_needle="owner=WrongSugar",
             ),
         )
 
