@@ -39,7 +39,8 @@ Scripts:
 - `scripts/vendor_special_case_law.py` → `R_vendor_special_case`
 - `scripts/native_crash_zero_tolerance.py` → `R_native_crashes` across every
   Python file in the production package and corpus tooling
-- `scripts/silent_zero_tolerance.py` → `R_silent`
+- `scripts/silent_zero_tolerance.py` → `R_silent` across every Python file in
+  the production package and corpus tooling
 
 CI: `.github/workflows/factory-zero-tolerance.yml` (no baselines, no allowlists).
 
