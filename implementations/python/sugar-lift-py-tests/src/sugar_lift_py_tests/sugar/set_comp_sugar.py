@@ -5,11 +5,11 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import ComprehensionValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.recognition.set_comp import SetCompRecognition
 from sugar_lift_py_tests.sugar.comprehension_clauses import (
     build_clauses,
     clause_children,
     reduce_clauses,
-    supports_clauses,
 )
 from sugar_lift_py_tests.sugar.list_comp_sugar import _floor_as_term
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -24,24 +24,33 @@ class SetCompSugar(Sugar, role=SugarRole.TERM):
     site: object = dataclass_field(compare=False)
 
     @classmethod
-    def owns(cls, site) -> bool:
-        return site.observed == "SetComp" and supports_clauses(
-            site.setcomp_generators()
-        )
+    def owns(cls, fragment) -> bool:
+        return SetCompRecognition.owns(fragment)
 
     @classmethod
     def new(cls, site, ctx) -> "SetCompSugar":
+        recognition = SetCompRecognition.classify(site)
+        if recognition is None:
+            raise ValueError("SetCompSugar.new requires a recognized SetComp")
         return cls(
-            clauses=build_clauses(site.setcomp_generators(), ctx),
+            clauses=build_clauses(
+                site.setcomp_generators(),
+                ctx,
+                clause_bindings=recognition.clause_bindings,
+            ),
             elt_body=ctx.build_body(site.setcomp_element(), SugarRole.TERM),
             site=site,
         )
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A(z):\n    y = {x for x in z}\n    return 1\n\n"
+        prefix = (
+            "def A(z):\n"
+            "    y = {c for *_, c in ((1, 2), (3, 4))}\n"
+            "    return 1\n\n"
+        )
         return _call_pair(
-            name="set_comp_return",
+            name="set_comp_starred_discard_return",
             owner_sugar="SetCompSugar",
             truthful=prefix + "def test_a():\n    assert A(5) == 1\n",
             lying=prefix + "def test_a():\n    assert A(5) == 0\n",

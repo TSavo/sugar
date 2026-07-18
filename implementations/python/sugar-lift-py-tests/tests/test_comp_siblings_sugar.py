@@ -27,6 +27,9 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.idd.sugar_witness_instruments import (
+    evaluate_seed_witnesses,
+)
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.dict_comp_sugar import DictCompSugar
 from sugar_lift_py_tests.sugar.generator_exp_sugar import GeneratorExpSugar
@@ -86,6 +89,40 @@ def test_set_comp_multi_generator_is_citable() -> None:
         {"A": SymbolicValue(make_var("A")), "B": SymbolicValue(make_var("B"))},
     )
     assert value.term.name == "py.setcomp"
+
+
+def test_set_comp_discarded_starred_prefix_projects_suffix_binding() -> None:
+    value = reduce_value(
+        "{c for *_, c in rows}",
+        {"rows": SymbolicValue(make_var("rows"))},
+    )
+
+    element = ctor("py.iter_elem", [make_var("rows")])
+    assert value.term == ctor(
+        "py.setcomp",
+        [ctor("py.subscript", [element, num(-1)]), make_var("rows")],
+    )
+
+
+def test_set_comp_used_starred_binding_stays_a_loud_factory_gap() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        reduce_value(
+            "{prefix for *prefix, c in rows}",
+            {"rows": SymbolicValue(make_var("rows"))},
+        )
+
+    assert raised.value.info.owner == "python.factory"
+    assert raised.value.info.observed == "SetComp"
+    assert raised.value.info.requested == "term"
+
+
+def test_set_comp_starred_discard_witness_truthful_and_lying(
+    tmp_path,
+) -> None:
+    witness = SetCompSugar.witnesses()
+
+    assert witness.name == "set_comp_starred_discard_return"
+    assert evaluate_seed_witnesses((witness,), tmp_path).is_zero
 
 
 # ---------------------------------------------------------------------------

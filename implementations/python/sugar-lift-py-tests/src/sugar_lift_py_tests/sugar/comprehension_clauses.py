@@ -26,19 +26,38 @@ def supports_clauses(generators) -> bool:
     )
 
 
-def build_clauses(generators, ctx) -> tuple[ComprehensionClause, ...]:
+def build_clauses(
+    generators,
+    ctx,
+    *,
+    clause_bindings=None,
+) -> tuple[ComprehensionClause, ...]:
+    if clause_bindings is None:
+        classified = tuple(
+            LoopControlScopeSugar.classify(
+                generator.comprehension_target()
+            ).target_bindings
+            for generator in generators
+        )
+        if any(bindings is None for bindings in classified):
+            raise ValueError("build_clauses requires recognized target bindings")
+        bindings = tuple(
+            target_bindings
+            for target_bindings in classified
+            if target_bindings is not None
+        )
+    else:
+        bindings = clause_bindings
     return tuple(
         ComprehensionClause(
-            bindings=LoopControlScopeSugar.classify(
-                generator.comprehension_target()
-            ).target_bindings,
+            bindings=target_bindings,
             iterable=ctx.build_body(generator.comprehension_iter(), SugarRole.TERM),
             conditions=tuple(
                 ctx.build_body(condition, SugarRole.TERM)
                 for condition in generator.comprehension_ifs()
             ),
         )
-        for generator in generators
+        for generator, target_bindings in zip(generators, bindings, strict=True)
     )
 
 
