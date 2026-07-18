@@ -260,6 +260,30 @@ FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
         "silent-truncation/no-terminal-verdict-after-witness-verify",
         re.compile(r"== verify good witness ==\Z"),
     ),
+    # #3587 drain residuals (2026-07-18): provenance-KIND-required text is gone;
+    # these patterns pin the live shapes so the gate cannot silently re-match
+    # the drained provenance pattern on newer failure text (#3677 criterion 10).
+    FailurePattern(
+        "witness-recompute/build-output-path-missing",
+        re.compile(
+            r"could not resolve witness package body: oracle refused resolution: "
+            r"\[Errno 2\] No such file or directory:.*\.build/"
+        ),
+    ),
+    FailurePattern(
+        "harness/json-decode-extra-data",
+        re.compile(r"JSONDecodeError: Extra data"),
+    ),
+    FailurePattern(
+        "lift-plugin/transport-disconnected",
+        re.compile(
+            r"lift plugin transport disconnected|plugin process ended without responding"
+        ),
+    ),
+    FailurePattern(
+        "mint-refused/split-pipeline-kit-binary",
+        re.compile(r"refusing to mint from a split pipeline: kit @"),
+    ),
 )
 
 
