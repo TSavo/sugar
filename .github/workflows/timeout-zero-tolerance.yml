@@ -12,6 +12,8 @@ permissions:
 jobs:
   timeout-zero-tolerance:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: "implementations/python/sugar-lift-python-source/src:implementations/python/sugar-lift-py-tests/src"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,6 +25,10 @@ jobs:
           python -m pytest --noconftest
           implementations/python/sugar-lift-py-tests/tests/test_timeout_zero_tolerance.py
           -q
+      - name: Panic-catch self-check
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/factory_panic_catch_law.py
       - name: R_timeouts = 0
         run: >-
           python
