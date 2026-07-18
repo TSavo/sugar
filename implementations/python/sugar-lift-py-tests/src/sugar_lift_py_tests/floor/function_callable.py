@@ -158,6 +158,32 @@ class FunctionCallable(FloorValue):
             if name == "**"
         )
         keyword_map.pop("**", None)
+        # Body-bearing ** expansions are diggable floor work: dig the mapping,
+        # then re-enter binding as substitution. Opaque / undiggable peers stay
+        # loud below (never mint a RuntimeEffect over a diggable callsite).
+        if any(_diggable_keyword_expansion(value) for value in keyword_expansions):
+            from sugar_lift_py_tests.floor.call_site_value import force_floor
+
+            rewritten = list(arg_values)
+            kw_start = len(arg_values) - n_keywords
+            for offset, name in enumerate(keyword_names):
+                if name != "**":
+                    continue
+                value = rewritten[kw_start + offset]
+                if _diggable_keyword_expansion(value):
+                    rewritten[kw_start + offset] = force_floor(
+                        value,
+                        None,
+                        owner="FunctionCallable diggable **kwargs",
+                        project_callsite=False,
+                    )
+            return self.callsite(
+                tuple(rewritten),
+                keyword_names,
+                site,
+                source_arg_values=source_arg_values,
+                term=term,
+            )
         fixed_positional_count = sum(
             kind in {"positional", "positional-only"} for kind in self.parameter_kinds
         )
@@ -183,16 +209,28 @@ class FunctionCallable(FloorValue):
         keyword_expansion = (
             keyword_expansions[0] if len(keyword_expansions) == 1 else None
         )
-        if type(keyword_expansion) is DictValue:
+        # One or more constructed DictValue ** expansions merge in source order
+        # into the explicit keyword map. Duplicate keys are a static TypeError
+        # (Python rejects multiple values for the same keyword). Non-string
+        # keys leave the expansion for the exact-** / loud paths below.
+        keyword_expansion_collision = False
+        if keyword_expansions and all(
+            type(expansion) is DictValue for expansion in keyword_expansions
+        ):
             expanded_keywords: dict[str, FloorValue] = {}
-            for key, value in keyword_expansion.entries:
-                if (
-                    type(key) is not StringValue
-                    or key.value in keyword_map
-                    or key.value in expanded_keywords
-                ):
+            merge_ok = True
+            for expansion in keyword_expansions:
+                for key, value in expansion.entries:
+                    if type(key) is not StringValue:
+                        merge_ok = False
+                        break
+                    if key.value in keyword_map or key.value in expanded_keywords:
+                        keyword_expansion_collision = True
+                        merge_ok = False
+                        break
+                    expanded_keywords[key.value] = value
+                if not merge_ok:
                     break
-                expanded_keywords[key.value] = value
             else:
                 keyword_map.update(expanded_keywords)
                 keyword_expansions = ()
@@ -233,7 +271,10 @@ class FunctionCallable(FloorValue):
         # instead. Other expansion shapes remain loud: do not invent keys or
         # confuse missing binder machinery with runtime dependence.
         binding_failed_decidably = False
-        if (
+        if keyword_expansion_collision:
+            bound_values = None
+            binding_failed_decidably = True
+        elif (
             keyword_expansions
             and not binds_keyword_expansion_exactly
             or any(
@@ -591,6 +632,18 @@ def _implementation_preserving_decorator_factory(target_name: str) -> bool:
 
 def _array_function_dispatcher_ctor(target_name: str) -> bool:
     return target_name.rsplit(".", 1)[-1] == "_ArrayFunctionDispatcher"
+
+
+def _diggable_keyword_expansion(value) -> bool:
+    """True when a ``**`` operand carries a factory-built body that can dig."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    return type(value) is CallSiteValue and (
+        isinstance(value.body, SugarBody)
+        or isinstance(value.body, FunctionBodyUniverse)
+    )
 
 
 def _guarded_dict_value(value) -> bool:
