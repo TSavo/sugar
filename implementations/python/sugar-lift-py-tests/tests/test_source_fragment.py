@@ -131,6 +131,26 @@ def test_initializer_call_site_rejects_non_ground_super_setattr_name() -> None:
     assert call is None
 
 
+def test_initializer_call_site_recognizes_ordinary_call_statement() -> None:
+    call = _stmt("prepare(value)\n").initializer_call_site(receiver_name="self")
+
+    assert call is not None
+    assert call.kind == "ordinary_call"
+    assert call.target == "prepare"
+
+
+def test_initializer_call_site_rejects_non_call_expression_statement() -> None:
+    call = _stmt("value\n").initializer_call_site(receiver_name="self")
+
+    assert call is None
+
+
+def test_initializer_call_site_rejects_ordinary_call_receiving_self() -> None:
+    call = _stmt("prepare(self)\n").initializer_call_site(receiver_name="self")
+
+    assert call is None
+
+
 def test_name_id():
     site = _module("x = 1\n").fragments()[0].statements()[0].terms()[0]
     assert site.name_id() == "x"

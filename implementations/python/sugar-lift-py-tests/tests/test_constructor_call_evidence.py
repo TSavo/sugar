@@ -522,6 +522,55 @@ def test_importfrom_then_field_constructor_binds_name() -> None:
     assert type(fields["meta"]) is ImportAliasValue
 
 
+def test_ordinary_initializer_call_is_constructed_before_field_bind() -> None:
+    outcome = _outcome(
+        "def prepare(value):\n"
+        "    return value\n"
+        "\n"
+        "class Prepared:\n"
+        "    def __init__(self, value):\n"
+        "        prepare(value)\n"
+        "        self.value = value\n",
+        "Prepared(7)",
+        filename="constructor_ordinary_call.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert _field_values(outcome.value) == {"value": TermValue(7)}
+
+
+def test_ordinary_initializer_call_preserves_exceptional_exit() -> None:
+    outcome = _outcome(
+        "def prepare(fail):\n"
+        "    if fail:\n"
+        "        raise ValueError('failed')\n"
+        "\n"
+        "class Prepared:\n"
+        "    def __init__(self, fail):\n"
+        "        prepare(fail)\n"
+        "        self.value = 7\n",
+        "Prepared(True)",
+        filename="constructor_ordinary_call_raise.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ExceptionalExitValue
+    assert outcome.value.effect.exception_name == "ValueError"
+
+
+def test_opaque_ordinary_initializer_call_stays_loud() -> None:
+    with pytest.raises(FactoryPanic):
+        _outcome(
+            "class Prepared:\n"
+            "    def __init__(self, value):\n"
+            "        opaque(value)\n"
+            "        self.value = value\n",
+            "Prepared(7)",
+            filename="constructor_opaque_ordinary_call.py",
+        )
+
+
 def test_source_initializer_constructs_authenticated_explicit_base_call() -> None:
     temporal = TemporalContext.empty().bind_value(
         "ExternalBase",
@@ -1095,6 +1144,23 @@ def test_super_setattr_constructor_truthful_sat_wrong_twin_unsat(tmp_path) -> No
         for witness in ConstructorCallSugar.witnesses()
         if isinstance(witness, SugarWitnessPair)
         and witness.name == "source_body_constructor_super_setattr"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_ordinary_call_constructor_truthful_sat_wrong_twin_unsat(tmp_path) -> None:
+    pair = next(
+        witness
+        for witness in ConstructorCallSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "source_body_constructor_ordinary_call"
     )
 
     truthful = run_source_through_real_solver(

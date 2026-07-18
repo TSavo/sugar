@@ -620,8 +620,10 @@ class SourceFragment:
         This is the one recognizer for ``super().__init__(...)``,
         authenticated ``DeclaredBase.__init__(self, ...)``, exact
         ``super().__setattr__("name", value)``, and exact zero-argument
-        ``self.method()`` statements. Consumers receive typed testimony and
-        never reopen the AST.
+        ``self.method()`` statements. Other plain call expressions receive
+        ``ordinary_call`` testimony so the normal call factory must construct
+        them or panic at its own loud boundary. Consumers receive typed
+        testimony and never reopen the AST.
         """
         if not isinstance(self.node, ast.Expr) or not isinstance(
             self.node.value, ast.Call
@@ -633,7 +635,13 @@ class SourceFragment:
         target = call.call_target_name()
         call_receiver = call.call_receiver()
         if call_receiver is None:
-            return None
+            if receiver_name in call.loaded_names():
+                return None
+            return InitializerCallSite(
+                kind="ordinary_call",
+                call=call,
+                target=target,
+            )
         zero_arg_super = (
             call_receiver.observed == "Call"
             and call_receiver.call_target_name() == "super"
