@@ -60,6 +60,29 @@ def test_one_arm_binding_read_stays_loud() -> None:
         audit_lift_file(source, "one.py", hold_panic=False)
 
 
+def test_one_arm_existing_binding_joins_changed_and_prior_values() -> None:
+    predicate = SymbolicValue(make_var("p"))
+    block = compose_block(
+        "    if p:\n" "        value = 'changed'\n",
+        {
+            "p": predicate,
+            "value": StringValue("prior"),
+        },
+    )
+
+    rebound = next(
+        statement
+        for statement in block.statements
+        if isinstance(statement, ScopeRebind) and statement.name == "value"
+    )
+
+    assert rebound.value == GuardedValue(
+        atomic("py.truthy", [make_var("p")]),
+        StringValue("changed"),
+        StringValue("prior"),
+    )
+
+
 def test_repeated_identical_guard_activates_prior_one_arm_binding() -> None:
     source = (
         "def f(p):\n"
@@ -119,6 +142,29 @@ def test_repeated_guard_binding_witness_truthful_sat_wrong_twin_unsat(
     )
     lying = run_source_through_real_solver(
         tmp_path / "same-guard-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_one_arm_existing_binding_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    witnesses = IfSugar.witnesses()
+    pairs = witnesses if isinstance(witnesses, tuple) else (witnesses,)
+    pair = next(
+        witness
+        for witness in pairs
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "if_one_arm_existing_binding_join"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "one-arm-existing-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "one-arm-existing-lying", pair.lying.source
     )
 
     assert truthful.verdict == pair.truthful.expected == "sat"
