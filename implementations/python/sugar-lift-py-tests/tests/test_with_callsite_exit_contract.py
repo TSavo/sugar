@@ -178,6 +178,39 @@ def test_guarded_callsite_managers_join_entered_values_before_body() -> None:
     )
 
 
+def test_nested_guarded_callsite_managers_join_entered_values_before_body() -> None:
+    outer = atomic("outer-manager-choice", [])
+    inner = atomic("inner-manager-choice", [])
+    block = compose_block(
+        "    with manager as entered:\n" "        return entered\n",
+        binds={
+            "manager": GuardedValue(
+                outer,
+                _manager_callsite(exit_expr="False", enter_expr="1", class_name="Left"),
+                GuardedValue(
+                    inner,
+                    _manager_callsite(
+                        exit_expr="False", enter_expr="2", class_name="Middle"
+                    ),
+                    _manager_callsite(
+                        exit_expr="False", enter_expr="3", class_name="Right"
+                    ),
+                ),
+            )
+        },
+    )
+
+    assert block.statements == (
+        ReturnValue(
+            GuardedValue(
+                outer,
+                TermValue(1),
+                GuardedValue(inner, TermValue(2), TermValue(3)),
+            )
+        ),
+    )
+
+
 def test_guarded_manager_with_unconstructed_face_stays_loud() -> None:
     guard = atomic("manager-choice", [])
 
@@ -483,6 +516,56 @@ def test_numpy_assert_raises_regex_suppresses_the_exact_exception() -> None:
     )
 
     assert not payload.effects
+
+
+@pytest.mark.parametrize(
+    ("coordinate", "exception_name"),
+    (
+        ("numpy.testing.assert_raises", "TypeError"),
+        ("pandas._testing.external_error_raised", "TypeError"),
+    ),
+)
+def test_with_recovers_exact_static_suppression_contract(
+    coordinate: str, exception_name: str
+) -> None:
+    manager = CallSiteValue(
+        target_name=coordinate,
+        arg_values=(
+            BuiltinExceptionClassValue(
+                name=exception_name, bases=(), record=BlockValue(())
+            ),
+        ),
+        parameters=(),
+        term=ctor(f"call:{coordinate}", []),
+        body=None,
+        exit_suppression=None,
+    )
+
+    block = compose_block(
+        f"    with manager:\n        raise {exception_name}('expected')\n",
+        binds={"manager": manager},
+    )
+
+    assert block.statements == ()
+
+
+def test_with_recovers_exact_get_handle_non_suppression_contract() -> None:
+    manager = CallSiteValue(
+        target_name="pandas.io.common.get_handle",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:pandas.io.common.get_handle", []),
+        body=None,
+        exit_suppression=None,
+    )
+
+    block = compose_block(
+        "    with manager as entered:\n" "        raise ValueError('not suppressed')\n",
+        binds={"manager": manager},
+    )
+
+    assert isinstance(block.statements[-1], RaiseValue)
+    assert block.statements[-1].effect.exception_name == "ValueError"
 
 
 def test_unrelated_assert_raises_regex_coordinate_stays_loud() -> None:
@@ -852,3 +935,47 @@ def test_source_function_exit_contract_inherits_digged_manager_class(
         "test_source_function_exit.py",
     )
     assert not payload.effects
+
+
+def test_local_import_exit_contract_requires_unshadowed_source_coordinate(
+    tmp_path, monkeypatch
+) -> None:
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        resolve_local_source_exit_contract,
+    )
+
+    manager = _install_module(
+        tmp_path,
+        monkeypatch,
+        "exact_imported_manager",
+        "class Managed:\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, exc_type, exc, tb):\n"
+        "        return None\n"
+        "def managed() -> Managed:\n"
+        "    return Managed()\n",
+    )
+    package = tmp_path / "manager_consumers"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    consumer = package / "exact_manager_consumer.py"
+    consumer.write_text(
+        f"from {manager} import managed\n"
+        "def use():\n"
+        "    with managed():\n"
+        "        raise ValueError()\n",
+        encoding="utf-8",
+    )
+    shadowed = package / "shadowed_manager_consumer.py"
+    shadowed.write_text(
+        f"from {manager} import managed\n" "def managed():\n" "    return object()\n",
+        encoding="utf-8",
+    )
+    import importlib
+
+    importlib.invalidate_caches()
+
+    contract = resolve_local_source_exit_contract(str(consumer), "managed")
+    assert contract == ExitSuppressionContract.never_suppresses()
+    assert resolve_local_source_exit_contract(str(shadowed), "managed") is None

@@ -331,8 +331,11 @@ def _static_exit_suppression_contract(source_name: str, values: tuple):
     }:
         return ExitSuppressionContract.never_suppresses()
     if source_name in {
+        "numpy.testing.assert_raises",
+        "numpy.testing._private.utils.assert_raises",
         "numpy.testing.assert_raises_regex",
         "numpy.testing._private.utils.assert_raises_regex",
+        "pandas._testing.external_error_raised",
     }:
         from sugar_lift_py_tests.floor import BuiltinExceptionClassValue
 

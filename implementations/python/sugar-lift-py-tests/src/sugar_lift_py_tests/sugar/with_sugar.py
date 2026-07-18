@@ -69,10 +69,12 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             "import contextlib\n"
             "\n"
             "def A(p):\n"
-            "    if p:\n"
+            "    if p == 1:\n"
             "        manager = contextlib.suppress(Exception)\n"
-            "    else:\n"
+            "    elif p == 2:\n"
             "        manager = contextlib.nullcontext()\n"
+            "    else:\n"
+            "        manager = contextlib.suppress(ValueError)\n"
             "    with manager:\n"
             "        result = 1\n"
             "    return result\n"
@@ -118,8 +120,8 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             _call_pair(
                 name="with_guarded_manager_enter",
                 owner_sugar="WithSugar",
-                truthful=(guarded_prefix + "def test_a():\n    assert A(True) == 1\n"),
-                lying=guarded_prefix + "def test_a():\n    assert A(True) == 2\n",
+                truthful=(guarded_prefix + "def test_a():\n    assert A(2) == 1\n"),
+                lying=guarded_prefix + "def test_a():\n    assert A(2) == 2\n",
             ),
             _call_pair(
                 name="with_source_contextmanager_contract",
@@ -199,25 +201,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
         from sugar_lift_py_tests.floor.call_site_value import force_floor
 
         if isinstance(cm, GuardedValue):
-            from sugar_lift_py_tests.ir import not_
-
-            entered_faces = []
-            for guard, face in (
-                (cm.guard, cm.when_true),
-                (not_(cm.guard), cm.when_false),
-            ):
-                if not isinstance(face, CallSiteValue):
-                    return face._floor_gap(
-                        owner=type(self).__name__,
-                        blame=self.site,
-                        observed=type(face).__name__,
-                        requested="context manager data-model methods",
-                        fix="construct __enter__ and __exit__",
-                    )
-                face_ctx = ctx.with_temporal(ctx.temporal.activate_guard(guard))
-                entered_faces.append(self._enter_callsite(face, face_ctx)[0])
-
-            entered = GuardedValue(cm.guard, *entered_faces)
+            entered = self._enter_guarded_manager(cm, ctx)
             body_ctx = ctx
             binding = _with_binding(as_names, entered, self.site)
             if binding is not None:
@@ -247,7 +231,7 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             # the callsite arrived without one. Construction owns the proof;
             # missing evidence stays None and the raise path below stays loud.
             if cm.exit_suppression is None:
-                cm = _attach_source_exit_contract(cm)
+                cm = _attach_exact_exit_contract(cm, ctx)
             # An exact source-derived exit contract is sufficient when the
             # statement does not bind ``as``: no entered value is demanded,
             # and reducing the producer body would construct unrelated result
@@ -421,6 +405,31 @@ class WithSugar(Sugar, role=SugarRole.STATEMENT):
             force_floor(exit_call, ctx, owner="WithSugar.__exit__")
         return _carry_continuing_binding(outcome, binding)
 
+    def _enter_guarded_manager(self, manager, ctx):
+        """Construct every statically selected manager face recursively."""
+        from sugar_lift_py_tests.floor import CallSiteValue, GuardedValue
+        from sugar_lift_py_tests.ir import not_
+
+        entered_faces = []
+        for guard, face in (
+            (manager.guard, manager.when_true),
+            (not_(manager.guard), manager.when_false),
+        ):
+            face_ctx = ctx.with_temporal(ctx.temporal.activate_guard(guard))
+            if isinstance(face, GuardedValue):
+                entered_faces.append(self._enter_guarded_manager(face, face_ctx))
+            elif isinstance(face, CallSiteValue):
+                entered_faces.append(self._enter_callsite(face, face_ctx)[0])
+            else:
+                return face._floor_gap(
+                    owner=type(self).__name__,
+                    blame=self.site,
+                    observed=type(face).__name__,
+                    requested="context manager data-model methods",
+                    fix="construct __enter__ and __exit__",
+                )
+        return GuardedValue(manager.guard, *entered_faces)
+
     def _enter_callsite(self, cm, ctx):
         """Construct one guarded callsite manager's exact ``__enter__`` face."""
         from sugar_lift_py_tests.floor import ObjectValue
@@ -528,21 +537,51 @@ def _with_binding(names, entered, site):
     )
 
 
-def _attach_source_exit_contract(manager):
-    """Dig and attach a source-backed exit contract onto a callsite manager.
+def _attach_exact_exit_contract(manager, ctx=None):
+    """Attach an exact static or source-backed contract to a callsite manager.
 
-    Qualified install-source targets only: bare names cannot name an exact
-    ``__exit__`` owner. Returns the original manager when dig cannot prove a
-    disposition — never fabricates non-suppression.
+    Static contracts require an exact coordinate and operands. Source contracts
+    require a qualified install-source target. Missing evidence stays loud.
     """
     from dataclasses import replace
 
+    from sugar_lift_py_tests.sugar.method_call_sugar import (
+        _static_exit_suppression_contract,
+    )
     from sugar_lift_py_tests.sugar.install_source_dig import (
         resolve_source_exit_contract,
     )
 
     target = getattr(manager, "target_name", None)
-    if not isinstance(target, str) or "." not in target:
+    if not isinstance(target, str):
+        return manager
+    if "." not in target and ctx is not None:
+        from sugar_lift_py_tests.floor import ImportAliasValue
+
+        module_temporal = getattr(ctx, "module_temporal", None)
+        imported = (
+            module_temporal.value_if_bound(target)
+            if module_temporal is not None
+            else None
+        )
+        if isinstance(imported, ImportAliasValue) and imported.import_target:
+            target = imported.import_target
+    if "." not in target:
+        from sugar_lift_py_tests.sugar.install_source_dig import (
+            resolve_local_source_exit_contract,
+        )
+
+        contract = resolve_local_source_exit_contract(
+            getattr(getattr(manager, "site", None), "filename", None), target
+        )
+        if contract is not None:
+            return replace(manager, exit_suppression=contract)
+    contract = _static_exit_suppression_contract(
+        target, tuple(getattr(manager, "arg_values", ()))
+    )
+    if contract is not None:
+        return replace(manager, exit_suppression=contract)
+    if "." not in target:
         return manager
     contract = resolve_source_exit_contract(target)
     if contract is None:
