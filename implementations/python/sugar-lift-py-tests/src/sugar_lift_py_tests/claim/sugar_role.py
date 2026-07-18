@@ -15,6 +15,10 @@ class SugarRole(str, Enum):
     # each own their statement shape. Their OUTCOME is a category (a comment's is
     # Support); the role is just the dispatch key, parallel to TERM for expressions.
     STATEMENT = "statement"
+    # A match-case pattern shape. Selected by the factory for `case` patterns so
+    # MatchSugar consumes recognized pattern sugars, never raw `ast.pattern`
+    # isinstance walks. Ground matching is `match_ground`; desugar is identity.
+    PATTERN = "pattern"
 
     def __str__(self) -> str:
         return self.value
