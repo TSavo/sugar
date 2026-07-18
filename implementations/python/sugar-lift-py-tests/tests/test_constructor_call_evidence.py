@@ -124,6 +124,51 @@ def test_source_initializer_threads_local_assignment_into_self_fields() -> None:
     }
 
 
+def test_source_initializer_super_init_recovers_base_self_state() -> None:
+    """IndexType-shaped: local name + super().__init__(name) recovers self.name."""
+    outcome = _outcome(
+        "class Type:\n"
+        "    def __init__(self, name):\n"
+        "        self.name = name\n"
+        "\n"
+        "class IndexType(Type):\n"
+        "    def __init__(self, dtype, layout, pyclass):\n"
+        "        self.pyclass = pyclass\n"
+        "        name = f'index({dtype}, {layout})'\n"
+        "        self.dtype = dtype\n"
+        "        self.layout = layout\n"
+        "        super().__init__(name)\n",
+        "IndexType('int64', 'C', 'Index')",
+        filename="constructor_super_index.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert outcome.value.class_name == "IndexType"
+    assert _field_values(outcome.value) == {
+        "pyclass": StringValue("Index"),
+        "dtype": StringValue("int64"),
+        "layout": StringValue("C"),
+        "name": StringValue("index(int64, C)"),
+    }
+
+
+def test_source_initializer_unresolved_super_stays_loud() -> None:
+    """super() without a diggable static base must not empty-succeed."""
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class IndexType(MissingBase):\n"
+            "    def __init__(self, dtype):\n"
+            "        name = f'index({dtype})'\n"
+            "        super().__init__(name)\n",
+            "IndexType('int64')",
+            filename="constructor_unresolved_super.py",
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "constructed source initializer"
+
+
 def test_source_initializer_assert_constructs_exceptional_exit_face() -> None:
     outcome = _outcome(
         "class MockRequest:\n"
@@ -624,6 +669,23 @@ def test_asserted_source_constructor_truthful_sat_wrong_twin_unsat(tmp_path) -> 
         for witness in ConstructorCallSugar.witnesses()
         if isinstance(witness, SugarWitnessPair)
         and witness.name == "source_body_constructor_asserted"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_super_source_constructor_truthful_sat_wrong_twin_unsat(tmp_path) -> None:
+    pair = next(
+        witness
+        for witness in ConstructorCallSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "source_body_constructor_super_init"
     )
 
     truthful = run_source_through_real_solver(
