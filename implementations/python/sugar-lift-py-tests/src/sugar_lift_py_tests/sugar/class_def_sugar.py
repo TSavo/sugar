@@ -77,7 +77,7 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                 for imported, alias in declaration.import_names():
                     authenticated_modules[alias or imported.split(".", 1)[0]] = imported
         for decorator in statement.class_decorators():
-            if decorator.observed == "Name":
+            if decorator.observed in {"Name", "Attribute"}:
                 receiver = decorator
             elif decorator.observed == "Call":
                 receiver = decorator.call_func()
@@ -146,10 +146,10 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             "\n"
         )
         dataclass_decorated = (
-            "from dataclasses import dataclass\n"
+            "import dataclasses\n"
             "\n"
             "def D(z):\n"
-            "    @dataclass\n"
+            "    @dataclasses.dataclass\n"
             "    class Point:\n"
             "        value: int\n"
             "    return z\n"
