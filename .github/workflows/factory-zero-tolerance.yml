@@ -92,3 +92,12 @@ jobs:
           python -m pytest --noconftest
           implementations/python/sugar-lift-py-tests/tests/test_factory_walk_unclassified_law.py
           -q
+      - name: R_factory_walk_unclassified = 0
+        if: always()
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/factory_walk_unclassified_law.py
+          --live-root
+          implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests
+          --live-root
+          implementations/python/sugar-lift-py-tests/scripts

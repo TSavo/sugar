@@ -24,7 +24,10 @@ Without a measurement payload the auditor refuses (exit 2) rather than faking R=
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
+import os
+import subprocess
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
@@ -214,7 +217,129 @@ def load_json(path: Path) -> Any:
     return json.loads(text)
 
 
+def _python_paths(roots: Sequence[Path]) -> list[Path]:
+    return sorted(
+        {
+            path
+            for root in roots
+            for path in (root.rglob("*.py") if root.is_dir() else (root,))
+            if path.is_file() and "__pycache__" not in path.parts
+        }
+    )
+
+
+def _run_live_child(path: Path, rel: str) -> int:
+    from sugar_lift_py_tests.audit_only import collect_factory_panic
+    from sugar_lift_py_tests.lift_rpc import lift_file_payload
+
+    source = path.read_text(encoding="utf-8", errors="replace")
+    payload, panic_gap = collect_factory_panic(
+        rel, lambda: lift_file_payload(source, rel)
+    )
+    if panic_gap is not None:
+        category = "factory-panic"
+        rows: list[dict[str, Any]] = []
+    else:
+        assert payload is not None
+        category = "completed"
+        rows = [row.to_rpc() for row in payload.factory_walk]
+    print(
+        json.dumps(
+            {
+                "kind": "factory-walk-live-row",
+                "file": rel,
+                "category": category,
+                "rows": rows,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return 0
+
+
+def _parse_live_child(stdout: str) -> Mapping[str, Any] | None:
+    for line in reversed(stdout.splitlines()):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, Mapping) and value.get("kind") == "factory-walk-live-row":
+            return value
+    return None
+
+
+def _measure_live_file(
+    path: Path, *, repo_root: Path, file_timeout: int
+) -> Mapping[str, Any]:
+    rel = path.resolve().relative_to(repo_root.resolve()).as_posix()
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--child-file",
+                str(path),
+                "--child-rel",
+                rel,
+            ],
+            text=True,
+            capture_output=True,
+            timeout=file_timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"file": rel, "category": "timeout", "rows": []}
+    if result.returncode < 0:
+        return {"file": rel, "category": "native-crash", "rows": []}
+    testimony = _parse_live_child(result.stdout)
+    if result.returncode or testimony is None:
+        return {"file": rel, "category": "auditor-error", "rows": []}
+    return testimony
+
+
+def measure_live_roots(
+    roots: Sequence[Path],
+    *,
+    repo_root: Path,
+    file_timeout: int,
+    workers: int,
+) -> tuple[list[Any], dict[str, int]]:
+    paths = _python_paths(roots)
+    if not paths:
+        raise ValueError(f"no Python source files found under {list(roots)}")
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        results = list(
+            executor.map(
+                lambda path: _measure_live_file(
+                    path, repo_root=repo_root, file_timeout=file_timeout
+                ),
+                paths,
+            )
+        )
+    counts = {
+        "files_discovered": len(results),
+        "files_completed": sum(row.get("category") == "completed" for row in results),
+        "factory_panics": sum(row.get("category") == "factory-panic" for row in results),
+        "timeouts": sum(row.get("category") == "timeout" for row in results),
+        "native_crashes": sum(
+            row.get("category") == "native-crash" for row in results
+        ),
+        "auditor_errors": sum(
+            row.get("category") == "auditor-error" for row in results
+        ),
+    }
+    rows = [
+        walk_row
+        for result in results
+        for walk_row in result.get("rows", [])
+        if isinstance(walk_row, Mapping)
+    ]
+    return rows, counts
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    repo_root = Path(__file__).resolve().parents[4]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--from-json",
@@ -237,10 +362,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=50,
         help="Max unclassified loci to print (default 50).",
     )
+    parser.add_argument(
+        "--live-root",
+        type=Path,
+        action="append",
+        default=[],
+        help="Census checked-in Python sources under this root (repeatable).",
+    )
+    parser.add_argument("--repo-root", type=Path, default=repo_root)
+    parser.add_argument("--file-timeout", type=int, default=30)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=min(16, max(1, os.cpu_count() or 1)),
+    )
+    parser.add_argument("--child-file", type=Path)
+    parser.add_argument("--child-rel")
     args = parser.parse_args(argv)
+
+    if args.child_file or args.child_rel:
+        if args.child_file is None or args.child_rel is None:
+            parser.error("child mode requires --child-file and --child-rel")
+        return _run_live_child(args.child_file, args.child_rel)
 
     rows: list[Any] = []
     sources = 0
+    live_counts: dict[str, int] = {}
     try:
         for path in args.from_json:
             sources += 1
@@ -248,6 +395,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.stdin:
             sources += 1
             rows.extend(extract_walk_rows(json.load(sys.stdin)))
+        if args.live_root:
+            sources += 1
+            live_rows, live_counts = measure_live_roots(
+                args.live_root,
+                repo_root=args.repo_root,
+                file_timeout=args.file_timeout,
+                workers=max(1, args.workers),
+            )
+            rows.extend(live_rows)
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
         # Loud structured failure — never a raw traceback-only process crash.
         print(
@@ -294,7 +450,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         "ok": r == 0,
         "R_factory_walk_unclassified": r,
         "rows_measured": len(rows),
+        **live_counts,
     }
+    incomplete_live_measurement = any(
+        live_counts.get(key, 0)
+        for key in ("timeouts", "native_crashes", "auditor_errors")
+    )
+    if incomplete_live_measurement:
+        summary["ok"] = False
+        print(
+            "FACTORY-WALK-UNCLASSIFIED LAW ERROR: live measurement incomplete; "
+            "timeout, native crash, or auditor error cannot certify R=0",
+            file=sys.stderr,
+        )
+        if r:
+            print(format_report(rows, limit=args.limit))
+        print(json.dumps(summary))
+        return 2
     if r > 0:
         print(
             "FACTORY-WALK-UNCLASSIFIED LAW RED: "
