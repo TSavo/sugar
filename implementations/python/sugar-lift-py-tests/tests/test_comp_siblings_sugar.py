@@ -16,7 +16,13 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import ComprehensionValue, SymbolicValue
+from sugar_lift_py_tests.floor import (
+    ComprehensionValue,
+    ObjectField,
+    ObjectValue,
+    SymbolicValue,
+    TermValue,
+)
 from sugar_lift_py_tests.ir import ctor, make_var, num
 from sugar_lift_py_tests.sugar.dict_comp_sugar import DictCompSugar
 from sugar_lift_py_tests.sugar.generator_exp_sugar import GeneratorExpSugar
@@ -155,6 +161,44 @@ def test_genexp_multi_generator_is_citable() -> None:
         {"A": SymbolicValue(make_var("A")), "B": SymbolicValue(make_var("B"))},
     )
     assert value.term.name == "py.genexp"
+
+
+def test_genexp_projects_each_constructed_finite_iterable_member() -> None:
+    value = reduce_value(
+        "(getattr(obj, name) for name in ('a', 'b'))",
+        binds={
+            "obj": ObjectValue(
+                class_name="Box",
+                fields=(
+                    ObjectField(name="a", value=TermValue(1)),
+                    ObjectField(name="b", value=TermValue(2)),
+                ),
+            )
+        },
+    )
+
+    assert isinstance(value, ComprehensionValue)
+    assert value.finite_elements == (TermValue(1), TermValue(2))
+
+
+def test_filtered_finite_genexp_keeps_unbuilt_enumeration_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        reduce_value(
+            "(getattr(obj, name) for name in ('a', 'b') if keep)",
+            binds={
+                "obj": ObjectValue(
+                    class_name="Box",
+                    fields=(
+                        ObjectField(name="a", value=TermValue(1)),
+                        ObjectField(name="b", value=TermValue(2)),
+                    ),
+                ),
+                "keep": SymbolicValue(make_var("keep")),
+            },
+        )
+
+    assert raised.value.info.owner == "GetattrBuiltinSugar"
+    assert raised.value.info.requested == "statically enumerated attribute name"
 
 
 # ---------------------------------------------------------------------------

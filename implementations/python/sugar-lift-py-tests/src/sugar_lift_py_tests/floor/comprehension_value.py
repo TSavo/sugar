@@ -20,9 +20,13 @@ class ComprehensionValue(FloorValue):
     Finite literal comprehensions reduce to concrete collection floors. All
     other comprehensions retain their constructor term, but ``length`` stays on
     FloorValue's loud missing arm until cardinality semantics are constructed.
+    ``finite_elements`` is present only when the comprehension owner projected
+    every member of an exact finite iterable; ``None`` means no such testimony
+    exists and must never be treated as an empty collection.
     """
 
     term: object
+    finite_elements: tuple | None = None
 
     def to_term(self, *, owner: str):
         del owner
