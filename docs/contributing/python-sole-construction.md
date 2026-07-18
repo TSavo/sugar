@@ -35,6 +35,7 @@ Scripts:
 - `scripts/factory_panic_catch_law.py` → `R_factory_panic_catches_outside_audit`
   across production package and corpus tooling; only
   `audit_only/collect_construction_gaps.py` is the catch membrane
+- `scripts/silent_zero_tolerance.py` → `R_silent`
 
 CI: `.github/workflows/factory-zero-tolerance.yml` (no baselines, no allowlists).
 
