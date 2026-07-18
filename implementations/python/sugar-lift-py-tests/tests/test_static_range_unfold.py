@@ -3,11 +3,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import build_node
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkStatus
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.idd.sugar_witness_instruments import (
     DEFAULT_SUGAR_WITNESS_SEEDS,
@@ -55,12 +53,23 @@ def test_large_static_range_unfold_is_stack_safe() -> None:
     assert len(payload.factory_walk) >= 4
 
 
-def test_static_unfold_cap_still_panics_loudly_above_reviewed_bound() -> None:
-    node = ast.parse("for i in range(1025):\n    pass\n").body[0]
-    with pytest.raises(
-        FactoryPanic, match="at most 1024 concrete loop self-applications"
-    ):
-        build_node(node, filename="large.py", role=SugarRole.STATEMENT)
+def test_large_static_range_projects_the_callable_loop_floor() -> None:
+    source = (
+        "def f():\n"
+        "    total = 0\n"
+        "    for i in range(1025):\n"
+        "        total = 7\n"
+        "    return total\n"
+    )
+
+    payload = lift_file_payload(source, "large.py")
+
+    assert payload.effects == []
+    assert any(
+        row.output == "ForSugar" and row.status == FactoryWalkStatus.WARRANTED
+        for row in payload.factory_walk
+    )
+    assert "call:loop:large.py:3:4" in str(payload.ir[0].post)
 
 
 def test_literal_tuple_is_structurally_static() -> None:
