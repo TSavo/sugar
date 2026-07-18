@@ -272,20 +272,32 @@ class CallSiteValue(FloorValue):
         statement still rebinds the name: carry the prior list coordinate and
         appended value on ``py.list_append`` so later statements keep a
         FloorValue. A finite value behind ``typing.cast`` keeps its exact
-        history. ``list.copy()`` of a finite list folds exactly; ``copy`` of a
+        history; a diggable cast operand (method body returning a list) digs
+        through. ``list.copy()`` of a finite list folds exactly; ``copy`` of a
         proven list-shaped callsite rebinds through ``py.list_append``.
-        Unclassified callsites stay loud; a call result is not proof that the
-        receiver is a mutable list.
+        ``py.subscript`` of a diggable tuple/list projects the element when the
+        index is a ground int (unpack residual: ``handles`` from a returned
+        triple). ``iter_elem`` of a proven list-of-lists (or a listcomp whose
+        element expression is a list literal) rebinds through ``py.list_append``.
+        Opaque cast/subscript/iter faces stay loud; a call result is not proof
+        that the receiver is a mutable list. Never mint RuntimeEffect over a
+        ground list proof.
         """
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
         from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor.term_value import TermValue
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_value
+
+        def is_list_floor(floor) -> bool:
+            return isinstance(floor, (ListValue, ComprehensionValue))
 
         def is_constructed_list_callsite(receiver: CallSiteValue) -> bool:
             if receiver.target_name in {"builtins.list", "list", "split"}:
                 return True
             if receiver.target_name == "copy" and receiver.arg_values:
                 base = receiver.arg_values[0]
-                if isinstance(base, (ListValue, ComprehensionValue)):
+                if is_list_floor(base):
                     return True
                 return isinstance(base, CallSiteValue) and is_constructed_list_callsite(
                     base
@@ -297,54 +309,147 @@ class CallSiteValue(FloorValue):
                 and is_constructed_list_callsite(receiver.arg_values[0])
             )
 
-        if (
-            self.target_name == "typing.cast"
-            and len(self.arg_values) == 2
-            and isinstance(self.arg_values[1], ListValue)
-        ):
-            return self.arg_values[1].append_with(value, site)
+        def dig_floor(operand):
+            if isinstance(operand, CallSiteValue):
+                return operand._dig_floor_or_none(
+                    None, owner="CallSiteValue.append_with"
+                )
+            return None
 
-        # Shallow copy of a finite list is the same element history: fold
-        # through ListValue so post-append state stays exact, never opaque.
-        if self.target_name == "copy" and self.arg_values:
-            base = self.arg_values[0]
-            if isinstance(base, ListValue):
-                return base.append_with(value, site)
-            if isinstance(base, ComprehensionValue):
-                return base.append_with(value, site)
+        def list_append_coordinate(prior):
+            from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
-        if not is_constructed_list_callsite(self):
-            from sugar_lift_py_tests.factory import factory_panic_gap
-
-            factory_panic_gap(
-                owner="CallSiteValue.append_with",
-                blame=str(site),
-                observed=f"CallSiteValue({self.target_name})",
-                requested="classified append contract",
-                fix=(
-                    "prove that the call result is a mutable list and construct "
-                    "its post-append state, or leave it loud"
-                ),
+            value_term = floor_to_term(value, owner="CallSiteValue.append_with value")
+            return Complete(
+                CallSiteValue(
+                    target_name="list.append",
+                    arg_values=(prior, value),
+                    parameters=(),
+                    term=ctor(
+                        "py.list_append",
+                        [prior.to_term(owner=str(site)), value_term],
+                        symbol_kind="method-coordinate",
+                    ),
+                    body=None,
+                    site=site,
+                )
             )
 
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
-        from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
+        def elements_are_lists(elements) -> bool:
+            if not elements:
+                return False
+            for element in elements:
+                if is_list_floor(element):
+                    continue
+                if isinstance(element, CallSiteValue) and is_constructed_list_callsite(
+                    element
+                ):
+                    continue
+                return False
+            return True
 
-        value_term = floor_to_term(value, owner="CallSiteValue.append_with value")
-        return Complete(
-            CallSiteValue(
-                target_name="list.append",
-                arg_values=(self, value),
-                parameters=(),
-                term=ctor(
-                    "py.list_append",
-                    [self.to_term(owner=str(site)), value_term],
-                    symbol_kind="method-coordinate",
-                ),
-                body=None,
-                site=site,
-            )
+        def iter_elem_is_list_shaped(iterable) -> bool:
+            """True when every iteration face is proven list-shaped."""
+            elements = None
+            if isinstance(iterable, (ListValue, TupleValue)):
+                elements = iterable.elements
+            elif isinstance(iterable, ComprehensionValue):
+                if iterable.finite_elements is not None:
+                    elements = iterable.finite_elements
+                else:
+                    # ``[[label] for label in header]``: element expression is
+                    # a list literal (``array(...)``) even when the iterable is
+                    # opaque — format.py str_columns residual.
+                    term = iterable.term
+                    if (
+                        getattr(term, "name", None) == "py.listcomp"
+                        and term.args
+                        and getattr(term.args[0], "name", None) == "array"
+                    ):
+                        return True
+                    return False
+            if elements is None:
+                return False
+            return elements_are_lists(elements)
+
+        def project_list_operand(operand):
+            """Fold to a list floor, rebind through list_append, or None (loud)."""
+            if is_list_floor(operand):
+                return operand.append_with(value, site)
+            if not isinstance(operand, CallSiteValue):
+                return None
+            dug = dig_floor(operand)
+            if is_list_floor(dug):
+                return dug.append_with(value, site)
+            if is_constructed_list_callsite(operand):
+                return list_append_coordinate(operand)
+            return resolve_receiver(operand)
+
+        def resolve_receiver(receiver: CallSiteValue):
+            # typing.cast is runtime identity: dig/prove the second operand only.
+            # Annotation alone never blesses an opaque operand.
+            if receiver.target_name == "typing.cast" and len(receiver.arg_values) == 2:
+                return project_list_operand(receiver.arg_values[1])
+
+            # Shallow copy of a finite list is the same element history.
+            if receiver.target_name == "copy" and receiver.arg_values:
+                base = receiver.arg_values[0]
+                if is_list_floor(base):
+                    return base.append_with(value, site)
+                if isinstance(base, CallSiteValue) and is_constructed_list_callsite(
+                    base
+                ):
+                    return list_append_coordinate(receiver)
+                return None
+
+            # Unpack residual: handles = returned_triple[2] where the call digs
+            # to a TupleValue/ListValue and the index is a ground int.
+            if receiver.target_name == "py.subscript" and len(receiver.arg_values) == 2:
+                base, index = receiver.arg_values
+                if isinstance(index, TermValue) and type(index.value) is int:
+                    floor_base = base
+                    if isinstance(base, CallSiteValue):
+                        dug_base = dig_floor(base)
+                        if dug_base is not None:
+                            floor_base = dug_base
+                    if isinstance(floor_base, (ListValue, TupleValue)):
+                        projected = floor_base.subscript(index, site)
+                        if isinstance(projected, Incomplete):
+                            return None
+                        element = complete_value(
+                            projected, owner="CallSiteValue.append_with subscript"
+                        )
+                        return project_list_operand(element)
+                if is_constructed_list_callsite(receiver):
+                    return list_append_coordinate(receiver)
+                return None
+
+            # Loop-face residual: for x in list_of_lists / listcomp-of-lists.
+            if receiver.target_name == "iter_elem" and receiver.arg_values:
+                if iter_elem_is_list_shaped(receiver.arg_values[0]):
+                    return list_append_coordinate(receiver)
+                return None
+
+            if is_constructed_list_callsite(receiver):
+                return list_append_coordinate(receiver)
+            return None
+
+        constructed = resolve_receiver(self)
+        if constructed is not None:
+            return constructed
+
+        from sugar_lift_py_tests.factory import factory_panic_gap
+
+        factory_panic_gap(
+            owner="CallSiteValue.append_with",
+            blame=str(site),
+            observed=f"CallSiteValue({self.target_name})",
+            requested="classified append contract",
+            fix=(
+                "prove that the call result is a mutable list and construct "
+                "its post-append state, or leave it loud"
+            ),
         )
 
     def delitem(self, index, site):

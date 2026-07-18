@@ -78,6 +78,31 @@ class AppendCallSugar(
             "    return len(xs)\n"
             "\n"
         )
+        # Diggable unpack: function returns a triple whose third face is a list
+        # (pandas io.common handles residual). Annotation-free construction.
+        diggable_unpack_prefix = (
+            "def A():\n"
+            "    def f():\n"
+            "        return (1, True, [0])\n"
+            "\n"
+            "    h, m, handles = f()\n"
+            "    handles.append(9)\n"
+            "    return len(handles)\n"
+            "\n"
+        )
+        # Diggable cast: cast of a list-returning call digs through (range.py).
+        diggable_cast_prefix = (
+            "from typing import cast\n"
+            "\n"
+            "def A():\n"
+            "    def get_items():\n"
+            "        return [1, 2]\n"
+            "\n"
+            "    attrs = cast('list', get_items())\n"
+            "    attrs.append(3)\n"
+            "    return len(attrs)\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="append_return",
@@ -118,6 +143,28 @@ class AppendCallSugar(
                 + "    assert A() == 2\n",
                 lying=finite_copy_prefix + "def test_a():\n" + "    assert A() == 1\n",
                 family="finite-copy-list-append",
+            ),
+            _call_pair(
+                name="append_diggable_unpack_return",
+                owner_sugar="AppendCallSugar",
+                truthful=diggable_unpack_prefix
+                + "def test_a():\n"
+                + "    assert A() == 2\n",
+                lying=diggable_unpack_prefix
+                + "def test_a():\n"
+                + "    assert A() == 1\n",
+                family="diggable-unpack-list-append",
+            ),
+            _call_pair(
+                name="append_diggable_cast_return",
+                owner_sugar="AppendCallSugar",
+                truthful=diggable_cast_prefix
+                + "def test_a():\n"
+                + "    assert A() == 3\n",
+                lying=diggable_cast_prefix
+                + "def test_a():\n"
+                + "    assert A() == 2\n",
+                family="diggable-cast-list-append",
             ),
         )
 
