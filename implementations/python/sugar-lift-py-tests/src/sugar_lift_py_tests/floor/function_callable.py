@@ -438,7 +438,12 @@ class FunctionCallable(FloorValue):
     def _apply_decorators(self, site):
         """Apply Python decorators as nested callable substitutions."""
         from sugar_lift_py_tests.factory import factory_panic_gap
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.call_site_value import (
+            CallSiteValue,
+            _ctx_with_curried_args,
+            _reduce_callsite_body,
+            force_floor,
+        )
         from sugar_lift_py_tests.outcome import complete_value
 
         current = replace(self, decorators=())
@@ -471,11 +476,40 @@ class FunctionCallable(FloorValue):
                     fix="construct the decorator callsite or panic loudly",
                 )
             assert isinstance(applied, CallSiteValue)
-            current = applied.force_floor(
-                None,
+            if applied.body is None:
+                factory_panic_gap(
+                    owner="FunctionCallable",
+                    blame=str(site),
+                    observed="missing decorator callsite body",
+                    requested="decorator result substitution",
+                    fix="construct the decorator body or panic loudly",
+                )
+            assert applied.body is not None
+            result = complete_value(
+                _reduce_callsite_body(
+                    applied.body,
+                    _ctx_with_curried_args(
+                        None, applied.parameters, applied.arg_values
+                    ),
+                    blame=applied.target_name,
+                ),
                 owner="FunctionCallable decorator result",
-                project_callsite=False,
             )
+            if (
+                isinstance(result, CallSiteValue)
+                and result.target_name in {"cast", "typing.cast"}
+                and len(result.arg_values) == 2
+            ):
+                # typing.cast is runtime identity. Its second operand is the
+                # exact callable produced by the decorator body.
+                current = result.arg_values[1]
+            else:
+                current = force_floor(
+                    result,
+                    None,
+                    owner="FunctionCallable decorator result",
+                    project_callsite=False,
+                )
             if not isinstance(current, FunctionCallable):
                 factory_panic_gap(
                     owner="FunctionCallable",
