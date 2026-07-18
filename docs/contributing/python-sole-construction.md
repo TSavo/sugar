@@ -28,6 +28,7 @@ No other outcome is permitted.
 | `R_native_crashes = 0` | No process crashes on corpus |
 | `R_factory_panic_catches_outside_audit = 0` | Only the per-file corpus audit membrane may catch `FactoryPanic`, and only to emit a **loud red row** |
 | `R_vendor_special_case = 0` | Sugar/factory/recognition dispatch on source shape, never vendor module or class identity |
+| `R_factory_walk_unclassified = 0` | No factory-walk rows left as unclassified/unresolved residue (separate red axis from panics/crashes/timeouts) |
 
 Scripts:
 
@@ -41,6 +42,9 @@ Scripts:
   Python file in the production package and corpus tooling
 - `scripts/silent_zero_tolerance.py` → `R_silent` across every Python file in
   the production package and corpus tooling
+- `scripts/factory_walk_unclassified_law.py` → `R_factory_walk_unclassified`
+  (measure via `--from-json` recensus/audit payload; refuses missing measurement;
+  **not** subsumed by `R_silent=0`)
 
 CI: `.github/workflows/factory-zero-tolerance.yml` (no baselines, no allowlists).
 
@@ -87,14 +91,15 @@ operand; red-effect witness + bad twin. **Never** generic `RuntimeEffect` as
 8. Declare completion only after **two consecutive content-pinned runs** report:
 
 ```text
-Factory side doors  = 0
-Ownership gaps       = 0
-Silent lines         = 0
-Construction panics  = 0
-Bare exceptions      = 0
-Native crashes       = 0
-Timeouts             = 0
-Every source line    = warranted | support | inert | typed effect
+Factory side doors              = 0
+Ownership gaps                  = 0
+Silent lines                    = 0
+Construction panics             = 0
+Bare exceptions                 = 0
+Native crashes                  = 0
+Timeouts                        = 0
+Factory-walk unclassified rows  = 0
+Every source line               = warranted | support | inert | typed effect
 ```
 
 ## Management rule

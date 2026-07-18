@@ -134,6 +134,13 @@ def main() -> None:
                 counts[f"lift_coverage.{key}"] += value
 
         for row in payload.factory_walk:
+            status_value = getattr(
+                getattr(row, "status", None), "value", None
+            ) or str(getattr(row, "status", "") or "")
+            # Permanent product-completeness axis (#5252): unclassified /
+            # wire-unresolved walk rows are honest red residue, not success.
+            if status_value in {"unclassified", "unresolved"}:
+                counts["R_factory_walk_unclassified"] += 1
             if not isinstance(row, FactoryWalkRedRowDto):
                 continue
             counts["factory_walk_red_total"] += 1
@@ -159,6 +166,11 @@ def main() -> None:
     report = {
         "package_versions": versions,
         "shard": {"index": args.shard_index, "count": args.shard_count},
+        # Permanent baseline-free floor (#5252). Separate red axis from
+        # crashes / bare exceptions / timeouts / file fatals.
+        "R_factory_walk_unclassified": int(
+            counts.get("R_factory_walk_unclassified", 0)
+        ),
         "counts": dict(sorted(counts.items())),
         "factory_walk_red_statuses": dict(sorted(red_statuses.items())),
         "fatal_types": dict(sorted(fatal_types.items())),

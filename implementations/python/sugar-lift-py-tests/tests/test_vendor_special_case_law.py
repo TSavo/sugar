@@ -57,3 +57,27 @@ def owns(value):
     )
 
     assert _SCANNER.scan_roots((sugar,)) == []
+
+
+def test_unreadable_or_invalid_source_is_structured_not_crash(tmp_path: Path) -> None:
+    """Windows portability: auditor must not process-crash on bad files (#5253)."""
+    sugar = tmp_path / "sugar"
+    sugar.mkdir()
+    # Invalid UTF-8 bytes that still look like a .py path
+    bad = sugar / "binaryish.py"
+    bad.write_bytes(b"\xff\xfe\x00not-valid-python\x00")
+    # Unparseable Python
+    (sugar / "syntax_error.py").write_text("def (\n", encoding="utf-8")
+    # Missing root should also not raise
+    missing = tmp_path / "does-not-exist"
+
+    offenders = _SCANNER.scan_roots((sugar, missing))
+    kinds = {row.kind for row in offenders}
+    assert "auditor-parse-error" in kinds or "auditor-read-error" in kinds
+    assert "auditor-root-error" in kinds
+    # Logo floor stays zero for pure auditor diagnostics
+    assert _SCANNER.r_vendor_special_case(offenders) == 0
+    assert _SCANNER.r_auditor_errors(offenders) >= 1
+    # CLI exits 1 (red structured), never raises
+    code = _SCANNER.main([str(sugar), str(missing)])
+    assert code == 1
