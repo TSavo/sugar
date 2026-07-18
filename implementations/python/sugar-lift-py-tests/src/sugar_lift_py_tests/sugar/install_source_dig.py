@@ -2549,6 +2549,61 @@ class ContextualizedDigBody:
             cur = outcome.extend_scope(cur)
         return cur
 
+    def initializer_scope_after(self, ctx: Any):
+        """Thread an initializer and retain exact assertion exit faces."""
+        from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+        from sugar_lift_py_tests.floor import (
+            ExceptionalExitValue,
+            InvValue,
+            RaiseValue,
+        )
+        from sugar_lift_py_tests.outcome import Incomplete
+
+        sequential = getattr(self.body, "sugar", None)
+        if not isinstance(sequential, SequentialDigBody):
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame="<initializer>",
+                observed=type(sequential).__name__,
+                requested="straight-line source initializer",
+                fix="construct SequentialDigBody initializer scope or panic loudly",
+            )
+        cur = self._reduce_context(ctx)
+        assertions = []
+        for statement in sequential.statements:
+            outcome = statement.reduce(cur)
+            if isinstance(outcome, Incomplete):
+                factory_panic_gap(
+                    owner="ConstructorCallSugar",
+                    blame=str(getattr(statement, "audit_row", "<initializer>")),
+                    observed=type(outcome.effect).__name__,
+                    requested="decidable source initializer statement",
+                    fix="construct the initializer statement or panic loudly",
+                )
+            contribution = tuple(outcome.contribution())
+            raises = tuple(item for item in contribution if type(item) is RaiseValue)
+            if raises:
+                if len(contribution) != len(raises) or len(raises) != 1:
+                    factory_panic_gap(
+                        owner="ConstructorCallSugar",
+                        blame=str(getattr(statement, "audit_row", "<initializer>")),
+                        observed="mixed initializer exceptional exit",
+                        requested="one exact initializer exit",
+                        fix="construct the mixed initializer faces or panic loudly",
+                    )
+                return cur, tuple(assertions), ExceptionalExitValue(raises[0].effect)
+            assertions.extend(item for item in contribution if type(item) is InvValue)
+            if not outcome.follow().continues:
+                factory_panic_gap(
+                    owner="ConstructorCallSugar",
+                    blame=str(getattr(statement, "audit_row", "<initializer>")),
+                    observed=type(outcome.value).__name__,
+                    requested="decidable initializer continuation",
+                    fix="construct the initializer exit or panic loudly",
+                )
+            cur = outcome.extend_scope(cur)
+        return cur, tuple(assertions), None
+
 
 def _contextualized_dig_body(body, base_context):
     from sugar_lift_py_tests.claim import SugarRole

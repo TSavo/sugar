@@ -6,15 +6,13 @@ if TYPE_CHECKING:
     from sugar_lift_py_tests.outcome import Outcome
 
 
-def ground_assertion_error(*, site) -> Outcome:
-    """Construct the exact exceptional exit from a proved-false assertion."""
+def assertion_raise_effect(*, site):
+    """Construct source-cited ``AssertionError`` testimony for one assert."""
     import hashlib
     from pathlib import Path
 
     from sugar_lift_py_tests.effect import RaiseEffect
     from sugar_lift_py_tests.factory import factory_panic_gap
-    from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
-    from sugar_lift_py_tests.outcome import Complete
 
     if Path(site.filename).is_absolute():
         factory_panic_gap(
@@ -29,10 +27,18 @@ def ground_assertion_error(*, site) -> Outcome:
         if site.source is not None
         else None
     )
+    return RaiseEffect("AssertionError", str(site), source_sha256)
+
+
+def ground_assertion_error(*, site) -> Outcome:
+    """Construct the exact exceptional exit from a proved-false assertion."""
+    from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
+    from sugar_lift_py_tests.outcome import Complete
+
     exception = ExceptionValue("AssertionError", (), site)
     return Complete(
         RaiseValue(
-            RaiseEffect("AssertionError", str(site), source_sha256),
+            assertion_raise_effect(site=site),
             exception=exception,
         )
     )
