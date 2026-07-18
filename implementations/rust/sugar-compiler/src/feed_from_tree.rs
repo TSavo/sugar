@@ -725,6 +725,10 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
         let (formals, formals_present) = formals_from_ir_row(ir);
         // Function-contracts: kind-derived default eligible; IR can refuse.
         let (eligible, reason) = body_policy_from_ir(ir);
+        // #3587 sole-construction: do not drop IR proofirProvenance. Ambient
+        // KIND and Stated/Derived witness keys ride this field the same way
+        // graph_from_fact already does — hardcoding None was a third unstamped
+        // emission path that made verify refuse as provenance-kind-required.
         let extras = ClaimExtras {
             emit_empty_formals: formals_present && formals.is_empty(),
             formals,
@@ -735,7 +739,18 @@ pub fn graph_from_universe(u: &Universe) -> Result<ProofGraph, FeedError> {
             body_discharge_refusal_reason: reason,
             proofir_provenance: None,
         };
-        push_claim_with_slots(&mut graph, &name, slots, warrants, extras)?;
+        let provenance_variants = proofir_provenance_variants(ir)?;
+        for proofir_provenance in provenance_variants {
+            let mut variant_extras = extras.clone();
+            variant_extras.proofir_provenance = proofir_provenance;
+            push_claim_with_slots(
+                &mut graph,
+                &name,
+                slots.clone(),
+                warrants.clone(),
+                variant_extras,
+            )?;
+        }
         push_source_mementos_from_warrants(&mut graph, &warrant_jsons, &name)?;
         return Ok(graph);
     }
@@ -943,6 +958,69 @@ mod silent_loss_3901_tests {
             c.contract_name,
             sorts.len()
         );
+    }
+
+    /// #3587 sole-construction: IR proofirProvenance must reach the sealed
+    /// universe member (parity with graph_from_fact). Dropping it left ambient
+    /// KIND dependent only on sourceWarrants and opened a silent stamp hole.
+    #[test]
+    fn graph_from_universe_carries_proofir_provenance_from_ir() {
+        let ir = json!({
+            "kind": "function-contract",
+            "name": "mathy::add::callable",
+            "formals": ["a"],
+            "formalSorts": [{"kind": "primitive", "name": "Int"}],
+            "post": {"kind": "atomic", "name": "true", "args": []},
+            "proofirProvenance": {
+                "kind": "proofir-provenance",
+                "nodeClass": "FloorDerivedCountedUniverse",
+                "warrants": [{
+                    "kind": "Derived",
+                    "floorChain": ["feed-test", "universe-proofir"]
+                }]
+            }
+        });
+        let u = Universe::for_feed_test(test_memento("mathy::add::callable"), Some(ir), None);
+        let graph = graph_from_universe(&u).expect("graph_from_universe");
+        // Typed ContractMember does not yet surface proofirProvenance; read the
+        // sealed member bytes the verifier's contract_provenance_kind will see.
+        let mut saw_derived = false;
+        for (cid, bytes) in graph.members() {
+            let raw: Json = serde_json::from_slice(bytes)
+                .unwrap_or_else(|e| panic!("member {cid} is not JSON: {e}"));
+            let kind = raw
+                .pointer("/header/kind")
+                .or_else(|| raw.pointer("/kind"))
+                .and_then(|v| v.as_str());
+            if kind != Some("contract") {
+                continue;
+            }
+            let provenance = raw
+                .pointer("/header/proofirProvenance")
+                .or_else(|| raw.get("proofirProvenance"))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "R_universe_proofir_provenance_dropped=1 — IR carried \
+                         proofirProvenance but feed sealed without it (cid={cid}). \
+                         Replacement: graph_from_universe must thread \
+                         proofir_provenance_variants like graph_from_fact."
+                    )
+                });
+            let warrant_kind = provenance
+                .pointer("/warrants/0/kind")
+                .and_then(|v| v.as_str());
+            assert_eq!(
+                warrant_kind,
+                Some("Derived"),
+                "expected Derived warrant on universe member: {provenance}"
+            );
+            saw_derived = true;
+        }
+        assert!(
+            saw_derived,
+            "R_universe_proofir_provenance_dropped=1 — no contract member sealed"
+        );
+        eprintln!("R_universe_proofir_provenance_dropped=0 — Derived KIND sealed");
     }
 
     /// R_universe_empty_warrants: IR omitting sourceWarrants must still seal

@@ -20,13 +20,13 @@
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
+      "failure_shape": "witness-recompute/build-output-path-missing",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required in the recensus4 clean sweep; this is a LIVE recurrence of the #3587 provenance-KIND-required text (contract memento lacks required proofirProvenance/sourceWarrants provenance KIND) even though #3587 is closed as fixed. Flagging loudly per #3677/#3686 criterion 10: this may mean #3587 needs reopening, or that its fix did not cover this witness-package/build-witness/ambient-testimony code path. Not silently re-pinned as stale -- see docs/audits/2026-07-06-recensus4.md.",
+      "grounds": "#3587 provenance-KIND-required axis drained on current main (stamps: #3601 cargo-test-witness, #3770 python pytest/build-witness, #4563 helper-call sourceWarrants, #4604 execution-witness default Derived; feed graph_from_universe now carries IR proofirProvenance). Live failure is a DIFFERENT shape \u2014 re-bucketed per #3677/#3686 criterion 10 rather than keeping a stale provenance-kind pin. Live: witness recompute ENOENT on .build/libdemo.txt (not MissingProvenanceKind). Needs dedicated work order under #3677.",
       "last_observed_rc": 1,
       "last_observed_seconds": 37.618,
       "name": "examples/build-witness-showcase/run.sh",
-      "work_order_issue": 3587
+      "work_order_issue": 3677
     },
     {
       "expected": "NAMED_RED",
@@ -268,13 +268,13 @@
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
+      "failure_shape": "harness/json-decode-extra-data",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required in the recensus4 clean sweep; this is a LIVE recurrence of the #3587 provenance-KIND-required text (contract memento lacks required proofirProvenance/sourceWarrants provenance KIND) even though #3587 is closed as fixed. Flagging loudly per #3677/#3686 criterion 10: this may mean #3587 needs reopening, or that its fix did not cover this witness-package/build-witness/ambient-testimony code path. Not silently re-pinned as stale -- see docs/audits/2026-07-06-recensus4.md.",
+      "grounds": "#3587 provenance-KIND-required axis drained on current main (stamps: #3601 cargo-test-witness, #3770 python pytest/build-witness, #4563 helper-call sourceWarrants, #4604 execution-witness default Derived; feed graph_from_universe now carries IR proofirProvenance). Live failure is a DIFFERENT shape \u2014 re-bucketed per #3677/#3686 criterion 10 rather than keeping a stale provenance-kind pin. Live: prove stdout has Extra data / JSONDecodeError when parsing receipt (logging mixed into JSON). Not provenance-kind.",
       "last_observed_rc": 1,
       "last_observed_seconds": 2.322,
       "name": "examples/numpy-attribute-safety-showcase/run.sh",
-      "work_order_issue": 3587
+      "work_order_issue": 3677
     },
     {
       "expected": "GREEN",
@@ -296,13 +296,13 @@
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
+      "failure_shape": "lift-plugin/transport-disconnected",
       "first_seen": "2026-07-05 examples gate current-main sweep 700020c92",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required in the recensus4 clean sweep; this is a LIVE recurrence of the #3587 provenance-KIND-required text (contract memento lacks required proofirProvenance/sourceWarrants provenance KIND) even though #3587 is closed as fixed. Flagging loudly per #3677/#3686 criterion 10: this may mean #3587 needs reopening, or that its fix did not cover this witness-package/build-witness/ambient-testimony code path. Not silently re-pinned as stale -- see docs/audits/2026-07-06-recensus4.md.",
+      "grounds": "#3587 provenance-KIND-required axis drained on current main (stamps: #3601 cargo-test-witness, #3770 python pytest/build-witness, #4563 helper-call sourceWarrants, #4604 execution-witness default Derived; feed graph_from_universe now carries IR proofirProvenance). Live failure is a DIFFERENT shape \u2014 re-bucketed per #3677/#3686 criterion 10 rather than keeping a stale provenance-kind pin. Live: lift plugin transport disconnected before response (numpy full-tree lift). Not provenance-kind.",
       "last_observed_rc": 1,
       "last_observed_seconds": 8.301,
       "name": "examples/numpy-vendor/run.sh",
-      "work_order_issue": 3587
+      "work_order_issue": 3677
     },
     {
       "expected": "NAMED_RED",
@@ -365,23 +365,23 @@
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
+      "failure_shape": "mint-refused/split-pipeline-kit-binary",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required in the recensus4 clean sweep; this is a LIVE recurrence of the #3587 provenance-KIND-required text (contract memento lacks required proofirProvenance/sourceWarrants provenance KIND) even though #3587 is closed as fixed. Flagging loudly per #3677/#3686 criterion 10: this may mean #3587 needs reopening, or that its fix did not cover this witness-package/build-witness/ambient-testimony code path. Not silently re-pinned as stale -- see docs/audits/2026-07-06-recensus4.md.",
+      "grounds": "#3587 provenance-KIND-required axis drained on current main (stamps: #3601 cargo-test-witness, #3770 python pytest/build-witness, #4563 helper-call sourceWarrants, #4604 execution-witness default Derived; feed graph_from_universe now carries IR proofirProvenance). Live failure is a DIFFERENT shape \u2014 re-bucketed per #3677/#3686 criterion 10 rather than keeping a stale provenance-kind pin. Live: refusing to mint from a split pipeline (kit_source identity vs SUGAR_BUILD_GIT_HEAD). Separate from #3587 ambient KIND; kit provenance gate #4580/#4577 family.",
       "last_observed_rc": 1,
       "last_observed_seconds": 7.543,
       "name": "examples/python-literal-base20/run.sh",
-      "work_order_issue": 3587
+      "work_order_issue": 3677
     },
     {
       "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
+      "failure_shape": "mint-refused/split-pipeline-kit-binary",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required in the recensus4 clean sweep; this is a LIVE recurrence of the #3587 provenance-KIND-required text (contract memento lacks required proofirProvenance/sourceWarrants provenance KIND) even though #3587 is closed as fixed. Flagging loudly per #3677/#3686 criterion 10: this may mean #3587 needs reopening, or that its fix did not cover this witness-package/build-witness/ambient-testimony code path. Not silently re-pinned as stale -- see docs/audits/2026-07-06-recensus4.md.",
+      "grounds": "#3587 provenance-KIND-required axis drained on current main (stamps: #3601 cargo-test-witness, #3770 python pytest/build-witness, #4563 helper-call sourceWarrants, #4604 execution-witness default Derived; feed graph_from_universe now carries IR proofirProvenance). Live failure is a DIFFERENT shape \u2014 re-bucketed per #3677/#3686 criterion 10 rather than keeping a stale provenance-kind pin. Live: refusing to mint from a split pipeline (kit_source identity vs SUGAR_BUILD_GIT_HEAD). Separate from #3587 ambient KIND; kit provenance gate #4580/#4577 family.",
       "last_observed_rc": 1,
       "last_observed_seconds": 9.74,
       "name": "examples/python-literal-base64/run.sh",
-      "work_order_issue": 3587
+      "work_order_issue": 3677
     },
     {
       "expected": "GREEN",
@@ -419,14 +419,12 @@
       "work_order_issue": 3590
     },
     {
-      "expected": "NAMED_RED",
-      "failure_shape": "prove-refused/provenance-kind-required",
+      "expected": "GREEN",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required in the recensus4 clean sweep; this is a LIVE recurrence of the #3587 provenance-KIND-required text (contract memento lacks required proofirProvenance/sourceWarrants provenance KIND) even though #3587 is closed as fixed. Flagging loudly per #3677/#3686 criterion 10: this may mean #3587 needs reopening, or that its fix did not cover this witness-package/build-witness/ambient-testimony code path. Not silently re-pinned as stale -- see docs/audits/2026-07-06-recensus4.md.",
-      "last_observed_rc": 1,
+      "grounds": "PASS on current main (battleaxe release/debug mint+prove): good discharges, bad unsatisfied. Provenance KIND previously refused helper-call ambient rows; fixed by #4563 function-memento sourceWarrants fallback + earlier stamps. Closes this row of #3587.",
+      "last_observed_rc": 0,
       "last_observed_seconds": 2.072,
-      "name": "examples/rust-test-assertion-consistency/run.sh",
-      "work_order_issue": 3587
+      "name": "examples/rust-test-assertion-consistency/run.sh"
     },
     {
       "expected": "GREEN",
@@ -484,11 +482,11 @@
       "expected": "NAMED_RED",
       "failure_shape": "prove-refused/panic-callsite-row",
       "first_seen": "2026-07-06 recensus4 sweep (clean battleaxe observation, current main; #3677/#3686 criterion 10)",
-      "grounds": "script exited 1 with terminal shape prove-refused/provenance-kind-required; work order #3587",
+      "grounds": "#3587 provenance-KIND-required axis drained on current main (stamps: #3601 cargo-test-witness, #3770 python pytest/build-witness, #4563 helper-call sourceWarrants, #4604 execution-witness default Derived; feed graph_from_universe now carries IR proofirProvenance). Live failure is a DIFFERENT shape \u2014 re-bucketed per #3677/#3686 criterion 10 rather than keeping a stale provenance-kind pin. Live: vacuous single-constraint panic_callsite rows refuse (no sibling to contradict). Detach work order from #3587.",
       "last_observed_rc": 1,
       "last_observed_seconds": 14.424,
       "name": "examples/std-core-string-predicates/run.sh",
-      "work_order_issue": 3587
+      "work_order_issue": 3677
     },
     {
       "expected": "NAMED_RED",
