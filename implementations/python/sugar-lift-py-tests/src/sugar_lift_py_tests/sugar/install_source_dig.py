@@ -723,6 +723,36 @@ def resolve_source_exit_contract(
     )
 
 
+def resolve_local_source_exit_contract(filename: str | None, local_name: str):
+    """Resolve an exact module import used by a source-digged callsite.
+
+    Only an unconditional top-level import in the authenticated installed
+    source file qualifies a bare call coordinate. Shadowed or local-only names
+    return no contract and therefore remain loud.
+    """
+    if not filename or not local_name or "." in local_name:
+        return None
+    from pathlib import Path
+
+    from sugar_lift_py_tests.lift_rpc import _installed_module_name_from_filename
+
+    module_name = _installed_module_name_from_filename(str(Path(filename).resolve()))
+    if module_name is None:
+        return None
+    installed = _installed_source(module_name)
+    if installed is None:
+        return None
+    source, sourcefile = installed
+    try:
+        parsed = parsed_tree(source, sourcefile)
+    except SyntaxError:
+        return None
+    target = _definite_unconditional_reexport_target(module_name, local_name, parsed)
+    if target is None:
+        return None
+    return resolve_source_exit_contract(target)
+
+
 def resolve_class_exit_contract(qualified_class: str):
     """Prove exit disposition from an installed class's exact ``__exit__`` body."""
     exit_fn = resolve_install_source_class_method(qualified_class, "__exit__")
