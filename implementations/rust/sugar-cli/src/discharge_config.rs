@@ -297,6 +297,7 @@ fn manifest_working_dir(project_root: &Path, manifest: &PlannedLiftManifest) -> 
 /// Env key shape historically written by the deleted DISCHARGE_* stager.
 /// Kept as a pure helper so the #3860 instrument can name the illegal key
 /// without reintroducing a writer.
+#[cfg(test)]
 fn discharge_tool_env_key(tool: &str) -> String {
     format!(
         "SUGAR_WITNESS_DISCHARGE_{}",
