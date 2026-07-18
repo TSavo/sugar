@@ -437,10 +437,12 @@ def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
         if isinstance(node, ast.Assert):
             needs_statement_door = True
             continue
+        if isinstance(node, (ast.If, ast.Raise)):
+            needs_statement_door = True
+            continue
         if (
             isinstance(node, ast.Expr)
             and isinstance(node.value, ast.Call)
-            and not node.value.keywords
             and isinstance(node.value.func, ast.Attribute)
             and node.value.func.attr == "__init__"
             and isinstance(node.value.func.value, ast.Call)
@@ -449,6 +451,7 @@ def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
             and not node.value.func.value.args
             and not node.value.func.value.keywords
         ):
+            needs_statement_door = True
             continue
         return False
     return needs_statement_door
@@ -953,7 +956,7 @@ def _source_body_constructor_strategy(
     site, ctx, target: str, init, methods, class_fields
 ):
     """Construct an imported initializer through the ordinary statement door."""
-    if class_fields or not init.function_has_simple_positional_params():
+    if not init.function_has_simple_positional_params():
         return None
     params = tuple(init.function_params())
     if not params:
@@ -983,6 +986,7 @@ def _source_body_constructor_strategy(
         parameters=params,
         arguments=tuple(arguments),
         methods=methods,
+        class_fields=class_fields,
         identity=site.blame,
         has_assertion=any(
             statement.observed == "Assert" for statement in init.function_body()

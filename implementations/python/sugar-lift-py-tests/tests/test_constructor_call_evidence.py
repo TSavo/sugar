@@ -150,6 +150,143 @@ def test_source_initializer_assert_constructs_exceptional_exit_face() -> None:
     assert outcome.value.when_false.effect.blame == "constructor_assert_symbolic.py:3:8"
 
 
+def test_source_initializer_selects_concrete_if_path() -> None:
+    outcome = _outcome(
+        "class Choice:\n"
+        "    def __init__(self, selected):\n"
+        "        if selected:\n"
+        "            self.value = 1\n"
+        "        else:\n"
+        "            self.value = 2\n",
+        "Choice(True)",
+        filename="constructor_if.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert _field_values(outcome.value) == {"value": TermValue(1)}
+
+
+def test_source_initializer_if_preserves_constructed_class_fields() -> None:
+    outcome = _outcome(
+        "class Choice:\n"
+        "    marker = 3\n"
+        "\n"
+        "    def __init__(self, selected):\n"
+        "        if selected:\n"
+        "            self.value = 1\n"
+        "        else:\n"
+        "            self.value = 2\n",
+        "Choice(True)",
+        filename="constructor_if_class_field.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert _field_values(outcome.value) == {"value": TermValue(1)}
+    assert {field.name: field.value for field in outcome.value.class_fields} == {
+        "marker": TermValue(3)
+    }
+
+
+def test_source_initializer_self_assignment_then_super_constructs() -> None:
+    outcome = _outcome(
+        "class Base:\n"
+        "    pass\n"
+        "\n"
+        "class Child(Base):\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n"
+        "        super().__init__()\n",
+        "Child(7)",
+        filename="constructor_super.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert _field_values(outcome.value) == {"value": TermValue(7)}
+
+
+def test_source_initializer_keyword_super_call_constructs() -> None:
+    outcome = _outcome(
+        "class Base:\n"
+        "    def __init__(self, name=None):\n"
+        "        self.name = name\n"
+        "\n"
+        "class Child(Base):\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n"
+        "        super().__init__(name=value)\n",
+        "Child(7)",
+        filename="constructor_keyword_super.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert _field_values(outcome.value) == {"value": TermValue(7)}
+
+
+def test_source_initializer_explicit_base_call_stays_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class Base:\n"
+            "    def __init__(self):\n"
+            "        self.base = 1\n"
+            "\n"
+            "class Child(Base):\n"
+            "    def __init__(self, value):\n"
+            "        self.value = value\n"
+            "        Base.__init__(self)\n",
+            "Child(7)",
+            filename="constructor_explicit_base.py",
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "constructed source initializer"
+
+
+def test_source_initializer_if_witness_refutes_file_backed_wrong_twin(
+    tmp_path,
+) -> None:
+    prefix = (
+        "class Choice:\n"
+        "    def __init__(self, selected):\n"
+        "        if selected:\n"
+        "            self.value = 1\n"
+        "        else:\n"
+        "            self.value = 2\n"
+        "\n"
+        "def A():\n"
+        "    return Choice(True).value\n"
+        "\n"
+    )
+    truthful = tmp_path / "truthful" / "test_witness.py"
+    lying = tmp_path / "lying" / "test_witness.py"
+    truthful.parent.mkdir(parents=True)
+    lying.parent.mkdir(parents=True)
+    truthful.write_text(
+        prefix + "def test_a():\n    assert A() == 1\n",
+        encoding="utf-8",
+    )
+    lying.write_text(
+        prefix + "def test_a():\n    assert A() == 2\n",
+        encoding="utf-8",
+    )
+
+    truthful_result = run_source_through_real_solver(
+        truthful.parent,
+        truthful.read_text(encoding="utf-8"),
+    )
+    lying_result = run_source_through_real_solver(
+        lying.parent,
+        lying.read_text(encoding="utf-8"),
+    )
+
+    assert "ConstructorCallSugar" in truthful_result.selected_sugars
+    assert truthful_result.verdict == "sat"
+    assert lying_result.verdict == "unsat"
+
+
 def test_source_initializer_with_arbitrary_expression_stays_loud() -> None:
     with pytest.raises(FactoryPanic) as raised:
         _outcome(

@@ -107,37 +107,7 @@ class ConstructorStrategy:
         return ObjectField(name=name, value=value)
 
     def _class_field(self, name: str, body: SugarBody, ctx) -> ObjectField:
-        value = complete_value(
-            body.reduce(ctx),
-            owner=f"{self.class_name}.{name}",
-        )
-        if isinstance(value, ObjectValue) and value.has_method("__set_name__"):
-            info = FactoryGapInfo(
-                owner="python.factory",
-                blame=f"{self.class_name}.{name}",
-                observed=f"{self.class_name}.{name}",
-                requested="class descriptor __set_name__ effect",
-                fix=(
-                    f"add class-construction descriptor wiring for "
-                    f"`{self.class_name}.{name}` or emit an explicit "
-                    "__set_name__ effect"
-                ),
-                gap_kind=GapKind.CONSTRUCTOR,
-                gap_locus=GapLocus.CONSTRUCTION,
-            )
-            factory_panic(
-                info,
-                FactoryAuditRow(
-                    role="class descriptor __set_name__ effect",
-                    status=FactoryAuditStatus.FLOOR_GAP,
-                    observed=info.observed,
-                    blame=info.blame,
-                    selected=None,
-                    candidates=[],
-                    message=info.message,
-                ),
-            )
-        return ObjectField(name=name, value=value)
+        return _constructed_class_field(self.class_name, name, body, ctx)
 
 
 @dataclass(frozen=True)
@@ -149,6 +119,7 @@ class SourceBodyConstructorStrategy:
     parameters: tuple[str, ...]
     arguments: tuple[SugarBody, ...]
     methods: tuple[ObjectMethodValue, ...] = ()
+    class_fields: tuple[tuple[str, SugarBody], ...] = ()
     identity: str = ""
     has_assertion: bool = False
 
@@ -210,6 +181,10 @@ class SourceBodyConstructorStrategy:
             class_name=self.class_name,
             fields=fields,
             methods=self.methods,
+            class_fields=tuple(
+                _constructed_class_field(self.class_name, name, body, ctx)
+                for name, body in self.class_fields
+            ),
             identity=self.identity,
         )
         if assertions:
@@ -225,6 +200,45 @@ class SourceBodyConstructorStrategy:
                     ExceptionalExitValue(assertion_raise_effect(site=assertion.site)),
                 )
         return Complete(value)
+
+
+def _constructed_class_field(
+    class_name: str,
+    name: str,
+    body: SugarBody,
+    ctx,
+) -> ObjectField:
+    value = complete_value(
+        body.reduce(ctx),
+        owner=f"{class_name}.{name}",
+    )
+    if isinstance(value, ObjectValue) and value.has_method("__set_name__"):
+        info = FactoryGapInfo(
+            owner="python.factory",
+            blame=f"{class_name}.{name}",
+            observed=f"{class_name}.{name}",
+            requested="class descriptor __set_name__ effect",
+            fix=(
+                f"add class-construction descriptor wiring for "
+                f"`{class_name}.{name}` or emit an explicit "
+                "__set_name__ effect"
+            ),
+            gap_kind=GapKind.CONSTRUCTOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="class descriptor __set_name__ effect",
+                status=FactoryAuditStatus.FLOOR_GAP,
+                observed=info.observed,
+                blame=info.blame,
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+    return ObjectField(name=name, value=value)
 
 
 @dataclass(frozen=True)
