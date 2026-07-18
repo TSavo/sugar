@@ -2309,6 +2309,15 @@ class SequentialDigBody:
                     for item in non_returns
                 )
             )
+            # TrySugar has already authenticated and guarded typed effects from
+            # a runtime-dependent return arm. Route that existing red outcome;
+            # replacing it with a SequentialDigBody construction panic loses
+            # the more precise owner and aborts report painting too early.
+            routed_guarded_effect = (
+                guarded and len(non_returns) == 1 and isinstance(non_returns[0], _Inc)
+            )
+            if routed_guarded_effect:
+                return non_returns[0]
             # Statements after a guarded exit execute only on its fall-through
             # path. Exact rebind-only BlockValues can therefore thread that
             # continuation scope before the final fallback is selected. A

@@ -943,6 +943,63 @@ def test_sequential_dig_halted_block_state_stays_loud() -> None:
         SequentialDigBody((_HaltedBlock(), _UnreachableFallback())).desugar(ctx)
 
 
+def test_sequential_dig_routes_existing_typed_effect_from_guarded_try() -> None:
+    from sugar_lift_py_tests.effect import (
+        ConditionalExpressionRuntimeEffect,
+        RaiseEffect,
+        runtime_effect_evidence_from_terms,
+    )
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.floor import BlockValue, GuardedRaise
+    from sugar_lift_py_tests.ir import atomic, make_var
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+    key_error = atomic("py.except", [])
+    site = (
+        SourceFragment.from_source(
+            "result = left if condition else right\n",
+            "datetime.py",
+        )
+        .statements()[0]
+        .statements()[0]
+    )
+    effect = ConditionalExpressionRuntimeEffect(
+        "conditional expression runtime boundary; effect occurs under normal try arm",
+        **runtime_effect_evidence_from_terms(
+            make_var("condition"),
+            make_var("selected"),
+            site,
+        ),
+    )
+
+    class _GuardedTryEffect:
+        audit_row = None
+
+        def reduce(self, ctx):
+            del ctx
+            return Complete(
+                BlockValue(
+                    (
+                        GuardedRaise(
+                            (key_error,),
+                            RaiseEffect(
+                                "ValueError",
+                                "datetime.py:209:8",
+                                "0" * 64,
+                            ),
+                        ),
+                        Incomplete(effect),
+                    ),
+                    can_fall_through=True,
+                )
+            )
+
+    outcome = SequentialDigBody((_GuardedTryEffect(),)).desugar()
+
+    assert isinstance(outcome, Incomplete)
+    assert outcome.effect is effect
+
+
 def test_sequential_dig_mixed_guarded_exit_and_state_stays_loud() -> None:
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
