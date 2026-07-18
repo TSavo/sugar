@@ -15,7 +15,9 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import NamedExpressionValue, TermValue
 from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
 from sugar_lift_py_tests.temporal import TemporalContext
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _site(source: str) -> SourceFragment:
@@ -73,6 +75,41 @@ def test_named_expr_comparison_keeps_rhs_as_the_binding_value() -> None:
 
     assert isinstance(outcome.value, NamedExpressionValue)
     assert outcome.extend_scope(ctx).temporal.value_for("item") == TermValue(3)
+
+
+def test_named_expr_inside_call_argument_survives_the_call_result() -> None:
+    ctx = _ctx()
+    outcome = _build("unknown((item := 3), item)").sugar.desugar(ctx)
+
+    assert isinstance(outcome.value, NamedExpressionValue)
+    assert outcome.extend_scope(ctx).temporal.value_for("item") == TermValue(3)
+    assert outcome.value.presented_value.arg_values == (TermValue(3), TermValue(3))
+
+
+def test_plain_call_without_named_expression_does_not_fabricate_a_binding() -> None:
+    outcome = _build("unknown(3)").sugar.desugar(_ctx())
+
+    assert not isinstance(outcome.value, NamedExpressionValue)
+
+
+def test_named_expr_call_argument_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in NamedExprSugar.witnesses()
+        if witness.name == "named_expr_call_argument_binding_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "named-expr-call-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "named-expr-call-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_named_expr_statement_role_stays_a_loud_factory_gap() -> None:
