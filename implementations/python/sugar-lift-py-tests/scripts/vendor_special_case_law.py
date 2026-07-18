@@ -11,12 +11,19 @@ cryptography, requests.
 Exit 1 whenever R_vendor_special_case > 0. There is no baseline, threshold, or
 allowlist. Replacement: register the source shape and construct/reduce it
 through the ordinary Sugar + SugarBody + floor path.
+
+Portability: every load/parse failure is a loud structured diagnostic row (or
+process-level structured ERROR exit), never an unhandled process crash. Windows
+and Linux must both emit R / structured output.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import json
+import sys
+import traceback
 from pathlib import Path
 from typing import NamedTuple, Sequence
 
@@ -133,55 +140,215 @@ def _isinstance_vendor(node: ast.Call) -> str | None:
     return None
 
 
+def _rel_path(root: Path, path: Path) -> str:
+    """Cross-platform relative path for reports (always forward slashes)."""
+    try:
+        rel = path.resolve().relative_to(root.resolve())
+    except ValueError:
+        # Not under root (symlink / mount edge); fall back to path name.
+        rel = Path(path.name)
+    return f"{root.name}/{rel.as_posix()}"
+
+
+def _read_source(path: Path) -> tuple[str | None, VendorSpecialCase | None]:
+    """Read source text. On failure return a structured diagnostic row."""
+    try:
+        return path.read_text(encoding="utf-8"), None
+    except UnicodeDecodeError:
+        try:
+            return path.read_text(encoding="utf-8-sig"), None
+        except UnicodeDecodeError:
+            try:
+                return path.read_text(encoding="utf-8", errors="replace"), None
+            except OSError as exc:
+                return None, VendorSpecialCase(
+                    path=path.as_posix(),
+                    line=0,
+                    kind="auditor-read-error",
+                    vendor="-",
+                    expression=type(exc).__name__,
+                    note=f"could not read source after utf-8 fallback: {exc}",
+                )
+    except OSError as exc:
+        return None, VendorSpecialCase(
+            path=path.as_posix(),
+            line=0,
+            kind="auditor-read-error",
+            vendor="-",
+            expression=type(exc).__name__,
+            note=f"could not read source: {exc}",
+        )
+
+
+def _safe_unparse(node: ast.AST) -> str:
+    try:
+        return ast.unparse(node)
+    except Exception as exc:  # noqa: BLE001 — auditor must not crash
+        return f"<unparse-failed:{type(exc).__name__}>"
+
+
+def scan_file(path: Path, *, rel: str) -> list[VendorSpecialCase]:
+    """Scan one file. Read/parse failures become structured rows, not crashes."""
+    offenders: list[VendorSpecialCase] = []
+    source, read_error = _read_source(path)
+    if read_error is not None:
+        return [
+            read_error._replace(path=rel)
+            if read_error.path == path.as_posix()
+            else VendorSpecialCase(
+                path=rel,
+                line=read_error.line,
+                kind=read_error.kind,
+                vendor=read_error.vendor,
+                expression=read_error.expression,
+                note=read_error.note,
+            )
+        ]
+    assert source is not None
+    try:
+        tree = ast.parse(source, filename=str(path))
+    except SyntaxError as exc:
+        return [
+            VendorSpecialCase(
+                path=rel,
+                line=int(exc.lineno or 0),
+                kind="auditor-parse-error",
+                vendor="-",
+                expression=type(exc).__name__,
+                note=f"ast.parse failed: {exc.msg}",
+            )
+        ]
+    except Exception as exc:  # noqa: BLE001 — loud structured, not crash
+        return [
+            VendorSpecialCase(
+                path=rel,
+                line=0,
+                kind="auditor-parse-error",
+                vendor="-",
+                expression=type(exc).__name__,
+                note=f"ast.parse failed: {exc}",
+            )
+        ]
+
+    try:
+        symbols = _vendor_symbols(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Compare):
+                for vendor in sorted(_is_name_match(node, symbols)):
+                    offenders.append(
+                        VendorSpecialCase(
+                            path=rel,
+                            line=getattr(node, "lineno", 0) or 0,
+                            kind="vendor-name-match",
+                            vendor=vendor,
+                            expression=_safe_unparse(node),
+                            note=(
+                                "dispatch on source shape, registered Sugar, "
+                                "and floor value types; never vendor names"
+                            ),
+                        )
+                    )
+            elif isinstance(node, ast.Call):
+                vendor = _isinstance_vendor(node)
+                if vendor is not None:
+                    offenders.append(
+                        VendorSpecialCase(
+                            path=rel,
+                            line=getattr(node, "lineno", 0) or 0,
+                            kind="vendor-isinstance",
+                            vendor=vendor,
+                            expression=_safe_unparse(node),
+                            note=(
+                                "vendor class checks are logo dispatch; own "
+                                "the structural source shape instead"
+                            ),
+                        )
+                    )
+    except Exception as exc:  # noqa: BLE001 — per-file containment
+        offenders.append(
+            VendorSpecialCase(
+                path=rel,
+                line=0,
+                kind="auditor-scan-error",
+                vendor="-",
+                expression=type(exc).__name__,
+                note=f"scan aborted for file: {exc}",
+            )
+        )
+    return offenders
+
+
 def scan_roots(roots: Sequence[Path]) -> list[VendorSpecialCase]:
     offenders: list[VendorSpecialCase] = []
     for root in roots:
-        for path in sorted(root.rglob("*.py")):
-            rel = f"{root.name}/{path.relative_to(root).as_posix()}"
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            symbols = _vendor_symbols(tree)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Compare):
-                    for vendor in sorted(_is_name_match(node, symbols)):
-                        offenders.append(
-                            VendorSpecialCase(
-                                path=rel,
-                                line=node.lineno,
-                                kind="vendor-name-match",
-                                vendor=vendor,
-                                expression=ast.unparse(node),
-                                note=(
-                                    "dispatch on source shape, registered Sugar, "
-                                    "and floor value types; never vendor names"
-                                ),
-                            )
-                        )
-                elif isinstance(node, ast.Call):
-                    vendor = _isinstance_vendor(node)
-                    if vendor is not None:
-                        offenders.append(
-                            VendorSpecialCase(
-                                path=rel,
-                                line=node.lineno,
-                                kind="vendor-isinstance",
-                                vendor=vendor,
-                                expression=ast.unparse(node),
-                                note=(
-                                    "vendor class checks are logo dispatch; own "
-                                    "the structural source shape instead"
-                                ),
-                            )
-                        )
+        try:
+            root_resolved = root.resolve()
+        except OSError as exc:
+            offenders.append(
+                VendorSpecialCase(
+                    path=str(root),
+                    line=0,
+                    kind="auditor-root-error",
+                    vendor="-",
+                    expression=type(exc).__name__,
+                    note=f"could not resolve scan root: {exc}",
+                )
+            )
+            continue
+        if not root_resolved.is_dir():
+            offenders.append(
+                VendorSpecialCase(
+                    path=str(root),
+                    line=0,
+                    kind="auditor-root-error",
+                    vendor="-",
+                    expression="NotADirectory",
+                    note=f"scan root is not a directory: {root_resolved}",
+                )
+            )
+            continue
+        try:
+            paths = sorted(root_resolved.rglob("*.py"))
+        except OSError as exc:
+            offenders.append(
+                VendorSpecialCase(
+                    path=str(root),
+                    line=0,
+                    kind="auditor-root-error",
+                    vendor="-",
+                    expression=type(exc).__name__,
+                    note=f"rglob failed: {exc}",
+                )
+            )
+            continue
+        for path in paths:
+            if not path.is_file():
+                continue
+            rel = _rel_path(root_resolved, path)
+            offenders.extend(scan_file(path, rel=rel))
     return sorted(offenders)
 
 
 def r_vendor_special_case(offenders: Sequence[VendorSpecialCase]) -> int:
-    return len(offenders)
+    # Auditor diagnostic rows are loud process health, not logo debt.
+    # They still fail the run (exit 1) via main when present, but are counted
+    # separately from R_vendor_special_case so a portable crash-fix does not
+    # inflate the logo-dispatch floor.
+    return sum(
+        1
+        for row in offenders
+        if row.kind in {"vendor-name-match", "vendor-isinstance"}
+    )
+
+
+def r_auditor_errors(offenders: Sequence[VendorSpecialCase]) -> int:
+    return sum(1 for row in offenders if row.kind.startswith("auditor-"))
 
 
 def format_report(offenders: Sequence[VendorSpecialCase]) -> str:
     lines = [
         f"R_vendor_special_case = {r_vendor_special_case(offenders)}",
+        f"auditor_errors = {r_auditor_errors(offenders)}",
         (
             "Replacement: source shape → registered Sugar → SugarBody children "
             "→ floor dispatch; never vendor module/class identity."
@@ -197,7 +364,7 @@ def format_report(offenders: Sequence[VendorSpecialCase]) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     package = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -214,16 +381,49 @@ def main() -> int:
             package / "recognition",
         ],
     )
-    args = parser.parse_args()
-    offenders = scan_roots(args.roots)
-    if offenders:
+    try:
+        args = parser.parse_args(argv)
+        offenders = scan_roots(args.roots)
+    except Exception as exc:  # noqa: BLE001 — process-level containment
+        print(
+            "VENDOR-SPECIAL-CASE LAW ERROR: unhandled auditor failure "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        print(traceback.format_exc(), file=sys.stderr)
+        print(
+            json.dumps(
+                {
+                    "instrument": "R_vendor_special_case",
+                    "ok": False,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                    "R_vendor_special_case": None,
+                    "auditor_errors": 1,
+                }
+            )
+        )
+        return 2
+
+    r = r_vendor_special_case(offenders)
+    err = r_auditor_errors(offenders)
+    summary = {
+        "instrument": "R_vendor_special_case",
+        "ok": r == 0 and err == 0,
+        "R_vendor_special_case": r,
+        "auditor_errors": err,
+    }
+    if r > 0 or err > 0:
         print(
             "VENDOR-SPECIAL-CASE LAW RED: "
-            f"{r_vendor_special_case(offenders)} logo-dispatch loci"
+            f"{r} logo-dispatch loci"
+            + (f"; {err} auditor errors" if err else "")
         )
         print(format_report(offenders))
+        print(json.dumps(summary))
         return 1
     print("VENDOR-SPECIAL-CASE LAW GREEN: R_vendor_special_case = 0")
+    print(json.dumps(summary))
     return 0
 
 

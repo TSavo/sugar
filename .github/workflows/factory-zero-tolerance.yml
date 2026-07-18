@@ -61,3 +61,14 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/silent_zero_tolerance.py
+      # Product-completeness axis (#5252). R_silent does not subsume unclassified.
+      # Discrimination proves the instrument trips on planted residue and refuses
+      # missing measurement (never fakes R=0). Live corpus R is measured by
+      # recensus shards and gated via:
+      #   scripts/factory_walk_unclassified_law.py --from-json <shard>
+      - name: R_factory_walk_unclassified discrimination
+        if: always()
+        run: >-
+          python -m pytest --noconftest
+          implementations/python/sugar-lift-py-tests/tests/test_factory_walk_unclassified_law.py
+          -q
