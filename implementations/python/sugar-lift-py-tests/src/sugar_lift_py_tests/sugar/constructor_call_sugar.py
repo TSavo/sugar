@@ -162,6 +162,18 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
             "    return Empty().marker()\n"
             "\n"
         )
+        explicit_base_prefix = (
+            "from io import StringIO\n"
+            "\n"
+            "class MarkedText(StringIO):\n"
+            "    def __init__(self, marker):\n"
+            "        self.marker = marker\n"
+            "        StringIO.__init__(self)\n"
+            "\n"
+            "def J():\n"
+            "    return MarkedText('evidence').marker\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="constructor_field_return",
@@ -259,6 +271,17 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
                 lying=pass_source_body_prefix
                 + "def test_pass_source_body():\n"
                 + "    assert I() == 8\n",
+                family="source-body-constructor",
+            ),
+            _call_pair(
+                name="source_body_constructor_explicit_base_initializer",
+                owner_sugar=cls.__name__,
+                truthful=explicit_base_prefix
+                + "def test_explicit_base():\n"
+                + "    assert J() == 'evidence'\n",
+                lying=explicit_base_prefix
+                + "def test_explicit_base():\n"
+                + "    assert J() == 'suppressed'\n",
                 family="source-body-constructor",
             ),
         )
@@ -429,7 +452,12 @@ def _strategy_from_init(
     )
     if bytesio is not None:
         return bytesio
-    if _source_initializer_needs_statement_door(init, params[0]):
+    if _source_initializer_needs_statement_door(
+        init,
+        params[0],
+        class_site=class_site,
+        ctx=ctx,
+    ):
         source_strategy = _source_body_constructor_strategy(
             site,
             ctx,
@@ -498,7 +526,13 @@ def _strategy_from_init(
     )
 
 
-def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
+def _source_initializer_needs_statement_door(
+    init,
+    receiver_name: str,
+    *,
+    class_site,
+    ctx,
+) -> bool:
     """Admit the exact ordinary-statement initializer subset.
 
     The field-only fast path cannot carry a local assignment into a later
@@ -507,10 +541,20 @@ def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
 
     Admitted non-field statements: local assignment, annotated self bind,
     assert, if, raise, import, import-from, exact ``super().__init__(...)``,
-    and pass (no-op). Arbitrary expression calls stay loud.
+    authenticated ``DeclaredImportedBase.__init__(self, ...)``, and pass
+    (no-op). Arbitrary expression calls stay loud.
     """
 
     needs_statement_door = False
+    declared_bases = (
+        {
+            coordinate
+            for base in class_site.class_bases()
+            if (coordinate := base.dotted_expr_name()) is not None
+        }
+        if class_site is not None
+        else set()
+    )
     for statement in init.function_body():
         node = statement.node
         if (
@@ -556,6 +600,17 @@ def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
             # path cannot recover. Force the ordinary-statement door.
             needs_statement_door = True
             continue
+        explicit_base = _explicit_imported_base_initializer(
+            node,
+            receiver_name=receiver_name,
+            declared_bases=declared_bases,
+            ctx=ctx,
+        )
+        if explicit_base:
+            # Declared imported base.__init__(self, ...) is the explicit spelling
+            # of the same statement-door need as super().__init__.
+            needs_statement_door = True
+            continue
         return False
     return needs_statement_door
 
@@ -578,6 +633,43 @@ def _is_exact_super_init_node(node) -> bool:
 
 def _is_exact_super_init_fragment(statement) -> bool:
     return _is_exact_super_init_node(statement.node)
+
+
+def _explicit_imported_base_initializer(
+    node: ast.AST,
+    *,
+    receiver_name: str,
+    declared_bases: set[str],
+    ctx,
+) -> bool:
+    """Authenticate ``DeclaredBase.__init__(self, ...)`` against class ancestry."""
+
+    if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+        return False
+    call = node.value
+    if call.keywords or not call.args:
+        return False
+    receiver = call.args[0]
+    if not isinstance(receiver, ast.Name) or receiver.id != receiver_name:
+        return False
+    function = call.func
+    if not isinstance(function, ast.Attribute) or function.attr != "__init__":
+        return False
+    base_coordinate = _ast_dotted_name(function.value)
+    if base_coordinate is None or base_coordinate not in declared_bases:
+        return False
+    root_name = base_coordinate.partition(".")[0]
+    return _import_target_for_name(ctx, root_name) is not None
+
+
+def _ast_dotted_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        receiver = _ast_dotted_name(node.value)
+        if receiver is not None:
+            return f"{receiver}.{node.attr}"
+    return None
 
 
 def _source_bytesio_strategy(

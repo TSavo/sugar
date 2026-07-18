@@ -338,6 +338,50 @@ def test_importfrom_then_field_constructor_binds_name() -> None:
     assert type(fields["meta"]) is ImportAliasValue
 
 
+def test_source_initializer_constructs_authenticated_explicit_base_call() -> None:
+    temporal = TemporalContext.empty().bind_value(
+        "ExternalBase",
+        ImportAliasValue(
+            "ExternalBase",
+            "ExternalBase",
+            import_target="vendor.ExternalBase",
+        ),
+    )
+
+    outcome = _outcome(
+        "\n\n\n\n\nclass Box(ExternalBase):\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n"
+        "        ExternalBase.__init__(self, value)\n",
+        "Box('evidence')",
+        temporal=temporal,
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert _field_values(outcome.value) == {"value": StringValue("evidence")}
+
+
+def test_source_initializer_non_base_explicit_init_call_stays_loud() -> None:
+    temporal = TemporalContext.empty().bind_value(
+        "Other",
+        ImportAliasValue("Other", "Other", import_target="vendor.Other"),
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "\n\n\n\n\n\nclass Box(ExternalBase):\n"
+            "    def __init__(self, value):\n"
+            "        self.value = value\n"
+            "        Other.__init__(self, value)\n",
+            "Box('evidence')",
+            temporal=temporal,
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "constructed source initializer"
+
+
 def test_static_inherited_constructor_builds_base_fields() -> None:
     outcome = _outcome(
         "class Base:\n"
@@ -814,6 +858,23 @@ def test_super_source_constructor_truthful_sat_wrong_twin_unsat(tmp_path) -> Non
         for witness in ConstructorCallSugar.witnesses()
         if isinstance(witness, SugarWitnessPair)
         and witness.name == "source_body_constructor_super_init"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_explicit_base_initializer_truthful_sat_wrong_twin_unsat(tmp_path) -> None:
+    pair = next(
+        witness
+        for witness in ConstructorCallSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "source_body_constructor_explicit_base_initializer"
     )
 
     truthful = run_source_through_real_solver(
