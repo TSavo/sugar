@@ -188,38 +188,17 @@ class AppendCallSugar(
         )
 
 
-_PANDAS_INDEX_CALL_TARGETS = frozenset(
-    {
-        "pandas.DatetimeIndex",
-        "pandas.Index",
-        "pandas.IntervalIndex",
-        "pandas.IntervalIndex.from_breaks",
-        "pandas.MultiIndex.from_arrays",
-        "pandas.PeriodIndex",
-        "pandas.RangeIndex",
-        "pandas.core.indexes.api.Index",
-        "pandas.TimedeltaIndex",
-        "pandas.core.indexes.datetimes.date_range",
-        "pandas.core.indexes.period.period_range",
-        "pandas.core.indexes.timedeltas.timedelta_range",
-    }
-)
-
-# Methods that return the same Index species when invoked on an Index-like
-# coordinate. Live residual: ``date_range(...).as_unit(unit).append(...)``.
-_PANDAS_INDEX_PRESERVING_METHODS = frozenset({"as_unit"})
-
-
 def _is_pandas_index_like(receiver) -> bool:
     """True when the callsite is a known Index constructor or Index-preserving chain."""
     from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.factory.native_shape import NativeShape, has_native_shape
 
     if not isinstance(receiver, CallSiteValue):
         return False
-    if receiver.target_name in _PANDAS_INDEX_CALL_TARGETS:
+    if has_native_shape(receiver.target_name, NativeShape.INDEX_SEQUENCE):
         return True
     if (
-        receiver.target_name in _PANDAS_INDEX_PRESERVING_METHODS
+        has_native_shape(receiver.target_name, NativeShape.INDEX_PRESERVING)
         and receiver.arg_values
         and isinstance(receiver.arg_values[0], CallSiteValue)
     ):

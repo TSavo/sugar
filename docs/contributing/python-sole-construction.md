@@ -27,6 +27,7 @@ No other outcome is permitted.
 | `R_silent = 0` | No silent lines / unspoken mass (coverage / silent-drop instruments) |
 | `R_native_crashes = 0` | No process crashes on corpus |
 | `R_factory_panic_catches_outside_audit = 0` | Only the per-file corpus audit membrane may catch `FactoryPanic`, and only to emit a **loud red row** |
+| `R_vendor_special_case = 0` | Sugar/factory/recognition dispatch on source shape, never vendor module or class identity |
 
 Scripts:
 
@@ -35,6 +36,7 @@ Scripts:
 - `scripts/factory_panic_catch_law.py` → `R_factory_panic_catches_outside_audit`
   across production package and corpus tooling; only
   `audit_only/collect_construction_gaps.py` is the catch membrane
+- `scripts/vendor_special_case_law.py` → `R_vendor_special_case`
 
 CI: `.github/workflows/factory-zero-tolerance.yml` (no baselines, no allowlists).
 

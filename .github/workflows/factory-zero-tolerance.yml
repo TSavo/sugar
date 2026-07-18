@@ -32,3 +32,17 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/factory_panic_catch_law.py
+      - name: Install static-floor test runner
+        if: always()
+        run: python -m pip install pytest
+      - name: R_vendor_special_case discrimination
+        if: always()
+        run: >-
+          python -m pytest --noconftest
+          implementations/python/sugar-lift-py-tests/tests/test_vendor_special_case_law.py
+          -q
+      - name: R_vendor_special_case = 0
+        if: always()
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/vendor_special_case_law.py

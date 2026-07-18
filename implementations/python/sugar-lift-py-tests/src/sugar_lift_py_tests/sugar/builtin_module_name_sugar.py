@@ -8,61 +8,6 @@ from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
-# Well-known top-level modules often referenced in tests without a local binding
-# surviving into the function temporal (or when import stmt is not yet staged).
-# Closed set — not a soft map for arbitrary names. Unbound user modules still panic.
-_BUILTIN_MODULE_NAMES = frozenset(
-    {
-        "pytest",
-        "unittest",
-        "mock",
-        "typing",
-        "types",
-        "sys",
-        "os",
-        "re",
-        "json",
-        "math",
-        "abc",
-        "functools",
-        "itertools",
-        "collections",
-        "dataclasses",
-        "pathlib",
-        "io",
-        "copy",
-        "struct",
-        "base64",
-        "hashlib",
-        "hmac",
-        "binascii",
-        "zlib",
-        "uuid",
-        "datetime",
-        "time",
-        "random",
-        "string",
-        "warnings",
-        "contextlib",
-        "inspect",
-        "operator",
-        "enum",
-        "numpy",
-        "pandas",
-        "itsdangerous",
-        "requests",
-        "freezegun",
-        "hashlib",
-        "secrets",
-        "urllib",
-        "http",
-        "email",
-        "logging",
-        "pickle",
-        "base64",
-    }
-)
-
 
 @dataclass(frozen=True)
 class BuiltinModuleNameSugar(
@@ -85,7 +30,9 @@ class BuiltinModuleNameSugar(
 
     @classmethod
     def owns(cls, site) -> bool:
-        return site.observed == "Name" and site.name_id() in _BUILTIN_MODULE_NAMES
+        from sugar_lift_py_tests.factory.native_shape import recognizes_module_name
+
+        return site.observed == "Name" and recognizes_module_name(site.name_id())
 
     @classmethod
     def new(cls, site, ctx) -> "BuiltinModuleNameSugar":

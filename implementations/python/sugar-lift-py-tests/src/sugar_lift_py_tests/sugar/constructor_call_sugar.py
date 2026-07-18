@@ -741,7 +741,15 @@ def _source_bytesio_strategy(
         or len(initial.call_args()) != 1
     ):
         return None
-    if _import_target_for_name(ctx, "asbytes") != "numpy._utils.asbytes":
+    from sugar_lift_py_tests.factory.native_shape import (
+        NativeShape,
+        recognize_native_call,
+    )
+
+    if (
+        recognize_native_call(_import_target_for_name(ctx, "asbytes"))
+        is not NativeShape.BYTES_COERCER
+    ):
         return None
     arguments = [ctx.build_body(arg, SugarRole.TERM) for arg in site.call_args()]
     missing = max_args - supplied

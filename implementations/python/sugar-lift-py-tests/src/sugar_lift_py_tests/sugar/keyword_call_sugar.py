@@ -161,7 +161,14 @@ class KeywordCallSugar(
                 _static_exit_suppression_contract,
             )
 
-            if self.import_target == "pandas._config.config.register_option" and (
+            from sugar_lift_py_tests.factory.native_shape import (
+                NativeShape,
+                recognize_native_call,
+            )
+
+            if recognize_native_call(
+                self.import_target
+            ) is NativeShape.OPTION_REGISTER and (
                 registration_values := pos_values[1:]
             ):
                 from sugar_lift_py_tests.floor import FunctionCallable, StringValue

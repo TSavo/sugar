@@ -241,8 +241,10 @@ def _proves_nonempty_nditer(iterable) -> bool:
 
     from sugar_lift_py_tests.floor import CallSiteValue, ImportAliasValue, ListValue
 
-    if type(iterable) is not CallSiteValue or not _is_numpy_call(
-        iterable, qualified="numpy.nditer", member="nditer"
+    from sugar_lift_py_tests.factory.native_shape import NativeShape
+
+    if type(iterable) is not CallSiteValue or not _is_native_call(
+        iterable, NativeShape.ITERATOR
     ):
         return False
     args = iterable.arg_values
@@ -261,7 +263,9 @@ def _proves_nonempty_numpy_array(value) -> bool:
     if value.target_name == "astype":
         args = _without_import_receiver(value.arg_values)
         return bool(args) and _proves_nonempty_numpy_array(args[0])
-    if _is_numpy_call(value, qualified="numpy.arange", member="arange"):
+    from sugar_lift_py_tests.factory.native_shape import NativeShape
+
+    if _is_native_call(value, NativeShape.RANGE_ARRAY):
         args = _without_import_receiver(value.arg_values)
         bounds = [
             arg.value
@@ -274,7 +278,7 @@ def _proves_nonempty_numpy_array(value) -> bool:
             return len(range(*bounds)) > 0
         except ValueError:
             return False
-    if value.target_name == "numpy.random.randint":
+    if _is_native_call(value, NativeShape.RANDOM_INTEGER_ARRAY):
         size = _ground_keyword_int(value, "size")
         return size is not None and size > 0
     return False
@@ -288,18 +292,14 @@ def _without_import_receiver(args):
     return args
 
 
-def _is_numpy_call(callsite, *, qualified: str, member: str) -> bool:
-    from sugar_lift_py_tests.floor import ImportAliasValue
+def _is_native_call(callsite, shape) -> bool:
+    from sugar_lift_py_tests.factory.native_shape import has_native_shape
 
-    if callsite.target_name == qualified:
+    if has_native_shape(callsite.target_name, shape):
         return True
     receiver = callsite.runtime_dispatch_receiver
-    return (
-        callsite.target_name == member
-        and type(receiver) is ImportAliasValue
-        and receiver.name == "numpy"
-        and receiver.import_target == "numpy"
-    )
+    import_target = getattr(receiver, "import_target", None)
+    return has_native_shape(f"{import_target}.{callsite.target_name}", shape)
 
 
 def _ground_keyword_int(callsite, name: str) -> int | None:
