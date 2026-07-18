@@ -125,6 +125,79 @@ def test_liftable_module_assignment_seeds_constructed_floor_value() -> None:
     assert not any(gap.label.endswith(":4:0") for gap in gaps)
 
 
+MODULE_TUPLE_UNPACK = (
+    "START, END = 1, 2\n"
+    "\n"
+    "def uses_start():\n"
+    "    return START\n"
+    "\n"
+    "def uses_end():\n"
+    "    return END\n"
+)
+
+
+def test_module_tuple_unpack_seeds_each_leaf_for_later_name_sugar() -> None:
+    """Module multi-target Assign must seed TemporalContext like function bodies.
+
+    Live residual shape: `START, END = …` at module scope, later methods load
+    START/END. Single-name Assign already seeded; multi-target was skipped
+    solely because assign_target_name() is None.
+    """
+    recovered = audit_lift_file(
+        MODULE_TUPLE_UNPACK, "module_tuple_unpack.py", recover_panics=True
+    )
+    temporal = [
+        panic.gap
+        for panic in recovered.panics
+        if panic.gap.get("owner") == "TemporalContext"
+    ]
+    assert temporal == []
+
+    payload, gaps = audit_lift_file(MODULE_TUPLE_UNPACK, "module_tuple_unpack.py")
+    start = next(row for row in payload.ir if row.name.endswith("uses_start"))
+    end = next(row for row in payload.ir if row.name.endswith("uses_end"))
+    assert start.post["args"][1] == {
+        "kind": "const",
+        "sort": {"kind": "primitive", "name": "Int"},
+        "value": 1,
+    }
+    assert end.post["args"][1] == {
+        "kind": "const",
+        "sort": {"kind": "primitive", "name": "Int"},
+        "value": 2,
+    }
+    assert gaps == []
+
+
+def test_module_tuple_unpack_does_not_fabricate_unrelated_names() -> None:
+    """Unpack binds only its leaves; a different unbound name stays TemporalContext."""
+    source = "START, END = 1, 2\n" "\n" "def uses_missing():\n" "    return MISSING\n"
+    recovered = audit_lift_file(
+        source, "module_tuple_unpack_unrelated.py", recover_panics=True
+    )
+    temporal = [
+        panic.gap
+        for panic in recovered.panics
+        if panic.gap.get("owner") == "TemporalContext"
+    ]
+    assert temporal
+    assert {gap["observed"] for gap in temporal} == {"MISSING"}
+
+
+def test_module_tuple_unpack_truthful_and_lying_twins_refute(tmp_path) -> None:
+    prefix = "START, END = 3, 4\n" "def sum_bounds():\n" "    return START + END\n" "\n"
+    truthful = run_source_through_real_solver(
+        tmp_path / "module-tuple-unpack-truthful",
+        prefix + "def test_start_end():\n    assert sum_bounds() == 7\n",
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "module-tuple-unpack-lying",
+        prefix + "def test_start_end():\n    assert sum_bounds() == 8\n",
+    )
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
+
+
 def test_unliftable_module_rhs_does_not_bind_name_or_poison_sibling() -> None:
     payload, gaps = audit_lift_file(MODULE_BINDINGS, "module_constants.py")
 

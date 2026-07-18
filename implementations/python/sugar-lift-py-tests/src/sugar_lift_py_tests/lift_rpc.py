@@ -1277,9 +1277,12 @@ def _module_import_temporal(
     panics on unbound import names even though the source stated the import.
     Imports use the same ``ImportAliasValue`` constructed by ``AliasSugar``.
     A valued single-name Assign or AnnAssign uses the same factory-built
-    ``BoundVar`` representation as ``_ctx_with_module_global_binds``. Each
-    assignment is independent: an unowned or runtime-effect RHS stays unbound
-    without poisoning siblings. Annotation-only declarations bind nothing.
+    ``BoundVar`` representation as ``_ctx_with_module_global_binds``. Multi-target
+    / tuple-unpack Assign reduces through the same factory door
+    (``TupleUnpackAssignSugar`` and siblings) so leaf names like ``START``/``END``
+    stand for later NameSugar. Each assignment is independent: an unowned or
+    runtime-effect RHS stays unbound without poisoning siblings.
+    Annotation-only declarations bind nothing.
 
     Module-level ``try`` / ``except`` declarations (optional imports that bind
     the same name on both faces) reduce through ordinary TrySugar so continuing
@@ -1508,6 +1511,13 @@ def _module_import_temporal(
                 temporal = outcome.extend_scope(ctx).temporal
                 continue
             if observed == "Assign":
+                # Single-name Assign uses assign_target_name. Multi-target /
+                # tuple-unpack Assign returns None for that helper, but
+                # TupleUnpackAssignSugar (and siblings) still own the shape and
+                # bind every leaf name through ordinary reduction. Skipping the
+                # multi-target door left module unpacks like `START, END = …`
+                # unbound for later NameSugar — a TemporalContext residual that
+                # was already constructed correctly inside function bodies.
                 name = stmt.assign_target_name()
             else:
                 try:
@@ -1516,8 +1526,8 @@ def _module_import_temporal(
                     continue
                 if stmt.annassign_value() is None:
                     continue
-            if name is None:
-                continue
+                if name is None:
+                    continue
             ctx = FactoryBuildContext(
                 filename=stmt.filename,
                 catalog=catalog,
@@ -1528,10 +1538,11 @@ def _module_import_temporal(
             except FactoryPanic as panic:
                 if recovered_panics is None:
                     raise
+                binding_label = name if name is not None else "multi-target"
                 recovered_panics.append(
                     _SeedPanicEvidence(
                         locus=f"{stmt.filename}:{stmt.line}:{stmt.col}",
-                        demanded_source=f"binding:{name}",
+                        demanded_source=f"binding:{binding_label}",
                         info=panic.info,
                     )
                 )
@@ -1970,8 +1981,12 @@ def audit_lift_file(
                     if item.node is stmt.node:
                         break
                     if item.observed == "Assign":
-                        if item.assign_target_name() is None:
-                            continue
+                        # Single-name and multi-target / tuple-unpack class
+                        # assigns both replay in class execution order. The
+                        # multi-target door used to skip because
+                        # assign_target_name() is None; owned unpack sugars
+                        # now bind every leaf through ordinary reduction.
+                        pass
                     elif item.observed == "FunctionDef":
                         if item.function_name() not in class_local_uses:
                             continue
