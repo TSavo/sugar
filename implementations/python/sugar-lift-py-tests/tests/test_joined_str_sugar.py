@@ -14,9 +14,11 @@ from sugar_lift_py_tests.effect import DynamicFormatRuntimeEffect
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import StringValue, SymbolicValue
+from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.ir import ctor, make_var, num, str_const
 from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.sugar.joined_str_sugar import JoinedStrSugar
+from sugar_lift_py_tests.sugar.witnesses import SugarRedEffectWitnessPair
 
 
 def _site(expr: str):
@@ -122,3 +124,17 @@ def test_dynamic_format_spec_is_a_named_runtime_effect() -> None:
             ],
         )
     )
+
+
+def test_dynamic_format_runtime_effect_has_a_refuting_bad_twin(tmp_path) -> None:
+    witness = next(
+        row
+        for row in JoinedStrSugar.witnesses()
+        if row.name == "joined_str_dynamic_format_spec"
+    )
+
+    assert isinstance(witness, SugarRedEffectWitnessPair)
+    assert witness.truthful.expected_match is True
+    assert witness.lying.expected_match is False
+    assert witness.truthful.expectation.effect_class == "DynamicFormatRuntimeEffect"
+    assert evaluate_seed_witnesses((witness,), tmp_path).is_zero
