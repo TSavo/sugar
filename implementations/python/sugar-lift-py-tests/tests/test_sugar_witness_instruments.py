@@ -134,6 +134,7 @@ EXPECTED_OPT_OUT_SUGARS = {
     "BreakSugar",
     "ContinueSugar",
     "ExprSugar",
+    "PackageSourceAccountingSugar",
     "PassSugar",
 }
 EXPECTED_TEMPORAL_OPT_OUT_SUGARS: set[str] = set()
@@ -241,6 +242,7 @@ def test_non_fol_opt_out_is_floor_anchored_and_bidirectional() -> None:
     assert current_non_fol_support_floor_names() == {
         "SupportValue",
         "LoopControlValue",
+        "PackageSourceAccountingValue",
     }
     assert SetLiteralValue.non_fol_support is False
 

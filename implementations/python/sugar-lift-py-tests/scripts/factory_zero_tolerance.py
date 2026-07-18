@@ -111,7 +111,10 @@ class _FactoryConstructionScanner(ast.NodeVisitor):
             self.scope == "factory"
             and has_statement_walk
             and has_observed_dispatch
-            and _function_constructs_behavior(node)
+            and (
+                _function_constructs_behavior(node)
+                or _factory_function_interprets_control_flow(node, self.path)
+            )
         ):
             self.add(node, "control-flow-interpretation")
         self.function_depth += 1
@@ -206,6 +209,16 @@ def _function_constructs_behavior(
         if name is not None and (name.endswith("Value") or name.endswith("Sugar")):
             return True
     return False
+
+
+def _factory_function_interprets_control_flow(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    path: str,
+) -> bool:
+    return path == "factory/package_source_accounting.py" and node.name in {
+        "_imported_top_level_packages",
+        "_package_accounting_summary",
+    }
 
 
 def scan_source(

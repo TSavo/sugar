@@ -58,7 +58,7 @@ class DiagnosticDto(TypedDict, total=False):
 
 class SourceAuditDto(TypedDict, total=False):
     """Two distinct producers stamp this lane: package_source_audits_for_source()
-    (factory/package_source_accounting.py, `kind: "source-audit"`, structural
+    (sugar/package_source_accounting_sugar.py, `kind: "source-audit"`, structural
     package accounting) and AuditMemento.to_declaration()
     (proofir/nodes/audit_memento.py, no `kind`, per-assertion source-locus
     counts). Their `contract` field alone differs in shape (a dict in one, a
