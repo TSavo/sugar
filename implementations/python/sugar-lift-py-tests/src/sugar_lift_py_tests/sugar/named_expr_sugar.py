@@ -18,6 +18,14 @@ class NamedExprSugar(Sugar, role=SugarRole.TERM):
     value: SugarBody
     site: object = dataclass_field(compare=False)
 
+    @staticmethod
+    def recognize_target_name(site) -> str:
+        from sugar_lift_py_tests.recognition.binding_shapes import (
+            BindingShapeRecognition,
+        )
+
+        return BindingShapeRecognition.named_expr_target_name(site)
+
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "NamedExpr"

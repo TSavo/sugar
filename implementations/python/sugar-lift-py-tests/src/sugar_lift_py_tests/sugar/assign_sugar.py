@@ -21,6 +21,14 @@ class AssignSugar(Sugar, role=SugarRole.STATEMENT):
     value: SugarBody
     site: object = dataclass_field(compare=False)
 
+    @staticmethod
+    def recognize_target_name(site) -> str | None:
+        from sugar_lift_py_tests.recognition.binding_shapes import (
+            BindingShapeRecognition,
+        )
+
+        return BindingShapeRecognition.assign_target_name(site)
+
     @classmethod
     def owns(cls, site) -> bool:
         # Single Name target only; tuple/attr/subscript targets stay loud gaps.

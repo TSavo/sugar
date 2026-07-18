@@ -101,6 +101,38 @@ class CallSugar(Sugar, role=SugarRole.TERM):
     exact_exception_name: str | None = None
 
     @classmethod
+    def qualified_name(cls, fragment) -> str | None:
+        from sugar_lift_py_tests.recognition.call_identity import (
+            CallIdentityRecognition,
+        )
+
+        return CallIdentityRecognition.qualified_name(fragment)
+
+    @classmethod
+    def recognize_target_name(cls, site) -> str | None:
+        from sugar_lift_py_tests.recognition.call_identity import (
+            CallIdentityRecognition,
+        )
+
+        return CallIdentityRecognition.target_name(site)
+
+    @classmethod
+    def qualified_target_name(cls, site) -> str | None:
+        from sugar_lift_py_tests.recognition.call_identity import (
+            CallIdentityRecognition,
+        )
+
+        return CallIdentityRecognition.qualified_target_name(site)
+
+    @classmethod
+    def is_method_call(cls, site) -> bool:
+        from sugar_lift_py_tests.recognition.call_identity import (
+            CallIdentityRecognition,
+        )
+
+        return CallIdentityRecognition.is_method_call(site)
+
+    @classmethod
     def owns(cls, site) -> bool:
         # Plain-name calls (positional and/or keyword). abs is a closed builtin
         # partition: KeywordCallSugar owns keyword-bearing shapes,

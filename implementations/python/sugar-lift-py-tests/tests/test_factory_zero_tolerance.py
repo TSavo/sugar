@@ -12,6 +12,7 @@ _SPEC.loader.exec_module(_SCANNER)
 
 scan_source = _SCANNER.scan_source
 scan_package = _SCANNER.scan_package
+scan_source_fragment_semantics = _SCANNER.scan_source_fragment_semantics
 format_offenders = _SCANNER.format_offenders
 
 
@@ -72,6 +73,31 @@ def binop_left(self):
         )
         == []
     )
+
+
+def test_source_fragment_semantic_classifier_is_red_but_child_projection_is_not() -> (
+    None
+):
+    source = """
+import ast
+
+def binop_left(self) -> "SourceFragment":
+    assert isinstance(self.node, ast.BinOp)
+    return SourceFragment.from_node(self.node.left, self.filename)
+
+def call_target_name(self) -> str | None:
+    if isinstance(self.node.func, ast.Name):
+        return self.node.func.id
+    return None
+"""
+
+    assert [
+        (row.line, row.kind)
+        for row in scan_source_fragment_semantics(
+            source,
+            "source_fragment.py",
+        )
+    ] == [(8, "semantic-ast-classification")]
 
 
 def test_semantic_factory_and_leaf_sugar_classifiers_are_loud() -> None:
@@ -181,6 +207,21 @@ def test_current_behavior_side_doors_are_stable_zero() -> None:
         "R>0 ⇒ CI red. Factory may only select Sugar | FactoryPanic; "
         f"R_behavior_side_doors={len(offenders)}; promote each locus into Sugar "
         "and delete factory/sugar helpers (do not relocate):\n"
+        + format_offenders(offenders)
+    )
+
+
+def test_source_fragment_semantic_classifiers_are_stable_zero() -> None:
+    source_fragment = _KIT / "src" / "sugar_lift_py_tests" / "source_fragment.py"
+    offenders = scan_source_fragment_semantics(
+        source_fragment.read_text(encoding="utf-8"),
+        "source_fragment.py",
+    )
+
+    assert offenders == [], (
+        "R_source_fragment_semantic_classifiers="
+        f"{len(offenders)}; structural child projection may remain, but every "
+        "meaning-bearing classifier must move to its registered Sugar owner:\n"
         + format_offenders(offenders)
     )
 

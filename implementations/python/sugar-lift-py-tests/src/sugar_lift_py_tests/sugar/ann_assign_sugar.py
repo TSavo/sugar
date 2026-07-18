@@ -32,6 +32,14 @@ class AnnAssignSugar(Sugar, role=SugarRole.STATEMENT):
     value: SugarBody | None
     site: object = dataclass_field(compare=False)
 
+    @staticmethod
+    def recognize_target_id(site) -> str:
+        from sugar_lift_py_tests.recognition.binding_shapes import (
+            BindingShapeRecognition,
+        )
+
+        return BindingShapeRecognition.annassign_target_id(site)
+
     @classmethod
     def owns(cls, site) -> bool:
         # Name targets only; Attribute AnnAssign stays a loud gap.

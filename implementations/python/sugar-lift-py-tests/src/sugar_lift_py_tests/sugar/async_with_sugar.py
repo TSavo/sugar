@@ -58,6 +58,14 @@ class AsyncWithSugar(Sugar, role=SugarRole.STATEMENT):
     optional_name: str | None
     site: object = field(compare=False)
 
+    @staticmethod
+    def recognize_optional_name(site, index: int = 0) -> str | None:
+        from sugar_lift_py_tests.recognition.binding_shapes import (
+            BindingShapeRecognition,
+        )
+
+        return BindingShapeRecognition.with_optional_vars_name(site, index)
+
     @classmethod
     def owns(cls, site):
         return (

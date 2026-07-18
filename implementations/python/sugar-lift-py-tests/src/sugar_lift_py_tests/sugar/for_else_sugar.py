@@ -5,6 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.loop_control_scope_sugar import LoopControlScopeSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -37,7 +38,7 @@ class ForElseSugar(Sugar, role=SugarRole.STATEMENT):
             (name,) if name is not None else site.for_flat_tuple_target_names()
         )
         assert target_names is not None
-        scope = site.classify_loop_control_scope()
+        scope = LoopControlScopeSugar.classify(site)
         return cls(
             target_names=tuple(target_names),
             iterable=ctx.build_body(site.for_iter(), SugarRole.TERM),

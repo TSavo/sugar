@@ -24,6 +24,14 @@ class TupleForSugar(Sugar, role=SugarRole.STATEMENT):
     body: SugarBody
     site: object = dataclass_field(compare=False)
 
+    @staticmethod
+    def recognize_target_names(site) -> tuple[str, ...] | None:
+        from sugar_lift_py_tests.recognition.binding_shapes import (
+            BindingShapeRecognition,
+        )
+
+        return BindingShapeRecognition.for_flat_tuple_target_names(site)
+
     @classmethod
     def owns(cls, site) -> bool:
         if site.observed != "For" or site.for_orelse_count() != 0:
