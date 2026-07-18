@@ -512,7 +512,7 @@ def _with_binding(names, entered, site):
     )
     from sugar_lift_py_tests.floor import ListValue, ScopeRebind, TupleValue
     from sugar_lift_py_tests.outcome import Complete, Incomplete
-    from sugar_lift_py_tests.sugar.tuple_unpack_assign_sugar import (
+    from sugar_lift_py_tests.sugar.sequence_unpack_assign_sugar import (
         SequenceUnpackBindings,
     )
 
