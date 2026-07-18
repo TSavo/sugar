@@ -41,6 +41,14 @@ class JoinedStrSugar(Sugar, role=SugarRole.TERM):
     parts: tuple[_JoinedPart, ...]
     site: object = dataclass_field(compare=False)
 
+    @staticmethod
+    def recognize_static_text(site) -> str | None:
+        from sugar_lift_py_tests.recognition.remaining_semantics import (
+            RemainingSemanticRecognition,
+        )
+
+        return RemainingSemanticRecognition.joined_str_static_text(site)
+
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "JoinedStr"

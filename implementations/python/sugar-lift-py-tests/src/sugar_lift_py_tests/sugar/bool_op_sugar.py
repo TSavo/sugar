@@ -19,6 +19,14 @@ class BoolOpSugar(Sugar, role=SugarRole.TERM):
     operands: tuple[SugarBody, ...]
     site: object = dataclass_field(compare=False)
 
+    @staticmethod
+    def recognize_operator(site) -> str:
+        from sugar_lift_py_tests.recognition.remaining_semantics import (
+            RemainingSemanticRecognition,
+        )
+
+        return RemainingSemanticRecognition.boolop_kind(site)
+
     @classmethod
     def owns(cls, site) -> bool:
         return site.observed == "BoolOp"

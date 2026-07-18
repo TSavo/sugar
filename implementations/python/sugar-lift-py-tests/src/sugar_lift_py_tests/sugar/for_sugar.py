@@ -37,6 +37,14 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     deferred_outputs: tuple[str, ...]
     site: object = dataclass_field(compare=False)
 
+    @staticmethod
+    def recognize_target_name(site) -> str | None:
+        from sugar_lift_py_tests.recognition.binding_shapes import (
+            BindingShapeRecognition,
+        )
+
+        return BindingShapeRecognition.for_target_name(site)
+
     @classmethod
     def owns(cls, site) -> bool:
         if site.observed != "For":

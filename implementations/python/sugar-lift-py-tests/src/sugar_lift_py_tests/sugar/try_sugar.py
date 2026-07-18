@@ -68,6 +68,14 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
     finally_body: SugarBody | None
     site: object = dataclass_field(compare=False)
 
+    @staticmethod
+    def recognize_handler_type_names(site) -> tuple[str, ...] | None:
+        from sugar_lift_py_tests.recognition.remaining_semantics import (
+            RemainingSemanticRecognition,
+        )
+
+        return RemainingSemanticRecognition.except_handler_type_names(site)
+
     @classmethod
     def owns(cls, site) -> bool:
         if site.observed != "Try":
@@ -75,9 +83,7 @@ class TrySugar(Sugar, role=SugarRole.STATEMENT):
         finalbody = site.try_finalbody()
         if finalbody is None:
             return True
-        return not (
-            LoopControlScopeSugar.classify(finalbody).contains_terminal_control
-        )
+        return not (LoopControlScopeSugar.classify(finalbody).contains_terminal_control)
 
     @classmethod
     def new(cls, site, ctx) -> "TrySugar":

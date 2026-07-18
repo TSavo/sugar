@@ -235,6 +235,63 @@ def scan_source(
     return sorted(scanner.offenders)
 
 
+def _returns_structural_fragment(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    """Whether a raw-AST read only projects source structure to a consumer."""
+    if node.returns is None:
+        return False
+    annotation = ast.unparse(node.returns)
+    return "SourceFragment" in annotation or annotation in {"ast.stmt", "NodeKind"}
+
+
+def _declares_structural_accessor(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    return any(
+        _terminal_name(decorator) == "structural_accessor"
+        for decorator in node.decorator_list
+    )
+
+
+def scan_source_fragment_semantics(
+    source: str,
+    path: str = "source_fragment.py",
+) -> list[Offender]:
+    """Find meaning-bearing raw-AST classifiers in the source gateway.
+
+    A function that returns a SourceFragment child (or the raw statement/kind
+    used for catalog selection) is structural. Every other raw AST
+    classifier, walker, or visitor decides meaning and must live in Sugar.
+    """
+    tree = ast.parse(source, filename=path)
+    offenders: list[Offender] = []
+    parents: dict[ast.AST, ast.AST] = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        parent = parents.get(node)
+        nested_in_function = False
+        while parent is not None:
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                nested_in_function = True
+                break
+            parent = parents.get(parent)
+        if nested_in_function:
+            continue
+        if (
+            _has_ast_classification(node)
+            and not _returns_structural_fragment(node)
+            and not _declares_structural_accessor(node)
+        ):
+            offenders.append(Offender(path, node.lineno, "semantic-ast-classification"))
+    return sorted(set(offenders))
+
+
 def scan_factory(factory_root: Path) -> list[Offender]:
     offenders: list[Offender] = []
     for path in sorted(factory_root.rglob("*.py")):

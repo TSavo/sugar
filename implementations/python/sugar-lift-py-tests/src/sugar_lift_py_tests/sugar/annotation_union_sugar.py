@@ -22,6 +22,46 @@ class AnnotationUnionSugar(Sugar, role=SugarRole.TERM):
     right: SugarBody
     site: object = dataclass_field(compare=False)
 
+    @staticmethod
+    def mark_annotation_subtree(node):
+        from sugar_lift_py_tests.recognition.annotation_context import (
+            AnnotationContextRecognition,
+        )
+
+        return AnnotationContextRecognition.mark_subtree(node)
+
+    @staticmethod
+    def is_pep613_type_alias(node) -> bool:
+        from sugar_lift_py_tests.recognition.annotation_context import (
+            AnnotationContextRecognition,
+        )
+
+        return AnnotationContextRecognition.is_pep613_type_alias(node)
+
+    @staticmethod
+    def annotation_roots(node):
+        from sugar_lift_py_tests.recognition.annotation_context import (
+            AnnotationContextRecognition,
+        )
+
+        return AnnotationContextRecognition.roots(node)
+
+    @staticmethod
+    def mark_runtime_statement(node):
+        from sugar_lift_py_tests.recognition.annotation_context import (
+            AnnotationContextRecognition,
+        )
+
+        return AnnotationContextRecognition.mark_runtime_statement(node)
+
+    @staticmethod
+    def contains(site) -> bool:
+        from sugar_lift_py_tests.recognition.annotation_context import (
+            AnnotationContextRecognition,
+        )
+
+        return AnnotationContextRecognition.contains(site)
+
     @classmethod
     def owns(cls, site) -> bool:
         return (

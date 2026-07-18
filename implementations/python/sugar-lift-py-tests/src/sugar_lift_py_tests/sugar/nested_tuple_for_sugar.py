@@ -18,6 +18,14 @@ class NestedTupleForSugar(Sugar, role=SugarRole.STATEMENT):
     body: SugarBody
     site: object = dataclass_field(compare=False)
 
+    @staticmethod
+    def recognize_target_paths(site):
+        from sugar_lift_py_tests.recognition.binding_shapes import (
+            BindingShapeRecognition,
+        )
+
+        return BindingShapeRecognition.for_nested_tuple_target_paths(site)
+
     @classmethod
     def owns(cls, site) -> bool:
         return (

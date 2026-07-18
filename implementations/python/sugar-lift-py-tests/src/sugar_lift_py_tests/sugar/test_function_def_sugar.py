@@ -29,6 +29,14 @@ class TestFunctionDefSugar(
     body: SugarBody
     site: object = dataclass_field(compare=False)
 
+    @staticmethod
+    def recognize_parameter_rows(site):
+        from sugar_lift_py_tests.recognition.remaining_semantics import (
+            RemainingSemanticRecognition,
+        )
+
+        return RemainingSemanticRecognition.literal_pytest_parametrize_rows(site)
+
     @classmethod
     def owns(cls, site) -> bool:
         if site.observed != "FunctionDef":

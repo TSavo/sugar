@@ -34,6 +34,11 @@ from .factory.block import Block
 from .factory.node_kind import NodeKind, OperatorKind
 
 
+def structural_accessor(function):
+    """Mark a raw-AST read that only projects source structure."""
+    return function
+
+
 @dataclass(frozen=True)
 class InitializerCallSite:
     """Factory testimony for a call statement inside ``__init__``."""
@@ -43,6 +48,7 @@ class InitializerCallSite:
     target: str | None = None
 
 
+@structural_accessor
 def _is_suite(value) -> bool:
     return (
         isinstance(value, list)
@@ -52,52 +58,28 @@ def _is_suite(value) -> bool:
 
 
 def _dotted_expr_name(node: ast.AST) -> str | None:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        receiver = _dotted_expr_name(node.value)
-        if receiver is not None:
-            return f"{receiver}.{node.attr}"
-    return None
+    from .recognition.call_identity import CallIdentityRecognition
+
+    fragment = SourceFragment.from_node(node, "<structural-call-target>")
+    return CallIdentityRecognition.qualified_name(fragment)
 
 
 def _mark_annotation_subtree(node: ast.AST) -> ast.AST:
-    """Carry parent-stated annotation context with every descendant node."""
-    for descendant in ast.walk(node):
-        descendant._sugar_annotation_context = True  # type: ignore[attr-defined]
-    return node
+    from .recognition.annotation_context import AnnotationContextRecognition
+
+    return AnnotationContextRecognition.mark_subtree(node)
 
 
 def _is_pep613_type_alias(node: ast.AST) -> bool:
-    if not isinstance(node, ast.AnnAssign) or node.value is None:
-        return False
-    annotation = node.annotation
-    return (
-        isinstance(annotation, ast.Name)
-        and annotation.id == "TypeAlias"
-        or isinstance(annotation, ast.Attribute)
-        and annotation.attr == "TypeAlias"
-    )
+    from .recognition.annotation_context import AnnotationContextRecognition
+
+    return AnnotationContextRecognition.is_pep613_type_alias(node)
 
 
 def _annotation_roots(node: ast.AST) -> list[ast.AST]:
-    roots: list[ast.AST] = []
-    for descendant in ast.walk(node):
-        if isinstance(descendant, ast.arg) and descendant.annotation is not None:
-            roots.append(descendant.annotation)
-        if (
-            isinstance(descendant, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and descendant.returns is not None
-        ):
-            roots.append(descendant.returns)
-        if isinstance(descendant, ast.AnnAssign):
-            roots.append(descendant.annotation)
-            if _is_pep613_type_alias(descendant):
-                roots.append(descendant.value)
-        type_alias = getattr(ast, "TypeAlias", ())
-        if type_alias and isinstance(descendant, type_alias):
-            roots.append(descendant.value)
-    return roots
+    from .recognition.annotation_context import AnnotationContextRecognition
+
+    return AnnotationContextRecognition.roots(node)
 
 
 def _mark_runtime_statement(node: ast.stmt) -> ast.stmt:
@@ -107,18 +89,9 @@ def _mark_runtime_statement(node: ast.stmt) -> ast.stmt:
     later request for the same statement is a flag check, not two tree walks
     (`statements()` is called per site, so re-walking was quadratic per module).
     """
-    if getattr(node, "_sugar_runtime_marked", False):
-        return node
-    node._sugar_runtime_marked = True  # type: ignore[attr-defined]
-    annotation_nodes = {
-        descendant for root in _annotation_roots(node) for descendant in ast.walk(root)
-    }
-    for descendant in ast.walk(node):
-        if descendant in annotation_nodes:
-            descendant._sugar_annotation_context = True  # type: ignore[attr-defined]
-        elif isinstance(descendant, ast.expr):
-            descendant._sugar_runtime_expression_context = True  # type: ignore[attr-defined]
-    return node
+    from .recognition.annotation_context import AnnotationContextRecognition
+
+    return AnnotationContextRecognition.mark_runtime_statement(node)
 
 
 def _mark_loop_body(nodes: list[ast.stmt]) -> list[ast.stmt]:
@@ -129,29 +102,9 @@ def _mark_loop_body(nodes: list[ast.stmt]) -> list[ast.stmt]:
     still loop bodies and may carry the same marker safely.
     """
 
-    class MarkLoopControl(ast.NodeVisitor):
-        def visit_Break(self, node: ast.Break) -> None:
-            node._sugar_loop_context = True  # type: ignore[attr-defined]
+    from .recognition.loop_control_scope import LoopControlScopeRecognition
 
-        def visit_Continue(self, node: ast.Continue) -> None:
-            node._sugar_loop_context = True  # type: ignore[attr-defined]
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            del node
-
-        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-            del node
-
-        def visit_Lambda(self, node: ast.Lambda) -> None:
-            del node
-
-        def visit_ClassDef(self, node: ast.ClassDef) -> None:
-            del node
-
-    marker = MarkLoopControl()
-    for node in nodes:
-        marker.visit(node)
-    return nodes
+    return LoopControlScopeRecognition.mark_loop_body(nodes)
 
 
 @dataclass(frozen=True)
@@ -196,6 +149,7 @@ class SourceFragment:
             source=source,
         )
 
+    @structural_accessor
     def memento(self):
         # The fragment EMITS its memento: the sealed wire projection -- file,
         # span, and the content address of the exact source text it covers
@@ -258,29 +212,9 @@ class SourceFragment:
         )
 
     def _has_source_ancestor(self, wanted: tuple[type[ast.AST], ...]) -> bool:
-        if self.source is None:
-            return False
-        parsed = _parsed_tree_and_parents(self.source)
-        if parsed is None:
-            return False
-        tree, parents = parsed
-        target = next(
-            (
-                node
-                for node in ast.walk(tree)
-                if type(node) is type(self.node)
-                and getattr(node, "lineno", None) == self.line
-                and getattr(node, "col_offset", None) == self.col
-            ),
-            None,
-        )
-        while target in parents:
-            target = parents[target]
-            if isinstance(target, wanted):
-                return True
-            if isinstance(target, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-                return False
-        return False
+        from .recognition.loop_control_scope import LoopControlScopeRecognition
+
+        return LoopControlScopeRecognition.has_source_ancestor(self, wanted)
 
     def yield_value(self) -> "SourceFragment | None":
         self._require(ast.Yield, ast.YieldFrom)
@@ -292,62 +226,10 @@ class SourceFragment:
         )
 
     def is_within_annotation(self) -> bool:
-        """Whether this exact source node is nested under a Python annotation."""
-        if getattr(self.node, "_sugar_annotation_context", False):
-            return True
-        if self.source is None:
-            return False
-        parsed = _parsed_tree_and_parents(self.source)
-        if parsed is None:
-            return False
-        _tree, parents = parsed
-        target = next(
-            (
-                node
-                for node in parents
-                if type(node) is type(self.node)
-                and getattr(node, "lineno", None) == self.line
-                and getattr(node, "col_offset", None) == self.col
-                and getattr(node, "end_lineno", None)
-                == getattr(self.node, "end_lineno", None)
-                and getattr(node, "end_col_offset", None)
-                == getattr(self.node, "end_col_offset", None)
-            ),
-            None,
-        )
-        if target is None:
-            return False
+        """Delegate annotation meaning to AnnotationUnionSugar."""
+        from .recognition.annotation_context import AnnotationContextRecognition
 
-        # The parent table was minted with the pristine cached parse. Annotation
-        # membership is an ancestry question, so do not re-walk the entire shared
-        # module (and thereby couple this site to unrelated later nodes).
-        current = target
-        while current in parents:
-            parent = parents[current]
-            if isinstance(parent, ast.arg) and parent.annotation is current:
-                return True
-            if (
-                isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and parent.returns is current
-            ):
-                return True
-            if isinstance(parent, ast.AnnAssign) and parent.annotation is current:
-                return True
-            if (
-                _is_pep613_type_alias(parent)
-                and isinstance(parent, ast.AnnAssign)
-                and parent.value is current
-            ):
-                return True
-            type_alias = getattr(ast, "TypeAlias", ())
-            if (
-                type_alias
-                and isinstance(parent, type_alias)
-                and parent.value is current
-            ):
-                return True
-            current = parent
-        return False
+        return AnnotationContextRecognition.contains(self)
 
     def is_within_runtime_expression(self) -> bool:
         """Whether a statement gateway classified this node as runtime syntax."""
@@ -496,9 +378,19 @@ class SourceFragment:
         return self.node.attr  # type: ignore[attr-defined]
 
     def call_is_method_call(self) -> bool:
-        """Return True if the Call's func is an Attribute (i.e. a method call)."""
+        """Delegate call identity classification to CallSugar."""
+        from .recognition.call_identity import CallIdentityRecognition
+
+        return CallIdentityRecognition.is_method_call(self)
+
+    def call_function(self) -> "SourceFragment":
+        """Return the structurally projected callable expression."""
         self._require(ast.Call)
-        return isinstance(self.node.func, ast.Attribute)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(
+            self.node.func,  # type: ignore[attr-defined]
+            self.filename,
+            source=self.source,
+        )
 
     def call_receiver(self) -> "SourceFragment | None":
         """Return a SourceFragment for the Attribute.value receiver, or None if not a method call."""
@@ -508,22 +400,19 @@ class SourceFragment:
         return None
 
     def call_target_name(self) -> "str | None":
-        """Return func.id (plain call) or func.attr (method call), else None."""
-        self._require(ast.Call)
-        func = self.node.func  # type: ignore[attr-defined]
-        if isinstance(func, ast.Name):
-            return func.id
-        if isinstance(func, ast.Attribute):
-            return func.attr
-        return None
+        """Delegate call identity classification to CallSugar."""
+        from .recognition.call_identity import CallIdentityRecognition
+
+        return CallIdentityRecognition.target_name(self)
 
     def call_qualified_target_name(self) -> "str | None":
         """Return the dotted call target as written, e.g. ``np.testing.equal``.
 
         This is syntax, not import resolution: aliases are intentionally not expanded here.
         """
-        self._require(ast.Call)
-        return _dotted_expr_name(self.node.func)  # type: ignore[attr-defined]
+        from .recognition.call_identity import CallIdentityRecognition
+
+        return CallIdentityRecognition.qualified_target_name(self)
 
     def call_import_target_name(
         self,
@@ -611,73 +500,13 @@ class SourceFragment:
         them or panic at its own loud boundary. Consumers receive typed
         testimony and never reopen the AST.
         """
-        if not isinstance(self.node, ast.Expr) or not isinstance(
-            self.node.value, ast.Call
-        ):
-            return None
-        call = SourceFragment.from_node(
-            self.node.value, self.filename, source=self.source
+        from .recognition.remaining_semantics import RemainingSemanticRecognition
+
+        return RemainingSemanticRecognition.initializer_call_site(
+            self,
+            receiver_name=receiver_name,
+            declared_bases=declared_bases,
         )
-        target = call.call_target_name()
-        call_receiver = call.call_receiver()
-        if call_receiver is None:
-            if receiver_name in call.loaded_names():
-                return None
-            return InitializerCallSite(
-                kind="ordinary_call",
-                call=call,
-                target=target,
-            )
-        zero_arg_super = (
-            call_receiver.observed == "Call"
-            and call_receiver.call_target_name() == "super"
-            and not call_receiver.call_args()
-            and not call_receiver.call_has_keywords()
-        )
-        arguments = call.call_args()
-        if (
-            target == "__setattr__"
-            and zero_arg_super
-            and not call.call_has_keywords()
-            and len(arguments) == 2
-            and arguments[0].observed == "PrimitiveLiteral"
-            and isinstance(arguments[0].literal_value(), str)
-        ):
-            return InitializerCallSite(
-                kind="super_setattr",
-                call=call,
-                target=arguments[0].literal_value(),
-            )
-        if (
-            target != "__init__"
-            and not call.call_args()
-            and not call.call_has_keywords()
-            and call_receiver.observed == "Name"
-            and call_receiver.name_id() == receiver_name
-        ):
-            return InitializerCallSite(
-                kind="self_method",
-                call=call,
-                target=target,
-            )
-        if target != "__init__":
-            return None
-        if zero_arg_super:
-            return InitializerCallSite(kind="super", call=call, target="super")
-        base_coordinate = call_receiver.dotted_expr_name()
-        if (
-            not call.call_has_keywords()
-            and arguments
-            and arguments[0].observed == "Name"
-            and arguments[0].name_id() == receiver_name
-            and base_coordinate in declared_bases
-        ):
-            return InitializerCallSite(
-                kind="explicit_base",
-                call=call,
-                target=base_coordinate,
-            )
-        return None
 
     def operator_kind(self) -> "OperatorKind":
         """Return the operator kind for BinOp or UnaryOp (e.g. Add, Not).
@@ -749,13 +578,9 @@ class SourceFragment:
     def named_expr_target_name(self) -> str:
         """Return the only target shape Python admits for a named expression."""
         self._require(ast.NamedExpr)
-        target = self.node.target  # type: ignore[attr-defined]
-        if not isinstance(target, ast.Name):
-            raise TypeError(
-                "NamedExpr target must be an ast.Name; malformed AST cannot "
-                "enter NamedExprSugar"
-            )
-        return target.id
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.named_expr_target_name(self)
 
     def named_expr_value(self) -> "SourceFragment":
         self._require(ast.NamedExpr)
@@ -855,10 +680,9 @@ class SourceFragment:
     def assign_target_name(self) -> "str | None":
         """Return the target name id for a single-Name Assign target, else None."""
         self._require(ast.Assign)
-        targets = self.node.targets  # type: ignore[attr-defined]
-        if len(targets) == 1 and isinstance(targets[0], ast.Name):
-            return targets[0].id
-        return None
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.assign_target_name(self)
 
     def assign_targets(self) -> "list[SourceFragment]":
         """Return SourceFragments for each assignment target."""
@@ -871,33 +695,23 @@ class SourceFragment:
     def assign_target_attribute_receiver_name(self) -> "str | None":
         """Return the receiver name for ``receiver.field = value``, else None."""
         self._require(ast.Assign)
-        targets = self.node.targets  # type: ignore[attr-defined]
-        if (
-            len(targets) == 1
-            and isinstance(targets[0], ast.Attribute)
-            and isinstance(targets[0].value, ast.Name)
-        ):
-            return targets[0].value.id
-        return None
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.assign_attribute_receiver_name(self)
 
     def assign_target_attribute_name(self) -> "str | None":
         """Return the field name for ``receiver.field = value``, else None."""
         self._require(ast.Assign)
-        targets = self.node.targets  # type: ignore[attr-defined]
-        if len(targets) == 1 and isinstance(targets[0], ast.Attribute):
-            return targets[0].attr
-        return None
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.assign_attribute_name(self)
 
     def assign_target_dotted_attribute_path(self) -> "tuple[str, ...] | None":
         """Return a pure dotted single assignment target as path components."""
         self._require(ast.Assign)
-        targets = self.node.targets  # type: ignore[attr-defined]
-        if len(targets) != 1 or not isinstance(targets[0], ast.Attribute):
-            return None
-        dotted = _dotted_expr_name(targets[0])
-        if dotted is None:
-            return None
-        return tuple(dotted.split("."))
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.assign_dotted_path(self)
 
     def assign_value(self) -> "SourceFragment":
         """Return a SourceFragment for Assign.value."""
@@ -988,19 +802,9 @@ class SourceFragment:
     def except_handler_type_names(self) -> "tuple[str, ...] | None":
         """Return handler exception names, or None for a bare except."""
         self._require(ast.ExceptHandler)
-        typ = self.node.type  # type: ignore[attr-defined]
-        if typ is None:
-            return None
-        if isinstance(typ, ast.Tuple):
-            return tuple(
-                name
-                for item in typ.elts
-                if (name := _dotted_expr_name(item)) is not None
-            )
-        name = _dotted_expr_name(typ)
-        if name is None:
-            return ()
-        return (name,)
+        from .recognition.remaining_semantics import RemainingSemanticRecognition
+
+        return RemainingSemanticRecognition.except_handler_type_names(self)
 
     def except_handler_type(self) -> "SourceFragment | None":
         """Return the exception type expression of an ExceptHandler, or None if bare."""
@@ -1260,6 +1064,7 @@ class SourceFragment:
         """Return True if this node has line and column position attributes."""
         return hasattr(self.node, "lineno") and hasattr(self.node, "col_offset")
 
+    @structural_accessor
     def is_statement_site(self) -> bool:
         """Return True when the fragment is a statement/suite dispatch site."""
         return isinstance(self.node, (ast.stmt, Block))
@@ -1363,7 +1168,9 @@ class SourceFragment:
     def boolop_op_kind(self) -> str:
         """Return 'and' or 'or' for a BoolOp node."""
         self._require(ast.BoolOp)
-        return "and" if isinstance(self.node.op, ast.And) else "or"  # type: ignore[attr-defined]
+        from .recognition.remaining_semantics import RemainingSemanticRecognition
+
+        return RemainingSemanticRecognition.boolop_kind(self)
 
     def boolop_values(self) -> "list[SourceFragment]":
         """Return the operand SourceFragments for a BoolOp node (ast.BoolOp.values)."""
@@ -1437,12 +1244,9 @@ class SourceFragment:
     def joined_str_static_text(self) -> "str | None":
         """Return the f-string text when every segment is already literal text."""
         self._require(ast.JoinedStr)
-        pieces: list[str] = []
-        for value in self.node.values:  # type: ignore[attr-defined]
-            if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
-                return None
-            pieces.append(value.value)
-        return "".join(pieces)
+        from .recognition.remaining_semantics import RemainingSemanticRecognition
+
+        return RemainingSemanticRecognition.joined_str_static_text(self)
 
     def formatted_value_value(self) -> "SourceFragment":
         """Return the expression inside an f-string formatted field."""
@@ -1583,13 +1387,9 @@ class SourceFragment:
     def annassign_target_id(self) -> str:
         """Return the name string when an AnnAssign target is a simple Name node."""
         self._require(ast.AnnAssign)
-        target = self.node.target  # type: ignore[attr-defined]
-        if not isinstance(target, ast.Name):
-            raise TypeError(
-                f"annassign_target_id requires a Name target, got {type(target).__name__}"
-                f" at {self.blame}"
-            )
-        return target.id
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.annassign_target_id(self)
 
     # --- imports ----------------------------------------------------------
 
@@ -1663,67 +1463,9 @@ class SourceFragment:
         retained; callers keep those omitted formals symbolic.
         """
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
-        recognized = []
-        for decorator in self.node.decorator_list:  # type: ignore[attr-defined]
-            if (
-                not isinstance(decorator, ast.Call)
-                or _dotted_expr_name(decorator.func) != "pytest.mark.parametrize"
-                or len(decorator.args) < 2
-                or decorator.keywords
-            ):
-                continue
-            try:
-                raw_names = ast.literal_eval(decorator.args[0])
-                raw_rows = ast.literal_eval(decorator.args[1])
-            except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
-                continue
+        from .recognition.remaining_semantics import RemainingSemanticRecognition
 
-            if isinstance(raw_names, str):
-                names = tuple(part.strip() for part in raw_names.split(","))
-            elif isinstance(raw_names, (tuple, list)):
-                names = tuple(raw_names)
-            else:
-                continue
-            if not names or any(
-                not isinstance(name, str) or not name for name in names
-            ):
-                continue
-            if not isinstance(raw_rows, (tuple, list)):
-                continue
-
-            rows = []
-            for raw_row in raw_rows:
-                if len(names) == 1:
-                    row = (raw_row,)
-                elif isinstance(raw_row, (tuple, list)):
-                    row = tuple(raw_row)
-                else:
-                    rows = []
-                    break
-                if len(row) != len(names):
-                    rows = []
-                    break
-                rows.append(row)
-            if rows:
-                decidable_indexes = tuple(
-                    index
-                    for index in range(len(names))
-                    if all(
-                        type(row[index]) in (str, int, float, bool, type(None))
-                        for row in rows
-                    )
-                )
-                if decidable_indexes:
-                    recognized.append(
-                        (
-                            tuple(names[index] for index in decidable_indexes),
-                            tuple(
-                                tuple(row[index] for index in decidable_indexes)
-                                for row in rows
-                            ),
-                        )
-                    )
-        return tuple(recognized)
+        return RemainingSemanticRecognition.literal_pytest_parametrize_rows(self)
 
     # --- augmented assignment ----------------------------------------------
 
@@ -1795,12 +1537,9 @@ class SourceFragment:
     def with_optional_vars_name(self, index: int = 0) -> "str | None":
         """Return the simple `as name` binding for a With/AsyncWith item, if any."""
         self._require(ast.With, ast.AsyncWith)
-        target = self.node.items[index].optional_vars  # type: ignore[attr-defined]
-        if target is None:
-            return None
-        if isinstance(target, ast.Name):
-            return target.id
-        return None
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.with_optional_vars_name(self, index)
 
     def with_optional_vars(self, index: int = 0) -> "SourceFragment | None":
         """Return the complete optional ``as`` target for a With item."""
@@ -1845,10 +1584,9 @@ class SourceFragment:
     def for_target_name(self) -> "str | None":
         """Return the simple target name for a For/AsyncFor node, if any."""
         self._require(ast.For, ast.AsyncFor)
-        target = self.node.target  # type: ignore[attr-defined]
-        if isinstance(target, ast.Name):
-            return target.id
-        return None
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.for_target_name(self)
 
     def for_target_observed(self) -> str:
         """Return the AST kind for a For/AsyncFor target."""
@@ -1858,40 +1596,18 @@ class SourceFragment:
     def for_flat_tuple_target_names(self) -> "tuple[str, ...] | None":
         """Return names for a flat all-Name tuple loop target, else None."""
         self._require(ast.For, ast.AsyncFor)
-        target = self.node.target  # type: ignore[attr-defined]
-        if not isinstance(target, ast.Tuple) or not target.elts:
-            return None
-        if not all(isinstance(element, ast.Name) for element in target.elts):
-            return None
-        return tuple(element.id for element in target.elts)
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.for_flat_tuple_target_names(self)
 
     def for_nested_tuple_target_paths(
         self,
     ) -> "tuple[tuple[tuple[int, ...], str], ...] | None":
         """Return indexed paths for a nested all-Name tuple target."""
         self._require(ast.For, ast.AsyncFor)
-        target = self.node.target  # type: ignore[attr-defined]
-        if not isinstance(target, ast.Tuple):
-            return None
-        paths: list[tuple[tuple[int, ...], str]] = []
-        nested = False
+        from .recognition.binding_shapes import BindingShapeRecognition
 
-        def visit(node, path: tuple[int, ...]) -> bool:
-            nonlocal nested
-            if isinstance(node, ast.Name):
-                paths.append((path, node.id))
-                return True
-            if not isinstance(node, ast.Tuple) or not node.elts:
-                return False
-            if path:
-                nested = True
-            return all(
-                visit(item, (*path, index)) for index, item in enumerate(node.elts)
-            )
-
-        if not visit(target, ()) or not nested:
-            return None
-        return tuple(paths)
+        return BindingShapeRecognition.for_nested_tuple_target_paths(self)
 
     def for_body(self) -> "list[SourceFragment]":
         """Return SourceFragments for the body statements of a For or AsyncFor node."""
@@ -1959,27 +1675,9 @@ class SourceFragment:
         definitions because class constructor selection must reject a local
         ``__new__`` no matter which binding spelling introduced it.
         """
-        for descendant in ast.walk(self.node):
-            if (
-                isinstance(
-                    descendant,
-                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-                )
-                and descendant.name == name
-            ):
-                return True
-            if (
-                isinstance(descendant, ast.Name)
-                and isinstance(descendant.ctx, ast.Store)
-                and descendant.id == name
-            ):
-                return True
-            if isinstance(descendant, (ast.Import, ast.ImportFrom)) and any(
-                (alias.asname or alias.name.split(".", 1)[0]) == name
-                for alias in descendant.names
-            ):
-                return True
-        return False
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.binds_name_anywhere(self, name)
 
     def loop_carried_names(
         self,
@@ -2027,11 +1725,9 @@ class SourceFragment:
 
     def loaded_names(self) -> "frozenset[str]":
         """Names read by this fragment, including reads nested in expressions."""
-        return frozenset(
-            node.id
-            for node in ast.walk(self.node)
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
-        )
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.loaded_names(self)
 
     def stored_or_deleted_names(self) -> "frozenset[str]":
         """Names rebound or deleted anywhere inside this fragment.
@@ -2040,11 +1736,9 @@ class SourceFragment:
         assignments, loop targets, with-as targets, deletes, and walrus targets
         all carry Store/Del context in Python's native AST.
         """
-        return frozenset(
-            node.id
-            for node in ast.walk(self.node)
-            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
-        )
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.stored_or_deleted_names(self)
 
 
 # ---------------------------------------------------------------------------

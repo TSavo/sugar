@@ -4,6 +4,9 @@ import ast
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.factory.block import Block
+from sugar_lift_python_source.source_tables import parsed_parents
+
+
 @dataclass(frozen=True)
 class LoopControlScopeClassification:
     """Sugar-owned testimony about one loop/control-flow source scope."""
@@ -34,6 +37,54 @@ class LoopControlScopeRecognition:
             "Subscript",
         }
     )
+
+    @staticmethod
+    def mark_loop_body(nodes: list[ast.stmt]) -> list[ast.stmt]:
+        class MarkLoopControl(ast.NodeVisitor):
+            def visit_Break(self, node: ast.Break) -> None:
+                node._sugar_loop_context = True  # type: ignore[attr-defined]
+
+            def visit_Continue(self, node: ast.Continue) -> None:
+                node._sugar_loop_context = True  # type: ignore[attr-defined]
+
+            def stop_at_owner(self, node: ast.AST) -> None:
+                del node
+
+            visit_FunctionDef = stop_at_owner
+            visit_AsyncFunctionDef = stop_at_owner
+            visit_Lambda = stop_at_owner
+            visit_ClassDef = stop_at_owner
+
+        marker = MarkLoopControl()
+        for node in nodes:
+            marker.visit(node)
+        return nodes
+
+    @staticmethod
+    def has_source_ancestor(fragment, wanted: tuple[type[ast.AST], ...]) -> bool:
+        if fragment.source is None:
+            return False
+        parsed = parsed_parents(fragment.source)
+        if parsed is None:
+            return False
+        tree, parents = parsed
+        target = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if type(node) is type(fragment.node)
+                and getattr(node, "lineno", None) == fragment.line
+                and getattr(node, "col_offset", None) == fragment.col
+            ),
+            None,
+        )
+        while target in parents:
+            target = parents[target]
+            if isinstance(target, wanted):
+                return True
+            if isinstance(target, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                return False
+        return False
 
     @classmethod
     def owns(cls, site) -> bool:
@@ -406,9 +457,7 @@ class LoopControlScopeRecognition:
             else ()
         )
         stored_names = (
-            cls.loop_stored_names(site)
-            if is_loop
-            else cls.own_scope_stored_names(site)
+            cls.loop_stored_names(site) if is_loop else cls.own_scope_stored_names(site)
         )
 
         class OwnedLoopControl(ast.NodeVisitor):
@@ -436,9 +485,7 @@ class LoopControlScopeRecognition:
 
         control = OwnedLoopControl()
         roots = (
-            site.node.body
-            if is_loop or isinstance(site.node, Block)
-            else (site.node,)
+            site.node.body if is_loop or isinstance(site.node, Block) else (site.node,)
         )
         for root in roots:
             control.visit(root)

@@ -1,5 +1,33 @@
 # `source_fragment.py` side-door inventory (2026-07-18)
 
+## Hardened final disposition
+
+T's structural-only ruling supersedes the earlier flagged-for-follow-on
+dispositions below. The baseline-free semantic instrument measured 27 live
+meaning-bearing classifiers after excluding three explicitly structural
+accessors and one nested duplicate. The final count is **0**.
+
+| Promoted meaning | Registered Sugar owner(s) |
+|---|---|
+| annotation roots, PEP 613 alias context, annotation/runtime partition | `AnnotationUnionSugar`, discriminated from `RuntimeBitwiseOpSugar` |
+| plain/method/qualified call identity | `CallSugar` and the registered Call-family owners |
+| constructor initializer-call and whole-scope binding testimony | `ConstructorCallSugar` |
+| walrus target identity | `NamedExprSugar` |
+| simple, attribute, nested-attribute, and annotated assignment targets | `AssignSugar`, `AttributeAssignSugar`, `NestedAttributeAssignSugar`, `AnnAssignSugar` |
+| simple, flat-tuple, and nested-tuple loop targets; loop ancestry/control marking | `ForSugar`, `TupleForSugar`, `NestedTupleForSugar`, `LoopControlScopeSugar` |
+| With `as` binding | `AsyncWithSugar` and `PytestRaisesWithSugar` |
+| exception handler type coordinates | `TrySugar` |
+| Boolean operator meaning | `BoolOpSugar` |
+| static joined-string text | `JoinedStrSugar` |
+| literal pytest parameter rows | `TestFunctionDefSugar` |
+
+Raw Python-AST recognition is isolated behind the Sugar-owned recognition
+implementations; `SourceFragment` contains only structural accessors and
+delegation to those owners. Every owner listed above is a registered,
+constructing Sugar with a non-empty witness set. No owner claims a shape and
+then returns `Incomplete`; existing genuine-runtime typed effects are
+unchanged.
+
 This inventory accompanies #5207 and the STEP 1 zero-tolerance instrument in
 #5204. The promoted `classify_loop_control_scope` walker is gone. Its semantic
 owner is `LoopControlScopeSugar`; raw traversal is isolated in the structural
@@ -13,7 +41,7 @@ construction. The gateway contains no IR/floor construction and no `.reduce`
 call. Its remaining raw-AST sites are enumerated below rather than silently
 treating their former factory filename as permission.
 
-## Traversal and visitor side doors
+## Historical pre-hardening traversal and visitor census
 
 | Kind | Function | Lines | Disposition |
 |---|---|---:|---|
@@ -82,8 +110,8 @@ future promotion work starts from an honest census.
 - `.reduce`: 0 sites
 - Total enumerated raw-AST/construction/reduction sites: 65
 
-The merged #5204 zero-tolerance factory instrument moves from 110 to 45
-offenses for this lane. All 65 former `factory/source_fragment.py` loci leave
-the factory census; `factory/source_fragment.py` is green at zero. The global
-stable-zero test remains honestly red on 45 unrelated factory loci, chiefly
-`factory/sugar_constructors.py`; this lane does not suppress or allowlist them.
+The first #5215 pass removed all 65 former factory-package loci by separating
+the source grammar gateway. The hardened pass then measured the gateway itself
+by meaning rather than path and drained its 27 semantic classifiers to zero.
+The historical rows above remain as provenance for how each raw-AST site was
+adjudicated; they are not an accepted baseline.

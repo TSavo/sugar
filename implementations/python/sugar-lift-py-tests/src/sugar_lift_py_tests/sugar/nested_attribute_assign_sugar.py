@@ -18,6 +18,14 @@ class NestedAttributeAssignSugar(Sugar, role=SugarRole.STATEMENT):
     value: SugarBody
     site: object = dataclass_field(compare=False)
 
+    @staticmethod
+    def recognize_target_path(site) -> tuple[str, ...] | None:
+        from sugar_lift_py_tests.recognition.binding_shapes import (
+            BindingShapeRecognition,
+        )
+
+        return BindingShapeRecognition.assign_dotted_path(site)
+
     @classmethod
     def owns(cls, site) -> bool:
         if site.observed != "Assign":

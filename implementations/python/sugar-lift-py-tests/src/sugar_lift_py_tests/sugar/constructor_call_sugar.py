@@ -29,6 +29,20 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
         ConstructorStrategy | RuntimeConstructorStrategy | SourceBodyConstructorStrategy
     )
 
+    @staticmethod
+    def recognize_initializer_call(
+        site, *, receiver_name: str, declared_bases: frozenset[str] = frozenset()
+    ):
+        from sugar_lift_py_tests.recognition.remaining_semantics import (
+            RemainingSemanticRecognition,
+        )
+
+        return RemainingSemanticRecognition.initializer_call_site(
+            site,
+            receiver_name=receiver_name,
+            declared_bases=declared_bases,
+        )
+
     @classmethod
     def owns(cls, site) -> bool:
         if site.observed != "Call":
