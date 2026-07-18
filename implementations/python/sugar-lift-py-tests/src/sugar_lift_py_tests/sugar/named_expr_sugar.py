@@ -33,11 +33,29 @@ class NamedExprSugar(Sugar, role=SugarRole.TERM):
     @classmethod
     def witnesses(cls):
         prefix = "def A(z):\n" "    return (seen := z)\n\n"
-        return _call_pair(
-            name="named_expr_binding_return",
-            owner_sugar="NamedExprSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+        call_argument = (
+            "def identity(value):\n"
+            "    return value\n"
+            "\n"
+            "def B(z):\n"
+            "    identity((seen := z))\n"
+            "    return seen\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="named_expr_binding_return",
+                owner_sugar="NamedExprSugar",
+                truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
+                lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            ),
+            _call_pair(
+                name="named_expr_call_argument_binding_return",
+                owner_sugar="NamedExprSugar",
+                truthful=call_argument + "def test_b():\n    assert B(5) == 5\n",
+                lying=call_argument + "def test_b():\n    assert B(5) == 6\n",
+                family="call-argument-binding",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:

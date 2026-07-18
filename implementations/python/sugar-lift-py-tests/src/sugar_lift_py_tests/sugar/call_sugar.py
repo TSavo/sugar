@@ -379,8 +379,28 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             )
         head, *rest = remaining
         return head.reduce(ctx).and_then(
-            lambda value: self._collect(tuple(rest), (*accumulated, value), ctx)
+            lambda value: self._continue_collect(value, tuple(rest), accumulated, ctx)
         )
+
+    def _continue_collect(self, value, remaining, accumulated, ctx):
+        from sugar_lift_py_tests.floor import NamedExpressionValue
+
+        if isinstance(value, NamedExpressionValue):
+            # Python evaluates arguments left-to-right.  A walrus argument
+            # presents its RHS to the call while its assignment survives the
+            # entire call expression and is visible to later arguments.
+            return self._collect(
+                remaining,
+                (*accumulated, value.presented_value),
+                value.extend_scope(ctx),
+            ).and_then(
+                lambda presented: Complete(
+                    NamedExpressionValue.carrying(
+                        value.name, value.assigned_value, presented
+                    )
+                )
+            )
+        return self._collect(remaining, (*accumulated, value), ctx)
 
     def walk_children(self):
         return self.args
