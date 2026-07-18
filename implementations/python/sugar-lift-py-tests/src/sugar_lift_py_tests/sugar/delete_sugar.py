@@ -7,6 +7,10 @@ from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.recognition.delete_targets import (
+    DeleteTargetKind,
+    DeleteTargetRecognition,
+)
 
 
 @dataclass(frozen=True)
@@ -33,9 +37,10 @@ class DeleteSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def owns(cls, site) -> bool:
-        if site.observed != "Delete":
-            return False
-        return _delete_name_targets(site) is not None
+        targets = DeleteTargetRecognition.statement_targets(site)
+        return targets is not None and all(
+            target.kind is DeleteTargetKind.NAME for target in targets
+        )
 
     @classmethod
     def new(cls, site, ctx) -> "DeleteSugar":
@@ -70,11 +75,9 @@ class DeleteSugar(Sugar, role=SugarRole.STATEMENT):
 
 
 def _delete_name_targets(site) -> tuple[str, ...] | None:
-    targets = site.delete_targets()
-    if not targets:
+    targets = DeleteTargetRecognition.statement_targets(site)
+    if targets is None or any(
+        target.kind is not DeleteTargetKind.NAME for target in targets
+    ):
         return None
-    if len(targets) == 1 and targets[0].observed == "Tuple":
-        targets = targets[0].tuple_elts()
-    if not targets or any(target.observed != "Name" for target in targets):
-        return None
-    return tuple(target.name_id() for target in targets)
+    return tuple(target.target.name_id() for target in targets)

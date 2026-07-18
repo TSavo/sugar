@@ -70,10 +70,52 @@ def test_read_after_delete_reaches_the_unbound_name_floor_loudly() -> None:
     assert info["requested"] == "value"
 
 
-@pytest.mark.parametrize("source", ["del obj.attr", "del d[1:]"])
-def test_non_name_delete_targets_stay_loud(source: str) -> None:
-    with pytest.raises(FactoryPanic):
-        _build_statement(source)
+@pytest.mark.parametrize(
+    ("source", "selected"),
+    [
+        ("del obj.attr", "AttributeDeleteSugar"),
+        ("del d[1:]", "SubscriptDeleteSugar"),
+    ],
+)
+def test_single_non_name_delete_targets_select_their_existing_owner(
+    source: str, selected: str
+) -> None:
+    assert type(_build_statement(source).sugar).__name__ == selected
+
+
+def test_multi_attribute_delete_selects_composite_owner() -> None:
+    built = _build_statement("del self.args, self.kwds, self.func")
+
+    assert type(built.sugar).__name__ == "MultiDeleteSugar"
+
+
+def test_multi_attribute_delete_constructs_each_post_state() -> None:
+    block = compose_block(
+        "    class Box:\n"
+        "        pass\n"
+        "    box = Box()\n"
+        "    box.left = 1\n"
+        "    box.right = 2\n"
+        "    del box.left, box.right\n"
+        "    return 3\n"
+    )
+
+    assert block.statements == (ReturnValue(TermValue(3)),)
+
+
+def test_mixed_delete_replays_name_attribute_and_subscript_left_to_right() -> None:
+    block = compose_block(
+        "    class Box:\n"
+        "        pass\n"
+        "    box = Box()\n"
+        "    box.value = 1\n"
+        "    xs = [1, 2, 3]\n"
+        "    name = 4\n"
+        "    del name, box.value, xs[1]\n"
+        "    return xs[1]\n"
+    )
+
+    assert block.statements == (ReturnValue(TermValue(3)),)
 
 
 def test_delete_sugar_owns_only_flat_or_parenthesized_all_name_targets() -> None:
@@ -236,6 +278,29 @@ def test_dict_delete_witness_truthful_sat_lying_unsat(tmp_path: Path) -> None:
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_multi_attribute_delete_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    from sugar_lift_py_tests.sugar.subscript_delete_sugar import MultiDeleteSugar
+
+    witnesses = MultiDeleteSugar.witnesses()
+    assert isinstance(witnesses, tuple)
+    pair = next(
+        witness
+        for witness in witnesses
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "multi_attribute_delete_post_state"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_multiple_subscript_deletes_replay_left_to_right() -> None:
     assert compose_block(
         "    xs = [1, 2, 3]\n    del xs[1], xs[0]\n    return xs[0]\n"
@@ -269,9 +334,10 @@ def test_runtime_slice_delete_is_a_named_store_effect() -> None:
     assert "runtime slice bounds" in effect.reason
 
 
-def test_heterogeneous_multi_delete_remains_loud() -> None:
-    with pytest.raises(FactoryPanic):
-        _build_statement("del xs[:], name")
+def test_heterogeneous_multi_delete_routes_through_typed_recognition() -> None:
+    built = _build_statement("del xs[:], name")
+
+    assert type(built.sugar).__name__ == "MultiDeleteSugar"
 
 
 def test_full_datetime_delete_is_owned_and_later_assertions_now_lift(
