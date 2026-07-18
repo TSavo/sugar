@@ -133,11 +133,30 @@ class ListValue(FloorValue):
             runtime_count_kind = "integer-warranted len(...) result"
         elif type(other) is CallSiteValue and other.target_name == "ndim":
             runtime_count_kind = "integer-warranted callsite ndim"
+        elif type(other) is CallSiteValue and other.target_name == "nlanes":
+            # NumPy SIMD helper nlanes is the integer lane width of the active
+            # vector type. Count depends on the runtime helper, not on lift.
+            runtime_count_kind = "integer-warranted callsite nlanes"
         elif type(other) is CallSiteValue and other.target_name == "nlevels":
             # pandas Index.nlevels is an integer-valued data-model property.
             # Its value depends on the runtime index, but its __index__ warrant
             # does not.
             runtime_count_kind = "integer-warranted callsite nlevels"
+        elif type(other) is CallSiteValue and other.target_name == "_AXIS_LEN":
+            # pandas NDFrame._AXIS_LEN is the integer axis cardinality of the
+            # box type (Series=1, DataFrame=2, ...). The constant is type-owned
+            # but only available after the class coordinate is known at runtime.
+            runtime_count_kind = "integer-warranted callsite _AXIS_LEN"
+        elif (
+            type(other) is CallSiteValue
+            and other.target_name == "py.subscript"
+            and len(other.arg_values) == 2
+            and type(other.arg_values[0]) is CallSiteValue
+            and other.arg_values[0].target_name == "shape"
+        ):
+            # obj.shape[i] is a non-negative integer dimension. The element is
+            # unavailable until the concrete shape exists at runtime.
+            runtime_count_kind = "integer-warranted shape element"
         elif (
             type(other) is CallSiteValue
             and other.target_name == "min"
