@@ -8,12 +8,9 @@ Production construction, dig, floors, and reports must never convert
 FactoryPanic into Incomplete, opacity, empty collections, soft None, or a
 missing row.
 
-Allowed membranes (relative to sugar_lift_py_tests package root):
-
-- audit_only/collect_construction_gaps.py — enumerate gaps as AuditOnlyGap
-- idd/live_factory_panic_isolation.py — per-file status factory_panic
-- idd/collect_gap_swallow_frontier.py — auditor of swallow sites
-- factory/factory_gap.py — type definition comments only
+The single allowed membrane (relative to the package root) is
+``audit_only/collect_construction_gaps.py``. It enumerates a FactoryPanic as an
+``AuditOnlyGap`` loud red row.
 
 Every other ``except FactoryPanic`` (or catch of FactoryPanic via isinstance on
 Exception) under production ``src/sugar_lift_py_tests`` is debt unless the
@@ -38,13 +35,7 @@ class PanicCatchOffender(NamedTuple):
     note: str
 
 
-# Paths under sugar_lift_py_tests/ that may hold FactoryPanic for loud audit only.
-_AUDIT_MEMBRANE_PREFIXES = (
-    "audit_only/collect_construction_gaps.py",
-    "idd/live_factory_panic_isolation.py",
-    "idd/collect_gap_swallow_frontier.py",
-    "factory/factory_gap.py",
-)
+_AUDIT_MEMBRANE = "audit_only/collect_construction_gaps.py"
 
 _SOFT_AFTER_CATCH = frozenset(
     {
@@ -61,9 +52,7 @@ _SOFT_AFTER_CATCH = frozenset(
 
 
 def _is_audit_membrane(rel: str) -> bool:
-    return any(rel == p or rel.startswith(p.rstrip(".py")) for p in _AUDIT_MEMBRANE_PREFIXES) or any(
-        rel == p for p in _AUDIT_MEMBRANE_PREFIXES
-    )
+    return rel == _AUDIT_MEMBRANE
 
 
 def _handler_names(handler: ast.ExceptHandler) -> set[str]:
@@ -89,7 +78,9 @@ def _handler_names(handler: ast.ExceptHandler) -> set[str]:
 
 def _catches_factory_panic(handler: ast.ExceptHandler) -> bool:
     names = _handler_names(handler)
-    return bool(names & {"FactoryPanic", "FactoryGap"}) or names == {"<bare>"}
+    return bool(
+        names & {"FactoryPanic", "FactoryGap", "BaseException"}
+    ) or names == {"<bare>"}
 
 
 def _is_terminal_raise(stmt: ast.AST) -> bool:
@@ -207,20 +198,27 @@ def scan_package(package_root: Path) -> list[PanicCatchOffender]:
         for node in ast.walk(tree):
             if not isinstance(node, ast.If):
                 continue
-            test = node.test
-            if not isinstance(test, ast.Call):
-                continue
-            if not isinstance(test.func, ast.Name) or test.func.id != "isinstance":
-                continue
-            if len(test.args) < 2:
-                continue
-            type_arg = test.args[1]
-            type_name = (
-                type_arg.id
-                if isinstance(type_arg, ast.Name)
-                else (type_arg.attr if isinstance(type_arg, ast.Attribute) else "")
-            )
-            if type_name != "FactoryPanic":
+            calls = [
+                child
+                for child in ast.walk(node.test)
+                if isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id == "isinstance"
+                and len(child.args) >= 2
+            ]
+            if not any(
+                (
+                    call.args[1].id
+                    if isinstance(call.args[1], ast.Name)
+                    else (
+                        call.args[1].attr
+                        if isinstance(call.args[1], ast.Attribute)
+                        else ""
+                    )
+                )
+                == "FactoryPanic"
+                for call in calls
+            ):
                 continue
             body_text = ast.unparse(node)
             if "return None" in body_text or "return" in body_text and "raise" not in body_text:
@@ -235,6 +233,22 @@ def scan_package(package_root: Path) -> list[PanicCatchOffender]:
                         ),
                     )
                 )
+    return sorted(offenders)
+
+
+def scan_repository(kit_root: Path) -> list[PanicCatchOffender]:
+    roots = (
+        ("src/sugar_lift_py_tests", kit_root / "src" / "sugar_lift_py_tests"),
+        ("scripts", kit_root / "scripts"),
+    )
+    offenders: list[PanicCatchOffender] = []
+    for prefix, root in roots:
+        if not root.is_dir():
+            continue
+        offenders.extend(
+            offender._replace(path=f"{prefix}/{offender.path}")
+            for offender in scan_package(root)
+        )
     return sorted(offenders)
 
 
@@ -254,16 +268,12 @@ def format_report(offenders: list[PanicCatchOffender]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--package-root",
+        "--kit-root",
         type=Path,
-        default=(
-            Path(__file__).resolve().parents[1]
-            / "src"
-            / "sugar_lift_py_tests"
-        ),
+        default=Path(__file__).resolve().parents[1],
     )
     args = parser.parse_args()
-    offenders = scan_package(args.package_root)
+    offenders = scan_repository(args.kit_root)
     if offenders:
         print(
             "FACTORY-PANIC-CATCH LAW RED: "

@@ -51,6 +51,37 @@ def dig():
     assert offenders == []
 
 
+def test_scanner_flags_corpus_tooling_catch(tmp_path: Path) -> None:
+    package = tmp_path / "src" / "sugar_lift_py_tests"
+    package.mkdir(parents=True)
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "bad_corpus_tool.py").write_text(
+        """
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+
+def audit():
+    try:
+        raise FactoryPanic(None)
+    except FactoryPanic:
+        return []
+""",
+        encoding="utf-8",
+    )
+
+    offenders = _SCANNER.scan_repository(tmp_path)
+
+    assert [
+        (row.path, row.kind)
+        for row in offenders
+    ] == [
+        (
+            "scripts/bad_corpus_tool.py",
+            "factory-panic-catch-outside-audit",
+        )
+    ]
+
+
 def test_current_package_factory_panic_catch_law() -> None:
     """R_factory_panic_catches_outside_audit > 0 ⇒ red until production soft catches die."""
     offenders = _SCANNER.scan_package(_KIT / "src" / "sugar_lift_py_tests")
