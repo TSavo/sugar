@@ -37,7 +37,8 @@ Scripts:
   across production package and corpus tooling; only
   `audit_only/collect_construction_gaps.py` is the catch membrane
 - `scripts/vendor_special_case_law.py` → `R_vendor_special_case`
-- `scripts/native_crash_zero_tolerance.py` → `R_native_crashes`
+- `scripts/native_crash_zero_tolerance.py` → `R_native_crashes` across every
+  Python file in the production package and corpus tooling
 
 CI: `.github/workflows/factory-zero-tolerance.yml` (no baselines, no allowlists).
 

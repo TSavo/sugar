@@ -12,6 +12,7 @@ Exit 1 whenever R_native_crashes > 0; there is no baseline or allowlist.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import os
 import signal
@@ -25,6 +26,22 @@ class NativeCrashOffender(NamedTuple):
     returncode: int
     signal: str
     stderr_tail: str
+
+
+class ChildResult(NamedTuple):
+    file: str
+    category: str
+    returncode: int | None
+    stderr_tail: str
+    offender: NativeCrashOffender | None
+
+
+class AuditSummary(NamedTuple):
+    discovered: int
+    completed: int
+    timeouts: int
+    non_native_red: int
+    offenders: tuple[NativeCrashOffender, ...]
 
 
 def native_crash_offender(
@@ -81,55 +98,109 @@ def _python_paths(roots: Sequence[Path]) -> list[Path]:
     )
 
 
+def production_roots(repo_root: Path) -> tuple[Path, Path]:
+    kit = repo_root / "implementations/python/sugar-lift-py-tests"
+    return (kit / "src/sugar_lift_py_tests", kit / "scripts")
+
+
+def require_python_paths(roots: Sequence[Path]) -> list[Path]:
+    paths = _python_paths(roots)
+    if not paths:
+        raise ValueError(f"no Python source files found under {list(roots)}")
+    return paths
+
+
+def _run_isolated(
+    path: Path,
+    *,
+    root: Path,
+    file_timeout: int,
+) -> ChildResult:
+    script = Path(__file__).resolve()
+    rel = path.resolve().relative_to(root.resolve()).as_posix()
+    env = dict(os.environ)
+    env["PYTHONFAULTHANDLER"] = "1"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--child-file",
+                str(path),
+                "--child-rel",
+                rel,
+            ],
+            text=True,
+            capture_output=True,
+            timeout=file_timeout,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        return ChildResult(
+            rel,
+            "timeout",
+            None,
+            (error.stderr or "")[-2000:] if isinstance(error.stderr, str) else "",
+            None,
+        )
+    offender = native_crash_offender(
+        file=rel,
+        returncode=result.returncode,
+        stderr=result.stderr,
+    )
+    if offender is not None:
+        return ChildResult(
+            rel, "native-crash", result.returncode, result.stderr[-2000:], offender
+        )
+    if result.returncode:
+        return ChildResult(
+            rel, "non-native-red", result.returncode, result.stderr[-2000:], None
+        )
+    return ChildResult(rel, "completed", result.returncode, "", None)
+
+
 def audit_paths(
     paths: Sequence[Path],
     *,
     root: Path,
     file_timeout: int,
-) -> list[NativeCrashOffender]:
-    script = Path(__file__).resolve()
-    offenders: list[NativeCrashOffender] = []
-    for path in sorted(paths):
-        rel = path.resolve().relative_to(root.resolve()).as_posix()
-        env = dict(os.environ)
-        env["PYTHONFAULTHANDLER"] = "1"
-        try:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(script),
-                    "--child-file",
-                    str(path),
-                    "--child-rel",
-                    rel,
-                ],
-                text=True,
-                capture_output=True,
-                timeout=file_timeout,
-                env=env,
-                check=False,
+    workers: int,
+) -> AuditSummary:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        rows = list(
+            executor.map(
+                lambda path: _run_isolated(
+                    path,
+                    root=root,
+                    file_timeout=file_timeout,
+                ),
+                sorted(paths),
             )
-        except subprocess.TimeoutExpired:
-            print(
-                f"LOUD timeout row: {rel}: exceeded {file_timeout}s",
-                flush=True,
-            )
-            continue
-        offender = native_crash_offender(
-            file=rel,
-            returncode=result.returncode,
-            stderr=result.stderr,
         )
-        if offender is not None:
-            offenders.append(offender)
-        elif result.returncode:
-            tail = (result.stderr.splitlines() or ["no stderr"])[-1]
+    offenders = tuple(
+        row.offender for row in rows if row.offender is not None
+    )
+    for row in rows:
+        if row.category == "timeout":
             print(
-                f"LOUD non-native red row: {rel}: "
-                f"returncode={result.returncode}: {tail}",
+                f"LOUD timeout row: {row.file}: exceeded {file_timeout}s",
                 flush=True,
             )
-    return offenders
+        elif row.category == "non-native-red":
+            tail = (row.stderr_tail.splitlines() or ["no stderr"])[-1]
+            print(
+                f"LOUD non-native red row: {row.file}: "
+                f"returncode={row.returncode}: {tail}",
+                flush=True,
+            )
+    return AuditSummary(
+        discovered=len(rows),
+        completed=sum(row.category == "completed" for row in rows),
+        timeouts=sum(row.category == "timeout" for row in rows),
+        non_native_red=sum(row.category == "non-native-red" for row in rows),
+        offenders=offenders,
+    )
 
 
 def _run_child(path: Path, rel: str) -> int:
@@ -147,18 +218,20 @@ def _run_child(path: Path, rel: str) -> int:
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[4]
-    default_corpus = (
-        repo_root
-        / "implementations"
-        / "python"
-        / "sugar-lift-py-tests"
-        / "tests"
-        / "witness_seeds"
-    )
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("paths", nargs="*", type=Path, default=[default_corpus])
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        type=Path,
+        default=list(production_roots(repo_root)),
+    )
     parser.add_argument("--repo-root", type=Path, default=repo_root)
     parser.add_argument("--file-timeout", type=int, default=30)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=min(16, max(1, os.cpu_count() or 1)),
+    )
     parser.add_argument("--child-file", type=Path)
     parser.add_argument("--child-rel")
     args = parser.parse_args()
@@ -168,14 +241,25 @@ def main() -> int:
             parser.error("child mode requires --child-file and --child-rel")
         return _run_child(args.child_file, args.child_rel)
 
-    offenders = audit_paths(
-        _python_paths(args.paths),
+    try:
+        paths = require_python_paths(args.paths)
+    except ValueError as error:
+        print(f"NATIVE-CRASH ZERO-TOLERANCE RED: {error}")
+        return 1
+    summary = audit_paths(
+        paths,
         root=args.repo_root,
         file_timeout=args.file_timeout,
+        workers=max(1, args.workers),
     )
-    if offenders:
+    print(
+        "NATIVE-CRASH SURFACE: "
+        f"discovered={summary.discovered} completed={summary.completed} "
+        f"non_native_red={summary.non_native_red} timeouts={summary.timeouts}"
+    )
+    if summary.offenders:
         print("NATIVE-CRASH ZERO-TOLERANCE RED")
-        print(format_report(offenders))
+        print(format_report(summary.offenders))
         return 1
     print("NATIVE-CRASH ZERO-TOLERANCE GREEN: R_native_crashes = 0")
     return 0

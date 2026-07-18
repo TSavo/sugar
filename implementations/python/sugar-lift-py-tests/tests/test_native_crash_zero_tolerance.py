@@ -8,6 +8,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import pytest
 
 
 _KIT = Path(__file__).resolve().parents[1]
@@ -62,3 +63,18 @@ def test_success_is_not_a_native_crash() -> None:
         )
         is None
     )
+
+
+def test_production_roots_cover_package_and_corpus_tooling(tmp_path: Path) -> None:
+    roots = _SCANNER.production_roots(tmp_path)
+
+    assert roots == (
+        tmp_path
+        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests",
+        tmp_path / "implementations/python/sugar-lift-py-tests/scripts",
+    )
+
+
+def test_empty_surface_is_loud(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="no Python source files"):
+        _SCANNER.require_python_paths((tmp_path / "missing",))
