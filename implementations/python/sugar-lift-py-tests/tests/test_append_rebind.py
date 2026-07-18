@@ -373,6 +373,252 @@ def test_append_sugar_enrolls_finite_copy_witness() -> None:
     )
 
 
+def test_append_sugar_enrolls_diggable_unpack_and_cast_witnesses() -> None:
+    from sugar_lift_py_tests.sugar.append_call_sugar import AppendCallSugar
+
+    names = {pair.name for pair in AppendCallSugar.witnesses()}
+    assert "append_diggable_unpack_return" in names
+    assert "append_diggable_cast_return" in names
+
+
+def test_diggable_tuple_subscript_unpack_appends_exact_post_state() -> None:
+    """``handles = f()[2]`` digs a returned triple and folds list append (#5136)."""
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.floor import CallSiteValue, TupleValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    class _StaticFloor:
+        def __init__(self, value) -> None:
+            self.value = value
+
+        def desugar(self, ctx=None):
+            return Complete(self.value)
+
+        def walk_children(self):
+            return ()
+
+    returned = TupleValue((TermValue(1), TermValue(True), ListValue((TermValue(0),))))
+    call = CallSiteValue(
+        target_name="_maybe_memory_map",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:_maybe_memory_map", ()),
+        body=SugarBody(_StaticFloor(returned), SugarRole.TERM),
+        site="append.py:1",
+    )
+    handles = CallSiteValue(
+        target_name="py.subscript",
+        arg_values=(call, TermValue(2)),
+        parameters=(),
+        term=ctor(
+            "py.subscript",
+            [call.term, TermValue(2).to_term(owner="append.py:1")],
+        ),
+        body=None,
+        site="append.py:1",
+    )
+
+    record = compose_block(
+        "    handles.append(9)\n    return handles\n",
+        binds={"handles": handles},
+    )
+
+    assert record.statements == (ReturnValue(ListValue((TermValue(0), TermValue(9)))),)
+
+
+def test_function_return_unpack_list_appends_exact_post_state() -> None:
+    """Live residual shape: dig through ``h, m, handles = f(); handles.append``."""
+    record = compose_block(
+        "    def f():\n"
+        "        return (1, True, [0])\n"
+        "    h, m, handles = f()\n"
+        "    handles.append(9)\n"
+        "    return handles\n"
+    )
+
+    returned = record.statements[-1]
+    assert isinstance(returned, ReturnValue)
+    assert returned.value == ListValue((TermValue(0), TermValue(9)))
+
+
+def test_opaque_subscript_unpack_append_stays_loud() -> None:
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+
+    opaque = CallSiteValue(
+        target_name="opaque_factory",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:opaque_factory", ()),
+        body=None,
+        site="append.py:1",
+    )
+    handles = CallSiteValue(
+        target_name="py.subscript",
+        arg_values=(opaque, TermValue(2)),
+        parameters=(),
+        term=ctor(
+            "py.subscript",
+            [opaque.term, TermValue(2).to_term(owner="append.py:1")],
+        ),
+        body=None,
+        site="append.py:1",
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    handles.append(9)\n    return handles\n",
+            binds={"handles": handles},
+        )
+
+    assert raised.value.info.owner == "CallSiteValue.append_with"
+    assert raised.value.info.observed == "CallSiteValue(py.subscript)"
+
+
+def test_iter_elem_of_list_of_lists_rebinds_through_list_append() -> None:
+    """Symbolic loop face over a proven list-of-lists is list-shaped (#5136)."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+
+    columns = ListValue(
+        (ListValue((StringValue("a"),)), ListValue((StringValue("b"),)))
+    )
+    loop_face = CallSiteValue(
+        target_name="iter_elem",
+        arg_values=(columns,),
+        parameters=(),
+        term=ctor("py.iter_elem", [columns.to_term(owner="append.py:1")]),
+        body=None,
+        site="append.py:1",
+    )
+
+    record = compose_block(
+        "    x.append('')\n    return x\n",
+        binds={"x": loop_face},
+    )
+
+    returned = record.statements[0]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    assert returned.value.target_name == "list.append"
+    assert returned.value.term.name == "py.list_append"
+
+
+def test_iter_elem_of_listcomp_of_lists_rebinds_through_list_append() -> None:
+    """format.py residual: ``for x in [[label] for label in header]: x.append``."""
+    from sugar_lift_py_tests.floor import CallSiteValue, ComprehensionValue
+    from sugar_lift_py_tests.ir import ctor, make_var
+
+    columns = ComprehensionValue(
+        ctor(
+            "py.listcomp",
+            [
+                ctor("array", [ctor("py.iter_elem", [make_var("header")])]),
+                make_var("header"),
+            ],
+        )
+    )
+    loop_face = CallSiteValue(
+        target_name="iter_elem",
+        arg_values=(columns,),
+        parameters=(),
+        term=ctor("py.iter_elem", [columns.term]),
+        body=None,
+        site="append.py:1",
+    )
+
+    record = compose_block(
+        "    x.append('')\n    return x\n",
+        binds={"x": loop_face},
+    )
+
+    returned = record.statements[0]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    assert returned.value.target_name == "list.append"
+
+
+def test_iter_elem_of_opaque_iterable_append_stays_loud() -> None:
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+
+    opaque = CallSiteValue(
+        target_name="opaque_factory",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:opaque_factory", ()),
+        body=None,
+        site="append.py:1",
+    )
+    loop_face = CallSiteValue(
+        target_name="iter_elem",
+        arg_values=(opaque,),
+        parameters=(),
+        term=ctor("py.iter_elem", [opaque.term]),
+        body=None,
+        site="append.py:1",
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    x.append('')\n    return x\n",
+            binds={"x": loop_face},
+        )
+
+    assert raised.value.info.owner == "CallSiteValue.append_with"
+    assert raised.value.info.observed == "CallSiteValue(iter_elem)"
+
+
+def test_typing_cast_of_diggable_list_call_appends_exact_post_state() -> None:
+    """range.py residual: cast around a diggable list-returning call folds."""
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    class _StaticFloor:
+        def __init__(self, value) -> None:
+            self.value = value
+
+        def desugar(self, ctx=None):
+            return Complete(self.value)
+
+        def walk_children(self):
+            return ()
+
+    diggable = CallSiteValue(
+        target_name="_get_data_as_items",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:_get_data_as_items", ()),
+        body=SugarBody(
+            _StaticFloor(ListValue((TermValue(1), TermValue(2)))),
+            SugarRole.TERM,
+        ),
+        site="append.py:1",
+    )
+    casted = CallSiteValue(
+        target_name="typing.cast",
+        arg_values=(StringValue("list"), diggable),
+        parameters=(),
+        term=ctor("call:typing.cast", ()),
+        body=None,
+        site="append.py:1",
+    )
+
+    record = compose_block(
+        "    attrs.append(3)\n    return attrs\n",
+        binds={"attrs": casted},
+    )
+
+    assert record.statements == (
+        ReturnValue(ListValue((TermValue(1), TermValue(2), TermValue(3)))),
+    )
+
+
 def test_requests_check_compatibility_asserts_lift_through_append() -> None:
     """Part of #4103: the five requests __init__ asserts speak after append floor.
 
