@@ -25,10 +25,12 @@ jobs:
           python
           implementations/python/sugar-lift-py-tests/scripts/factory_zero_tolerance.py
       - name: R_ownership = 0
+        if: always()
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/factory_ownership_law.py
       - name: R_factory_panic_catches_outside_audit = 0
+        if: always()
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/factory_panic_catch_law.py
@@ -39,6 +41,24 @@ jobs:
           pytest
           ./implementations/python/sugar-lift-python-source
           ./implementations/python/sugar-lift-py-tests
+      - name: R_native_crashes = 0
+        if: always()
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/native_crash_zero_tolerance.py
+      - name: R_bare_exceptions = 0
+        if: always()
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/bare_exception_zero_tolerance.py
+      - name: R_timeouts = 0
+        if: always()
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/timeout_zero_tolerance.py
+      - name: All permanent axes are bound
+        if: always()
+        run: python -m pytest tests/test_python_sole_construction_ci.py -q
       - name: R_vendor_special_case discrimination
         if: always()
         run: >-
