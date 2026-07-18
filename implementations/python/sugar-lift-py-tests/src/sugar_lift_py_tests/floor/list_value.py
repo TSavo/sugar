@@ -165,6 +165,18 @@ class ListValue(FloorValue):
             # max preserves one of its operands. When every operand already
             # carries the runtime-integer/count shape, its result carries it too.
             runtime_count_kind = "integer-warranted callsite max"
+        elif (
+            type(other) is CallSiteValue
+            and other.target_name == "numpy.sum"
+            and len(other.arg_values) == 1
+            and type(other.arg_values[0]) is CallSiteValue
+            and other.arg_values[0].target_name == "isna"
+        ):
+            # numpy.sum over the Boolean result of Index.isna() is an integer
+            # count.  The count depends on the runtime index contents, while
+            # the exact qualified coordinate and Boolean producer warrant its
+            # Python integer/index role.
+            runtime_count_kind = "integer-warranted numpy.sum boolean count"
         elif _is_pyarrow_list_length_max_as_py(other):
             # Arrow list_value_length produces integer scalars, max preserves
             # that element type, and Scalar.as_py returns its Python integer.
