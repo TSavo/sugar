@@ -122,12 +122,13 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             source_values = accumulated[1:] if self.import_target else accumulated
             source_name = self.import_target or self.method_name
             receiver_floor = accumulated[0] if accumulated else None
+            from sugar_lift_py_tests.factory.native_shape import (
+                NativeShape,
+                has_native_shape,
+            )
+
             if (
-                source_name
-                in {
-                    "pandas._config.config.set_option",
-                    "pandas._config.config.reset_option",
-                }
+                has_native_shape(source_name, NativeShape.OPTION_UPDATE)
                 and source_values
             ):
                 from sugar_lift_py_tests.floor import FunctionCallable, StringValue
@@ -227,24 +228,32 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
         return (self.receiver, *self.args)
 
 
-_NUMPY_INTEGER_UFUNCS = frozenset(
-    {
-        "numpy.add",
-        "numpy.floor_divide",
-        "numpy.maximum",
-        "numpy.minimum",
-        "numpy.mod",
-        "numpy.multiply",
-        "numpy.power",
-        "numpy.subtract",
-    }
-)
 _NUMPY_INT64_MIN = -(2**63)
 _NUMPY_INT64_MAX = 2**63 - 1
 
 
 def _numpy_literal_call(callee: str, values: tuple):
-    if callee not in (*_NUMPY_INTEGER_UFUNCS, "numpy.divide") or len(values) != 2:
+    from sugar_lift_py_tests.factory.native_shape import (
+        NativeShape,
+        recognize_native_call,
+    )
+
+    shape = recognize_native_call(callee)
+    if (
+        shape
+        not in {
+            NativeShape.INTEGER_ADD,
+            NativeShape.INTEGER_FLOOR_DIVIDE,
+            NativeShape.INTEGER_MAXIMUM,
+            NativeShape.INTEGER_MINIMUM,
+            NativeShape.INTEGER_MODULO,
+            NativeShape.INTEGER_MULTIPLY,
+            NativeShape.INTEGER_POWER,
+            NativeShape.INTEGER_SUBTRACT,
+            NativeShape.REAL_DIVIDE,
+        }
+        or len(values) != 2
+    ):
         return None
     from sugar_lift_py_tests.floor import OpaqueOpCallsite, TermValue
 
@@ -254,7 +263,7 @@ def _numpy_literal_call(callee: str, values: tuple):
     if type(left.value) not in (int, float) or type(right.value) not in (int, float):
         return None
 
-    result = _numpy_literal_result(callee, left.value, right.value)
+    result = _numpy_literal_result(shape, left.value, right.value)
     if result is None:
         return None
     return OpaqueOpCallsite(
@@ -265,8 +274,10 @@ def _numpy_literal_call(callee: str, values: tuple):
     )
 
 
-def _numpy_literal_result(callee: str, left, right):
-    if callee == "numpy.divide":
+def _numpy_literal_result(shape, left, right):
+    from sugar_lift_py_tests.factory.native_shape import NativeShape
+
+    if shape is NativeShape.REAL_DIVIDE:
         if right == 0:
             return None
         result = left / right
@@ -282,27 +293,27 @@ def _numpy_literal_result(callee: str, left, right):
         return None
     if not (_fits_numpy_int64(left) and _fits_numpy_int64(right)):
         return None
-    if callee == "numpy.add":
+    if shape is NativeShape.INTEGER_ADD:
         result = left + right
-    elif callee == "numpy.multiply":
+    elif shape is NativeShape.INTEGER_MULTIPLY:
         result = left * right
-    elif callee == "numpy.subtract":
+    elif shape is NativeShape.INTEGER_SUBTRACT:
         result = left - right
-    elif callee == "numpy.mod":
+    elif shape is NativeShape.INTEGER_MODULO:
         if right == 0:
             return None
         result = left % right
-    elif callee == "numpy.floor_divide":
+    elif shape is NativeShape.INTEGER_FLOOR_DIVIDE:
         if right == 0:
             return None
         result = left // right
-    elif callee == "numpy.power":
+    elif shape is NativeShape.INTEGER_POWER:
         if right < 0 or (left not in {-1, 0, 1} and right > 63):
             return None
         result = left**right
-    elif callee == "numpy.maximum":
+    elif shape is NativeShape.INTEGER_MAXIMUM:
         result = max(left, right)
-    elif callee == "numpy.minimum":
+    elif shape is NativeShape.INTEGER_MINIMUM:
         result = min(left, right)
     else:
         return None
@@ -316,27 +327,11 @@ def _fits_numpy_int64(value: int) -> bool:
 def _static_exit_suppression_contract(source_name: str, values: tuple):
     """Construct known manager evidence only from exact static operands."""
     from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
+    from sugar_lift_py_tests.factory.native_shape import NativeShape, has_native_shape
 
-    if source_name in {
-        "open",
-        "builtins.open",
-        "contextlib.closing",
-        "numpy.errstate",
-        "numpy.nditer",
-        "pandas.HDFStore",
-        "pandas._testing.assert_produces_warning",
-        "pandas._testing.raises_chained_assignment_error",
-        "pandas.option_context",
-        "pytest.warns",
-    }:
+    if has_native_shape(source_name, NativeShape.NEVER_SUPPRESSING_MANAGER):
         return ExitSuppressionContract.never_suppresses()
-    if source_name in {
-        "numpy.testing.assert_raises",
-        "numpy.testing._private.utils.assert_raises",
-        "numpy.testing.assert_raises_regex",
-        "numpy.testing._private.utils.assert_raises_regex",
-        "pandas._testing.external_error_raised",
-    }:
+    if has_native_shape(source_name, NativeShape.ASSERTING_MANAGER):
         from sugar_lift_py_tests.floor import BuiltinExceptionClassValue
 
         if values and isinstance(values[0], BuiltinExceptionClassValue):

@@ -49,13 +49,9 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
     @staticmethod
     def decorators_preserve_identity(statement) -> bool:
         """Recognize source contracts whose decorator returns the same class."""
-        identity_exports = {
-            ("pandas.core.indexes.extension", "inherit_names"),
-            ("pandas.util._decorators", "set_module"),
-            ("pandas.api.extensions", "register_dataframe_accessor"),
-            ("pandas.api.extensions", "register_index_accessor"),
-            ("pandas.api.extensions", "register_series_accessor"),
-        }
+        from sugar_lift_py_tests.factory.native_shape import (
+            recognizes_identity_decorator,
+        )
         from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
         try:
@@ -75,7 +71,7 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             if declaration.observed == "ImportFrom":
                 module = declaration.importfrom_module()
                 for imported, alias in declaration.importfrom_names():
-                    if (module, imported) in identity_exports:
+                    if recognizes_identity_decorator(module, imported):
                         authenticated_names.add(alias or imported)
             elif declaration.observed == "Import":
                 for imported, alias in declaration.import_names():
@@ -100,7 +96,7 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                 return False
             qualified = f"{module}.{tail}"
             export_module, _, export_name = qualified.rpartition(".")
-            if (export_module, export_name) not in identity_exports:
+            if not recognizes_identity_decorator(export_module, export_name):
                 return False
         return True
 

@@ -108,6 +108,10 @@ def assign_attribute_value(*, receiver, field_name, value, key, site, ctx, owner
         ObjectValue,
         StringValue,
     )
+    from sugar_lift_py_tests.factory.native_shape import (
+        NativeShape,
+        recognize_native_call,
+    )
 
     if (
         type(receiver) is CallSiteValue
@@ -115,7 +119,10 @@ def assign_attribute_value(*, receiver, field_name, value, key, site, ctx, owner
         and receiver.body is None
         and len(receiver.arg_values) == 1
         and type(receiver.arg_values[0]) is ImportAliasValue
-        and receiver.arg_values[0].import_target == "pandas._config.config"
+        and recognize_native_call(
+            f"{receiver.arg_values[0].import_target}.{receiver.target_name}"
+        )
+        is NativeShape.OPTION_NAMESPACE
     ):
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
         from sugar_lift_py_tests.sugar.keyword_call_sugar import (
