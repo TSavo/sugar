@@ -86,6 +86,16 @@ def test_value_oracle_does_not_publish_cycle_breaks(tmp_path, monkeypatch) -> No
     assert key not in INSTALL_SOURCE_VALUE_ORACLE._table
 
 
+def test_value_oracle_does_not_publish_unresolved_none() -> None:
+    """None is provisional: a later consumer must be allowed to reconstruct."""
+    INSTALL_SOURCE_VALUE_ORACLE.clear()
+    key = ("source-cid", "MAPPING")
+
+    INSTALL_SOURCE_VALUE_ORACLE._publish(key, None)
+
+    assert key not in INSTALL_SOURCE_VALUE_ORACLE._table
+
+
 def test_stdlib_typing_literal_second_resolve_is_identity_hit() -> None:
     """Timeout-blob hot path: typing.Literal has one construction identity."""
     INSTALL_SOURCE_VALUE_ORACLE.clear()

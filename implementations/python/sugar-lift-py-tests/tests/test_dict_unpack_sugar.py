@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import replace
+import importlib
 import os
 from pathlib import Path
 import subprocess
@@ -75,6 +76,34 @@ def test_resolved_import_alias_dict_unpack_merges_at_lift_time() -> None:
                 bound_name="mapping",
                 import_target="provider.mapping",
                 resolved_value=DictValue(((StringValue("answer"), TermValue(42)),)),
+                install_source_checked=True,
+            ),
+        ),
+    )
+
+    outcome = built.sugar.desugar(ctx)
+
+    assert outcome == Complete(DictValue(((StringValue("answer"), TermValue(42)),)))
+
+
+def test_source_checked_import_alias_dict_unpack_reenters_install_source_dig(
+    tmp_path, monkeypatch
+) -> None:
+    (tmp_path / "provider.py").write_text(
+        'mapping = {"answer": 42}\n', encoding="utf-8"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    built, ctx = _build("{**mapping}")
+    ctx = replace(
+        ctx,
+        temporal=ctx.temporal.bind_value(
+            "mapping",
+            ImportAliasValue(
+                name="mapping",
+                bound_name="mapping",
+                import_target="provider.mapping",
+                resolved_value=None,
                 install_source_checked=True,
             ),
         ),
