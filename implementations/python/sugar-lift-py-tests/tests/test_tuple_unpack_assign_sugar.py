@@ -11,14 +11,18 @@ from sugar_lift_py_tests.factory import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
+from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue, TupleValue
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.sugar.sequence_unpack_assign_sugar import (
+    SequenceUnpackAssignSugar,
+)
 from sugar_lift_py_tests.sugar.tuple_unpack_assign_sugar import (
     TupleUnpackAssignSugar,
 )
+from sugar_lift_py_tests.sugar.witnesses import SugarRedEffectWitnessPair
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
@@ -127,6 +131,38 @@ def test_star_unpack_runtime_length_is_a_named_effect() -> None:
     assert type(effect.effect).__name__ == "SequenceUnpackRuntimeEffect"
 
 
+def test_ground_sequence_unpack_arity_mismatch_stays_loud() -> None:
+    with pytest.raises(FactoryPanic, match=r"FACTORY PANIC:.*None => panic"):
+        compose_block("    [head, tail] = (1,)\n    return head\n")
+
+
+def test_bound_ground_sequence_arity_mismatch_stays_owned_and_loud() -> None:
+    with pytest.raises(
+        FactoryPanic,
+        match=r"owner=SequenceUnpackAssignSugar.*observed=unpack arity mismatch",
+    ):
+        compose_block(
+            "    [head, tail] = values\n    return head\n",
+            binds={"values": TupleValue((TermValue(1),))},
+        )
+
+
+def test_sequence_unpack_runtime_effect_has_typed_red_bad_twin() -> None:
+    witness = next(
+        witness
+        for witness in SequenceUnpackAssignSugar.witnesses()
+        if isinstance(witness, SugarRedEffectWitnessPair)
+    )
+
+    assert witness.truthful.expectation.effect_class == "SequenceUnpackRuntimeEffect"
+    assert witness.truthful.expected_match is True
+    assert witness.lying.expected_match is False
+    assert (
+        witness.truthful.expectation.reason_needle
+        != witness.lying.expectation.reason_needle
+    )
+
+
 @pytest.mark.parametrize(
     "source",
     (
@@ -157,9 +193,12 @@ def test_tuple_unpack_owns_only_one_flat_all_name_target_with_matching_literal_a
     result = build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
 
     assert isinstance(result.sugar, TupleUnpackAssignSugar)
-    assert result.sugar.names == ("dayfrac", "days")
+    assert tuple(store.sugar.name for store in result.sugar.stores) == (
+        "dayfrac",
+        "days",
+    )
     assert tuple(
-        getattr(projection.sugar, "index") for projection in result.sugar.projections
+        getattr(store.sugar.projection.sugar, "index") for store in result.sugar.stores
     ) == (
         0,
         1,
