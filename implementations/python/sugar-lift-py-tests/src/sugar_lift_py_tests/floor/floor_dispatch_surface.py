@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from sugar_lift_py_tests.operations.callable_map_operation import (
         CallableMapOperation,
     )
+    from sugar_lift_py_tests.callable_application import CallableApplication
     from sugar_lift_py_tests.operations.callsite_projection_operation import (
         CallsiteProjectionOperation,
     )
@@ -95,6 +96,7 @@ FLOOR_OPERATION_METHOD_NAMES = (
     "await_with",
     "binary_operator_with",
     "bitwise_with",
+    "callable_application_with",
     "call_method_with",
     "construct_sequence_with",
     "contains_with",
@@ -183,6 +185,14 @@ class BinaryOperatorFloor(Protocol):
 class BitwiseFloor(Protocol):
     def bitwise_with(
         self, operation: BitwiseOperation, ctx: FactoryBuildContext | None
+    ) -> Outcome: ...
+
+
+class CallableApplicationFloor(Protocol):
+    def callable_application_with(
+        self,
+        operation: CallableApplication,
+        ctx: FactoryBuildContext | None,
     ) -> Outcome: ...
 
 
@@ -344,6 +354,7 @@ class FloorDispatchSurface(
     AwaitFloor,
     BinaryOperatorFloor,
     BitwiseFloor,
+    CallableApplicationFloor,
     MethodCallFloor,
     SequenceConstructionFloor,
     ContainsFloor,
