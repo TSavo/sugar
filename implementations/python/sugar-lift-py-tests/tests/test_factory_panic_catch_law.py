@@ -71,10 +71,7 @@ def audit():
 
     offenders = _SCANNER.scan_repository(tmp_path)
 
-    assert [
-        (row.path, row.kind)
-        for row in offenders
-    ] == [
+    assert [(row.path, row.kind) for row in offenders] == [
         (
             "scripts/bad_corpus_tool.py",
             "factory-panic-catch-outside-audit",
@@ -82,9 +79,9 @@ def audit():
     ]
 
 
-def test_current_package_factory_panic_catch_law() -> None:
+def test_current_repository_factory_panic_catch_law() -> None:
     """R_factory_panic_catches_outside_audit > 0 ⇒ red until production soft catches die."""
-    offenders = _SCANNER.scan_package(_KIT / "src" / "sugar_lift_py_tests")
+    offenders = _SCANNER.scan_repository(_KIT)
     assert offenders == [], (
         "Only audit membrane may catch FactoryPanic for a loud red row; "
         f"R_factory_panic_catches_outside_audit={len(offenders)}:\n"

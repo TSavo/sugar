@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Callable, Iterable, TypeAlias
+from typing import Callable, Iterable, TypeAlias, TypeVar
 
 from sugar_lift_py_tests.factory import FactoryAuditRow, GapKind
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
@@ -10,6 +10,7 @@ from sugar_lift_py_tests.factory.factory_gap_info import gap_kind_status
 from .audit_only_gap import AuditOnlyGap
 
 AuditWalker: TypeAlias = tuple[str, Callable[[], object]]
+T = TypeVar("T")
 _FIELD = re.compile(
     r"(owner|blame|observed|requested|fix)=([^=]+?)(?=\s(?:owner|blame|observed|requested|fix)=|$)"
 )
@@ -37,6 +38,21 @@ def collect_construction_gaps(walkers: Iterable[AuditWalker]) -> list[AuditOnlyG
                 raise
             gaps.append(gap)
     return gaps
+
+
+def collect_factory_panic(
+    label: str,
+    walker: Callable[[], T],
+) -> tuple[T | None, AuditOnlyGap | None]:
+    """Run one per-file audit walker through the sole FactoryPanic membrane.
+
+    A successful value and a loud panic row are disjoint. Other exceptions
+    propagate to the caller for their own terminal classification.
+    """
+    try:
+        return walker(), None
+    except FactoryPanic as panic:
+        return None, gap_from_factory_panic(label, panic)
 
 
 def gap_from_factory_panic(label: str, panic: FactoryPanic) -> AuditOnlyGap:

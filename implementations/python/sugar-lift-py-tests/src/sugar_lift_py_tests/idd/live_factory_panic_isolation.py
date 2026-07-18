@@ -19,8 +19,9 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
+from sugar_lift_py_tests.audit_only import collect_factory_panic
 from sugar_lift_py_tests.idd.factory_panic_fronts import (
-    fingerprint_from_panic_info,
+    fingerprint_from_gap,
     fingerprint_label,
     rank_factory_panic_fronts,
 )
@@ -73,7 +74,6 @@ def live_per_file_isolation_conservation(
     Returns a closed ranking payload including ``R_live_factory_panic_files``,
     ``owner_families``, and ``exact_fronts``.
     """
-    from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
     from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
     # Keep isolation telemetry readable; panics still raise, only log noise drops.
@@ -95,29 +95,33 @@ def live_per_file_isolation_conservation(
         file_on_disk = len(disk.asserts)
         on_disk_total += file_on_disk
         try:
-            payload = lift_file_payload(src, rel)
-            report = payload.to_rpc()
-            body = account_lift_coverage(disk, report).to_json()
-            status = "completed"
-            completed += 1
-        except FactoryPanic as panic:
-            body = account_lift_coverage(disk, engaged).to_json()
-            status = "factory_panic"
-            gap = (
-                panic.info.to_json() if getattr(panic, "info", None) is not None else {}
+            payload, panic_gap = collect_factory_panic(
+                rel,
+                lambda: lift_file_payload(src, rel),
             )
-            fingerprint = fingerprint_from_panic_info(getattr(panic, "info", None))
-            panic_rows.append(
-                {
-                    "file": rel,
-                    "onDisk": file_on_disk,
-                    "owner": gap.get("owner") or panic_owner_from_message(str(panic)),
-                    "gap": gap,
-                    "fingerprint": list(fingerprint),
-                    "front": fingerprint_label(fingerprint),
-                    "message": str(panic).splitlines()[0][:200],
-                }
-            )
+            if panic_gap is None:
+                assert payload is not None
+                report = payload.to_rpc()
+                body = account_lift_coverage(disk, report).to_json()
+                status = "completed"
+                completed += 1
+            else:
+                body = account_lift_coverage(disk, engaged).to_json()
+                status = "factory_panic"
+                gap = panic_gap.info
+                fingerprint = fingerprint_from_gap(gap)
+                panic_rows.append(
+                    {
+                        "file": rel,
+                        "onDisk": file_on_disk,
+                        "owner": gap.get("owner")
+                        or panic_owner_from_message(panic_gap.message),
+                        "gap": gap,
+                        "fingerprint": list(fingerprint),
+                        "front": fingerprint_label(fingerprint),
+                        "message": panic_gap.message.splitlines()[0][:200],
+                    }
+                )
         except Exception as exc:  # noqa: BLE001 — residual taxonomy, not swallow
             body = account_lift_coverage(disk, engaged).to_json()
             status = "other"

@@ -28,6 +28,11 @@ from sugar_lift_py_tests.idd.sugar_witness_instruments import (
 from sugar_lift_py_tests.claim import SugarClaim, SugarRole
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.factory.factory_gap_info import (
+    FactoryGapInfo,
+    GapKind,
+    GapLocus,
+)
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
     DictLiteralValue,
@@ -783,6 +788,20 @@ def _synthetic_seed(name: str, owner: str) -> SugarWitnessPair:
     )
 
 
+def _planted_factory_panic() -> FactoryPanic:
+    return FactoryPanic(
+        FactoryGapInfo(
+            owner="witness-test",
+            blame="witness.py:1:0",
+            observed="MissingSugar",
+            requested="proof-bearing witness",
+            fix="construct the missing witness sugar",
+            gap_kind=GapKind.SUGAR,
+            gap_locus=GapLocus.AST,
+        )
+    )
+
+
 def test_evaluate_seed_witnesses_runs_seed_pairs_in_parallel_and_collates_by_name(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -937,6 +956,67 @@ def test_evaluate_seed_witness_worker_failure_is_named_without_aborting_corpus(
         )
         for failure in report.triple_failures
     ] == [("bad", "BadSugar", "truthful", "pipeline", "boom from fake worker")]
+
+
+def test_evaluate_seed_witness_never_softens_factory_panic(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SUGAR_WITNESS_WORKERS", "1")
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "ensure_sugar_bin",
+        lambda: Path("fake-sugar"),
+    )
+
+    def panic_in_pipeline(project: Path, source: str) -> WitnessPipelineResult:
+        del project, source
+        raise _planted_factory_panic()
+
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "run_source_through_real_solver",
+        panic_in_pipeline,
+    )
+
+    with pytest.raises(FactoryPanic):
+        evaluate_seed_witnesses(
+            (_synthetic_seed("panic", "PanicSugar"),),
+            tmp_path,
+            catalog_count=1,
+        )
+
+
+def test_evaluate_seed_verdict_never_softens_factory_panic(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SUGAR_WITNESS_WORKERS", "1")
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "ensure_sugar_bin",
+        lambda: Path("fake-sugar"),
+    )
+    monkeypatch.setattr(
+        sugar_witness_instruments,
+        "run_source_through_real_solver",
+        lambda project, source: _fake_witness_result(
+            selected=("PanicSugar",),
+            verdict="sat",
+        ),
+    )
+    monkeypatch.setattr(
+        WitnessPipelineResult,
+        "verdict",
+        property(lambda self: (_ for _ in ()).throw(_planted_factory_panic())),
+    )
+
+    with pytest.raises(FactoryPanic):
+        evaluate_seed_witnesses(
+            (_synthetic_seed("panic", "PanicSugar"),),
+            tmp_path,
+            catalog_count=1,
+        )
 
 
 def test_verdict_construction_failure_is_reported_as_panic_vocabulary(

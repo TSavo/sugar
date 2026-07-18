@@ -65,8 +65,8 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
 
         configure_live_log()
     try:
+        from sugar_lift_py_tests.audit_only import collect_factory_panic
         from sugar_lift_py_tests.effect import effect_reason, effect_status
-        from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
         from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
         try:
@@ -75,21 +75,33 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
             source = path.read_text(encoding="utf-8", errors="replace")
         if progress:
             with reduction_span(sugar="lift_file_payload", role="file", site=rel):
-                payload = lift_file_payload(source, rel)
+                payload, panic_gap = collect_factory_panic(
+                    rel,
+                    lambda: lift_file_payload(source, rel),
+                )
         else:
-            payload = lift_file_payload(source, rel)
+            payload, panic_gap = collect_factory_panic(
+                rel,
+                lambda: lift_file_payload(source, rel),
+            )
+        if panic_gap is not None:
+            return {
+                "outcome": "factory-panic",
+                "file": rel,
+                "exception_type": "FactoryPanic",
+                "reason": panic_gap.message.splitlines()[-1][:1000],
+                "gap": panic_gap.info,
+            }, 3
+        assert payload is not None
     except KeyboardInterrupt:
         raise
-    except BaseException as error:
+    except Exception as error:
         terminal: dict[str, Any] = {
             "outcome": "exception",
             "file": rel,
             "exception_type": type(error).__name__,
             "reason": (str(error).splitlines() or [repr(error)])[-1][:1000],
         }
-        if "FactoryPanic" in locals() and isinstance(error, FactoryPanic):
-            terminal["outcome"] = "factory-panic"
-            terminal["gap"] = error.info.to_json()
         return terminal, 3
     return {
         "outcome": "completed",
