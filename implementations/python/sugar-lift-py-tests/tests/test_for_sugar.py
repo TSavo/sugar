@@ -34,6 +34,7 @@ from sugar_lift_py_tests.idd.sugar_witness_instruments import (
 )
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar.for_sugar import ForSugar
+from sugar_lift_py_tests.sugar.loop_control_scope_sugar import LoopControlScopeSugar
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -58,6 +59,25 @@ def test_for_body_threads_and_binds_iter_elem_coordinate() -> None:
     assert isinstance(value, CallSiteValue)
     assert value.target_name == "iter_elem"
     assert value.term == ctor("py.iter_elem", [make_var("z")])
+
+
+def test_append_rebind_is_loop_carried_state() -> None:
+    loop = _site(
+        "for item in items:\n"
+        "    if item:\n"
+        "        results.append(item)\n"
+    )
+
+    classification = LoopControlScopeSugar.classify(
+        loop, target_name=loop.for_target_name()
+    )
+    built = ForSugar.new(
+        loop, FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    )
+
+    assert classification.carried_names == ("results",)
+    assert built.carried == ("results",)
+    assert built.curried is True
 
 
 def test_iterable_discriminates_the_iter_elem_coordinate() -> None:

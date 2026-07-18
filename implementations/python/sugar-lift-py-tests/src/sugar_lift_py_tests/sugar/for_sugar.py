@@ -62,12 +62,15 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         # Iterable (TERM), target name, body block (STATEMENT). Never reduce here.
         target_name = site.for_target_name()
         scope = LoopControlScopeSugar.classify(site, target_name=target_name)
+        append_carried = set(scope.carried_names) & set(
+            LoopControlScopeSugar.loop_append_rebind_names(site)
+        )
         return cls(
             target_name=target_name,
             iterable=ctx.build_body(site.for_iter(), SugarRole.TERM),
             body=ctx.build_body(site.for_body_block(), SugarRole.STATEMENT),
             carried=scope.carried_names,
-            curried=scope.has_loop_control,
+            curried=scope.has_loop_control or bool(append_carried),
             unclassified_mutation=scope.has_unclassified_mutation,
             deferred_outputs=_finite_loop_output_names(site, target_name),
             site=site,
