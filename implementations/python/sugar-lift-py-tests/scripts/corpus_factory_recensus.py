@@ -11,6 +11,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from sugar_lift_py_tests.audit_only import collect_factory_panic
 from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkRedRowDto
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
@@ -89,10 +90,27 @@ def main() -> None:
                 counts["files_without_assertions_skipped"] += 1
                 continue
             counts["files_with_assertions"] += 1
-            payload = lift_file_payload(source, rel)
+            payload, panic_gap = collect_factory_panic(
+                rel,
+                lambda: lift_file_payload(source, rel),
+            )
+            if panic_gap is not None:
+                counts["files_fatal"] += 1
+                fatal_types["FactoryPanic"] += 1
+                if len(fatal_examples) < 50:
+                    fatal_examples.append(
+                        {
+                            "file": rel,
+                            "error_type": "FactoryPanic",
+                            "reason": panic_gap.message.splitlines()[-1][:500],
+                            "gap": panic_gap.info,
+                        }
+                    )
+                continue
+            assert payload is not None
         except KeyboardInterrupt:
             raise
-        except BaseException as error:
+        except (Exception, FileLiftTimeout) as error:
             counts["files_fatal"] += 1
             fatal_types[type(error).__name__] += 1
             if len(fatal_examples) < 50:

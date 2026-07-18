@@ -452,7 +452,7 @@ def _evaluate_one_seed(
                 work_root / seed.name / variant,
                 witness.source,
             )
-        except BaseException as exc:
+        except Exception as exc:
             triple_failures.append(
                 WitnessTripleFailure(
                     seed=seed.name,
@@ -484,7 +484,7 @@ def _evaluate_one_seed(
             )
         try:
             observed_verdict = result.verdict
-        except BaseException as exc:
+        except Exception as exc:
             triple_failures.append(
                 WitnessTripleFailure(
                     seed=seed.name,
