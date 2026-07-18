@@ -24,12 +24,10 @@ from sugar_lift_py_tests.factory.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.factory.sugar_constructors import (
-    IncompleteFunctionBody,
     _class_decorators_preserve_identity,
     _ctx_with_formal_binds,
     build_control_flow_body_sugar,
 )
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.floor import ImportAliasValue, SymbolicValue
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.sugar.call_sugar import (
@@ -456,20 +454,12 @@ def test_urlsafe_encode_translation_binds_from_install_source() -> None:
     assert "_urlsafe_encode_translation" in bound, bound
     assert "s" in bound, bound
 
-    # Body dig may still Incomplete on nested b64encode asserts; the Name must
-    # not be the first failure mode.
-    try:
-        sugar = build_control_flow_body_sugar(fn, ctx)
-        blob = str(sugar.constraint_formulas())
-        assert "_urlsafe_encode_translation" not in blob or "call:translate" in blob
-    except IncompleteFunctionBody as exc:
-        reason = str(exc.incomplete.effect)
-        assert "bind `_urlsafe_encode_translation`" not in reason, reason
-        assert not (
-            isinstance(exc.incomplete, Incomplete)
-            and getattr(exc.incomplete.effect, "observed", None)
-            == "_urlsafe_encode_translation"
-        ), reason
+    # An incomplete body is the loud FactoryPanic arm of construction, never a
+    # soft third result. The module binding must still not be the failure mode.
+    with pytest.raises(FactoryPanic) as raised:
+        build_control_flow_body_sugar(fn, ctx)
+    assert raised.value.info.owner == "ControlFlowBodySugar"
+    assert "bind `_urlsafe_encode_translation`" not in raised.value.info.message
 
 
 def test_nested_external_bridge_default_still_false() -> None:

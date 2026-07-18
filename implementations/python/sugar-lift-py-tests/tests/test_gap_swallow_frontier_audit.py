@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[4]
 
 # Stable-zero ratchet: every quiet gap was drained (#4203). A new swallow turns
 # this red until the site panics, records via a sanctioned recorder, or is
-# rewritten as a pre-check / named IncompleteFunctionBody membrane.
+# rewritten as a pre-check or a loud FactoryPanic membrane.
 EXPECTED_FRONTIER: tuple[tuple[str, int, str, str], ...] = ()
 
 

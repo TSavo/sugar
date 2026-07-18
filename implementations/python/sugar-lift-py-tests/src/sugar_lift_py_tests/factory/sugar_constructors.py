@@ -7,12 +7,6 @@ from sugar_lift_py_tests.claim import SugarRole
 from .source_fragment import SourceFragment
 
 
-class IncompleteFunctionBody(Exception):
-    def __init__(self, incomplete):
-        super().__init__(incomplete.reason)
-        self.incomplete = incomplete
-
-
 def _cf_operand(frag: SourceFragment):
     from sugar_lift_py_tests.ir import make_var, num, str_const
 
@@ -123,7 +117,18 @@ def build_control_flow_body_sugar(site, ctx):
     block = body_ctx.build_body(Block.of(body), SugarRole.STATEMENT)
     block_outcome = block.reduce(body_ctx)
     if isinstance(block_outcome, Incomplete):
-        raise IncompleteFunctionBody(block_outcome)
+        from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+        factory_panic_gap(
+            owner="ControlFlowBodySugar",
+            blame=site,
+            observed=type(block_outcome.effect).__name__,
+            requested="complete function-body Sugar reduction",
+            fix=(
+                "route the body shape to its owning Sugar; a genuinely "
+                "unliftable body must remain this loud FactoryPanic"
+            ),
+        )
     block_value = complete_value(block_outcome, owner="function body")
     if type(block_value) is not BlockValue:
         raise TypeError(

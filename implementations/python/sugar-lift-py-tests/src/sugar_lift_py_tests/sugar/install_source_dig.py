@@ -2815,7 +2815,6 @@ def _build_dig_body_impl(
 
     from sugar_lift_py_tests.claim import SugarRole
     from sugar_lift_py_tests.factory.sugar_constructors import (
-        IncompleteFunctionBody,
         _ctx_with_formal_binds,
         build_bridge_body,
     )
@@ -2830,76 +2829,70 @@ def _build_dig_body_impl(
 
     from sugar_lift_py_tests.engine_log import reduction_span
 
-    try:
-        body_ctx = replace(ctx, building=building | {name, bridge})
-        body_ctx = _ctx_with_method_module_bindings(fn_site, body_ctx)
-        mod = getattr(fn_site.node, "_sugar_bridge_name", "") or ""
-        if "." in str(mod):
-            parts = str(mod).split(".")
-            if len(parts) >= 3 and parts[-2][:1].isupper():
-                module_name = ".".join(parts[:-2])
-            elif len(parts) >= 2:
-                module_name = parts[0]
-            else:
-                module_name = str(mod)
-            siblings = module_sibling_function_nodes(module_name)
-            if siblings:
-                merged = dict(getattr(body_ctx, "name_resolver", None) or {})
-                merged.update(siblings)
-                body_ctx = replace(body_ctx, name_resolver=merged)
-
-        formal_ctx = _ctx_with_formal_binds(fn_site, body_ctx)
-        oracle = DIG_BODY_ORACLE
-        key = oracle.identity_key(fn_site)
-        if key is not None and oracle_variant is not None:
-            key = (key, oracle_variant)
-        core = oracle.get(key) if key is not None else _MISSING
-        if core is _MISSING:
-            with reduction_span(
-                sugar=str(name),
-                role="dig.build_body.construct",
-                site=str(getattr(fn_site, "blame", None) or name),
-            ):
-                oracle.construct_count += 1
-                frags = fn_site.function_body()
-                # Single return expr → existing bridge body (TERM sugar).
-                if (
-                    len(frags) == 1
-                    and frags[0].observed == "Return"
-                    and frags[0].return_value() is not None
-                ):
-                    core = build_bridge_body(fn_site, body_ctx)
-                else:
-                    # Straight-line Assign* + Return → sequential dig body.
-                    statements = tuple(
-                        formal_ctx.build_body(stmt, SugarRole.STATEMENT)
-                        for stmt in frags
-                    )
-                    core = SugarBody(
-                        sugar=SequentialDigBody(
-                            statements=statements,
-                            fn_site=fn_site,
-                            contextmanager_yield=(
-                                contextmanager_exit_contract_for_fragment(fn_site)
-                                is not None
-                            ),
-                        ),
-                        role=SugarRole.TERM,
-                    )
-            if key is not None:
-                oracle.put(key, core)
+    body_ctx = replace(ctx, building=building | {name, bridge})
+    body_ctx = _ctx_with_method_module_bindings(fn_site, body_ctx)
+    mod = getattr(fn_site.node, "_sugar_bridge_name", "") or ""
+    if "." in str(mod):
+        parts = str(mod).split(".")
+        if len(parts) >= 3 and parts[-2][:1].isupper():
+            module_name = ".".join(parts[:-2])
+        elif len(parts) >= 2:
+            module_name = parts[0]
         else:
-            with reduction_span(
-                sugar=str(name),
-                role="dig.build_body.hit",
-                site=str(getattr(fn_site, "blame", None) or name),
+            module_name = str(mod)
+        siblings = module_sibling_function_nodes(module_name)
+        if siblings:
+            merged = dict(getattr(body_ctx, "name_resolver", None) or {})
+            merged.update(siblings)
+            body_ctx = replace(body_ctx, name_resolver=merged)
+
+    formal_ctx = _ctx_with_formal_binds(fn_site, body_ctx)
+    oracle = DIG_BODY_ORACLE
+    key = oracle.identity_key(fn_site)
+    if key is not None and oracle_variant is not None:
+        key = (key, oracle_variant)
+    core = oracle.get(key) if key is not None else _MISSING
+    if core is _MISSING:
+        with reduction_span(
+            sugar=str(name),
+            role="dig.build_body.construct",
+            site=str(getattr(fn_site, "blame", None) or name),
+        ):
+            oracle.construct_count += 1
+            frags = fn_site.function_body()
+            # Single return expr → existing bridge body (TERM sugar).
+            if (
+                len(frags) == 1
+                and frags[0].observed == "Return"
+                and frags[0].return_value() is not None
             ):
-                pass
-        return _contextualized_dig_body(core, formal_ctx)
-    except IncompleteFunctionBody:
-        # Named dig opacity: body reduction stayed Incomplete. Coordinate-only
-        # body=None — not a soft Exception swallow of construction gaps (#4203).
-        return None
+                core = build_bridge_body(fn_site, body_ctx)
+            else:
+                # Straight-line Assign* + Return → sequential dig body.
+                statements = tuple(
+                    formal_ctx.build_body(stmt, SugarRole.STATEMENT) for stmt in frags
+                )
+                core = SugarBody(
+                    sugar=SequentialDigBody(
+                        statements=statements,
+                        fn_site=fn_site,
+                        contextmanager_yield=(
+                            contextmanager_exit_contract_for_fragment(fn_site)
+                            is not None
+                        ),
+                    ),
+                    role=SugarRole.TERM,
+                )
+        if key is not None:
+            oracle.put(key, core)
+    else:
+        with reduction_span(
+            sugar=str(name),
+            role="dig.build_body.hit",
+            site=str(getattr(fn_site, "blame", None) or name),
+        ):
+            pass
+    return _contextualized_dig_body(core, formal_ctx)
 
 
 def dig_parameters_for_body(fn_site, arg_count: int, keyword_names: tuple[str, ...]):
