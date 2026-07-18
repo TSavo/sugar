@@ -153,3 +153,56 @@ def test_install_source_callable_captures_local_exception_prerequisite(
     assert isinstance(resolved, FunctionCallable)
     base_context = resolved.body.sugar.base_context
     assert type(base_context.temporal.value_for("OpError")) is LocalExceptionClassValue
+
+
+def test_install_source_raise_of_seeded_local_exception_constructs_exit(
+    tmp_path, monkeypatch
+) -> None:
+    """Bare ``raise OpError(...)`` inside dig demands OpError as a free name.
+
+    ``_names_in_fragment`` must collect the bare call target so module-global
+    binds seed LocalExceptionClassValue; RaiseSugar then constructs the exact
+    exceptional exit instead of panicking on CallSiteValue.
+    """
+    (tmp_path / "source_local_exception.py").write_text(
+        "class OpError(Exception):\n"
+        "    pass\n\n"
+        "def as_number(obj):\n"
+        "    raise OpError(f'cannot convert {obj}')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    ctx = FactoryBuildContext(filename="consumer.py", catalog=default_catalog())
+    resolved = resolve_install_source_value("source_local_exception.as_number", ctx)
+
+    from sugar_lift_py_tests.floor import (
+        ExceptionalExitValue,
+        FunctionCallable,
+    )
+    from sugar_lift_py_tests.floor.call_site_value import force_floor
+    from sugar_lift_py_tests.ir import make_var
+
+    assert isinstance(resolved, FunctionCallable)
+    callsite = resolved.callsite(
+        (SymbolicValue(make_var("obj")),),
+        (),
+        type("S", (), {"source": None, "__str__": lambda self: "site"})(),
+    ).value
+    floor = force_floor(callsite, ctx, owner="local exception raise dig")
+
+    assert isinstance(floor, ExceptionalExitValue)
+    assert floor.effect.exception_name == "OpError"
+
+
+def test_names_in_fragment_collects_bare_exception_call_target() -> None:
+    from sugar_lift_py_tests.factory.sugar_constructors import _names_in_fragment
+
+    raise_site = SourceFragment.from_source(
+        "raise OpError(f'cannot convert {obj}')\n", "names.py"
+    ).statements()[0]
+
+    names = _names_in_fragment(raise_site)
+
+    assert "OpError" in names
+    assert "obj" in names
