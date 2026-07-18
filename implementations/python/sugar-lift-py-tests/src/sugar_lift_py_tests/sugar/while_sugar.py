@@ -5,6 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.loop_control_scope_sugar import LoopControlScopeSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -44,7 +45,9 @@ class WhileSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def new(cls, site, ctx) -> "WhileSugar":
         # Test (TERM) and body block (STATEMENT). Never reduce here.
-        scope = site.classify_loop_control_scope(entry_reads=(site.while_test(),))
+        scope = LoopControlScopeSugar.classify(
+            site, entry_reads=(site.while_test(),)
+        )
         return cls(
             test=ctx.build_body(site.while_test(), SugarRole.TERM),
             body=ctx.build_body(site.while_body_block(), SugarRole.STATEMENT),

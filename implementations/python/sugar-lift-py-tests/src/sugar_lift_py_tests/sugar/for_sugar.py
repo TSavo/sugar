@@ -5,6 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.loop_control_scope_sugar import LoopControlScopeSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -52,7 +53,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     def new(cls, site, ctx) -> "ForSugar":
         # Iterable (TERM), target name, body block (STATEMENT). Never reduce here.
         target_name = site.for_target_name()
-        scope = site.classify_loop_control_scope(target_name=target_name)
+        scope = LoopControlScopeSugar.classify(site, target_name=target_name)
         return cls(
             target_name=target_name,
             iterable=ctx.build_body(site.for_iter(), SugarRole.TERM),
@@ -255,4 +256,7 @@ def _post_loop_bindings(initial_ctx, final_ctx):
 
 def _finite_loop_output_names(site, target_name: str) -> tuple[str, ...]:
     """Names definitely rebound by a nonempty finite loop callable."""
-    return (target_name, *site.for_body_block().own_scope_stored_names())
+    return (
+        target_name,
+        *LoopControlScopeSugar.own_scope_stored_names(site.for_body_block()),
+    )
