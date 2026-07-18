@@ -761,7 +761,7 @@ class TermTableBuilder:
                     "args": [
                         {
                             "kind": "term-ref",
-                            "cid": blake3_512_of(child.encode("utf-8")),
+                            "cid": blake3_512_of(_rpc_canonical_bytes(child)),
                         }
                         for child in children
                     ],
@@ -772,7 +772,7 @@ class TermTableBuilder:
                 canonical = encode_jcs(_json_like_to_value(term))
                 node_payload = json.loads(canonical)
 
-            cid = blake3_512_of(canonical.encode("utf-8"))
+            cid = blake3_512_of(_rpc_canonical_bytes(canonical))
             cid_by_id[identity] = cid
             if inbound.get(identity, 0) > 1:
                 shared_canonical[identity] = canonical
@@ -882,7 +882,7 @@ class TermTableBuilder:
         started = time.monotonic()
         cid = self._cached_cid(term)
         if cid is None:
-            cid = blake3_512_of(canonical.encode("utf-8"))
+            cid = blake3_512_of(_rpc_canonical_bytes(canonical))
             self._cids[id(term)] = (term, cid)
             if _TERM_TABLE_LOG.isEnabledFor(logging.DEBUG):
                 _TERM_TABLE_LOG.debug(
@@ -936,6 +936,16 @@ class TermTableBuilder:
                     "term_kind": type(term).__name__,
                 },
             )
+
+
+def _rpc_canonical_bytes(canonical: str) -> bytes:
+    """Hash the same Unicode scalar sequence that the RPC boundary transmits."""
+    if not any(0xD800 <= ord(char) <= 0xDFFF for char in canonical):
+        return canonical.encode("utf-8")
+    safe = "".join(
+        "\ufffd" if 0xD800 <= ord(char) <= 0xDFFF else char for char in canonical
+    )
+    return safe.encode("utf-8")
 
 
 def formula_to_value(f: Formula) -> Value:

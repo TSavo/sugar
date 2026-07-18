@@ -157,9 +157,7 @@ def test_array_function_dispatch_preserves_implementation_callsite() -> None:
     impl = _function_callable_with_body("rot90")
     decorator = CallSiteValue(
         target_name="array_function_dispatch",
-        arg_values=(
-            FunctionCallable(name="_rot90_dispatcher", parameters=("m",)),
-        ),
+        arg_values=(FunctionCallable(name="_rot90_dispatcher", parameters=("m",)),),
         parameters=(),
         term=ctor(
             "call:array_function_dispatch",
@@ -237,6 +235,55 @@ def test_unknown_decorator_factory_missing_body_names_owner() -> None:
     assert info.owner == "FunctionCallable decorator factory:mystery_wrap"
     assert "mystery_wrap" in str(info.observed)
     assert "never soft-continue" in info.fix
+
+
+def test_incomplete_decorator_result_is_a_named_factory_panic() -> None:
+    """A typed-red decorator body must not escape as a bare RuntimeError."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.effect import (
+        ConditionalExpressionRuntimeEffect,
+        runtime_effect_evidence_from_terms,
+    )
+    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    site = SourceFragment.from_source("decorated(1)\n", "decorator.py").statements()[0]
+    operand = make_var("runtime_name")
+    effect = ConditionalExpressionRuntimeEffect(
+        "decorator result depends on a runtime conditional",
+        **runtime_effect_evidence_from_terms(
+            ctor("py.ifexp.select", [operand]),
+            operand,
+            site,
+        ),
+    )
+
+    class IncompleteDecoratorResult:
+        def desugar(self, ctx=None):
+            del ctx
+            return Incomplete(effect)
+
+    decorator = FunctionCallable(
+        name="decorate",
+        parameters=("func",),
+        parameter_kinds=("positional",),
+        body=SugarBody(
+            sugar=IncompleteDecoratorResult(),
+            role=SugarRole.TERM,
+        ),
+    )
+    decorated = replace(
+        _function_callable_with_body("decorated"), decorators=(decorator,)
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        decorated.callsite((TermValue(1),), (), site)
+
+    info = raised.value.info
+    assert info.owner == "FunctionCallable decorator result:decorate"
+    assert info.observed == "ConditionalExpressionRuntimeEffect"
+    assert info.requested == "completed decorator result substitution"
 
 
 def test_callable_merges_explicit_keyword_into_guarded_static_mapping() -> None:

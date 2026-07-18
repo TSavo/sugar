@@ -485,7 +485,7 @@ class FunctionCallable(FloorValue):
             _reduce_callsite_body,
             force_floor,
         )
-        from sugar_lift_py_tests.outcome import complete_value
+        from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
         current = replace(self, decorators=())
         for decorator in reversed(self.decorators):
@@ -566,14 +566,27 @@ class FunctionCallable(FloorValue):
                     ),
                 )
             assert applied.body is not None
-            result = complete_value(
-                _reduce_callsite_body(
-                    applied.body,
-                    _ctx_with_curried_args(
-                        None, applied.parameters, applied.arg_values
+            result_outcome = _reduce_callsite_body(
+                applied.body,
+                _ctx_with_curried_args(None, applied.parameters, applied.arg_values),
+                blame=applied.target_name,
+            )
+            if isinstance(result_outcome, Incomplete):
+                factory_panic_gap(
+                    owner=(
+                        "FunctionCallable decorator result:" f"{applied.target_name}"
                     ),
-                    blame=applied.target_name,
-                ),
+                    blame=str(site),
+                    observed=type(result_outcome.effect).__name__,
+                    requested="completed decorator result substitution",
+                    fix=(
+                        "construct the decorator body's runtime-dependent result "
+                        "before applying it; never read an incomplete effect as a "
+                        "completed callable"
+                    ),
+                )
+            result = complete_value(
+                result_outcome,
                 owner="FunctionCallable decorator result",
             )
             if (
