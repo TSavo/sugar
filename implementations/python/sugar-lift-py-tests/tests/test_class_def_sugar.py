@@ -7,6 +7,7 @@ stay loud gaps.
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 
 import pytest
 
@@ -24,8 +25,10 @@ from sugar_lift_py_tests.floor import (
     FunctionCallable,
 )
 from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.lift_rpc import audit_lift_file
 from sugar_lift_py_tests.outcome import complete_value
 from sugar_lift_py_tests.sugar.class_def_sugar import ClassDefSugar
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def _site(source: str):
@@ -108,6 +111,71 @@ def test_class_binds_name_for_later_reference() -> None:
     assert len(ret) == 1
     assert isinstance(ret[0].value, ClassValue)
     assert ret[0].value.name == "C"
+
+
+def test_definition_root_replays_prior_class_local_definitions() -> None:
+    source = (
+        "class C:\n"
+        "    def f2(x, y):\n"
+        "        return x ** y\n"
+        "\n"
+        "    class Helper:\n"
+        "        pass\n"
+        "\n"
+        "    def method(self, operation=f2, helper=Helper):\n"
+        "        return operation, helper\n"
+    )
+
+    recovered = audit_lift_file(source, "class_defaults.py", recover_panics=True)
+
+    assert [
+        panic.gap
+        for panic in recovered.panics
+        if panic.gap.get("owner") == "TemporalContext"
+    ] == []
+
+
+def test_definition_root_does_not_replay_later_class_local_definition() -> None:
+    source = (
+        "class C:\n"
+        "    def method(self, operation=f2):\n"
+        "        return operation\n"
+        "\n"
+        "    def f2(x, y):\n"
+        "        return x ** y\n"
+    )
+
+    recovered = audit_lift_file(
+        source, "class_defaults_wrong_order.py", recover_panics=True
+    )
+    temporal = [
+        panic.gap
+        for panic in recovered.panics
+        if panic.gap.get("owner") == "TemporalContext"
+    ]
+
+    assert temporal
+    assert {gap["observed"] for gap in temporal} == {"f2"}
+
+
+def test_class_local_default_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in ClassDefSugar.witnesses()
+        if witness.name == "class_local_default_binding_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "class-local-default-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "class-local-default-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
 
 
 def test_owns_plain_class_not_decorated_metaclass_or_function() -> None:
