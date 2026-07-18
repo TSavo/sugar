@@ -1090,7 +1090,9 @@ def _module_declaration_name(statement: ast.stmt) -> str | None:
     return None
 
 
-def _module_import_bindings(statement: ast.stmt) -> dict[str, tuple[str, str | None]]:
+def _module_import_bindings(
+    statement: ast.stmt, *, defining_module: str | None = None
+) -> dict[str, tuple[str, str | None]]:
     bindings: dict[str, tuple[str, str | None]] = {}
     if isinstance(statement, ast.Import):
         for alias in statement.names:
@@ -1099,6 +1101,15 @@ def _module_import_bindings(statement: ast.stmt) -> dict[str, tuple[str, str | N
             bindings[bound] = (module_name, None)
     elif isinstance(statement, ast.ImportFrom):
         module_name = statement.module or ""
+        if statement.level and defining_module is not None:
+            module_name = (
+                _absolute_import_from_module(
+                    defining_module,
+                    module_name or None,
+                    statement.level,
+                )
+                or module_name
+            )
         for alias in statement.names:
             if alias.name == "*":
                 continue
@@ -1211,7 +1222,7 @@ def _ctx_with_required_module_bindings_impl(
     selected: list[ast.stmt] = []
     for statement in reversed(statements[:target_index]):
         declaration = _module_declaration_name(statement)
-        imports = _module_import_bindings(statement)
+        imports = _module_import_bindings(statement, defining_module=defining_module)
         owned = ({declaration} if declaration is not None else set()) | set(imports)
         wanted = owned & needed
         if not wanted:
@@ -1232,7 +1243,7 @@ def _ctx_with_required_module_bindings_impl(
     lexical = TemporalContext.empty()
     module_ctx = replace(ctx, temporal=lexical, module_temporal=lexical)
     for statement in selected:
-        imports = _module_import_bindings(statement)
+        imports = _module_import_bindings(statement, defining_module=defining_module)
         if imports:
             temporal = module_ctx.temporal
             for bound, (module_name, imported_name) in imports.items():

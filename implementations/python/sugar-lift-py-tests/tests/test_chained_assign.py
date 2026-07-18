@@ -15,6 +15,7 @@ from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
 from sugar_lift_py_tests.sugar.ann_assign_sugar import AnnAssignSugar
 from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 from sugar_lift_py_tests.sugar.chained_assign_sugar import ChainedAssignSugar
+from sugar_lift_py_tests.sugar.subscript_assign_sugar import SubscriptAssignSugar
 
 
 def _site(source: str) -> SourceFragment:
@@ -46,6 +47,20 @@ def test_chained_owner_is_disjoint_from_plain_and_annotated_assign() -> None:
     assert AssignSugar.owns(plain)
     assert not ChainedAssignSugar.owns(annotated)
     assert AnnAssignSugar.owns(annotated)
+
+
+def test_chained_subscript_targets_reuse_structural_store_owner() -> None:
+    built = _build_statement("outer[0] = outer[1] = value")
+
+    assert isinstance(built.sugar, ChainedAssignSugar)
+    assert [type(store.sugar) for store in built.sugar.stores] == [
+        SubscriptAssignSugar,
+        SubscriptAssignSugar,
+    ]
+    assert [store.sugar.receiver_coordinate for store in built.sugar.stores] == [
+        "outer",
+        "outer",
+    ]
 
 
 def _build_statement(source: str):

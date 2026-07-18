@@ -10,7 +10,11 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import ImportAliasValue, ReturnValue
-from sugar_lift_py_tests.lift_rpc import audit_lift_file
+from sugar_lift_py_tests.kit_rpc import RecoveredAuditDto
+from sugar_lift_py_tests.lift_rpc import (
+    _installed_module_name_from_filename,
+    audit_lift_file,
+)
 
 
 def _statement(source: str) -> SourceFragment:
@@ -72,3 +76,21 @@ def raises_chained_assignment_error():
         recover_panics=True,
     )
     assert all(panic.gap["observed"] != "ImportFrom" for panic in recovered.panics)
+
+
+def test_relative_site_packages_import_keeps_its_installed_package() -> None:
+    filename = ".venv/lib/python3.14/site-packages/numpy/_core/arrayprint.py"
+
+    assert _installed_module_name_from_filename(filename) == "numpy._core.arrayprint"
+
+    recovered = audit_lift_file(
+        "from . import numerictypes as _nt\n"
+        "_typelessdata = [_nt.bool]\n"
+        "\n"
+        "def test_typelessdata():\n"
+        "    assert _typelessdata\n",
+        filename,
+        recover_panics=True,
+    )
+
+    assert isinstance(recovered, RecoveredAuditDto)
