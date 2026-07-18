@@ -93,7 +93,9 @@ FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
         "prove-refused/expected-discharge-rows",
         re.compile(
             r"expected all consistency rows discharged|"
-            r"expected the witness-package to DISCHARGE"
+            r"expected the witness-package to DISCHARGE|"
+            r"expected at least one genuinely discharged membership row|"
+            r"unnamed consistency terminal state\(s\)"
         ),
     ),
     FailurePattern(
