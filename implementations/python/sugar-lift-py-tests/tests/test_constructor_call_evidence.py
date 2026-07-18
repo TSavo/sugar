@@ -17,6 +17,7 @@ from sugar_lift_py_tests.floor import (
     StringValue,
     TermValue,
 )
+from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.sugar.constructor_call_sugar import ConstructorCallSugar
@@ -993,3 +994,19 @@ def test_multiple_inheritance_constructor_refutes_wrong_linearization_twin(
     assert wrong_linearization.verdict == "unsat"
     assert "ConstructorCallSugar" in truthful.selected_sugars
     assert "ConstructorCallSugar" in wrong_linearization.selected_sugars
+
+
+def test_recursive_constructor_method_is_a_named_factory_panic() -> None:
+    source = (
+        "class Recursive:\n"
+        "    def again(self):\n"
+        "        return Recursive()\n\n"
+        "def test_recursive():\n"
+        "    assert Recursive() == Recursive()\n"
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        lift_file_payload(source, "recursive_constructor.py")
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.observed == "recursive-constructor-method"

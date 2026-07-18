@@ -2,6 +2,7 @@
 import ast
 import os
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -14,6 +15,7 @@ from sugar_lift_python_source.ast_template import function_param_names, stmt_to_
 from sugar_lift_python_source.canonical import blake3_512_of, template_cid_of_json
 from sugar_lift_python_source.source_oracle import (
     SourceOracleRefusal,
+    installed_module_source,
     resolve_source_memento,
 )
 
@@ -48,6 +50,28 @@ def test_oracle_resolves_when_source_aligns(tmp_path: Path) -> None:
     # the oracle is the AST-walk site: recomputed CIDs equal the pinned ones
     assert out["source_cid"] == memento["source_cid"]
     assert out["template_cid"] == memento["template_cid"]
+
+
+def test_installed_source_resolves_nested_module_without_importing_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "outer"
+    child = package / "inner"
+    child.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (child / "__init__.py").write_text("", encoding="utf-8")
+    (child / "module.py").write_text("VALUE = 7\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    for name in ("outer", "outer.inner", "outer.inner.module"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    installed_module_source.cache_clear()
+
+    resolved = installed_module_source("outer.inner.module")
+
+    assert resolved is not None
+    source, filename, _cid = resolved
+    assert source == "VALUE = 7\n"
+    assert filename.endswith("outer/inner/module.py")
 
 
 def test_oracle_resolves_dotted_method_envelope_name(tmp_path: Path) -> None:

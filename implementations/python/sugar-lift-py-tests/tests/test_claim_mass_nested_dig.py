@@ -14,8 +14,10 @@ DualGroundEqFace remains the sole py.eq dual door (untouched here).
 
 from __future__ import annotations
 
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import CallSiteValue
 from sugar_lift_py_tests.floor.object_field import ObjectField
@@ -34,6 +36,7 @@ from sugar_lift_py_tests.sugar.install_source_dig import (
     resolve_install_source_class_method,
     resolve_method_funcdef,
 )
+from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 def _class_resolver(src: str, filename: str = "t.py") -> dict:
@@ -217,6 +220,37 @@ def test_nested_method_dig_attaches_and_reduces_under_budget() -> None:
     finally:
         MethodCallSugar._collect = orig  # type: ignore[method-assign]
     assert ("inner", True) in captured, captured
+
+
+def test_nested_callsite_dig_budget_ends_in_named_panic() -> None:
+    class GroundBody:
+        def desugar(self, ctx=None):
+            from sugar_lift_py_tests.outcome import Complete
+
+            return Complete(TermValue(1))
+
+    value = CallSiteValue(
+        target_name="recursive",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:recursive", []),
+        body=SugarBody(GroundBody(), SugarRole.TERM),
+        site=None,
+    )
+    ctx = FactoryBuildContext(filename="recursive_dig.py", catalog=default_catalog())
+    from sugar_lift_py_tests.floor.call_site_value import _ACTIVE_DIG_DEMAND
+
+    token = _ACTIVE_DIG_DEMAND.set(8)
+    try:
+        try:
+            value._dig_floor_or_none(ctx, owner="CallSiteValue.add")
+        except FactoryPanic as error:
+            assert error.info.owner == "CallSiteValue.add"
+            assert error.info.observed == "callsite value demand budget exhausted"
+        else:
+            raise AssertionError("nested dig must terminate at the named budget")
+    finally:
+        _ACTIVE_DIG_DEMAND.reset(token)
 
 
 def test_receiver_class_name_from_object_value() -> None:

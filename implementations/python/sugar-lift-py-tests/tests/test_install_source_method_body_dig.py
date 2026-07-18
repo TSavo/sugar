@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,7 @@ from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_covera
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.sugar.install_source_dig import (
+    _installed_native_extension,
     bind_positional_defaults,
     build_dig_body,
     dig_parameters_for_body,
@@ -33,6 +35,72 @@ def test_resolve_signer_sign_method() -> None:
     assert "self" in params
     assert "value" in params
     assert getattr(fn.node, "_sugar_file", None)
+
+
+def test_extension_method_without_python_source_stays_coordinate_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sugar_lift_py_tests.sugar import install_source_dig
+
+    class ExtensionMethod:
+        __code__ = object()
+
+        def __call__(self):
+            return None
+
+    class ExtensionClass:
+        method = ExtensionMethod()
+
+    module = SimpleNamespace(ExtensionClass=ExtensionClass)
+    monkeypatch.setattr(
+        install_source_dig.importlib, "import_module", lambda _name: module
+    )
+    monkeypatch.setattr(
+        install_source_dig.inspect,
+        "getsource",
+        lambda _obj: (_ for _ in ()).throw(
+            TypeError("expected Python object, got cython_function_or_method")
+        ),
+    )
+
+    assert (
+        resolve_install_source_class_method("vendor.ExtensionClass", "method") is None
+    )
+
+
+def test_nested_native_extension_resolves_without_importing_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    origin = f"/vendor/_core/_native{suffix}"
+    calls: list[tuple[str, object]] = []
+
+    def find_spec(name, search_path=None):
+        calls.append((name, search_path))
+        if name == "vendor" and search_path is None:
+            return SimpleNamespace(
+                submodule_search_locations=["/vendor"], origin=None, loader=None
+            )
+        if name == "_core" and search_path == ["/vendor"]:
+            return SimpleNamespace(
+                submodule_search_locations=["/vendor/_core"],
+                origin=None,
+                loader=None,
+            )
+        if name == "_native" and search_path == ["/vendor/_core"]:
+            return SimpleNamespace(
+                submodule_search_locations=None,
+                origin=origin,
+                loader=importlib.machinery.ExtensionFileLoader(
+                    "vendor._core._native", origin
+                ),
+            )
+        return None
+
+    monkeypatch.setattr(importlib.machinery.PathFinder, "find_spec", find_spec)
+
+    assert _installed_native_extension("vendor._core._native") == origin
+    assert [name for name, _path in calls] == ["vendor", "_core", "_native"]
 
 
 def test_resolve_method_via_from_imports_and_ctor_receiver() -> None:

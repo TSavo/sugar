@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import (
@@ -220,7 +220,19 @@ def _strategy(
             "positional constructor arguments",
             f"add keyword constructor binding for `{target}`",
         )
-    methods = _methods(class_site, ctx)
+    construction_key = f"constructor-methods:{target}"
+    if construction_key in ctx.building:
+        _panic(
+            site,
+            "recursive-constructor-method",
+            f"finite constructor method graph for `{target}`",
+            "construct recursive constructor method coordinates without eagerly "
+            "rebuilding the same class",
+        )
+    methods = _methods(
+        class_site,
+        replace(ctx, building=ctx.building | {construction_key}),
+    )
     init = next(
         (
             stmt

@@ -302,7 +302,8 @@ def _installed_native_extension(module_name: str) -> str | None:
     try:
         for index in range(1, len(parts) + 1):
             qualified = ".".join(parts[:index])
-            spec = importlib.machinery.PathFinder.find_spec(qualified, search_path)
+            lookup_name = qualified if search_path is None else parts[index - 1]
+            spec = importlib.machinery.PathFinder.find_spec(lookup_name, search_path)
             if spec is None:
                 return None
             if index < len(parts):
@@ -318,7 +319,7 @@ def _installed_native_extension(module_name: str) -> str | None:
         if not origin.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES)):
             return None
         return origin
-    except (ImportError, ModuleNotFoundError, OSError, TypeError, ValueError):
+    except (ImportError, KeyError, ModuleNotFoundError, OSError, TypeError, ValueError):
         return None
 
 
@@ -1997,7 +1998,7 @@ def resolve_install_source_class_method(qualified_class: str, method_name: str):
     try:
         source = textwrap.dedent(inspect.getsource(obj))
         sourcefile = inspect.getsourcefile(obj) or f"<{module_name}>"
-    except OSError:
+    except (OSError, TypeError):
         return None
     try:
         parsed = SourceFragment.from_source_private(source, sourcefile)
