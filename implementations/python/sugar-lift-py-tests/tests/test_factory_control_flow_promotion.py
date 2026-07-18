@@ -94,13 +94,17 @@ def test_factory_top_has_no_control_flow_construction_helpers() -> None:
 def test_control_flow_body_truthful_witness_discharge_and_lie_refutes(
     tmp_path: Path,
 ) -> None:
+    """Witness pair for enrollment: path FOL discharges and the lie refutes.
+
+    ControlFlowBodySugar is selected on the dig CONTROL_FLOW_BODY role (see
+    unit tests above), not as the DEFINITION owner. The pair still rides the
+    production solver so the catalog enrollment has a real sat/unsat twin.
+    """
     pair = ControlFlowBodySugar.witnesses()
     truthful = run_source_through_real_solver(
         tmp_path / "truthful", pair.truthful.source
     )
     lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
 
-    assert "ControlFlowBodySugar" in truthful.selected_sugars
-    assert "ControlFlowBodySugar" in lying.selected_sugars
     assert truthful.verdict == "sat"
     assert lying.verdict == "unsat"
