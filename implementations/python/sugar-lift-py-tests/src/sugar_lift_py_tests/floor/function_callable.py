@@ -100,10 +100,19 @@ class FunctionCallable(FloorValue):
         from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import Complete, complete_value
 
         if source_arg_values is None:
             source_arg_values = arg_values
+        if self.decorators:
+            decorated = self._apply_decorators(site)
+            return decorated.callsite(
+                arg_values,
+                keyword_names,
+                site,
+                source_arg_values=source_arg_values,
+                term=term,
+            )
 
         if self.body is None:
             factory_panic_gap(
@@ -167,6 +176,7 @@ class FunctionCallable(FloorValue):
         has_var_positional = "var-positional" in self.parameter_kinds
         has_var_keyword = "var-keyword" in self.parameter_kinds
         from .dict_value import DictValue
+        from .guarded_value import GuardedValue
         from .string_value import StringValue
         from .symbolic_value import SymbolicValue
 
@@ -187,8 +197,20 @@ class FunctionCallable(FloorValue):
                 keyword_map.update(expanded_keywords)
                 keyword_expansions = ()
                 keyword_expansion = None
+        if isinstance(keyword_expansion, GuardedValue) and _guarded_dict_value(
+            keyword_expansion
+        ):
+            explicit = DictValue(
+                tuple((StringValue(key), value) for key, value in keyword_map.items())
+            )
+            keyword_expansion = complete_value(
+                keyword_expansion.map_from_left("bitwise_or", explicit, site),
+                owner="FunctionCallable guarded **kwargs substitution",
+            )
+            keyword_map.clear()
         binds_keyword_expansion_exactly = (
-            keyword_names == ("**",)
+            not keyword_map
+            and len(keyword_expansions) == 1
             and self.parameter_kinds
             and self.parameter_kinds[-1] == "var-keyword"
             and all(
@@ -196,7 +218,7 @@ class FunctionCallable(FloorValue):
                 for kind in self.parameter_kinds[:-1]
             )
             and (
-                type(keyword_expansion) in (DictValue, SymbolicValue)
+                type(keyword_expansion) in (DictValue, GuardedValue, SymbolicValue)
                 or (
                     type(keyword_expansion) is CallSiteValue
                     and keyword_expansion.body is None
@@ -210,6 +232,7 @@ class FunctionCallable(FloorValue):
         # under the source ``**`` contract; a body-bearing peer must be dug
         # instead. Other expansion shapes remain loud: do not invent keys or
         # confuse missing binder machinery with runtime dependence.
+        binding_failed_decidably = False
         if (
             keyword_expansions
             and not binds_keyword_expansion_exactly
@@ -305,13 +328,25 @@ class FunctionCallable(FloorValue):
                 and len(keyword_only_defaults_by_name) != keyword_only_count
             ):
                 binding_ok = False
+            binding_failed_decidably = not binding_ok
             bound_values = tuple(bound_list) if binding_ok else None
         if bound_values is None:
-            runtime_keyword_expansion = len(keyword_expansions) == 1 and (
-                type(keyword_expansion) is SymbolicValue
-                or (
-                    type(keyword_expansion) is CallSiteValue
-                    and keyword_expansion.body is None
+            from sugar_lift_py_tests.effect.runtime_effect import (
+                is_lift_time_decidable,
+            )
+
+            # Body-bearing callsites are diggable floor work, not runtime
+            # dependence: construct-or-panic after dig, never mint an effect.
+            diggable_keyword_expansion = (
+                type(keyword_expansion) is CallSiteValue
+                and keyword_expansion.body is not None
+            )
+            runtime_keyword_expansion = (
+                len(keyword_expansions) == 1
+                and keyword_expansion is not None
+                and not diggable_keyword_expansion
+                and not is_lift_time_decidable(
+                    keyword_expansion.to_term(owner="FunctionCallable **kwargs")
                 )
             )
             if runtime_keyword_expansion:
@@ -328,12 +363,18 @@ class FunctionCallable(FloorValue):
             unexpected_keywords = tuple(
                 name for name in keyword_map if name not in keyword_bindable_names
             )
-            if (
-                supported_signature
-                and not has_var_keyword
-                and "**" not in keyword_names
-                and unexpected_keywords
-            ):
+            # A completed binding attempt that fails under a supported signature
+            # is a static TypeError (missing/extra/unexpected), not an unbuilt
+            # floor. Opaque expansions and unsupported machinery stay loud above.
+            static_type_error = supported_signature and (
+                binding_failed_decidably
+                or (
+                    not has_var_keyword
+                    and "**" not in keyword_names
+                    and bool(unexpected_keywords)
+                )
+            )
+            if static_type_error:
                 import hashlib
 
                 from sugar_lift_py_tests.effect import RaiseEffect
@@ -360,6 +401,7 @@ class FunctionCallable(FloorValue):
                 gap_kind=GapKind.FLOOR,
                 gap_locus=GapLocus.CONSTRUCTION,
             )
+        assert bound_values is not None
         if term is None:
             term = ctor(
                 f"call:{self.name}",
@@ -392,3 +434,67 @@ class FunctionCallable(FloorValue):
                 exit_suppression=self.exit_suppression,
             )
         )
+
+    def _apply_decorators(self, site):
+        """Apply Python decorators as nested callable substitutions."""
+        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.outcome import complete_value
+
+        current = replace(self, decorators=())
+        for decorator in reversed(self.decorators):
+            if isinstance(decorator, CallSiteValue):
+                decorator = decorator.force_floor(
+                    None,
+                    owner="FunctionCallable decorator factory",
+                    project_callsite=False,
+                )
+            if not isinstance(decorator, FunctionCallable):
+                factory_panic_gap(
+                    owner="FunctionCallable",
+                    blame=str(site),
+                    observed=type(decorator).__name__,
+                    requested="decorator callable substitution",
+                    fix="construct the decorator callable floor or panic loudly",
+                )
+            assert isinstance(decorator, FunctionCallable)
+            applied = complete_value(
+                decorator.callsite((current,), (), site),
+                owner="FunctionCallable decorator application",
+            )
+            if not isinstance(applied, CallSiteValue):
+                factory_panic_gap(
+                    owner="FunctionCallable",
+                    blame=str(site),
+                    observed=type(applied).__name__,
+                    requested="decorator callsite substitution",
+                    fix="construct the decorator callsite or panic loudly",
+                )
+            assert isinstance(applied, CallSiteValue)
+            current = applied.force_floor(
+                None,
+                owner="FunctionCallable decorator result",
+                project_callsite=False,
+            )
+            if not isinstance(current, FunctionCallable):
+                factory_panic_gap(
+                    owner="FunctionCallable",
+                    blame=str(site),
+                    observed=type(current).__name__,
+                    requested="decorated callable floor",
+                    fix="construct the decorator return callable or panic loudly",
+                )
+        return current
+
+
+def _guarded_dict_value(value) -> bool:
+    from .dict_value import DictValue
+    from .guarded_value import GuardedValue
+
+    if type(value) is DictValue:
+        return True
+    if not isinstance(value, GuardedValue):
+        return False
+    return _guarded_dict_value(value.when_true) and _guarded_dict_value(
+        value.when_false
+    )

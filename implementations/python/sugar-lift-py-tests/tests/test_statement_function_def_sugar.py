@@ -13,6 +13,7 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     DictValue,
     FunctionCallable,
+    GuardedValue,
     RaiseValue,
     StringValue,
     SymbolicValue,
@@ -20,7 +21,7 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
     UniverseValue,
 )
-from sugar_lift_py_tests.ir import ctor, make_var, num
+from sugar_lift_py_tests.ir import atomic, ctor, make_var, num
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.keyword_call_sugar import KeywordCallSugar
@@ -61,6 +62,102 @@ def test_nested_def_binds_named_callable_and_later_call_digs_body() -> None:
     assert isinstance(dug, TermValue)
     assert dug.value == 6
     assert "inner" in repr(universe.record)
+
+
+def test_decorated_callable_call_substitutes_through_wrapper() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def decorate(func):\n"
+        "        def wrapper(value):\n"
+        "            return func(value) + 1\n"
+        "        return wrapper\n"
+        "    @decorate\n"
+        "    def doubled(value):\n"
+        "        return value * 2\n"
+        "    return doubled(3)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="decorated callable substitution", project_callsite=False
+    ) == TermValue(7)
+
+
+def test_decorated_callable_wrapper_fills_original_missing_argument() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def decorate(func):\n"
+        "        def wrapper(value):\n"
+        "            return func(value, 4)\n"
+        "        return wrapper\n"
+        "    @decorate\n"
+        "    def add(value, increment):\n"
+        "        return value + increment\n"
+        "    return add(3)\n"
+    )
+
+    callsite = universe.record.statements[-1].value
+    assert isinstance(callsite, CallSiteValue)
+    ctx = FactoryBuildContext(filename="nested.py", catalog=default_catalog())
+    assert callsite.force_floor(
+        ctx, owner="decorated callable curry floor", project_callsite=False
+    ) == TermValue(7)
+
+
+def test_callable_merges_explicit_keyword_into_guarded_static_mapping() -> None:
+    site = SourceFragment.from_source(
+        "inner(obj='left', **options)\n", "nested.py"
+    ).statements()[0]
+    guard = atomic("mapping-choice", [])
+    expansion = GuardedValue(
+        guard,
+        DictValue(((StringValue("check"), TermValue(1)),)),
+        DictValue(()),
+    )
+    callable_value = FunctionCallable(
+        name="inner",
+        parameters=("left", "right", "options"),
+        parameter_kinds=("positional", "positional", "var-keyword"),
+        body=object(),
+    )
+
+    outcome = callable_value.callsite(
+        (TermValue(1), TermValue(2), StringValue("left"), expansion),
+        ("obj", "**"),
+        site,
+    )
+
+    callsite = complete_value(outcome, owner="guarded kwargs substitution")
+    assert isinstance(callsite, CallSiteValue)
+    options = callsite.arg_values[-1]
+    assert isinstance(options, GuardedValue)
+    assert options.when_true == DictValue(
+        (
+            (StringValue("obj"), StringValue("left")),
+            (StringValue("check"), TermValue(1)),
+        )
+    )
+    assert options.when_false == DictValue(((StringValue("obj"), StringValue("left")),))
+
+
+def test_unconstructed_decorator_stays_loud() -> None:
+    site = SourceFragment.from_source("inner(1)\n", "nested.py").statements()[0]
+    callable_value = FunctionCallable(
+        name="inner",
+        parameters=("value",),
+        parameter_kinds=("positional",),
+        decorators=(TermValue(0),),
+        body=object(),
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        callable_value.callsite((TermValue(1),), (), site)
+
+    assert raised.value.info.owner == "FunctionCallable"
+    assert raised.value.info.observed == "TermValue"
+    assert raised.value.info.requested == "decorator callable substitution"
 
 
 def test_nested_callable_captures_lexical_bindings_and_overlays_actuals() -> None:
@@ -221,32 +318,34 @@ def test_nested_callable_default_is_assigned_once_at_its_temporal_coordinate() -
     ) == TermValue(5)
 
 
-def test_nested_callable_missing_required_positional_stays_a_signature_gap() -> None:
-    with pytest.raises(FactoryPanic) as raised:
-        _root_universe(
-            "def outer(x):\n"
-            "    def inner(required, optional=4):\n"
-            "        return required + optional\n"
-            "    return inner()\n"
-        )
+def test_nested_callable_missing_required_positional_is_static_type_error() -> None:
+    universe = _root_universe(
+        "def outer(x):\n"
+        "    def inner(required, optional=4):\n"
+        "        return required + optional\n"
+        "    return inner()\n"
+    )
 
-    assert raised.value.info.owner == "FunctionCallable"
-    assert raised.value.info.requested == "bind call arguments to a function signature"
-    assert raised.value.info.observed == ("positional", "positional")
+    exit_value = universe.record.statements[-1]
+    assert isinstance(exit_value, RaiseValue)
+    assert exit_value.effect.exception_name == "TypeError"
+    assert exit_value.exception is not None
+    assert exit_value.exception.exception_name == "TypeError"
 
 
-def test_nested_callable_extra_positional_stays_a_signature_gap() -> None:
-    with pytest.raises(FactoryPanic) as raised:
-        _root_universe(
-            "def outer(x):\n"
-            "    def inner(required, optional=4):\n"
-            "        return required + optional\n"
-            "    return inner(x, 6, 7)\n"
-        )
+def test_nested_callable_extra_positional_is_static_type_error() -> None:
+    universe = _root_universe(
+        "def outer(x):\n"
+        "    def inner(required, optional=4):\n"
+        "        return required + optional\n"
+        "    return inner(x, 6, 7)\n"
+    )
 
-    assert raised.value.info.owner == "FunctionCallable"
-    assert raised.value.info.requested == "bind call arguments to a function signature"
-    assert raised.value.info.observed == ("positional", "positional")
+    exit_value = universe.record.statements[-1]
+    assert isinstance(exit_value, RaiseValue)
+    assert exit_value.effect.exception_name == "TypeError"
+    assert exit_value.exception is not None
+    assert exit_value.exception.exception_name == "TypeError"
 
 
 def test_nested_callable_binds_empty_variadic_parameters_without_rekeying_callsite() -> (
@@ -383,6 +482,24 @@ def test_nested_callable_opaque_expansion_has_authenticated_binding_effect() -> 
     assert type(outcome.effect).__name__ == "CallableArgumentBindingRuntimeEffect"
     assert outcome.effect.runtime_operand.term == expansion.term
     assert outcome.effect.witness.operand == expansion.term
+
+
+def test_runtime_dict_key_expansion_has_authenticated_binding_effect() -> None:
+    site = SourceFragment.from_source("inner(**options)\n", "nested.py").statements()[0]
+    callable_value = FunctionCallable(
+        "inner",
+        parameters=("value",),
+        parameter_kinds=("positional",),
+        body=object(),
+    )
+    expansion = DictValue(((SymbolicValue(make_var("runtime_key")), TermValue(5)),))
+
+    outcome = callable_value.callsite((expansion,), ("**",), site)
+
+    assert isinstance(outcome, Incomplete)
+    assert type(outcome.effect).__name__ == "CallableArgumentBindingRuntimeEffect"
+    assert outcome.effect.runtime_operand.term == expansion.to_term(owner="test")
+    assert outcome.effect.witness.operand == expansion.to_term(owner="test")
 
 
 def test_ground_keyword_expansion_cannot_mint_argument_binding_effect() -> None:
@@ -548,6 +665,20 @@ def test_default_keyword_expansion_witness_truthful_sat_and_lying_unsat(
         witness
         for witness in StatementFunctionDefSugar.witnesses()
         if witness.name == "statement_function_def_default_keyword_expansion_return"
+    )
+
+    report = evaluate_seed_witnesses((witness,), tmp_path)
+
+    assert report.is_zero
+
+
+def test_decorated_callable_substitution_witness_truthful_sat_and_lying_unsat(
+    tmp_path,
+) -> None:
+    witness = next(
+        witness
+        for witness in StatementFunctionDefSugar.witnesses()
+        if witness.name == "statement_function_def_decorated_callable_substitution"
     )
 
     report = evaluate_seed_witnesses((witness,), tmp_path)
@@ -726,59 +857,47 @@ def test_nested_callable_keyword_only_default_is_captured_at_definition_time() -
     ) == TermValue(5)
 
 
-def test_nested_callable_missing_required_keyword_only_stays_a_signature_gap() -> None:
-    with pytest.raises(FactoryPanic) as raised:
-        _root_universe(
-            "def outer():\n"
-            "    def inner(*, required):\n"
-            "        return required\n"
-            "    return inner()\n"
-        )
+def test_nested_callable_missing_required_keyword_only_is_static_type_error() -> None:
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(*, required):\n"
+        "        return required\n"
+        "    return inner()\n"
+    )
 
-    assert raised.value.info.owner == "FunctionCallable"
-    assert raised.value.info.requested == "bind call arguments to a function signature"
-    assert raised.value.info.observed == ("keyword-only",)
+    exit_value = universe.record.statements[-1]
+    assert isinstance(exit_value, RaiseValue)
+    assert exit_value.effect.exception_name == "TypeError"
 
 
 def test_nested_callable_keyword_only_boundary_is_not_filled_by_surplus_positionals() -> (
     None
 ):
-    with pytest.raises(FactoryPanic) as raised:
-        _root_universe(
-            "def outer():\n"
-            "    def inner(required, /, *extras, flag, **options):\n"
-            "        return extras\n"
-            "    return inner(5, 6, 7)\n"
-        )
-
-    assert raised.value.info.owner == "FunctionCallable"
-    assert raised.value.info.requested == "bind call arguments to a function signature"
-    assert raised.value.info.observed == (
-        "positional-only",
-        "var-positional",
-        "keyword-only",
-        "var-keyword",
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(required, /, *extras, flag, **options):\n"
+        "        return extras\n"
+        "    return inner(5, 6, 7)\n"
     )
+
+    exit_value = universe.record.statements[-1]
+    assert isinstance(exit_value, RaiseValue)
+    assert exit_value.effect.exception_name == "TypeError"
 
 
 def test_nested_callable_empty_variadics_do_not_hide_missing_required_positional() -> (
     None
 ):
-    with pytest.raises(FactoryPanic) as raised:
-        _root_universe(
-            "def outer():\n"
-            "    def inner(required, *extras, **options):\n"
-            "        return required\n"
-            "    return inner()\n"
-        )
-
-    assert raised.value.info.owner == "FunctionCallable"
-    assert raised.value.info.requested == "bind call arguments to a function signature"
-    assert raised.value.info.observed == (
-        "positional",
-        "var-positional",
-        "var-keyword",
+    universe = _root_universe(
+        "def outer():\n"
+        "    def inner(required, *extras, **options):\n"
+        "        return required\n"
+        "    return inner()\n"
     )
+
+    exit_value = universe.record.statements[-1]
+    assert isinstance(exit_value, RaiseValue)
+    assert exit_value.effect.exception_name == "TypeError"
 
 
 def test_decorated_statement_def_stays_loud() -> None:
