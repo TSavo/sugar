@@ -1269,6 +1269,7 @@ def _module_import_temporal(
     filename=None,
     recovered_panics=None,
     assertion_sink=None,
+    definition_temporal_sink=None,
 ) -> "object":
     """Bind constructed module declarations into a TemporalContext.
 
@@ -1345,6 +1346,15 @@ def _module_import_temporal(
                         ] = nested_stmt.node
     for stmt in module.statements():
         observed = stmt.observed
+        if definition_temporal_sink is not None and observed in {
+            "FunctionDef",
+            "AsyncFunctionDef",
+        }:
+            # Python constructs decorators/defaults at this exact execution
+            # coordinate. Preserve the factory-threaded prefix; a later module
+            # binding may serve the deferred body, but must never backfill an
+            # eager definition face.
+            definition_temporal_sink[id(stmt.node)] = temporal
         if observed == "Import":
             for name, asname in stmt.import_names():
                 bound = asname or name.split(".")[0]
@@ -1692,6 +1702,7 @@ class _AuditFileContext:
     catalog: Any
     module: Any
     module_temporal: Any
+    definition_temporals: dict[int, Any]
     seed_panics: tuple[_SeedPanicEvidence, ...]
     module_assertions: tuple[Any, ...]
     import_aliases: dict[str, str]
@@ -1751,12 +1762,14 @@ def _audit_file_context(
     module = roots[0] if roots else source_root
     seed_panics: list[_SeedPanicEvidence] = []
     module_assertions: list[Any] = []
+    definition_temporals: dict[int, Any] = {}
     module_temporal = _module_import_temporal(
         module,
         catalog,
         filename=filename,
         recovered_panics=seed_panics if hold_seed_panics else None,
         assertion_sink=module_assertions,
+        definition_temporal_sink=definition_temporals,
     )
     import_aliases, from_imports = _module_import_maps(module, filename)
     definitions = tuple(_iter_liftable_function_defs(module))
@@ -1798,6 +1811,7 @@ def _audit_file_context(
         catalog=catalog,
         module=module,
         module_temporal=module_temporal,
+        definition_temporals=definition_temporals,
         seed_panics=tuple(seed_panics),
         module_assertions=tuple(module_assertions),
         import_aliases=import_aliases,
@@ -1951,7 +1965,9 @@ def audit_lift_file(
             },
         )
         try:
-            lexical_temporal = module_temporal
+            lexical_temporal = audit_context.definition_temporals.get(
+                id(stmt.node), module_temporal
+            )
             # Definition roots are audited independently, but Python evaluates
             # method decorators/defaults while executing the enclosing class
             # body. Reconstruct only earlier class-local definitions that the

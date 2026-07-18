@@ -158,11 +158,27 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def witnesses(cls):
         prefix = "def A():\n    a, b = (2, 3)\n    return a + b\n\n"
-        return _call_pair(
-            name="tuple_unpack_assign_return",
-            owner_sugar="TupleUnpackAssignSugar",
-            truthful=prefix + "def test_a():\n    assert A() == 5\n",
-            lying=prefix + "def test_a():\n    assert A() == 6\n",
+        module_prefix = (
+            "pair = (2, 3)\n"
+            "a, b = pair\n"
+            "def B(value=a):\n"
+            "    return value\n"
+            "\n"
+        )
+        return (
+            _call_pair(
+                name="tuple_unpack_assign_return",
+                owner_sugar="TupleUnpackAssignSugar",
+                truthful=prefix + "def test_a():\n    assert A() == 5\n",
+                lying=prefix + "def test_a():\n    assert A() == 6\n",
+            ),
+            _call_pair(
+                name="module_tuple_unpack_execution_order",
+                owner_sugar="TupleUnpackAssignSugar",
+                truthful=module_prefix + "def test_b():\n    assert B(a) == 2\n",
+                lying=module_prefix + "def test_b():\n    assert B(a) == 3\n",
+                family="module-execution-order",
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
