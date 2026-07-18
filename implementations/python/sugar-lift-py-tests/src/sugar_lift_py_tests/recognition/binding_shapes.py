@@ -56,6 +56,23 @@ class BindingShapeRecognition:
         return None if dotted is None else tuple(dotted.split("."))
 
     @staticmethod
+    def augassign_dotted_path(site) -> tuple[str, ...] | None:
+        from sugar_lift_py_tests.recognition.call_identity import (
+            CallIdentityRecognition,
+        )
+        from sugar_lift_py_tests.source_fragment import SourceFragment
+
+        if not isinstance(site.node.target, ast.Attribute):
+            return None
+        target = SourceFragment.from_node(
+            site.node.target,
+            site.filename,
+            source=site.source,
+        )
+        dotted = CallIdentityRecognition.qualified_name(target)
+        return None if dotted is None else tuple(dotted.split("."))
+
+    @staticmethod
     def annassign_target_id(site) -> str:
         target = site.node.target
         if not isinstance(target, ast.Name):

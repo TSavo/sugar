@@ -1474,6 +1474,13 @@ class SourceFragment:
         self._require(ast.AugAssign)
         return SourceFragment.from_node(self.node.target, self.filename, source=self.source)  # type: ignore[attr-defined]
 
+    def aug_assign_target_dotted_attribute_path(self) -> "tuple[str, ...] | None":
+        """Return a pure dotted AugAssign target as path components."""
+        self._require(ast.AugAssign)
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.augassign_dotted_path(self)
+
     def aug_assign_value(self) -> "SourceFragment":
         """Return a SourceFragment for the value expression of an AugAssign node."""
         self._require(ast.AugAssign)
