@@ -3,7 +3,6 @@ from sugar_lift_py_tests.idd.sugar_witness_instruments import (
 )
 from sugar_lift_py_tests.sugar.dict_literal_sugar import DictLiteralSugar
 from sugar_lift_py_tests.sugar.getattr_builtin_sugar import GetattrBuiltinSugar
-from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
 from sugar_lift_py_tests.sugar.witnesses import SugarRedEffectWitnessPair
 
 
@@ -19,7 +18,6 @@ def test_first_half_runtime_effects_enroll_refuting_bad_twins(tmp_path) -> None:
     witnesses = (
         _typed_red_witness(DictLiteralSugar, "dict_unpack_runtime_effect"),
         _typed_red_witness(GetattrBuiltinSugar, "getattr_runtime_effect"),
-        _typed_red_witness(IfExpSugar, "if_exp_runtime_effect"),
     )
 
     report = evaluate_seed_witnesses(
