@@ -272,14 +272,24 @@ class CallSiteValue(FloorValue):
         statement still rebinds the name: carry the prior list coordinate and
         appended value on ``py.list_append`` so later statements keep a
         FloorValue. A finite value behind ``typing.cast`` keeps its exact
-        history. Unclassified callsites stay loud; a call result is not proof
-        that the receiver is a mutable list.
+        history. ``list.copy()`` of a finite list folds exactly; ``copy`` of a
+        proven list-shaped callsite rebinds through ``py.list_append``.
+        Unclassified callsites stay loud; a call result is not proof that the
+        receiver is a mutable list.
         """
+        from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
         from sugar_lift_py_tests.floor.list_value import ListValue
 
         def is_constructed_list_callsite(receiver: CallSiteValue) -> bool:
             if receiver.target_name in {"builtins.list", "list", "split"}:
                 return True
+            if receiver.target_name == "copy" and receiver.arg_values:
+                base = receiver.arg_values[0]
+                if isinstance(base, (ListValue, ComprehensionValue)):
+                    return True
+                return isinstance(base, CallSiteValue) and is_constructed_list_callsite(
+                    base
+                )
             return (
                 receiver.target_name == "py.subscript"
                 and bool(receiver.arg_values)
@@ -293,6 +303,15 @@ class CallSiteValue(FloorValue):
             and isinstance(self.arg_values[1], ListValue)
         ):
             return self.arg_values[1].append_with(value, site)
+
+        # Shallow copy of a finite list is the same element history: fold
+        # through ListValue so post-append state stays exact, never opaque.
+        if self.target_name == "copy" and self.arg_values:
+            base = self.arg_values[0]
+            if isinstance(base, ListValue):
+                return base.append_with(value, site)
+            if isinstance(base, ComprehensionValue):
+                return base.append_with(value, site)
 
         if not is_constructed_list_callsite(self):
             from sugar_lift_py_tests.factory import factory_panic_gap

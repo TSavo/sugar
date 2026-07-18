@@ -120,6 +120,114 @@ def test_append_on_callsite_rebinds_to_list_append_coordinate() -> None:
     assert returned.value.term.name == "py.list_append"
 
 
+def test_list_copy_appends_exact_post_state() -> None:
+    """``[1].copy().append(2)`` folds exact element history, never opaque."""
+    record = compose_block(
+        "    xs = [1].copy()\n    xs.append(2)\n    return xs\n",
+    )
+
+    assert record.statements == (ReturnValue(ListValue((TermValue(1), TermValue(2)))),)
+
+
+def test_list_value_copy_appends_exact_post_state() -> None:
+    """Parametrized finite list copy (pandas find_replace residual) folds."""
+    record = compose_block(
+        "    xs = expected_data.copy()\n    xs.append(3)\n    return xs\n",
+        binds={"expected_data": ListValue((TermValue(1), TermValue(2)))},
+    )
+
+    assert record.statements == (
+        ReturnValue(ListValue((TermValue(1), TermValue(2), TermValue(3)))),
+    )
+
+
+def test_list_shaped_callsite_copy_rebinds_through_list_append() -> None:
+    """``s.split(".").copy()`` is still list-shaped after copy."""
+    record = compose_block(
+        '    xs = s.split(".").copy()\n    xs.append("0")\n    return xs\n',
+        binds={"s": SymbolicValue(make_var("s"))},
+    )
+
+    assert isinstance(record, BlockValue)
+    returned = record.statements[0]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    assert returned.value.target_name == "list.append"
+    assert returned.value.term.name == "py.list_append"
+
+
+def test_opaque_copy_append_stays_loud() -> None:
+    """``opaque.copy().append`` is not blessed; copy alone is not list proof."""
+    from sugar_lift_py_tests.ir import ctor
+
+    opaque = CallSiteValue(
+        target_name="opaque_factory",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:opaque_factory", ()),
+        body=None,
+        site="append.py:1",
+    )
+    copied = CallSiteValue(
+        target_name="copy",
+        arg_values=(opaque,),
+        parameters=(),
+        term=ctor("call:copy", ()),
+        body=None,
+        site="append.py:1",
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    xs.append(1)\n    return xs\n",
+            binds={"xs": copied},
+        )
+
+    assert raised.value.info.owner == "CallSiteValue.append_with"
+    assert raised.value.info.observed == "CallSiteValue(copy)"
+
+
+def test_pandas_index_as_unit_chain_constructs_non_mutating_append() -> None:
+    """``date_range(...).as_unit(u).append(other)`` is Index-like (live residual)."""
+    from sugar_lift_py_tests.ir import ctor
+
+    date_range = CallSiteValue(
+        target_name="pandas.core.indexes.datetimes.date_range",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:pandas.core.indexes.datetimes.date_range", ()),
+        body=None,
+        site="append.py:1",
+    )
+    receiver = CallSiteValue(
+        target_name="as_unit",
+        arg_values=(date_range, StringValue("ns")),
+        parameters=(),
+        term=ctor("call:as_unit", ()),
+        body=None,
+        site="append.py:1",
+    )
+    other = CallSiteValue(
+        target_name="pandas.core.indexes.datetimes.date_range",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:pandas.core.indexes.datetimes.date_range", ()),
+        body=None,
+        site="append.py:1",
+    )
+
+    record = compose_block(
+        "    result = index.append(other)\n    return result\n",
+        binds={"index": receiver, "other": other},
+    )
+
+    returned = record.statements[0]
+    assert isinstance(returned, ReturnValue)
+    assert isinstance(returned.value, CallSiteValue)
+    assert returned.value.target_name == "append"
+    assert returned.value.arg_values == (receiver, other)
+
+
 @pytest.mark.parametrize(
     "target_name",
     (
@@ -254,6 +362,14 @@ def test_append_sugar_enrolls_finite_cast_witness() -> None:
 
     assert any(
         pair.name == "append_finite_cast_return" for pair in AppendCallSugar.witnesses()
+    )
+
+
+def test_append_sugar_enrolls_finite_copy_witness() -> None:
+    from sugar_lift_py_tests.sugar.append_call_sugar import AppendCallSugar
+
+    assert any(
+        pair.name == "append_finite_copy_return" for pair in AppendCallSugar.witnesses()
     )
 
 

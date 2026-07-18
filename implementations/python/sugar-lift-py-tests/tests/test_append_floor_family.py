@@ -99,3 +99,23 @@ def test_finite_cast_append_truthful_and_lying_twins_reach_opposite_verdicts(
     assert lying.verdict == pair.lying.expected == "unsat"
     assert "AppendCallSugar" in truthful.selected_sugars
     assert "AppendCallSugar" in lying.selected_sugars
+
+
+def test_finite_copy_append_truthful_and_lying_twins_reach_opposite_verdicts(
+    tmp_path,
+) -> None:
+    pair = next(
+        pair
+        for pair in AppendCallSugar.witnesses()
+        if pair.name == "append_finite_copy_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+    assert "AppendCallSugar" in truthful.selected_sugars
+    assert "AppendCallSugar" in lying.selected_sugars
