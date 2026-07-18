@@ -113,6 +113,24 @@ def _expr(src: str) -> SourceFragment:
     return _stmt(src).assign_value()
 
 
+def test_initializer_call_site_recognizes_ground_super_setattr() -> None:
+    call = _stmt('super().__setattr__("f", f)\n').initializer_call_site(
+        receiver_name="self"
+    )
+
+    assert call is not None
+    assert call.kind == "super_setattr"
+    assert call.target == "f"
+
+
+def test_initializer_call_site_rejects_non_ground_super_setattr_name() -> None:
+    call = _stmt("super().__setattr__(name, value)\n").initializer_call_site(
+        receiver_name="self"
+    )
+
+    assert call is None
+
+
 def test_name_id():
     site = _module("x = 1\n").fragments()[0].statements()[0].terms()[0]
     assert site.name_id() == "x"

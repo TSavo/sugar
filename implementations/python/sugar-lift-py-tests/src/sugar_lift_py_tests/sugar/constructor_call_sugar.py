@@ -186,6 +186,15 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
             "    return Ready(7).flag\n"
             "\n"
         )
+        super_setattr_prefix = (
+            "class CheckedCall:\n"
+            "    def __init__(self, f):\n"
+            '        super().__setattr__("f", f)\n'
+            "\n"
+            "def L():\n"
+            "    return CheckedCall('callable').f\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="constructor_field_return",
@@ -305,6 +314,17 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
                 lying=zero_arg_self_method_prefix
                 + "def test_zero_arg_self_method():\n"
                 + "    assert K() == 0\n",
+                family="source-body-constructor",
+            ),
+            _call_pair(
+                name="source_body_constructor_super_setattr",
+                owner_sugar=cls.__name__,
+                truthful=super_setattr_prefix
+                + "def test_super_setattr():\n"
+                + "    assert L() == 'callable'\n",
+                lying=super_setattr_prefix
+                + "def test_super_setattr():\n"
+                + "    assert L() == 'suppressed'\n",
                 family="source-body-constructor",
             ),
         )
@@ -1304,6 +1324,48 @@ class ObjectInitApply:
 
 
 @dataclass(frozen=True)
+class SuperSetAttrApply:
+    """Construct exact ``super().__setattr__("name", value)`` self state."""
+
+    attribute_name: str
+    value: object
+    self_name: str
+    site: object
+
+    def desugar(self, ctx=None) -> Outcome:
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+        from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_value
+
+        if ctx is None:
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed='super().__setattr__("name", value)',
+                requested="constructor self scope for ground attribute binding",
+                fix="apply super().__setattr__ only inside a constructor scope",
+            )
+        if ctx.temporal.value_if_bound(self.self_name) is None:
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed=f"unbound {self.self_name}",
+                requested="constructor self for super().__setattr__",
+                fix=f"bind `{self.self_name}` before applying super().__setattr__",
+            )
+        outcome = self.value.reduce(ctx)
+        if isinstance(outcome, Incomplete):
+            return outcome
+        value = complete_value(outcome, owner="super().__setattr__ value")
+        return Complete(
+            ScopeRebinds(((f"{self.self_name}.{self.attribute_name}", value),))
+        )
+
+
+@dataclass(frozen=True)
 class SelfMethodApply:
     """Apply a dug zero-arg ``self.method()`` body inside a source initializer.
 
@@ -1582,6 +1644,8 @@ def _constructor_initializer_factory_context(
             return False
         if call.kind == "explicit_base":
             return True
+        if call.kind == "super_setattr":
+            return call.target is not None
         if call.kind == "super":
             if super_init is None:
                 return False
@@ -1602,6 +1666,16 @@ def _constructor_initializer_factory_context(
             raise AssertionError("initializer claim constructed an unrecognized site")
         if call.kind == "explicit_base":
             return ExprSugar.new(site, build_ctx)
+        if call.kind == "super_setattr":
+            assert call.target is not None
+            arguments = call.call.call_args()
+            assert len(arguments) == 2
+            return SuperSetAttrApply(
+                attribute_name=call.target,
+                value=build_ctx.build_body(arguments[1], SugarRole.TERM),
+                self_name=self_name,
+                site=site,
+            )
         if call.kind == "super":
             assert super_init is not None
             kind, parameters, base_body = super_init
