@@ -23,18 +23,16 @@ from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.factory.sugar_constructors import (
-    IncompleteFunctionBody,
-    _class_decorators_preserve_identity,
-    _ctx_with_formal_binds,
-    build_control_flow_body_sugar,
-)
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.floor import ImportAliasValue, SymbolicValue
 from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.sugar.class_def_sugar import ClassDefSugar
 from sugar_lift_py_tests.sugar.call_sugar import (
     _module_sibling_function_nodes,
     _resolve_install_source_funcdef,
+)
+from sugar_lift_py_tests.sugar.control_flow_body_sugar import (
+    ControlFlowBodySugar,
+    select_control_flow_body_sugar as build_control_flow_body_sugar,
 )
 from sugar_lift_py_tests.sugar.try_sugar import TrySugar
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnessPair
@@ -66,7 +64,7 @@ def test_minimal_module_global_binds_on_body_dig() -> None:
         catalog=default_catalog(),
         name_resolver={"f": fn.node},
     )
-    body_ctx = _ctx_with_formal_binds(fn, ctx)
+    body_ctx = ControlFlowBodySugar.build_context(fn, ctx)
     bound = {b.name for b in body_ctx.temporal.bindings}
     assert "GLOBAL" in bound, bound
     assert "s" in bound, bound
@@ -105,7 +103,7 @@ def test_installed_source_body_binds_needed_sibling_assignment_and_import() -> N
         name_resolver={"f": fn.node},
     )
 
-    body_ctx = _ctx_with_formal_binds(fn, ctx)
+    body_ctx = ControlFlowBodySugar.build_context(fn, ctx)
     bindings = {binding.name: binding.value for binding in body_ctx.temporal.bindings}
     assert set(bindings) == {"provider", "TOKEN", "x"}, bindings
     assert isinstance(bindings["provider"], ImportAliasValue)
@@ -139,7 +137,7 @@ def test_installed_source_body_binds_prior_identity_decorated_class() -> None:
         name_resolver={"pkg.mod.f": fn.node},
     )
 
-    body_ctx = _ctx_with_formal_binds(fn, ctx)
+    body_ctx = ControlFlowBodySugar.build_context(fn, ctx)
 
     assert body_ctx.temporal.value_for("Result").name == "Result"
 
@@ -157,7 +155,7 @@ def test_pandas_accessor_registrar_is_authenticated_identity_decorator() -> None
         if fragment.observed == "ClassDef"
     )
 
-    assert _class_decorators_preserve_identity(statement) is True
+    assert ClassDefSugar.decorators_preserve_identity(statement) is True
 
 
 def test_installed_source_body_rejects_prior_unknown_decorated_class() -> None:
@@ -268,7 +266,7 @@ def test_installed_source_try_optional_import_binds_name() -> None:
         catalog=default_catalog(),
         name_resolver={"opt.mod.f": fn.node},
     )
-    body_ctx = _ctx_with_formal_binds(fn, ctx)
+    body_ctx = ControlFlowBodySugar.build_context(fn, ctx)
     bindings = {binding.name: binding.value for binding in body_ctx.temporal.bindings}
     assert "optional_mod" in bindings, bindings
     value = bindings["optional_mod"]
@@ -300,7 +298,7 @@ def test_installed_source_try_loads_earlier_module_dependency() -> None:
         name_resolver={"ordered.mod.f": fn.node},
     )
 
-    body_ctx = _ctx_with_formal_binds(fn, ctx)
+    body_ctx = ControlFlowBodySugar.build_context(fn, ctx)
 
     assert body_ctx.temporal.value_for("alias") is not None
 
@@ -329,7 +327,7 @@ def test_installed_source_try_cannot_load_later_module_dependency() -> None:
     )
 
     with pytest.raises(FactoryPanic, match=r"bind `seed` before reducing NameSugar"):
-        _ctx_with_formal_binds(fn, ctx)
+        ControlFlowBodySugar.build_context(fn, ctx)
 
 
 def test_module_try_dependency_prefix_witness_refutes_wrong_twin(
@@ -382,7 +380,7 @@ def test_minimal_module_global_without_sugar_tag_does_not_seed() -> None:
         temporal=ambient,
         name_resolver={"f": fn.node},
     )
-    body_ctx = _ctx_with_formal_binds(fn, ctx)
+    body_ctx = ControlFlowBodySugar.build_context(fn, ctx)
     bound = {b.name for b in body_ctx.temporal.bindings}
     assert bound == {"s"}, bound
 
@@ -403,7 +401,7 @@ def test_same_leaf_installed_modules_cannot_cross_bind_globals() -> None:
             catalog=default_catalog(),
             name_resolver={qualified_name: fn.node},
         )
-        return fn, _ctx_with_formal_binds(fn, ctx)
+        return fn, ControlFlowBodySugar.build_context(fn, ctx)
 
     alpha_fn, alpha = body_context(
         'TOKEN = "alpha"\ndef f():\n    return TOKEN\n',
@@ -451,25 +449,20 @@ def test_urlsafe_encode_translation_binds_from_install_source() -> None:
         catalog=default_catalog(),
         name_resolver=siblings or {"urlsafe_b64encode": fn.node},
     )
-    body_ctx = _ctx_with_formal_binds(fn, ctx)
+    body_ctx = ControlFlowBodySugar.build_context(fn, ctx)
     bound = {b.name for b in body_ctx.temporal.bindings}
     assert "_urlsafe_encode_translation" in bound, bound
     assert "s" in bound, bound
 
-    # Body dig may still Incomplete on nested b64encode asserts; the Name must
+    # Body dig may stay loud on nested b64encode asserts; the Name must
     # not be the first failure mode.
     try:
         sugar = build_control_flow_body_sugar(fn, ctx)
         blob = str(sugar.constraint_formulas())
         assert "_urlsafe_encode_translation" not in blob or "call:translate" in blob
-    except IncompleteFunctionBody as exc:
-        reason = str(exc.incomplete.effect)
+    except FactoryPanic as exc:
+        reason = str(exc)
         assert "bind `_urlsafe_encode_translation`" not in reason, reason
-        assert not (
-            isinstance(exc.incomplete, Incomplete)
-            and getattr(exc.incomplete.effect, "observed", None)
-            == "_urlsafe_encode_translation"
-        ), reason
 
 
 def test_nested_external_bridge_default_still_false() -> None:

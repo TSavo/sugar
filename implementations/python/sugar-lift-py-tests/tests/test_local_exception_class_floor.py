@@ -196,13 +196,15 @@ def test_install_source_raise_of_seeded_local_exception_constructs_exit(
 
 
 def test_names_in_fragment_collects_bare_exception_call_target() -> None:
-    from sugar_lift_py_tests.factory.sugar_constructors import _names_in_fragment
+    from sugar_lift_py_tests.sugar.statement_function_def_sugar import (
+        StatementFunctionDefSugar,
+    )
 
     raise_site = SourceFragment.from_source(
         "raise OpError(f'cannot convert {obj}')\n", "names.py"
     ).statements()[0]
 
-    names = _names_in_fragment(raise_site)
+    names = StatementFunctionDefSugar._names_in_fragment(raise_site)
 
     assert "OpError" in names
     assert "obj" in names

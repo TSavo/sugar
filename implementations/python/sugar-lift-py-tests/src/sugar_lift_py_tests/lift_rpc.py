@@ -1278,7 +1278,7 @@ def _module_import_temporal(
     panics on unbound import names even though the source stated the import.
     Imports use the same ``ImportAliasValue`` constructed by ``AliasSugar``.
     A valued single-name Assign or AnnAssign uses the same factory-built
-    ``BoundVar`` representation as ``_ctx_with_module_global_binds``. Multi-target
+    ``BoundVar`` representation as ``StatementFunctionDefSugar.module_context_for``. Multi-target
     / tuple-unpack Assign reduces through the same factory door
     (``TupleUnpackAssignSugar`` and siblings) so leaf names like ``START``/``END``
     stand for later NameSugar. Each assignment is independent: an unowned or

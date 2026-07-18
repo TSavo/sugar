@@ -2,7 +2,7 @@
 
 Membrane: fleet/CallSugar emits call:f(...) coordinates. This module resolves
 f to a FunctionDef (same module, from_import, or importable module.attr), tags
-install-source provenance, and builds a diggable body via build_bridge_body.
+install-source provenance, and builds a diggable body via ControlFlowBodySugar.
 
 Method dig: MethodCallSugar attaches body when recv is a known class ctor /
 from_import class and the method FunctionDef resolves on install source.
@@ -2814,10 +2814,9 @@ def _build_dig_body_impl(
     from dataclasses import replace
 
     from sugar_lift_py_tests.claim import SugarRole
-    from sugar_lift_py_tests.factory.sugar_constructors import (
-        IncompleteFunctionBody,
-        _ctx_with_formal_binds,
-        build_bridge_body,
+    from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+    from sugar_lift_py_tests.sugar.control_flow_body_sugar import (
+        ControlFlowBodySugar,
     )
     from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -2848,7 +2847,7 @@ def _build_dig_body_impl(
                 merged.update(siblings)
                 body_ctx = replace(body_ctx, name_resolver=merged)
 
-        formal_ctx = _ctx_with_formal_binds(fn_site, body_ctx)
+        formal_ctx = ControlFlowBodySugar.build_context(fn_site, body_ctx)
         oracle = DIG_BODY_ORACLE
         key = oracle.identity_key(fn_site)
         if key is not None and oracle_variant is not None:
@@ -2868,7 +2867,7 @@ def _build_dig_body_impl(
                     and frags[0].observed == "Return"
                     and frags[0].return_value() is not None
                 ):
-                    core = build_bridge_body(fn_site, body_ctx)
+                    core = ControlFlowBodySugar.build_bridge_body(fn_site, body_ctx)
                 else:
                     # Straight-line Assign* + Return → sequential dig body.
                     statements = tuple(
@@ -2896,10 +2895,9 @@ def _build_dig_body_impl(
             ):
                 pass
         return _contextualized_dig_body(core, formal_ctx)
-    except IncompleteFunctionBody:
-        # Named dig opacity: body reduction stayed Incomplete. Coordinate-only
-        # body=None — not a soft Exception swallow of construction gaps (#4203).
-        return None
+    except FactoryPanic:
+        # A selected unsupported body is a floor breach, never coordinate-only.
+        raise
 
 
 def dig_parameters_for_body(fn_site, arg_count: int, keyword_names: tuple[str, ...]):

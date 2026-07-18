@@ -43,6 +43,10 @@ class ImportSugar(Sugar, role=SugarRole.STATEMENT):
     def desugar(self, ctx: object = None) -> Outcome:
         return self._reduce_aliases(self.aliases, (), ctx)
 
+    def desugar_module_context(self, ctx: object) -> Outcome:
+        """Construct exact module targets for installed-module lexical replay."""
+        return self._reduce_module_aliases(self.aliases, (), ctx)
+
     @classmethod
     def _reduce_aliases(cls, remaining, values, ctx) -> Outcome:
         if not remaining:
@@ -50,6 +54,42 @@ class ImportSugar(Sugar, role=SugarRole.STATEMENT):
         head, *tail = remaining
         return head.reduce(ctx).and_then(
             lambda value: cls._reduce_aliases(tuple(tail), (*values, value), ctx)
+        )
+
+    @classmethod
+    def _reduce_module_aliases(cls, remaining, values, ctx) -> Outcome:
+        if not remaining:
+            return Complete(BlockValue(values))
+        head, *tail = remaining
+        return head.reduce(ctx).and_then(
+            lambda value: cls._reduce_module_aliases(
+                tuple(tail),
+                (
+                    *values,
+                    cls._module_alias_value(value, head),
+                ),
+                ctx,
+            )
+        )
+
+    @staticmethod
+    def _module_alias_value(value, alias_body):
+        from sugar_lift_py_tests.floor import ImportAliasValue
+
+        if not isinstance(value, ImportAliasValue):
+            raise TypeError(
+                f"ImportSugar expected ImportAliasValue, got {type(value).__name__}"
+            )
+        site = getattr(alias_body.sugar, "site", None)
+        target = (
+            value.name
+            if getattr(getattr(site, "node", None), "asname", None) is not None
+            else value.name.split(".", 1)[0]
+        )
+        return ImportAliasValue(
+            value.name,
+            value.bound_name,
+            import_target=target,
         )
 
     def walk_children(self):
