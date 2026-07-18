@@ -23,6 +23,11 @@ class Offender(NamedTuple):
     kind: str
 
 
+class Census(NamedTuple):
+    behavior: list[Offender]
+    structural: list[Offender]
+
+
 _TEMPORAL_CONSTRUCTORS = frozenset(
     {
         "TemporalContext",
@@ -66,6 +71,7 @@ class _FactoryConstructionScanner(ast.NodeVisitor):
         self.path = path
         self.scope = scope
         self.offenders: set[Offender] = set()
+        self.structural: set[Offender] = set()
         self.ir_builders: set[str] = set()
         self.function_depth = 0
 
@@ -93,15 +99,20 @@ class _FactoryConstructionScanner(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         has_ast_classification = _has_ast_classification(node)
-        if (
+        drives_semantics = (
             has_ast_classification
             and self._semantic_ast_is_forbidden()
             and (
                 self.scope == "sugar"
                 or _factory_function_drives_semantics(node, self.path)
             )
-        ):
+        )
+        if drives_semantics:
             self.add(node, "semantic-ast-classification")
+        elif has_ast_classification and self.scope == "factory":
+            self.structural.add(
+                Offender(self.path, node.lineno, "structural-ast-accessor")
+            )
         has_statement_walk = any(isinstance(child, ast.For) for child in ast.walk(node))
         has_observed_dispatch = any(
             isinstance(child, ast.Attribute) and child.attr == "observed"
@@ -214,10 +225,22 @@ def scan_source(
     *,
     scope: str | None = None,
 ) -> list[Offender]:
+    return scan_source_census(source, path, scope=scope).behavior
+
+
+def scan_source_census(
+    source: str,
+    path: str,
+    *,
+    scope: str | None = None,
+) -> Census:
     selected_scope = scope or ("factory" if path.startswith("factory/") else "sugar")
     scanner = _FactoryConstructionScanner(path, scope=selected_scope)
     scanner.visit(ast.parse(source, filename=path))
-    return sorted(scanner.offenders)
+    return Census(
+        behavior=sorted(scanner.offenders),
+        structural=sorted(scanner.structural),
+    )
 
 
 def scan_factory(factory_root: Path) -> list[Offender]:
@@ -235,19 +258,27 @@ def scan_factory(factory_root: Path) -> list[Offender]:
 
 
 def scan_package(package_root: Path) -> list[Offender]:
-    offenders: list[Offender] = []
+    return scan_package_census(package_root).behavior
+
+
+def scan_package_census(package_root: Path) -> Census:
+    behavior: list[Offender] = []
+    structural: list[Offender] = []
     for scope in ("factory", "sugar"):
         root = package_root / scope
         for path in sorted(root.rglob("*.py")):
             relative = path.relative_to(package_root).as_posix()
-            offenders.extend(
-                scan_source(
-                    path.read_text(encoding="utf-8"),
-                    relative,
-                    scope=scope,
-                )
+            census = scan_source_census(
+                path.read_text(encoding="utf-8"),
+                relative,
+                scope=scope,
             )
-    return sorted(offenders)
+            behavior.extend(census.behavior)
+            structural.extend(census.structural)
+    return Census(
+        behavior=sorted(behavior),
+        structural=sorted(structural),
+    )
 
 
 # Replacement plan per crime kind. Green for a site means this plan is
@@ -306,16 +337,19 @@ def format_offenders(offenders: list[Offender]) -> str:
     return "\n".join(f"{row.path}:{row.line}:{row.kind}" for row in offenders)
 
 
-def format_report(offenders: list[Offender]) -> str:
+def format_report(census: Census) -> str:
     """Full red report: R, kind tallies with replacement plans, then loci."""
     from collections import Counter
 
+    offenders = census.behavior
     by_kind = Counter(row.kind for row in offenders)
     by_file = Counter(row.path for row in offenders)
     lines = [
-        f"R_behavior_side_doors = {len(offenders)}",
+        f"R_behavior = {len(offenders)}",
+        f"I_structural_accessors = {len(census.structural)}",
         "Factory: select registered Sugar | FactoryPanic.",
-        "Sugar: construct behavior without raw-AST classification side doors.",
+        "Structural child projection and Sugar selection are informational, not gated.",
+        "Behavior construction and meaning decisions are gated.",
         "No allowlist. Compare consecutive runs for Delta R.",
         "",
         "By kind (replacement plan applies to every locus of that kind):",
@@ -333,6 +367,9 @@ def format_report(offenders: list[Offender]) -> str:
     lines.append("")
     lines.append("Loci:")
     lines.append(format_offenders(offenders))
+    lines.append("")
+    lines.append("Informational structural accessors (not gated):")
+    lines.append(format_offenders(census.structural))
     return "\n".join(lines)
 
 
@@ -387,7 +424,8 @@ def main() -> int:
         ),
     )
     args = parser.parse_args()
-    offenders = scan_package(args.package_root)
+    census = scan_package_census(args.package_root)
+    offenders = census.behavior
     if args.baseline_file is not None and args.baseline_file.exists():
         baseline = read_baseline(args.baseline_file)
         _, status = evaluate_ratchet(len(offenders), baseline)
@@ -398,10 +436,11 @@ def main() -> int:
             "FACTORY ZERO-TOLERANCE RED: "
             f"{len(offenders)} behavior-construction side doors"
         )
-        print(format_report(offenders))
+        print(format_report(census))
         return 1
     print("FACTORY ZERO-TOLERANCE GREEN: 0 behavior-construction side doors")
-    print("R_behavior_side_doors = 0")
+    print("R_behavior = 0")
+    print(f"I_structural_accessors = {len(census.structural)}")
     return 0
 
 

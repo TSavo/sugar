@@ -12,6 +12,8 @@ _SPEC.loader.exec_module(_SCANNER)
 
 scan_source = _SCANNER.scan_source
 scan_package = _SCANNER.scan_package
+scan_source_census = _SCANNER.scan_source_census
+scan_package_census = _SCANNER.scan_package_census
 format_offenders = _SCANNER.format_offenders
 
 
@@ -64,14 +66,15 @@ def binop_left(self):
     return SourceFragment.from_node(self.node.left, self.filename)
 """
 
-    assert (
-        scan_source(
-            source,
-            "factory/source_fragment.py",
-            scope="factory",
-        )
-        == []
+    census = scan_source_census(
+        source,
+        "factory/source_fragment.py",
+        scope="factory",
     )
+    assert census.behavior == []
+    assert [(row.line, row.kind) for row in census.structural] == [
+        (4, "structural-ast-accessor")
+    ]
 
 
 def test_semantic_factory_and_leaf_sugar_classifiers_are_loud() -> None:
@@ -97,14 +100,15 @@ def _structural_target(node):
     return node
 """
 
-    assert [
-        row.kind
-        for row in scan_source(
-            factory,
-            "factory/source_fragment.py",
-            scope="factory",
-        )
-    ] == ["semantic-ast-classification"]
+    factory_census = scan_source_census(
+        factory,
+        "factory/source_fragment.py",
+        scope="factory",
+    )
+    assert [row.kind for row in factory_census.behavior] == [
+        "semantic-ast-classification"
+    ]
+    assert factory_census.structural == []
     assert [
         row.kind
         for row in scan_source(
@@ -142,12 +146,13 @@ def resolve_external_source(node):
 
 
 def test_current_behavior_side_doors_are_stable_zero() -> None:
-    """Law: R_behavior_side_doors > 0 ⇒ red. No baseline may green non-zero debt.
+    """Law: R_behavior > 0 ⇒ red. Structural accessors are informational.
 
     Install-source dig AST inspection remains exempt only for re-entry classification
     (see scanner scope rules); every other reported locus is debt.
     """
-    offenders = scan_package(_KIT / "src" / "sugar_lift_py_tests")
+    census = scan_package_census(_KIT / "src" / "sugar_lift_py_tests")
+    offenders = census.behavior
 
     assert not any(
         row.path == "sugar/install_source_dig.py"
@@ -157,7 +162,7 @@ def test_current_behavior_side_doors_are_stable_zero() -> None:
 
     assert offenders == [], (
         "R>0 ⇒ CI red. Factory may only select Sugar | FactoryPanic; "
-        f"R_behavior_side_doors={len(offenders)}; promote each locus into Sugar "
+        f"R_behavior={len(offenders)}; promote each locus into Sugar "
         "and delete factory/sugar helpers (do not relocate):\n"
         + format_offenders(offenders)
     )
@@ -165,14 +170,28 @@ def test_current_behavior_side_doors_are_stable_zero() -> None:
 
 def test_scanner_report_names_r_and_replacement_plans() -> None:
     report = _SCANNER.format_report(
-        [
-            _SCANNER.Offender("factory/sugar_constructors.py", 17, "ir-construction"),
-            _SCANNER.Offender(
-                "factory/sugar_constructors.py", 10, "non-contract-third-result"
-            ),
-        ]
+        _SCANNER.Census(
+            behavior=[
+                _SCANNER.Offender(
+                    "factory/sugar_constructors.py", 17, "ir-construction"
+                ),
+                _SCANNER.Offender(
+                    "factory/sugar_constructors.py",
+                    10,
+                    "non-contract-third-result",
+                ),
+            ],
+            structural=[
+                _SCANNER.Offender(
+                    "factory/source_fragment.py",
+                    100,
+                    "structural-ast-accessor",
+                )
+            ],
+        )
     )
-    assert "R_behavior_side_doors = 2" in report
+    assert "R_behavior = 2" in report
+    assert "I_structural_accessors = 1" in report
     assert "ir-construction" in report
     assert "Promote IR operand" in report or "sugar_lift_py_tests.ir" in report
     assert "non-contract-third-result" in report
