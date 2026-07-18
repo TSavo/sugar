@@ -2662,6 +2662,12 @@ class ContextualizedDigBody:
                     requested="decidable source initializer statement",
                     fix="construct the initializer statement or panic loudly",
                 )
+            # SuperInitApply / SelfMethodApply project a reduced exceptional
+            # exit as ExceptionalExitValue. That is already terminal control-
+            # flow testimony — accept it before contribution routing, or the
+            # default FloorValue continue face would silently skip the raise.
+            if type(getattr(outcome, "value", None)) is ExceptionalExitValue:
+                return cur, tuple(assertions), outcome.value
             contribution = tuple(outcome.contribution())
             raises = tuple(item for item in contribution if type(item) is RaiseValue)
             if raises:

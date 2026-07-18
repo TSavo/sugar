@@ -210,6 +210,135 @@ def test_source_initializer_with_arbitrary_expression_stays_loud() -> None:
     assert raised.value.info.requested == "constructed source initializer"
 
 
+def test_zero_arg_self_method_constructor_recovers_method_self_state() -> None:
+    """Exact zero-arg self.method() digs local body and recovers self.* rebinds."""
+    outcome = _outcome(
+        "class Ready:\n"
+        "    def __init__(self, x):\n"
+        "        self.x = x\n"
+        "        self._ready()\n"
+        "\n"
+        "    def _ready(self):\n"
+        "        self.flag = 1\n",
+        "Ready(7)",
+        filename="constructor_zero_arg_self_method.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert _field_values(outcome.value) == {
+        "x": TermValue(7),
+        "flag": TermValue(1),
+    }
+
+
+def test_zero_arg_self_method_pass_only_keeps_prior_self_state() -> None:
+    outcome = _outcome(
+        "class Ready:\n"
+        "    def __init__(self, x):\n"
+        "        self.x = x\n"
+        "        self._noop()\n"
+        "\n"
+        "    def _noop(self):\n"
+        "        pass\n",
+        "Ready(3)",
+        filename="constructor_zero_arg_self_pass.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ObjectValue
+    assert _field_values(outcome.value) == {"x": TermValue(3)}
+
+
+def test_zero_arg_self_method_raise_constructs_exceptional_exit() -> None:
+    bad = _outcome(
+        "class Checked:\n"
+        "    def __init__(self, ok):\n"
+        "        self.ok = ok\n"
+        "        self._validate()\n"
+        "\n"
+        "    def _validate(self):\n"
+        "        if not self.ok:\n"
+        "            raise ValueError('bad')\n",
+        "Checked(False)",
+        filename="constructor_zero_arg_self_raise.py",
+    )
+    ok = _outcome(
+        "class Checked:\n"
+        "    def __init__(self, ok):\n"
+        "        self.ok = ok\n"
+        "        self._validate()\n"
+        "\n"
+        "    def _validate(self):\n"
+        "        if not self.ok:\n"
+        "            raise ValueError('bad')\n",
+        "Checked(True)",
+        filename="constructor_zero_arg_self_raise_ok.py",
+    )
+
+    assert type(bad) is Complete
+    assert type(bad.value) is ExceptionalExitValue
+    assert bad.value.effect.exception_name == "ValueError"
+    assert type(ok) is Complete
+    assert type(ok.value) is ObjectValue
+    ok_fields = _field_values(ok.value)
+    assert set(ok_fields) == {"ok"}
+    assert type(ok_fields["ok"]).__name__ == "TrueBoolLiteralSugar"
+
+
+def test_zero_arg_self_method_with_return_stays_loud() -> None:
+    """Return-bearing helpers are not expression-statement constructible yet."""
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class Ready:\n"
+            "    def __init__(self, x):\n"
+            "        self.x = x\n"
+            "        self._ready()\n"
+            "\n"
+            "    def _ready(self):\n"
+            "        self.flag = 1\n"
+            "        return self.flag\n",
+            "Ready(7)",
+            filename="constructor_zero_arg_self_return.py",
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "constructed source initializer"
+
+
+def test_zero_arg_self_method_missing_stays_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class Ready:\n"
+            "    def __init__(self, x):\n"
+            "        self.x = x\n"
+            "        self._missing()\n",
+            "Ready(7)",
+            filename="constructor_zero_arg_self_missing.py",
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "constructed source initializer"
+
+
+def test_self_method_with_args_stays_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class Ready:\n"
+            "    def __init__(self, x):\n"
+            "        self.x = x\n"
+            "        self._set(1)\n"
+            "\n"
+            "    def _set(self, flag):\n"
+            "        self.flag = flag\n",
+            "Ready(7)",
+            filename="constructor_self_method_args.py",
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "constructed source initializer"
+
+
 def test_pass_only_constructor_builds_empty_object() -> None:
     """MyTz-shaped: ``pass`` is exact no-op construction, not RuntimeEffect."""
     outcome = _outcome(
@@ -875,6 +1004,25 @@ def test_explicit_base_initializer_truthful_sat_wrong_twin_unsat(tmp_path) -> No
         for witness in ConstructorCallSugar.witnesses()
         if isinstance(witness, SugarWitnessPair)
         and witness.name == "source_body_constructor_explicit_base_initializer"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_zero_arg_self_method_constructor_truthful_sat_wrong_twin_unsat(
+    tmp_path,
+) -> None:
+    pair = next(
+        witness
+        for witness in ConstructorCallSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "source_body_constructor_zero_arg_self_method"
     )
 
     truthful = run_source_through_real_solver(

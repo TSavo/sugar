@@ -174,6 +174,19 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
             "    return MarkedText('evidence').marker\n"
             "\n"
         )
+        zero_arg_self_method_prefix = (
+            "class Ready:\n"
+            "    def __init__(self, x):\n"
+            "        self.x = x\n"
+            "        self._ready()\n"
+            "\n"
+            "    def _ready(self):\n"
+            "        self.flag = 1\n"
+            "\n"
+            "def K():\n"
+            "    return Ready(7).flag\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="constructor_field_return",
@@ -282,6 +295,17 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
                 lying=explicit_base_prefix
                 + "def test_explicit_base():\n"
                 + "    assert J() == 'suppressed'\n",
+                family="source-body-constructor",
+            ),
+            _call_pair(
+                name="source_body_constructor_zero_arg_self_method",
+                owner_sugar=cls.__name__,
+                truthful=zero_arg_self_method_prefix
+                + "def test_zero_arg_self_method():\n"
+                + "    assert K() == 1\n",
+                lying=zero_arg_self_method_prefix
+                + "def test_zero_arg_self_method():\n"
+                + "    assert K() == 0\n",
                 family="source-body-constructor",
             ),
         )
@@ -541,8 +565,9 @@ def _source_initializer_needs_statement_door(
 
     Admitted non-field statements: local assignment, annotated self bind,
     assert, if, raise, import, import-from, exact ``super().__init__(...)``,
-    authenticated ``DeclaredImportedBase.__init__(self, ...)``, and pass
-    (no-op). Arbitrary expression calls stay loud.
+    authenticated ``DeclaredImportedBase.__init__(self, ...)``, exact zero-arg
+    ``self.method()`` (dug or stay loud), and pass (no-op). Arbitrary
+    expression calls stay loud.
     """
 
     needs_statement_door = False
@@ -600,6 +625,12 @@ def _source_initializer_needs_statement_door(
             # path cannot recover. Force the ordinary-statement door.
             needs_statement_door = True
             continue
+        if _is_exact_zero_arg_self_method_node(node, receiver_name):
+            # self.method() may rebind self.* through a dug local method body.
+            # Undiggable methods refuse the source strategy rather than
+            # SupportValue-skipping the call.
+            needs_statement_door = True
+            continue
         explicit_base = _explicit_imported_base_initializer(
             node,
             receiver_name=receiver_name,
@@ -633,6 +664,30 @@ def _is_exact_super_init_node(node) -> bool:
 
 def _is_exact_super_init_fragment(statement) -> bool:
     return _is_exact_super_init_node(statement.node)
+
+
+def _is_exact_zero_arg_self_method_node(node, receiver_name: str) -> bool:
+    """Exact zero-arg ``self.method()`` expression statement shape."""
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and not node.value.args
+        and not node.value.keywords
+        and isinstance(node.value.func, ast.Attribute)
+        and isinstance(node.value.func.value, ast.Name)
+        and node.value.func.value.id == receiver_name
+        and node.value.func.attr != "__init__"
+    )
+
+
+def _is_exact_zero_arg_self_method_fragment(statement, receiver_name: str) -> bool:
+    return _is_exact_zero_arg_self_method_node(statement.node, receiver_name)
+
+
+def _zero_arg_self_method_name(node, receiver_name: str) -> str | None:
+    if not _is_exact_zero_arg_self_method_node(node, receiver_name):
+        return None
+    return node.value.func.attr
 
 
 def _explicit_imported_base_initializer(
@@ -1180,8 +1235,11 @@ def _source_body_constructor_strategy(
 
     Exact ``super().__init__(...)`` statements are expanded into the static
     base ``__init__`` body so constructed self state includes base fields
-    (e.g. ``Type.__init__`` binding ``self.name``). Unresolvable super remains
-    unconstructed — no empty-success SupportValue arm.
+    (e.g. ``Type.__init__`` binding ``self.name``). Exact zero-arg
+    ``self.method()`` statements expand into the local dug method body so
+    method-side ``self.*`` rebinds are recovered. Unresolvable super or
+    undiggable self-methods remain unconstructed — no empty-success
+    SupportValue arm.
     """
     if class_fields or not init.function_has_simple_positional_params():
         return None
@@ -1205,6 +1263,15 @@ def _source_body_constructor_strategy(
         init=init,
         class_site=class_site,
         target=target,
+        ctx=ctx,
+        self_name=params[0],
+    )
+    if body is None:
+        return None
+    body = _rewrite_self_methods_in_constructor_body(
+        body,
+        init=init,
+        class_site=class_site,
         ctx=ctx,
         self_name=params[0],
     )
@@ -1335,6 +1402,131 @@ class SuperInitApply:
             if binding.name.startswith(field_prefix)
         )
         return Complete(ScopeRebinds(bindings))
+
+
+@dataclass(frozen=True)
+class SelfMethodApply:
+    """Apply a dug zero-arg ``self.method()`` body inside a source initializer.
+
+    Not a catalog sugar: ConstructorCallSugar synthesizes it when the local
+    class defines a diggable zero-arg method. ``desugar`` recovers method-side
+    ``self.*`` rebinds as ``ScopeRebinds`` so the constructor scope keeps the
+    exact object state. Undiggable methods never reach this door.
+    """
+
+    method_body: object
+    method_parameters: tuple[str, ...]
+    self_name: str
+    method_name: str
+    site: object
+
+    def desugar(self, ctx=None) -> Outcome:
+        from sugar_lift_py_tests.floor.call_site_value import _ctx_with_curried_args
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.install_source_dig import ContextualizedDigBody
+
+        if ctx is None:
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed=f"self.{self.method_name}()",
+                requested="constructor self scope for zero-arg method",
+                fix="apply self.method() only inside a constructor scope",
+            )
+        self_value = ctx.temporal.value_if_bound(self.self_name)
+        if self_value is None:
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed=f"unbound {self.self_name}",
+                requested=f"constructor self for self.{self.method_name}()",
+                fix=(
+                    f"bind `{self.self_name}` before expanding "
+                    f"self.{self.method_name}()"
+                ),
+            )
+        if len(self.method_parameters) != 1:
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed=(
+                    f"self.{self.method_name}() arity for params "
+                    f"{self.method_parameters}"
+                ),
+                requested="zero-arg method self parameter only",
+                fix=(
+                    "construct only exact zero-arg self.method() shapes or leave "
+                    "this call loud"
+                ),
+            )
+        contextualized = self.method_body.sugar
+        if not isinstance(contextualized, ContextualizedDigBody):
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed=type(contextualized).__name__,
+                requested="dug zero-arg self.method body",
+                fix=(
+                    f"dig `{self.method_name}` before expanding "
+                    f"self.{self.method_name}()"
+                ),
+            )
+        curried = _ctx_with_curried_args(
+            ctx, self.method_parameters, (self_value,)
+        )
+        final_ctx, assertions, terminal = contextualized.initializer_scope_after(
+            curried
+        )
+        if terminal is not None:
+            return Complete(terminal)
+        if assertions:
+            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+            factory_panic_gap(
+                owner="ConstructorCallSugar",
+                blame=str(self.site),
+                observed=f"self.{self.method_name}() assertion",
+                requested="assertion-free zero-arg self.method expansion",
+                fix=(
+                    "construct self.method() bodies that assert through the "
+                    "constructor assertion face, or leave this call loud"
+                ),
+            )
+        method_self = self.method_parameters[0]
+        field_prefix = f"{method_self}."
+        bindings = tuple(
+            (
+                f"{self.self_name}.{binding.name.removeprefix(field_prefix)}",
+                binding.value,
+            )
+            for binding in final_ctx.temporal.bindings
+            if binding.name.startswith(field_prefix)
+        )
+        return Complete(ScopeRebinds(bindings))
+
+
+def _resolve_local_class_method(class_site, method_name: str):
+    """Local ClassDef FunctionDef for ``method_name``, or None."""
+    if class_site is None:
+        return None
+    return next(
+        (
+            statement
+            for statement in class_site.class_body()
+            if statement.observed == "FunctionDef"
+            and statement.function_name() == method_name
+        ),
+        None,
+    )
 
 
 def _resolve_super_init_for_class(class_site, target: str, ctx):
@@ -1487,6 +1679,98 @@ def _rewrite_super_inits_in_constructor_body(
                     base_parameters=base_parameters,
                     arguments=super_args,
                     self_name=self_name,
+                    site=fragment,
+                ),
+                role=SugarRole.STATEMENT,
+            )
+        )
+    new_sequential = SequentialDigBody(
+        statements=tuple(rewritten),
+        fn_site=sequential.fn_site,
+        contextmanager_yield=sequential.contextmanager_yield,
+    )
+    new_core = SugarBody(sugar=new_sequential, role=contextualized.body.role)
+    return SugarBody(
+        sugar=dc_replace(contextualized, body=new_core),
+        role=body.role,
+        audit_row=body.audit_row,
+    )
+
+
+def _rewrite_self_methods_in_constructor_body(
+    body, *, init, class_site, ctx, self_name: str
+):
+    """Replace exact zero-arg self.method() dig statements with SelfMethodApply.
+
+    Returns the rewritten body, or None when a zero-arg self.method() is present
+    but cannot be constructed (keeps the constructor loud — never SupportValue
+    skip of an undiggable method effect).
+    """
+    from dataclasses import replace as dc_replace
+
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        ContextualizedDigBody,
+        SequentialDigBody,
+        build_dig_body,
+    )
+    from sugar_lift_py_tests.sugar_body import SugarBody
+
+    contextualized = getattr(body, "sugar", None)
+    if not isinstance(contextualized, ContextualizedDigBody):
+        return body
+    sequential = getattr(contextualized.body, "sugar", None)
+    if not isinstance(sequential, SequentialDigBody):
+        return body
+    frags = tuple(init.function_body())
+    dig_statements = sequential.statements
+    if len(frags) != len(dig_statements):
+        return body
+
+    if not any(
+        _is_exact_zero_arg_self_method_fragment(fragment, self_name)
+        for fragment in frags
+    ):
+        return body
+
+    # Cache dug methods so repeated self.method() calls share one body dig.
+    dug_methods: dict[str, tuple[object, tuple[str, ...]]] = {}
+    rewritten = []
+    for fragment, dig_statement in zip(frags, dig_statements, strict=True):
+        method_name = _zero_arg_self_method_name(fragment.node, self_name)
+        if method_name is None:
+            rewritten.append(dig_statement)
+            continue
+        if method_name not in dug_methods:
+            method_fn = _resolve_local_class_method(class_site, method_name)
+            if method_fn is None:
+                return None
+            if not method_fn.function_has_simple_positional_params():
+                return None
+            method_params = tuple(method_fn.function_params())
+            # Exact zero-arg call: method must take only self (no extra
+            # required positional parameters / no defaults to fill).
+            min_args, max_args = method_fn.function_positional_arity()
+            if min_args != 1 or max_args != 1 or len(method_params) != 1:
+                return None
+            # Refuse methods that return: expression-statement calls discard
+            # the value, but initializer_scope_after treats Return as halt.
+            if any(
+                statement.observed == "Return"
+                for statement in method_fn.function_body()
+            ):
+                return None
+            method_body = build_dig_body(method_fn, ctx)
+            if method_body is None:
+                return None
+            dug_methods[method_name] = (method_body, method_params)
+        method_body, method_params = dug_methods[method_name]
+        rewritten.append(
+            SugarBody(
+                sugar=SelfMethodApply(
+                    method_body=method_body,
+                    method_parameters=method_params,
+                    self_name=self_name,
+                    method_name=method_name,
                     site=fragment,
                 ),
                 role=SugarRole.STATEMENT,
