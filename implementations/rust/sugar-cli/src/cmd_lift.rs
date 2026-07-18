@@ -6194,6 +6194,8 @@ const REPORT_PYTHON_COORDINATE_CONSTRUCTORS: &[&str] = &[
     "py.slice",
     "py.star",
     "py.subscript",
+    // ImportAliasValue.to_term — inert import coordinate, not an open effect.
+    "python:import_alias",
 ];
 
 const REPORT_PYTHON_EFFECT_CONSTRUCTORS: &[&str] = &[
