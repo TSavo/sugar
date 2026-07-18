@@ -518,6 +518,132 @@ def test_numpy_assert_raises_regex_suppresses_the_exact_exception() -> None:
     assert not payload.effects
 
 
+def test_external_error_raised_issue_representative_completes() -> None:
+    """#5129 locus: pandas/tests/util/test_util.py external_error_raised with-body."""
+    payload = lift_file_payload(
+        "import pandas._testing as tm\n"
+        "def test_external_error_raised():\n"
+        "    with tm.external_error_raised(TypeError):\n"
+        "        raise TypeError('Should not check this error message')\n",
+        "pandas/tests/util/test_util.py",
+    )
+
+    assert not payload.effects
+
+
+def test_guarded_pytest_raises_or_nullcontext_issue_representative_completes() -> None:
+    """#5129 locus: guarded manager choice like style/test_style.py:740."""
+    payload = lift_file_payload(
+        "import contextlib\n"
+        "import pytest\n"
+        "def test_map_subset(slice_):\n"
+        "    if isinstance(slice_, list):\n"
+        "        ctx = pytest.raises(KeyError, match='C')\n"
+        "    else:\n"
+        "        ctx = contextlib.nullcontext()\n"
+        "    with ctx:\n"
+        "        result = 1\n"
+        "    return result\n",
+        "pandas/tests/io/formats/style/test_style.py",
+    )
+
+    assert not any(
+        type(row.effect).__name__ == "ContextManagerExitRuntimeEffect"
+        for row in payload.effects
+    )
+
+
+def test_chunked_read_csv_reader_proves_non_suppressing_exit() -> None:
+    """Keyword chunksize=1 selects TextFileReader whose digged __exit__ propagates."""
+    from sugar_lift_py_tests.sugar.keyword_call_sugar import (
+        _chunked_pandas_reader_exit_contract,
+    )
+
+    contract = _chunked_pandas_reader_exit_contract(
+        "read_csv",
+        (("chunksize", TermValue(1)),),
+    )
+    assert contract == ExitSuppressionContract.never_suppresses()
+    assert (
+        _chunked_pandas_reader_exit_contract(
+            "read_csv",
+            (("chunksize", TermValue(0)),),
+        )
+        is None
+    )
+    assert (
+        _chunked_pandas_reader_exit_contract(
+            "project.open",
+            (("chunksize", TermValue(1)),),
+        )
+        is None
+    )
+
+
+def test_chunked_reader_raise_carrying_with_body_propagates() -> None:
+    """#5129 optional mass: with reader from read_csv(..., chunksize=1) + raise."""
+    payload = lift_file_payload(
+        "def test_context_manager(parser, path):\n"
+        "    reader = parser.read_csv(path, chunksize=1)\n"
+        "    try:\n"
+        "        with reader:\n"
+        "            raise AssertionError\n"
+        "    except AssertionError:\n"
+        "        return 1\n",
+        "pandas/tests/io/parser/common/test_file_buffer_url.py",
+    )
+
+    assert not any(
+        "WithSugar" in type(row.effect).__name__
+        or "ContextManagerExit" in type(row.effect).__name__
+        for row in payload.effects
+    )
+
+
+def test_keyword_method_call_sets_runtime_dispatch_receiver() -> None:
+    """Keyword method calls carry the receiver for sealed runtime manager exit."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.claim import SugarRole
+    from sugar_lift_py_tests.context import FactoryBuildContext
+    from sugar_lift_py_tests.factory import SourceFragment
+    from sugar_lift_py_tests.factory.build import build_node, default_catalog
+    from sugar_lift_py_tests.ir import make_var
+
+    call = (
+        SourceFragment.from_source("parser.read_csv(path, chunksize=1)\n", "t.py")
+        .statements()[0]
+        .statements()[0]
+        .expr_value()
+    )
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    temporal = ctx.temporal.bind_value(
+        "parser", SymbolicValue(make_var("parser"))
+    ).bind_value("path", SymbolicValue(make_var("path")))
+    ctx = replace(ctx, temporal=temporal)
+    outcome = build_node(
+        call, filename="t.py", role=SugarRole.TERM, ctx=ctx
+    ).sugar.desugar(ctx)
+    manager = outcome.value
+    assert isinstance(manager, CallSiteValue)
+    assert manager.runtime_dispatch_receiver is not None
+    assert manager.exit_suppression == ExitSuppressionContract.never_suppresses()
+
+
+def test_symbolic_chunksize_does_not_invent_reader_exit_contract() -> None:
+    from sugar_lift_py_tests.sugar.keyword_call_sugar import (
+        _chunked_pandas_reader_exit_contract,
+    )
+
+    assert (
+        _chunked_pandas_reader_exit_contract(
+            "read_csv",
+            (("chunksize", SymbolicValue(make_var("n"))),),
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     ("coordinate", "exception_name"),
     (
