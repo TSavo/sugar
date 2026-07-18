@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass, replace
 
-from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.claim import SugarCatalog, SugarClaim, SugarRole
 from sugar_lift_py_tests.factory import (
     FactoryAuditRow,
     FactoryGapInfo,
@@ -476,7 +475,7 @@ def _strategy_from_init(
     )
     if bytesio is not None:
         return bytesio
-    if _source_initializer_needs_statement_door(
+    if _source_initializer_requires_body_reduction(
         init,
         params[0],
         class_site=class_site,
@@ -550,7 +549,7 @@ def _strategy_from_init(
     )
 
 
-def _source_initializer_needs_statement_door(
+def _source_initializer_requires_body_reduction(
     init,
     receiver_name: str,
     *,
@@ -570,161 +569,61 @@ def _source_initializer_needs_statement_door(
     expression calls stay loud.
     """
 
-    needs_statement_door = False
-    declared_bases = (
-        {
-            coordinate
-            for base in class_site.class_bases()
-            if (coordinate := base.dotted_expr_name()) is not None
-        }
-        if class_site is not None
-        else set()
-    )
+    requires_body_reduction = False
+    declared_bases = _authenticated_initializer_bases(class_site, ctx)
     for statement in init.function_body():
-        node = statement.node
         if (
-            isinstance(node, ast.Expr)
-            and isinstance(node.value, ast.Constant)
-            and isinstance(node.value.value, str)
+            statement.observed == "Expr"
+            and statement.expr_value().observed == "PrimitiveLiteral"
+            and isinstance(statement.expr_value().literal_value(), str)
         ):
             continue
-        if isinstance(node, ast.Pass):
+        if statement.observed == "Pass":
             # No-op support; field-only still handles pass-only / pass+fields.
             continue
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            target = node.targets[0]
-            if isinstance(target, ast.Name):
-                needs_statement_door = True
+        if statement.observed == "Assign":
+            targets = statement.assign_targets()
+            if len(targets) != 1:
+                return False
+            target = targets[0]
+            if target.observed == "Name":
+                requires_body_reduction = True
                 continue
             if (
-                isinstance(target, ast.Attribute)
-                and isinstance(target.value, ast.Name)
-                and target.value.id == receiver_name
+                statement.assign_target_attribute_receiver_name() == receiver_name
+                and statement.assign_target_attribute_name() is not None
             ):
                 continue
             return False
         if (
-            isinstance(node, ast.AnnAssign)
-            and node.value is not None
-            and isinstance(node.target, ast.Attribute)
-            and isinstance(node.target.value, ast.Name)
-            and node.target.value.id == receiver_name
+            statement.observed == "AnnAssign"
+            and statement.annassign_value() is not None
+            and statement.annassign_target().observed == "Attribute"
+            and statement.annassign_target().dotted_expr_name() is not None
+            and statement.annassign_target().dotted_expr_name().partition(".")[0]
+            == receiver_name
         ):
-            needs_statement_door = True
+            requires_body_reduction = True
             continue
-        if isinstance(node, ast.Assert):
-            needs_statement_door = True
+        if statement.observed == "Assert":
+            requires_body_reduction = True
             continue
-        if isinstance(node, (ast.If, ast.Raise, ast.Import, ast.ImportFrom)):
+        if statement.observed in {"If", "Raise", "Import", "ImportFrom"}:
             # Branch, exceptional exit, and module bind are ordinary dig
             # statements. Dig constructs them or stays loud — never empty-success.
-            needs_statement_door = True
+            requires_body_reduction = True
             continue
-        if _is_exact_super_init_node(node):
-            # super().__init__(...) carries base self-state that the field-only
-            # path cannot recover. Force the ordinary-statement door.
-            needs_statement_door = True
-            continue
-        if _is_exact_zero_arg_self_method_node(node, receiver_name):
-            # self.method() may rebind self.* through a dug local method body.
-            # Undiggable methods refuse the source strategy rather than
-            # SupportValue-skipping the call.
-            needs_statement_door = True
-            continue
-        explicit_base = _explicit_imported_base_initializer(
-            node,
+        initializer_call = statement.initializer_call_site(
             receiver_name=receiver_name,
             declared_bases=declared_bases,
-            ctx=ctx,
         )
-        if explicit_base:
-            # Declared imported base.__init__(self, ...) is the explicit spelling
-            # of the same statement-door need as super().__init__.
-            needs_statement_door = True
+        if initializer_call is not None:
+            # The factory grammar boundary authenticated the initializer call.
+            # Dig constructs it or stays loud; no expression is skipped.
+            requires_body_reduction = True
             continue
         return False
-    return needs_statement_door
-
-
-def _is_exact_super_init_node(node) -> bool:
-    """Exact zero-arg ``super().__init__(...)`` expression statement shape."""
-    return (
-        isinstance(node, ast.Expr)
-        and isinstance(node.value, ast.Call)
-        and not node.value.keywords
-        and isinstance(node.value.func, ast.Attribute)
-        and node.value.func.attr == "__init__"
-        and isinstance(node.value.func.value, ast.Call)
-        and isinstance(node.value.func.value.func, ast.Name)
-        and node.value.func.value.func.id == "super"
-        and not node.value.func.value.args
-        and not node.value.func.value.keywords
-    )
-
-
-def _is_exact_super_init_fragment(statement) -> bool:
-    return _is_exact_super_init_node(statement.node)
-
-
-def _is_exact_zero_arg_self_method_node(node, receiver_name: str) -> bool:
-    """Exact zero-arg ``self.method()`` expression statement shape."""
-    return (
-        isinstance(node, ast.Expr)
-        and isinstance(node.value, ast.Call)
-        and not node.value.args
-        and not node.value.keywords
-        and isinstance(node.value.func, ast.Attribute)
-        and isinstance(node.value.func.value, ast.Name)
-        and node.value.func.value.id == receiver_name
-        and node.value.func.attr != "__init__"
-    )
-
-
-def _is_exact_zero_arg_self_method_fragment(statement, receiver_name: str) -> bool:
-    return _is_exact_zero_arg_self_method_node(statement.node, receiver_name)
-
-
-def _zero_arg_self_method_name(node, receiver_name: str) -> str | None:
-    if not _is_exact_zero_arg_self_method_node(node, receiver_name):
-        return None
-    return node.value.func.attr
-
-
-def _explicit_imported_base_initializer(
-    node: ast.AST,
-    *,
-    receiver_name: str,
-    declared_bases: set[str],
-    ctx,
-) -> bool:
-    """Authenticate ``DeclaredBase.__init__(self, ...)`` against class ancestry."""
-
-    if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
-        return False
-    call = node.value
-    if call.keywords or not call.args:
-        return False
-    receiver = call.args[0]
-    if not isinstance(receiver, ast.Name) or receiver.id != receiver_name:
-        return False
-    function = call.func
-    if not isinstance(function, ast.Attribute) or function.attr != "__init__":
-        return False
-    base_coordinate = _ast_dotted_name(function.value)
-    if base_coordinate is None or base_coordinate not in declared_bases:
-        return False
-    root_name = base_coordinate.partition(".")[0]
-    return _import_target_for_name(ctx, root_name) is not None
-
-
-def _ast_dotted_name(node: ast.AST) -> str | None:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        receiver = _ast_dotted_name(node.value)
-        if receiver is not None:
-            return f"{receiver}.{node.attr}"
-    return None
+    return requires_body_reduction
 
 
 def _source_bytesio_strategy(
@@ -819,6 +718,23 @@ def _import_target_for_name(ctx, name: str) -> str | None:
         return None
     module, attr = imported
     return f"{module}.{attr}" if module else attr
+
+
+def _authenticated_initializer_bases(class_site, ctx) -> frozenset[str]:
+    """Declared imported bases eligible for explicit ``Base.__init__`` calls."""
+    if class_site is None:
+        return frozenset()
+    coordinates = []
+    for base in class_site.class_bases():
+        coordinate = base.dotted_expr_name()
+        if coordinate is None:
+            continue
+        import_target = _import_target_for_name(ctx, coordinate.partition(".")[0])
+        if import_target is None or import_target in {"io.BytesIO", "_io.BytesIO"}:
+            # BytesIO owns a stricter evidence-bearing constructor recognizer.
+            continue
+        coordinates.append(coordinate)
+    return frozenset(coordinates)
 
 
 def _generated_strategy(
@@ -979,7 +895,7 @@ def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
 def _inherited_bytesio_strategy(site, ctx, target, class_site, methods, base):
     """Carry the exact one-argument ``io.BytesIO`` inherited constructor seed."""
     has_local_new = any(
-        _statement_binds_name(statement.node, "__new__")
+        statement.binds_name_anywhere("__new__")
         for statement in class_site.class_body()
     )
     if (
@@ -1005,31 +921,6 @@ def _inherited_bytesio_strategy(site, ctx, target, class_site, methods, base):
         class_fields=_class_fields(class_site, ctx),
         identity=site.blame,
     )
-
-
-def _statement_binds_name(node, name: str) -> bool:
-    """Conservatively reject any class-body statement that may bind ``name``."""
-    for descendant in ast.walk(node):
-        if (
-            isinstance(
-                descendant,
-                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-            )
-            and descendant.name == name
-        ):
-            return True
-        if (
-            isinstance(descendant, ast.Name)
-            and isinstance(descendant.ctx, ast.Store)
-            and descendant.id == name
-        ):
-            return True
-        if isinstance(descendant, (ast.Import, ast.ImportFrom)) and any(
-            (alias.asname or alias.name.split(".", 1)[0]) == name
-            for alias in descendant.names
-        ):
-            return True
-    return False
 
 
 def _base_type_coordinate(base):
@@ -1255,25 +1146,19 @@ def _source_body_constructor_strategy(
 
     from sugar_lift_py_tests.sugar.install_source_dig import build_dig_body
 
-    body = build_dig_body(init, ctx)
-    if body is None:
-        return None
-    body = _rewrite_super_inits_in_constructor_body(
-        body,
+    initializer_ctx = _constructor_initializer_factory_context(
         init=init,
         class_site=class_site,
         target=target,
         ctx=ctx,
         self_name=params[0],
     )
-    if body is None:
+    if initializer_ctx is None:
         return None
-    body = _rewrite_self_methods_in_constructor_body(
-        body,
-        init=init,
-        class_site=class_site,
-        ctx=ctx,
-        self_name=params[0],
+    body = build_dig_body(
+        init,
+        initializer_ctx,
+        oracle_variant=f"constructor-initializer-calls:{target}",
     )
     if body is None:
         return None
@@ -1405,6 +1290,20 @@ class SuperInitApply:
 
 
 @dataclass(frozen=True)
+class ObjectInitApply:
+    """The exact zero-argument ``object.__init__`` no-op."""
+
+    site: object
+
+    def desugar(self, ctx=None) -> Outcome:
+        del ctx
+        from sugar_lift_py_tests.floor import SupportValue
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(SupportValue())
+
+
+@dataclass(frozen=True)
 class SelfMethodApply:
     """Apply a dug zero-arg ``self.method()`` body inside a source initializer.
 
@@ -1480,9 +1379,7 @@ class SelfMethodApply:
                     f"self.{self.method_name}()"
                 ),
             )
-        curried = _ctx_with_curried_args(
-            ctx, self.method_parameters, (self_value,)
-        )
+        curried = _ctx_with_curried_args(ctx, self.method_parameters, (self_value,))
         final_ctx, assertions, terminal = contextualized.initializer_scope_after(
             curried
         )
@@ -1608,185 +1505,139 @@ def _resolve_super_init_for_class(class_site, target: str, ctx):
     return "object"
 
 
-def _rewrite_super_inits_in_constructor_body(
-    body, *, init, class_site, target: str, ctx, self_name: str
+def _constructor_initializer_factory_context(
+    *,
+    init,
+    class_site,
+    target: str,
+    ctx,
+    self_name: str,
 ):
-    """Replace exact super().__init__ dig statements with SuperInitApply.
+    """Install the constructor-only initializer-call claim in the factory."""
+    from sugar_lift_py_tests.sugar.expr_sugar import ExprSugar
+    from sugar_lift_py_tests.sugar.install_source_dig import build_dig_body
 
-    Returns the rewritten contextualized body, or None when a super call is
-    present but cannot be constructed (keeps the constructor loud).
-    """
-    from dataclasses import replace as dc_replace
-
-    from sugar_lift_py_tests.sugar.install_source_dig import (
-        ContextualizedDigBody,
-        SequentialDigBody,
-        build_dig_body,
+    declared_bases = _authenticated_initializer_bases(class_site, ctx)
+    call_sites = tuple(
+        statement.initializer_call_site(
+            receiver_name=self_name,
+            declared_bases=declared_bases,
+        )
+        for statement in init.function_body()
     )
-    from sugar_lift_py_tests.sugar_body import SugarBody
 
-    contextualized = getattr(body, "sugar", None)
-    if not isinstance(contextualized, ContextualizedDigBody):
-        return body
-    sequential = getattr(contextualized.body, "sugar", None)
-    if not isinstance(sequential, SequentialDigBody):
-        return body
-    frags = tuple(init.function_body())
-    dig_statements = sequential.statements
-    if len(frags) != len(dig_statements):
-        return body
+    super_init = None
+    if any(call is not None and call.kind == "super" for call in call_sites):
+        resolved = _resolve_super_init_for_class(class_site, target, ctx)
+        if resolved == "object":
+            super_init = ("object", (), None)
+        elif resolved is not None and resolved.function_has_simple_positional_params():
+            parameters = tuple(resolved.function_params())
+            body = build_dig_body(resolved, ctx) if parameters else None
+            if body is not None:
+                super_init = ("source", parameters, body)
 
-    if not any(_is_exact_super_init_fragment(fragment) for fragment in frags):
-        return body
+    method_applies: dict[str, tuple[object, tuple[str, ...]]] = {}
+    for call in call_sites:
+        if call is None or call.kind != "self_method" or call.target is None:
+            continue
+        method = _resolve_local_class_method(class_site, call.target)
+        if method is None or not method.function_has_simple_positional_params():
+            continue
+        parameters = tuple(method.function_params())
+        min_args, max_args = method.function_positional_arity()
+        if (
+            min_args != 1
+            or max_args != 1
+            or len(parameters) != 1
+            or any(
+                statement.observed == "Return" for statement in method.function_body()
+            )
+        ):
+            continue
+        body = build_dig_body(method, ctx)
+        if body is not None:
+            method_applies[call.target] = (body, parameters)
 
-    base_init = _resolve_super_init_for_class(class_site, target, ctx)
-    if base_init is None:
+    if any(
+        call is not None
+        and (
+            call.kind == "super"
+            and super_init is None
+            or call.kind == "self_method"
+            and call.target not in method_applies
+        )
+        for call in call_sites
+    ):
+        # The statement door owns only calls it can construct. Unresolved
+        # initializer calls fall back to the constructor's original loud arm.
         return None
 
-    base_body = None
-    base_parameters: tuple[str, ...] = ()
-    if base_init != "object":
-        if not base_init.function_has_simple_positional_params():
-            return None
-        base_parameters = tuple(base_init.function_params())
-        if not base_parameters:
-            return None
-        base_body = build_dig_body(base_init, ctx)
-        if base_body is None:
-            return None
-
-    rewritten = []
-    for fragment, dig_statement in zip(frags, dig_statements, strict=True):
-        if not _is_exact_super_init_fragment(fragment):
-            rewritten.append(dig_statement)
-            continue
-        call = fragment.expr_value()
-        super_args = tuple(
-            ctx.build_body(argument, SugarRole.TERM) for argument in call.call_args()
+    def recognized(site):
+        call = site.initializer_call_site(
+            receiver_name=self_name,
+            declared_bases=declared_bases,
         )
-        if base_init == "object":
-            if super_args:
-                return None
-            # object.__init__ is a no-op; drop the statement rather than minting
-            # SupportValue success over missing base state.
-            continue
-        if len(base_parameters) != 1 + len(super_args):
-            return None
-        rewritten.append(
-            SugarBody(
-                sugar=SuperInitApply(
-                    base_body=base_body,
-                    base_parameters=base_parameters,
-                    arguments=super_args,
-                    self_name=self_name,
-                    site=fragment,
-                ),
-                role=SugarRole.STATEMENT,
+        if call is None:
+            return False
+        if call.kind == "explicit_base":
+            return True
+        if call.kind == "super":
+            if super_init is None:
+                return False
+            kind, parameters, _body = super_init
+            return (
+                call.call.call_arg_count() == 0
+                if kind == "object"
+                else len(parameters) == 1 + call.call.call_arg_count()
             )
+        return call.kind == "self_method" and call.target in method_applies
+
+    def construct(site, build_ctx):
+        call = site.initializer_call_site(
+            receiver_name=self_name,
+            declared_bases=declared_bases,
         )
-    new_sequential = SequentialDigBody(
-        statements=tuple(rewritten),
-        fn_site=sequential.fn_site,
-        contextmanager_yield=sequential.contextmanager_yield,
-    )
-    new_core = SugarBody(sugar=new_sequential, role=contextualized.body.role)
-    return SugarBody(
-        sugar=dc_replace(contextualized, body=new_core),
-        role=body.role,
-        audit_row=body.audit_row,
-    )
-
-
-def _rewrite_self_methods_in_constructor_body(
-    body, *, init, class_site, ctx, self_name: str
-):
-    """Replace exact zero-arg self.method() dig statements with SelfMethodApply.
-
-    Returns the rewritten body, or None when a zero-arg self.method() is present
-    but cannot be constructed (keeps the constructor loud — never SupportValue
-    skip of an undiggable method effect).
-    """
-    from dataclasses import replace as dc_replace
-
-    from sugar_lift_py_tests.sugar.install_source_dig import (
-        ContextualizedDigBody,
-        SequentialDigBody,
-        build_dig_body,
-    )
-    from sugar_lift_py_tests.sugar_body import SugarBody
-
-    contextualized = getattr(body, "sugar", None)
-    if not isinstance(contextualized, ContextualizedDigBody):
-        return body
-    sequential = getattr(contextualized.body, "sugar", None)
-    if not isinstance(sequential, SequentialDigBody):
-        return body
-    frags = tuple(init.function_body())
-    dig_statements = sequential.statements
-    if len(frags) != len(dig_statements):
-        return body
-
-    if not any(
-        _is_exact_zero_arg_self_method_fragment(fragment, self_name)
-        for fragment in frags
-    ):
-        return body
-
-    # Cache dug methods so repeated self.method() calls share one body dig.
-    dug_methods: dict[str, tuple[object, tuple[str, ...]]] = {}
-    rewritten = []
-    for fragment, dig_statement in zip(frags, dig_statements, strict=True):
-        method_name = _zero_arg_self_method_name(fragment.node, self_name)
-        if method_name is None:
-            rewritten.append(dig_statement)
-            continue
-        if method_name not in dug_methods:
-            method_fn = _resolve_local_class_method(class_site, method_name)
-            if method_fn is None:
-                return None
-            if not method_fn.function_has_simple_positional_params():
-                return None
-            method_params = tuple(method_fn.function_params())
-            # Exact zero-arg call: method must take only self (no extra
-            # required positional parameters / no defaults to fill).
-            min_args, max_args = method_fn.function_positional_arity()
-            if min_args != 1 or max_args != 1 or len(method_params) != 1:
-                return None
-            # Refuse methods that return: expression-statement calls discard
-            # the value, but initializer_scope_after treats Return as halt.
-            if any(
-                statement.observed == "Return"
-                for statement in method_fn.function_body()
-            ):
-                return None
-            method_body = build_dig_body(method_fn, ctx)
-            if method_body is None:
-                return None
-            dug_methods[method_name] = (method_body, method_params)
-        method_body, method_params = dug_methods[method_name]
-        rewritten.append(
-            SugarBody(
-                sugar=SelfMethodApply(
-                    method_body=method_body,
-                    method_parameters=method_params,
-                    self_name=self_name,
-                    method_name=method_name,
-                    site=fragment,
-                ),
-                role=SugarRole.STATEMENT,
+        if call is None:
+            raise AssertionError("initializer claim constructed an unrecognized site")
+        if call.kind == "explicit_base":
+            return ExprSugar.new(site, build_ctx)
+        if call.kind == "super":
+            assert super_init is not None
+            kind, parameters, base_body = super_init
+            arguments = tuple(
+                build_ctx.build_body(argument, SugarRole.TERM)
+                for argument in call.call.call_args()
             )
+            if kind == "object":
+                assert not arguments
+                return ObjectInitApply(site=site)
+            assert len(parameters) == 1 + len(arguments)
+            return SuperInitApply(
+                base_body=base_body,
+                base_parameters=parameters,
+                arguments=arguments,
+                self_name=self_name,
+                site=site,
+            )
+        assert call.target is not None
+        method_body, parameters = method_applies[call.target]
+        return SelfMethodApply(
+            method_body=method_body,
+            method_parameters=parameters,
+            self_name=self_name,
+            method_name=call.target,
+            site=site,
         )
-    new_sequential = SequentialDigBody(
-        statements=tuple(rewritten),
-        fn_site=sequential.fn_site,
-        contextmanager_yield=sequential.contextmanager_yield,
+
+    claim = SugarClaim(
+        name="ConstructorInitializerCallSugar",
+        role=SugarRole.STATEMENT,
+        owns=recognized,
+        comes_before=("ExprSugar",),
+        new=construct,
     )
-    new_core = SugarBody(sugar=new_sequential, role=contextualized.body.role)
-    return SugarBody(
-        sugar=dc_replace(contextualized, body=new_core),
-        role=body.role,
-        audit_row=body.audit_row,
-    )
+    return replace(ctx, catalog=SugarCatalog((*ctx.catalog.claims, claim)))
 
 
 def _native_imported_base_targets(class_site, ctx):
