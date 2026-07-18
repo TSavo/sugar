@@ -72,6 +72,24 @@ def test_module_execution_does_not_replay_later_tuple_unpack() -> None:
     assert {gap["observed"] for gap in temporal} == {"a"}
 
 
+def test_module_definition_body_sees_later_module_binding() -> None:
+    recovered = audit_lift_file(
+        "def timezone_name():\n"
+        "    return timezone\n"
+        "timezone = 7\n"
+        "def test_timezone_name():\n"
+        "    assert timezone_name() == 7\n",
+        "temporal_deferred_body.py",
+        recover_panics=True,
+    )
+
+    assert [
+        panic.gap
+        for panic in recovered.panics
+        if panic.gap.get("owner") == "TemporalContext"
+    ] == []
+
+
 def test_module_tuple_unpack_execution_order_witness_refutes(
     tmp_path: Path,
 ) -> None:
