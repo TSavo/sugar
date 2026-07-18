@@ -372,6 +372,77 @@ def test_open_elif_chain_does_not_fabricate_definite_binding() -> None:
         audit_lift_file(source, "open_elif.py", hold_panic=False)
 
 
+def test_assert_in_list_domain_makes_exclusive_elif_binding_definite() -> None:
+    """pandas missing.find_valid_index residual: assert how in [..] + if/elif."""
+    source = (
+        "def find_valid_index(how):\n"
+        "    assert how in ['first', 'last']\n"
+        "    if how == 'first':\n"
+        "        idxpos = 1\n"
+        "    elif how == 'last':\n"
+        "        idxpos = 2\n"
+        "    return idxpos\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "assert_list_elif.py")
+
+    assert gaps == []
+    contract = next(
+        row
+        for row in payload.ir
+        if row.post is not None and row.name.endswith("find_valid_index")
+    )
+    assert contract.post["kind"] == "and"
+
+
+def test_assert_in_tuple_domain_makes_exclusive_elif_binding_definite() -> None:
+    source = (
+        "def find_valid_index(how):\n"
+        "    assert how in ('first', 'last')\n"
+        "    if how == 'first':\n"
+        "        idxpos = 1\n"
+        "    elif how == 'last':\n"
+        "        idxpos = 2\n"
+        "    return idxpos\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "assert_tuple_elif.py")
+
+    assert gaps == []
+    assert any(row.post is not None for row in payload.ir)
+
+
+def test_list_not_in_return_makes_exclusive_elif_binding_definite() -> None:
+    source = (
+        "def f(how):\n"
+        "    if how not in ['first', 'last']:\n"
+        "        return None\n"
+        "    if how == 'first':\n"
+        "        idxpos = 1\n"
+        "    elif how == 'last':\n"
+        "        idxpos = 2\n"
+        "    return idxpos\n"
+    )
+
+    payload, gaps = audit_lift_file(source, "list_not_in_elif.py")
+
+    assert gaps == []
+    assert any(row.post is not None for row in payload.ir)
+
+
+def test_assert_in_domain_missing_elif_arm_stays_loud() -> None:
+    source = (
+        "def find_valid_index(how):\n"
+        "    assert how in ['first', 'last']\n"
+        "    if how == 'first':\n"
+        "        idxpos = 1\n"
+        "    return idxpos\n"
+    )
+
+    with pytest.raises(FactoryPanic, match="observed=idxpos requested=value"):
+        audit_lift_file(source, "assert_incomplete_elif.py", hold_panic=False)
+
+
 def test_returning_not_in_guard_makes_literal_elif_binding_definite() -> None:
     source = (
         "    if kind not in ('first', 'middle', 'last'):\n"

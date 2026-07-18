@@ -165,7 +165,9 @@ class PredicateValue(FloorValue):
 
     def stated(self, site):
         # A symbolic predicate states an inv: the fact the record emits. Operand
-        # callsites ride into the InvValue so edges project later.
+        # callsites ride into the InvValue so edges project later. then_bindings
+        # become definite under the asserted fact (assert x in domain → x is
+        # one of the domain faces for the continuing tail).
         from sugar_lift_py_tests.floor.inv_value import InvValue
         from sugar_lift_py_tests.outcome import Complete
 
@@ -176,6 +178,7 @@ class PredicateValue(FloorValue):
                 self.operand_callsites,
                 self.derived_formulas,
                 self.rewrite_chains,
+                self.then_bindings,
             )
         )
 

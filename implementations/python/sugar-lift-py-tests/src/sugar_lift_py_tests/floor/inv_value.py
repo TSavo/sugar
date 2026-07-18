@@ -14,7 +14,13 @@ class InvValue(FloorValue):
     meets the same sentence through its memento as a warrant -- a constraint.
     That duality is protocol position, not a field here: the sentence travels
     content-addressed, and the side of the RPC round decides prove-vs-assume.
-    It contributes itself to the record (the record IS the emission surface)."""
+    It contributes itself to the record (the record IS the emission surface).
+
+    ``bindings`` are exact refinements warranted by the stated fact (for example
+    ``assert how in ("first", "last")`` rebinds ``how`` to the finite domain).
+    They extend temporal scope for the continuing tail; they are not inventions
+    of the assert sugar — they ride from the reduced predicate's then_bindings.
+    """
 
     formula: Formula
     site: object = dataclass_field(default=None, compare=False)
@@ -25,13 +31,29 @@ class InvValue(FloorValue):
     rewrite_chains: tuple[tuple[str, str, int], ...] = dataclass_field(
         default=(), compare=False
     )
+    bindings: tuple[tuple[str, FloorValue], ...] = dataclass_field(
+        default=(), compare=False
+    )
 
     def inv_contribution(self):
         # The stated fact IS the inv slot's row.
         return (self.formula,)
 
+    def extend_scope(self, ctx):
+        # Asserted then_bindings are definite on the continuing path: the false
+        # face of the predicate would have halted (AssertionError), so the tail
+        # only runs under the true face.
+        from dataclasses import replace
+
+        temporal = ctx.temporal
+        for name, value in self.bindings:
+            temporal = temporal.bind_value(name, value)
+        return replace(ctx, temporal=temporal)
+
     def guarded(self, formula):
         # A fact stated under a guard IS an implication; operand callsites ride.
+        # Bindings stay attached: they refine under the same guard polarity the
+        # inv already carries as implication.
         from sugar_lift_py_tests.ir import implies
 
         return InvValue(
@@ -40,6 +62,7 @@ class InvValue(FloorValue):
             self.operand_callsites,
             self.derived_formulas,
             self.rewrite_chains,
+            self.bindings,
         )
 
     def edge_contribution(self, source_contract):

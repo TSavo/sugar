@@ -105,7 +105,9 @@ class NotInOpSugar(Sugar, role=SugarRole.TERM):
         )
         else_bindings = ()
         coordinate = self.site.compare_left().dotted_expr_name()
-        finite_value = _finite_membership_value(left, right, self.site)
+        from sugar_lift_py_tests.sugar.in_op_sugar import finite_membership_value
+
+        finite_value = finite_membership_value(left, right, self.site)
         if coordinate and finite_value is not None:
             # On the false face of ``x not in (<literal domain>)``, x is
             # provably one of those literals.  Preserve that exact finite
@@ -126,22 +128,3 @@ class NotInOpSugar(Sugar, role=SugarRole.TERM):
 
     def walk_children(self):
         return (self.left, self.right)
-
-
-def _finite_membership_value(left, right, site):
-    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.floor.tuple_value import TupleValue
-    from sugar_lift_py_tests.outcome import Complete
-
-    if type(right) is not TupleValue or not right.elements:
-        return None
-    value = right.elements[-1]
-    for element in reversed(right.elements[:-1]):
-        comparison = left.equals(element, site)
-        if not isinstance(comparison, Complete) or not isinstance(
-            comparison.value, PredicateValue
-        ):
-            return None
-        value = GuardedValue(comparison.value.formula, element, value)
-    return value
