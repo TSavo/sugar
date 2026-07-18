@@ -84,7 +84,7 @@ jobs:
             target: test-claim-mass-tripwires
             python: true
             z3: false
-            b3sum: false
+            b3sum: true
           - name: self attestation
             target: self-attest
             python: false
