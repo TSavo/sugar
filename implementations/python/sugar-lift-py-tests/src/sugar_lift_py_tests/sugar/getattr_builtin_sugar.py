@@ -114,6 +114,11 @@ class GetattrBuiltinSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar",
                 from sugar_lift_py_tests.outcome import Complete
 
                 return Complete(resolved)
+            coordinate = receiver.qualified_attribute(name, self.site)
+            if coordinate is not None:
+                from sugar_lift_py_tests.outcome import Complete
+
+                return Complete(coordinate)
             return receiver.getattr_static(name, self.site)
         if not isinstance(receiver, ObjectValue):
             return Incomplete(

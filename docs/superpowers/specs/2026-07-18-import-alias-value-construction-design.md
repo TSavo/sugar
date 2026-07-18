@@ -20,9 +20,9 @@ When that resolver cannot construct a value, `ImportAliasValue` may authenticate
 the requested static attribute:
 
 1. Resolve the alias's exact import target.
-2. Import only that target and inspect the named attribute.
-3. When the target is a concrete module or class and the attribute exists,
-   return an `ImportAliasValue` for the exact qualified attribute.
+2. Import only that target and authenticate its concrete object identity.
+3. Return an `ImportAliasValue` for the exact qualified requested attribute;
+   the coordinate records the lookup without claiming that lookup succeeds.
 4. When import or attribute identity is unavailable, return no construction and
    follow the existing loud `ImportAliasValue` floor.
 
@@ -34,7 +34,8 @@ to that value. Any unresolved flag retains the current
 
 ## Boundary
 
-- Qualified module/class attributes construct `python:import_alias` coordinates.
+- Qualified imported-object attributes construct `python:import_alias`
+  coordinates.
 - Concrete imported classes continue to construct `python:type` only where a
   type tester asks for that coordinate.
 - No ground coordinate may mint RuntimeEffect authority.
@@ -55,6 +56,5 @@ to that value. Any unresolved flag retains the current
   sweep. Their terminal movement is conserved and `silent=0`.
 - The claim-mass direct-pytest tripwire is run and any moved pin is updated
   loudly rather than bypassed.
-- A fresh local release binary produces a provenance-matched truthful/lying
+- A fresh local binary produces a provenance-matched truthful/lying
   witness pair with distinct verdicts.
-

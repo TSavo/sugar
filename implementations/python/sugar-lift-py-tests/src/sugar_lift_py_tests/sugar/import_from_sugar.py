@@ -60,15 +60,24 @@ class ImportFromSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        del ctx
         separator = "" if self.module.endswith(".") else "."
-        return Complete(
-            BlockValue(
-                tuple(
-                    ImportAliasValue(f"{self.module}{separator}{name}", alias or name)
-                    for name, alias in self.names
-                )
+        from sugar_lift_py_tests.sugar.install_source_dig import (
+            resolve_install_source_value,
+        )
+
+        def import_value(name: str, alias: str | None) -> ImportAliasValue:
+            target = f"{self.module}{separator}{name}"
+            checked = ctx is not None and not self.module.startswith(".")
+            resolved = resolve_install_source_value(target, ctx) if checked else None
+            return ImportAliasValue(
+                target,
+                alias or name,
+                resolved_value=resolved,
+                install_source_checked=checked,
             )
+
+        return Complete(
+            BlockValue(tuple(import_value(name, alias) for name, alias in self.names))
         )
 
     def walk_children(self):

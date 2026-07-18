@@ -1253,6 +1253,7 @@ def _ctx_with_required_module_bindings_impl(
                         bound,
                         import_target=import_target,
                         resolved_value=resolved,
+                        install_source_checked=imported_name is not None,
                     ),
                 )
             module_ctx = replace(
@@ -1381,13 +1382,26 @@ def _construct_install_source_value(
             _resolving=resolving,
         )
         if resolved is not None:
+            from sugar_lift_py_tests.floor import ImportAliasValue
+
+            if (
+                isinstance(resolved, ImportAliasValue)
+                and resolved.resolved_value is None
+            ):
+                coordinate = _concrete_import_constant_coordinate(reexport)
+                if coordinate is not None:
+                    return coordinate
             return resolved
         from sugar_lift_py_tests.floor import ImportAliasValue
 
+        coordinate = _concrete_import_constant_coordinate(reexport)
+        if coordinate is not None:
+            return coordinate
         return ImportAliasValue(
             attr,
             attr,
             import_target=reexport,
+            install_source_checked=True,
         )
 
     if _installed_class_is_exception(
@@ -1543,7 +1557,34 @@ def _construct_install_source_value(
             resolved = extended.temporal.value_if_bound(attr)
             if resolved is not None:
                 return resolved
+
     return None
+
+
+def _concrete_import_constant_coordinate(import_target: str):
+    """Authenticate a definite reexported constant without reading its value."""
+    import inspect
+    from types import ModuleType
+
+    from sugar_lift_py_tests.floor.import_alias_value import (
+        _resolve_qualified_import_object,
+    )
+
+    value = _resolve_qualified_import_object(import_target)
+    if value is None or isinstance(value, ModuleType) or inspect.isclass(value):
+        return None
+    if callable(value):
+        return None
+
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return SymbolicValue(
+        ctor(
+            "python:import_alias",
+            [str_const(import_target.rsplit(".", 1)[-1]), str_const(import_target)],
+        )
+    )
 
 
 def _installed_class_is_exception(

@@ -55,13 +55,23 @@ class SingleImportFromSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        del ctx
         from sugar_lift_py_tests.floor import ImportAliasValue
 
+        target = f"{self.module}.{self.imported_name}"
+        resolved = None
+        checked = ctx is not None and not self.module.startswith(".")
+        if checked:
+            from sugar_lift_py_tests.sugar.install_source_dig import (
+                resolve_install_source_value,
+            )
+
+            resolved = resolve_install_source_value(target, ctx)
         return Complete(
             ImportAliasValue(
-                name=f"{self.module}.{self.imported_name}",
+                name=target,
                 bound_name=self.imported_name,
+                resolved_value=resolved,
+                install_source_checked=checked,
             )
         )
 

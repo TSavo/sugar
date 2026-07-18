@@ -1407,6 +1407,7 @@ def _module_import_temporal(
                         bound,
                         import_target=import_target,
                         resolved_value=resolved_value,
+                        install_source_checked=True,
                     ),
                 )
         elif observed == "ClassDef":

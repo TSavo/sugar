@@ -62,11 +62,11 @@ CLI, Z3 witness harness.
 
 **Interfaces:**
 - Produces:
-  `ImportAliasValue.qualified_attribute(name: str) -> ImportAliasValue | None`.
+  `ImportAliasValue.qualified_attribute(name: str, site) -> ImportAliasValue | None`.
 - Consumes: the source-stated `import_target` and a static attribute name.
 
-- [ ] Import the exact target and accept only module/class receivers with an
-  existing named attribute.
+- [ ] Import the exact target and authenticate the receiver's concrete object
+  identity without claiming the requested attribute lookup succeeds.
 - [ ] Return `ImportAliasValue(f"{target}.{name}", name,
   import_target=f"{target}.{name}")` for the authenticated coordinate.
 - [ ] In `_finish_static`, use this coordinate only after
@@ -79,6 +79,10 @@ CLI, Z3 witness harness.
 **Files:**
 - Modify:
   `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/install_source_dig.py`
+- Modify:
+  `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/import_from_sugar.py`
+- Modify:
+  `implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/single_importfrom_sugar.py`
 - Test:
   `implementations/python/sugar-lift-py-tests/tests/test_import_alias_residual_floors.py`
 
@@ -108,7 +112,7 @@ CLI, Z3 witness harness.
 - [ ] Run the direct-pytest claim-mass tripwire.
 - [ ] Replay the six `ImportAliasValue` and two `ImportAliasValue.truth` files;
   report every terminal movement and `silent=0`.
-- [ ] Build a fresh local release CLI and record its source provenance.
+- [ ] Build a fresh local CLI and record its source provenance.
 - [ ] Run a truthful/lying import-alias witness and require distinct expected
   verdicts.
 - [ ] Format changed Python with the repository-pinned formatter.
