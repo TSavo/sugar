@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory import (
@@ -103,6 +103,16 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
             "    return IndexType('int64').name\n"
             "\n"
         )
+        asserted_source_body_prefix = (
+            "class Checked:\n"
+            "    def __init__(self):\n"
+            "        assert True\n"
+            "        self.value = 1\n"
+            "\n"
+            "def E():\n"
+            "    return Checked().value\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="constructor_field_return",
@@ -145,6 +155,17 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
                 lying=source_body_prefix
                 + "def test_source_body():\n"
                 + "    assert D() == 'index(float64)'\n",
+                family="source-body-constructor",
+            ),
+            _call_pair(
+                name="source_body_constructor_asserted",
+                owner_sugar=cls.__name__,
+                truthful=asserted_source_body_prefix
+                + "def test_asserted_source_body():\n"
+                + "    assert E() == 1\n",
+                lying=asserted_source_body_prefix
+                + "def test_asserted_source_body():\n"
+                + "    assert E() == 2\n",
                 family="source-body-constructor",
             ),
         )
@@ -220,7 +241,19 @@ def _strategy(
             "positional constructor arguments",
             f"add keyword constructor binding for `{target}`",
         )
-    methods = _methods(class_site, ctx)
+    construction_key = f"constructor-methods:{target}"
+    if construction_key in ctx.building:
+        _panic(
+            site,
+            "recursive-constructor-method",
+            f"finite constructor method graph for `{target}`",
+            "construct recursive constructor method coordinates without eagerly "
+            "rebuilding the same class",
+        )
+    methods = _methods(
+        class_site,
+        replace(ctx, building=ctx.building | {construction_key}),
+    )
     init = next(
         (
             stmt
@@ -371,7 +404,7 @@ def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
     zero-argument ``super().__init__(...)`` tail; arbitrary calls stay loud.
     """
 
-    saw_local_assignment = False
+    needs_statement_door = False
     for statement in init.function_body():
         node = statement.node
         if (
@@ -383,7 +416,7 @@ def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
             if isinstance(target, ast.Name):
-                saw_local_assignment = True
+                needs_statement_door = True
                 continue
             if (
                 isinstance(target, ast.Attribute)
@@ -392,6 +425,18 @@ def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
             ):
                 continue
             return False
+        if (
+            isinstance(node, ast.AnnAssign)
+            and node.value is not None
+            and isinstance(node.target, ast.Attribute)
+            and isinstance(node.target.value, ast.Name)
+            and node.target.value.id == receiver_name
+        ):
+            needs_statement_door = True
+            continue
+        if isinstance(node, ast.Assert):
+            needs_statement_door = True
+            continue
         if (
             isinstance(node, ast.Expr)
             and isinstance(node.value, ast.Call)
@@ -406,7 +451,7 @@ def _source_initializer_needs_statement_door(init, receiver_name: str) -> bool:
         ):
             continue
         return False
-    return saw_local_assignment
+    return needs_statement_door
 
 
 def _source_bytesio_strategy(
@@ -939,6 +984,9 @@ def _source_body_constructor_strategy(
         arguments=tuple(arguments),
         methods=methods,
         identity=site.blame,
+        has_assertion=any(
+            statement.observed == "Assert" for statement in init.function_body()
+        ),
     )
 
 

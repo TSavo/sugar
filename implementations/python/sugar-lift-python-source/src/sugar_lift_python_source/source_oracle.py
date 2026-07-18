@@ -61,7 +61,8 @@ def installed_module_source(module_name: str) -> tuple[str, str, str] | None:
     try:
         for index in range(1, len(parts) + 1):
             qualified = ".".join(parts[:index])
-            spec = importlib.machinery.PathFinder.find_spec(qualified, search_path)
+            lookup_name = qualified if search_path is None else parts[index - 1]
+            spec = importlib.machinery.PathFinder.find_spec(lookup_name, search_path)
             if spec is None:
                 return None
             if index < len(parts):

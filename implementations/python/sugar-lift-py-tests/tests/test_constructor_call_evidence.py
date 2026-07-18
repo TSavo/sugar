@@ -12,11 +12,17 @@ from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
+    DictValue,
+    ExceptionalExitValue,
+    GuardedValue,
     ImportAliasValue,
     ObjectValue,
     StringValue,
+    SymbolicValue,
     TermValue,
 )
+from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.sugar.constructor_call_sugar import ConstructorCallSugar
@@ -28,6 +34,7 @@ def _outcome(
     source: str,
     expression: str,
     *,
+    filename: str = "constructor.py",
     temporal: TemporalContext | None = None,
 ):
     module = ast.parse(source)
@@ -37,7 +44,7 @@ def _outcome(
         if isinstance(statement, (ast.ClassDef, ast.FunctionDef))
     }
     ctx = FactoryBuildContext(
-        filename="constructor.py",
+        filename=filename,
         catalog=default_catalog(),
         name_resolver=resolver,
         temporal=temporal or TemporalContext.empty(),
@@ -115,6 +122,32 @@ def test_source_initializer_threads_local_assignment_into_self_fields() -> None:
         "dtype": StringValue("int64"),
         "layout": StringValue("C"),
     }
+
+
+def test_source_initializer_assert_constructs_exceptional_exit_face() -> None:
+    outcome = _outcome(
+        "class MockRequest:\n"
+        "    def __init__(self, request):\n"
+        "        assert request == 1\n"
+        "        self.request = request\n"
+        "        self.headers: dict[str, str] = {}\n",
+        "MockRequest(request)",
+        filename="constructor_assert_symbolic.py",
+        temporal=TemporalContext.empty().bind_value(
+            "request", SymbolicValue(make_var("request"))
+        ),
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is GuardedValue
+    assert type(outcome.value.when_true) is ObjectValue
+    assert _field_values(outcome.value.when_true) == {
+        "request": SymbolicValue(make_var("request")),
+        "headers": DictValue(()),
+    }
+    assert type(outcome.value.when_false) is ExceptionalExitValue
+    assert outcome.value.when_false.effect.exception_name == "AssertionError"
+    assert outcome.value.when_false.effect.blame == "constructor_assert_symbolic.py:3:8"
 
 
 def test_source_initializer_with_arbitrary_expression_stays_loud() -> None:
@@ -541,15 +574,31 @@ def test_runtime_selected_base_wrong_twin_hits_runtime_operand_door() -> None:
         )
 
 
-def test_ground_effectful_init_stays_a_loud_constructor_gap() -> None:
-    with pytest.raises(FactoryPanic) as raised:
-        _outcome(
-            "class Box:\n" "    def __init__(self, value):\n" "        assert value\n",
-            "Box(1)",
-        )
+def test_ground_true_initializer_assert_constructs_empty_object() -> None:
+    outcome = _outcome(
+        "class Box:\n" "    def __init__(self, value):\n" "        assert value\n",
+        "Box(1)",
+        filename="constructor_assert_true.py",
+    )
 
-    assert raised.value.info.owner == "ConstructorCallSugar"
-    assert raised.value.info.requested == "constructed source initializer"
+    assert type(outcome) is Complete
+    assert outcome.value == ObjectValue(
+        class_name="Box",
+        fields=(),
+        identity="constructor_assert_true.py:1:0",
+    )
+
+
+def test_ground_false_initializer_assert_constructs_exceptional_exit() -> None:
+    outcome = _outcome(
+        "class Box:\n" "    def __init__(self, value):\n" "        assert value\n",
+        "Box(0)",
+        filename="constructor_assert_false.py",
+    )
+
+    assert type(outcome) is Complete
+    assert type(outcome.value) is ExceptionalExitValue
+    assert outcome.value.effect.exception_name == "AssertionError"
 
 
 def test_source_bytesio_constructor_truthful_sat_wrong_twin_unsat(tmp_path) -> None:
@@ -558,6 +607,23 @@ def test_source_bytesio_constructor_truthful_sat_wrong_twin_unsat(tmp_path) -> N
         for witness in ConstructorCallSugar.witnesses()
         if isinstance(witness, SugarWitnessPair)
         and witness.name == "source_bytesio_constructor"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(tmp_path / "lying", pair.lying.source)
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_asserted_source_constructor_truthful_sat_wrong_twin_unsat(tmp_path) -> None:
+    pair = next(
+        witness
+        for witness in ConstructorCallSugar.witnesses()
+        if isinstance(witness, SugarWitnessPair)
+        and witness.name == "source_body_constructor_asserted"
     )
 
     truthful = run_source_through_real_solver(
@@ -993,3 +1059,19 @@ def test_multiple_inheritance_constructor_refutes_wrong_linearization_twin(
     assert wrong_linearization.verdict == "unsat"
     assert "ConstructorCallSugar" in truthful.selected_sugars
     assert "ConstructorCallSugar" in wrong_linearization.selected_sugars
+
+
+def test_recursive_constructor_method_is_a_named_factory_panic() -> None:
+    source = (
+        "class Recursive:\n"
+        "    def again(self):\n"
+        "        return Recursive()\n\n"
+        "def test_recursive():\n"
+        "    assert Recursive() == Recursive()\n"
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        lift_file_payload(source, "recursive_constructor.py")
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.observed == "recursive-constructor-method"

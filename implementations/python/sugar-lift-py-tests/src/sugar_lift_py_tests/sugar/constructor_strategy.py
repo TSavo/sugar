@@ -150,6 +150,7 @@ class SourceBodyConstructorStrategy:
     arguments: tuple[SugarBody, ...]
     methods: tuple[ObjectMethodValue, ...] = ()
     identity: str = ""
+    has_assertion: bool = False
 
     def emit(self, sugar, ctx) -> Outcome:
         del sugar
@@ -179,7 +180,11 @@ class SourceBodyConstructorStrategy:
                 "SourceBodyConstructorStrategy requires a contextualized source body"
             )
         curried = _ctx_with_curried_args(ctx, self.parameters, (receiver, *values))
-        final_ctx = contextualized.scope_after(curried)
+        final_ctx, assertions, terminal = contextualized.initializer_scope_after(
+            curried
+        )
+        if terminal is not None:
+            return Complete(terminal)
         field_prefix = f"{self.parameters[0]}."
         fields = tuple(
             ObjectField(
@@ -188,7 +193,7 @@ class SourceBodyConstructorStrategy:
             for binding in final_ctx.temporal.bindings
             if binding.name.startswith(field_prefix)
         )
-        if not fields:
+        if not fields and not self.has_assertion:
             from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
 
             factory_panic_gap(
@@ -201,14 +206,25 @@ class SourceBodyConstructorStrategy:
                     "state or leave this initializer loud"
                 ),
             )
-        return Complete(
-            ObjectValue(
-                class_name=self.class_name,
-                fields=fields,
-                methods=self.methods,
-                identity=self.identity,
-            )
+        value = ObjectValue(
+            class_name=self.class_name,
+            fields=fields,
+            methods=self.methods,
+            identity=self.identity,
         )
+        if assertions:
+            from sugar_lift_py_tests.floor import ExceptionalExitValue, GuardedValue
+            from sugar_lift_py_tests.floor.ground_assertion_error import (
+                assertion_raise_effect,
+            )
+
+            for assertion in reversed(assertions):
+                value = GuardedValue(
+                    assertion.formula,
+                    value,
+                    ExceptionalExitValue(assertion_raise_effect(site=assertion.site)),
+                )
+        return Complete(value)
 
 
 @dataclass(frozen=True)

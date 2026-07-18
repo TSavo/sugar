@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, NoReturn
 
-from sugar_lift_py_tests.ir import Term
+from sugar_lift_py_tests.ir import Term, TermTableBuilder
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -11,6 +12,15 @@ from .floor_value import FloorValue
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 _FORCE_FLOOR_BUDGET = 64
+_NESTED_DIG_DEMAND_BUDGET = 8
+_ACTIVE_DIG_DEMAND: ContextVar[int] = ContextVar(
+    "sugar_callsite_active_dig_demand", default=0
+)
+
+
+def _term_cycle_key(term: Term) -> str:
+    """Return a canonical, heap-backed identity for an arbitrarily deep term."""
+    return TermTableBuilder().reference(term)["cid"]
 
 
 @dataclass(frozen=True)
@@ -666,7 +676,7 @@ class CallSiteValue(FloorValue):
         panic and not a soft DigBoundary row. Budget / recursive demand still
         panics: those are non-composable, not joinable coordinates.
         """
-        key = repr(self.term)
+        key = _term_cycle_key(self.term)
         if depth >= budget or len(seen) >= budget:
             _force_floor_gap(
                 owner=owner,
@@ -694,13 +704,34 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
         reduce_ctx = _ctx_with_curried_args(ctx, self.parameters, self.arg_values)
+        active_demand = _ACTIVE_DIG_DEMAND.get()
+        nested_budget = min(budget, _NESTED_DIG_DEMAND_BUDGET)
+        if active_demand >= nested_budget:
+            _force_floor_gap(
+                owner=owner,
+                target_name=self.target_name,
+                observed="callsite value demand budget exhausted",
+                fix=(
+                    f"nested callsite dig exceeded force_floor budget "
+                    f"{nested_budget}; "
+                    "leave the recursive bridge as axiomatic"
+                ),
+            )
+        token = _ACTIVE_DIG_DEMAND.set(active_demand + 1)
         try:
-            outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
+            try:
+                outcome = _reduce_callsite_body(
+                    body, reduce_ctx, blame=self.target_name
+                )
+            finally:
+                _ACTIVE_DIG_DEMAND.reset(token)
         except Exception as exc:
             # FactoryPanic mid-dig: opaque residual, not process-terminal for dig_floor.
             from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 
             if isinstance(exc, FactoryPanic):
+                if exc.info.observed == "callsite value demand budget exhausted":
+                    raise
                 return None
             raise
         if isinstance(outcome, Incomplete):
@@ -728,7 +759,7 @@ class CallSiteValue(FloorValue):
         budget: int = _FORCE_FLOOR_BUDGET,
         project_callsite: bool = True,
     ):
-        key = repr(self.term)
+        key = _term_cycle_key(self.term)
         if depth >= budget or len(seen) >= budget:
             _force_floor_gap(
                 owner=owner,

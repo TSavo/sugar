@@ -15,6 +15,7 @@ from sugar_lift_py_tests.ir import (
     make_var,
     term_to_value,
 )
+from sugar_lift_py_tests.floor.call_site_value import _term_cycle_key
 
 
 def _spine(depth: int, *, name: str = "ssa") -> Term:
@@ -83,6 +84,11 @@ def test_payload_to_rpc_encodes_a_5000_deep_spine_without_process_death() -> Non
         f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
     assert "ENCODE-OK 5001" in completed.stdout
+
+
+def test_callsite_cycle_key_is_heap_backed_for_a_5000_deep_spine() -> None:
+    deep = _spine(5_000)
+    assert _term_cycle_key(deep) == TermTableBuilder().reference(deep)["cid"]
 
 
 class _RecursiveControlTable:
