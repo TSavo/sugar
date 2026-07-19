@@ -145,14 +145,19 @@ Term = Union[_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor]
 # use child *identities after child intern*, so bottom-up hash-cons stays O(1)
 # per node and equal trees share identity without recursive hashing.
 #
-# Each active term table is ``(by_key, by_id)``: ``by_id`` remembers every object
-# already hash-consed so building a linear spine via repeated ``ctor`` stays
-# O(depth) total, not O(depth²) re-walks.
+# Each active term table is ``(by_key, by_id, cid_by_id)``:
+# - ``by_id`` remembers every object already hash-consed so building a linear
+#   spine via repeated ``ctor`` stays O(depth) total, not O(depth²) re-walks.
+# - ``cid_by_id`` memoizes permanent content CIDs for interned terms so dunder
+#   hash/eq and formula keys stay O(1) after first materialization without
+#   keying on ``id()`` (#5569 — scope-stable identity).
 #
 # Restored after #5359 clobbered the #5369 iterative intern while landing
 # CallSiteValue equality / formula cycle keys. Formula intern stays on
 # ``_formula_cycle_key`` (also finite / iterative).
-_TermInternTables = tuple[dict[tuple[object, ...], Term], dict[int, Term]]
+_TermInternTables = tuple[
+    dict[tuple[object, ...], Term], dict[int, Term], dict[int, str]
+]
 _TERM_INTERN_TABLE: ContextVar[_TermInternTables | None] = ContextVar(
     "sugar_term_intern_table", default=None
 )
@@ -172,7 +177,7 @@ def term_intern_scope() -> Iterator[None]:
     share object identity inside the scope; tables are discarded on exit so
     separate lifts never share identity.
     """
-    intern_token = _TERM_INTERN_TABLE.set(({}, {}))
+    intern_token = _TERM_INTERN_TABLE.set(({}, {}, {}))
     formula_token = _FORMULA_INTERN_TABLE.set({})
     symbols_token = _CONSTRUCTOR_SYMBOL_KINDS.set({})
     try:
@@ -254,7 +259,7 @@ def _intern_term(term: Term) -> Term:
     tables = _TERM_INTERN_TABLE.get()
     if tables is None:
         return term
-    by_key, by_id = tables
+    by_key, by_id, _cid_by_id = tables
 
     # Idempotent only for *canonical* objects retained in by_key (never for
     # throwaway constructor inputs whose ids can be recycled by the allocator).
@@ -326,22 +331,42 @@ def _intern_formula(formula: "Formula") -> "Formula":
     return table.setdefault(_formula_cycle_key(formula), formula)
 
 
-def _term_formula_key(term: "Term") -> tuple:
-    """Finite key for one atomic formula arg.
+def _term_content_cid(term: "Term") -> str:
+    """Permanent content coordinate for a term (wire CID).
 
-    Under ``term_intern_scope``, request-scoped term hash-cons already gives
-    structural identity as object identity after ``_intern_term``. Key by that
-    identity — never rebuild a full ``TermTableBuilder`` CID walk per atomic
-    intern (#5338 stata reduce_body: NotInOp ``py.in`` over large CallSiteValue
-    terms paid ~19s in formula keys alone).
+    Scope-stable: the same structural term yields the same CID whether or not
+    ``term_intern_scope`` is active, and across distinct intern scopes (#5569).
 
-    Outside an intern scope (ad-hoc tests / one-shot builders), fall back to a
-    content CID so structural twins still collide without a live table.
+    Under an active intern table, memoize CID by interned object identity so
+    formula keys / CallSiteValue hash-eq stay O(1) after first materialization
+    without ever using ``id()`` as the *identity* (only as a memo index for
+    already-interned canonicals that live for the request).
     """
     tables = _TERM_INTERN_TABLE.get()
     if tables is not None:
-        return ("term-id", id(_intern_term(term)))
-    return ("term-cid", TermTableBuilder().reference(term)["cid"])
+        by_key, by_id, cid_by_id = tables
+        del by_key  # identity partition is by_id + cid_by_id
+        interned = _intern_term(term)
+        cached = cid_by_id.get(id(interned))
+        if cached is not None:
+            # Guard: only trust memo when by_id still owns this object.
+            if by_id.get(id(interned)) is interned:
+                return cached
+        cid = TermTableBuilder().reference(interned)["cid"]
+        cid_by_id[id(interned)] = cid
+        return cid
+    return TermTableBuilder().reference(term)["cid"]
+
+
+def _term_formula_key(term: "Term") -> tuple:
+    """Finite key for one atomic formula arg — permanent content CID only.
+
+    Never key by ``id(_intern_term(...))``: that made ``Formula.__hash__``
+    change across ``term_intern_scope`` and corrupted dict/set membership
+    (#5569). Volume is preserved by scope-local CID memoization in
+    ``_term_content_cid``.
+    """
+    return ("term-cid", _term_content_cid(term))
 
 
 def _formula_cycle_key(formula: "Formula") -> tuple:
