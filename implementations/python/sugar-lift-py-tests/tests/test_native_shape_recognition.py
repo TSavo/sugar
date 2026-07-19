@@ -26,6 +26,14 @@ def test_similar_unregistered_coordinates_do_not_gain_native_behavior() -> None:
     assert not recognizes_module_name("local_vendor")
 
 
+def test_numpy_isnat_requires_authenticated_import_coordinate() -> None:
+    assert recognize_native_call("numpy.isnat") is NativeShape.NUMPY_ISNAT
+    assert has_native_shape("numpy.isnat", NativeShape.NUMPY_ISNAT)
+    # Lying twin: same member spelling under an unauthenticated receiver.
+    assert recognize_native_call("project.isnat") is None
+    assert not has_native_shape("project.isnat", NativeShape.NUMPY_ISNAT)
+
+
 def test_functools_wraps_is_an_authenticated_native_decorator_shape() -> None:
     assert (
         recognize_native_decorator("functools.wraps")
