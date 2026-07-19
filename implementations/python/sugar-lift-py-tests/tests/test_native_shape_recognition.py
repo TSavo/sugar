@@ -59,3 +59,16 @@ def test_source_callable_authentication_has_lying_unresolved_twin() -> None:
         is NativeShape.SOURCE_AUTHENTICATED_CALLABLE
     )
     assert recognize_source_callable(Unresolved()) is None
+
+
+def test_numpy_batch_coordinates_and_lying_twins() -> None:
+    names = (
+        "iter_goto1d", "npyiter_has_delayed_bufalloc", "npyiter_has_index",
+        "numpy.ScalarType.index", "numpy.ediff1d", "numpy.finfo", "numpy.prod",
+        "numpy.result_type", "numpy.__array_namespace__", "numpy.__eq__",
+        "numpy.__le__", "numpy.__gt__", "numpy.__ge__", "numpy.__lt__",
+        "numpy.__ne__", "uniform", "strip", "selectedrealkind", "pytest.approx", "op",
+    )
+    for name in names:
+        assert recognize_native_call(name) is not None
+        assert recognize_native_call(f"project.{name}") is None
