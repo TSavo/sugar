@@ -1311,3 +1311,168 @@ def test_dataclasses_asdict_witness_pair_is_enrolled() -> None:
     assert "dataclasses_asdict_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
+def _leaf_attr_call_site(source: str, leaf: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == leaf
+    )
+    return SourceFragment.from_node(call, f"{leaf}.py", source=source)
+
+
+def _bare_call_site(source: str, leaf: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == leaf
+    )
+    return SourceFragment.from_node(call, f"{leaf}.py", source=source)
+
+
+@pytest.mark.parametrize("leaf", ["t0", "selectedintkind", "foo", "to_Dt"])
+def test_instance_module_attribute_call_authenticates(leaf: str) -> None:
+    source = (
+        "class _Mod:\n"
+        "    @staticmethod\n"
+        f"    def {leaf}(*args):\n"
+        "        return args\n"
+        "\n"
+        "class Host:\n"
+        "    module = _Mod\n"
+        "\n"
+        "    def test_a(self):\n"
+        f"        assert self.module.{leaf}(1) == (1,)\n"
+    )
+    site = _leaf_attr_call_site(source, leaf)
+    assert recognize_callee_universe(f"call:{leaf}", site=site) is not None
+    built = build_node(
+        site,
+        filename=f"{leaf}.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename=f"{leaf}.py", catalog=default_catalog()),
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize("leaf", ["t0", "selectedintkind", "foo", "to_Dt"])
+def test_unresolved_leaf_attribute_call_stays_unowned(leaf: str) -> None:
+    source = (
+        f"def test_a(module):\n"
+        f"    assert module.{leaf}(1) == (1,)\n"
+    )
+    site = _leaf_attr_call_site(source, leaf)
+    assert recognize_callee_universe(f"call:{leaf}", site=site) is None
+    built = build_node(
+        site,
+        filename=f"{leaf}.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename=f"{leaf}.py", catalog=default_catalog()),
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_selectedintkind_assignment_from_instance_module_authenticates() -> None:
+    source = (
+        "class _Mod:\n"
+        "    @staticmethod\n"
+        "    def selectedintkind(i):\n"
+        "        return i\n"
+        "\n"
+        "class Host:\n"
+        "    module = _Mod\n"
+        "\n"
+        "    def test_a(self):\n"
+        "        selectedintkind = self.module.selectedintkind\n"
+        "        assert selectedintkind(3) == 3\n"
+    )
+    site = _bare_call_site(source, "selectedintkind")
+    assert recognize_callee_universe("call:selectedintkind", site=site) is not None
+    built = build_node(
+        site,
+        filename="selectedintkind.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="selectedintkind.py", catalog=default_catalog()),
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_bound_ufunc_alias_authenticates_parameter_ufunc_stays_loud() -> None:
+    bound = (
+        "import numpy as np\n"
+        "\n"
+        "def test_a():\n"
+        "    ufunc = np.add\n"
+        "    assert ufunc(1, 2) == 3\n"
+    )
+    param = (
+        "import numpy as np\n"
+        "\n"
+        "def test_a(ufunc):\n"
+        "    assert ufunc(1, 2) == 3\n"
+    )
+    bound_site = _bare_call_site(bound, "ufunc")
+    param_site = _bare_call_site(param, "ufunc")
+    assert recognize_callee_universe("call:ufunc", site=bound_site) is not None
+    assert recognize_callee_universe("call:ufunc", site=param_site) is None
+    bound_built = build_node(
+        bound_site,
+        filename="ufunc.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="ufunc.py", catalog=default_catalog()),
+    )
+    param_built = build_node(
+        param_site,
+        filename="ufunc.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="ufunc.py", catalog=default_catalog()),
+    )
+    assert bound_built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    assert param_built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_path_resolve_authenticates_unresolved_stays_loud() -> None:
+    good = (
+        "import pathlib\n"
+        "\n"
+        "def test_a(value):\n"
+        "    path = pathlib.Path(value)\n"
+        "    assert path.resolve() is not None\n"
+    )
+    bad = (
+        "def test_a(path):\n"
+        "    assert path.resolve() is not None\n"
+    )
+    good_site = _leaf_attr_call_site(good, "resolve")
+    bad_site = _leaf_attr_call_site(bad, "resolve")
+    assert recognize_callee_universe("call:resolve", site=good_site) is not None
+    assert recognize_callee_universe("call:resolve", site=bad_site) is None
+    good_built = build_node(
+        good_site,
+        filename="resolve.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="resolve.py", catalog=default_catalog()),
+    )
+    bad_built = build_node(
+        bad_site,
+        filename="resolve.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="resolve.py", catalog=default_catalog()),
+    )
+    assert good_built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    assert bad_built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_batch_six_witness_pairs_are_enrolled() -> None:
+    names = {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
+    assert {
+        "path_resolve_universe_coordinate",
+        "ufunc_universe_coordinate",
+        "t0_universe_coordinate",
+        "selectedintkind_universe_coordinate",
+        "foo_universe_coordinate",
+        "to-Dt_universe_coordinate",
+    } <= names

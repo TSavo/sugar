@@ -45,6 +45,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "numpy.shares_memory",
         "numpy._core.multiarray.get_handler_name",
         "re.Pattern.search",
+        "pathlib.Path.resolve",
         "json.loads",
         "dataclasses.asdict",
         *_CONVERTER_COORDINATES,
@@ -114,13 +115,16 @@ class BuiltinCalleeUniverseSugar(
         receiver = site.call_receiver()
         if receiver is None:
             if target not in _AUTHENTICATED_PLAIN_LEAVES:
-                return (
-                    recognize_callee_universe(site=site)
-                    is CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
-                )
+                return recognize_callee_universe(site=site) is not None
+        elif receiver.observed == "Attribute":
+            # Nested Attribute receivers (``self.module.t0``) authenticate only
+            # through provenance-bound support — never by leaf spelling.
+            return recognize_callee_universe(site=site) is not None
         elif receiver.observed != "Name":
             # Only instance-parameter method form can authenticate converters.
             return False
+        if recognize_callee_universe(site=site) is not None:
+            return True
         coordinate = CalleeUniverseRecognition.coordinate(site)
         if coordinate is None:
             return False
@@ -179,6 +183,11 @@ class BuiltinCalleeUniverseSugar(
             _numpy_dtype_result_witness(),
             _json_loads_witness(),
             _dataclasses_asdict_witness(),
+            _path_resolve_coordinate_witness(),
+            _ufunc_coordinate_witness(),
+            *(_bound_leaf_coordinate_witness(name) for name in (
+                "t0", "selectedintkind", "foo", "to_Dt",
+            )),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -454,5 +463,76 @@ def _dataclasses_asdict_witness():
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+def _path_resolve_coordinate_witness():
+    prefix = (
+        "import pathlib\n"
+        "\n"
+        "def A(value):\n"
+        "    path = pathlib.Path(value)\n"
+        "    return path.resolve()\n"
+        "\n"
+    )
+    return _call_pair(
+        name="path_resolve_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A('.') == A('.')\n",
+        lying=prefix + "def test_a():\n    assert A('.') != A('.')\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _ufunc_coordinate_witness():
+    """Bound import-anchored ufunc alias — parameter ufunc stays unowned."""
+    prefix = (
+        "import numpy as np\n"
+        "\n"
+        "def A(x, y):\n"
+        "    ufunc = np.add\n"
+        "    return ufunc(x, y)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="ufunc_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A(1, 2) == A(1, 2)\n",
+        lying=prefix + "def test_a():\n    assert A(1, 2) != A(1, 2)\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _bound_leaf_coordinate_witness(name: str):
+    """Truthful self.module.<leaf> call; lying twin refutes equality."""
+    truthful = (
+        "class _Mod:\n"
+        "    @staticmethod\n"
+        f"    def {name}(*args):\n"
+        "        return args\n"
+        "\n"
+        "class Host:\n"
+        "    module = _Mod\n"
+        "\n"
+        "    def test_a(self):\n"
+        f"        assert self.module.{name}(1) == self.module.{name}(1)\n"
+    )
+    lying = (
+        "class _Mod:\n"
+        "    @staticmethod\n"
+        f"    def {name}(*args):\n"
+        "        return args\n"
+        "\n"
+        "class Host:\n"
+        "    module = _Mod\n"
+        "\n"
+        "    def test_a(self):\n"
+        f"        assert self.module.{name}(1) != self.module.{name}(1)\n"
+    )
+    return _call_pair(
+        name=f"{name.replace('_', '-')}_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=truthful,
+        lying=lying,
         family="builtin-universe-coordinate",
     )

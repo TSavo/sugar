@@ -55,6 +55,12 @@ class CalleeUniverseSupport(Enum):
     BOUND_SOURCE_CALLABLE = auto()
     JSON_LOADS = auto()
     DATACLASSES_ASDICT = auto()
+    PATH_RESOLVE = auto()
+    UFUNC = auto()
+    T0 = auto()
+    SELECTEDINTKIND = auto()
+    FOO = auto()
+    TO_DT = auto()
 
 
 _DTYPE_RESULT_SUPPORT = {
@@ -140,6 +146,8 @@ _IMPORTED_SUPPORT = {
     "re.Pattern.search": CalleeUniverseSupport.REGEX_SEARCH,
     "json.loads": CalleeUniverseSupport.JSON_LOADS,
     "dataclasses.asdict": CalleeUniverseSupport.DATACLASSES_ASDICT,
+    "pathlib.Path.resolve": CalleeUniverseSupport.PATH_RESOLVE,
+    "numpy.ufunc": CalleeUniverseSupport.UFUNC,
 }
 
 _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list", "set", "hasattr"})
@@ -162,16 +170,37 @@ def recognize_callee_universe(
 ) -> CalleeUniverseSupport | None:
     """Recognize one exact support family from structural/import testimony.
 
-    NumPy support is accepted only when the source call's lexical import
-    identity still resolves to an exact registered target. Parameters and
-    assignments revoke the import warrant.
+    Support is accepted only when lexical import / source-bound provenance
+    still resolves to an exact registered target or bound-source form.
+    Parameters and unresolved lookalikes revoke the warrant.
     """
 
     if site is None:
         return None
     identity = _result_call_identity(site)
     if identity is None:
-        return None
+        # Bound native receivers (``path = pathlib.Path(...); path.resolve()``)
+        # and multi-hop instance-module Attribute calls authenticate through
+        # coordinate / bound-source provenance, not a bare import identity.
+        bound = _bound_source_callable_identity(site)
+        if bound is not None:
+            leaf = site.call_target_name()
+            if target is not None and target != f"call:{leaf}":
+                return None
+            return CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
+        coordinate = CalleeUniverseRecognition.coordinate(site)
+        if coordinate is None:
+            return None
+        support = recognize_authenticated_callee_identity(coordinate)
+        if support is None:
+            return None
+        leaf = coordinate.rsplit(".", 1)[-1]
+        if target is not None and target not in {
+            f"call:{coordinate}",
+            f"call:{leaf}",
+        }:
+            return None
+        return support
     result_support = _DTYPE_RESULT_SUPPORT.get(identity)
     if result_support is not None and target in {None, "call:dtype"}:
         return result_support
@@ -180,10 +209,12 @@ def recognize_callee_universe(
         if _bound_source_callable_identity(site) != identity:
             return None
         support = CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
-        coordinate = site.call_target_name()
-    else:
-        coordinate = identity
-    if target is not None and target != f"call:{coordinate}":
+        leaf = site.call_target_name()
+        if target is not None and target != f"call:{leaf}":
+            return None
+        return support
+    leaf = identity.rsplit(".", 1)[-1]
+    if target is not None and target not in {f"call:{identity}", f"call:{leaf}"}:
         return None
     return support
 
@@ -375,6 +406,17 @@ def imported_call_identity(site) -> str | None:
             continue
         value_head, value_sep, value_tail = value_dotted.partition(".")
         if value_head in shadowed_parameters:
+            # Multi-hop instance-parameter chains only
+            # (``selectedintkind = self.module.selectedintkind``).
+            instance_param = _enclosing_instance_parameter(site)
+            if (
+                instance_param is not None
+                and value_head == instance_param
+                and value_sep
+                and "." in value_tail
+            ):
+                assigned[bound] = (value_dotted, function_local)
+                continue
             assigned[bound] = None
             continue
         origin_entry = imported.get(value_head)
@@ -394,6 +436,17 @@ def imported_call_identity(site) -> str | None:
 
     head, separator, tail = dotted.partition(".")
     if head in shadowed_parameters:
+        # ``self.module.t0(...)`` only — multi-hop Attribute chains rooted at
+        # the instance parameter. Bare ``self.conv(...)`` stays on the method-
+        # coordinate path.
+        instance_param = _enclosing_instance_parameter(site)
+        if (
+            instance_param is not None
+            and head == instance_param
+            and separator
+            and "." in tail
+        ):
+            return dotted
         return None
 
     # Prefer explicit assignment identity for the leaf name (``conv = mt.x``).
@@ -440,36 +493,69 @@ def _bound_native_receiver_coordinate(
     return recognize_native_instance_call(shape, member)
 
 
-def _bound_source_callable_identity(site) -> str | None:
-    """Authenticate a bare call through its exact dotted assignment binding.
+def _enclosing_instance_parameter(site) -> str | None:
+    """Return the enclosing method's instance parameter name, if any.
 
-    The leaf spelling grants nothing. The call must resolve to a preceding
-    single-name assignment whose dotted receiver chain is itself anchored in
-    lexical import testimony. Parameters and non-dotted/lookalike assignments
+    Free functions' first parameter is not an instance receiver — only a
+    method nested in a class body yields ``self``/``cls`` provenance.
+    """
+
+    method, class_def = _enclosing_method_and_class(site)
+    if method is None or class_def is None:
+        return None
+    return _instance_parameter_name(method)
+
+
+def _bound_source_callable_identity(site) -> str | None:
+    """Authenticate a call through source-bound dotted provenance.
+
+    Two structural forms (leaf spelling grants nothing):
+
+    1. Bare call after a single-name assignment whose dotted value is anchored
+       in lexical import testimony **or** a multi-hop instance-parameter
+       Attribute chain (``selectedintkind = self.module.selectedintkind``).
+    2. Multi-hop Attribute call rooted at the enclosing method's instance
+       parameter (``self.module.t0(...)``, ``self.module.foo()``).
+
+    Parameters used as the call leaf, unresolved names, and lookalike bindings
     stay outside this family.
     """
 
-    if site is None or site.observed != "Call" or site.call_receiver() is not None:
+    if site is None or site.observed != "Call":
         return None
-    target = site.call_target_name()
-    if target is None:
+    identity = imported_call_identity(site)
+    if identity is None:
         return None
-    declarations, shadowed_parameters = visible_declarations(site)
-    if target in shadowed_parameters:
+    receiver = site.call_receiver()
+    if receiver is None:
+        target = site.call_target_name()
+        if target is None:
+            return None
+        declarations, shadowed_parameters = visible_declarations(site)
+        if target in shadowed_parameters:
+            return None
+        binding = None
+        for declaration in declarations:
+            if target not in declaration.stored_or_deleted_names():
+                continue
+            binding = declaration
+        if binding is None or binding.observed != "Assign":
+            return None
+        if binding.stored_or_deleted_names() != frozenset({target}):
+            return None
+        value_name = binding.assign_value().dotted_expr_name()
+        if value_name is None or "." not in value_name:
+            return None
+        return identity
+    # Attribute call: multi-hop instance-parameter paths only
+    # (``self.module.t0``, not ``self.conv``).
+    parts = identity.split(".")
+    if len(parts) < 3:
         return None
-    binding = None
-    for declaration in declarations:
-        if target not in declaration.stored_or_deleted_names():
-            continue
-        binding = declaration
-    if binding is None or binding.observed != "Assign":
+    instance_param = _enclosing_instance_parameter(site)
+    if instance_param is None or parts[0] != instance_param:
         return None
-    if binding.stored_or_deleted_names() != frozenset({target}):
-        return None
-    value_name = binding.assign_value().dotted_expr_name()
-    if value_name is None or "." not in value_name:
-        return None
-    return imported_call_identity(site)
+    return identity
 
 
 def _result_call_identity(site) -> str | None:
