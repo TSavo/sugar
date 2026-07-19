@@ -310,20 +310,35 @@ def test_shadowed_authenticated_coordinate_stays_unclassified(callee: str) -> No
     assert gaps[0].ast_kind == f"call:{callee}"
 
 
-def test_unwarranted_receiver_converter_stays_unclassified() -> None:
+def test_import_bound_class_attr_converter_authenticates_without_logo() -> None:
+    """#5409: class-body assign from import-bound dotted name is BOUND_SOURCE.
+
+    The warrant is assign provenance + instance receiver, not a multiarray
+    logo whitelist. ``math.sqrt`` is as import-bound as ``mt.run_*_converter``.
+    """
+
     source = (
         "import math as mt\n"
         "class TestConverter:\n"
         "    conv = mt.sqrt\n"
         "    def test_shadowed(self):\n"
-        "        assert self.conv(5) == 5\n"
+        "        assert self.conv(5) == self.conv(5)\n"
     )
 
-    payload = lift_file_payload(source, "shadowed_receiver_conv.py")
+    payload = lift_file_payload(source, "import_bound_receiver_conv.py")
 
-    gaps = _universe_gaps(payload)
-    assert len(gaps) == 1
-    assert gaps[0].ast_kind == "call:conv"
+    assert _universe_gaps(payload) == []
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "conv"
+    )
+    site = SourceFragment.from_node(
+        call, "import_bound_receiver_conv.py", source=source
+    )
+    assert recognize_callee_universe("call:conv", site=site) is not None
 
 
 def test_later_local_rebind_revokes_get_handler_name_warrant() -> None:
@@ -800,34 +815,58 @@ def test_unauthenticated_numpy_all_fqn_alone_stays_loud() -> None:
 
 
 def test_authenticated_numpy_issubdtype_has_universe_support() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_dtype(left, right):\n"
-        "    assert np.issubdtype(left, right)\n"
+    """#5400: requires kit protocol load (see test_imported_callee_protocol_*)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "issubdtype_covered_fixture.py")
-
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.issubdtype"
-        for edge in payload.call_edges
-    )
-    assert _universe_gaps(payload) == []
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.issubdtype": CalleeUniverseSupport.NUMPY_ISSUBDTYPE}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(left, right):\n"
+            "    assert np.issubdtype(left, right)\n"
+        )
+        payload = lift_file_payload(source, "issubdtype_covered_fixture.py")
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.issubdtype"
+            for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+    finally:
+        clear_imported_callee_protocol()
 
 
 def test_shadowed_numpy_alias_cannot_warrant_issubdtype_support() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_dtype(np, left, right):\n"
-        "    assert np.issubdtype(left, right)\n"
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "issubdtype_shadowed_fixture.py")
-
-    gaps = _universe_gaps(payload)
-    assert [gap.ast_kind for gap in gaps] == ["call:numpy.issubdtype"]
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.issubdtype": CalleeUniverseSupport.NUMPY_ISSUBDTYPE}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(np, left, right):\n"
+            "    assert np.issubdtype(left, right)\n"
+        )
+        payload = lift_file_payload(source, "issubdtype_shadowed_fixture.py")
+        gaps = _universe_gaps(payload)
+        assert [gap.ast_kind for gap in gaps] == ["call:numpy.issubdtype"]
+    finally:
+        clear_imported_callee_protocol()
 
 
 def test_authenticated_numpy_allclose_has_universe_support() -> None:

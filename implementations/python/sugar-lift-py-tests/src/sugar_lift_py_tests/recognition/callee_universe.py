@@ -196,6 +196,18 @@ def recognize_callee_universe(
             target, coordinate, site
         ):
             return CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
+        # #5409 call:conv — class-body attribute assigned from an import-bound
+        # dotted name (``self.conv = mt.run_*_converter``). Coordinate is the
+        # resolved import FQN; the warrant is class-attr assign provenance +
+        # instance-parameter receiver, never a logo table or the spelling
+        # ``conv``. Arbitrary parameters / instance rebinds leave coordinate
+        # None and stay loud.
+        if (
+            "." in coordinate
+            and site.call_receiver() is not None
+            and _target_matches_call(target, coordinate, site)
+        ):
+            return CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
         return None
     result_support = _DTYPE_RESULT_SUPPORT.get(identity)
     if result_support is not None and target in {None, "call:dtype"}:
