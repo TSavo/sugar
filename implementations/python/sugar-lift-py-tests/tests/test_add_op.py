@@ -144,3 +144,23 @@ def test_bool_addition_truthful_and_lying_twins_refute(tmp_path) -> None:
     assert lying.verdict == pair.lying.expected == "unsat"
     assert "AddOpSugar" in truthful.selected_sugars
     assert "AddOpSugar" in lying.selected_sugars
+
+
+def test_comprehension_callsite_add_twins_refute(tmp_path) -> None:
+    pair = next(
+        pair
+        for pair in AddOpSugar.witnesses()
+        if pair.name == "comprehension_callsite_add_coordinate"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "comprehension-call-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "comprehension-call-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+    assert "AddOpSugar" in truthful.selected_sugars
+    assert "AddOpSugar" in lying.selected_sugars

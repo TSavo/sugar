@@ -9,6 +9,7 @@ from sugar_lift_py_tests.effect import SequenceConcatenationRuntimeEffect
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 from sugar_lift_py_tests.floor import (
+    CallSiteValue,
     ComprehensionValue,
     ListValue,
     StringValue,
@@ -88,6 +89,28 @@ def test_ground_comprehension_concat_constructs_the_exact_coordinate() -> None:
                 ctor("array", [StringValue("tail").to_term(owner="test")]),
             ],
         )
+    )
+
+
+def test_comprehension_plus_callsite_preserves_the_named_add_coordinate() -> None:
+    site = SourceFragment.from_source("items + suffix()", "comprehension-call.py")
+    comprehension = ComprehensionValue(ctor("py.listcomp", [make_var("items")]))
+    callsite = CallSiteValue(
+        target_name="suffix",
+        arg_values=(),
+        parameters=(),
+        term=ctor("call:suffix", []),
+        body=None,
+        site=site,
+    )
+
+    value = complete_value(
+        comprehension.add(callsite, site),
+        owner="comprehension plus callsite",
+    )
+
+    assert value == SymbolicValue(
+        ctor("+", [comprehension.term, callsite.term])
     )
 
 

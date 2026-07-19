@@ -110,6 +110,12 @@ class ComprehensionValue(FloorValue):
                     ),
                 )
             )
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+        if type(other) is CallSiteValue:
+            from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+            return SymbolicValue(self.term).add(other, site)
         return super().add(other, site)
 
     def subtract(self, other, site):
