@@ -348,3 +348,137 @@ def resolve_install_value(target, ctx, resolving=frozenset()):
         )
         == []
     )
+
+
+def test_generic_decorated_constructor_without_context_trips() -> None:
+    scanner = _scanner()
+    planted = """
+import functools
+
+CURRENT_CONTEXT = object()
+
+@functools.lru_cache(maxsize=32)
+def memoized_body(site):
+    return CURRENT_CONTEXT.build_body(site, role="statement")
+"""
+    offenders = scanner.context_incomplete_construction_caches(
+        ast.parse(planted), file="generic_lru.py"
+    )
+    assert [offender.owner for offender in offenders] == ["memoized_body"]
+
+
+def test_module_table_factory_product_without_context_key_trips() -> None:
+    scanner = _scanner()
+    planted = """
+_BODY_MEMO = {}
+
+def resolve(site, build_ctx):
+    key = site.filename
+    known = _BODY_MEMO.get(key)
+    if known is not None:
+        return known
+    body = build_ctx.build_body(site, role="statement")
+    _BODY_MEMO[key] = body
+    return body
+"""
+    offenders = scanner.context_incomplete_construction_caches(
+        ast.parse(planted), file="module_table.py"
+    )
+    assert [offender.owner for offender in offenders] == ["_BODY_MEMO"]
+
+
+def test_node_attribute_factory_product_without_context_key_trips() -> None:
+    scanner = _scanner()
+    planted = """
+def resolve(node, site, build_ctx):
+    cached = getattr(node, "_body_cache", None)
+    if cached is not None:
+        return cached
+    body = build_ctx.build_body(site, role="statement")
+    node._body_cache = (site.filename, body)
+    return body
+"""
+    offenders = scanner.context_incomplete_construction_caches(
+        ast.parse(planted), file="node_cache.py"
+    )
+    assert [offender.owner for offender in offenders] == ["resolve"]
+
+
+def test_generic_construction_cache_syntaxes_with_context_are_green() -> None:
+    scanner = _scanner()
+    clean = """
+import functools
+
+@functools.lru_cache(maxsize=32)
+def memoized_body(site, build_ctx):
+    return build_ctx.build_body(site, role="statement")
+
+_BODY_MEMO = {}
+
+def resolve(site, build_ctx):
+    key = (site.filename, build_ctx)
+    known = _BODY_MEMO.get(key)
+    if known is not None:
+        return known
+    body = build_ctx.build_body(site, role="statement")
+    _BODY_MEMO[key] = body
+    return body
+
+def resolve_node(node, site, build_ctx):
+    cached = getattr(node, "_body_cache", None)
+    if cached is not None and cached[0] is build_ctx:
+        return cached[1]
+    body = build_ctx.build_body(site, role="statement")
+    node._body_cache = (build_ctx, body)
+    return body
+"""
+    assert (
+        scanner.context_incomplete_construction_caches(
+            ast.parse(clean), file="generic_clean.py"
+        )
+        == []
+    )
+
+
+def test_content_keyed_cache_with_nested_source_seat_partition_is_green() -> None:
+    scanner = _scanner()
+    clean = """
+_FILE_PAYLOAD_CACHE = {}
+
+def build_payload(source, file_rel, file_cid):
+    seats = _FILE_PAYLOAD_CACHE.get(file_cid)
+    if seats is not None and file_rel in seats:
+        return seats[file_rel]
+    value = build_node(source, file_rel)
+    seats = _FILE_PAYLOAD_CACHE.setdefault(file_cid, {})
+    seats[file_rel] = value
+    return value
+"""
+    assert (
+        scanner.context_incomplete_construction_caches(
+            ast.parse(clean), file="nested_seat.py"
+        )
+        == []
+    )
+
+
+def test_module_installed_source_table_requires_context_key() -> None:
+    scanner = _scanner()
+    planted = """
+from collections import OrderedDict
+
+_SOURCE_CACHE = OrderedDict()
+
+def resolve_install_source_class_bases(target, ctx):
+    key = target
+    known = _SOURCE_CACHE.get(key)
+    if known is not None:
+        return known
+    value = resolve_source_bases(target, ctx)
+    _SOURCE_CACHE[key] = value
+    return value
+"""
+    offenders = scanner.context_incomplete_construction_caches(
+        ast.parse(planted), file="source_table.py"
+    )
+    assert [offender.owner for offender in offenders] == ["_SOURCE_CACHE"]

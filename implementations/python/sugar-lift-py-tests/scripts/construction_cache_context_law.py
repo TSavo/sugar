@@ -207,6 +207,294 @@ def _cached_source_oracle_functions(
     return offenders
 
 
+def _decorated_construction_cache_functions(
+    tree: ast.AST, *, file: str
+) -> list[ContextIncompleteConstructionCache]:
+    """Catch generic memoized constructors, independent of function naming."""
+    local_functions = _local_function_map(tree)
+    offenders: list[ContextIncompleteConstructionCache] = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not any(
+            _decorator_name(decorator) in {
+                "cache",
+                "cached_property",
+                "lru_cache",
+            }
+            for decorator in function.decorator_list
+        ):
+            continue
+        if not _function_constructs(
+            function,
+            local_functions=local_functions,
+            owner_methods={},
+        ):
+            continue
+        context_parameters = _context_parameters(function)
+        # functools cache identity includes every supplied argument. A
+        # constructor that receives its context is therefore partitioned by it;
+        # a constructor reading context elsewhere is not.
+        if context_parameters:
+            continue
+        offenders.append(
+            ContextIncompleteConstructionCache(
+                file=file,
+                line=function.lineno,
+                owner=function.name,
+                reason=(
+                    "memoized factory constructor has no factory-recognition "
+                    "context in its automatic argument key"
+                ),
+            )
+        )
+    return offenders
+
+
+def _module_table_names(tree: ast.AST) -> frozenset[str]:
+    names: set[str] = set()
+    for node in getattr(tree, "body", ()):
+        target = None
+        value = None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign):
+            target, value = node.target, node.value
+        if not isinstance(target, ast.Name) or value is None:
+            continue
+        if not any(
+            word in target.id.lower()
+            for word in ("cache", "memo", "table", "oracle", "contexts")
+        ):
+            continue
+        if isinstance(value, (ast.Dict, ast.DictComp)):
+            names.add(target.id)
+        elif isinstance(value, ast.Call) and _call_name(value) in {
+            "dict",
+            "defaultdict",
+            "OrderedDict",
+            "WeakKeyDictionary",
+            "WeakValueDictionary",
+        }:
+            names.add(target.id)
+    return frozenset(names)
+
+
+def _global_table_access(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    table: str,
+) -> tuple[bool, bool, tuple[ast.AST, ...]]:
+    reads = False
+    writes = False
+    keys: list[ast.AST] = []
+    for node in ast.walk(function):
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == table
+        ):
+            keys.append(node.slice)
+            reads = reads or isinstance(node.ctx, ast.Load)
+            writes = writes or not isinstance(node.ctx, ast.Load)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == table
+            and node.args
+        ):
+            keys.append(node.args[0])
+            reads = reads or node.func.attr in {
+                "get",
+                "__getitem__",
+                "move_to_end",
+                "pop",
+            }
+            writes = writes or node.func.attr in {
+                "__setitem__",
+                "setdefault",
+                "update",
+                "pop",
+                "popitem",
+            }
+    return reads, writes, tuple(keys)
+
+
+def _expanded_key_names(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    keys: Iterable[ast.AST],
+) -> frozenset[str]:
+    assignments: dict[str, ast.AST] = {}
+    for node in ast.walk(function):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            assignments[node.targets[0].id] = node.value
+    names: set[str] = set()
+    pending = list(keys)
+    expanded: set[str] = set()
+    while pending:
+        key = pending.pop()
+        referenced = {
+            child.id for child in ast.walk(key) if isinstance(child, ast.Name)
+        }
+        names.update(referenced)
+        for name in referenced:
+            if name in assignments and name not in expanded:
+                expanded.add(name)
+                pending.append(assignments[name])
+    return frozenset(names)
+
+
+def _module_table_construction_caches(
+    tree: ast.AST, *, file: str
+) -> list[ContextIncompleteConstructionCache]:
+    """Catch factory products published through module-level cache tables."""
+    local_functions = _local_function_map(tree)
+    offenders: list[ContextIncompleteConstructionCache] = []
+    for table in _module_table_names(tree):
+        for function in local_functions.values():
+            reads, writes, keys = _global_table_access(function, table)
+            if not reads or not writes:
+                continue
+            constructs_factory_product = _function_constructs(
+                function,
+                local_functions=local_functions,
+                owner_methods={},
+            )
+            calls = {
+                _call_name(node)
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call)
+            }
+            constructs_source_product = (
+                "install_source" in function.name
+                or "installed_source" in function.name
+                or "installed_module_source" in calls
+            )
+            if not constructs_factory_product and not constructs_source_product:
+                continue
+            context_parameters = _context_parameters(function)
+            key_names = _expanded_key_names(function, keys)
+            if context_parameters & key_names:
+                continue
+            parameters = _function_parameters(function)
+            has_source_identity = any(
+                "source" in name or "cid" in name or "content" in name
+                for name in key_names
+            )
+            seat_parameters = {
+                name
+                for name in parameters
+                if "filename" in name
+                or "path" in name
+                or name.endswith("_rel")
+                or name in {"file", "seat"}
+            }
+            seat_partitions_payload = any(
+                isinstance(node, ast.Subscript)
+                and any(
+                    isinstance(child, ast.Name)
+                    and child.id in seat_parameters
+                    for child in ast.walk(node.slice)
+                )
+                for node in ast.walk(function)
+            )
+            if (
+                has_source_identity
+                and (seat_parameters & key_names or seat_partitions_payload)
+            ):
+                continue
+            offenders.append(
+                ContextIncompleteConstructionCache(
+                    file=file,
+                    line=function.lineno,
+                    owner=table,
+                    reason=(
+                        "module-level factory product cache key omits the "
+                        "factory-recognition context consumed by construction"
+                    ),
+                )
+            )
+            break
+    return offenders
+
+
+def _attribute_construction_caches(
+    tree: ast.AST, *, file: str
+) -> list[ContextIncompleteConstructionCache]:
+    """Catch construction published on an object/node cache attribute."""
+    local_functions = _local_function_map(tree)
+    owner_methods_by_function: dict[
+        int, dict[str, ast.FunctionDef | ast.AsyncFunctionDef]
+    ] = {}
+    for owner in ast.walk(tree):
+        if not isinstance(owner, ast.ClassDef):
+            continue
+        methods = _method_map(owner)
+        for method in methods.values():
+            owner_methods_by_function[id(method)] = methods
+    offenders: list[ContextIncompleteConstructionCache] = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        read_attributes: set[str] = set()
+        write_values: dict[str, ast.AST] = {}
+        for node in ast.walk(function):
+            if (
+                isinstance(node, ast.Call)
+                and _call_name(node) == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+                and "cache" in node.args[1].value.lower()
+            ):
+                read_attributes.add(node.args[1].value)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
+                for target in targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and "cache" in target.attr.lower()
+                        and node.value is not None
+                    ):
+                        write_values[target.attr] = node.value
+        cached_attributes = read_attributes & write_values.keys()
+        if not cached_attributes:
+            continue
+        if not _function_constructs(
+            function,
+            local_functions=local_functions,
+            owner_methods=owner_methods_by_function.get(id(function), {}),
+        ):
+            continue
+        context_parameters = _context_parameters(function)
+        carries_context = any(
+            any(
+                isinstance(child, ast.Name)
+                and child.id in context_parameters
+                for child in ast.walk(write_values[attribute])
+            )
+            for attribute in cached_attributes
+        )
+        if carries_context:
+            continue
+        offenders.append(
+            ContextIncompleteConstructionCache(
+                file=file,
+                line=function.lineno,
+                owner=function.name,
+                reason=(
+                    "object/node factory product cache omits the "
+                    "factory-recognition context from its published identity"
+                ),
+            )
+        )
+    return offenders
+
+
 def _module_context_tables(
     tree: ast.AST, *, file: str
 ) -> list[ContextIncompleteConstructionCache]:
@@ -539,6 +827,9 @@ def context_incomplete_construction_caches(
 ) -> list[ContextIncompleteConstructionCache]:
     offenders: list[ContextIncompleteConstructionCache] = []
     offenders.extend(_cached_source_oracle_functions(tree, file=file))
+    offenders.extend(_decorated_construction_cache_functions(tree, file=file))
+    offenders.extend(_module_table_construction_caches(tree, file=file))
+    offenders.extend(_attribute_construction_caches(tree, file=file))
     offenders.extend(_module_context_tables(tree, file=file))
     offenders.extend(_opaque_cycle_guards(tree, file=file))
     local_functions = _local_function_map(tree)
