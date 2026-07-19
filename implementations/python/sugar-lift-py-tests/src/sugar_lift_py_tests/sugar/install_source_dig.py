@@ -174,7 +174,7 @@ class DigBodyOracle:
         from collections import OrderedDict
 
         self._capacity = max(int(capacity), 1)
-        self._table: OrderedDict[tuple[str, int, str, str], Any] = OrderedDict()
+        self._table: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
         self.construct_count = 0
         self.hit_count = 0
 
@@ -191,6 +191,18 @@ class DigBodyOracle:
         if not file or lineno < 0:
             return None
         return (file, lineno, name, bridge)
+
+    def cache_key(self, fn_site: Any, ctx: Any) -> tuple[Any, ...] | None:
+        base = self.identity_key(fn_site)
+        if base is None:
+            return None
+        source = getattr(getattr(fn_site, "node", None), "_sugar_source", "") or ""
+        from sugar_lift_py_tests.canonicalizer import blake3_512_of
+
+        source_cid = blake3_512_of(str(source).encode()) if source else ""
+        # Dig construction builds the body with this context; every factory
+        # recognition input must partition the published successful structure.
+        return (*base, source_cid, _factory_context_identity(ctx))
 
     def get(self, key: tuple[str, int, str, str]) -> Any:
         value = self._table.get(key, _MISSING)
@@ -2947,7 +2959,7 @@ def _build_dig_body_impl(
 
         formal_ctx = ControlFlowBodySugar.build_context(fn_site, body_ctx)
         oracle = DIG_BODY_ORACLE
-        key = oracle.identity_key(fn_site)
+        key = oracle.cache_key(fn_site, body_ctx)
         if key is not None and oracle_variant is not None:
             key = (key, oracle_variant)
         core = oracle.get(key) if key is not None else _MISSING
