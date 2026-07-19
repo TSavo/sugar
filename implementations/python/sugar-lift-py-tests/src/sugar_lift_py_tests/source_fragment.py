@@ -1626,6 +1626,15 @@ class SourceFragment:
 
         return BindingShapeRecognition.for_nested_tuple_target_paths(self)
 
+    def for_discarded_star_tuple_target_paths(
+        self,
+    ) -> "tuple[tuple[tuple[int, ...], str], ...] | None":
+        """Return paths for a tuple/list for-target with one discarded star."""
+        self._require(ast.For, ast.AsyncFor)
+        from .recognition.binding_shapes import BindingShapeRecognition
+
+        return BindingShapeRecognition.for_discarded_star_tuple_target_paths(self)
+
     def for_body(self) -> "list[SourceFragment]":
         """Return SourceFragments for the body statements of a For or AsyncFor node."""
         self._require(ast.For, ast.AsyncFor)

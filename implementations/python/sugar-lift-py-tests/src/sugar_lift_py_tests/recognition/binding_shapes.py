@@ -129,6 +129,58 @@ class BindingShapeRecognition:
         return tuple(paths)
 
     @staticmethod
+    def for_discarded_star_tuple_target_paths(
+        site,
+    ) -> tuple[tuple[tuple[int, ...], str], ...] | None:
+        """Projection paths for a For target with exactly one discarded star.
+
+        Non-star leaves must be name-rooted (LoopControlScope target_bindings).
+        The starred name must not appear as a Load on the For site. Indices
+        before the star stay positive; indices after become negative suffix
+        coordinates (same discarded-star arithmetic as SetComp).
+        """
+        if not isinstance(site.node, (ast.For, ast.AsyncFor)):
+            return None
+        target = site.node.target
+        if not isinstance(target, (ast.Tuple, ast.List)) or not target.elts:
+            return None
+        starred = [
+            (index, element)
+            for index, element in enumerate(target.elts)
+            if isinstance(element, ast.Starred)
+        ]
+        if len(starred) != 1:
+            return None
+        star_index, star = starred[0]
+        if not isinstance(star.value, ast.Name):
+            return None
+        if star.value.id in BindingShapeRecognition.loaded_names(site):
+            return None
+
+        from sugar_lift_py_tests.source_fragment import SourceFragment
+        from sugar_lift_py_tests.sugar.loop_control_scope_sugar import (
+            LoopControlScopeSugar,
+        )
+
+        paths: list[tuple[tuple[int, ...], str]] = []
+        for index, element in enumerate(target.elts):
+            if index == star_index:
+                continue
+            fragment = SourceFragment.from_node(
+                element,
+                site.filename,
+                source=site.source,
+            )
+            nested = LoopControlScopeSugar.classify(fragment).target_bindings
+            if nested is None:
+                return None
+            root_index = index if index < star_index else index - len(target.elts)
+            paths.extend(((root_index, *path), name) for name, path in nested)
+        if not paths:
+            return None
+        return tuple(paths)
+
+    @staticmethod
     def binds_name_anywhere(site, name: str) -> bool:
         for descendant in ast.walk(site.node):
             if (
