@@ -28,10 +28,12 @@ _CONVERTER_COORDINATES = frozenset(
 )
 _AUTHENTICATED_COORDINATES = frozenset(
     {
-        "type",
+        # bare ``type`` is owned by BuiltinTypeCallSugar (construction + universe).
         "dtype",
         "all",
         "list",
+        "set",
+        "hasattr",
         "numpy.can_cast",
         "numpy.issubdtype",
         "numpy.isnan",
@@ -40,7 +42,11 @@ _AUTHENTICATED_COORDINATES = frozenset(
         *_CONVERTER_COORDINATES,
     }
 )
-_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list"})
+# Must match recognition.callee_universe bare-builtin warrants this leaf owns.
+# ``type`` is intentionally absent: BuiltinTypeCallSugar is its construction owner.
+_BUILTIN_COORDINATES = frozenset(
+    {"dtype", "all", "list", "set", "hasattr"}
+)
 # Leaf spellings that can still resolve into an authenticated coordinate.
 # Plain-call owns refuses full import-identity work when the callee leaf cannot
 # match; method receivers keep the Name-only path (class attribute aliases).
@@ -115,10 +121,11 @@ class BuiltinCalleeUniverseSugar(
     @classmethod
     def witnesses(cls):
         return (
-            _coordinate_witness("type", "5", "6"),
             _coordinate_witness("dtype", "'i4'", "'i8'"),
             _coordinate_witness("all", "True", "False"),
             _coordinate_witness("list", "[]", "[0]"),
+            _coordinate_witness("set", "[]", "[0]"),
+            _coordinate_witness("hasattr", "True", "False"),
             _imported_coordinate_witness(
                 name="get_handler_name",
                 setup=("from numpy._core.multiarray import get_handler_name\n"),

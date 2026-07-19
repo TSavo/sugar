@@ -19,6 +19,8 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
     assert {
         "all",
         "list",
+        "set",
+        "hasattr",
         "numpy.can_cast",
         "numpy.issubdtype",
         "numpy.isnan",
@@ -29,6 +31,8 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
     assert {
         "all_builtin_universe_coordinate",
         "list_builtin_universe_coordinate",
+        "set_builtin_universe_coordinate",
+        "hasattr_builtin_universe_coordinate",
         "numpy_can_cast_universe_coordinate",
         "numpy_issubdtype_universe_coordinate",
         "numpy_isnan_universe_coordinate",
@@ -38,15 +42,19 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
     } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
 
 
-def _list_call_site(source: str) -> SourceFragment:
+def _bare_builtin_call_site(source: str, callee: str) -> SourceFragment:
     call = next(
         node
         for node in ast.walk(ast.parse(source))
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "list"
+        and node.func.id == callee
     )
-    return SourceFragment.from_node(call, "list_call.py", source=source)
+    return SourceFragment.from_node(call, f"{callee}_call.py", source=source)
+
+
+def _list_call_site(source: str) -> SourceFragment:
+    return _bare_builtin_call_site(source, "list")
 
 
 def test_authenticated_list_selects_one_factory_owner() -> None:
@@ -101,6 +109,124 @@ def test_unwarranted_list_receiver_is_not_factory_owned(source: str) -> None:
 
 def test_list_witness_pair_is_enrolled() -> None:
     assert "list_builtin_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def test_authenticated_set_selects_one_factory_owner() -> None:
+    source = "def test_set(values):\n    assert set(values) == set()\n"
+    context = FactoryBuildContext(
+        filename="set_call.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _bare_builtin_call_site(source, "set"),
+        filename="set_call.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def test_set(set, values):\n    assert set(values) == set()\n",
+        (
+            "def test_set(values):\n"
+            "    assert set(values) == set()\n"
+            "    set = replacement\n"
+        ),
+        (
+            "class PretendSet:\n"
+            "    def __call__(self, values):\n"
+            "        return values\n"
+            "\n"
+            "def test_set(set, values):\n"
+            "    assert set(values) == set()\n"
+        ),
+    ],
+)
+def test_unwarranted_set_receiver_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="set_call.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _bare_builtin_call_site(source, "set"),
+        filename="set_call.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_set_witness_pair_is_enrolled() -> None:
+    assert "set_builtin_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def test_authenticated_hasattr_selects_one_factory_owner() -> None:
+    source = (
+        "def test_hasattr(obj, name):\n"
+        "    assert hasattr(obj, name)\n"
+    )
+    context = FactoryBuildContext(
+        filename="hasattr_call.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _bare_builtin_call_site(source, "hasattr"),
+        filename="hasattr_call.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "def test_hasattr(hasattr, obj, name):\n"
+            "    assert hasattr(obj, name)\n"
+        ),
+        (
+            "def test_hasattr(obj, name):\n"
+            "    assert hasattr(obj, name)\n"
+            "    hasattr = replacement\n"
+        ),
+        (
+            "class PretendHasattr:\n"
+            "    def __call__(self, obj, name):\n"
+            "        return True\n"
+            "\n"
+            "def test_hasattr(hasattr, obj, name):\n"
+            "    assert hasattr(obj, name)\n"
+        ),
+    ],
+)
+def test_unwarranted_hasattr_receiver_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="hasattr_call.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _bare_builtin_call_site(source, "hasattr"),
+        filename="hasattr_call.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_hasattr_witness_pair_is_enrolled() -> None:
+    assert "hasattr_builtin_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 

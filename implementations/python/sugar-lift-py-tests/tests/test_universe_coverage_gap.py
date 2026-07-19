@@ -118,6 +118,14 @@ def test_builtin_covered_callee_emits_no_universe_gap() -> None:
             "def test_list(value):\n    assert list(value) == []\n",
         ),
         (
+            "set",
+            "def test_set(value):\n    assert set(value) == set()\n",
+        ),
+        (
+            "hasattr",
+            "def test_hasattr(obj, name):\n    assert hasattr(obj, name)\n",
+        ),
+        (
             "get_handler_name",
             "from numpy._core.multiarray import get_handler_name\n"
             "def test_handler():\n"
@@ -148,7 +156,7 @@ def test_authenticated_builtin_coordinate_emits_no_universe_gap(
     )
     assert _universe_gaps(payload) == []
 
-    if callee in {"type", "dtype", "all", "list"}:
+    if callee in {"type", "dtype", "all", "list", "set", "hasattr"}:
         node = ast.parse(f"{callee}(value)", mode="eval").body
         context = FactoryBuildContext(
             filename="coordinate.py", catalog=default_catalog()
@@ -159,7 +167,14 @@ def test_authenticated_builtin_coordinate_emits_no_universe_gap(
             role=SugarRole.TERM,
             ctx=context,
         )
-        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+        # bare type() is BuiltinTypeCallSugar; remaining builtins share the
+        # BuiltinCalleeUniverseSugar universe-coordinate leaf.
+        expected = (
+            "BuiltinTypeCallSugar"
+            if callee == "type"
+            else "BuiltinCalleeUniverseSugar"
+        )
+        assert built.audit_row.selected == expected
 
 
 def test_py_subscript_floor_coordinate_is_not_a_callee_universe_gap() -> None:
@@ -194,7 +209,9 @@ def test_bare_subscript_under_assert_is_not_a_callee_universe_gap() -> None:
     assert _universe_gaps(payload) == []
 
 
-@pytest.mark.parametrize("callee", ["get_handler_name", "conv", "all", "list"])
+@pytest.mark.parametrize(
+    "callee", ["get_handler_name", "conv", "all", "list", "set", "hasattr"]
+)
 def test_shadowed_authenticated_coordinate_stays_unclassified(callee: str) -> None:
     source = f"def test_shadowed({callee}):\n" f"    assert {callee}(5) == 5\n"
 
