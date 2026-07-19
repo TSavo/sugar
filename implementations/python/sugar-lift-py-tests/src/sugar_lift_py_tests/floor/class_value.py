@@ -30,6 +30,15 @@ class ClassValue(FloorValue):
     def test_python_type(self, value, site):
         return value.python_isinstance(self.name, self.to_term(owner=self.name), site)
 
+    def subscript(self, index, site):
+        from sugar_lift_py_tests.recognition.class_value import (
+            class_value_supports_generic_subscription,
+        )
+
+        if class_value_supports_generic_subscription(self):
+            return self.py_subscript_coordinate(index, site)
+        return super().subscript(index, site)
+
     def contribution(self):
         # Splice body entries (methods, assigns) into the enclosing record.
         return self.record.contribution()

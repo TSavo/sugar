@@ -34,6 +34,7 @@ class NativeShape(Enum):
     CLASS_IDENTITY_DECORATOR = auto()
     IMPLEMENTATION_PRESERVING_DECORATOR = auto()
     SQLALCHEMY_ORM_REGISTRY = auto()
+    GENERIC_CLASS = auto()
     PYDANTIC_BASE_MODEL = auto()
     PYDANTIC_EXTRA_ALLOW_CLASS_OPTION = auto()
 
@@ -133,6 +134,7 @@ _NATIVE_INSTANCE_CLASS_DECORATORS = {
 }
 
 _CLASS_IMPORT_SHAPES = {
+    ("typing", "Generic"): NativeShape.GENERIC_CLASS,
     ("pydantic", "BaseModel"): NativeShape.PYDANTIC_BASE_MODEL,
 }
 

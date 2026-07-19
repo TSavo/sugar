@@ -113,6 +113,49 @@ def test_class_binds_name_for_later_reference() -> None:
     assert ret[0].value.name == "C"
 
 
+def test_generic_class_subscription_constructs_a_base_coordinate() -> None:
+    block = compose_block(
+        "    from typing import Generic, TypeVar\n"
+        '    T = TypeVar("T")\n'
+        "    class CommonBase(Generic[T]):\n"
+        "        pass\n"
+        "    class Base(CommonBase[T]):\n"
+        "        pass\n"
+        "    class Derived(Base[int]):\n"
+        "        pass\n"
+        "    return Derived\n"
+    )
+
+    from sugar_lift_py_tests.floor import CallSiteValue, ReturnValue
+
+    returned = next(
+        statement.value
+        for statement in block.statements
+        if isinstance(statement, ReturnValue)
+    )
+    assert isinstance(returned, ClassValue)
+    assert len(returned.bases) == 1
+    assert isinstance(returned.bases[0], CallSiteValue)
+    assert returned.bases[0].target_name == "py.subscript"
+    assert isinstance(returned.bases[0].arg_values[0], ClassValue)
+    assert returned.bases[0].arg_values[0].name == "Base"
+
+
+def test_non_generic_class_subscription_stays_loud() -> None:
+    with pytest.raises(FactoryPanic) as raised:
+        compose_block(
+            "    from typing import TypeVar\n"
+            '    T = TypeVar("T")\n'
+            "    class Plain:\n"
+            "        pass\n"
+            "    class Bad(Plain[T]):\n"
+            "        pass\n"
+        )
+
+    assert raised.value.info.owner == "subscript"
+    assert raised.value.info.observed == "ClassValue"
+
+
 def test_definition_root_replays_prior_class_local_definitions() -> None:
     source = (
         "class C:\n"
@@ -172,6 +215,26 @@ def test_class_local_default_witness_truthful_sat_wrong_twin_unsat(
     )
     lying = run_source_through_real_solver(
         tmp_path / "class-local-default-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_generic_class_subscription_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in ClassDefSugar.witnesses()
+        if witness.name == "generic_class_subscription_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "generic-class-subscription-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "generic-class-subscription-lying", pair.lying.source
     )
 
     assert truthful.verdict == pair.truthful.expected == "sat"
