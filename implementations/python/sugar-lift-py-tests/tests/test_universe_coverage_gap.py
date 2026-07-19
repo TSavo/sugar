@@ -472,6 +472,43 @@ def test_authenticated_numpy_isnan_has_universe_support() -> None:
     assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
 
 
+def test_authenticated_numpy_dtype_has_universe_support() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_dtype(value):\n"
+        "    assert np.dtype(value) == np.dtype(value)\n"
+    )
+
+    payload = lift_file_payload(source, "numpy_dtype_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.dtype" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_non_numpy_import_refutes_numpy_dtype_support() -> None:
+    source = (
+        "import struct as np\n"
+        "\n"
+        "def test_dtype(value):\n"
+        "    assert np.dtype(value) == np.dtype(value)\n"
+    )
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "dtype"
+    )
+    site = SourceFragment.from_node(
+        call, "numpy_dtype_lying_fixture.py", source=source
+    )
+
+    assert recognize_callee_universe("call:numpy.dtype", site=site) is None
+
+
 def test_shadowed_numpy_alias_cannot_warrant_isnan_support() -> None:
     """Lying twin: parameter receiver is not the authenticated numpy import."""
 

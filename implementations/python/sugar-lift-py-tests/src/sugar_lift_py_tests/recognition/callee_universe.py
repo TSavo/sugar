@@ -21,6 +21,7 @@ class CalleeUniverseSupport(Enum):
     NUMPY_CAN_CAST = auto()
     NUMPY_ISNAN = auto()
     NUMPY_ALL = auto()
+    NUMPY_DTYPE = auto()
     NUMPY_HANDLER_NAME = auto()
     NUMPY_CONVERTER = auto()
 
@@ -31,6 +32,7 @@ _IMPORTED_SUPPORT = {
     "numpy.can_cast": CalleeUniverseSupport.NUMPY_CAN_CAST,
     "numpy.isnan": CalleeUniverseSupport.NUMPY_ISNAN,
     "numpy.all": CalleeUniverseSupport.NUMPY_ALL,
+    "numpy.dtype": CalleeUniverseSupport.NUMPY_DTYPE,
     "numpy._core.multiarray.get_handler_name": (
         CalleeUniverseSupport.NUMPY_HANDLER_NAME
     ),
