@@ -81,9 +81,9 @@ class ImportAliasValue(FloorValue):
             return None
         try:
             module = importlib.import_module(module_name)
+            candidate = getattr(module, attribute, None)
         except (ImportError, ModuleNotFoundError, TypeError, ValueError):
             return None
-        candidate = getattr(module, attribute, None)
         if not inspect.isclass(candidate):
             return None
         qualified = f"{module_name}.{attribute}"

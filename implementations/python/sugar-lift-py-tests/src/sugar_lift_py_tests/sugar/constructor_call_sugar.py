@@ -1844,7 +1844,10 @@ def _native_imported_base_targets(class_site, ctx):
         bound = ctx.temporal.value_if_bound(module_name)
         if not isinstance(bound, ImportAliasValue) or bound.import_target is None:
             return None
-        spec = importlib.util.find_spec(bound.import_target)
+        try:
+            spec = importlib.util.find_spec(bound.import_target)
+        except (ImportError, ModuleNotFoundError, ValueError):
+            return None
         origin = None if spec is None else spec.origin
         if origin is None or not any(
             origin.endswith(suffix) for suffix in importlib.machinery.EXTENSION_SUFFIXES
