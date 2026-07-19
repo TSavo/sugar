@@ -61,6 +61,12 @@ def universe_coverage_gaps(
         if _edge_carries_external_universe(edge):
             continue
         node = call_nodes.get((line, col))
+        from sugar_lift_py_tests.recognition.callee_universe import (
+            recognize_callee_universe,
+        )
+
+        if recognize_callee_universe(target, site=node) is not None:
+            continue
         if _has_builtin_universe_claim(
             node, callee=callee, catalog=catalog, filename=filename
         ):
@@ -122,11 +128,12 @@ def _call_nodes_by_locus(
     module, filename: str
 ) -> dict[tuple[int, int], SourceFragment]:
     root = module.node if isinstance(module, SourceFragment) else module
+    source = module.source if isinstance(module, SourceFragment) else None
     if not isinstance(root, ast.AST):
         root = ast.Module(body=list(root.body), type_ignores=[])
     return {
         (int(node.lineno), int(node.col_offset)): SourceFragment.from_node(
-            node, filename
+            node, filename, source=source
         )
         for node in ast.walk(root)
         if isinstance(node, ast.Call)
@@ -146,9 +153,7 @@ def _assertion_call_loci(module) -> frozenset[tuple[int, int]]:
     )
 
 
-def _has_builtin_universe_claim(
-    site, *, callee: str, catalog, filename: str
-) -> bool:
+def _has_builtin_universe_claim(site, *, callee: str, catalog, filename: str) -> bool:
     del filename
     if catalog.claims_universe_coordinate(callee):
         return True
