@@ -105,8 +105,23 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def new(cls, site, ctx) -> "TupleUnpackAssignSugar":
         target = site.assign_targets()[0]
-        leaves = _target_leaves(target)
         receiver = ctx.build_body(site.assign_value(), SugarRole.TERM)
+        return cls(
+            stores=cls.stores_for_target(target, receiver, site, ctx),
+            site=site,
+        )
+
+    @staticmethod
+    def target_is_supported(target) -> bool:
+        return bool(_target_leaves(target))
+
+    @staticmethod
+    def stores_for_target(target, receiver, site, ctx) -> tuple[SugarBody, ...]:
+        leaves = _target_leaves(target)
+        if not leaves:
+            raise AssertionError(
+                "TupleUnpackAssignSugar built an unsupported tuple target"
+            )
         stores = []
         from sugar_lift_py_tests.sugar.attribute_assign_sugar import (
             AttributeAssignSugar,
@@ -165,10 +180,7 @@ class TupleUnpackAssignSugar(Sugar, role=SugarRole.STATEMENT):
                         SugarRole.STATEMENT,
                     )
                 )
-        return cls(
-            stores=tuple(stores),
-            site=site,
-        )
+        return tuple(stores)
 
     @classmethod
     def witnesses(cls):
