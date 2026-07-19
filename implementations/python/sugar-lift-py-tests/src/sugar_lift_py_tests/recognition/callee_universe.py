@@ -19,12 +19,14 @@ class CalleeUniverseSupport(Enum):
     NUMPY_ISSUBDTYPE = auto()
     NUMPY_ALLCLOSE = auto()
     NUMPY_CAN_CAST = auto()
+    NUMPY_ISNAN = auto()
 
 
 _IMPORTED_SUPPORT = {
     "numpy.issubdtype": CalleeUniverseSupport.NUMPY_ISSUBDTYPE,
     "numpy.allclose": CalleeUniverseSupport.NUMPY_ALLCLOSE,
     "numpy.can_cast": CalleeUniverseSupport.NUMPY_CAN_CAST,
+    "numpy.isnan": CalleeUniverseSupport.NUMPY_ISNAN,
 }
 
 _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all"})
