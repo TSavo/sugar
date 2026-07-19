@@ -40,6 +40,8 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "numpy.shares_memory",
         "numpy.isdtype",
         "numpy.datetime_data",
+        "numpy.f2py.crackfortran.markinnerspaces",
+        "numpy._core._multiarray_tests.identity_hash_set_item_default",
         "numpy.ndarray.tobytes",
         "numpy._core.multiarray.get_handler_name",
         "numpy._core._multiarray_tests.run_byteorder_converter",
@@ -62,6 +64,8 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "numpy_shares_memory_universe_coordinate",
         "numpy_isdtype_universe_coordinate",
         "numpy_datetime_data_universe_coordinate",
+        "numpy_markinnerspaces_universe_coordinate",
+        "numpy_identity_hash_set_item_default_universe_coordinate",
         "numpy_array_tobytes_universe_coordinate",
         "get_handler_name_builtin_universe_coordinate",
         "conv_builtin_universe_coordinate",
@@ -2027,3 +2031,115 @@ def test_numpy_batch_four_witness_pairs_are_enrolled() -> None:
         "numpy_subrout_default_universe_coordinate",
         "numpy_eval_scalar_universe_coordinate",
     } <= names
+
+
+def test_authenticated_numpy_markinnerspaces_selects_one_factory_owner() -> None:
+    source = (
+        "from numpy.f2py.crackfortran import markinnerspaces\n"
+        "\n"
+        "def test_mark(s):\n"
+        "    assert markinnerspaces(s) == markinnerspaces(s)\n"
+    )
+    context = FactoryBuildContext(
+        filename="markinnerspaces.py", catalog=default_catalog()
+    )
+    built = build_node(
+        _import_leaf_call_site(source, "markinnerspaces", "markinnerspaces.py"),
+        filename="markinnerspaces.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "from numpy.f2py.crackfortran import markinnerspaces\n"
+            "\n"
+            "def test_mark(markinnerspaces, s):\n"
+            "    assert markinnerspaces(s) == s\n"
+        ),
+        (
+            "def test_mark(s):\n"
+            "    assert markinnerspaces(s) == s\n"
+        ),
+    ],
+)
+def test_unwarranted_numpy_markinnerspaces_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="markinnerspaces.py", catalog=default_catalog()
+    )
+    built = build_node(
+        _import_leaf_call_site(source, "markinnerspaces", "markinnerspaces.py"),
+        filename="markinnerspaces.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_numpy_markinnerspaces_witness_pair_is_enrolled() -> None:
+    assert "numpy_markinnerspaces_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def test_authenticated_identity_hash_set_item_default_selects_one_factory_owner() -> None:
+    source = (
+        "from numpy._core._multiarray_tests import identity_hash_set_item_default\n"
+        "\n"
+        "def test_hash(ht, key, value):\n"
+        "    assert identity_hash_set_item_default(ht, key, value) is value\n"
+    )
+    context = FactoryBuildContext(
+        filename="identity_hash.py", catalog=default_catalog()
+    )
+    built = build_node(
+        _import_leaf_call_site(
+            source, "identity_hash_set_item_default", "identity_hash.py"
+        ),
+        filename="identity_hash.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "from numpy._core._multiarray_tests import identity_hash_set_item_default\n"
+            "\n"
+            "def test_hash(identity_hash_set_item_default, ht, key, value):\n"
+            "    assert identity_hash_set_item_default(ht, key, value) is value\n"
+        ),
+        (
+            "def test_hash(ht, key, value):\n"
+            "    assert identity_hash_set_item_default(ht, key, value) is value\n"
+        ),
+    ],
+)
+def test_unwarranted_identity_hash_set_item_default_is_not_factory_owned(
+    source: str,
+) -> None:
+    context = FactoryBuildContext(
+        filename="identity_hash.py", catalog=default_catalog()
+    )
+    built = build_node(
+        _import_leaf_call_site(
+            source, "identity_hash_set_item_default", "identity_hash.py"
+        ),
+        filename="identity_hash.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_identity_hash_set_item_default_witness_pair_is_enrolled() -> None:
+    assert "numpy_identity_hash_set_item_default_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }

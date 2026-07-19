@@ -1061,6 +1061,95 @@ def test_unowned_datetime_data_lookalikes_stay_loud(
     assert [gap.ast_kind for gap in gaps] == [expected_kind]
 
 
+
+def test_authenticated_numpy_markinnerspaces_has_universe_support() -> None:
+    source = (
+        "from numpy.f2py.crackfortran import markinnerspaces\n"
+        "\n"
+        "def test_values(s):\n"
+        "    assert markinnerspaces(s) == markinnerspaces(s)\n"
+    )
+
+    payload = lift_file_payload(source, "markinnerspaces_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.f2py.crackfortran.markinnerspaces"
+        or edge.get("targetSymbol") == "call:markinnerspaces"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_kind"),
+    (
+        (
+            "from numpy.f2py.crackfortran import markinnerspaces\n"
+            "def test_values(markinnerspaces, s):\n"
+            "    assert markinnerspaces(s) == s\n",
+            "call:markinnerspaces",
+        ),
+        (
+            "def test_values(s):\n"
+            "    assert markinnerspaces(s) == s\n",
+            "call:markinnerspaces",
+        ),
+    ),
+)
+def test_unowned_markinnerspaces_lookalikes_stay_loud(
+    source: str, expected_kind: str
+) -> None:
+    payload = lift_file_payload(source, "markinnerspaces_unowned_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == [expected_kind]
+
+
+def test_authenticated_identity_hash_set_item_default_has_universe_support() -> None:
+    source = (
+        "from numpy._core._multiarray_tests import identity_hash_set_item_default\n"
+        "\n"
+        "def test_values(ht, key, value):\n"
+        "    assert identity_hash_set_item_default(ht, key, value) is value\n"
+    )
+
+    payload = lift_file_payload(source, "identity_hash_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol")
+        == "call:numpy._core._multiarray_tests.identity_hash_set_item_default"
+        or edge.get("targetSymbol") == "call:identity_hash_set_item_default"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_kind"),
+    (
+        (
+            "from numpy._core._multiarray_tests import identity_hash_set_item_default\n"
+            "def test_values(identity_hash_set_item_default, ht, key, value):\n"
+            "    assert identity_hash_set_item_default(ht, key, value) is value\n",
+            "call:identity_hash_set_item_default",
+        ),
+        (
+            "def test_values(ht, key, value):\n"
+            "    assert identity_hash_set_item_default(ht, key, value) is value\n",
+            "call:identity_hash_set_item_default",
+        ),
+    ),
+)
+def test_unowned_identity_hash_set_item_default_lookalikes_stay_loud(
+    source: str, expected_kind: str
+) -> None:
+    payload = lift_file_payload(source, "identity_hash_unowned_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == [expected_kind]
+
+
+
 def test_module_scope_numpy_from_import_has_universe_support() -> None:
     """Module-level imports establish the name; do not revoke as free-var shadow."""
 

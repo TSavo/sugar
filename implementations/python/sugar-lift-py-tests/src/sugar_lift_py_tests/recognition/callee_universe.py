@@ -72,6 +72,8 @@ class CalleeUniverseSupport(Enum):
     SCIPY_FFT_GET_WORKERS = auto()
     NUMPY_ISDTYPE = auto()
     NUMPY_DATETIME_DATA = auto()
+    NUMPY_MARKINNERSPACES = auto()
+    NUMPY_IDENTITY_HASH_SET_ITEM_DEFAULT = auto()
 
 
 _DTYPE_RESULT_SUPPORT = {
@@ -191,6 +193,14 @@ _IMPORTED_SUPPORT = {
     "scipy.fft.get_workers": CalleeUniverseSupport.SCIPY_FFT_GET_WORKERS,
     "numpy.isdtype": CalleeUniverseSupport.NUMPY_ISDTYPE,
     "numpy.datetime_data": CalleeUniverseSupport.NUMPY_DATETIME_DATA,
+    # Corpus: numpy/f2py/tests/test_crackfortran.py — from-import.
+    "numpy.f2py.crackfortran.markinnerspaces": (
+        CalleeUniverseSupport.NUMPY_MARKINNERSPACES
+    ),
+    # Corpus: numpy/_core/tests/test_hashtable.py — multiarray_tests import.
+    "numpy._core._multiarray_tests.identity_hash_set_item_default": (
+        CalleeUniverseSupport.NUMPY_IDENTITY_HASH_SET_ITEM_DEFAULT
+    ),
 }
 
 _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list", "set", "hasattr"})
