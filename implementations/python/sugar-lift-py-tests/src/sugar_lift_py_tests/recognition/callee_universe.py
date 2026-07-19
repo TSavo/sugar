@@ -25,7 +25,7 @@ _IMPORTED_SUPPORT = {
     "numpy.allclose": CalleeUniverseSupport.NUMPY_ALLCLOSE,
 }
 
-_BUILTIN_COORDINATES = frozenset({"type", "dtype"})
+_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all"})
 
 
 def recognize_callee_universe(
@@ -87,8 +87,8 @@ class CalleeUniverseRecognition:
         if name in shadowed_parameters:
             return False
         if name in lexical_function_bindings(site):
-            # A function-local binding of ``type``/``dtype`` (parameter or later
-            # assignment) is never the builtin coordinate.
+            # A function-local binding of ``type``/``dtype``/``all`` (parameter
+            # or later assignment) is never the builtin coordinate.
             return False
         # Module-level assignment before the site also revokes.
         for declaration in _declarations:
@@ -218,7 +218,9 @@ def _enclosing_method_and_class(site):
     return method, class_def
 
 
-def _instance_parameter_name(method: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:
+def _instance_parameter_name(
+    method: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str | None:
     args = method.args
     positional = [*args.posonlyargs, *args.args]
     if not positional:
