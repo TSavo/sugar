@@ -7,8 +7,15 @@ import pytest
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkRedRowDto
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
+from sugar_lift_py_tests.recognition.callee_universe import (
+    recognize_callee_universe,
+)
+from sugar_lift_py_tests.recognition.visible_declarations import (
+    lexical_function_bindings,
+)
 
 
 def _universe_gaps(payload) -> list[FactoryWalkRedRowDto]:
@@ -122,6 +129,185 @@ def test_authenticated_builtin_coordinate_emits_no_universe_gap(
         ctx=context,
     )
     assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_authenticated_numpy_issubdtype_has_universe_support() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_dtype(left, right):\n"
+        "    assert np.issubdtype(left, right)\n"
+    )
+
+    payload = lift_file_payload(source, "issubdtype_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.issubdtype"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_shadowed_numpy_alias_cannot_warrant_issubdtype_support() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_dtype(np, left, right):\n"
+        "    assert np.issubdtype(left, right)\n"
+    )
+
+    payload = lift_file_payload(source, "issubdtype_shadowed_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:numpy.issubdtype"]
+
+
+def test_authenticated_numpy_allclose_has_universe_support() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_values(left, right):\n"
+        "    assert np.allclose(left, right)\n"
+    )
+
+    payload = lift_file_payload(source, "allclose_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.allclose" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_module_scope_numpy_from_import_has_universe_support() -> None:
+    """Module-level imports establish the name; do not revoke as free-var shadow."""
+
+    source = "from numpy import allclose\nassert allclose(1, 1)\n"
+
+    payload = lift_file_payload(source, "allclose_module_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.allclose" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_shadowed_numpy_alias_cannot_warrant_allclose_support() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_values(np, left, right):\n"
+        "    assert np.allclose(left, right)\n"
+    )
+
+    payload = lift_file_payload(source, "allclose_shadowed_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:numpy.allclose"]
+
+
+@pytest.mark.parametrize("callee", ["issubdtype", "allclose"])
+def test_later_function_local_binding_revokes_numpy_import_warrant(
+    callee: str,
+) -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_values(left, right):\n"
+        f"    assert np.{callee}(left, right)\n"
+        "    np = replacement\n"
+    )
+
+    payload = lift_file_payload(source, "numpy_late_shadow_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == [f"call:numpy.{callee}"]
+
+
+def test_later_exception_target_revokes_numpy_import_warrant() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_values(left, right):\n"
+        "    assert np.allclose(left, right)\n"
+        "    try:\n"
+        "        raise ValueError()\n"
+        "    except ValueError as np:\n"
+        "        pass\n"
+    )
+
+    payload = lift_file_payload(source, "numpy_except_shadow_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:numpy.allclose"]
+
+
+def test_comprehension_target_does_not_revoke_numpy_import_warrant() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_values(left, right):\n"
+        "    assert np.allclose(left, right)\n"
+        "    aliases = [np for np in ()]\n"
+    )
+
+    payload = lift_file_payload(source, "numpy_comprehension_scope_fixture.py")
+
+    assert _universe_gaps(payload) == []
+
+
+def test_later_match_capture_is_a_lexical_function_binding() -> None:
+    source = (
+        "def test_values(left, right):\n"
+        "    assert np.allclose(left, right)\n"
+        "    match left:\n"
+        "        case np:\n"
+        "            pass\n"
+    )
+    tree = ast.parse(source)
+    call = next(node for node in ast.walk(tree) if isinstance(node, ast.Call))
+    site = SourceFragment.from_node(
+        call,
+        "numpy_match_shadow_fixture.py",
+        source=source,
+    )
+
+    assert "np" in lexical_function_bindings(site)
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "(lambda np: np.allclose(left, right))(left)",
+        "all(np.allclose(left, right) for np in sources)",
+        (
+            "(lambda value: value)(left) or "
+            "(lambda np: np.allclose(left, right))(left)"
+        ),
+    ],
+)
+def test_nested_scope_binding_cannot_warrant_outer_numpy_import(
+    assertion: str,
+) -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_values(left, right, sources):\n"
+        f"    assert {assertion}\n"
+    )
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "allclose"
+    )
+    site = SourceFragment.from_node(
+        call,
+        "numpy_nested_scope_fixture.py",
+        source=source,
+    )
+
+    assert recognize_callee_universe("call:numpy.allclose", site=site) is None
 
 
 def test_floor_protocol_method_named_test_is_not_an_assertion_source() -> None:

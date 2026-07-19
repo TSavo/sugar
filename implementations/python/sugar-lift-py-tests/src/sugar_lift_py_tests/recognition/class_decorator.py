@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import ast
 from typing import TYPE_CHECKING
-
-from sugar_lift_python_source.source_tables import parsed_parents
 
 from sugar_lift_py_tests.recognition.native_shape import (
     NativeShape,
     recognize_native_call,
     recognize_native_class_decorator,
     recognize_native_instance_class_decorator,
+)
+from sugar_lift_py_tests.recognition.visible_declarations import (
+    visible_declarations,
 )
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ def class_decorators_preserve_identity(statement) -> bool:
 
     imported: dict[str, str] = {}
     constructed: dict[str, NativeShape] = {}
-    declarations, shadowed_parameters = _visible_declarations(statement)
+    declarations, shadowed_parameters = visible_declarations(statement)
     for declaration in declarations:
         if declaration.observed == "ImportFrom":
             module = declaration.importfrom_module()
@@ -107,107 +107,3 @@ def _constructed_native_shape(declaration, imported) -> NativeShape | None:
         else f"{origin}.{tail}" if separator and origin is not None else None
     )
     return recognize_native_call(qualified)
-
-
-def _visible_declarations(statement):
-    source = getattr(statement, "source", None)
-    if not source:
-        return (), frozenset()
-    parsed = parsed_parents(source)
-    if parsed is None:
-        return (), frozenset()
-    tree, parents = parsed
-    target = next(
-        (
-            node
-            for node in ast.walk(tree)
-            if type(node) is type(statement.node)
-            and getattr(node, "lineno", None) == statement.line
-            and getattr(node, "col_offset", None) == statement.col
-        ),
-        None,
-    )
-    if target is None:
-        return (), frozenset()
-    path = [target]
-    while path[-1] in parents:
-        path.append(parents[path[-1]])
-    path.reverse()
-
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-
-    declarations = []
-    shadowed: set[str] = set()
-    for ancestor, child in zip(path, path[1:]):
-        if isinstance(ancestor, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args = ancestor.args
-            shadowed.update(arg.arg for arg in args.posonlyargs)
-            shadowed.update(arg.arg for arg in args.args)
-            shadowed.update(arg.arg for arg in args.kwonlyargs)
-            if args.vararg is not None:
-                shadowed.add(args.vararg.arg)
-            if args.kwarg is not None:
-                shadowed.add(args.kwarg.arg)
-        for _, value in ast.iter_fields(ancestor):
-            if not isinstance(value, list) or child not in value:
-                continue
-            for sibling in value[: value.index(child)]:
-                if not isinstance(sibling, ast.stmt):
-                    continue
-                for declaration in _visible_recognition_declarations(
-                    sibling, tuple(declarations)
-                ):
-                    declarations.append(
-                        SourceFragment.from_node(
-                            declaration,
-                            statement.filename or "",
-                            source=source,
-                        )
-                    )
-            break
-    return tuple(declarations), frozenset(shadowed)
-
-
-def _visible_recognition_declarations(
-    statement: ast.stmt, prior_declarations: tuple[SourceFragment, ...]
-) -> tuple[ast.stmt, ...]:
-    """Expose imports whose success is required to reach a later statement."""
-    if not isinstance(statement, ast.Try):
-        return (statement,)
-    if statement.orelse or statement.finalbody:
-        return (statement,)
-    if not statement.body:
-        return (statement,)
-    if not statement.handlers or not all(
-        handler.body and all(isinstance(item, ast.Pass) for item in handler.body)
-        for handler in statement.handlers
-    ):
-        return (statement,)
-    guarded_names: set[str] = set()
-    for declaration in statement.body:
-        if not isinstance(declaration, (ast.Import, ast.ImportFrom)):
-            return (statement,)
-        guarded_names.update(
-            alias.asname or alias.name.split(".", 1)[0] for alias in declaration.names
-        )
-    if guarded_names & {
-        name
-        for declaration in prior_declarations
-        for name in _bound_declaration_names(declaration)
-    }:
-        return (statement,)
-    return tuple(statement.body)
-
-
-def _bound_declaration_names(declaration: SourceFragment) -> tuple[str, ...]:
-    if declaration.observed == "Import":
-        return tuple(
-            alias or name.split(".", 1)[0] for name, alias in declaration.import_names()
-        )
-    if declaration.observed == "ImportFrom":
-        return tuple(alias or name for name, alias in declaration.importfrom_names())
-    if declaration.observed == "ClassDef":
-        return (declaration.class_name(),)
-    if declaration.observed in {"FunctionDef", "AsyncFunctionDef"}:
-        return (declaration.function_name(),)
-    return tuple(declaration.stored_or_deleted_names())
