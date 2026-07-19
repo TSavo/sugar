@@ -139,6 +139,19 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             "    return z\n"
             "\n"
         )
+        guarded_import_dataclass = (
+            "try:\n"
+            "    import dataclasses\n"
+            "except ImportError:\n"
+            "    pass\n"
+            "\n"
+            "def Guarded(z):\n"
+            "    @dataclasses.dataclass\n"
+            "    class Point:\n"
+            "        value: int\n"
+            "    return z\n"
+            "\n"
+        )
         typed_dict_total = (
             "from typing_extensions import TypedDict\n"
             "\n"
@@ -237,6 +250,17 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                 lying=dataclass_decorated
                 + "def test_d():\n"
                 + "    assert D(5) == 6\n",
+                family="identity-decorated-class",
+            ),
+            _call_pair(
+                name="guarded_import_dataclass_class_return",
+                owner_sugar="ClassDefSugar",
+                truthful=guarded_import_dataclass
+                + "def test_guarded():\n"
+                + "    assert Guarded(5) == 5\n",
+                lying=guarded_import_dataclass
+                + "def test_guarded():\n"
+                + "    assert Guarded(5) == 6\n",
                 family="identity-decorated-class",
             ),
             _call_pair(

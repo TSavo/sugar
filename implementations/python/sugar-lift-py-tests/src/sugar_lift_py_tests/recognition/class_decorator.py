@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from typing import TYPE_CHECKING
 
 from sugar_lift_python_source.source_tables import parsed_parents
 
@@ -10,6 +11,9 @@ from sugar_lift_py_tests.recognition.native_shape import (
     recognize_native_class_decorator,
     recognize_native_instance_class_decorator,
 )
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
 
 def class_decorators_preserve_identity(statement) -> bool:
@@ -148,13 +152,62 @@ def _visible_declarations(statement):
             if not isinstance(value, list) or child not in value:
                 continue
             for sibling in value[: value.index(child)]:
-                if isinstance(sibling, ast.stmt):
+                if not isinstance(sibling, ast.stmt):
+                    continue
+                for declaration in _visible_recognition_declarations(
+                    sibling, tuple(declarations)
+                ):
                     declarations.append(
                         SourceFragment.from_node(
-                            sibling,
+                            declaration,
                             statement.filename or "",
                             source=source,
                         )
                     )
             break
     return tuple(declarations), frozenset(shadowed)
+
+
+def _visible_recognition_declarations(
+    statement: ast.stmt, prior_declarations: tuple[SourceFragment, ...]
+) -> tuple[ast.stmt, ...]:
+    """Expose imports whose success is required to reach a later statement."""
+    if not isinstance(statement, ast.Try):
+        return (statement,)
+    if statement.orelse or statement.finalbody:
+        return (statement,)
+    if not statement.body:
+        return (statement,)
+    if not statement.handlers or not all(
+        handler.body and all(isinstance(item, ast.Pass) for item in handler.body)
+        for handler in statement.handlers
+    ):
+        return (statement,)
+    guarded_names: set[str] = set()
+    for declaration in statement.body:
+        if not isinstance(declaration, (ast.Import, ast.ImportFrom)):
+            return (statement,)
+        guarded_names.update(
+            alias.asname or alias.name.split(".", 1)[0] for alias in declaration.names
+        )
+    if guarded_names & {
+        name
+        for declaration in prior_declarations
+        for name in _bound_declaration_names(declaration)
+    }:
+        return (statement,)
+    return tuple(statement.body)
+
+
+def _bound_declaration_names(declaration: SourceFragment) -> tuple[str, ...]:
+    if declaration.observed == "Import":
+        return tuple(
+            alias or name.split(".", 1)[0] for name, alias in declaration.import_names()
+        )
+    if declaration.observed == "ImportFrom":
+        return tuple(alias or name for name, alias in declaration.importfrom_names())
+    if declaration.observed == "ClassDef":
+        return (declaration.class_name(),)
+    if declaration.observed in {"FunctionDef", "AsyncFunctionDef"}:
+        return (declaration.function_name(),)
+    return tuple(declaration.stored_or_deleted_names())
