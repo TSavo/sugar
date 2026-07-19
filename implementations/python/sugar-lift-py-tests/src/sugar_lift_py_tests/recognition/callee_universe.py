@@ -80,6 +80,8 @@ class CalleeUniverseSupport(Enum):
     NUMPY_SFLOAT_DTYPE = auto()
     NUMPY_MARKINNERSPACES = auto()
     NUMPY_IDENTITY_HASH_SET_ITEM_DEFAULT = auto()
+    # stdlib import identity (#5561) — language protocol, not a vendor logo.
+    TEXTWRAP_DEDENT = auto()
 
 
 # Empty: numpy dtype-result coordinates are external kit contracts (#5603).
@@ -108,6 +110,12 @@ _IMPORTED_SUPPORT = {
     "checks.test_get_multi_index_iter_next": CalleeUniverseSupport.NUMPY_CHECKS,
     # Structural F2Py extension token — no vendor package root in the spelling.
     "f2py.generated_extension": CalleeUniverseSupport.NUMPY_F2PY_EXTENSION,
+    # stdlib (#5561). Corpus also appears under numpy tests; the warrant is the
+    # language import identity, never a vendor module prefix.
+    "textwrap.dedent": CalleeUniverseSupport.TEXTWRAP_DEDENT,
+    # Vendor-root coordinates (numpy/scipy/SF factory logos) deleted (#5603).
+    # External kit/bridge only — including call:SF / call:to_device when they
+    # land via contract, not hard-coded production logos.
 }
 
 # Language / builtin coordinates only (#5603 adjudication).
