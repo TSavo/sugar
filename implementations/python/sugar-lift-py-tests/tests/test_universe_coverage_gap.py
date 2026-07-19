@@ -98,6 +98,33 @@ def test_builtin_covered_callee_emits_no_universe_gap() -> None:
     assert _universe_gaps(payload) == []
 
 
+def test_import_constructed_item_receiver_emits_no_universe_gap() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_item(value):\n"
+        "    arr = np.array([value], dtype=object)\n"
+        "    assert arr.item() == value\n"
+    )
+
+    payload = lift_file_payload(source, "item_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:item" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_unresolved_item_receiver_stays_unclassified() -> None:
+    source = "def test_item(arr):\n    assert arr.item() == 0\n"
+
+    payload = lift_file_payload(source, "item_unresolved_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert len(gaps) == 1
+    assert gaps[0].ast_kind == "call:item"
+
+
 @pytest.mark.parametrize(
     ("callee", "source"),
     [
