@@ -361,29 +361,6 @@ def test_pydantic_base_model_extra_class_witness_truthful_sat_wrong_twin_unsat(
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
-def test_sqlalchemy_orm_decorated_class_witness_truthful_sat_wrong_twin_unsat(
-    tmp_path: Path,
-) -> None:
-    pair = next(
-        witness
-        for witness in ClassDefSugar.witnesses()
-        if witness.name == "sqlalchemy_orm_decorated_class_return"
-    )
-    seeds = Path(__file__).parent / "witness_seeds"
-
-    truthful = run_source_through_real_solver(
-        tmp_path / "sqlalchemy-class-truthful",
-        (seeds / "sqlalchemy_orm_class_truthful.py").read_text(),
-    )
-    lying = run_source_through_real_solver(
-        tmp_path / "sqlalchemy-class-lying",
-        (seeds / "sqlalchemy_orm_class_lying.py").read_text(),
-    )
-
-    assert truthful.verdict == pair.truthful.expected == "sat"
-    assert lying.verdict == pair.lying.expected == "unsat"
-
-
 def test_typed_dict_total_class_witness_truthful_sat_wrong_twin_unsat(
     tmp_path: Path,
 ) -> None:
@@ -586,6 +563,8 @@ def test_owns_authenticated_deprecated_decorated_class(source: str) -> None:
     "source",
     (
         (
+            # Import-authenticated spelling of as_declarative — still LOUD.
+            # #5603: coordinate was (b)/(c) illegal logo; no kit contract yet.
             "from sqlalchemy.orm import as_declarative as declarative_base\n"
             "@declarative_base()\n"
             "class Base:\n"
@@ -611,18 +590,62 @@ def test_owns_authenticated_deprecated_decorated_class(source: str) -> None:
             "class User:\n"
             "    value: int\n"
         ),
+        (
+            "from sqlalchemy.orm import as_declarative\n"
+            "@as_declarative()\n"
+            "class Base:\n"
+            "    pass\n"
+        ),
     ),
 )
-def test_owns_source_authenticated_sqlalchemy_orm_class_decorator(
+def test_sqlalchemy_orm_class_decorators_stay_loud_without_kit_contract(
     source: str,
 ) -> None:
-    site = SourceFragment.from_node(ast.parse(source).body[-1], "t.py", source=source)
+    """Honest residual: vendor ORM identity is not language-level construction.
 
-    assert ClassDefSugar.owns(site) is True
+    Deleting the logo maps is correct even though these rows stay FactoryPanic.
+    A kit/bridge contract may later authenticate them; a hard-coded coordinate must not.
+    """
+    class_node = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ClassDef) and node.name in {"Base", "User"}
+    )
+    site = SourceFragment.from_node(class_node, "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is False
 
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
-    result = build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
-    assert result.audit_row.selected == "ClassDefSugar"
+    with pytest.raises(FactoryPanic) as raised:
+        build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert raised.value.info.observed == "ClassDef"
+
+
+def test_sqlalchemy_logo_coordinates_are_absent_from_native_shape() -> None:
+    """Adjudicated DELETE: these coordinates must not reappear as table keys."""
+    from sugar_lift_py_tests.recognition.native_shape import (
+        NativeShape,
+        recognize_native_call,
+        recognize_native_class_decorator,
+        recognizes_identity_decorator,
+    )
+
+    assert recognize_native_call("sqlalchemy.orm.registry") is None
+    assert recognize_native_class_decorator("sqlalchemy.orm.as_declarative") is None
+    assert (
+        recognize_native_class_decorator(
+            "sqlalchemy.ext.declarative.as_declarative"
+        )
+        is None
+    )
+    # Enum retired with the logo maps (#5603).
+    assert not hasattr(NativeShape, "SQLALCHEMY_ORM_REGISTRY")
+    # No accidental CLASS_IDENTITY_DECORATOR via bare module spelling either.
+    assert recognizes_identity_decorator("sqlalchemy.orm", "as_declarative") is False
+    assert (
+        recognizes_identity_decorator("sqlalchemy.ext.declarative", "as_declarative")
+        is False
+    )
 
 
 def test_same_named_local_deprecated_decorator_stays_loud() -> None:

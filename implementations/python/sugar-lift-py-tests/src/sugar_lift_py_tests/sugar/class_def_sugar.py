@@ -192,17 +192,9 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             "    return z\n"
             "\n"
         )
-        sqlalchemy_orm_decorated = (
-            "from sqlalchemy.orm import as_declarative\n"
-            "\n"
-            "@as_declarative()\n"
-            "class Base:\n"
-            "    pass\n"
-            "\n"
-            "def H(z):\n"
-            "    return z\n"
-            "\n"
-        )
+        # sqlalchemy.orm as_declarative / registry.mapped* intentionally absent:
+        # #5603 adjudicated those coordinates as (b)/(c) illegal logo — deleted
+        # from native_shape. ClassDef rows stay loud until a kit/bridge contract.
         generic_class_subscription = (
             "from typing import Generic, TypeVar\n"
             "\n"
@@ -299,17 +291,6 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                 + "def test_h():\n"
                 + "    assert H(5) == 5\n",
                 lying=deprecated_decorated
-                + "def test_h():\n"
-                + "    assert H(5) == 6\n",
-                family="identity-decorated-class",
-            ),
-            _call_pair(
-                name="sqlalchemy_orm_decorated_class_return",
-                owner_sugar="ClassDefSugar",
-                truthful=sqlalchemy_orm_decorated
-                + "def test_h():\n"
-                + "    assert H(5) == 5\n",
-                lying=sqlalchemy_orm_decorated
                 + "def test_h():\n"
                 + "    assert H(5) == 6\n",
                 family="identity-decorated-class",

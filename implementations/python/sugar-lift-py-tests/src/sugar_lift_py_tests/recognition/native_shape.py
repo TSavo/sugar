@@ -53,7 +53,9 @@ class NativeShape(Enum):
     CLASS_IDENTITY_DECORATOR = auto()
     IMPLEMENTATION_PRESERVING_DECORATOR = auto()
     FIXTURE_DECORATOR = auto()
-    SQLALCHEMY_ORM_REGISTRY = auto()
+    # SQLALCHEMY_ORM_REGISTRY retired (#5603): hard-coded sqlalchemy.orm.registry /
+    # as_declarative / mapped coordinates were illegal logo branches — deleted.
+    # ClassDef identity for those shapes stays loud until an external kit contract.
     GENERIC_CLASS = auto()
     PYDANTIC_BASE_MODEL = auto()
     PYDANTIC_EXTRA_ALLOW_CLASS_OPTION = auto()
