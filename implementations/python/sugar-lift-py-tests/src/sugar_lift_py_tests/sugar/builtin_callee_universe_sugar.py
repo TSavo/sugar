@@ -64,6 +64,8 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "scipy.fft.get_workers",
         "numpy.isdtype",
         "numpy.datetime_data",
+        "numpy.f2py.crackfortran.markinnerspaces",
+        "numpy._core._multiarray_tests.identity_hash_set_item_default",
         *_CONVERTER_COORDINATES,
     }
 )
@@ -216,6 +218,8 @@ class BuiltinCalleeUniverseSugar(
             _scipy_fft_get_workers_witness(),
             _numpy_isdtype_witness(),
             _numpy_datetime_data_witness(),
+            _numpy_markinnerspaces_witness(),
+            _numpy_identity_hash_set_item_default_witness(),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -818,6 +822,52 @@ def _numpy_datetime_data_witness():
     )
     return _call_pair(
         name="numpy_datetime_data_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_markinnerspaces_witness():
+    """Direct from-import of crackfortran.markinnerspaces (corpus locus shape)."""
+    prefix = (
+        "from numpy.f2py.crackfortran import markinnerspaces\n"
+        "\n"
+        "def A(value):\n"
+        "    return markinnerspaces(value)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_markinnerspaces_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=(
+            prefix + "def test_a():\n    assert A('x y') == A('x y') and A('x y') == A('x y')\n"
+        ),
+        lying=(
+            prefix + "def test_a():\n    assert A('x y') == A('x y') and A('x y') != A('x y')\n"
+        ),
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_identity_hash_set_item_default_witness():
+    """From-import of multiarray_tests.identity_hash_set_item_default."""
+    # Determinism twin: same call returns equal values under conjunction.
+    prefix = (
+        "from numpy._core._multiarray_tests import (\n"
+        "    create_identity_hash,\n"
+        "    identity_hash_set_item_default,\n"
+        ")\n"
+        "\n"
+        "def A():\n"
+        "    ht = create_identity_hash(1)\n"
+        "    key = (0,)\n"
+        "    return identity_hash_set_item_default(ht, key, 1)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_identity_hash_set_item_default_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
