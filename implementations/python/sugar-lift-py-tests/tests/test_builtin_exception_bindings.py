@@ -116,6 +116,15 @@ def test_builtin_callable_binding_set_is_derived_from_python() -> None:
         assert lexical.value_for(name) == bound
 
 
+def test_empty_builtin_temporal_is_shared_identity() -> None:
+    """Module-seed frames share one empty builtin floor (not a rebuild each time)."""
+    first = TemporalContext.empty()
+    second = TemporalContext.empty()
+    third = temporal_module.builtin_name_temporal()
+    assert first is second
+    assert first is third
+
+
 def test_builtin_calls_keep_their_dedicated_sugar_owners() -> None:
     source = (
         "def f(x):\n"
