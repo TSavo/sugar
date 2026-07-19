@@ -10,7 +10,6 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
 _AUTHENTICATED_COORDINATES = frozenset({"type", "dtype"})
-_AUTHENTICATED_IMPORTED_COORDINATES = frozenset({"numpy.can_cast"})
 
 
 @dataclass(frozen=True)
