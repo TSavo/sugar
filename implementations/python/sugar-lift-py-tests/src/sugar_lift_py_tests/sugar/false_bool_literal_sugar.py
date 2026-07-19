@@ -108,6 +108,12 @@ class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
 
         return TermValue(0).subtract(other, site)
 
+    def unary_minus(self, site):
+        del site
+        from sugar_lift_py_tests.floor.term_value import TermValue
+
+        return Complete(TermValue(0))
+
     def bitwise_and(self, other, site):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (

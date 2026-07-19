@@ -19,7 +19,7 @@ from sugar_lift_py_tests.floor import (
     SymbolicValue,
     TermValue,
 )
-from sugar_lift_py_tests.ir import eq, make_var, num
+from sugar_lift_py_tests.ir import ctor, eq, make_var, num
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
@@ -127,7 +127,6 @@ def test_existing_exceptional_exit_propagates_through_floor_divide() -> None:
         lambda value, site: value.add(TermValue(1), site),
         lambda value, site: value.floor_divide(TermValue(1), site),
         lambda value, site: value.modulo(TermValue(1), site),
-        lambda value, site: value.unary_minus(site),
         lambda value, site: value.subtract(TermValue(1), site),
     ),
 )
@@ -137,6 +136,22 @@ def test_unbuilt_native_value_operator_stays_loud(operation) -> None:
 
     with pytest.raises(FactoryPanic):
         operation(native, site)
+
+
+def test_native_value_unary_minus_constructs_exact_coordinate() -> None:
+    site = SourceFragment.from_source("-native", "operator.py")
+    native = NativeCallableValue("vendor.native_constant", "vendor.so")
+
+    outcome = native.unary_minus(site)
+
+    assert outcome == Complete(
+        SymbolicValue(
+            ctor(
+                "py.neg",
+                [native.to_term(owner=str(site))],
+            )
+        )
+    )
 
 
 def test_ground_operator_family_witness_truthful_sat_lying_unsat(

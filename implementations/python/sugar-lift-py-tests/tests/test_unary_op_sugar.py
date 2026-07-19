@@ -12,8 +12,15 @@ from factory_reduce import fol, reduce_term, reduce_value
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import PredicateValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import (
+    NativeCallableValue,
+    PredicateValue,
+    SymbolicValue,
+    TermValue,
+)
+from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.ir import ctor, eq, make_var, num
+from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
@@ -39,6 +46,27 @@ def test_not_nonzero_folds_false_via_truth_floor() -> None:
 
 def test_unary_minus_folds_concrete() -> None:
     assert reduce_value("-5") == TermValue(-5)
+
+
+def test_unary_minus_folds_boolean_integer_coordinates() -> None:
+    assert reduce_value("-True") == TermValue(-1)
+    assert reduce_value("-False") == TermValue(0)
+
+
+def test_native_callable_unary_minus_preserves_exact_coordinate() -> None:
+    site = _site("-native")
+    native = NativeCallableValue("vendor.native_constant", "vendor.so")
+
+    outcome = native.unary_minus(site)
+
+    assert outcome == Complete(
+        SymbolicValue(
+            ctor(
+                "py.neg",
+                [native.to_term(owner=str(site))],
+            )
+        )
+    )
 
 
 def test_unary_plus_folds_concrete() -> None:
@@ -76,6 +104,20 @@ def test_predicate_unary_minus_witness_refutes(tmp_path: Path) -> None:
 
     assert truthful.verdict == pair.truthful.expected == "sat"
     assert lying.verdict == pair.lying.expected == "unsat"
+
+
+def test_decidable_unary_minus_witnesses_refute_wrong_twins(tmp_path: Path) -> None:
+    witnesses = tuple(
+        pair
+        for pair in UnaryOpSugar.witnesses()
+        if pair.name in {"bool_unary_minus", "native_coordinate_unary_minus"}
+    )
+
+    assert {pair.name for pair in witnesses} == {
+        "bool_unary_minus",
+        "native_coordinate_unary_minus",
+    }
+    assert evaluate_seed_witnesses(witnesses, tmp_path).is_zero
 
 
 def test_symbolic_invert_emits_py_invert() -> None:
