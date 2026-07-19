@@ -1,0 +1,1910 @@
+[
+  {
+    "file": "sklearn/_loss/tests/test_link.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/_loss/tests/test_link.py:124:9"
+  },
+  {
+    "file": "sklearn/_loss/tests/test_loss.py",
+    "category": "factory-construction-panic",
+    "owner": "TemporalContext",
+    "gap_kind": "Floor",
+    "observed": "xp_capabilities_table",
+    "requested": "value",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/scipy/_lib/_array_api.py:885:26"
+  },
+  {
+    "file": "sklearn/callback/tests/test_pickle.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/callback/tests/test_pickle.py:67:11"
+  },
+  {
+    "file": "sklearn/callback/tests/test_scoring_monitor.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/callback/tests/test_scoring_monitor.py:135:15"
+  },
+  {
+    "file": "sklearn/cluster/_agglomerative.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cluster/_agglomerative.py:611:20"
+  },
+  {
+    "file": "sklearn/cluster/tests/test_affinity_propagation.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cluster/tests/test_affinity_propagation.py:21:7"
+  },
+  {
+    "file": "sklearn/cluster/tests/test_bicluster.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cluster/tests/test_bicluster.py:73:20"
+  },
+  {
+    "file": "sklearn/cluster/tests/test_birch.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cluster/tests/test_birch.py:19:11"
+  },
+  {
+    "file": "sklearn/cluster/tests/test_bisect_k_means.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cluster/tests/test_bisect_k_means.py:33:20"
+  },
+  {
+    "file": "sklearn/cluster/tests/test_dbscan.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cluster/tests/test_dbscan.py:32:27"
+  },
+  {
+    "file": "sklearn/cluster/tests/test_feature_agglomeration.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cluster/tests/test_feature_agglomeration.py:47:11"
+  },
+  {
+    "file": "sklearn/cluster/tests/test_hdbscan.py",
+    "category": "factory-construction-panic",
+    "owner": "bitwise_or",
+    "gap_kind": "Floor",
+    "observed": "SetValue",
+    "requested": "stand on the runtime bitwise or floor",
+    "blame": "sklearn/cluster/tests/test_hdbscan.py:38:14"
+  },
+  {
+    "file": "sklearn/cluster/tests/test_hierarchical.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cluster/tests/test_hierarchical.py:69:10"
+  },
+  {
+    "file": "sklearn/cluster/tests/test_k_means.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cluster/tests/test_k_means.py:47:17"
+  },
+  {
+    "file": "sklearn/cluster/tests/test_mean_shift.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cluster/tests/test_mean_shift.py:18:7"
+  },
+  {
+    "file": "sklearn/cluster/tests/test_optics.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cluster/tests/test_optics.py:214:21"
+  },
+  {
+    "file": "sklearn/cluster/tests/test_spectral.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cluster/tests/test_spectral.py:81:11"
+  },
+  {
+    "file": "sklearn/compose/_column_transformer.py",
+    "category": "factory-construction-panic",
+    "owner": "python.factory",
+    "gap_kind": "Sugar",
+    "observed": "For",
+    "requested": "statement",
+    "blame": "sklearn/compose/_column_transformer.py:617:8"
+  },
+  {
+    "file": "sklearn/compose/tests/test_column_transformer.py",
+    "category": "timeout-or-hang",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/compose/tests/test_target.py",
+    "category": "factory-construction-panic",
+    "owner": "ConstructorCallSugar",
+    "gap_kind": "Constructor",
+    "observed": "DummyCheckerListRegressor MRO selected sklearn.dummy.DummyRegressor.__init__",
+    "requested": "statically constructed inherited constructor body",
+    "blame": "sklearn/compose/tests/test_target.py:307:18"
+  },
+  {
+    "file": "sklearn/covariance/tests/test_covariance.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/covariance/tests/test_covariance.py:37:14"
+  },
+  {
+    "file": "sklearn/covariance/tests/test_graphical_lasso.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/covariance/tests/test_graphical_lasso.py:278:1"
+  },
+  {
+    "file": "sklearn/covariance/tests/test_robust_covariance.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/covariance/tests/test_robust_covariance.py:77:25"
+  },
+  {
+    "file": "sklearn/cross_decomposition/tests/test_pls.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/cross_decomposition/tests/test_pls.py:29:8"
+  },
+  {
+    "file": "sklearn/datasets/_base.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/datasets/_base.py:1632:22"
+  },
+  {
+    "file": "sklearn/datasets/tests/test_20news.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/datasets/tests/test_20news.py:101:41"
+  },
+  {
+    "file": "sklearn/datasets/tests/test_base.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/datasets/tests/test_base.py:97:16"
+  },
+  {
+    "file": "sklearn/datasets/tests/test_lfw.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/datasets/tests/test_lfw.py:100:8"
+  },
+  {
+    "file": "sklearn/datasets/tests/test_openml.py",
+    "category": "factory-construction-panic",
+    "owner": "RaiseSugar",
+    "gap_kind": "Floor",
+    "observed": "CallSiteValue",
+    "requested": "constructed exception floor",
+    "blame": "sklearn/datasets/tests/test_openml.py:1004:8"
+  },
+  {
+    "file": "sklearn/datasets/tests/test_samples_generator.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/datasets/tests/test_samples_generator.py:42:11"
+  },
+  {
+    "file": "sklearn/datasets/tests/test_svmlight_format.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/datasets/tests/test_svmlight_format.py:40:15"
+  },
+  {
+    "file": "sklearn/decomposition/_pca.py",
+    "category": "factory-construction-panic",
+    "owner": "subtract",
+    "gap_kind": "Floor",
+    "observed": "TupleValue",
+    "requested": "stand on the subtraction floor",
+    "blame": "sklearn/decomposition/_pca.py:810:13"
+  },
+  {
+    "file": "sklearn/decomposition/tests/test_dict_learning.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/decomposition/tests/test_dict_learning.py:50:19"
+  },
+  {
+    "file": "sklearn/decomposition/tests/test_factor_analysis.py",
+    "category": "factory-construction-panic",
+    "owner": "RuntimeEffect",
+    "gap_kind": "Floor",
+    "observed": "py.setitem operand=NoneValue()",
+    "requested": "genuine runtime-dependent operand",
+    "blame": "sklearn/decomposition/tests/test_factor_analysis.py:87:8"
+  },
+  {
+    "file": "sklearn/decomposition/tests/test_fastica.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/decomposition/tests/test_fastica.py:64:22"
+  },
+  {
+    "file": "sklearn/decomposition/tests/test_kernel_pca.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/decomposition/tests/test_kernel_pca.py:335:11"
+  },
+  {
+    "file": "sklearn/decomposition/tests/test_nmf.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/decomposition/tests/test_nmf.py:359:18"
+  },
+  {
+    "file": "sklearn/decomposition/tests/test_online_lda.py",
+    "category": "factory-construction-panic",
+    "owner": "TemporalContext",
+    "gap_kind": "Floor",
+    "observed": "xp_capabilities_table",
+    "requested": "value",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/scipy/_lib/_array_api.py:885:26"
+  },
+  {
+    "file": "sklearn/decomposition/tests/test_pca.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/decomposition/tests/test_pca.py:264:12"
+  },
+  {
+    "file": "sklearn/decomposition/tests/test_sparse_pca.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/decomposition/tests/test_sparse_pca.py:222:18"
+  },
+  {
+    "file": "sklearn/ensemble/_hist_gradient_boosting/tests/test_binning.py",
+    "category": "timeout-or-hang",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/ensemble/_hist_gradient_boosting/tests/test_compare_lightgbm.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/ensemble/_hist_gradient_boosting/tests/test_compare_lightgbm.py:66:11"
+  },
+  {
+    "file": "sklearn/ensemble/_hist_gradient_boosting/tests/test_gradient_boosting.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/ensemble/_hist_gradient_boosting/tests/test_gradient_boosting.py:47:37"
+  },
+  {
+    "file": "sklearn/ensemble/_hist_gradient_boosting/tests/test_predictor.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/ensemble/_hist_gradient_boosting/tests/test_predictor.py:30:11"
+  },
+  {
+    "file": "sklearn/ensemble/_hist_gradient_boosting/tests/test_splitting.py",
+    "category": "completed",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/ensemble/_hist_gradient_boosting/tests/test_warm_start.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/ensemble/_hist_gradient_boosting/tests/test_warm_start.py:13:37"
+  },
+  {
+    "file": "sklearn/ensemble/tests/test_bagging.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/ensemble/tests/test_bagging.py:58:7"
+  },
+  {
+    "file": "sklearn/ensemble/tests/test_base.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/ensemble/tests/test_base.py:27:11"
+  },
+  {
+    "file": "sklearn/ensemble/tests/test_common.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/ensemble/tests/test_common.py:33:13"
+  },
+  {
+    "file": "sklearn/ensemble/tests/test_forest.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/ensemble/tests/test_forest.py:208:39"
+  },
+  {
+    "file": "sklearn/ensemble/tests/test_gradient_boosting.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/ensemble/tests/test_gradient_boosting.py:45:15"
+  },
+  {
+    "file": "sklearn/ensemble/tests/test_iforest.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/ensemble/tests/test_iforest.py:31:11"
+  },
+  {
+    "file": "sklearn/ensemble/tests/test_stacking.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/ensemble/tests/test_stacking.py:59:7"
+  },
+  {
+    "file": "sklearn/ensemble/tests/test_voting.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/ensemble/tests/test_voting.py:727:1"
+  },
+  {
+    "file": "sklearn/ensemble/tests/test_weight_boosting.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/ensemble/tests/test_weight_boosting.py:301:39"
+  },
+  {
+    "file": "sklearn/externals/_numpydoc/docscrape.py",
+    "category": "factory-construction-panic",
+    "owner": "ForSugar",
+    "gap_kind": "Floor",
+    "observed": "nonlocal mutation",
+    "requested": "classifiable loop-carried local state",
+    "blame": "sklearn/externals/_numpydoc/docscrape.py:57:8"
+  },
+  {
+    "file": "sklearn/externals/array_api_compat/common/_helpers.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator result",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body",
+    "requested": "force callsite floor",
+    "blame": "update_wrapper"
+  },
+  {
+    "file": "sklearn/externals/array_api_extra/_lib/_funcs.py",
+    "category": "completed",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/externals/array_api_extra/_lib/_lazy.py",
+    "category": "factory-construction-panic",
+    "owner": "RuntimeEffect",
+    "gap_kind": "Floor",
+    "observed": "RuntimeEffect operand=_Ctor(name='|', args=(_Ctor(name='python:type', args=(_ConstStr(value='int', sort=PrimitiveSort(name='String')),)), _Ctor(name='None', args=())))",
+    "requested": "genuine runtime-dependent operand",
+    "blame": "sklearn/externals/array_api_extra/_lib/_lazy.py:210:13"
+  },
+  {
+    "file": "sklearn/externals/array_api_extra/_lib/_utils/_helpers.py",
+    "category": "factory-construction-panic",
+    "owner": "RuntimeEffect",
+    "gap_kind": "Floor",
+    "observed": "RuntimeEffect operand=_Ctor(name='|', args=(_Ctor(name='|', args=(_Ctor(name='python:type', args=(_ConstStr(value='int', sort=PrimitiveSort(name='String')),)), _Ctor(name='python:type', args=(_ConstStr(value='float', sort=PrimitiveSort(name='String')),)))), _Ctor(name='python:type', args=(_ConstStr(value='complex', sort=PrimitiveSort(name='String')),))))",
+    "requested": "genuine runtime-dependent operand",
+    "blame": "sklearn/externals/array_api_extra/_lib/_utils/_helpers.py:153:11"
+  },
+  {
+    "file": "sklearn/externals/array_api_extra/testing.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:contextmanager",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `contextmanager`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/externals/array_api_extra/testing.py:341:11"
+  },
+  {
+    "file": "sklearn/feature_extraction/_dict_vectorizer.py",
+    "category": "completed",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/feature_extraction/tests/test_dict_vectorizer.py",
+    "category": "completed",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/feature_extraction/tests/test_image.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/feature_extraction/tests/test_image.py:22:13"
+  },
+  {
+    "file": "sklearn/feature_extraction/tests/test_text.py",
+    "category": "factory-construction-panic",
+    "owner": "AttributeDeleteSugar",
+    "gap_kind": "Floor",
+    "observed": "CallSiteValue._stop_words_id",
+    "requested": "attribute deletion data-model method",
+    "blame": "sklearn/feature_extraction/tests/test_text.py:1332:8"
+  },
+  {
+    "file": "sklearn/feature_selection/tests/test_feature_select.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/feature_selection/tests/test_feature_select.py:72:11"
+  },
+  {
+    "file": "sklearn/feature_selection/tests/test_from_model.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/feature_selection/tests/test_from_model.py:485:11"
+  },
+  {
+    "file": "sklearn/feature_selection/tests/test_mutual_info.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/feature_selection/tests/test_mutual_info.py:130:9"
+  },
+  {
+    "file": "sklearn/feature_selection/tests/test_rfe.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/feature_selection/tests/test_rfe.py:69:11"
+  },
+  {
+    "file": "sklearn/feature_selection/tests/test_sequential.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/feature_selection/tests/test_sequential.py:19:11"
+  },
+  {
+    "file": "sklearn/frozen/tests/test_frozen.py",
+    "category": "factory-construction-panic",
+    "owner": "python.factory",
+    "gap_kind": "Sugar",
+    "observed": "For",
+    "requested": "statement",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/sklearn/compose/_column_transformer.py:617:8"
+  },
+  {
+    "file": "sklearn/gaussian_process/tests/test_kernels.py",
+    "category": "factory-construction-panic",
+    "owner": "ComputedCallableSugar",
+    "gap_kind": "Floor",
+    "observed": "SymbolicValue",
+    "requested": "callable_application_with",
+    "blame": "sklearn/gaussian_process/tests/test_kernels.py:182:24"
+  },
+  {
+    "file": "sklearn/impute/tests/test_impute.py",
+    "category": "factory-construction-panic",
+    "owner": "multiply",
+    "gap_kind": "Floor",
+    "observed": "FalseBoolLiteralSugar",
+    "requested": "stand on the multiplication floor",
+    "blame": "sklearn/impute/tests/test_impute.py:203:23"
+  },
+  {
+    "file": "sklearn/impute/tests/test_knn.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/impute/tests/test_knn.py:295:11"
+  },
+  {
+    "file": "sklearn/inspection/_plot/tests/test_boundary_decision_display.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/inspection/_plot/tests/test_boundary_decision_display.py:32:7"
+  },
+  {
+    "file": "sklearn/inspection/_plot/tests/test_plot_partial_dependence.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/inspection/_plot/tests/test_plot_partial_dependence.py:611:30"
+  },
+  {
+    "file": "sklearn/inspection/tests/test_partial_dependence.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/inspection/tests/test_partial_dependence.py:53:30"
+  },
+  {
+    "file": "sklearn/inspection/tests/test_permutation_importance.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/inspection/tests/test_permutation_importance.py:494:22"
+  },
+  {
+    "file": "sklearn/linear_model/_glm/_newton_solver.py",
+    "category": "factory-construction-panic",
+    "owner": "ForElseSugar",
+    "gap_kind": "Floor",
+    "observed": "nonlocal mutation",
+    "requested": "classifiable loop-carried local state",
+    "blame": "sklearn/linear_model/_glm/_newton_solver.py:243:8"
+  },
+  {
+    "file": "sklearn/linear_model/_glm/tests/test_glm.py",
+    "category": "factory-construction-panic",
+    "owner": "ConstructorCallSugar",
+    "gap_kind": "Constructor",
+    "observed": "BinomialRegressor MRO selected sklearn.linear_model._glm._GeneralizedLinearRegressor.__init__",
+    "requested": "statically constructed inherited constructor body",
+    "blame": "sklearn/linear_model/_glm/tests/test_glm.py:77:12"
+  },
+  {
+    "file": "sklearn/linear_model/_ridge.py",
+    "category": "factory-construction-panic",
+    "owner": "modulo",
+    "gap_kind": "Floor",
+    "observed": "StringValue",
+    "requested": "stand on the modulo floor",
+    "blame": "sklearn/linear_model/_ridge.py:682:25"
+  },
+  {
+    "file": "sklearn/linear_model/_stochastic_gradient.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/linear_model/_stochastic_gradient.py:627:38"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_base.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/linear_model/tests/test_base.py:115:40"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_bayes.py",
+    "category": "completed",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_common.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/linear_model/tests/test_common.py:132:8"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_coordinate_descent.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/linear_model/tests/test_coordinate_descent.py:91:11"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_huber.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/linear_model/tests/test_huber.py:22:11"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_least_angle.py",
+    "category": "factory-construction-panic",
+    "owner": "subtract",
+    "gap_kind": "Floor",
+    "observed": "ListValue",
+    "requested": "stand on the subtraction floor",
+    "blame": "sklearn/linear_model/tests/test_least_angle.py:242:12"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_linear_loss.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/linear_model/tests/test_linear_loss.py:34:8"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_logistic.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/linear_model/tests/test_logistic.py:2479:1"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_omp.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/linear_model/tests/test_omp.py:25:14"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_passive_aggressive.py",
+    "category": "factory-construction-panic",
+    "owner": "subtract",
+    "gap_kind": "Floor",
+    "observed": "TermValue",
+    "requested": "stand on the subtraction floor",
+    "blame": "sklearn/linear_model/tests/test_passive_aggressive.py:63:31"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_perceptron.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/linear_model/tests/test_perceptron.py:10:7"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_quantile.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/linear_model/tests/test_quantile.py:75:11"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_ransac.py",
+    "category": "timeout-or-hang",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_ridge.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/linear_model/tests/test_ridge.py:2639:1"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_sag.py",
+    "category": "factory-construction-panic",
+    "owner": "divide",
+    "gap_kind": "Floor",
+    "observed": "TermValue",
+    "requested": "stand on the division floor",
+    "blame": "sklearn/linear_model/tests/test_sag.py:106:66"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_sgd.py",
+    "category": "timeout-or-hang",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_sparse_coordinate_descent.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/linear_model/tests/test_sparse_coordinate_descent.py:292:11"
+  },
+  {
+    "file": "sklearn/linear_model/tests/test_theil_sen.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/linear_model/tests/test_theil_sen.py:265:9"
+  },
+  {
+    "file": "sklearn/manifold/_locally_linear.py",
+    "category": "factory-construction-panic",
+    "owner": "RaiseSugar",
+    "gap_kind": "Floor",
+    "observed": "CallSiteValue",
+    "requested": "constructed exception floor",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/scipy/linalg/_basic.py:246:12"
+  },
+  {
+    "file": "sklearn/manifold/_t_sne.py",
+    "category": "factory-construction-panic",
+    "owner": "TemporalContext",
+    "gap_kind": "Floor",
+    "observed": "_distance_wrap",
+    "requested": "value",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/scipy/spatial/distance.py:2276:8"
+  },
+  {
+    "file": "sklearn/manifold/tests/test_classical_mds.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/manifold/tests/test_classical_mds.py:12:11"
+  },
+  {
+    "file": "sklearn/manifold/tests/test_isomap.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/manifold/tests/test_isomap.py:237:8"
+  },
+  {
+    "file": "sklearn/manifold/tests/test_locally_linear.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/manifold/tests/test_locally_linear.py:163:11"
+  },
+  {
+    "file": "sklearn/manifold/tests/test_mds.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/manifold/tests/test_mds.py:28:11"
+  },
+  {
+    "file": "sklearn/manifold/tests/test_spectral_embedding.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/manifold/tests/test_spectral_embedding.py:53:17"
+  },
+  {
+    "file": "sklearn/manifold/tests/test_t_sne.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/manifold/tests/test_t_sne.py:123:16"
+  },
+  {
+    "file": "sklearn/metrics/_plot/tests/test_common_curve_display.py",
+    "category": "factory-construction-panic",
+    "owner": "python.factory",
+    "gap_kind": "Sugar",
+    "observed": "For",
+    "requested": "statement",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/sklearn/compose/_column_transformer.py:617:8"
+  },
+  {
+    "file": "sklearn/metrics/_plot/tests/test_confusion_matrix_display.py",
+    "category": "factory-construction-panic",
+    "owner": "python.factory",
+    "gap_kind": "Sugar",
+    "observed": "For",
+    "requested": "statement",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/sklearn/compose/_column_transformer.py:617:8"
+  },
+  {
+    "file": "sklearn/metrics/_plot/tests/test_det_curve_display.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/metrics/_plot/tests/test_det_curve_display.py:23:11"
+  },
+  {
+    "file": "sklearn/metrics/_plot/tests/test_precision_recall_display.py",
+    "category": "factory-construction-panic",
+    "owner": "python.factory",
+    "gap_kind": "Sugar",
+    "observed": "For",
+    "requested": "statement",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/sklearn/compose/_column_transformer.py:617:8"
+  },
+  {
+    "file": "sklearn/metrics/_plot/tests/test_predict_error_display.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/metrics/_plot/tests/test_predict_error_display.py:9:7"
+  },
+  {
+    "file": "sklearn/metrics/_plot/tests/test_roc_curve_display.py",
+    "category": "factory-construction-panic",
+    "owner": "python.factory",
+    "gap_kind": "Sugar",
+    "observed": "For",
+    "requested": "statement",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/sklearn/compose/_column_transformer.py:617:8"
+  },
+  {
+    "file": "sklearn/metrics/cluster/tests/test_bicluster.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/metrics/cluster/tests/test_bicluster.py:26:11"
+  },
+  {
+    "file": "sklearn/metrics/cluster/tests/test_common.py",
+    "category": "factory-construction-panic",
+    "owner": "TemporalContext",
+    "gap_kind": "Floor",
+    "observed": "ARRAY_API_COMPAT_FUNCTIONAL",
+    "requested": "value",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/sklearn/utils/_testing.py:332:12"
+  },
+  {
+    "file": "sklearn/metrics/cluster/tests/test_supervised.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/metrics/cluster/tests/test_supervised.py:119:14"
+  },
+  {
+    "file": "sklearn/metrics/cluster/tests/test_unsupervised.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/metrics/cluster/tests/test_unsupervised.py:39:8"
+  },
+  {
+    "file": "sklearn/metrics/tests/test_classification.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/metrics/tests/test_classification.py:3219:8"
+  },
+  {
+    "file": "sklearn/metrics/tests/test_common.py",
+    "category": "factory-construction-panic",
+    "owner": "bitwise_or",
+    "gap_kind": "Floor",
+    "observed": "SetValue",
+    "requested": "stand on the runtime bitwise or floor",
+    "blame": "sklearn/metrics/tests/test_common.py:684:8"
+  },
+  {
+    "file": "sklearn/metrics/tests/test_dist_metrics.py",
+    "category": "factory-construction-panic",
+    "owner": "TemporalContext",
+    "gap_kind": "Floor",
+    "observed": "X_mmap",
+    "requested": "value",
+    "blame": "sklearn/metrics/tests/test_dist_metrics.py:67:59"
+  },
+  {
+    "file": "sklearn/metrics/tests/test_pairwise.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/metrics/tests/test_pairwise.py:80:8"
+  },
+  {
+    "file": "sklearn/metrics/tests/test_pairwise_distances_reduction.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/metrics/tests/test_pairwise_distances_reduction.py:238:24"
+  },
+  {
+    "file": "sklearn/metrics/tests/test_ranking.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/metrics/tests/test_ranking.py:169:35"
+  },
+  {
+    "file": "sklearn/metrics/tests/test_regression.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/metrics/tests/test_regression.py:43:24"
+  },
+  {
+    "file": "sklearn/metrics/tests/test_score_objects.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/metrics/tests/test_score_objects.py:277:24"
+  },
+  {
+    "file": "sklearn/mixture/tests/test_bayesian_mixture.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/mixture/tests/test_bayesian_mixture.py:464:19"
+  },
+  {
+    "file": "sklearn/mixture/tests/test_gaussian_mixture.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/mixture/tests/test_gaussian_mixture.py:113:20"
+  },
+  {
+    "file": "sklearn/model_selection/tests/test_classification_threshold.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/model_selection/tests/test_classification_threshold.py:106:1"
+  },
+  {
+    "file": "sklearn/model_selection/tests/test_plot.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/model_selection/tests/test_plot.py:76:49"
+  },
+  {
+    "file": "sklearn/model_selection/tests/test_search.py",
+    "category": "factory-construction-panic",
+    "owner": "ConstructorCallSugar",
+    "gap_kind": "Constructor",
+    "observed": "LinearSVCNoScore MRO selected sklearn.svm.LinearSVC.__init__",
+    "requested": "statically constructed inherited constructor body",
+    "blame": "sklearn/model_selection/tests/test_search.py:320:8"
+  },
+  {
+    "file": "sklearn/model_selection/tests/test_split.py",
+    "category": "factory-construction-panic",
+    "owner": "multiply",
+    "gap_kind": "Floor",
+    "observed": "ListValue",
+    "requested": "stand on the multiplication floor",
+    "blame": "sklearn/model_selection/tests/test_split.py:437:8"
+  },
+  {
+    "file": "sklearn/model_selection/tests/test_successive_halving.py",
+    "category": "factory-construction-panic",
+    "owner": "ConstructorCallSugar",
+    "gap_kind": "Constructor",
+    "observed": "SometimesFailClassifier.__init__ contains Expr",
+    "requested": "constructed source initializer",
+    "blame": "sklearn/model_selection/tests/test_successive_halving.py:102:8"
+  },
+  {
+    "file": "sklearn/model_selection/tests/test_validation.py",
+    "category": "factory-construction-panic",
+    "owner": "python.factory",
+    "gap_kind": "Sugar",
+    "observed": "Try",
+    "requested": "statement",
+    "blame": "sklearn/model_selection/tests/test_validation.py:2024:4"
+  },
+  {
+    "file": "sklearn/neighbors/_base.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/neighbors/_base.py:183:12"
+  },
+  {
+    "file": "sklearn/neighbors/tests/test_ball_tree.py",
+    "category": "factory-construction-panic",
+    "owner": "TemporalContext",
+    "gap_kind": "Floor",
+    "observed": "X",
+    "requested": "value",
+    "blame": "sklearn/neighbors/tests/test_ball_tree.py:67:27"
+  },
+  {
+    "file": "sklearn/neighbors/tests/test_graph.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/neighbors/tests/test_graph.py:20:27"
+  },
+  {
+    "file": "sklearn/neighbors/tests/test_kde.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/neighbors/tests/test_kde.py:143:11"
+  },
+  {
+    "file": "sklearn/neighbors/tests/test_lof.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/neighbors/tests/test_lof.py:24:7"
+  },
+  {
+    "file": "sklearn/neighbors/tests/test_nca.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/neighbors/tests/test_nca.py:51:23"
+  },
+  {
+    "file": "sklearn/neighbors/tests/test_neighbors.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:filterwarnings",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `filterwarnings`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/neighbors/tests/test_neighbors.py:439:4"
+  },
+  {
+    "file": "sklearn/neural_network/tests/test_mlp.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/neural_network/tests/test_mlp.py:37:21"
+  },
+  {
+    "file": "sklearn/neural_network/tests/test_rbm.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/neural_network/tests/test_rbm.py:18:13"
+  },
+  {
+    "file": "sklearn/preprocessing/tests/test_common.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/preprocessing/tests/test_common.py:34:7"
+  },
+  {
+    "file": "sklearn/preprocessing/tests/test_data.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/preprocessing/tests/test_data.py:207:9"
+  },
+  {
+    "file": "sklearn/preprocessing/tests/test_function_transformer.py",
+    "category": "factory-construction-panic",
+    "owner": "RuntimeEffect",
+    "gap_kind": "Floor",
+    "observed": "py.setitem operand=SliceValue(lower=None, upper=None, step=None)",
+    "requested": "genuine runtime-dependent operand",
+    "blame": "sklearn/preprocessing/tests/test_function_transformer.py:48:4"
+  },
+  {
+    "file": "sklearn/preprocessing/tests/test_label.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/preprocessing/tests/test_label.py:208:8"
+  },
+  {
+    "file": "sklearn/preprocessing/tests/test_polynomial.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/preprocessing/tests/test_polynomial.py:910:26"
+  },
+  {
+    "file": "sklearn/preprocessing/tests/test_target_encoder.py",
+    "category": "factory-construction-panic",
+    "owner": "SequentialDigBody",
+    "gap_kind": "Floor",
+    "observed": "If",
+    "requested": "reduced guarded returns with an unguarded fallback",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/sklearn/utils/multiclass.py:441:4"
+  },
+  {
+    "file": "sklearn/semi_supervised/tests/test_label_propagation.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/semi_supervised/tests/test_label_propagation.py:29:32"
+  },
+  {
+    "file": "sklearn/semi_supervised/tests/test_self_training.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/semi_supervised/tests/test_self_training.py:25:7"
+  },
+  {
+    "file": "sklearn/svm/_base.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/svm/_base.py:787:29"
+  },
+  {
+    "file": "sklearn/svm/tests/test_bounds.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/svm/tests/test_bounds.py:28:12"
+  },
+  {
+    "file": "sklearn/svm/tests/test_sparse.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/svm/tests/test_sparse.py:49:19"
+  },
+  {
+    "file": "sklearn/svm/tests/test_svm.py",
+    "category": "factory-construction-panic",
+    "owner": "python.factory",
+    "gap_kind": "Sugar",
+    "observed": "Call",
+    "requested": "term",
+    "blame": "sklearn/svm/tests/test_svm.py:322:8"
+  },
+  {
+    "file": "sklearn/tests/metadata_routing_common.py",
+    "category": "completed",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/tests/test_base.py",
+    "category": "factory-construction-panic",
+    "owner": "ConstructorCallSugar",
+    "gap_kind": "Constructor",
+    "observed": "TreeBadVersion MRO selected sklearn.tree.DecisionTreeClassifier.__init__",
+    "requested": "statically constructed inherited constructor body",
+    "blame": "sklearn/tests/test_base.py:531:11"
+  },
+  {
+    "file": "sklearn/tests/test_calibration.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/tests/test_calibration.py:124:15"
+  },
+  {
+    "file": "sklearn/tests/test_common.py",
+    "category": "factory-construction-panic",
+    "owner": "TemporalContext",
+    "gap_kind": "Floor",
+    "observed": "__file__",
+    "requested": "value",
+    "blame": "../../../.local/share/uv/python/cpython-3.12.3-macos-x86_64-none/lib/python3.12/importlib/__init__.py:26:30"
+  },
+  {
+    "file": "sklearn/tests/test_config.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/tests/test_config.py:28:4"
+  },
+  {
+    "file": "sklearn/tests/test_discriminant_analysis.py",
+    "category": "factory-construction-panic",
+    "owner": "add",
+    "gap_kind": "Floor",
+    "observed": "PredicateValue",
+    "requested": "stand on the addition floor",
+    "blame": "sklearn/tests/test_discriminant_analysis.py:84:27"
+  },
+  {
+    "file": "sklearn/tests/test_docstring_parameters.py",
+    "category": "factory-construction-panic",
+    "owner": "TemporalContext",
+    "gap_kind": "Floor",
+    "observed": "__file__",
+    "requested": "value",
+    "blame": "../../../.local/share/uv/python/cpython-3.12.3-macos-x86_64-none/lib/python3.12/importlib/__init__.py:26:30"
+  },
+  {
+    "file": "sklearn/tests/test_init.py",
+    "category": "factory-construction-panic",
+    "owner": "StarImportFromSugar",
+    "gap_kind": "Floor",
+    "observed": "from sklearn import *",
+    "requested": "resolved static star-import exports",
+    "blame": "sklearn/tests/test_init.py:8:4"
+  },
+  {
+    "file": "sklearn/tests/test_isotonic.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/tests/test_isotonic.py:46:24"
+  },
+  {
+    "file": "sklearn/tests/test_kernel_approximation.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/tests/test_kernel_approximation.py:59:13"
+  },
+  {
+    "file": "sklearn/tests/test_metadata_routing.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/tests/test_metadata_routing.py:123:1"
+  },
+  {
+    "file": "sklearn/tests/test_metaestimators.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/tests/test_metaestimators.py:37:17"
+  },
+  {
+    "file": "sklearn/tests/test_metaestimators_metadata_routing.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/tests/test_metaestimators_metadata_routing.py:658:1"
+  },
+  {
+    "file": "sklearn/tests/test_multiclass.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/tests/test_multiclass.py:382:12"
+  },
+  {
+    "file": "sklearn/tests/test_multioutput.py",
+    "category": "factory-construction-panic",
+    "owner": "ConstructorCallSugar",
+    "gap_kind": "Constructor",
+    "observed": "DummyRegressorWithFitParams MRO selected sklearn.dummy.DummyRegressor.__init__",
+    "requested": "statically constructed inherited constructor body",
+    "blame": "sklearn/tests/test_multioutput.py:709:33"
+  },
+  {
+    "file": "sklearn/tests/test_naive_bayes.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/tests/test_naive_bayes.py:232:11"
+  },
+  {
+    "file": "sklearn/tests/test_pipeline.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/tests/test_pipeline.py:2101:1"
+  },
+  {
+    "file": "sklearn/tests/test_public_functions.py",
+    "category": "factory-construction-panic",
+    "owner": "TemporalContext",
+    "gap_kind": "Floor",
+    "observed": "__file__",
+    "requested": "value",
+    "blame": "../../../.local/share/uv/python/cpython-3.12.3-macos-x86_64-none/lib/python3.12/importlib/__init__.py:26:30"
+  },
+  {
+    "file": "sklearn/tests/test_random_projection.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/tests/test_random_projection.py:91:8"
+  },
+  {
+    "file": "sklearn/tree/tests/test_export.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/tree/tests/test_export.py:54:16"
+  },
+  {
+    "file": "sklearn/tree/tests/test_monotonic_tree.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/tree/tests/test_monotonic_tree.py:54:11"
+  },
+  {
+    "file": "sklearn/tree/tests/test_split.py",
+    "category": "factory-construction-panic",
+    "owner": "bitwise_or",
+    "gap_kind": "Floor",
+    "observed": "PredicateValue",
+    "requested": "stand on the runtime bitwise or floor",
+    "blame": "sklearn/tree/tests/test_split.py:70:12"
+  },
+  {
+    "file": "sklearn/tree/tests/test_tree.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/tree/tests/test_tree.py:320:16"
+  },
+  {
+    "file": "sklearn/utils/_array_api.py",
+    "category": "completed",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/utils/_mocking.py",
+    "category": "factory-construction-panic",
+    "owner": "ConstructorCallSugar",
+    "gap_kind": "Constructor",
+    "observed": "recursive-constructor-method",
+    "requested": "finite constructor method graph for `MockDataFrame`",
+    "blame": "sklearn/utils/_mocking.py:59:15"
+  },
+  {
+    "file": "sklearn/utils/_repr_html/tests/test_attributes.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/utils/_repr_html/tests/test_attributes.py:68:9"
+  },
+  {
+    "file": "sklearn/utils/_repr_html/tests/test_estimator.py",
+    "category": "factory-construction-panic",
+    "owner": "python.factory",
+    "gap_kind": "Sugar",
+    "observed": "For",
+    "requested": "statement",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/sklearn/compose/_column_transformer.py:617:8"
+  },
+  {
+    "file": "sklearn/utils/_repr_html/tests/test_features.py",
+    "category": "factory-construction-panic",
+    "owner": "python.factory",
+    "gap_kind": "Sugar",
+    "observed": "For",
+    "requested": "statement",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/sklearn/compose/_column_transformer.py:617:8"
+  },
+  {
+    "file": "sklearn/utils/_repr_html/tests/test_params.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/utils/_repr_html/tests/test_params.py:28:9"
+  },
+  {
+    "file": "sklearn/utils/estimator_checks.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/utils/estimator_checks.py:966:15"
+  },
+  {
+    "file": "sklearn/utils/tests/test_array_api.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/utils/tests/test_array_api.py:86:9"
+  },
+  {
+    "file": "sklearn/utils/tests/test_chunking.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/utils/tests/test_chunking.py:14:63"
+  },
+  {
+    "file": "sklearn/utils/tests/test_class_weight.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/utils/tests/test_class_weight.py:18:9"
+  },
+  {
+    "file": "sklearn/utils/tests/test_deprecation.py",
+    "category": "factory-construction-panic",
+    "owner": "python.factory",
+    "gap_kind": "Sugar",
+    "observed": "ClassDef",
+    "requested": "statement",
+    "blame": "sklearn/utils/tests/test_deprecation.py:94:4"
+  },
+  {
+    "file": "sklearn/utils/tests/test_estimator_checks.py",
+    "category": "factory-construction-panic",
+    "owner": "ConstructorCallSugar",
+    "gap_kind": "Constructor",
+    "observed": "UntaggedBinaryClassifier MRO selected sklearn.linear_model.SGDClassifier.__init__",
+    "requested": "statically constructed inherited constructor body",
+    "blame": "sklearn/utils/tests/test_estimator_checks.py:836:24"
+  },
+  {
+    "file": "sklearn/utils/tests/test_extmath.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/utils/tests/test_extmath.py:119:8"
+  },
+  {
+    "file": "sklearn/utils/tests/test_fixes.py",
+    "category": "completed",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/utils/tests/test_graph.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/utils/tests/test_graph.py:13:12"
+  },
+  {
+    "file": "sklearn/utils/tests/test_indexing.py",
+    "category": "factory-construction-panic",
+    "owner": "TemporalContext",
+    "gap_kind": "Floor",
+    "observed": "update_wrapper",
+    "requested": "value",
+    "blame": "../../../.local/share/uv/python/cpython-3.12.3-macos-x86_64-none/lib/python3.12/functools.py:76:19"
+  },
+  {
+    "file": "sklearn/utils/tests/test_mask.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/utils/tests/test_mask.py:15:11"
+  },
+  {
+    "file": "sklearn/utils/tests/test_metaestimators.py",
+    "category": "factory-construction-panic",
+    "owner": "AttributeSugar",
+    "gap_kind": "Constructor",
+    "observed": "AvailableParameterEstimator.available_func",
+    "requested": "constructor-bound field",
+    "blame": "sklearn/utils/tests/test_metaestimators.py:29:8"
+  },
+  {
+    "file": "sklearn/utils/tests/test_mocking.py",
+    "category": "completed",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/utils/tests/test_multiclass.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/utils/tests/test_multiclass.py:322:9"
+  },
+  {
+    "file": "sklearn/utils/tests/test_optimize.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/utils/tests/test_optimize.py:68:9"
+  },
+  {
+    "file": "sklearn/utils/tests/test_parallel.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/utils/tests/test_parallel.py:32:9"
+  },
+  {
+    "file": "sklearn/utils/tests/test_param_validation.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/utils/tests/test_param_validation.py:478:8"
+  },
+  {
+    "file": "sklearn/utils/tests/test_pprint.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/utils/tests/test_pprint.py:243:1"
+  },
+  {
+    "file": "sklearn/utils/tests/test_response.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/utils/tests/test_response.py:21:7"
+  },
+  {
+    "file": "sklearn/utils/tests/test_seq_dataset.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/utils/tests/test_seq_dataset.py:21:7"
+  },
+  {
+    "file": "sklearn/utils/tests/test_set_output.py",
+    "category": "factory-construction-panic",
+    "owner": "python.factory",
+    "gap_kind": "Sugar",
+    "observed": "ClassDef",
+    "requested": "statement",
+    "blame": "sklearn/utils/tests/test_set_output.py:313:8"
+  },
+  {
+    "file": "sklearn/utils/tests/test_show_versions.py",
+    "category": "completed",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/utils/tests/test_sparsefuncs.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable decorator factory:wraps",
+    "gap_kind": "Floor",
+    "observed": "missing callsite body for decorator factory `wraps`",
+    "requested": "decorator callable floor or implementation-preserving decorator contract",
+    "blame": "sklearn/utils/tests/test_sparsefuncs.py:41:11"
+  },
+  {
+    "file": "sklearn/utils/tests/test_stats.py",
+    "category": "timeout-or-hang",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/utils/tests/test_tags.py",
+    "category": "completed",
+    "owner": null,
+    "gap_kind": null,
+    "observed": null,
+    "requested": null,
+    "blame": null
+  },
+  {
+    "file": "sklearn/utils/tests/test_testing.py",
+    "category": "factory-construction-panic",
+    "owner": "FunctionCallable",
+    "gap_kind": "Floor",
+    "observed": "ImportAliasValue",
+    "requested": "decorator callable substitution",
+    "blame": "sklearn/utils/tests/test_testing.py:133:8"
+  },
+  {
+    "file": "sklearn/utils/tests/test_user_interface.py",
+    "category": "factory-construction-panic",
+    "owner": "subtract",
+    "gap_kind": "Floor",
+    "observed": "TermValue",
+    "requested": "stand on the subtraction floor",
+    "blame": "../../../sugar/.worktrees/vendor-recensus-requests-datetime/.venv-recensus/lib/python3.12/site-packages/sklearn/utils/_user_interface.py:31:15"
+  },
+  {
+    "file": "sklearn/utils/tests/test_validation.py",
+    "category": "factory-construction-panic",
+    "owner": "sklearn/utils/tests/test_validation.py:434:4",
+    "gap_kind": "Floor",
+    "observed": "RaiseValue",
+    "requested": "project this floor value to a term",
+    "blame": "RaiseValue"
+  }
+]
