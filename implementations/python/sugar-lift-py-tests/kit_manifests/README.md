@@ -65,3 +65,15 @@ key format). Declares two receiver shapes (`PANDAS_DATAFRAME`,
 `PANDAS_SERIES`) and two members each (`equals`, `items`) — 4 of #5913's 143
 member tickets. Every other member ticket is untouched by this manifest and
 stays loud `FactoryPanic`.
+
+## `pydantic_receiver_surface_5577.json`
+
+Part of #5577's mass drain (architecture landed in #5619; this manifest is
+the first re-earn increment on top of it). Declares the two ranked-#1/#2
+pydantic method-mass families from the #5577 pinned ranking:
+`SchemaValidator.validate_python` (401 rows) and `SchemaSerializer.to_python`
+(533 rows) — Assign-bound receiver only (`v = SchemaValidator(...)` /
+`s = SchemaSerializer(...)`). Every other #5577 member (`to_json`,
+`validate_json`, `errors`, `model_dump`, fixture/annotated-param receivers,
+Attribute-chain receivers, keyword-bearing call sites) is untouched by this
+manifest and stays loud `FactoryPanic`.

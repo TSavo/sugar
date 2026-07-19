@@ -245,6 +245,20 @@ class CalleeUniverseSupport(Enum):
     PANDAS_INDEX_IS_ = auto()
     PANDAS_INDEX_SLICE_LOCS = auto()
 
+    # #5577 pydantic method-receiver drain (first mass increment): the top two
+    # ranked pydantic method-mass families (#5577 ranking: to_python 533,
+    # validate_python 401 — ~26% of the ~3580-row pin window). Same
+    # empty-by-construction law as the pandas #5913 family above — these
+    # coordinates arrive ONLY through a loaded kit manifest's call_shape +
+    # instance_call + imported_callee sections
+    # (kit_manifests/pydantic_receiver_surface_5577.json). Production
+    # _CALL_SHAPES / _NATIVE_INSTANCE_CALLS never carry a "pydantic_core.*"
+    # key. A bare `to_python(...)`/`validate_python(...)` leaf, or the same
+    # method name on an unauthenticated/lookalike/rebound/aliased receiver,
+    # never resolves a NativeShape and stays loud FactoryPanic.
+    PYDANTIC_CORE_SCHEMA_SERIALIZER_TO_PYTHON = auto()
+    PYDANTIC_CORE_SCHEMA_VALIDATOR_VALIDATE_PYTHON = auto()
+
 
 # Empty: numpy dtype-result coordinates are external kit contracts (#5603).
 # Hard-coded vendor logos deleted; rows stay loud until bridge evidence.
