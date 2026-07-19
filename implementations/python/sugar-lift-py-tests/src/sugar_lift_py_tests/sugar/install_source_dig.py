@@ -25,7 +25,13 @@ import functools
 import inspect
 import sys
 import textwrap
-from dataclasses import dataclass, replace
+from dataclasses import (
+    dataclass,
+    field as dataclass_field,
+    fields,
+    is_dataclass,
+    replace,
+)
 from pathlib import Path
 from typing import Any
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
@@ -41,6 +47,48 @@ INSTALLED_SOURCE_INDEX_CAPACITY = 64
 # Capacity is resident ownership only (eviction recomputes; not invalidation).
 INSTALL_SOURCE_VALUE_CAPACITY = 256
 _MISSING = object()
+
+
+@dataclass(frozen=True)
+class _FactoryContextToken:
+    value: Any = dataclass_field(compare=False, hash=False, repr=False)
+
+    def __hash__(self) -> int:
+        return id(self.value)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _FactoryContextToken) and self.value is other.value
+
+
+def _factory_context_identity(ctx: Any) -> tuple[tuple[str, Any], ...]:
+    if ctx is None or not hasattr(ctx, "__dataclass_fields__"):
+        return ()
+    def component(value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, bool, float, bytes, frozenset)):
+            return value
+        if is_dataclass(value) and not isinstance(value, type):
+            return (
+                type(value).__qualname__,
+                tuple((item.name, component(getattr(value, item.name))) for item in fields(value)),
+            )
+        if isinstance(value, dict):
+            return tuple(
+                (repr(key), component(item))
+                for key, item in sorted(value.items(), key=lambda pair: repr(pair[0]))
+            )
+        if isinstance(value, list):
+            return tuple(component(item) for item in value)
+        if isinstance(value, ast.AST):
+            return ast.dump(value, include_attributes=True)
+        if isinstance(value, tuple):
+            try:
+                hash(value)
+            except TypeError:
+                return _FactoryContextToken(value)
+            return value
+        return _FactoryContextToken(value)
+
+    return tuple((item.name, component(getattr(ctx, item.name))) for item in fields(ctx))
 
 
 class InstallSourceValueOracle:

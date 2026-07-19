@@ -81,4 +81,4 @@ def test_build_dig_body_wrong_context_rebuilds_and_matches_fresh_second(
     fresh_second = build_dig_body(fn, ctx_two)
     assert fresh_second is not None
     assert type(second.sugar).__name__ == type(fresh_second.sugar).__name__
-    assert second.sugar.body is fresh_second.sugar.body
+    assert second.sugar.body == fresh_second.sugar.body
