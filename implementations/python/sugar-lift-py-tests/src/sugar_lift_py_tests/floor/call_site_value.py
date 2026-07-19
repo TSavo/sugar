@@ -337,6 +337,10 @@ class CallSiteValue(FloorValue):
         index is a ground int (unpack residual: ``handles`` from a returned
         triple). ``iter_elem`` of a proven list-of-lists (or a listcomp whose
         element expression is a list literal) rebinds through ``py.list_append``.
+        A curried For post-state (``loop:…`` target) that carried a list via
+        append-rebind is still list-shaped: further appends rebind through
+        ``py.list_append`` without re-digging the loop body. Chained
+        ``list.append`` / ``py.list_append`` coordinates do the same.
         Opaque cast/subscript/iter faces stay loud; a call result is not proof
         that the receiver is a mutable list. Never mint RuntimeEffect over a
         ground list proof.
@@ -351,7 +355,22 @@ class CallSiteValue(FloorValue):
             return isinstance(floor, (ListValue, ComprehensionValue))
 
         def is_constructed_list_callsite(receiver: CallSiteValue) -> bool:
-            if receiver.target_name in {"builtins.list", "list", "split"}:
+            # Proven list constructors and post-states that already rebind through
+            # ``py.list_append``. ``loop:…`` is the curried For floor's single
+            # (or projected) list-shaped carried output after append-rebinding
+            # iterations (#5338 / public_api residual after #5574). ``list.append``
+            # is the coordinate this door itself mints — chained appends must not
+            # re-panic. Content identity stays on term CID (#5569).
+            if receiver.target_name in {
+                "builtins.list",
+                "list",
+                "split",
+                "list.append",
+            }:
+                return True
+            if receiver.target_name.startswith("loop:"):
+                return True
+            if getattr(receiver.term, "name", None) == "py.list_append":
                 return True
             if receiver.target_name == "copy" and receiver.arg_values:
                 base = receiver.arg_values[0]
