@@ -521,5 +521,16 @@
         "requested": "constructed source initializer"
       }
     }
-  ]
+  ],
+  "coordination": {
+    "pr_5336": {
+      "state": "merged before review completed",
+      "mechanism": "DeferredStatementStructureOracle memoizes successful SugarBody values by filename, line, column, observed kind, and statement source segment",
+      "retired_timeout_files_from_66": 0,
+      "reason": "the measured pre-#5336 disposition already has zero files reaching the 30-second bound",
+      "soundness": "unsound cache identity: enclosing source, name_resolver, and factory context are absent",
+      "counterexample": "same.py return Foo() caches Foo.__init__ self.x=1 and reuses it when the second factory context resolves Foo.__init__ to self.x=2; a fresh build returns x=2",
+      "required_fix": "key by the full immutable construction identity (including enclosing source and all factory-recognition inputs) or scope the cache to one immutable build context; retain success-only publication and live reduction"
+    }
+  }
 }

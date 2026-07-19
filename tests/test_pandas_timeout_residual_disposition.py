@@ -60,3 +60,12 @@ def test_noncompleted_rows_keep_loud_terminal_testimony() -> None:
         else:
             assert row["terminal"] is not None
             assert row["terminal"]["kind"] != "runtime-effect"
+
+
+def test_deferred_statement_memo_does_not_claim_timeout_retirement() -> None:
+    ledger = _load(DISPOSITION_LEDGER)
+    review = ledger["coordination"]["pr_5336"]
+
+    assert review["retired_timeout_files_from_66"] == 0
+    assert "unsound cache identity" in review["soundness"]
+    assert "fresh build returns x=2" in review["counterexample"]
