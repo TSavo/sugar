@@ -510,6 +510,9 @@ def test_extract_progress_from_engine_log_ranks_sugar_hotspots(tmp_path: Path) -
     assert progress["phase_share"]["dig"] > progress["phase_share"]["factory_new"]
     assert progress["dig_target_ms"][0]["target"] == "numpy.ma.core.array"
     assert "dig.resolve_value" in progress["role_ms"]
+    # #5306 mechanism fingerprint is attached for timeout cohort bisection.
+    assert progress["mechanism"]["schema"] == "sugar.timeout.mechanism.v1"
+    assert progress["dominant_mechanism"] == progress["mechanism"]["dominant_mechanism"]
 
 
 def test_phase_from_role_bisects_factory_and_dig() -> None:
