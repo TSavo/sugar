@@ -32,6 +32,10 @@ _AUTHENTICATED_COORDINATES = frozenset(
         # bare ``type`` is owned by BuiltinTypeCallSugar (construction + universe).
         "dtype",
         "all",
+        "any",
+        "min",
+        "max",
+        "sum",
         "list",
         "set",
         "hasattr",
@@ -60,6 +64,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "numpy.f2py.crackfortran._eval_scalar",
         "json.loads",
         "dataclasses.asdict",
+        "dataclasses.is_dataclass",
         "math.isclose",
         "numpy.result_type",
         "scipy.linalg.issymmetric",
@@ -75,7 +80,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
 # Must match recognition.callee_universe bare-builtin warrants this leaf owns.
 # ``type`` is intentionally absent: BuiltinTypeCallSugar is its construction owner.
 _BUILTIN_COORDINATES = frozenset(
-    {"dtype", "all", "list", "set", "hasattr"}
+    {"dtype", "all", "any", "min", "max", "sum", "list", "set", "hasattr"}
 )
 _RECEIVER_COORDINATES = frozenset({"item"})
 # Leaf spellings that can still resolve into an authenticated coordinate.
@@ -101,6 +106,7 @@ _OWNED_IMPORTED_SUPPORT = frozenset(
         CalleeUniverseSupport.REGEX_SEARCH,
         CalleeUniverseSupport.JSON_LOADS,
         CalleeUniverseSupport.DATACLASSES_ASDICT,
+        CalleeUniverseSupport.DATACLASSES_IS_DATACLASS,
         CalleeUniverseSupport.MATH_ISCLOSE,
         CalleeUniverseSupport.NUMPY_RESULT_TYPE,
         CalleeUniverseSupport.SCIPY_LINALG_ISSYMMETRIC,
@@ -183,6 +189,10 @@ class BuiltinCalleeUniverseSugar(
         return (
             _coordinate_witness("dtype", "'i4'", "'i8'"),
             _coordinate_witness("all", "True", "False"),
+            _coordinate_witness("any", "True", "False"),
+            _coordinate_witness("min", "0", "1"),
+            _coordinate_witness("max", "0", "1"),
+            _coordinate_witness("sum", "0", "1"),
             _coordinate_witness("list", "[]", "[0]"),
             _coordinate_witness("set", "[]", "[0]"),
             _coordinate_witness("hasattr", "True", "False"),
@@ -213,12 +223,30 @@ class BuiltinCalleeUniverseSugar(
             _numpy_isnan_witness(),
             _numpy_all_witness(),
             _numpy_dtype_witness(),
-            *(_numpy_batch_witness(name) for name in (
-                "timedelta64", "read", "__array_wrap__", "__dlpack_device__",
-                "astype", "dtypes", "get_npyiter_ndim", "get_npyiter_size",
-                "asarray", "drop_metadata", "_has_method_heading", "_repr_latex_",
-                "binomial", "conv_intp", "create", "exists", "func", "iter_goto", "median",
-            )),
+            *(
+                _numpy_batch_witness(name)
+                for name in (
+                    "timedelta64",
+                    "read",
+                    "__array_wrap__",
+                    "__dlpack_device__",
+                    "astype",
+                    "dtypes",
+                    "get_npyiter_ndim",
+                    "get_npyiter_size",
+                    "asarray",
+                    "drop_metadata",
+                    "_has_method_heading",
+                    "_repr_latex_",
+                    "binomial",
+                    "conv_intp",
+                    "create",
+                    "exists",
+                    "func",
+                    "iter_goto",
+                    "median",
+                )
+            ),
             _numpy_may_share_memory_witness(),
             _numpy_shares_memory_witness(),
             _numpy_array_tobytes_witness(),
@@ -230,11 +258,18 @@ class BuiltinCalleeUniverseSugar(
             _numpy_dtype_result_witness(),
             _json_loads_witness(),
             _dataclasses_asdict_witness(),
+            _dataclasses_is_dataclass_witness(),
             _path_resolve_coordinate_witness(),
             _ufunc_coordinate_witness(),
-            *(_bound_leaf_coordinate_witness(name) for name in (
-                "t0", "selectedintkind", "foo", "to_Dt",
-            )),
+            *(
+                _bound_leaf_coordinate_witness(name)
+                for name in (
+                    "t0",
+                    "selectedintkind",
+                    "foo",
+                    "to_Dt",
+                )
+            ),
             _math_isclose_witness(),
             _numpy_result_type_witness(),
             _scipy_linalg_issymmetric_witness(),
@@ -587,13 +622,7 @@ def _numpy_dtype_result_witness():
 
 
 def _json_loads_witness():
-    prefix = (
-        "import json\n"
-        "\n"
-        "def A():\n"
-        "    return json.loads('0')\n"
-        "\n"
-    )
+    prefix = "import json\n" "\n" "def A():\n" "    return json.loads('0')\n" "\n"
     return _call_pair(
         name="json_loads_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
@@ -606,11 +635,7 @@ def _json_loads_witness():
 
 def _math_isclose_witness():
     prefix = (
-        "import math\n"
-        "\n"
-        "def A():\n"
-        "    return math.isclose(1.0, 1.0)\n"
-        "\n"
+        "import math\n" "\n" "def A():\n" "    return math.isclose(1.0, 1.0)\n" "\n"
     )
     return _call_pair(
         name="math_isclose_universe_coordinate",
@@ -710,6 +735,28 @@ def _dataclasses_asdict_witness():
         lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
         family="builtin-universe-coordinate",
     )
+
+
+def _dataclasses_is_dataclass_witness():
+    prefix = (
+        "from dataclasses import is_dataclass, dataclass\n"
+        "\n"
+        "@dataclass\n"
+        "class Point:\n"
+        "    x: int\n"
+        "\n"
+        "def A():\n"
+        "    return is_dataclass(Point)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="dataclasses_is_dataclass_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
 
 def _pathlib_path_witness():
     """Import-bound ``pathlib.Path`` constructor (corpus: test_configtool)."""

@@ -28,6 +28,10 @@ from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
     assert {
         "all",
+        "any",
+        "min",
+        "max",
+        "sum",
         "list",
         "set",
         "hasattr",
@@ -48,9 +52,15 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "re.Pattern.search",
         "json.loads",
         "dataclasses.asdict",
+        "dataclasses.is_dataclass",
+        "math.isclose",
     } <= (BuiltinCalleeUniverseSugar.universe_coordinates)
     assert {
         "all_builtin_universe_coordinate",
+        "any_builtin_universe_coordinate",
+        "min_builtin_universe_coordinate",
+        "max_builtin_universe_coordinate",
+        "sum_builtin_universe_coordinate",
         "list_builtin_universe_coordinate",
         "set_builtin_universe_coordinate",
         "hasattr_builtin_universe_coordinate",
@@ -72,6 +82,8 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "regex_search_builtin_universe_coordinate",
         "json_loads_universe_coordinate",
         "dataclasses_asdict_universe_coordinate",
+        "dataclasses_is_dataclass_universe_coordinate",
+        "math_isclose_universe_coordinate",
     } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
 
 
@@ -371,6 +383,154 @@ def test_unwarranted_hasattr_receiver_is_not_factory_owned(source: str) -> None:
 
 def test_hasattr_witness_pair_is_enrolled() -> None:
     assert "hasattr_builtin_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+@pytest.mark.parametrize(
+    ("callee", "source"),
+    [
+        ("any", "def test_any(value):\n    assert any(value)\n"),
+        ("min", "def test_min(value):\n    assert min(value) == 0\n"),
+        ("max", "def test_max(value):\n    assert max(value) == 0\n"),
+        ("sum", "def test_sum(value):\n    assert sum(value) == 0\n"),
+    ],
+)
+def test_authenticated_bare_builtin_selects_one_factory_owner(
+    callee: str, source: str
+) -> None:
+    context = FactoryBuildContext(
+        filename=f"{callee}_call.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _bare_builtin_call_site(source, callee),
+        filename=f"{callee}_call.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize("callee", ["any", "min", "max", "sum"])
+def test_unwarranted_bare_builtin_receiver_is_not_factory_owned(callee: str) -> None:
+    sources = [
+        f"def test_{callee}({callee}, value):\n    assert {callee}(value)\n",
+        (
+            f"def test_{callee}(value):\n"
+            f"    assert {callee}(value)\n"
+            f"    {callee} = replacement\n"
+        ),
+    ]
+    context = FactoryBuildContext(
+        filename=f"{callee}_call.py",
+        catalog=default_catalog(),
+    )
+    for source in sources:
+        built = build_node(
+            _bare_builtin_call_site(source, callee),
+            filename=f"{callee}_call.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize("callee", ["any", "min", "max", "sum"])
+def test_bare_builtin_witness_pair_is_enrolled(callee: str) -> None:
+    assert f"{callee}_builtin_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def test_authenticated_dataclasses_is_dataclass_selects_one_factory_owner() -> None:
+    source = (
+        "import dataclasses\n"
+        "\n"
+        "def test_is_dataclass(value):\n"
+        "    assert dataclasses.is_dataclass(value) == dataclasses.is_dataclass(value)\n"
+    )
+    context = FactoryBuildContext(
+        filename="dataclasses_is_dataclass.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _stdlib_attr_call_site(source, "is_dataclass", "dataclasses_is_dataclass.py"),
+        filename="dataclasses_is_dataclass.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_authenticated_from_import_is_dataclass_selects_one_factory_owner() -> None:
+    source = (
+        "from dataclasses import is_dataclass\n"
+        "\n"
+        "def test_is_dataclass(value):\n"
+        "    assert is_dataclass(value) == is_dataclass(value)\n"
+    )
+    context = FactoryBuildContext(
+        filename="is_dataclass_from.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _stdlib_name_call_site(source, "is_dataclass", "is_dataclass_from.py"),
+        filename="is_dataclass_from.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import dataclasses\n"
+            "\n"
+            "def test_is_dataclass(dataclasses, value):\n"
+            "    assert dataclasses.is_dataclass(value)\n"
+        ),
+        (
+            "import dataclasses\n"
+            "\n"
+            "def test_is_dataclass(value):\n"
+            "    assert dataclasses.is_dataclass(value)\n"
+            "    dataclasses = replacement\n"
+        ),
+        (
+            "import math as dataclasses\n"
+            "\n"
+            "def test_is_dataclass(value):\n"
+            "    assert dataclasses.is_dataclass(value)\n"
+        ),
+        (
+            "def test_is_dataclass(value):\n"
+            "    assert dataclasses.is_dataclass(value)\n"
+        ),
+    ],
+)
+def test_unwarranted_is_dataclass_receiver_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="dataclasses_is_dataclass.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _stdlib_attr_call_site(source, "is_dataclass", "dataclasses_is_dataclass.py"),
+        filename="dataclasses_is_dataclass.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_dataclasses_is_dataclass_witness_pair_is_enrolled() -> None:
+    assert "dataclasses_is_dataclass_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
@@ -1100,7 +1260,10 @@ def test_numpy_can_cast_requires_authenticated_receiver() -> None:
         temporal=TemporalContext.empty().bind_value(
             "np",
             ImportAliasValue(
-                "numpy", "np", import_target="numpy", install_source_checked=True,
+                "numpy",
+                "np",
+                import_target="numpy",
+                install_source_checked=True,
                 resolved_value=TermValue("numpy"),
             ),
         ),
@@ -1109,9 +1272,11 @@ def test_numpy_can_cast_requires_authenticated_receiver() -> None:
     assert isinstance(sugar, BuiltinCalleeUniverseSugar)
 
     lying = FactoryBuildContext(
-        filename="numpy_can_cast.py", catalog=default_catalog(), temporal=TemporalContext.empty().bind_value(
+        filename="numpy_can_cast.py",
+        catalog=default_catalog(),
+        temporal=TemporalContext.empty().bind_value(
             "np", ImportAliasValue("other", "np", import_target="other")
-        )
+        ),
     )
     with pytest.raises(FactoryPanic):
         BuiltinCalleeUniverseSugar.new(site, lying)
@@ -1321,6 +1486,8 @@ def test_dataclasses_asdict_witness_pair_is_enrolled() -> None:
     assert "dataclasses_asdict_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
+
+
 def _leaf_attr_call_site(source: str, leaf: str) -> SourceFragment:
     call = next(
         node
@@ -1370,10 +1537,7 @@ def test_instance_module_attribute_call_authenticates(leaf: str) -> None:
 
 @pytest.mark.parametrize("leaf", ["t0", "selectedintkind", "foo", "to_Dt"])
 def test_unresolved_leaf_attribute_call_stays_unowned(leaf: str) -> None:
-    source = (
-        f"def test_a(module):\n"
-        f"    assert module.{leaf}(1) == (1,)\n"
-    )
+    source = f"def test_a(module):\n" f"    assert module.{leaf}(1) == (1,)\n"
     site = _leaf_attr_call_site(source, leaf)
     assert recognize_callee_universe(f"call:{leaf}", site=site) is None
     built = build_node(
@@ -1405,7 +1569,9 @@ def test_selectedintkind_assignment_from_instance_module_authenticates() -> None
         site,
         filename="selectedintkind.py",
         role=SugarRole.TERM,
-        ctx=FactoryBuildContext(filename="selectedintkind.py", catalog=default_catalog()),
+        ctx=FactoryBuildContext(
+            filename="selectedintkind.py", catalog=default_catalog()
+        ),
     )
     assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
 
@@ -1452,10 +1618,7 @@ def test_path_resolve_authenticates_unresolved_stays_loud() -> None:
         "    path = pathlib.Path(value)\n"
         "    assert path.resolve() is not None\n"
     )
-    bad = (
-        "def test_a(path):\n"
-        "    assert path.resolve() is not None\n"
-    )
+    bad = "def test_a(path):\n" "    assert path.resolve() is not None\n"
     good_site = _leaf_attr_call_site(good, "resolve")
     bad_site = _leaf_attr_call_site(bad, "resolve")
     assert recognize_callee_universe("call:resolve", site=good_site) is not None
@@ -1506,10 +1669,7 @@ def _import_leaf_call_site(source: str, leaf: str, filename: str) -> SourceFragm
 
 def test_authenticated_math_isclose_selects_one_factory_owner() -> None:
     source = (
-        "import math\n"
-        "\n"
-        "def test_close(a, b):\n"
-        "    assert math.isclose(a, b)\n"
+        "import math\n" "\n" "def test_close(a, b):\n" "    assert math.isclose(a, b)\n"
     )
     context = FactoryBuildContext(filename="math_isclose.py", catalog=default_catalog())
     built = build_node(
@@ -1537,10 +1697,7 @@ def test_authenticated_math_isclose_selects_one_factory_owner() -> None:
             "    assert math.isclose(a, b)\n"
             "    math = replacement\n"
         ),
-        (
-            "def test_close(a, b):\n"
-            "    assert math.isclose(a, b)\n"
-        ),
+        ("def test_close(a, b):\n" "    assert math.isclose(a, b)\n"),
     ],
 )
 def test_unwarranted_math_isclose_is_not_factory_owned(source: str) -> None:
@@ -1593,10 +1750,7 @@ def test_authenticated_numpy_result_type_selects_one_factory_owner() -> None:
             "    assert np.result_type(a, b) == a\n"
             "    np = replacement\n"
         ),
-        (
-            "def test_rt(a, b):\n"
-            "    assert numpy.result_type(a, b) == a\n"
-        ),
+        ("def test_rt(a, b):\n" "    assert numpy.result_type(a, b) == a\n"),
     ],
 )
 def test_unwarranted_numpy_result_type_is_not_factory_owned(source: str) -> None:
@@ -1642,10 +1796,7 @@ def test_authenticated_numpy_isdtype_selects_one_factory_owner() -> None:
             "def test_id(np, dt):\n"
             "    assert np.isdtype(dt, 'real floating')\n"
         ),
-        (
-            "def test_id(dt):\n"
-            "    assert isdtype(dt, 'real floating')\n"
-        ),
+        ("def test_id(dt):\n" "    assert isdtype(dt, 'real floating')\n"),
     ],
 )
 def test_unwarranted_numpy_isdtype_is_not_factory_owned(source: str) -> None:
@@ -1693,10 +1844,7 @@ def test_authenticated_numpy_datetime_data_selects_one_factory_owner() -> None:
             "def test_dd(np, dt):\n"
             "    assert np.datetime_data(dt) == 0\n"
         ),
-        (
-            "def test_dd(dt):\n"
-            "    assert datetime_data(dt) == 0\n"
-        ),
+        ("def test_dd(dt):\n" "    assert datetime_data(dt) == 0\n"),
     ],
 )
 def test_unwarranted_numpy_datetime_data_is_not_factory_owned(source: str) -> None:
@@ -1745,10 +1893,7 @@ def test_authenticated_scipy_issymmetric_selects_one_factory_owner() -> None:
             "def test_sym(issymmetric, a):\n"
             "    assert issymmetric(a)\n"
         ),
-        (
-            "def test_sym(a):\n"
-            "    assert scipy.linalg.issymmetric(a)\n"
-        ),
+        ("def test_sym(a):\n" "    assert scipy.linalg.issymmetric(a)\n"),
     ],
 )
 def test_unwarranted_scipy_issymmetric_is_not_factory_owned(source: str) -> None:
@@ -1795,10 +1940,7 @@ def test_authenticated_scipy_ishermitian_selects_one_factory_owner() -> None:
             "def test_herm(ishermitian, a):\n"
             "    assert ishermitian(a)\n"
         ),
-        (
-            "def test_herm(a):\n"
-            "    assert scipy.linalg.ishermitian(a)\n"
-        ),
+        ("def test_herm(a):\n" "    assert scipy.linalg.ishermitian(a)\n"),
     ],
 )
 def test_unwarranted_scipy_ishermitian_is_not_factory_owned(source: str) -> None:
@@ -1851,10 +1993,7 @@ def test_authenticated_scipy_fft_get_workers_selects_one_factory_owner() -> None
             "    assert fft.get_workers() == 1\n"
             "    fft = replacement\n"
         ),
-        (
-            "def test_workers():\n"
-            "    assert scipy.fft.get_workers() == 1\n"
-        ),
+        ("def test_workers():\n" "    assert scipy.fft.get_workers() == 1\n"),
     ],
 )
 def test_unwarranted_scipy_fft_get_workers_is_not_factory_owned(source: str) -> None:
@@ -1881,10 +2020,7 @@ def test_pathlib_path_authenticates_unresolved_stays_loud() -> None:
         "def test_a(value):\n"
         "    assert pathlib.Path(value) is not None\n"
     )
-    bad = (
-        "def test_a(pathlib, value):\n"
-        "    assert pathlib.Path(value) is not None\n"
-    )
+    bad = "def test_a(pathlib, value):\n" "    assert pathlib.Path(value) is not None\n"
     good_site = _leaf_attr_call_site(good, "Path")
     bad_site = _leaf_attr_call_site(bad, "Path")
     assert recognize_callee_universe("call:pathlib.Path", site=good_site) is not None
@@ -1925,14 +2061,17 @@ def test_standard_gamma_authenticates_helper_and_direct_unresolved_stays_loud() 
         "    assert mt19937.standard_gamma(0.0) == 0.0\n"
     )
     lookalike = (
-        "def test_gamma(mt19937):\n"
-        "    assert mt19937.standard_gamma(0.0) == 0.0\n"
+        "def test_gamma(mt19937):\n" "    assert mt19937.standard_gamma(0.0) == 0.0\n"
     )
     helper_site = _leaf_attr_call_site(helper, "standard_gamma")
     direct_site = _leaf_attr_call_site(direct, "standard_gamma")
     bad_site = _leaf_attr_call_site(lookalike, "standard_gamma")
-    assert recognize_callee_universe("call:standard_gamma", site=helper_site) is not None
-    assert recognize_callee_universe("call:standard_gamma", site=direct_site) is not None
+    assert (
+        recognize_callee_universe("call:standard_gamma", site=helper_site) is not None
+    )
+    assert (
+        recognize_callee_universe("call:standard_gamma", site=direct_site) is not None
+    )
     assert recognize_callee_universe("call:standard_gamma", site=bad_site) is None
     for site, expect_owned in (
         (helper_site, True),
@@ -1966,10 +2105,7 @@ def test_subrout_default_authenticates_unresolved_module_stays_loud() -> None:
         "    def test_a(self):\n"
         "        assert self.module.subrout_default(200, 12) == 212\n"
     )
-    bad = (
-        "def test_a(module):\n"
-        "    assert module.subrout_default(200, 12) == 212\n"
-    )
+    bad = "def test_a(module):\n" "    assert module.subrout_default(200, 12) == 212\n"
     good_site = _leaf_attr_call_site(good, "subrout_default")
     bad_site = _leaf_attr_call_site(bad, "subrout_default")
     assert recognize_callee_universe("call:subrout_default", site=good_site) is not None
