@@ -947,6 +947,27 @@ def test_unresolved_multiple_inheritance_mro_stays_loud_construction_panic() -> 
     json.dumps(raised.value.info.to_json())
 
 
+def test_missing_parent_module_in_native_base_probe_stays_typed_loud() -> None:
+    temporal = TemporalContext.empty().bind_value(
+        "native",
+        ImportAliasValue(
+            "missing_parent.child",
+            "native",
+            import_target="missing_parent.child",
+        ),
+    )
+
+    with pytest.raises(FactoryPanic) as raised:
+        _outcome(
+            "class Child(native.Left, native.Right):\n" "    pass\n",
+            "Child(1)",
+            temporal=temporal,
+        )
+
+    assert raised.value.info.owner == "ConstructorCallSugar"
+    assert raised.value.info.requested == "statically resolved inherited constructor"
+
+
 def test_native_imported_multiple_inheritance_uses_runtime_call_operand() -> None:
     from sugar_lift_py_tests.effect import ConstructorRuntimeEffect
     from sugar_lift_py_tests.floor import SymbolicValue

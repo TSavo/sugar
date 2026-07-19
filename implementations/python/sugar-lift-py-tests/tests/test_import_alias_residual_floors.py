@@ -40,6 +40,53 @@ _ANNOTATION_SITE = (
 assert _ANNOTATION_SITE is not None
 
 
+def test_qualified_class_attribute_does_not_leak_module_getattr_import_error(
+    monkeypatch,
+) -> None:
+    class RemovedAttributeModule:
+        def __getattr__(self, _name):
+            raise ImportError("attribute was removed by the installed package")
+
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda _module_name: RemovedAttributeModule(),
+    )
+    alias = ImportAliasValue(
+        "vendor",
+        "vendor",
+        import_target="vendor",
+    )
+
+    assert alias.qualified_class_attribute("RemovedClass") is None
+
+
+def test_qualified_class_attribute_still_constructs_a_real_class_coordinate(
+    monkeypatch,
+) -> None:
+    class AvailableClass:
+        pass
+
+    class AvailableModule:
+        Available = AvailableClass
+
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda _module_name: AvailableModule(),
+    )
+    alias = ImportAliasValue(
+        "vendor",
+        "vendor",
+        import_target="vendor",
+    )
+
+    qualified = alias.qualified_class_attribute("Available")
+
+    assert qualified is not None
+    assert qualified.import_target == "vendor.Available"
+
+
 def _assert_import_effect(outcome, operator: str) -> None:
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, ImportedModuleRuntimeEffect)
