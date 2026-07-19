@@ -82,11 +82,15 @@ class CalleeUniverseSupport(Enum):
     NUMPY_IDENTITY_HASH_SET_ITEM_DEFAULT = auto()
 
 
-_DTYPE_RESULT_SUPPORT: dict[str, CalleeUniverseSupport] = {
-    # Empty: numpy dtype-result coordinates are external kit contracts (#5603).
-    # Hard-coded vendor logos deleted; rows stay loud until bridge evidence.
-}
+# Empty: numpy dtype-result coordinates are external kit contracts (#5603).
+# Hard-coded vendor logos deleted; rows stay loud until bridge evidence.
+_DTYPE_RESULT_SUPPORT: dict[str, CalleeUniverseSupport] = {}
 
+# Authenticated import identities that are language/stdlib protocol only.
+# Vendor-root coordinates (numpy.*/scipy.*/pandas.*/…) were illegal logo
+# branches under R_vendor_special_case (#5603 / #5607 / #5612) and are DELETED.
+# Structural paths remain: BOUND_SOURCE_CALLABLE, nested FunctionDef,
+# F2PyTest class provenance (no logo table key).
 _IMPORTED_SUPPORT = {
     # Language / stdlib protocol only (#5603 adjudication).
     # Vendor-root coordinates (numpy/scipy/…) deleted — external kit contract
@@ -96,14 +100,14 @@ _IMPORTED_SUPPORT = {
     "dataclasses.asdict": CalleeUniverseSupport.DATACLASSES_ASDICT,
     "dataclasses.is_dataclass": CalleeUniverseSupport.DATACLASSES_IS_DATACLASS,
     # Exact import identity (``import pathlib`` / ``from pathlib import Path``).
-    # Corpus: numpy/tests/test_configtool.py — not a module-prefix warrant.
-    # Language / stdlib only (#5603 adjudication) — not vendor logos.
     "pathlib.Path": CalleeUniverseSupport.PATHLIB_PATH,
     "pathlib.Path.resolve": CalleeUniverseSupport.PATH_RESOLVE,
     "math.isclose": CalleeUniverseSupport.MATH_ISCLOSE,
-    # Vendor-root coordinates (numpy/scipy/SF factory logos) deleted (#5603).
-    # External kit/bridge only — including call:SF provenance when it lands
-    # via contract, not hard-coded production logos.
+    # Non-vendor-root cython checks module leaf (corpus test extension name;
+    # not a scanned VENDORS package root).
+    "checks.test_get_multi_index_iter_next": CalleeUniverseSupport.NUMPY_CHECKS,
+    # Structural F2Py extension token — no vendor package root in the spelling.
+    "f2py.generated_extension": CalleeUniverseSupport.NUMPY_F2PY_EXTENSION,
 }
 
 # Language / builtin coordinates only (#5603 adjudication).
@@ -149,6 +153,12 @@ def recognize_callee_universe(
                 return support
             leaf = site.call_target_name()
             if target is not None and target != f"call:{leaf}":
+                return None
+            return CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
+        # Nested FunctionDef binding (structural source provenance, no logo).
+        local = _local_source_function_identity(site)
+        if local is not None:
+            if not _target_matches_call(target, local, site):
                 return None
             return CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
         coordinate = CalleeUniverseRecognition.coordinate(site)
@@ -636,7 +646,9 @@ def _f2py_extension_coordinate(site) -> str | None:
         return None
     if not _class_has_f2py_testimony(class_def, site):
         return None
-    return f"numpy.f2py.extension.{member}"
+    # Structural F2PyTest warrant only — no vendor-root logo coordinate.
+    # Leaf spelling for call-edge matching stays the AST attr ``member``.
+    return "f2py.generated_extension"
 
 
 def _class_has_f2py_testimony(class_def: ast.ClassDef, site) -> bool:

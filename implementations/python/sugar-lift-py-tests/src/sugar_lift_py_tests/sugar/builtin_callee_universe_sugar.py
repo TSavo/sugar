@@ -15,11 +15,12 @@ from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
-_CONVERTER_COORDINATES: frozenset[str] = frozenset()
 # Empty: multiarray converter logos deleted (#5603). Loud until kit contract.
+_CONVERTER_COORDINATES: frozenset[str] = frozenset()
 _AUTHENTICATED_COORDINATES = frozenset(
     {
         # bare builtins owned by this leaf / BuiltinTypeCallSugar.
+        # Language/builtin leaves only — not vendor package FQNs (#5603).
         "dtype",
         "all",
         "any",
@@ -38,7 +39,9 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "dataclasses.asdict",
         "dataclasses.is_dataclass",
         "math.isclose",
-        # No vendor-root module paths (#5603 drain).
+        # Non-vendor-root corpus checks leaf + structural F2Py token.
+        "checks.test_get_multi_index_iter_next",
+        "f2py.generated_extension",
     }
 )
 
@@ -153,6 +156,8 @@ class BuiltinCalleeUniverseSugar(
 
     @classmethod
     def witnesses(cls):
+        # Language/stdlib + structural provenance only (#5603).
+        # Vendor-logo coordinates were deleted; their twins retire with them.
         return (
             _coordinate_witness("dtype", "'i4'", "'i8'"),
             _coordinate_witness("all", "True", "False"),
@@ -163,90 +168,17 @@ class BuiltinCalleeUniverseSugar(
             _coordinate_witness("list", "[]", "[0]"),
             _coordinate_witness("set", "[]", "[0]"),
             _coordinate_witness("hasattr", "True", "False"),
-            _item_receiver_coordinate_witness(),
-            _imported_coordinate_witness(
-                name="get_handler_name",
-                setup=("from numpy._core.multiarray import get_handler_name\n"),
-                callee="get_handler_name",
-                argument="5",
-            ),
-            _imported_coordinate_witness(
-                name="get_handler_version",
-                setup=(
-                    "from numpy._core.multiarray import get_handler_version\n"
-                ),
-                callee="get_handler_version",
-                argument="5",
-            ),
-            _imported_method_coordinate_witness(
-                setup=("import numpy._core._multiarray_tests as mt\n"),
-            ),
             _checks_test_get_multi_index_iter_next_witness(),
             _compare_dtypes_local_source_witness(),
             _f2py_sum_and_double_witness(),
             _regex_search_coordinate_witness(),
-            _numpy_can_cast_witness(),
-            _numpy_issubdtype_witness(),
-            _numpy_isnan_witness(),
-            _numpy_all_witness(),
-            _numpy_dtype_witness(),
-            *(
-                _numpy_batch_witness(name)
-                for name in (
-                    "timedelta64",
-                    "read",
-                    "__array_wrap__",
-                    "__dlpack_device__",
-                    "astype",
-                    "dtypes",
-                    "get_npyiter_ndim",
-                    "get_npyiter_size",
-                    "asarray",
-                    "drop_metadata",
-                    "_has_method_heading",
-                    "_repr_latex_",
-                    "binomial",
-                    "conv_intp",
-                    "create",
-                    "exists",
-                    "func",
-                    "iter_goto",
-                    "median",
-                )
-            ),
-            _numpy_may_share_memory_witness(),
-            _numpy_shares_memory_witness(),
-            _numpy_array_tobytes_witness(),
             _bound_source_callable_witness(),
             _pathlib_path_witness(),
-            _numpy_standard_gamma_witness(),
-            _numpy_subrout_default_witness(),
-            _numpy_eval_scalar_witness(),
-            _numpy_dtype_result_witness(),
             _json_loads_witness(),
             _dataclasses_asdict_witness(),
             _dataclasses_is_dataclass_witness(),
             _path_resolve_coordinate_witness(),
-            _ufunc_coordinate_witness(),
-            *(
-                _bound_leaf_coordinate_witness(name)
-                for name in (
-                    "t0",
-                    "selectedintkind",
-                    "foo",
-                    "to_Dt",
-                )
-            ),
             _math_isclose_witness(),
-            _numpy_result_type_witness(),
-            _scipy_linalg_issymmetric_witness(),
-            _scipy_linalg_ishermitian_witness(),
-            _scipy_fft_get_workers_witness(),
-            _numpy_isdtype_witness(),
-            _numpy_datetime_data_witness(),
-            _numpy_sfloat_dtype_witness(),
-            _numpy_markinnerspaces_witness(),
-            _numpy_identity_hash_set_item_default_witness(),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
