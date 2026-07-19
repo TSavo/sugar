@@ -19,6 +19,9 @@ AXIS_COMMANDS = {
     "R_finite_cap_opaque_completions = 0": (
         "finite_cap_opaque_completion_law.py"
     ),
+    "R_context_incomplete_construction_caches = 0": (
+        "construction_cache_context_law.py"
+    ),
 }
 
 

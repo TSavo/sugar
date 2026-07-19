@@ -112,3 +112,14 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/finite_cap_opaque_completion_law.py
+      - name: R_context_incomplete_construction_caches discrimination
+        if: always()
+        run: >-
+          python -m pytest --noconftest
+          implementations/python/sugar-lift-py-tests/tests/test_construction_cache_context_law.py
+          -q
+      - name: R_context_incomplete_construction_caches = 0
+        if: always()
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/construction_cache_context_law.py
