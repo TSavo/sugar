@@ -30,6 +30,7 @@ class NativeShape(Enum):
     RANGE_ARRAY = auto()
     RANDOM_INTEGER_ARRAY = auto()
     NUMPY_ISNAT = auto()
+    SOURCE_AUTHENTICATED_CALLABLE = auto()
     NUMPY_ALL = auto()
     NEVER_SUPPRESSING_MANAGER = auto()
     ASSERTING_MANAGER = auto()
@@ -210,6 +211,13 @@ def has_native_shape(target: str | None, shape: NativeShape) -> bool:
     if shape is NativeShape.NEVER_SUPPRESSING_MANAGER:
         return bool(_NEVER_SUPPRESSING_MANAGERS.get(target))
     return recognize_native_call(target) is shape
+
+
+def recognize_source_callable(value) -> NativeShape | None:
+    """Authenticate a callee from resolved source provenance, never spelling."""
+    if getattr(value, "body", None) is not None and getattr(value, "name", None):
+        return NativeShape.SOURCE_AUTHENTICATED_CALLABLE
+    return None
 
 
 def recognizes_module_name(name: str) -> bool:

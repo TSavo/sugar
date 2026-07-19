@@ -398,12 +398,17 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     )
                     if exit_suppression is not None:
                         bound = replace(bound, exit_suppression=exit_suppression)
+                from sugar_lift_py_tests.recognition.native_shape import (
+                    recognize_source_callable,
+                )
+
+                source_shape = recognize_source_callable(bound)
                 return bound.callsite(
                     expanded,
                     self.keyword_names,
                     self.site,
                     source_arg_values=accumulated,
-                    native_shape=imported_native_shape,
+                    native_shape=source_shape or imported_native_shape,
                 )
 
             if type(bound) in (
