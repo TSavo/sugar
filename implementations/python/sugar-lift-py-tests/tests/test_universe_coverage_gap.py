@@ -856,6 +856,79 @@ def test_non_numpy_receiver_refutes_isnan_support() -> None:
     assert recognize_callee_universe("call:numpy.isnan", site=site) is None
 
 
+def test_authenticated_numpy_array_tobytes_has_universe_support() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_bytes():\n"
+        "    value = np.array(b'abc')\n"
+        "    assert value.tobytes() == b'abc'\n"
+    )
+
+    payload = lift_file_payload(source, "tobytes_covered_fixture.py")
+
+    assert any(
+        row.get("selected") == "BuiltinCalleeUniverseSugar"
+        and row.get("blame") == "tobytes_covered_fixture.py:5:11"
+        for row in payload.factory_audits
+    )
+    assert _universe_gaps(payload) == []
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "tobytes"
+    )
+    site = SourceFragment.from_node(call, "tobytes_covered_fixture.py", source=source)
+    # Result-call identity joins the constructor import with the member
+    # (``numpy.array.tobytes``); bound-native shape spells the class coordinate
+    # (``numpy.ndarray.tobytes``). Both are the same authenticated family.
+    assert CalleeUniverseRecognition.coordinate(site) in {
+        "numpy.array.tobytes",
+        "numpy.ndarray.tobytes",
+    }
+    assert recognize_callee_universe("call:tobytes", site=site) is not None
+
+
+def test_tobytes_spelling_without_native_receiver_stays_loud() -> None:
+    source = "def test_bytes(value):\n" "    assert value.tobytes() == b'abc'\n"
+
+    payload = lift_file_payload(source, "tobytes_opaque_receiver.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:tobytes"]
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "tobytes"
+    )
+    site = SourceFragment.from_node(call, "tobytes_opaque_receiver.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) is None
+
+
+def test_tobytes_native_receiver_warrant_is_revoked_by_rebind() -> None:
+    """Lying twin: rebinding the receiver to opaque data revokes the warrant."""
+
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_bytes(opaque):\n"
+        "    value = np.array(b'abc')\n"
+        "    value = opaque\n"
+        "    assert value.tobytes() == b'abc'\n"
+    )
+
+    payload = lift_file_payload(source, "tobytes_rebound_receiver.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:tobytes"]
+
+
 def test_authenticated_numpy_shares_memory_has_universe_support() -> None:
     source = (
         "import numpy as np\n"
