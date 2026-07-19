@@ -18,3 +18,11 @@ class SugarCatalog:
             if claim.role == role and claim.owns(site):
                 candidates.append(SugarCandidate(claim))
         return candidates
+
+    def claims_universe_coordinate(self, coordinate: str) -> bool:
+        return any(
+            coordinate in claim.universe_coordinates
+            and claim.witnesses is not None
+            and bool(tuple(claim.witnesses()))
+            for claim in self.claims
+        )
