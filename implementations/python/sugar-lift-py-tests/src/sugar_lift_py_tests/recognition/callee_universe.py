@@ -18,18 +18,20 @@ class CalleeUniverseSupport(Enum):
 
     NUMPY_ISSUBDTYPE = auto()
     NUMPY_ALLCLOSE = auto()
+    NUMPY_CAN_CAST = auto()
 
 
 _IMPORTED_SUPPORT = {
     "numpy.issubdtype": CalleeUniverseSupport.NUMPY_ISSUBDTYPE,
     "numpy.allclose": CalleeUniverseSupport.NUMPY_ALLCLOSE,
+    "numpy.can_cast": CalleeUniverseSupport.NUMPY_CAN_CAST,
 }
 
 _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all"})
 
 
 def recognize_callee_universe(
-    target: str,
+    target: str | None = None,
     *,
     site,
 ) -> CalleeUniverseSupport | None:
@@ -46,7 +48,9 @@ def recognize_callee_universe(
     if identity is None:
         return None
     support = _IMPORTED_SUPPORT.get(identity)
-    if support is None or target != f"call:{identity}":
+    if support is None:
+        return None
+    if target is not None and target != f"call:{identity}":
         return None
     return support
 
@@ -63,6 +67,9 @@ class CalleeUniverseRecognition:
         if receiver is not None:
             if not site.source:
                 return None
+            imported = imported_call_identity(site)
+            if imported in _IMPORTED_SUPPORT:
+                return imported
             return cls._method_coordinate(site, receiver)
 
         target = site.call_target_name()
