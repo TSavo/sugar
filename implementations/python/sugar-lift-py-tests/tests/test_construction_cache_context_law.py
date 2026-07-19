@@ -259,3 +259,92 @@ class GoodConstructionCache:
         )
         == []
     )
+
+
+def test_delegated_installed_source_lru_trips_scanner() -> None:
+    scanner = _scanner()
+    planted = """
+import functools
+
+@functools.lru_cache(maxsize=64)
+def installed_source_index(module_name):
+    source = installed_module_source(module_name)
+    return parse_source(source)
+"""
+    offenders = scanner.context_incomplete_construction_caches(
+        ast.parse(planted), file="installed.py"
+    )
+    assert [offender.owner for offender in offenders] == [
+        "installed_source_index"
+    ]
+
+
+def test_module_context_cache_omitting_source_seat_trips_scanner() -> None:
+    scanner = _scanner()
+    planted = """
+from collections import OrderedDict
+
+_FILE_CONTEXTS = OrderedDict()
+
+def build_context(source, filename, file_cid):
+    known = _FILE_CONTEXTS.get(file_cid)
+    if known is not None:
+        return known
+    value = construct_context(source, filename)
+    _remember_context(_FILE_CONTEXTS, file_cid, value)
+    return value
+"""
+    offenders = scanner.context_incomplete_construction_caches(
+        ast.parse(planted), file="context_table.py"
+    )
+    assert [offender.owner for offender in offenders] == ["_FILE_CONTEXTS"]
+
+
+def test_opaque_construction_cycle_guard_trips_scanner() -> None:
+    scanner = _scanner()
+    planted = """
+def resolve_install_value(target, ctx, resolving=frozenset()):
+    if target in resolving:
+        return None
+    return build_value(target, ctx, resolving | {target})
+"""
+    offenders = scanner.context_incomplete_construction_caches(
+        ast.parse(planted), file="cycle.py"
+    )
+    assert [offender.owner for offender in offenders] == [
+        "resolve_install_value"
+    ]
+
+
+def test_context_complete_lru_table_and_loud_cycle_are_scanner_green() -> None:
+    scanner = _scanner()
+    clean = """
+import functools
+from collections import OrderedDict
+
+@functools.lru_cache(maxsize=64)
+def parsed(source, filename):
+    return parse_source(source, filename)
+
+_FILE_CONTEXTS = OrderedDict()
+
+def build_context(source, filename, file_cid):
+    key = (filename, file_cid)
+    known = _FILE_CONTEXTS.get(key)
+    if known is not None:
+        return known
+    value = construct_context(source, filename)
+    _remember_context(_FILE_CONTEXTS, key, value)
+    return value
+
+def resolve_install_value(target, ctx, resolving=frozenset()):
+    if target in resolving:
+        return factory_panic_gap(owner="install_source_cycle")
+    return build_value(target, ctx, resolving | {target})
+"""
+    assert (
+        scanner.context_incomplete_construction_caches(
+            ast.parse(clean), file="clean_families.py"
+        )
+        == []
+    )
