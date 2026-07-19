@@ -278,6 +278,29 @@ def test_pydantic_base_model_extra_class_witness_truthful_sat_wrong_twin_unsat(
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_sqlalchemy_orm_decorated_class_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in ClassDefSugar.witnesses()
+        if witness.name == "sqlalchemy_orm_decorated_class_return"
+    )
+    seeds = Path(__file__).parent / "witness_seeds"
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "sqlalchemy-class-truthful",
+        (seeds / "sqlalchemy_orm_class_truthful.py").read_text(),
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "sqlalchemy-class-lying",
+        (seeds / "sqlalchemy_orm_class_lying.py").read_text(),
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_typed_dict_total_class_witness_truthful_sat_wrong_twin_unsat(
     tmp_path: Path,
 ) -> None:
@@ -404,9 +427,52 @@ def test_owns_authenticated_deprecated_decorated_class(source: str) -> None:
     assert result.audit_row.selected == "ClassDefSugar"
 
 
+@pytest.mark.parametrize(
+    "source",
+    (
+        (
+            "from sqlalchemy.orm import as_declarative as declarative_base\n"
+            "@declarative_base()\n"
+            "class Base:\n"
+            "    pass\n"
+        ),
+        (
+            "from sqlalchemy.ext import declarative as legacy_decl\n"
+            "@legacy_decl.as_declarative()\n"
+            "class Base:\n"
+            "    pass\n"
+        ),
+        (
+            "from sqlalchemy.orm import registry as registry_factory\n"
+            "mapper_registry = registry_factory()\n"
+            "@mapper_registry.mapped\n"
+            "class User:\n"
+            "    pass\n"
+        ),
+        (
+            "import sqlalchemy.orm as orm\n"
+            "mapper_registry = orm.registry()\n"
+            "@mapper_registry.mapped_as_dataclass()\n"
+            "class User:\n"
+            "    value: int\n"
+        ),
+    ),
+)
+def test_owns_source_authenticated_sqlalchemy_orm_class_decorator(
+    source: str,
+) -> None:
+    site = SourceFragment.from_node(ast.parse(source).body[-1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is True
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    result = build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert result.audit_row.selected == "ClassDefSugar"
+
+
 def test_same_named_local_deprecated_decorator_stays_loud() -> None:
     source = (
-        "def deprecated(extra=\"\"):\n"
+        'def deprecated(extra=""):\n'
         "    return lambda cls: 7\n"
         "@deprecated()\n"
         "class MockClass:\n"
@@ -431,6 +497,60 @@ def test_class_keywords_auto_wrap_partition_stays_loud() -> None:
         "        return X\n"
     )
     site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is False
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic) as raised:
+        build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert raised.value.info.observed == "ClassDef"
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        (
+            "def as_declarative():\n"
+            "    return lambda cls: 7\n"
+            "@as_declarative()\n"
+            "class Base:\n"
+            "    pass\n"
+        ),
+        (
+            "class Registry:\n"
+            "    mapped = lambda self, cls: 7\n"
+            "registry = Registry()\n"
+            "@registry.mapped\n"
+            "class User:\n"
+            "    pass\n"
+        ),
+        (
+            "from sqlalchemy.orm import registry\n"
+            "def build(registry):\n"
+            "    @registry.mapped\n"
+            "    class User:\n"
+            "        pass\n"
+            "    return User\n"
+        ),
+        (
+            "from sqlalchemy.orm import as_declarative\n"
+            "as_declarative = lambda: (lambda cls: 7)\n"
+            "@as_declarative()\n"
+            "class Base:\n"
+            "    pass\n"
+        ),
+    ),
+)
+def test_sqlalchemy_decorator_lookalikes_and_shadowed_imports_stay_loud(
+    source: str,
+) -> None:
+    class_node = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ClassDef) and node.name in {"Base", "User"}
+    )
+    site = SourceFragment.from_node(class_node, "t.py", source=source)
+
     assert ClassDefSugar.owns(site) is False
 
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
@@ -535,9 +655,7 @@ def test_owns_authenticated_pydantic_base_model_extra_class(
 def test_unsupported_pydantic_base_model_keyword_partitions_stay_loud(
     source: str,
 ) -> None:
-    site = SourceFragment.from_node(
-        ast.parse(source).body[-1], "t.py", source=source
-    )
+    site = SourceFragment.from_node(ast.parse(source).body[-1], "t.py", source=source)
     assert ClassDefSugar.owns(site) is False
 
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())

@@ -33,6 +33,7 @@ class NativeShape(Enum):
     ASSERTING_MANAGER = auto()
     CLASS_IDENTITY_DECORATOR = auto()
     IMPLEMENTATION_PRESERVING_DECORATOR = auto()
+    SQLALCHEMY_ORM_REGISTRY = auto()
     PYDANTIC_BASE_MODEL = auto()
     PYDANTIC_EXTRA_ALLOW_CLASS_OPTION = auto()
 
@@ -76,6 +77,7 @@ _CALL_SHAPES = {
     "numpy.testing.assert_raises_regex": NativeShape.ASSERTING_MANAGER,
     "numpy.testing._private.utils.assert_raises_regex": NativeShape.ASSERTING_MANAGER,
     "pandas._testing.external_error_raised": NativeShape.ASSERTING_MANAGER,
+    "sqlalchemy.orm.registry": NativeShape.SQLALCHEMY_ORM_REGISTRY,
 }
 
 _NEVER_SUPPRESSING_MANAGERS = {
@@ -110,11 +112,24 @@ _IDENTITY_DECORATORS = {
         ("pandas.api.extensions", "register_dataframe_accessor"),
         ("pandas.api.extensions", "register_index_accessor"),
         ("pandas.api.extensions", "register_series_accessor"),
+        ("sqlalchemy.orm", "as_declarative"),
+        ("sqlalchemy.ext.declarative", "as_declarative"),
+        ("sqlalchemy.orm.registry", "mapped"),
+        ("sqlalchemy.orm.registry", "mapped_as_dataclass"),
     )
 }
 
 _NATIVE_DECORATORS = {
     "functools.wraps": NativeShape.IMPLEMENTATION_PRESERVING_DECORATOR,
+}
+
+_NATIVE_INSTANCE_CLASS_DECORATORS = {
+    (NativeShape.SQLALCHEMY_ORM_REGISTRY, "mapped"): (
+        NativeShape.CLASS_IDENTITY_DECORATOR
+    ),
+    (NativeShape.SQLALCHEMY_ORM_REGISTRY, "mapped_as_dataclass"): (
+        NativeShape.CLASS_IDENTITY_DECORATOR
+    ),
 }
 
 _CLASS_IMPORT_SHAPES = {
@@ -196,7 +211,30 @@ def recognizes_module_name(name: str) -> bool:
 
 
 def recognizes_identity_decorator(module: str, name: str) -> bool:
-    return bool(_IDENTITY_DECORATORS.get((module, name)))
+    return (
+        recognize_native_class_decorator(f"{module}.{name}")
+        is NativeShape.CLASS_IDENTITY_DECORATOR
+    )
+
+
+def recognize_native_class_decorator(target: str | None) -> NativeShape | None:
+    """Recognize a class decorator only at an authenticated import coordinate."""
+
+    if target is None:
+        return None
+    module, separator, name = target.rpartition(".")
+    if not separator or not _IDENTITY_DECORATORS.get((module, name)):
+        return None
+    return NativeShape.CLASS_IDENTITY_DECORATOR
+
+
+def recognize_native_instance_class_decorator(
+    receiver: NativeShape,
+    member: str,
+) -> NativeShape | None:
+    """Recognize a class decorator projected from an authenticated instance."""
+
+    return _NATIVE_INSTANCE_CLASS_DECORATORS.get((receiver, member))
 
 
 def recognize_native_decorator(target: str | None) -> NativeShape | None:
