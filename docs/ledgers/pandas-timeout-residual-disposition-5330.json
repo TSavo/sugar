@@ -1,0 +1,525 @@
+{
+  "schema": "sugar.pandas-timeout-residual-disposition.v1",
+  "issue": 5330,
+  "parent_issue": 5306,
+  "measurement": {
+    "commit": "0f4748f7488f3a64fafbd5a3a62b22db4eafefe0",
+    "python": "3.12.3",
+    "numpy": "2.5.1",
+    "pandas": "3.0.3",
+    "execution": "battleaxe via brun; release sugar built via bcargo",
+    "per_file_timeout_seconds": 30,
+    "manifest": "the 66 timeout-or-hang rows from docs/ledgers/pandas-timeout-shared-mechanism-5306.json",
+    "lane": "single bounded product child at a time; optional heartbeat tracing disabled",
+    "retry_rule": "only process-crash-or-overflow rows were retried; three bare exceptions repeated and remain loud"
+  },
+  "determination": {
+    "second_multiplicative_mechanism": "none verified live: no file reached the 30-second bound",
+    "genuinely_irreducible_timeout": "none verified live: no file reached the 30-second bound",
+    "production_change": "none; a performance cache or bounded-timeout classification would manufacture work"
+  },
+  "timeout_classes": {
+    "second_multiplicative_mechanism": [],
+    "genuinely_irreducible": []
+  },
+  "conservation": {
+    "completed": 46,
+    "typed-factory-panic": 17,
+    "bare-exception": 3,
+    "timeout-second-mechanism": 0,
+    "timeout-irreducible": 0,
+    "silent": 0
+  },
+  "files": [
+    {
+      "file": "pandas/core/arrays/categorical.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/arrays/sparse/array.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/generic.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/groupby/generic.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/indexes/datetimes.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "bitwise_and",
+        "gap_kind": "Floor",
+        "requested": "stand on the runtime bitwise and floor"
+      }
+    },
+    {
+      "file": "pandas/core/reshape/pivot.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "RuntimeEffect",
+        "gap_kind": "Floor",
+        "requested": "genuine runtime-dependent operand"
+      }
+    },
+    {
+      "file": "pandas/core/series.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "ConstructorCallSugar",
+        "gap_kind": "Constructor",
+        "requested": "constructed source initializer"
+      }
+    },
+    {
+      "file": "pandas/core/tools/datetimes.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "bitwise_invert",
+        "gap_kind": "Floor",
+        "requested": "stand on the bitwise-invert floor"
+      }
+    },
+    {
+      "file": "pandas/tests/arithmetic/test_numeric.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/arithmetic/test_period.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/dtypes/test_missing.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/frame/methods/test_to_csv.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "CallSiteValue.append_with",
+        "gap_kind": "Floor",
+        "requested": "classified append contract"
+      }
+    },
+    {
+      "file": "pandas/tests/frame/test_subclass.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": ".venv312/lib/python3.12/site-packages/pandas/core/frame.py:130:15",
+        "gap_kind": "Floor",
+        "requested": "project this floor value to a term"
+      }
+    },
+    {
+      "file": "pandas/tests/groupby/test_groupby.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/groupby/transform/test_transform.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/datetimes/test_constructors.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/interval/test_interval_range.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/period/test_constructors.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/test_base.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexing/test_iloc.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexing/test_indexing.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/internals/test_internals.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/excel/test_writers.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "FunctionCallable",
+        "gap_kind": "Floor",
+        "requested": "decorator callable substitution"
+      }
+    },
+    {
+      "file": "pandas/tests/io/json/test_pandas.py",
+      "disposition": "bare-exception",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "TypeError",
+        "owner": "bare-exception"
+      }
+    },
+    {
+      "file": "pandas/tests/io/parser/common/test_chunksize.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/parser/common/test_iterator.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/parser/test_c_parser_only.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/pytables/test_append.py",
+      "disposition": "bare-exception",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "AttributeError",
+        "owner": "bare-exception"
+      }
+    },
+    {
+      "file": "pandas/tests/io/pytables/test_categorical.py",
+      "disposition": "bare-exception",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "SystemError",
+        "owner": "bare-exception"
+      }
+    },
+    {
+      "file": "pandas/tests/io/pytables/test_put.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/pytables/test_select.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "bitwise_and",
+        "gap_kind": "Floor",
+        "requested": "stand on the runtime bitwise and floor"
+      }
+    },
+    {
+      "file": "pandas/tests/io/pytables/test_store.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/test_pickle.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "TemporalContext",
+        "gap_kind": "Floor",
+        "requested": "value"
+      }
+    },
+    {
+      "file": "pandas/tests/io/test_sql.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "TemporalContext",
+        "gap_kind": "Floor",
+        "requested": "value"
+      }
+    },
+    {
+      "file": "pandas/tests/io/test_stata.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "TemporalContext",
+        "gap_kind": "Floor",
+        "requested": "value"
+      }
+    },
+    {
+      "file": "pandas/tests/plotting/test_datetimelike.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/plotting/test_misc.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "TemporalContext",
+        "gap_kind": "Floor",
+        "requested": "value"
+      }
+    },
+    {
+      "file": "pandas/tests/plotting/test_series.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reductions/test_reductions.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "divide",
+        "gap_kind": "Floor",
+        "requested": "stand on the division floor"
+      }
+    },
+    {
+      "file": "pandas/tests/resample/test_datetime_index.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/resample/test_period_index.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_append.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_concat.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_dataframe.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_datetimes.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_empty.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_index.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_series.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/merge/test_merge.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "TemporalContext",
+        "gap_kind": "Floor",
+        "requested": "value"
+      }
+    },
+    {
+      "file": "pandas/tests/reshape/merge/test_merge_asof.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "FunctionCallable",
+        "gap_kind": "Floor",
+        "requested": "decorator callable substitution"
+      }
+    },
+    {
+      "file": "pandas/tests/reshape/test_cut.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/test_get_dummies.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/test_melt.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/test_pivot.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/accessors/test_dt_accessor.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/indexing/test_datetime.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/indexing/test_getitem.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/indexing/test_indexing.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/indexing/test_setitem.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/methods/test_fillna.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/test_constructors.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/test_subclass.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "TemporalContext",
+        "gap_kind": "Floor",
+        "requested": "value"
+      }
+    },
+    {
+      "file": "pandas/tests/test_sorting.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/window/moments/test_moments_consistency_ewm.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/window/test_apply.py",
+      "disposition": "completed",
+      "elapsed_seconds": null,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/window/test_rolling.py",
+      "disposition": "typed-factory-panic",
+      "elapsed_seconds": null,
+      "terminal": {
+        "kind": "FactoryPanic",
+        "owner": "ConstructorCallSugar",
+        "gap_kind": "Constructor",
+        "requested": "constructed source initializer"
+      }
+    }
+  ]
+}
