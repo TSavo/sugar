@@ -34,6 +34,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "all",
         "list",
         "numpy.can_cast",
+        "numpy.issubdtype",
         "numpy.isnan",
         "numpy.all",
         "numpy._core.multiarray.get_handler_name",
@@ -50,6 +51,7 @@ _AUTHENTICATED_PLAIN_LEAVES = frozenset(
 _OWNED_IMPORTED_SUPPORT = frozenset(
     {
         CalleeUniverseSupport.NUMPY_CAN_CAST,
+        CalleeUniverseSupport.NUMPY_ISSUBDTYPE,
         CalleeUniverseSupport.NUMPY_ISNAN,
         CalleeUniverseSupport.NUMPY_ALL,
         CalleeUniverseSupport.NUMPY_HANDLER_NAME,
@@ -127,6 +129,7 @@ class BuiltinCalleeUniverseSugar(
                 setup=("import numpy._core._multiarray_tests as mt\n"),
             ),
             _numpy_can_cast_witness(),
+            _numpy_issubdtype_witness(),
             _numpy_isnan_witness(),
             _numpy_all_witness(),
         )
@@ -204,6 +207,23 @@ def _numpy_can_cast_witness():
         # determinism of the authenticated coordinate is load-bearing.
         truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_issubdtype_witness():
+    prefix = (
+        "import numpy as np\n"
+        "\n"
+        "def A():\n"
+        "    return np.issubdtype('i4', np.integer)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_issubdtype_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() != A()\n",
         family="builtin-universe-coordinate",
     )
 
