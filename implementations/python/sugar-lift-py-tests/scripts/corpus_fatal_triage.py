@@ -18,9 +18,15 @@ from sugar_lift_py_tests.idd.factory_panic_fronts import (
     fingerprint_from_gap,
     rank_factory_panic_fronts,
 )
+from sugar_lift_py_tests.idd.factory_walk_unclassified_locus import (
+    project_unclassified_loci,
+    shape_split_unclassified,
+)
 
 PACKAGES = ("numpy", "pandas")
 DEFAULT_FILE_TIMEOUT_SECONDS = 30
+# Cap retained loci in --compact parent reports; full emission stays default.
+COMPACT_LOCUS_LIMIT = 200
 TRANSPORT_MARKERS = (
     "closed stdout",
     "transport",
@@ -103,11 +109,16 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
             "reason": (str(error).splitlines() or [repr(error)])[-1][:1000],
         }
         return terminal, 3
+    # Row-addressable unclassified evidence (#5252): completed files dump
+    # every unclassified walk locus so next recensus is shape-split capable.
+    unclassified_rows = project_unclassified_loci(payload.factory_walk)
     return {
         "outcome": "completed",
         "file": rel,
         "facts": len(payload.ir),
         "factory_walk_rows": len(payload.factory_walk),
+        "R_factory_walk_unclassified": len(unclassified_rows),
+        "unclassified_rows": unclassified_rows,
         "effects": [
             {
                 "effect": type(row.effect).__name__,
@@ -225,6 +236,7 @@ def _run_parent(args: argparse.Namespace) -> int:
     effect_file_counts: Counter[str] = Counter()
     effect_examples: dict[str, list[str]] = defaultdict(list)
     effect_reason_examples: dict[str, list[str]] = defaultdict(list)
+    factory_walk_unclassified_rows: list[dict[str, Any]] = []
     script = Path(__file__).resolve()
 
     for index, (package, root, path) in enumerate(paths, start=1):
@@ -293,7 +305,8 @@ def _run_parent(args: argparse.Namespace) -> int:
                 }
             )
         if category == "completed":
-            effects = (row.get("testimony") or {}).get("effects") or []
+            testimony = row.get("testimony") or {}
+            effects = testimony.get("effects") or []
             seen_effects: set[str] = set()
             for effect in effects:
                 effect_class = str(effect.get("effect") or "")
@@ -312,6 +325,12 @@ def _run_parent(args: argparse.Namespace) -> int:
                 effect_file_counts[effect_class] += 1
                 if len(effect_examples[effect_class]) < 5:
                     effect_examples[effect_class].append(rel)
+            # Collect row-addressable unclassified loci from completed files.
+            loci = testimony.get("unclassified_rows") or []
+            if isinstance(loci, list):
+                for locus in loci:
+                    if isinstance(locus, dict):
+                        factory_walk_unclassified_rows.append(locus)
         if index % 25 == 0:
             print(f"triaged {index}/{len(paths)} files", file=sys.stderr)
 
@@ -330,6 +349,11 @@ def _run_parent(args: argparse.Namespace) -> int:
             effect_occurrence_counts.items(), key=lambda item: (-item[1], item[0])
         )
     ]
+    r_unclassified = len(factory_walk_unclassified_rows)
+    shape_split = shape_split_unclassified(factory_walk_unclassified_rows)
+    retained_loci = factory_walk_unclassified_rows
+    if args.compact and len(retained_loci) > COMPACT_LOCUS_LIMIT:
+        retained_loci = retained_loci[:COMPACT_LOCUS_LIMIT]
     report: dict[str, Any] = {
         "package_versions": versions,
         "shard": {"index": args.shard_index, "count": args.shard_count},
@@ -350,7 +374,18 @@ def _run_parent(args: argparse.Namespace) -> int:
         "owners": ranking["owners"],
         "completed_effect_front_count": len(completed_effect_fronts),
         "completed_effect_fronts": completed_effect_fronts,
+        # Permanent baseline-free floor + row-addressable evidence (#5252).
+        # Conserves: R == len(factory_walk_unclassified_rows) == statuses map.
+        "R_factory_walk_unclassified": r_unclassified,
+        "factory_walk_statuses": {
+            "unclassified": r_unclassified,
+        },
+        "factory_walk_unclassified_shape_split": shape_split,
+        "factory_walk_unclassified_rows": retained_loci,
     }
+    if args.compact and r_unclassified > COMPACT_LOCUS_LIMIT:
+        report["factory_walk_unclassified_rows_truncated"] = True
+        report["factory_walk_unclassified_rows_retained"] = COMPACT_LOCUS_LIMIT
     if not args.compact:
         report["terminal_rows"] = terminal_rows
     rendered = json.dumps(report, indent=2)

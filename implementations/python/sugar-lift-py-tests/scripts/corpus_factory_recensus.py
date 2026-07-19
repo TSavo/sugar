@@ -12,12 +12,17 @@ from collections import Counter
 from pathlib import Path
 
 from sugar_lift_py_tests.audit_only import collect_factory_panic
+from sugar_lift_py_tests.idd.factory_walk_unclassified_locus import (
+    project_unclassified_locus,
+    shape_split_unclassified,
+)
 from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkRedRowDto
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
 PACKAGES = ("numpy", "pandas")
 UNIVERSE_REQUEST = "callee universe coverage"
 FILE_TIMEOUT_SECONDS = 30
+COMPACT_LOCUS_LIMIT = 200
 
 
 class FileLiftTimeout(BaseException):
@@ -60,6 +65,7 @@ def main() -> None:
     universe_by_package: Counter[str] = Counter()
     universe_examples: list[dict[str, object]] = []
     fatal_examples: list[dict[str, object]] = []
+    factory_walk_unclassified_rows: list[dict[str, object]] = []
 
     all_paths = [
         (package, root, path)
@@ -139,8 +145,12 @@ def main() -> None:
             ) or str(getattr(row, "status", "") or "")
             # Permanent product-completeness axis (#5252): unclassified /
             # wire-unresolved walk rows are honest red residue, not success.
+            # Retain a row-addressable locus for shape-split drain.
             if status_value in {"unclassified", "unresolved"}:
                 counts["R_factory_walk_unclassified"] += 1
+                locus = project_unclassified_locus(row)
+                if locus is not None:
+                    factory_walk_unclassified_rows.append(locus)
             if not isinstance(row, FactoryWalkRedRowDto):
                 continue
             counts["factory_walk_red_total"] += 1
@@ -163,19 +173,37 @@ def main() -> None:
         if index % 100 == 0:
             print(f"measured {index}/{len(paths)} files", file=sys.stderr)
 
+    r_unclassified = int(counts.get("R_factory_walk_unclassified", 0))
+    retained_loci = factory_walk_unclassified_rows
+    if args.compact and len(retained_loci) > COMPACT_LOCUS_LIMIT:
+        retained_loci = retained_loci[:COMPACT_LOCUS_LIMIT]
     report = {
         "package_versions": versions,
         "shard": {"index": args.shard_index, "count": args.shard_count},
         # Permanent baseline-free floor (#5252). Separate red axis from
         # crashes / bare exceptions / timeouts / file fatals.
-        "R_factory_walk_unclassified": int(
-            counts.get("R_factory_walk_unclassified", 0)
+        # Row-addressable loci enable offline shape-split (not just R).
+        "R_factory_walk_unclassified": r_unclassified,
+        "factory_walk_statuses": {
+            "unclassified": r_unclassified,
+            **{
+                status: count
+                for status, count in sorted(red_statuses.items())
+                if status != "unclassified"
+            },
+        },
+        "factory_walk_unclassified_shape_split": shape_split_unclassified(
+            factory_walk_unclassified_rows
         ),
+        "factory_walk_unclassified_rows": retained_loci,
         "counts": dict(sorted(counts.items())),
         "factory_walk_red_statuses": dict(sorted(red_statuses.items())),
         "fatal_types": dict(sorted(fatal_types.items())),
         "universe_absence_by_package": dict(sorted(universe_by_package.items())),
     }
+    if args.compact and r_unclassified > COMPACT_LOCUS_LIMIT:
+        report["factory_walk_unclassified_rows_truncated"] = True
+        report["factory_walk_unclassified_rows_retained"] = COMPACT_LOCUS_LIMIT
     if not args.compact:
         report.update(
             {

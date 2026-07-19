@@ -66,6 +66,60 @@ def test_extract_from_factory_walk_statuses_aggregate() -> None:
     assert _SCANNER.r_factory_walk_unclassified(rows) == 8470
 
 
+def test_extract_prefers_row_addressable_locus_list_over_aggregate() -> None:
+    """Next-recensus shape: retained loci win so reports print file:line, not ?:?:."""
+    payload = {
+        "R_factory_walk_unclassified": 99,
+        "factory_walk_statuses": {"unclassified": 99},
+        "factory_walk_unclassified_rows": [
+            {
+                "status": "unclassified",
+                "selected": "",
+                "ast_kind": "ListComp",
+                "role": "term",
+                "reason": "source-to-factory conservation owner disappeared",
+                "file": "numpy/core/fromnumeric.py",
+                "line": 42,
+            },
+            {
+                "status": "unclassified",
+                "selected": "CallSugar",
+                "ast_kind": "Call",
+                "role": "term",
+                "reason": "no universe Sugar",
+                "file": "numpy/core/numeric.py",
+                "line": 7,
+            },
+        ],
+    }
+    rows = _SCANNER.extract_walk_rows(payload)
+    assert _SCANNER.r_factory_walk_unclassified(rows) == 2
+    assert rows[0]["file"] == "numpy/core/fromnumeric.py"
+    assert rows[0]["line"] == 42
+    report = _SCANNER.format_report(rows, limit=10)
+    assert "numpy/core/fromnumeric.py:42" in report
+    assert "?:?:" not in report
+
+
+def test_extract_from_unclassified_rows_alias() -> None:
+    payload = {
+        "unclassified_rows": [
+            {
+                "status": "unclassified",
+                "selected": "",
+                "ast_kind": "GeneratorExp",
+                "role": "term",
+                "reason": "conservation owner disappeared",
+                "file": "demo.py",
+                "line": 3,
+            }
+        ]
+    }
+    rows = _SCANNER.extract_walk_rows(payload)
+    assert _SCANNER.r_factory_walk_unclassified(rows) == 1
+    assert rows[0]["file"] == "demo.py"
+
+
 def test_extract_from_map_shaped_factory_walk() -> None:
     payload = {"factory_walk": {"unclassified": 12, "warranted": 40}}
     assert _SCANNER.r_factory_walk_unclassified(_SCANNER.extract_walk_rows(payload)) == 12

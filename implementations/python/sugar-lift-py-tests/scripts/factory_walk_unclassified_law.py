@@ -13,8 +13,12 @@ no allowlist. Keep this axis separate from crashes, bare exceptions, timeouts,
 and FactoryPanic file fatals.
 
 Measurement: pass factory-walk rows via --from-json (audit summary, recensus
-shard, or bare row list). Pure functions are for recensus / tests. Without a
-measurement payload the auditor refuses (exit 2) rather than faking R=0.
+shard, or bare row list). Prefer row-addressable locus lists
+(``factory_walk_unclassified_rows`` / ``unclassified_rows``) over aggregate
+status maps so reports print real ``file:line`` loci and shape-split drain
+is possible offline (#5252).
+
+Without a measurement payload the auditor refuses (exit 2) rather than faking R=0.
 """
 
 from __future__ import annotations
@@ -26,8 +30,25 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-# Wire + internal names for the same red residue.
-UNCLASSIFIED_STATUSES = frozenset({"unclassified", "unresolved"})
+from sugar_lift_py_tests.idd.factory_walk_unclassified_locus import (
+    UNCLASSIFIED_STATUSES,
+    extract_locus_list,
+    is_unclassified_row,
+    project_unclassified_locus,
+    shape_split_unclassified,
+)
+
+# Re-export for tests and producers that import the law module by path.
+__all__ = [
+    "UNCLASSIFIED_STATUSES",
+    "extract_walk_rows",
+    "format_report",
+    "is_unclassified_row",
+    "main",
+    "project_unclassified_locus",
+    "r_factory_walk_unclassified",
+    "shape_split_unclassified",
+]
 
 
 def _status_of(row: Any) -> str:
@@ -44,10 +65,6 @@ def _status_of(row: Any) -> str:
     if hasattr(status, "value"):
         return str(status.value)
     return str(status)
-
-
-def is_unclassified_row(row: Any) -> bool:
-    return _status_of(row) in UNCLASSIFIED_STATUSES
 
 
 def r_factory_walk_unclassified(rows: Sequence[Any] | Iterable[Any]) -> int:
@@ -71,7 +88,14 @@ def _looks_like_walk_row(row: Any) -> bool:
 
 
 def extract_walk_rows(payload: Any) -> list[Any]:
-    """Pull factory-walk rows from common recensus / audit / DTO shapes."""
+    """Pull factory-walk rows from common recensus / audit / DTO shapes.
+
+    Preference order (shape-split capable first):
+    1. Retained unclassified locus lists (row-addressable evidence)
+    2. Full walk row lists
+    3. Aggregate status maps (historical shards; synthesize opaque rows)
+    4. Nested audit / R-only fallbacks
+    """
     if payload is None:
         return []
     if isinstance(payload, list):
@@ -79,8 +103,27 @@ def extract_walk_rows(payload: Any) -> list[Any]:
     if not isinstance(payload, Mapping):
         return []
 
-    # Prefer aggregate status maps (historical recensus shards) before generic lists.
-    # pandas-shard*.json only has factory_walk_statuses — never fake R=0 from that.
+    # Prefer retained locus lists so next-recensus shards print real file:line.
+    loci = extract_locus_list(payload)
+    if loci is not None:
+        return list(loci)
+
+    # Full walk lists (row objects with status) before aggregates when present.
+    for key in ("factoryWalk", "factory_walk", "walk"):
+        value = payload.get(key)
+        if isinstance(value, list) and value and _looks_like_walk_row(value[0]):
+            return list(value)
+        if isinstance(value, list) and not value:
+            return []
+
+    # Bare "rows" only when elements look like walk loci (have status).
+    rows = payload.get("rows")
+    if isinstance(rows, list) and rows and _looks_like_walk_row(rows[0]):
+        return list(rows)
+    if isinstance(rows, list) and not rows:
+        return []
+
+    # Historical aggregate status maps — honest red count, opaque loci.
     for key in (
         "statusCounts",
         "status_counts",
@@ -94,6 +137,14 @@ def extract_walk_rows(payload: Any) -> list[Any]:
             if synthetic:
                 return synthetic
 
+    # map-shaped factory_walk after list arm failed
+    for key in ("factoryWalk", "factory_walk", "walk"):
+        value = payload.get(key)
+        if isinstance(value, Mapping):
+            synthetic = _synthesize_unclassified_from_counts(value)
+            if synthetic:
+                return synthetic
+
     # nested accounting.factory (requests/datetime ledger shape)
     accounting = payload.get("accounting")
     if isinstance(accounting, Mapping):
@@ -102,24 +153,6 @@ def extract_walk_rows(payload: Any) -> list[Any]:
             synthetic = _synthesize_unclassified_from_counts(factory_counts)
             if synthetic:
                 return synthetic
-
-    # Direct walk lists (row objects with status) or aggregate factory_walk maps
-    for key in ("factoryWalk", "factory_walk", "walk"):
-        value = payload.get(key)
-        if isinstance(value, list):
-            return list(value)
-        if isinstance(value, Mapping):
-            synthetic = _synthesize_unclassified_from_counts(value)
-            if synthetic:
-                return synthetic
-
-    # Bare "rows" only when elements look like walk loci (have status).
-    # File-terminal ledgers (requests/pydantic completed) also use "rows".
-    rows = payload.get("rows")
-    if isinstance(rows, list) and rows and _looks_like_walk_row(rows[0]):
-        return list(rows)
-    if isinstance(rows, list) and not rows:
-        return []
 
     # Nested audit summary
     for key in ("factoryAuditSummary", "factory_audit_summary", "audit"):
@@ -134,7 +167,7 @@ def extract_walk_rows(payload: Any) -> list[Any]:
     if isinstance(sites, list):
         return list(sites)
 
-    # R already computed
+    # R already computed (last resort — no loci)
     if "R_factory_walk_unclassified" in payload:
         n = int(payload["R_factory_walk_unclassified"] or 0)
         return [{"status": "unclassified"} for _ in range(n)]
@@ -163,9 +196,10 @@ def format_report(rows: Sequence[Any], *, limit: int = 50) -> str:
             reason = row.get("reason") or ""
             ast_kind = row.get("ast_kind") or row.get("astKind") or ""
             selected = row.get("selected") or ""
+            role = row.get("role") or row.get("requested_role") or ""
             lines.append(
-                f"{file}:{line}:unclassified ast={ast_kind!s} selected={selected!s} "
-                f"— {reason}"
+                f"{file}:{line}:unclassified ast={ast_kind!s} role={role!s} "
+                f"selected={selected!s} — {reason}"
             )
         else:
             file = getattr(row, "file", "?")
