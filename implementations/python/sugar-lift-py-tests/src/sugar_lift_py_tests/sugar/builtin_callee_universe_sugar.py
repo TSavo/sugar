@@ -33,6 +33,12 @@ _AUTHENTICATED_COORDINATES = frozenset(
         *_CONVERTER_COORDINATES,
     }
 )
+# Leaf spellings that can still resolve into an authenticated coordinate.
+# Plain-call owns refuses full import-identity work when the callee leaf cannot
+# match; method receivers keep the Name-only path (class attribute aliases).
+_AUTHENTICATED_PLAIN_LEAVES = frozenset(
+    coordinate.rsplit(".", 1)[-1] for coordinate in _AUTHENTICATED_COORDINATES
+)
 
 
 @dataclass(frozen=True)
@@ -56,6 +62,21 @@ class BuiltinCalleeUniverseSugar(
 
     @classmethod
     def owns(cls, site) -> bool:
+        # factory.select asks every TERM claim. Import-identity resolution is
+        # O(module) without a locus index; refuse the expensive coordinate path
+        # when the callee leaf cannot be an authenticated coordinate.
+        if site.observed != "Call" or site.call_has_keywords():
+            return False
+        target = site.call_target_name()
+        if target is None:
+            return False
+        receiver = site.call_receiver()
+        if receiver is None:
+            if target not in _AUTHENTICATED_PLAIN_LEAVES:
+                return False
+        elif receiver.observed != "Name":
+            # Only instance-parameter method form can authenticate converters.
+            return False
         return CalleeUniverseRecognition.coordinate(site) in _AUTHENTICATED_COORDINATES
 
     @classmethod

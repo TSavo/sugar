@@ -26,6 +26,8 @@ import functools
 
 __all__ = [
     "SOURCE_TABLE_CAPACITY",
+    "locate_parsed_node",
+    "parsed_locus_index",
     "parsed_parents",
     "parsed_tree",
     "source_lines",
@@ -113,3 +115,41 @@ def parsed_parents(source: str) -> "tuple[ast.Module, dict[ast.AST, ast.AST]] | 
         for child in ast.iter_child_nodes(parent)
     }
     return tree, parents
+
+
+@functools.lru_cache(maxsize=SOURCE_TABLE_CAPACITY)
+def parsed_locus_index(
+    source: str,
+) -> "dict[tuple[type, int, int], ast.AST] | None":
+    """Map ``(type(node), lineno, col_offset)`` → node for one source.
+
+    Call-site recognizers re-resolve a SourceFragment's locus against the
+    content-keyed parse. A full ``ast.walk`` per site is O(module × sites) and
+    dominated factory.select wall on large modules (BuiltinCalleeUniverseSugar
+    / visible_declarations). One index walk per source is the replacement.
+    """
+    try:
+        tree = parsed_tree(source)
+    except SyntaxError:
+        return None
+    index: dict[tuple[type, int, int], ast.AST] = {}
+    for node in ast.walk(tree):
+        lineno = getattr(node, "lineno", None)
+        col = getattr(node, "col_offset", None)
+        if lineno is None or col is None:
+            continue
+        index[(type(node), int(lineno), int(col))] = node
+    return index
+
+
+def locate_parsed_node(
+    source: str,
+    node_type: type,
+    line: int,
+    col: int,
+) -> ast.AST | None:
+    """O(1) locus lookup against the content-keyed index (None if missing)."""
+    index = parsed_locus_index(source)
+    if index is None:
+        return None
+    return index.get((node_type, int(line), int(col)))

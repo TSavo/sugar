@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import symtable
 
-from sugar_lift_python_source.source_tables import parsed_parents
+from sugar_lift_python_source.source_tables import locate_parsed_node, parsed_parents
 
 
 def visible_declarations(statement):
@@ -18,15 +18,9 @@ def visible_declarations(statement):
     if parsed is None:
         return (), frozenset()
     tree, parents = parsed
-    target = next(
-        (
-            node
-            for node in ast.walk(tree)
-            if type(node) is type(statement.node)
-            and getattr(node, "lineno", None) == statement.line
-            and getattr(node, "col_offset", None) == statement.col
-        ),
-        None,
+    del tree
+    target = locate_parsed_node(
+        source, type(statement.node), statement.line, statement.col
     )
     if target is None:
         return (), frozenset()
@@ -203,16 +197,9 @@ def _source_path(statement):
     parsed = parsed_parents(source)
     if parsed is None:
         return None
-    tree, parents = parsed
-    target = next(
-        (
-            node
-            for node in ast.walk(tree)
-            if type(node) is type(statement.node)
-            and getattr(node, "lineno", None) == statement.line
-            and getattr(node, "col_offset", None) == statement.col
-        ),
-        None,
+    _tree, parents = parsed
+    target = locate_parsed_node(
+        source, type(statement.node), statement.line, statement.col
     )
     if target is None:
         return None

@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from enum import Enum, auto
 
-from sugar_lift_python_source.source_tables import parsed_parents
+from sugar_lift_python_source.source_tables import locate_parsed_node, parsed_parents
 from sugar_lift_py_tests.recognition.visible_declarations import (
     declaration_is_function_local,
     lexical_function_bindings,
@@ -329,16 +329,9 @@ def _source_path(statement):
     parsed = parsed_parents(source)
     if parsed is None:
         return None
-    tree, parents = parsed
-    target = next(
-        (
-            node
-            for node in ast.walk(tree)
-            if type(node) is type(statement.node)
-            and getattr(node, "lineno", None) == statement.line
-            and getattr(node, "col_offset", None) == statement.col
-        ),
-        None,
+    _tree, parents = parsed
+    target = locate_parsed_node(
+        source, type(statement.node), statement.line, statement.col
     )
     if target is None:
         return None
