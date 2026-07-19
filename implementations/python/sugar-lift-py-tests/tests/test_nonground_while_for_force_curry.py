@@ -21,12 +21,15 @@ import ast
 import time
 from dataclasses import replace
 
+import pytest
+
 from factory_reduce import compose_block
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
@@ -77,21 +80,12 @@ _PRED_CHAIN_BODY = (
 )
 
 
-def test_nonground_pred_chain_for_while_force_curries_not_hangs() -> None:
-    """Opaque pred/sources + for+while chain → CurriedLoopScope, completes fast."""
+def test_nonground_pred_chain_for_while_is_loud_not_opaque_success() -> None:
+    """Finite opaque for+while history cannot mint an opaque Complete."""
     opaque = _opaque_array("dijkstra_pred")
     binds = {"pred": opaque, "sources": opaque}
-    started = time.perf_counter()
-    value = _reduce_for(_PRED_CHAIN_BODY, binds)
-    # Full block path must also complete (scope-only contribution is empty).
-    block = compose_block(_PRED_CHAIN_BODY, binds=binds)
-    elapsed = time.perf_counter() - started
-
-    assert elapsed < 5.0, f"opaque for+while chain hung ({elapsed:.2f}s)"
-    assert isinstance(value, CurriedLoopScope), (
-        f"expected CurriedLoopScope for non-ground while chain; got {type(value).__name__}"
-    )
-    assert isinstance(block, BlockValue)
+    with pytest.raises(FactoryPanic):
+        _reduce_for(_PRED_CHAIN_BODY, binds)
 
 
 def test_ground_pred_chain_for_while_still_static_unfolds() -> None:
@@ -135,9 +129,5 @@ def test_parametrize_nonground_pred_chain_lift_completes() -> None:
         "            assert sources[p] == s\n"
         "            p = pred[p]\n"
     )
-    started = time.perf_counter()
-    payload = lift_file_payload(source, "nonground_pred_chain.py")
-    elapsed = time.perf_counter() - started
-    assert elapsed < 15.0, f"parametrize opaque pred-chain hung ({elapsed:.2f}s)"
-    # Completion under bound is the instrument: shape moved off per-k Equality hang.
-    assert payload is not None
+    with pytest.raises(FactoryPanic):
+        lift_file_payload(source, "nonground_pred_chain.py")

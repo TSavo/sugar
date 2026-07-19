@@ -230,16 +230,40 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         ):
             elements = iterable.finite_elements
         if elements is not None:
-            # Non-ground pred-chain While under a finite for: one coordinate,
-            # not STATIC_UNFOLD_LIMIT per-k Equality reduces on dig-opaque
-            # arrays (#5338 residual A / scipy csgraph shortest_path).
+            from sugar_lift_py_tests.factory import factory_panic_gap
+
+            try:
+                element_count = len(elements)
+            except OverflowError:
+                factory_panic_gap(
+                    owner="ForSugar.static_unfold",
+                    blame=str(self.site),
+                    observed="finite iterable length overflow",
+                    requested="bounded finite loop materialization",
+                    fix="reduce the iterable or provide an authenticated runtime coordinate",
+                )
+            # Finite history is decidable even when the body reads opaque
+            # values. Never replace that finite construction with opaque
+            # force-curry; exceeding the reviewed budget is a loud terminal.
             if self._body_has_while() and self._while_reads_non_ground_outer(ctx):
-                return self._bind_and_body(iterable, ctx, force_curry=True)
+                factory_panic_gap(
+                    owner="ForSugar.static_unfold",
+                    blame=str(self.site),
+                    observed=f"finite for/while body with {element_count} elements",
+                    requested="bounded finite loop materialization",
+                    fix="reduce the finite iterable or add reviewed authenticated semantics",
+                )
             limit = STATIC_UNFOLD_LIMIT
             if self._body_has_branching_statement():
                 limit = min(limit, BRANCHED_STATIC_UNFOLD_LIMIT)
             if len(elements) > limit:
-                return self._bind_and_body(iterable, ctx, force_curry=True)
+                factory_panic_gap(
+                    owner="ForSugar.static_unfold",
+                    blame=str(self.site),
+                    observed=f"finite iterable with {element_count} elements",
+                    requested="bounded finite loop materialization",
+                    fix="reduce the iterable or add reviewed authenticated semantics",
+                )
             return self._unfold_values(elements, ctx)
         return self._bind_and_body(iterable, ctx)
 
