@@ -104,16 +104,54 @@ sugar_bx_init() {
 
 sugar_bx_sync_workspace() {
   # Local mode runs in the checkout itself: nothing to sync.
-  [[ "${SUGAR_BX_LOCAL:-0}" == 1 ]] && return 0
-  local existing=() rel manifest
-  for rel in "${sync_paths[@]}"; do [[ -e "$SUGAR_BX_REPO_ROOT/$rel" ]] && existing+=("$rel"); done
-  sugar_bx_ssh "rm -rf $(sugar_bx_quote "$SUGAR_BX_REPO/menagerie") && mkdir -p $(sugar_bx_quote "$SUGAR_BX_REPO")"
-  (cd "$SUGAR_BX_REPO_ROOT" && "$SUGAR_BX_RSYNC" -azR --delete "${exclude_args[@]}" "${existing[@]}" "$SUGAR_BX_HOST:$SUGAR_BX_REPO/")
-  manifest="$(mktemp)"
-  if git -C "$SUGAR_BX_REPO_ROOT" ls-files -z >"$manifest" 2>/dev/null; then
-    "$SUGAR_BX_RSYNC" -az "$manifest" "$SUGAR_BX_HOST:$SUGAR_BX_REPO/.bcargo-tracked-manifest"
+  if [[ "${SUGAR_BX_LOCAL:-0}" != 1 ]]; then
+    local existing=() rel manifest
+    for rel in "${sync_paths[@]}"; do [[ -e "$SUGAR_BX_REPO_ROOT/$rel" ]] && existing+=("$rel"); done
+    sugar_bx_ssh "rm -rf $(sugar_bx_quote "$SUGAR_BX_REPO/menagerie") && mkdir -p $(sugar_bx_quote "$SUGAR_BX_REPO")"
+    (cd "$SUGAR_BX_REPO_ROOT" && "$SUGAR_BX_RSYNC" -azR --delete "${exclude_args[@]}" "${existing[@]}" "$SUGAR_BX_HOST:$SUGAR_BX_REPO/")
+    manifest="$(mktemp)"
+    if git -C "$SUGAR_BX_REPO_ROOT" ls-files -z >"$manifest" 2>/dev/null; then
+      "$SUGAR_BX_RSYNC" -az "$manifest" "$SUGAR_BX_HOST:$SUGAR_BX_REPO/.bcargo-tracked-manifest"
+    fi
+    rm -f "$manifest"
   fi
-  rm -f "$manifest"
+}
+
+# A bind mount can start up cleanly and still be empty, stale, or point at an
+# entirely different checkout -- on WSL2 hosts a plain Linux path silently
+# binds an empty directory instead of failing. Stamp a fresh, unpredictable
+# token into the just-synced workspace and require every container that
+# mounts it (see tools/sugar-build/entrypoint.sh) to read the same token back
+# before running anything. An empty or wrong mount cannot produce the token,
+# so it cannot produce a plausible result either: it fails loudly instead.
+SUGAR_BX_MOUNT_PROOF_NAME=".bcargo-mount-proof"
+sugar_bx_write_mount_proof() {
+  local head_sha manifest_sha
+  head_sha="$(git -C "$SUGAR_BX_REPO_ROOT" rev-parse HEAD 2>/dev/null || echo no-head)"
+  manifest_sha="$( (git -C "$SUGAR_BX_REPO_ROOT" ls-files -z 2>/dev/null | shasum -a 256 2>/dev/null || true) | cut -d' ' -f1)"
+  SUGAR_BX_MOUNT_PROOF="${head_sha}:${manifest_sha:-no-manifest}:$$:${RANDOM:-0}:$(date +%s%N 2>/dev/null || date +%s)"
+  if [[ "${SUGAR_BX_LOCAL:-0}" == 1 ]]; then
+    printf '%s' "$SUGAR_BX_MOUNT_PROOF" >"$SUGAR_BX_REPO/$SUGAR_BX_MOUNT_PROOF_NAME"
+  else
+    printf '%s' "$SUGAR_BX_MOUNT_PROOF" | sugar_bx_ssh "cat > $(sugar_bx_quote "$SUGAR_BX_REPO/$SUGAR_BX_MOUNT_PROOF_NAME")"
+  fi
+}
+
+# `systemctl is-active docker` reports active on battleaxe even when
+# /var/run/docker.sock is a dead symlink into Docker Desktop's WSL2 shared
+# sockets and nothing works -- it is a false-healthy reading. Prove the
+# daemon actually answers the API before routing any command through it.
+sugar_bx_require_docker_ready() {
+  local out status
+  set +e
+  out="$(sugar_bx_ssh "docker info" 2>&1)"
+  status=$?
+  set -e
+  if [[ "$status" != 0 ]]; then
+    printf 'sugarbin: crime=false-healthy-docker-daemon host=%s reason=docker-info-failed status=%s detail=%s replacement=fix the Docker Desktop / WSL2 integration or start the daemon -- do not trust `systemctl is-active docker`, it reports active even when the socket is a dead symlink and nothing works\n' \
+      "$SUGAR_BX_HOST" "$status" "${out:-<no output>}" >&2
+    return 70
+  fi
 }
 
 sugar_bx_run_ambient() {
@@ -138,8 +176,22 @@ sugar_bx_run_ambient() {
 }
 
 sugar_bx_docker_bind_source() {
-  local source="$1"
-  sugar_bx_ssh "if command -v wslpath >/dev/null 2>&1; then wslpath -w $(sugar_bx_quote "$source"); else printf '%s\\n' $(sugar_bx_quote "$source"); fi" | tr -d '\r'
+  local source="$1" resolved
+  # On a WSL2 host, Docker Desktop's engine runs in a separate distro: a
+  # plain Linux path like /home/tsavo/... does not fail to bind, it silently
+  # binds an EMPTY directory. Only the Windows UNC form
+  # (\\wsl.localhost\<distro>\...), produced by `wslpath -w`, resolves inside
+  # the engine. If this is a WSL host and wslpath is unavailable, refuse
+  # instead of silently constructing the path form that produces the empty
+  # mount -- that silent fallback is exactly the hazard being closed here.
+  resolved="$(sugar_bx_ssh "if command -v wslpath >/dev/null 2>&1; then wslpath -w $(sugar_bx_quote "$source"); elif grep -qi microsoft /proc/version 2>/dev/null; then printf 'SUGAR_BX_WSLPATH_MISSING\n'; else printf '%s\n' $(sugar_bx_quote "$source"); fi")" || return $?
+  resolved="$(printf '%s' "$resolved" | tr -d '\r')"
+  if [[ "$resolved" == SUGAR_BX_WSLPATH_MISSING ]]; then
+    printf 'sugarbin: crime=empty-bind-mount-risk host=%s source=%s reason=wslpath-unavailable-on-wsl2-host replacement=install wslpath on the remote host; refusing to construct a plain Linux-path bind mount that Docker Desktop silently mounts empty\n' \
+      "$SUGAR_BX_HOST" "$source" >&2
+    return 70
+  fi
+  printf '%s\n' "$resolved"
 }
 
 sugar_bx_build_artifacts_docker() {
@@ -159,6 +211,7 @@ sugar_bx_build_artifacts_docker() {
     --env SUGAR_BINARY_PUBLISH=0
     --env CARGO_TARGET_DIR=/managed-target
     --env SUGAR_BINARY_TARGET_ROOT=/managed-target
+    --env "SUGAR_BX_MOUNT_PROOF=$SUGAR_BX_MOUNT_PROOF"
     --mount "type=bind,src=$workspace_source,dst=/workspace/sugar"
     --mount "type=bind,src=$artifacts_source,dst=/out"
     --mount "type=bind,src=$cache_source,dst=/root/.cache/sugar/binaries"
@@ -178,6 +231,7 @@ sugar_bx_run_docker() {
   local -a docker_args=(docker run --rm
     --workdir "$remote_cwd"
     --env PATH=/opt/sugar/bin:/opt/java/bin:/root/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+    --env "SUGAR_BX_MOUNT_PROOF=$SUGAR_BX_MOUNT_PROOF"
     --mount "type=bind,src=$workspace_source,dst=/workspace/sugar")
   [[ "$network" != none ]] || docker_args+=(--network none)
   if [[ "$has_artifacts" == 1 ]]; then

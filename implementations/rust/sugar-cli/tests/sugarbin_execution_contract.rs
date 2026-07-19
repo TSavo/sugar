@@ -100,6 +100,34 @@ fn sugarbin_docker_execution_contract() {
 }
 
 #[test]
+fn sugarbin_mount_proof_guard_contract() {
+    let root = repo_root();
+    let status = Command::new("bash")
+        .arg(root.join("tests/sugarbin_mount_proof_guard.sh"))
+        .arg(&root)
+        .status()
+        .expect("run mount-proof guard contract");
+    assert!(
+        status.success(),
+        "mount-proof guard contract failed: {status}"
+    );
+}
+
+#[test]
+fn sugarbin_docker_daemon_guard_contract() {
+    let root = repo_root();
+    let status = Command::new("bash")
+        .arg(root.join("tests/sugarbin_docker_daemon_guard.sh"))
+        .arg(&root)
+        .status()
+        .expect("run Docker daemon liveness guard contract");
+    assert!(
+        status.success(),
+        "Docker daemon liveness guard contract failed: {status}"
+    );
+}
+
+#[test]
 fn sugarbin_wrapper_compatibility_contract() {
     let root = repo_root();
     let status = Command::new("bash")

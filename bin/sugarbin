@@ -248,8 +248,10 @@ dispatch_execution_subcommand() {
   [[ -n "$repo_root" ]] || { echo "sugarbin: must be run from inside a git checkout" >&2; return 2; }
   local_cwd="$(pwd -P)"
   sugar_bx_init "$repo_root" "$local_cwd" || return $?
+  [[ "$route_env" != docker ]] || sugar_bx_require_docker_ready || return $?
   sugar_bx_sync_workspace || return $?
   if [[ "$route_env" == docker ]]; then
+    sugar_bx_write_mount_proof || return $?
     local remote_needs="$needs" has_artifacts=0
     if [[ -n "$remote_needs" ]]; then
       sugar_bx_build_artifacts_docker "$core_image" "$remote_needs" "$profile" || return $?

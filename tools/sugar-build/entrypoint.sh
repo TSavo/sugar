@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# A bind mount can start successfully and still be empty or point at the
+# wrong tree: WSL2 hosts silently mount an empty directory when a plain
+# Linux-style path is bound instead of the UNC form the Docker Desktop
+# engine (running in its own WSL distro) can actually resolve. That failure
+# mode produces plausible-looking output with no error, so prove the mounted
+# workspace is the one the caller intended before anything else -- including
+# the toolchain contract below -- runs.
+if [[ -n "${SUGAR_BX_MOUNT_PROOF:-}" ]]; then
+  proof_file="${SUGAR_BX_MOUNT_PROOF_FILE:-/workspace/sugar/.bcargo-mount-proof}"
+  actual="$(cat "$proof_file" 2>/dev/null || true)"
+  if [[ "$actual" != "$SUGAR_BX_MOUNT_PROOF" ]]; then
+    echo "sugarbin: crime=empty-or-stale-bind-mount workspace=$proof_file expected=$SUGAR_BX_MOUNT_PROOF actual=${actual:-<missing>} replacement=verify the bind mount source resolves inside the container -- WSL2 hosts need the UNC \\\\wsl.localhost\\<distro>\\... form, not a plain Linux path, and the workspace must be synced immediately before this run" >&2
+    exit 70
+  fi
+fi
+
 contract_mismatch() {
   echo "managed environment contract mismatch: $1" >&2
   exit 70
