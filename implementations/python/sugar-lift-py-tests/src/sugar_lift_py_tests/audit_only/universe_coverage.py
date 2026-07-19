@@ -75,6 +75,7 @@ def universe_coverage_gaps(
             # Co-located floor/callsite edge sharing the Call's col_offset.
             continue
         from sugar_lift_py_tests.recognition.callee_universe import (
+            classify_callee_resolution,
             recognize_callee_universe,
         )
 
@@ -85,6 +86,9 @@ def universe_coverage_gaps(
         ):
             continue
         blame = f"{file}:{line}:{col}"
+        # Recognition already computed why this callee did not resolve
+        # (#5252/#5913 audit); record that outcome instead of discarding it.
+        resolution_kind = classify_callee_resolution(target, site=node).value
         gaps.append(
             FactoryGapInfo(
                 owner="python.factory",
@@ -97,6 +101,7 @@ def universe_coverage_gaps(
                 ),
                 gap_kind=GapKind.SUGAR,
                 gap_locus=GapLocus.CONSTRUCTION,
+                resolution_kind=resolution_kind,
             )
         )
     return gaps

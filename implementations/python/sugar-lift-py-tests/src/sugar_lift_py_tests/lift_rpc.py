@@ -2363,6 +2363,10 @@ def _factory_walk_red_from_gap(
         "blame": blame,
         "gap_kind": str(gap.info.get("gap_kind") or ""),
         "gap_locus": str(gap.info.get("gap_locus") or ""),
+        # Recognition outcome already computed for this callee's gap, when
+        # the producer computes one (#5252/#5913 audit). Empty when the
+        # producer (e.g. conservation violations) has no callee to classify.
+        "resolution_kind": str(gap.info.get("resolution_kind") or ""),
     }
     if recovered_owner_span is not None:
         extra.update(
