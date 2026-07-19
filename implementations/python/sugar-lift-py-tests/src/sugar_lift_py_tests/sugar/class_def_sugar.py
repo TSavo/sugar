@@ -45,10 +45,14 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             return False
         if site.class_keywords():
             from sugar_lift_py_tests.recognition.class_definition import (
+                recognize_pydantic_base_model_extra_class,
                 recognize_typed_dict_total_class,
             )
 
-            return recognize_typed_dict_total_class(site) is not None
+            return (
+                recognize_typed_dict_total_class(site) is not None
+                or recognize_pydantic_base_model_extra_class(site) is not None
+            )
         return True
 
     @staticmethod
@@ -111,10 +115,21 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
     @classmethod
     def new(cls, site, ctx) -> "ClassDefSugar":
         from sugar_lift_py_tests.recognition.class_definition import (
+            recognize_pydantic_base_model_extra_class,
             recognize_typed_dict_total_class,
         )
 
-        recognized = recognize_typed_dict_total_class(site)
+        typed_dict = recognize_typed_dict_total_class(site)
+        pydantic_base_model = recognize_pydantic_base_model_extra_class(site)
+        class_option = (
+            typed_dict.total_value
+            if typed_dict is not None
+            else (
+                pydantic_base_model.extra_value
+                if pydantic_base_model is not None
+                else None
+            )
+        )
         return cls(
             name=site.class_name(),
             bases=tuple(
@@ -122,8 +137,8 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             ),
             class_options=(
                 ()
-                if recognized is None
-                else (ctx.build_body(recognized.total_value, SugarRole.TERM),)
+                if class_option is None
+                else (ctx.build_body(class_option, SugarRole.TERM),)
             ),
             body=ctx.build_body(site.class_body_block(), SugarRole.STATEMENT),
             site=site,
@@ -191,6 +206,15 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             "    return z\n"
             "\n"
         )
+        pydantic_base_model_extra = (
+            "from pydantic import BaseModel\n"
+            "\n"
+            "def G(z):\n"
+            '    class Payload(BaseModel, extra="allow"):\n'
+            "        value: int\n"
+            "    return z\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="class_def_return",
@@ -242,6 +266,17 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                 + "    assert F(5) == 5\n",
                 lying=pydantic_dataclass + "def test_f():\n" + "    assert F(5) == 6\n",
                 family="identity-decorated-class",
+            ),
+            _call_pair(
+                name="pydantic_base_model_extra_class_return",
+                owner_sugar="ClassDefSugar",
+                truthful=pydantic_base_model_extra
+                + "def test_g():\n"
+                + "    assert G(5) == 5\n",
+                lying=pydantic_base_model_extra
+                + "def test_g():\n"
+                + "    assert G(5) == 6\n",
+                family="pydantic-base-model-extra-class",
             ),
         )
 

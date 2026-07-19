@@ -33,6 +33,8 @@ class NativeShape(Enum):
     ASSERTING_MANAGER = auto()
     CLASS_IDENTITY_DECORATOR = auto()
     IMPLEMENTATION_PRESERVING_DECORATOR = auto()
+    PYDANTIC_BASE_MODEL = auto()
+    PYDANTIC_EXTRA_ALLOW_CLASS_OPTION = auto()
 
 
 _CALL_SHAPES = {
@@ -109,6 +111,18 @@ _NATIVE_DECORATORS = {
     "functools.wraps": NativeShape.IMPLEMENTATION_PRESERVING_DECORATOR,
 }
 
+_CLASS_IMPORT_SHAPES = {
+    ("pydantic", "BaseModel"): NativeShape.PYDANTIC_BASE_MODEL,
+}
+
+_CLASS_OPTION_SHAPES = {
+    (
+        NativeShape.PYDANTIC_BASE_MODEL,
+        "extra",
+        "allow",
+    ): NativeShape.PYDANTIC_EXTRA_ALLOW_CLASS_OPTION,
+}
+
 _MODULE_NAMES = {
     name: True
     for name in (
@@ -183,3 +197,19 @@ def recognize_native_decorator(target: str | None) -> NativeShape | None:
     """Recognize a decorator only from its authenticated import coordinate."""
 
     return _NATIVE_DECORATORS.get(target)
+
+
+def recognize_native_class_import(module: str, name: str) -> NativeShape | None:
+    """Recognize a class base only from its authenticated import coordinate."""
+
+    return _CLASS_IMPORT_SHAPES.get((module, name))
+
+
+def recognize_native_class_option(
+    base_shape: NativeShape,
+    keyword: str | None,
+    value: object,
+) -> NativeShape | None:
+    """Recognize an exact class option contract on an authenticated base."""
+
+    return _CLASS_OPTION_SHAPES.get((base_shape, keyword, value))
