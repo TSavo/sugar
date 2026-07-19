@@ -289,7 +289,14 @@ class CalleeUniverseRecognition:
 
     @classmethod
     def _name_is_unshadowed(cls, site, name: str) -> bool:
-        """Bare builtin names lose their warrant under parameters or local rebinds."""
+        """Bare builtin names lose their warrant under parameters or local rebinds.
+
+        Nested ClassDef / FunctionDef introduce their own namespaces. Interior
+        stores (a method named ``type``, a class attribute ``type = …``) do
+        **not** shadow the module/function bare builtin under Python semantics.
+        Only the nested definition's own *binding name* (``class type:`` /
+        ``def type:``) or a same-scope assign/import/delete of ``name`` revokes.
+        """
 
         _declarations, shadowed_parameters = visible_declarations(site)
         if name in shadowed_parameters:
@@ -298,8 +305,17 @@ class CalleeUniverseRecognition:
             # A function-local binding of a bare builtin coordinate (parameter
             # or later assignment) is never the builtin coordinate.
             return False
-        # Module-level assignment before the site also revokes.
         for declaration in _declarations:
+            if declaration.observed == "ClassDef":
+                # Class object name only — not body member stores.
+                if declaration.class_name() == name:
+                    return False
+                continue
+            if declaration.observed in {"FunctionDef", "AsyncFunctionDef"}:
+                if declaration.function_name() == name:
+                    return False
+                continue
+            # Same-scope assign / import / delete of the bare name revokes.
             if name in declaration.stored_or_deleted_names():
                 return False
         return True
