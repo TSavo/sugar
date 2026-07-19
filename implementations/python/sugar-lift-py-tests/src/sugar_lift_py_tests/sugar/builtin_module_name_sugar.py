@@ -30,7 +30,7 @@ class BuiltinModuleNameSugar(
 
     @classmethod
     def owns(cls, site) -> bool:
-        from sugar_lift_py_tests.factory.native_shape import recognizes_module_name
+        from sugar_lift_py_tests.recognition.native_shape import recognizes_module_name
 
         return site.observed == "Name" and recognizes_module_name(site.name_id())
 

@@ -161,7 +161,7 @@ class KeywordCallSugar(
                 _static_exit_suppression_contract,
             )
 
-            from sugar_lift_py_tests.factory.native_shape import (
+            from sugar_lift_py_tests.recognition.native_shape import (
                 NativeShape,
                 recognize_native_call,
             )

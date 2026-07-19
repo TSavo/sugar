@@ -191,7 +191,7 @@ class AppendCallSugar(
 def _is_pandas_index_like(receiver) -> bool:
     """True when the callsite is a known Index constructor or Index-preserving chain."""
     from sugar_lift_py_tests.floor import CallSiteValue
-    from sugar_lift_py_tests.factory.native_shape import NativeShape, has_native_shape
+    from sugar_lift_py_tests.recognition.native_shape import NativeShape, has_native_shape
 
     if not isinstance(receiver, CallSiteValue):
         return False

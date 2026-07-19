@@ -171,6 +171,55 @@ class NodeKind:
     ] == ["semantic-ast-classification"]
 
 
+def test_factory_recognize_helpers_are_loud_semantic_side_doors() -> None:
+    """TypedDict-style loophole: recognize_* under factory/ must fail the floor.
+
+    classify_* was already red; recognize_* previously slipped through.
+    """
+    source = """
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class TypedDictTotalClassRecognition:
+    total_value: object
+
+def recognize_typed_dict_total_class(site):
+    if site.observed != "ClassDef":
+        return None
+    return TypedDictTotalClassRecognition(total_value=site)
+
+def recognizes_identity_decorator(module, name):
+    return module == "dataclasses" and name == "dataclass"
+"""
+
+    kinds = [
+        (row.line, row.kind)
+        for row in scan_source(
+            source,
+            "factory/class_definition.py",
+            scope="factory",
+        )
+    ]
+    assert {kind for _, kind in kinds} == {"semantic-recognition-in-factory"}
+    assert len(kinds) == 2  # recognize_* and recognizes_*
+
+
+def test_recognition_package_may_define_recognize_helpers() -> None:
+    source = """
+def recognize_typed_dict_total_class(site):
+    return None
+"""
+
+    assert (
+        scan_source(
+            source,
+            "recognition/class_definition.py",
+            scope="sugar",  # recognition/ is not factory/
+        )
+        == []
+    )
+
+
 def test_install_source_dig_resolution_ast_is_not_construction() -> None:
     source = """
 import ast
