@@ -10,6 +10,7 @@ from sugar_lift_py_tests.factory import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import (
+    BlockValue,
     CallSiteValue,
     DictValue,
     FunctionCallable,
@@ -18,17 +19,40 @@ from sugar_lift_py_tests.floor import (
     StringValue,
     SymbolicValue,
     TermValue,
+    TestimonyValue,
     TupleValue,
     UniverseValue,
 )
 from sugar_lift_py_tests.ir import atomic, ctor, make_var, num
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
-from sugar_lift_py_tests.outcome import Incomplete, complete_value
+from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_value
 from sugar_lift_py_tests.sugar.keyword_call_sugar import KeywordCallSugar
 from sugar_lift_py_tests.sugar.statement_function_def_sugar import (
     DEFERRED_STATEMENT_STRUCTURE_ORACLE,
     StatementFunctionDefSugar,
 )
+from sugar_lift_py_tests.sugar.test_function_def_sugar import TestFunctionDefSugar
+
+
+def test_literal_parametrize_rows_reduce_without_python_recursion() -> None:
+    class EmptyBody:
+        def reduce(self, ctx):
+            del ctx
+            return Complete(BlockValue(()))
+
+    sugar = TestFunctionDefSugar(
+        name="test_many_rows",
+        formals=("case",),
+        parameter_rows=tuple(((("case", index),)) for index in range(2_000)),
+        body=EmptyBody(),  # type: ignore[arg-type]
+        site=object(),
+    )
+    ctx = FactoryBuildContext(filename="many-rows.py", catalog=default_catalog())
+
+    value = complete_value(sugar.desugar(ctx), owner="many literal rows")
+
+    assert isinstance(value, TestimonyValue)
+    assert value.record.statements == ()
 
 
 def _root_universe(source: str) -> UniverseValue:
