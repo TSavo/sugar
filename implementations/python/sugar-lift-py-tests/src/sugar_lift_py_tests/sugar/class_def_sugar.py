@@ -190,6 +190,21 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             "    return z\n"
             "\n"
         )
+        generic_class_subscription = (
+            "from typing import Generic, TypeVar\n"
+            "\n"
+            'T = TypeVar("T")\n'
+            "\n"
+            "class CommonBase(Generic[T]):\n"
+            "    pass\n"
+            "\n"
+            "class Base(CommonBase[T]):\n"
+            "    pass\n"
+            "\n"
+            "def I(z):\n"
+            "    return z\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="class_def_return",
@@ -274,6 +289,17 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                 + "def test_h():\n"
                 + "    assert H(5) == 6\n",
                 family="identity-decorated-class",
+            ),
+            _call_pair(
+                name="generic_class_subscription_return",
+                owner_sugar="ClassDefSugar",
+                truthful=generic_class_subscription
+                + "def test_i():\n"
+                + "    assert I(5) == 5\n",
+                lying=generic_class_subscription
+                + "def test_i():\n"
+                + "    assert I(5) == 6\n",
+                family="generic-class-subscription",
             ),
         )
 
