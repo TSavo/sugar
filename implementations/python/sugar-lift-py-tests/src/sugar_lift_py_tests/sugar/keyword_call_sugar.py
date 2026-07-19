@@ -320,9 +320,27 @@ class KeywordCallSugar(
                 term_args.append(
                     ctor("kw", [str_const(name), value.to_term(owner=str(self.site))])
                 )
+            target = self.import_target or self.target_name
+            exit_suppression = (
+                _static_exit_suppression_contract(
+                    self.import_target, (*pos_values, *(v for _, v in kw_pairs))
+                )
+                if self.import_target is not None
+                else None
+            )
+            if exit_suppression is None:
+                # Chunked pandas readers are TextFileReader: digged __exit__
+                # never suppresses. Only constant truthy chunksize/iterator
+                # prove the reader face; unknown kwargs stay undecidable.
+                exit_suppression = _chunked_pandas_reader_exit_contract(
+                    target, kw_pairs
+                )
+            receiver_floor = (
+                pos_values[0] if self.receiver is not None and pos_values else None
+            )
             return Complete(
                 CallSiteValue(
-                    target_name=self.import_target or self.target_name,
+                    target_name=target,
                     arg_values=pos_values,
                     parameters=tuple(n for n, _ in kw_pairs),
                     term=ctor(
@@ -336,12 +354,12 @@ class KeywordCallSugar(
                     ),
                     body=None,
                     site=self.site,
-                    exit_suppression=(
-                        _static_exit_suppression_contract(
-                            self.import_target, (*pos_values, *(v for _, v in kw_pairs))
-                        )
-                        if self.import_target is not None
-                        else None
+                    exit_suppression=exit_suppression,
+                    # Mirror MethodCallSugar: the receiver's runtime type
+                    # selects the method result / manager face. Exact imported
+                    # free functions leave this absent.
+                    runtime_dispatch_receiver=(
+                        receiver_floor if self.import_target is None else None
                     ),
                 )
             )
@@ -363,3 +381,42 @@ class KeywordCallSugar(
 
 def _pandas_option_callback_binding(key: str) -> str:
     return f"__sugar_pandas_option_callback__:{key}"
+
+
+def _chunked_pandas_reader_exit_contract(
+    target_name: str, kw_pairs: tuple[tuple[str, object], ...]
+):
+    """Dig TextFileReader's non-suppressing ``__exit__`` for chunked CSV reads.
+
+    ``pandas.read_csv`` / ``read_table`` (and method spellings) return a
+    ``TextFileReader`` when ``chunksize`` is a non-zero constant or
+    ``iterator`` is literally true. That class's digged ``__exit__`` only
+    closes the handle and cannot return truthy, so exceptional bodies
+    propagate. Missing install source or non-constant kwargs stay ``None``.
+    """
+    base = target_name.rsplit(".", 1)[-1]
+    if base not in {"read_csv", "read_table"}:
+        return None
+    if not _kwargs_prove_chunked_reader(kw_pairs):
+        return None
+    from sugar_lift_py_tests.sugar.install_source_dig import resolve_class_exit_contract
+
+    return resolve_class_exit_contract("pandas.io.parsers.readers.TextFileReader")
+
+
+def _kwargs_prove_chunked_reader(kw_pairs: tuple[tuple[str, object], ...]) -> bool:
+    """True only when kwargs lift-time-prove a TextFileReader return face."""
+    from sugar_lift_py_tests.floor import TermValue
+
+    for name, value in kw_pairs:
+        if name == "chunksize":
+            if isinstance(value, TermValue) and bool(value.value):
+                return True
+        elif name == "iterator":
+            if isinstance(value, TermValue) and value.value is True:
+                return True
+            # TrueBoolLiteralSugar reduces to a TermValue(True) in most paths;
+            # also accept the typed true-literal floor when present.
+            if type(value).__name__ == "TrueBoolLiteralSugar":
+                return True
+    return False
