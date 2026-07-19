@@ -2279,3 +2279,73 @@ def test_identity_hash_set_item_default_witness_pair_is_enrolled() -> None:
     assert "numpy_identity_hash_set_item_default_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
+
+
+def test_sfloat_factory_result_authenticates_parameter_lookalike_stays_loud() -> None:
+    good = (
+        "from numpy._core._multiarray_umath import _get_sfloat_dtype\n"
+        "\n"
+        "SF = _get_sfloat_dtype()\n"
+        "\n"
+        "def test_a():\n"
+        "    assert SF(1.0) is not None\n"
+    )
+    bad = (
+        "def test_a(SF):\n"
+        "    assert SF(1.0) is not None\n"
+    )
+    good_site = _bare_call_site(good, "SF")
+    bad_site = _bare_call_site(bad, "SF")
+    assert recognize_callee_universe("call:SF", site=good_site) is not None
+    assert recognize_callee_universe("call:SF", site=bad_site) is None
+    good_built = build_node(
+        good_site,
+        filename="sfloat.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="sfloat.py", catalog=default_catalog()),
+    )
+    bad_built = build_node(
+        bad_site,
+        filename="sfloat.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="sfloat.py", catalog=default_catalog()),
+    )
+    assert good_built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    assert bad_built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_call_comp_parametrize_stays_loud_without_protocol() -> None:
+    """#5591 call:comp is pytest-parameter injection.
+
+    Honest drain needs a parametrize protocol/bridge (#5603), not a vendor
+    string match on ``pytest.mark.parametrize``. Until that exists, the
+    unresolved parameter form remains unowned (loud FactoryPanic path).
+    """
+
+    corpus_shape = (
+        "import operator\n"
+        "import pytest\n"
+        "\n"
+        "@pytest.mark.parametrize(\n"
+        '    "comp",\n'
+        "    [operator.eq, operator.ne, operator.le, operator.lt, "
+        "operator.ge, operator.gt],\n"
+        ")\n"
+        "def test_integer_comparison(sctype, other_val, comp):\n"
+        "    assert comp(10, other_val) == comp(10, other_val)\n"
+    )
+    site = _bare_call_site(corpus_shape, "comp")
+    assert recognize_callee_universe("call:comp", site=site) is None
+    built = build_node(
+        site,
+        filename="comp.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="comp.py", catalog=default_catalog()),
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_sfloat_witness_pair_is_enrolled() -> None:
+    names = {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
+    assert "numpy_sfloat_dtype_universe_coordinate" in names
+    assert "operator_comp_parametrize_universe_coordinate" not in names
