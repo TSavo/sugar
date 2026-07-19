@@ -42,6 +42,9 @@ _AUTHENTICATED_COORDINATES = frozenset(
         # Non-vendor-root corpus checks leaf + structural F2Py token.
         "checks.test_get_multi_index_iter_next",
         "f2py.generated_extension",
+        "textwrap.dedent",
+        # No vendor-root module paths (#5603 drain). call:to_device stays loud
+        # until an external kit/bridge contract — do not re-add numpy.* logos.
     }
 )
 
@@ -168,6 +171,12 @@ class BuiltinCalleeUniverseSugar(
             _coordinate_witness("list", "[]", "[0]"),
             _coordinate_witness("set", "[]", "[0]"),
             _coordinate_witness("hasattr", "True", "False"),
+            # #5555 / #5564 — multi-hop self.module.<leaf> bound-source twins
+            # (already recognized via BOUND_SOURCE; twins pin discrimination).
+            _bound_module_member_witness("type_subroutine"),
+            _bound_module_member_witness("simple_subroutine"),
+            # #5561 — stdlib import identity.
+            _textwrap_dedent_witness(),
             _checks_test_get_multi_index_iter_next_witness(),
             _compare_dtypes_local_source_witness(),
             _f2py_sum_and_double_witness(),
@@ -926,6 +935,49 @@ def _numpy_sfloat_dtype_witness():
     )
     return _call_pair(
         name="numpy_sfloat_dtype_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _bound_module_member_witness(member: str):
+    """Truthful/lying twin for multi-hop ``self.module.<member>`` bound-source."""
+
+    call = f"self.module.{member}(1)"
+    prefix = (
+        "class _Mod:\n"
+        "    @staticmethod\n"
+        f"    def {member}(*args):\n"
+        "        return args\n"
+        "\n"
+        "class Host:\n"
+        "    module = _Mod\n"
+        "\n"
+        "    def test_a(self):\n"
+    )
+    return _call_pair(
+        name=f"{member.replace('_', '-')}_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + f"        assert {call} == {call} and {call} == {call}\n",
+        lying=prefix + f"        assert {call} == {call} and {call} != {call}\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _textwrap_dedent_witness():
+    """stdlib import identity — language protocol only (#5561)."""
+
+    prefix = (
+        "import textwrap\n"
+        "\n"
+        "def A():\n"
+        "    return textwrap.dedent('x')\n"
+        "\n"
+    )
+    return _call_pair(
+        name="textwrap_dedent_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
