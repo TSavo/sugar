@@ -115,8 +115,18 @@ class BuiltinCalleeUniverseSugar(
         # whose attr cannot authenticate (``random.multinomial``, …). Refuse
         # that path structurally; one coordinate resolution is enough — do not
         # double-pay recognize_callee_universe + coordinate.
-        if site.observed != "Call" or site.call_has_keywords():
+        if site.observed != "Call":
             return False
+        # Keyword-bearing method sites own only when receiver-surface
+        # recognition authenticates (#5577). No bare-leaf keyword free pass.
+        if site.call_has_keywords():
+            coordinate = CalleeUniverseRecognition.coordinate(site)
+            if coordinate is None:
+                return False
+            return (
+                recognize_authenticated_callee_identity(coordinate)
+                in _OWNED_IMPORTED_SUPPORT
+            )
         target = site.call_target_name()
         if target is None:
             return False
@@ -181,6 +191,7 @@ class BuiltinCalleeUniverseSugar(
             _compare_dtypes_local_source_witness(),
             _f2py_sum_and_double_witness(),
             _regex_search_coordinate_witness(),
+            _regex_search_keyword_surface_witness(),
             _bound_source_callable_witness(),
             _pathlib_path_witness(),
             _json_loads_witness(),
@@ -277,6 +288,38 @@ def _regex_search_coordinate_witness():
     )
     return _call_pair(
         name="regex_search_builtin_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=(
+            prefix
+            + "def test_a():\n"
+            + "    assert A('x') == A('x') and A('x') == A('x')\n"
+        ),
+        lying=(
+            prefix
+            + "def test_a():\n"
+            + "    assert A('x') == A('x') and A('x') != A('x')\n"
+        ),
+        family="builtin-universe-coordinate",
+    )
+
+
+def _regex_search_keyword_surface_witness():
+    """Receiver-surface method with keywords (#5577 architecture twin).
+
+    Same Assign-bound re.compile surface as positional search; keywords must
+    not revoke an authenticated surface member.
+    """
+
+    prefix = (
+        "import re\n"
+        "\n"
+        "def A(value):\n"
+        "    pattern = re.compile('x')\n"
+        "    return pattern.search(value, pos=0)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="regex_search_keyword_surface_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=(
             prefix

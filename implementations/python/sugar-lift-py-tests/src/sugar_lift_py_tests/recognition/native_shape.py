@@ -68,6 +68,15 @@ class NativeShape(Enum):
     PATH = auto()
     NUMPY_ARRAY = auto()
     NUMPY_GENERATOR = auto()
+    # Receiver-surface shapes for method universes (#5577). Construction keys
+    # for these surfaces must NOT be hard-coded vendor logos in production
+    # tables (#5603). Surfaces arrive only via load_call_shape_protocol /
+    # load_instance_call_protocol (same empty-kit pattern as #5618 fixtures).
+    # Until a contract loads, SchemaValidator / SchemaSerializer /
+    # ValidationError method rows stay loud FactoryPanic.
+    SCHEMA_VALIDATOR = auto()
+    SCHEMA_SERIALIZER = auto()
+    VALIDATION_ERROR = auto()
 
 
 # Language / builtin protocol coordinates only (#5603).
@@ -134,10 +143,17 @@ _NATIVE_INSTANCE_CLASS_DECORATORS: dict[
     tuple[NativeShape, str], NativeShape
 ] = {}
 
+# Language surface methods: recognition key is (NativeShape, member), never a
+# bare global method leaf (#5577). Coordinate spellings are language FQNs.
 _NATIVE_INSTANCE_CALLS = {
     (NativeShape.REGEX_PATTERN, "search"): "re.Pattern.search",
     (NativeShape.PATH, "resolve"): "pathlib.Path.resolve",
 }
+
+# Kit-loaded (shape, member) → coordinate overlay (#5577 / #5618 pattern).
+# Empty by construction — SchemaValidator.validate_python etc. arrive only via
+# load_instance_call_protocol from external kit/bridge evidence.
+_PROTOCOL_INSTANCE_CALLS: dict[tuple[NativeShape, str], str] = {}
 
 _CLASS_IMPORT_SHAPES = {
     ("typing", "Generic"): NativeShape.GENERIC_CLASS,
@@ -249,9 +265,17 @@ def recognize_native_instance_call(
     receiver: NativeShape,
     member: str,
 ) -> str | None:
-    """Resolve a member call from its authenticated constructed receiver shape."""
+    """Resolve a member call from its authenticated constructed receiver shape.
 
-    return _NATIVE_INSTANCE_CALLS.get((receiver, member))
+    Keys are (NativeShape, member) — never bare method leaves and never vendor
+    logo string matches (#5577). Kit-loaded surfaces merge after language ones
+    via load_instance_call_protocol (empty until external contract loads).
+    """
+
+    coordinate = _NATIVE_INSTANCE_CALLS.get((receiver, member))
+    if coordinate is not None:
+        return coordinate
+    return _PROTOCOL_INSTANCE_CALLS.get((receiver, member))
 
 
 def recognize_native_decorator(target: str | None) -> NativeShape | None:
@@ -296,6 +320,8 @@ def load_call_shape_protocol(coordinates: dict[str, NativeShape]) -> None:
 
     Production language table is unchanged. Vendor-rooted keys must not appear
     hard-coded in this module; they arrive only through this loader.
+    Used for SchemaValidator / SchemaSerializer ctor identities (#5577) once a
+    content-addressed kit contract exists.
     """
 
     _PROTOCOL_CALL_SHAPES.clear()
@@ -306,6 +332,26 @@ def clear_call_shape_protocol() -> None:
     """Remove kit-loaded call-shape coordinates."""
 
     _PROTOCOL_CALL_SHAPES.clear()
+
+
+def load_instance_call_protocol(
+    coordinates: dict[tuple[NativeShape, str], str],
+) -> None:
+    """Install (shape, member) → coordinate map from a kit/bridge contract.
+
+    Production language instance methods (re.Pattern.search, pathlib.Path.resolve)
+    stay in ``_NATIVE_INSTANCE_CALLS``. Vendor surfaces (SchemaValidator.validate_python,
+    …) arrive only through this loader (#5577 / #5618 empty-kit pattern).
+    """
+
+    _PROTOCOL_INSTANCE_CALLS.clear()
+    _PROTOCOL_INSTANCE_CALLS.update(coordinates)
+
+
+def clear_instance_call_protocol() -> None:
+    """Remove kit-loaded instance-call coordinates (test isolation / unload)."""
+
+    _PROTOCOL_INSTANCE_CALLS.clear()
 
 
 def load_instance_class_decorator_protocol(

@@ -183,11 +183,23 @@ def recognize_callee_universe(
         return result_support
     support = recognize_authenticated_callee_identity(identity)
     if support is None:
-        if _bound_source_callable_identity(site) != identity:
+        if _bound_source_callable_identity(site) == identity:
+            support = CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
+            leaf = site.call_target_name()
+            if target is not None and target != f"call:{leaf}":
+                return None
+            return support
+        # Receiver-surface methods (#5577): result identity may spell
+        # ``ctor.member`` (e.g. ``re.compile.search``) while the enrolled
+        # coordinate is the surface FQN (``re.Pattern.search``). Prefer the
+        # Assign-bound surface registry over the raw result join.
+        surface = CalleeUniverseRecognition._surface_method_coordinate(site)
+        if surface is None:
             return None
-        support = CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
-        leaf = site.call_target_name()
-        if target is not None and target != f"call:{leaf}":
+        support = recognize_authenticated_callee_identity(surface)
+        if support is None:
+            return None
+        if not _target_matches_call(target, surface, site):
             return None
         return support
     if not _target_matches_call(target, identity, site):
@@ -226,12 +238,38 @@ def recognize_authenticated_callee_identity(
 
 
 class CalleeUniverseRecognition:
-    """Resolve a call's authenticated source-bound callee coordinate."""
+    """Resolve a call's authenticated source-bound callee coordinate.
+
+    Receiver-surface method universes (#5577)
+    -----------------------------------------
+    Method calls ``recv.member(...)`` never authenticate by bare method leaf
+    (``to_python``, ``validate_python``, …). Recognition requires:
+
+    1. **Receiver provenance** — Name receiver whose latest Assign is an
+       import-authenticated constructor Call
+       (``_bound_native_receiver_coordinate`` via ``imported_call_identity``).
+    2. **Surface member registry** — ``(NativeShape, member) → coordinate``
+       from language tables and optional kit/bridge loaders
+       (``recognize_native_instance_call``). Keys are shapes, not logos.
+    3. **Keywords** — positional and keyword method calls share the same
+       surface path; keywords no longer blanket-refuse when the surface
+       authenticates (pydantic mass uses ``mode=`` / ``include_url=``).
+
+    Partitions still loud until kit contract: fixture/annotated params without
+    Assign, Attribute chains (``exc_info.value.errors``), Call receivers
+    (``Model(...).model_dump()``), and any surface not loaded via kit.
+    """
 
     @classmethod
     def coordinate(cls, site) -> str | None:
-        if site is None or site.observed != "Call" or site.call_has_keywords():
+        if site is None or site.observed != "Call":
             return None
+
+        # Keyword-bearing sites only authenticate through receiver-surface
+        # provenance (#5577). Free-function / bare-builtin paths stay
+        # positional-only so open-domain methods do not silence via keywords.
+        if site.call_has_keywords():
+            return cls._surface_method_coordinate(site)
 
         receiver = site.call_receiver()
         if receiver is not None:
@@ -256,11 +294,9 @@ class CalleeUniverseRecognition:
                 result_support = _DTYPE_RESULT_SUPPORT.get(imported)
                 if result_support is not None:
                     return "dtype"
-            bound_receiver = _bound_native_receiver_coordinate(
-                site, receiver.name_id(), target
-            )
-            if bound_receiver is not None:
-                return bound_receiver
+            surface = cls._surface_method_coordinate(site)
+            if surface is not None:
+                return surface
             return cls._method_coordinate(site, receiver)
 
         target = site.call_target_name()
@@ -286,6 +322,25 @@ class CalleeUniverseRecognition:
         if target not in _IMPORTED_ATTRIBUTE_LEAVES:
             return None
         return imported_call_identity(site)
+
+    @classmethod
+    def _surface_method_coordinate(cls, site) -> str | None:
+        """Authenticate ``recv.member(...)`` via Assign-bound native surface.
+
+        Never bare method leaves. Receiver must be a Name whose definition is
+        an import-authenticated constructor Call; member must be enrolled on
+        that shape (language table or kit-loaded surface registry).
+        """
+
+        if site is None or site.observed != "Call" or not site.source:
+            return None
+        receiver = site.call_receiver()
+        if receiver is None or receiver.observed != "Name":
+            return None
+        member = site.call_target_name()
+        if member is None:
+            return None
+        return _bound_native_receiver_coordinate(site, receiver.name_id(), member)
 
     @classmethod
     def _name_is_unshadowed(cls, site, name: str) -> bool:
