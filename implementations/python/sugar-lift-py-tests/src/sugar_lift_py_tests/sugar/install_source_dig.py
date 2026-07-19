@@ -23,6 +23,7 @@ import ast
 import copy
 import functools
 import inspect
+import sys
 import textwrap
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -295,7 +296,13 @@ def _installed_source(module_name: str) -> tuple[str, str] | None:
 
 
 def _installed_native_extension(module_name: str) -> str | None:
-    """Return one exact extension-module origin without importing the module."""
+    """Return one exact extension-module origin without importing the module.
+
+    Covers ExtensionFileLoader packages (``.so``) and top-level built-in
+    modules (``origin='built-in'``, e.g. stdlib ``_csv``). Built-ins are only
+    admitted as top-level names so nested package dig never treats a missing
+    package as native.
+    """
     if not module_name:
         return None
     parts = module_name.split(".")
@@ -307,22 +314,39 @@ def _installed_native_extension(module_name: str) -> str | None:
             lookup_name = qualified if search_path is None else parts[index - 1]
             spec = importlib.machinery.PathFinder.find_spec(lookup_name, search_path)
             if spec is None:
+                # PathFinder does not own built-ins; fall through for top-level.
+                if len(parts) == 1:
+                    break
                 return None
             if index < len(parts):
                 search_path = spec.submodule_search_locations
                 if search_path is None:
                     return None
-        origin = getattr(spec, "origin", None)
-        loader = getattr(spec, "loader", None)
-        if not isinstance(origin, str) or not isinstance(
-            loader, importlib.machinery.ExtensionFileLoader
-        ):
-            return None
-        if not origin.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES)):
-            return None
-        return origin
+        else:
+            origin = getattr(spec, "origin", None)
+            loader = getattr(spec, "loader", None)
+            if (
+                isinstance(origin, str)
+                and isinstance(loader, importlib.machinery.ExtensionFileLoader)
+                and origin.endswith(tuple(importlib.machinery.EXTENSION_SUFFIXES))
+            ):
+                return origin
     except (ImportError, KeyError, ModuleNotFoundError, OSError, TypeError, ValueError):
+        pass
+    # Top-level built-in (no package walk). Never for dotted package names.
+    if "." in module_name:
         return None
+    try:
+        builtin_spec = importlib.util.find_spec(module_name)
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return None
+    if (
+        builtin_spec is None
+        or builtin_spec.loader is not importlib.machinery.BuiltinImporter
+        or builtin_spec.origin != "built-in"
+    ):
+        return None
+    return "built-in"
 
 
 def _relative_import_package_parts(defining_module: str) -> list[str]:
@@ -366,11 +390,12 @@ def _resolve_qualified_native_callable(
 ):
     """Follow one static re-export route to an installed extension symbol.
 
-    A native module spec proves where the symbol is loaded from, but not what
-    kind of value that export denotes. Inspect the exact loaded export before
-    assigning callable authority: native exception classes carry stronger,
-    statically decidable evidence and must reach RaiseSugar as
-    ExceptionClassValue.
+    PathFinder origin is sufficient for callable coordinate authority
+    (``NativeCallableValue``) and for refusing dig body. Dig must never
+    cold-import a *package* extension tree: that freezes ``dig.resolve_value``
+    on vendor package init (sklearn #5338 family D residual) under the product
+    bound. ExceptionClassValue remains decidable only from already-resident
+    modules or from a top-level extension cold import (stdlib ``_csv``-class).
     """
     if "." not in import_target or import_target in resolving:
         return None
@@ -383,12 +408,21 @@ def _resolve_qualified_native_callable(
             NativeCallableValue,
         )
 
-        try:
-            exported = getattr(importlib.import_module(module_name), attr)
-        except (AttributeError, ImportError, ModuleNotFoundError, OSError):
-            return None
-        if isinstance(exported, type) and issubclass(exported, BaseException):
-            return ExceptionClassValue(import_target)
+        module = sys.modules.get(module_name)
+        if module is None and "." not in module_name:
+            # Top-level extension only (e.g. ``_csv``). Nested package
+            # extensions stay coordinate-only — never pull sklearn/numpy trees.
+            try:
+                module = importlib.import_module(module_name)
+            except (ImportError, ModuleNotFoundError, OSError):
+                module = None
+        if module is not None:
+            try:
+                exported = getattr(module, attr)
+            except AttributeError:
+                return None
+            if isinstance(exported, type) and issubclass(exported, BaseException):
+                return ExceptionClassValue(import_target)
 
         return NativeCallableValue(
             qualified_name=import_target,
