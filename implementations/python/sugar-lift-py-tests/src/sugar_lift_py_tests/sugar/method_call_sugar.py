@@ -88,24 +88,15 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
     def _collect_value(
         self, remaining: tuple, accumulated: tuple, value, ctx: object
     ) -> Outcome:
-        from sugar_lift_py_tests.floor import GuardedValue
-        from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.outcome import Incomplete
-
-        if isinstance(value, GuardedValue):
-            true_outcome = self._collect_value(
-                remaining, accumulated, value.when_true, ctx
-            )
-            if isinstance(true_outcome, Incomplete):
-                return true_outcome.guarded(value.guard)
-            false_outcome = self._collect_value(
-                remaining, accumulated, value.when_false, ctx
-            )
-            if isinstance(false_outcome, Incomplete):
-                return false_outcome.guarded(not_(value.guard))
-            return Complete(
-                GuardedValue(value.guard, true_outcome.value, false_outcome.value)
-            )
+        # Compact method projection (#5338 / stata reduce_body residual):
+        # GuardedValue receivers/args are carried as one operand. Do **not**
+        # split the call across faces — per-face projection re-reduced
+        # remaining args under the same ctx and went quadratic for nested
+        # methods on the same guarded binding
+        # (``data.set_index(data.pop(index_col))`` over multi-face ``data``
+        # paid faces² NameSugar reduces). Method body dig remains for
+        # non-guarded ObjectValue receivers; guarded carriers stay
+        # method-coordinate CallSiteValues.
         return self._collect(remaining, (*accumulated, value), ctx)
 
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:

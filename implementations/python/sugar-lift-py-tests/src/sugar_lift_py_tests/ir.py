@@ -326,6 +326,24 @@ def _intern_formula(formula: "Formula") -> "Formula":
     return table.setdefault(_formula_cycle_key(formula), formula)
 
 
+def _term_formula_key(term: "Term") -> tuple:
+    """Finite key for one atomic formula arg.
+
+    Under ``term_intern_scope``, request-scoped term hash-cons already gives
+    structural identity as object identity after ``_intern_term``. Key by that
+    identity — never rebuild a full ``TermTableBuilder`` CID walk per atomic
+    intern (#5338 stata reduce_body: NotInOp ``py.in`` over large CallSiteValue
+    terms paid ~19s in formula keys alone).
+
+    Outside an intern scope (ad-hoc tests / one-shot builders), fall back to a
+    content CID so structural twins still collide without a live table.
+    """
+    tables = _TERM_INTERN_TABLE.get()
+    if tables is not None:
+        return ("term-id", id(_intern_term(term)))
+    return ("term-cid", TermTableBuilder().reference(term)["cid"])
+
+
 def _formula_cycle_key(formula: "Formula") -> tuple:
     """Build a finite structural key without invoking dataclass hash/equality."""
     memo: dict[int, tuple] = {}
@@ -345,7 +363,7 @@ def _formula_cycle_key(formula: "Formula") -> tuple:
                 memo[marker] = (
                     "atomic",
                     node.name,
-                    tuple(TermTableBuilder().reference(t)["cid"] for t in node.args),
+                    tuple(_term_formula_key(t) for t in node.args),
                 )
             elif isinstance(node, _Connective):
                 memo[marker] = ("connective", node.kind, tuple(memo[id(child)] for child in node.operands))

@@ -139,6 +139,11 @@ def finite_membership_value(left, right, site):
 
     Accepts literal tuple/list domains whose every element is equality-
     comparable with ``left``.  Empty domains yield no refinement.
+
+    Non-ground domain elements (CallSiteValue / dig-opaque / symbolic carriers)
+    are refused: they are not literal domain members, and equals → formula
+    intern over large callsite terms re-pays reduce_body volume without adding
+    a decidable refinement (#5338 For+If column membership).
     """
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue
     from sugar_lift_py_tests.floor.list_value import ListValue
@@ -147,6 +152,11 @@ def finite_membership_value(left, right, site):
     from sugar_lift_py_tests.outcome import Complete
 
     if type(right) not in (TupleValue, ListValue) or not right.elements:
+        return None
+    # Literal domains only — same ground primitive seat as _ground_membership.
+    if any(
+        _ground_primitive_value(element) is _NOT_GROUND for element in right.elements
+    ):
         return None
     value = right.elements[-1]
     for element in reversed(right.elements[:-1]):
