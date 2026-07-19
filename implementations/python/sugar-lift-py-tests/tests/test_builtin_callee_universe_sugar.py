@@ -73,10 +73,12 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "dataclasses_is_dataclass_universe_coordinate",
         "math_isclose_universe_coordinate",
         "textwrap_dedent_universe_coordinate",
+        "conv_builtin_universe_coordinate",
     } <= enrolled
     # Vendor mint witnesses retired with logo tables — kit protocol path only.
     assert "numpy_all_universe_coordinate" not in enrolled
     assert "numpy_dtype_universe_coordinate" not in enrolled
+    assert "numpy_issubdtype_universe_coordinate" not in enrolled
 
 
 def test_all_nine_authenticated_conv_rows_select_the_converter_owner() -> None:
@@ -625,24 +627,38 @@ def _issubdtype_call_site(source: str) -> SourceFragment:
 
 
 def test_authenticated_numpy_issubdtype_selects_one_factory_owner() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_dtype(left, right):\n"
-        "    assert np.issubdtype(left, right)\n"
-    )
-    context = FactoryBuildContext(
-        filename="issubdtype.py",
-        catalog=default_catalog(),
-    )
-    built = build_node(
-        _issubdtype_call_site(source),
-        filename="issubdtype.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """#5400: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
+        CalleeUniverseSupport,
     )
 
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.issubdtype": CalleeUniverseSupport.NUMPY_ISSUBDTYPE}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(left, right):\n"
+            "    assert np.issubdtype(left, right)\n"
+        )
+        context = FactoryBuildContext(
+            filename="issubdtype.py",
+            catalog=default_catalog(),
+        )
+        built = build_node(
+            _issubdtype_call_site(source),
+            filename="issubdtype.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -672,22 +688,38 @@ def test_authenticated_numpy_issubdtype_selects_one_factory_owner() -> None:
     ],
 )
 def test_unwarranted_issubdtype_receiver_is_not_factory_owned(source: str) -> None:
-    context = FactoryBuildContext(
-        filename="issubdtype.py",
-        catalog=default_catalog(),
-    )
-    built = build_node(
-        _issubdtype_call_site(source),
-        filename="issubdtype.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """Lying twins stay unowned even with the real kit coordinate loaded."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
+        CalleeUniverseSupport,
     )
 
-    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.issubdtype": CalleeUniverseSupport.NUMPY_ISSUBDTYPE}
+        )
+        context = FactoryBuildContext(
+            filename="issubdtype.py",
+            catalog=default_catalog(),
+        )
+        built = build_node(
+            _issubdtype_call_site(source),
+            filename="issubdtype.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
-def test_numpy_issubdtype_witness_pair_is_enrolled() -> None:
-    assert "numpy_issubdtype_universe_coordinate" in {
+def test_numpy_issubdtype_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5400 / #5902)."""
+
+    assert "numpy_issubdtype_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 

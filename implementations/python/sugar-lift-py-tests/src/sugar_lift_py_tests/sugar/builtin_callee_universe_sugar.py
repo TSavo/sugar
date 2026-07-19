@@ -199,6 +199,10 @@ class BuiltinCalleeUniverseSugar(
             _dataclasses_is_dataclass_witness(),
             _path_resolve_coordinate_witness(),
             _math_isclose_witness(),
+            # #5409 — class-body import-bound converter (BOUND_SOURCE; no logo).
+            _imported_method_coordinate_witness(
+                setup=("import numpy._core._multiarray_tests as mt\n"),
+            ),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
