@@ -230,6 +230,8 @@ def extract_progress_from_engine_log(
             "phase_share": {},
             "last_heartbeat": None,
             "recent": [],
+            "mechanism": None,
+            "dominant_mechanism": None,
         }
     heartbeats = [event for event in events if event.get("event") == "heartbeat"]
     exits = [event for event in events if event.get("event") == "exit"]
@@ -280,6 +282,12 @@ def extract_progress_from_engine_log(
     }
     recent = (heartbeats or events)[-last_n:]
     last_hb = heartbeats[-1] if heartbeats else None
+    # #5306: shared timeout mechanism fingerprint (stack-role buckets).
+    from sugar_lift_py_tests.idd.timeout_mechanism_fingerprint import (
+        fingerprint_engine_events,
+    )
+
+    mechanism = fingerprint_engine_events(events)
     return {
         "event_count": len(events),
         "heartbeat_count": len(heartbeats),
@@ -302,6 +310,8 @@ def extract_progress_from_engine_log(
         "heartbeat_role_counts": dict(heartbeat_role),
         "last_heartbeat": last_hb,
         "recent": recent,
+        "mechanism": mechanism,
+        "dominant_mechanism": mechanism.get("dominant_mechanism"),
     }
 
 
