@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import builtins as _builtins_module
 from enum import Enum, auto
 
 from sugar_lift_python_source.source_tables import locate_parsed_node, parsed_parents
@@ -443,6 +444,113 @@ def recognize_callee_universe(
     if not _target_matches_call(target, identity, site):
         return None
     return support
+
+
+class CalleeResolutionKind(str, Enum):
+    """Why a call-site coordinate did or did not resolve (#5252/#5913 audit).
+
+    ``recognize_callee_universe`` already computes local-binding, imported-
+    identity, and receiver-shape testimony on every call before deciding pass
+    or fail; it discarded that testimony once the boolean answer was made.
+    This is the same testimony, kept, as a coarse partition:
+
+    * ``RECOGNIZED`` — ``recognize_callee_universe`` already accepted it; not
+      an unclassified-locus row at all.
+    * ``IMPORTED_UNRESOLVED`` — resolves to an imported/assigned definition
+      (vendor or otherwise) but no recognizer family covers it. This is the
+      genuine drain frontier.
+    * ``LOCAL_BINDING`` — resolves to a local FunctionDef/Lambda/for-unpacked
+      binding, not a vendor method.
+    * ``BUILTIN`` — the call leaf is a Python builtin (``hash``, ``repr``,
+      …), not a vendor method, even when no production recognizer claims it.
+    * ``CHAINED_RECEIVER`` — the receiver is an Attribute/Call expression
+      (``a.b.c.method()``), not a bindable Name; needs a different partition
+      than a name-rooted call.
+    * ``UNRESOLVED_OTHER`` — none of the above testified; named explicitly so
+      it is never silently folded into one of the other classes.
+    """
+
+    RECOGNIZED = "recognized"
+    IMPORTED_UNRESOLVED = "imported_unresolved"
+    LOCAL_BINDING = "local_binding"
+    BUILTIN = "builtin"
+    CHAINED_RECEIVER = "chained_receiver"
+    UNRESOLVED_OTHER = "unresolved_other"
+
+
+def classify_callee_resolution(
+    target: str | None, *, site
+) -> CalleeResolutionKind:
+    """Classify the recognition outcome already computed for ``site``.
+
+    Reuses exactly the structural provenance ``recognize_callee_universe``
+    itself calls (``_local_source_function_identity``, ``_result_call_
+    identity``, ``_bound_source_callable_identity``, ``call_receiver``) —
+    no new predicate, no scan, no vendor-name matching. Never claims
+    ``RECOGNIZED`` unless the recognizer itself accepted the call, and never
+    claims ``IMPORTED_UNRESOLVED``/``BUILTIN``/``LOCAL_BINDING`` for a call
+    the recognizer already resolved.
+    """
+
+    if site is None or getattr(site, "observed", None) != "Call":
+        return CalleeResolutionKind.UNRESOLVED_OTHER
+    if recognize_callee_universe(target, site=site) is not None:
+        return CalleeResolutionKind.RECOGNIZED
+    receiver = site.call_receiver()
+    if receiver is not None and receiver.observed != "Name":
+        # Attribute/Call chain receiver: not a bindable name at all.
+        return CalleeResolutionKind.CHAINED_RECEIVER
+    if receiver is None and (
+        _local_source_function_identity(site) is not None
+        or _bare_call_binds_locally(site)
+    ):
+        return CalleeResolutionKind.LOCAL_BINDING
+    identity = _result_call_identity(site)
+    if identity is None and receiver is None:
+        identity = _bound_source_callable_identity(site)
+    if identity is not None:
+        # Resolved to an imported/assigned definition; no recognizer family
+        # claims it. This is the genuine drain frontier.
+        return CalleeResolutionKind.IMPORTED_UNRESOLVED
+    leaf = site.call_target_name()
+    if leaf is not None and hasattr(_builtins_module, leaf):
+        return CalleeResolutionKind.BUILTIN
+    return CalleeResolutionKind.UNRESOLVED_OTHER
+
+
+def _bare_call_binds_locally(site) -> bool:
+    """True when a bare call's name is bound by a FunctionDef/Lambda-Assign.
+
+    Same declaration testimony ``_local_source_function_identity`` reads
+    (nested ``FunctionDef`` / ``Assign`` of a ``Lambda``), but without that
+    function's stricter "function-local" requirement: a module-level
+    test-file helper (``drepr = lambda x: ...`` at module scope, then used
+    inside a ``test_*`` function) is still a local, non-vendor binding even
+    though it is not lexically local to the enclosing function.
+    """
+
+    if site is None or site.observed != "Call" or site.call_receiver() is not None:
+        return False
+    target = site.call_target_name()
+    if target is None:
+        return False
+    declarations, shadowed_parameters = visible_declarations(site)
+    if target in shadowed_parameters:
+        return False
+    bound = False
+    for declaration in declarations:
+        if declaration.observed in {"FunctionDef", "AsyncFunctionDef"}:
+            if declaration.function_name() == target:
+                bound = True
+            continue
+        if target not in declaration.stored_or_deleted_names():
+            continue
+        bound = (
+            declaration.observed == "Assign"
+            and declaration.stored_or_deleted_names() == frozenset({target})
+            and declaration.assign_value().observed == "Lambda"
+        )
+    return bound
 
 
 def _target_matches_call(target: str | None, coordinate: str | None, site) -> bool:
@@ -1407,8 +1515,10 @@ def _source_path(statement):
 
 
 __all__ = [
+    "CalleeResolutionKind",
     "CalleeUniverseRecognition",
     "CalleeUniverseSupport",
+    "classify_callee_resolution",
     "clear_dtype_result_protocol",
     "clear_imported_callee_protocol",
     "imported_call_identity",

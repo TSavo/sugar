@@ -37,6 +37,11 @@ class FactoryGapInfo:
     fix: str
     gap_kind: GapKind = GapKind.SUGAR
     gap_locus: GapLocus = GapLocus.AST
+    # Recognition outcome already computed for this gap's callee, when the
+    # producer has one (#5252/#5913 audit — recognize_callee_universe threw
+    # this away once it decided pass/fail). Empty string when the producer
+    # does not (yet) compute a callee resolution — never invented downstream.
+    resolution_kind: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.gap_kind, GapKind):
@@ -67,6 +72,7 @@ class FactoryGapInfo:
             "observed": self.observed,
             "requested": self.requested,
             "fix": self.fix,
+            "resolution_kind": self.resolution_kind,
             "gap_kind": gap_kind_label(self.gap_kind),
             "gap_locus": gap_locus_label(self.gap_locus),
         }

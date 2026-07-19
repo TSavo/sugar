@@ -15,10 +15,20 @@ Every unclassified / unresolved walk row MUST retain a locus object:
       "role": "<requested factory role: statement|term|...>",
       "reason": "<why walk left the row unclassified>",
       "file": "<repo-relative path>",
-      "line": 1234
+      "line": 1234,
+      "resolution_kind": "<recognizer's own resolution outcome, or '' when the producer computes none>"
     }
 
 Canonical print form: ``file:line`` (e.g. ``pandas/core/frame.py:1234``).
+
+``resolution_kind`` (#5252/#5913 audit) carries the recognition outcome
+``recognize_callee_universe`` already computed and previously discarded once
+it decided pass/fail — e.g. ``imported_unresolved`` (resolves to an imported/
+assigned definition but no recognizer family covers it — the genuine drain
+frontier), ``local_binding``, ``builtin``, ``chained_receiver``, or
+``unresolved_other``. It is additive: empty when a producer (e.g. a
+conservation-violation gap) computes no callee resolution. Its presence
+never changes ``factory_walk_statuses.unclassified`` or the locus count.
 
 Acceptance for next recensus producer:
 1. ``factory_walk_statuses.unclassified`` equals the count of locus rows.
@@ -52,6 +62,11 @@ LOCUS_FIELD_NAMES = (
     "reason",
     "file",
     "line",
+    # Recognition outcome for this row's callee, when a producer computes one
+    # (#5252/#5913 audit). Additive only: empty string when a producer does
+    # not carry it, never required for addressability (locus_is_addressable
+    # does not gate on it), so its presence never changes any count.
+    "resolution_kind",
 )
 
 
@@ -98,6 +113,10 @@ def project_unclassified_locus(row: Any) -> dict[str, Any] | None:
             or ""
         )
         reason = row.get("reason") or ""
+        extra = row.get("extra") if isinstance(row.get("extra"), Mapping) else {}
+        resolution_kind = row.get("resolution_kind") or extra.get(
+            "resolution_kind"
+        ) or ""
     else:
         file = getattr(row, "file", None) or getattr(row, "path", None) or ""
         line = getattr(row, "line", None)
@@ -112,6 +131,11 @@ def project_unclassified_locus(row: Any) -> dict[str, Any] | None:
             or ""
         )
         reason = getattr(row, "reason", None) or ""
+        row_extra = getattr(row, "extra", None)
+        extra = row_extra if isinstance(row_extra, Mapping) else {}
+        resolution_kind = (
+            getattr(row, "resolution_kind", None) or extra.get("resolution_kind") or ""
+        )
 
     try:
         line_int = int(line) if line is not None and line != "" else 0
@@ -128,6 +152,7 @@ def project_unclassified_locus(row: Any) -> dict[str, Any] | None:
         "reason": str(reason),
         "file": str(file),
         "line": line_int,
+        "resolution_kind": str(resolution_kind),
     }
 
 
