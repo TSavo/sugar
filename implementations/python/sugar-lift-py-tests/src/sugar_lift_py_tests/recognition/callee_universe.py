@@ -60,7 +60,7 @@ _IMPORTED_SUPPORT = {
     ),
 }
 
-_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all"})
+_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list"})
 
 
 def recognize_callee_universe(
