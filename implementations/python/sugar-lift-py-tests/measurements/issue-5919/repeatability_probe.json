@@ -1,0 +1,473 @@
+[
+  {
+    "file": "pandas/tests/frame/test_reductions.py",
+    "with_manifest": false,
+    "elapsed_s": 16.27,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "pandas/tests/frame/test_reductions.py",
+    "with_manifest": false,
+    "elapsed_s": 13.5,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "exception",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "pandas/tests/frame/test_reductions.py",
+    "with_manifest": false,
+    "elapsed_s": 15.32,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "pandas/tests/frame/test_reductions.py",
+    "with_manifest": true,
+    "elapsed_s": 3.75,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "pandas/tests/frame/test_reductions.py",
+    "with_manifest": true,
+    "elapsed_s": 14.91,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "pandas/tests/frame/test_reductions.py",
+    "with_manifest": true,
+    "elapsed_s": 14.84,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "pandas/tests/indexes/test_old_base.py",
+    "with_manifest": false,
+    "elapsed_s": 1.95,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "pandas/tests/indexes/test_old_base.py",
+    "with_manifest": false,
+    "elapsed_s": 1.83,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "pandas/tests/indexes/test_old_base.py",
+    "with_manifest": false,
+    "elapsed_s": 1.82,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "pandas/tests/indexes/test_old_base.py",
+    "with_manifest": true,
+    "elapsed_s": 1.8,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "pandas/tests/indexes/test_old_base.py",
+    "with_manifest": true,
+    "elapsed_s": 1.79,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "pandas/tests/indexes/test_old_base.py",
+    "with_manifest": true,
+    "elapsed_s": 1.81,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "pandas/tests/io/test_parquet.py",
+    "with_manifest": false,
+    "elapsed_s": 6.24,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "pandas/tests/io/test_parquet.py",
+    "with_manifest": false,
+    "elapsed_s": 6.03,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "pandas/tests/io/test_parquet.py",
+    "with_manifest": false,
+    "elapsed_s": 6.02,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "pandas/tests/io/test_parquet.py",
+    "with_manifest": true,
+    "elapsed_s": 6.03,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "pandas/tests/io/test_parquet.py",
+    "with_manifest": true,
+    "elapsed_s": 6.47,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "pandas/tests/io/test_parquet.py",
+    "with_manifest": true,
+    "elapsed_s": 6.14,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "pandas/tests/copy_view/test_indexing.py",
+    "with_manifest": false,
+    "elapsed_s": 4.15,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "pandas/tests/copy_view/test_indexing.py",
+    "with_manifest": false,
+    "elapsed_s": 4.36,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "pandas/tests/copy_view/test_indexing.py",
+    "with_manifest": false,
+    "elapsed_s": 4.09,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "pandas/tests/copy_view/test_indexing.py",
+    "with_manifest": true,
+    "elapsed_s": 3.59,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "pandas/tests/copy_view/test_indexing.py",
+    "with_manifest": true,
+    "elapsed_s": 3.11,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "exception",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "pandas/tests/copy_view/test_indexing.py",
+    "with_manifest": true,
+    "elapsed_s": 4.36,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "numpy/_core/tests/test_defchararray.py",
+    "with_manifest": false,
+    "elapsed_s": 4.41,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "numpy/_core/tests/test_defchararray.py",
+    "with_manifest": false,
+    "elapsed_s": 7.18,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "numpy/_core/tests/test_defchararray.py",
+    "with_manifest": false,
+    "elapsed_s": 7.57,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "numpy/_core/tests/test_defchararray.py",
+    "with_manifest": true,
+    "elapsed_s": 7.45,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "numpy/_core/tests/test_defchararray.py",
+    "with_manifest": true,
+    "elapsed_s": 7.4,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "numpy/_core/tests/test_defchararray.py",
+    "with_manifest": true,
+    "elapsed_s": 7.6,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "numpy/_core/tests/test_einsum.py",
+    "with_manifest": false,
+    "elapsed_s": 10.2,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "numpy/_core/tests/test_einsum.py",
+    "with_manifest": false,
+    "elapsed_s": 10.72,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "numpy/_core/tests/test_einsum.py",
+    "with_manifest": false,
+    "elapsed_s": 10.44,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "numpy/_core/tests/test_einsum.py",
+    "with_manifest": true,
+    "elapsed_s": 10.37,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "numpy/_core/tests/test_einsum.py",
+    "with_manifest": true,
+    "elapsed_s": 10.4,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "numpy/_core/tests/test_einsum.py",
+    "with_manifest": true,
+    "elapsed_s": 10.15,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "numpy/_core/tests/test_mem_overlap.py",
+    "with_manifest": false,
+    "elapsed_s": 1.87,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "numpy/_core/tests/test_mem_overlap.py",
+    "with_manifest": false,
+    "elapsed_s": 1.91,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "numpy/_core/tests/test_mem_overlap.py",
+    "with_manifest": false,
+    "elapsed_s": 0.34,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "numpy/_core/tests/test_mem_overlap.py",
+    "with_manifest": true,
+    "elapsed_s": 1.86,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "numpy/_core/tests/test_mem_overlap.py",
+    "with_manifest": true,
+    "elapsed_s": 1.88,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "numpy/_core/tests/test_mem_overlap.py",
+    "with_manifest": true,
+    "elapsed_s": 1.94,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "file": "numpy/_core/tests/test_datetime.py",
+    "with_manifest": false,
+    "elapsed_s": 30.01,
+    "timed_out": true,
+    "repeat_index": 0
+  },
+  {
+    "file": "numpy/_core/tests/test_datetime.py",
+    "with_manifest": false,
+    "elapsed_s": 30.03,
+    "timed_out": true,
+    "repeat_index": 1
+  },
+  {
+    "file": "numpy/_core/tests/test_datetime.py",
+    "with_manifest": false,
+    "elapsed_s": 30.03,
+    "timed_out": true,
+    "repeat_index": 2
+  },
+  {
+    "file": "numpy/_core/tests/test_datetime.py",
+    "with_manifest": true,
+    "elapsed_s": 22.65,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "file": "numpy/_core/tests/test_datetime.py",
+    "with_manifest": true,
+    "elapsed_s": 7.55,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "exception",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "file": "numpy/_core/tests/test_datetime.py",
+    "with_manifest": true,
+    "elapsed_s": 10.09,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "timed_out": false,
+    "repeat_index": 2
+  }
+]

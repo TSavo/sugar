@@ -1,0 +1,338 @@
+[
+  {
+    "file": "numpy/_core/tests/test_cpu_features.py",
+    "with_manifest": false,
+    "elapsed_s": 0.95,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "numpy/_core/tests/test_cpu_features.py",
+    "with_manifest": true,
+    "elapsed_s": 0.96,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "numpy/_core/tests/test_defchararray.py",
+    "with_manifest": false,
+    "elapsed_s": 1.68,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "stderr_tail": "ts/src/sugar_lift_py_tests/sugar/test_function_def_sugar.py\", line 75 in new\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/build.py\", line 123 in _build_site\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/build.py\", line 33 in build_node\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py\", line 1987 in audit_lift_file\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py\", line 1237 in lift_file_payload\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 99 in <lambda>\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit_only/collect_construction_gaps.py\", line 53 in collect_factory_panic\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 97 in _child_payload\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 151 in _run_child\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 453 in main\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 460 in <module>\n\nExtension modules: _cffi_backend, numpy._core._multiarray_umath, numpy.linalg._umath_linalg (total: 3)\n",
+    "timed_out": false
+  },
+  {
+    "file": "numpy/_core/tests/test_defchararray.py",
+    "with_manifest": true,
+    "elapsed_s": 7.2,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "numpy/_core/tests/test_einsum.py",
+    "with_manifest": false,
+    "elapsed_s": 6.73,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "stderr_tail": "/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/test_function_def_sugar.py\", line 181 in desugar\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py\", line 1996 in audit_lift_file\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py\", line 1237 in lift_file_payload\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 99 in <lambda>\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit_only/collect_construction_gaps.py\", line 53 in collect_factory_panic\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 97 in _child_payload\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 151 in _run_child\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 453 in main\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 460 in <module>\n\nExtension modules: _cffi_backend, numpy._core._multiarray_umath, numpy.linalg._umath_linalg, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand (total: 12)\n",
+    "timed_out": false
+  },
+  {
+    "file": "numpy/_core/tests/test_einsum.py",
+    "with_manifest": true,
+    "elapsed_s": 6.25,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "stderr_tail": "le \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/build.py\", line 33 in build_node\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py\", line 1987 in audit_lift_file\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py\", line 1237 in lift_file_payload\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 99 in <lambda>\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit_only/collect_construction_gaps.py\", line 53 in collect_factory_panic\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 97 in _child_payload\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 151 in _run_child\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 453 in main\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 460 in <module>\n\nExtension modules: _cffi_backend, numpy._core._multiarray_umath, numpy.linalg._umath_linalg, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand (total: 12)\n",
+    "timed_out": false
+  },
+  {
+    "file": "numpy/_core/tests/test_mem_overlap.py",
+    "with_manifest": false,
+    "elapsed_s": 1.88,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "numpy/_core/tests/test_mem_overlap.py",
+    "with_manifest": true,
+    "elapsed_s": 1.48,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "stderr_tail": "le \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/build.py\", line 33 in build_node\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py\", line 1987 in audit_lift_file\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py\", line 1237 in lift_file_payload\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 99 in <lambda>\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit_only/collect_construction_gaps.py\", line 53 in collect_factory_panic\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 97 in _child_payload\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 151 in _run_child\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 453 in main\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 460 in <module>\n\nExtension modules: _cffi_backend, numpy._core._multiarray_umath, numpy.linalg._umath_linalg, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand (total: 12)\n",
+    "timed_out": false
+  },
+  {
+    "file": "numpy/ma/core.py",
+    "with_manifest": false,
+    "elapsed_s": 3.83,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "numpy/ma/core.py",
+    "with_manifest": true,
+    "elapsed_s": 3.79,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "numpy/_core/tests/test_datetime.py",
+    "with_manifest": false,
+    "elapsed_s": 30.02,
+    "timed_out": true
+  },
+  {
+    "file": "numpy/_core/tests/test_datetime.py",
+    "with_manifest": true,
+    "elapsed_s": 1.44,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "stderr_tail": "ts/src/sugar_lift_py_tests/sugar/test_function_def_sugar.py\", line 75 in new\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/build.py\", line 123 in _build_site\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/factory/build.py\", line 33 in build_node\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py\", line 1987 in audit_lift_file\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py\", line 1237 in lift_file_payload\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 99 in <lambda>\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/audit_only/collect_construction_gaps.py\", line 53 in collect_factory_panic\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 97 in _child_payload\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 151 in _run_child\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 453 in main\n  File \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 460 in <module>\n\nExtension modules: _cffi_backend, numpy._core._multiarray_umath, numpy.linalg._umath_linalg (total: 3)\n",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/frame/test_reductions.py",
+    "with_manifest": false,
+    "elapsed_s": 14.82,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/frame/test_reductions.py",
+    "with_manifest": true,
+    "elapsed_s": 12.78,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "stderr_tail": "ile \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 460 in <module>\n\nExtension modules: _cffi_backend, numpy._core._multiarray_umath, numpy.linalg._umath_linalg, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, _cyutility, pandas._libs._cyutility, pandas._libs.tslibs.ccalendar, pandas._libs.tslibs.np_datetime, pandas._libs.tslibs.dtypes, pandas._libs.tslibs.base, pandas._libs.tslibs.nattype, pandas._libs.tslibs.timezones, pandas._libs.properties, pandas._libs.tslibs.fields, pandas._libs.tslibs.timedeltas, pandas._libs.tslibs.tzconversion, pandas._libs.tslibs.timestamps, pandas._libs.tslibs.offsets, pandas._libs.tslibs.strptime, pandas._libs.tslibs.parsing, pandas._libs.tslibs.conversion, pandas._libs.tslibs.period, pandas._libs.tslibs.vectorized, pandas._libs.ops_dispatch, pandas._libs.missing, pandas._libs.hashtable, pandas._libs.algos, pandas._libs.interval, pandas._libs.lib, pandas._libs.ops, pandas._libs.hashing, pandas._libs.arrays, pandas._libs.tslib, pandas._libs.sparse, pandas._libs.internals, pandas._libs.indexing, pandas._libs.index, pandas._libs.writers, pandas._libs.join, pandas._libs.window.aggregations, pandas._libs.window.indexers, pandas._libs.reshape, pandas._libs.groupby, pandas._libs.json, pandas._libs.parsers, pandas._libs.testing (total: 54)\n",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/indexes/test_old_base.py",
+    "with_manifest": false,
+    "elapsed_s": 1.43,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "stderr_tail": "gar/implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/outcome/complete.py\", line 39 in and_then\n  ...\n\nExtension modules: _cffi_backend, numpy._core._multiarray_umath, numpy.linalg._umath_linalg, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, _cyutility, pandas._libs._cyutility, pandas._libs.tslibs.ccalendar, pandas._libs.tslibs.np_datetime, pandas._libs.tslibs.dtypes, pandas._libs.tslibs.base, pandas._libs.tslibs.nattype, pandas._libs.tslibs.timezones, pandas._libs.properties, pandas._libs.tslibs.fields, pandas._libs.tslibs.timedeltas, pandas._libs.tslibs.tzconversion, pandas._libs.tslibs.timestamps, pandas._libs.tslibs.offsets, pandas._libs.tslibs.strptime, pandas._libs.tslibs.parsing, pandas._libs.tslibs.conversion, pandas._libs.tslibs.period, pandas._libs.tslibs.vectorized, pandas._libs.ops_dispatch, pandas._libs.missing, pandas._libs.hashtable, pandas._libs.algos, pandas._libs.interval, pandas._libs.lib, pandas._libs.ops, pandas._libs.hashing, pandas._libs.arrays, pandas._libs.tslib, pandas._libs.sparse, pandas._libs.internals, pandas._libs.indexing, pandas._libs.index, pandas._libs.writers, pandas._libs.join, pandas._libs.window.aggregations, pandas._libs.window.indexers, pandas._libs.reshape, pandas._libs.groupby, pandas._libs.json, pandas._libs.parsers, pandas._libs.testing (total: 54)\n",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/indexes/test_old_base.py",
+    "with_manifest": true,
+    "elapsed_s": 1.76,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/indexing/test_partial.py",
+    "with_manifest": false,
+    "elapsed_s": 3.03,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/indexing/test_partial.py",
+    "with_manifest": true,
+    "elapsed_s": 2.98,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/io/excel/test_openpyxl.py",
+    "with_manifest": false,
+    "elapsed_s": 1.28,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/io/excel/test_openpyxl.py",
+    "with_manifest": true,
+    "elapsed_s": 1.34,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/io/test_parquet.py",
+    "with_manifest": false,
+    "elapsed_s": 4.49,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "stderr_tail": "ile \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 460 in <module>\n\nExtension modules: _cffi_backend, numpy._core._multiarray_umath, numpy.linalg._umath_linalg, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, _cyutility, pandas._libs._cyutility, pandas._libs.tslibs.ccalendar, pandas._libs.tslibs.np_datetime, pandas._libs.tslibs.dtypes, pandas._libs.tslibs.base, pandas._libs.tslibs.nattype, pandas._libs.tslibs.timezones, pandas._libs.properties, pandas._libs.tslibs.fields, pandas._libs.tslibs.timedeltas, pandas._libs.tslibs.tzconversion, pandas._libs.tslibs.timestamps, pandas._libs.tslibs.offsets, pandas._libs.tslibs.strptime, pandas._libs.tslibs.parsing, pandas._libs.tslibs.conversion, pandas._libs.tslibs.period, pandas._libs.tslibs.vectorized, pandas._libs.ops_dispatch, pandas._libs.missing, pandas._libs.hashtable, pandas._libs.algos, pandas._libs.interval, pandas._libs.lib, pandas._libs.ops, pandas._libs.hashing, pandas._libs.arrays, pandas._libs.tslib, pandas._libs.sparse, pandas._libs.internals, pandas._libs.indexing, pandas._libs.index, pandas._libs.writers, pandas._libs.join, pandas._libs.window.aggregations, pandas._libs.window.indexers, pandas._libs.reshape, pandas._libs.groupby, pandas._libs.json, pandas._libs.parsers, pandas._libs.testing (total: 54)\n",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/io/test_parquet.py",
+    "with_manifest": true,
+    "elapsed_s": 5.89,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/copy_view/test_indexing.py",
+    "with_manifest": false,
+    "elapsed_s": 2.06,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "stderr_tail": "ile \"/workspace/sugar/implementations/python/sugar-lift-py-tests/scripts/corpus_fatal_triage.py\", line 460 in <module>\n\nExtension modules: _cffi_backend, numpy._core._multiarray_umath, numpy.linalg._umath_linalg, numpy.random._common, numpy.random.bit_generator, numpy.random._bounded_integers, numpy.random._pcg64, numpy.random._generator, numpy.random._mt19937, numpy.random._philox, numpy.random._sfc64, numpy.random.mtrand, _cyutility, pandas._libs._cyutility, pandas._libs.tslibs.ccalendar, pandas._libs.tslibs.np_datetime, pandas._libs.tslibs.dtypes, pandas._libs.tslibs.base, pandas._libs.tslibs.nattype, pandas._libs.tslibs.timezones, pandas._libs.properties, pandas._libs.tslibs.fields, pandas._libs.tslibs.timedeltas, pandas._libs.tslibs.tzconversion, pandas._libs.tslibs.timestamps, pandas._libs.tslibs.offsets, pandas._libs.tslibs.strptime, pandas._libs.tslibs.parsing, pandas._libs.tslibs.conversion, pandas._libs.tslibs.period, pandas._libs.tslibs.vectorized, pandas._libs.ops_dispatch, pandas._libs.missing, pandas._libs.hashtable, pandas._libs.algos, pandas._libs.interval, pandas._libs.lib, pandas._libs.ops, pandas._libs.hashing, pandas._libs.arrays, pandas._libs.tslib, pandas._libs.sparse, pandas._libs.internals, pandas._libs.indexing, pandas._libs.index, pandas._libs.writers, pandas._libs.join, pandas._libs.window.aggregations, pandas._libs.window.indexers, pandas._libs.reshape, pandas._libs.groupby, pandas._libs.json, pandas._libs.parsers, pandas._libs.testing (total: 54)\n",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/copy_view/test_indexing.py",
+    "with_manifest": true,
+    "elapsed_s": 4.0,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/frame/methods/test_diff.py",
+    "with_manifest": false,
+    "elapsed_s": 1.9,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/frame/methods/test_diff.py",
+    "with_manifest": true,
+    "elapsed_s": 1.92,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/frame/test_nonunique_indexes.py",
+    "with_manifest": false,
+    "elapsed_s": 1.91,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/frame/test_nonunique_indexes.py",
+    "with_manifest": true,
+    "elapsed_s": 1.91,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/frame/test_stack_unstack.py",
+    "with_manifest": false,
+    "elapsed_s": 16.71,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/frame/test_stack_unstack.py",
+    "with_manifest": true,
+    "elapsed_s": 16.7,
+    "returncode": 0,
+    "signal": null,
+    "outcome": "completed",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/frame/test_subclass.py",
+    "with_manifest": false,
+    "elapsed_s": 3.08,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "pandas/tests/frame/test_subclass.py",
+    "with_manifest": true,
+    "elapsed_s": 3.05,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "sklearn/utils/tests/test_stats.py",
+    "with_manifest": false,
+    "elapsed_s": 11.87,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "stderr_tail": "",
+    "timed_out": false
+  },
+  {
+    "file": "sklearn/utils/tests/test_stats.py",
+    "with_manifest": true,
+    "elapsed_s": 11.77,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "stderr_tail": "",
+    "timed_out": false
+  }
+]

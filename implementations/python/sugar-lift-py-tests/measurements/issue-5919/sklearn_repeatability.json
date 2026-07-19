@@ -1,0 +1,56 @@
+[
+  {
+    "with_manifest": false,
+    "elapsed_s": 11.91,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "with_manifest": false,
+    "elapsed_s": 2.91,
+    "returncode": -11,
+    "signal": 11,
+    "outcome": null,
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "with_manifest": false,
+    "elapsed_s": 11.75,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 2
+  },
+  {
+    "with_manifest": true,
+    "elapsed_s": 10.04,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "exception",
+    "timed_out": false,
+    "repeat_index": 0
+  },
+  {
+    "with_manifest": true,
+    "elapsed_s": 11.81,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 1
+  },
+  {
+    "with_manifest": true,
+    "elapsed_s": 11.9,
+    "returncode": 3,
+    "signal": null,
+    "outcome": "factory-panic",
+    "timed_out": false,
+    "repeat_index": 2
+  }
+]
