@@ -27,6 +27,7 @@ class PartialFunctionCallable(FunctionCallable):
         *,
         source_arg_values=None,
         term=None,
+        native_shape=None,
     ):
         from sugar_lift_py_tests.factory import factory_panic_gap
 
@@ -58,6 +59,8 @@ class PartialFunctionCallable(FunctionCallable):
                 merged_values.append(value)
 
         assert self.target is not None
+        # Forward the authenticated recognition coordinate — never drop
+        # native_shape (signature drift leaked bare TypeError on vendor walls).
         return self.target.callsite(
             (
                 *self.bound_positional,
@@ -68,4 +71,5 @@ class PartialFunctionCallable(FunctionCallable):
             site,
             source_arg_values=source_arg_values,
             term=term,
+            native_shape=native_shape,
         )
