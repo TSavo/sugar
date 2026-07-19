@@ -53,6 +53,9 @@ class CalleeUniverseSupport(Enum):
     NUMPY_CONVERTER = auto()
     REGEX_SEARCH = auto()
     BOUND_SOURCE_CALLABLE = auto()
+    PATHLIB_PATH = auto()
+    NUMPY_STANDARD_GAMMA = auto()
+    NUMPY_EVAL_SCALAR = auto()
     JSON_LOADS = auto()
     DATACLASSES_ASDICT = auto()
     PATH_RESOLVE = auto()
@@ -152,6 +155,17 @@ _IMPORTED_SUPPORT = {
     "re.Pattern.search": CalleeUniverseSupport.REGEX_SEARCH,
     "json.loads": CalleeUniverseSupport.JSON_LOADS,
     "dataclasses.asdict": CalleeUniverseSupport.DATACLASSES_ASDICT,
+    # Exact import identity (``import pathlib`` / ``from pathlib import Path``).
+    # Corpus: numpy/tests/test_configtool.py — not a module-prefix warrant.
+    "pathlib.Path": CalleeUniverseSupport.PATHLIB_PATH,
+    # Import-constructed Generator receiver method.
+    # Corpus: numpy/random/tests/test_generator_mt19937_regressions.py.
+    "numpy.random.Generator.standard_gamma": (
+        CalleeUniverseSupport.NUMPY_STANDARD_GAMMA
+    ),
+    # Assignment alias of crackfortran source binding.
+    # Corpus: numpy/f2py/tests/test_crackfortran.py.
+    "numpy.f2py.crackfortran._eval_scalar": CalleeUniverseSupport.NUMPY_EVAL_SCALAR,
     "pathlib.Path.resolve": CalleeUniverseSupport.PATH_RESOLVE,
     "numpy.ufunc": CalleeUniverseSupport.UFUNC,
     # Bound-native shape coordinate (``value = np.array(...); value.tobytes()``
@@ -219,11 +233,7 @@ def recognize_callee_universe(
         support = recognize_authenticated_callee_identity(coordinate)
         if support is None:
             return None
-        leaf = coordinate.rsplit(".", 1)[-1]
-        if target is not None and target not in {
-            f"call:{coordinate}",
-            f"call:{leaf}",
-        }:
+        if not _target_matches_call(target, coordinate, site):
             return None
         return support
     result_support = _DTYPE_RESULT_SUPPORT.get(identity)
@@ -238,10 +248,33 @@ def recognize_callee_universe(
         if target is not None and target != f"call:{leaf}":
             return None
         return support
-    leaf = identity.rsplit(".", 1)[-1]
-    if target is not None and target not in {f"call:{identity}", f"call:{leaf}"}:
+    if not _target_matches_call(target, identity, site):
         return None
     return support
+
+
+def _target_matches_call(
+    target: str | None, coordinate: str | None, site
+) -> bool:
+    """Accept full identity, identity leaf, or the call's written leaf/target.
+
+    Local assignment aliases (``eval_scalar = crackfortran._eval_scalar``)
+    spell a different leaf than the import tail; the call-site name is the
+    edge target the universe audit demands.
+    """
+
+    if target is None:
+        return True
+    if coordinate is None:
+        return False
+    allowed = {f"call:{coordinate}", f"call:{coordinate.rsplit('.', 1)[-1]}"}
+    call_leaf = site.call_target_name()
+    if call_leaf is not None:
+        allowed.add(f"call:{call_leaf}")
+    qualified = site.call_qualified_target_name()
+    if qualified is not None:
+        allowed.add(f"call:{qualified}")
+    return target in allowed
 
 
 def recognize_authenticated_callee_identity(
@@ -498,21 +531,10 @@ def _bound_native_receiver_coordinate(
 ) -> str | None:
     """Resolve a member through the latest source-authenticated receiver binding."""
 
-    shape = None
-    declarations, shadowed_parameters = visible_declarations(site)
-    if receiver_name in shadowed_parameters:
+    origin = _assigned_imported_call_identity(site, receiver_name)
+    if origin is None:
         return None
-    for declaration in declarations:
-        stored = declaration.stored_or_deleted_names()
-        if receiver_name not in stored:
-            continue
-        shape = None
-        if declaration.observed != "Assign" or len(stored) != 1:
-            continue
-        value = declaration.assign_value()
-        if value.observed != "Call":
-            continue
-        shape = recognize_native_call(imported_call_identity(value))
+    shape = recognize_native_call(origin)
     if shape is None:
         return None
     return recognize_native_instance_call(shape, member)
@@ -602,7 +624,11 @@ def _result_call_identity(site) -> str | None:
 
 
 def _assigned_imported_call_identity(site, name: str) -> str | None:
-    """Follow one visible assignment whose value is an authenticated import call."""
+    """Follow one visible assignment whose value is an authenticated import call.
+
+    Also resolves same-class helpers whose sole statement is
+    ``return ImportedCtor(...)`` (corpus: ``mt19937 = self._create_generator()``).
+    """
 
     declarations, shadowed_parameters = visible_declarations(site)
     if name in shadowed_parameters:
@@ -618,8 +644,49 @@ def _assigned_imported_call_identity(site, name: str) -> str | None:
         value = declaration.assign_value()
         if value.observed != "Call":
             return None
-        return imported_call_identity(value)
+        direct = imported_call_identity(value)
+        if direct is not None:
+            return direct
+        return _same_class_helper_return_imported_identity(site, value)
     return None
+
+
+def _same_class_helper_return_imported_identity(site, call_value) -> str | None:
+    """Resolve ``x = self.helper()`` when helper returns one import-bound Call."""
+
+    receiver = call_value.call_receiver()
+    if receiver is None or receiver.observed != "Name":
+        return None
+    method_name = call_value.call_target_name()
+    if method_name is None:
+        return None
+    enclosing_method, class_def = _enclosing_method_and_class(site)
+    if class_def is None or enclosing_method is None:
+        return None
+    instance_param = _instance_parameter_name(enclosing_method)
+    if instance_param is None or receiver.name_id() != instance_param:
+        return None
+    helper = None
+    for statement in class_def.body:
+        if (
+            isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and statement.name == method_name
+        ):
+            helper = statement
+            break
+    if helper is None:
+        return None
+    if len(helper.body) != 1 or not isinstance(helper.body[0], ast.Return):
+        return None
+    ret_val = helper.body[0].value
+    if ret_val is None or not isinstance(ret_val, ast.Call):
+        return None
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    ret_frag = SourceFragment.from_node(
+        ret_val, site.filename or "", source=site.source
+    )
+    return imported_call_identity(ret_frag)
 
 
 def _enclosing_method_and_class(site):
