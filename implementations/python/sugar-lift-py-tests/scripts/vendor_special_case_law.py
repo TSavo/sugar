@@ -192,8 +192,33 @@ def _table_literal_vendor_hits(node: ast.AST) -> list[tuple[str, str]]:
                     walk_collection(key)
                 if value is not None:
                     walk_collection(value)
+            return
+        # Comprehension forms of registry tables (e.g. {name: True for name in (...)}).
+        if isinstance(collection, ast.DictComp):
+            walk_collection(collection.key)
+            walk_collection(collection.value)
+            for gen in collection.generators:
+                walk_collection(gen.iter)
+            return
+        if isinstance(collection, (ast.SetComp, ast.ListComp, ast.GeneratorExp)):
+            walk_collection(collection.elt)
+            for gen in collection.generators:
+                walk_collection(gen.iter)
+            return
 
-    if isinstance(node, (ast.Dict, ast.Set, ast.List, ast.Tuple)):
+    if isinstance(
+        node,
+        (
+            ast.Dict,
+            ast.Set,
+            ast.List,
+            ast.Tuple,
+            ast.DictComp,
+            ast.SetComp,
+            ast.ListComp,
+            ast.GeneratorExp,
+        ),
+    ):
         walk_collection(node)
     return hits
 
@@ -322,10 +347,22 @@ def scan_file(path: Path, *, rel: str) -> list[VendorSpecialCase]:
                             ),
                         )
                     )
-            elif isinstance(node, (ast.Dict, ast.Set, ast.List, ast.Tuple)):
-                # Only top-level-ish collection literals that embed logos as
-                # dispatch coordinates. Nested collections are visited as their
-                # own walk nodes too; de-dupe by (line, vendor, expression).
+            elif isinstance(
+                node,
+                (
+                    ast.Dict,
+                    ast.Set,
+                    ast.List,
+                    ast.Tuple,
+                    ast.DictComp,
+                    ast.SetComp,
+                    ast.ListComp,
+                    ast.GeneratorExp,
+                ),
+            ):
+                # Dispatch/registry initializers (including comprehension forms).
+                # Nested collections are visited as their own walk nodes too;
+                # de-dupe by (line, vendor, expression).
                 for vendor, expression in _table_literal_vendor_hits(node):
                     offenders.append(
                         VendorSpecialCase(
