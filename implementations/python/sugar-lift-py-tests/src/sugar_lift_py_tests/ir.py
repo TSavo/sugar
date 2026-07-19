@@ -150,7 +150,7 @@ Term = Union[_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor]
 #   spine via repeated ``ctor`` stays O(depth) total, not O(depth²) re-walks.
 # - ``cid_by_id`` memoizes permanent content CIDs for interned terms so dunder
 #   hash/eq and formula keys stay O(1) after first materialization without
-#   keying on ``id()`` (#5569 — scope-stable identity).
+#   keying on ``id()`` (#5568 / #5569 — scope-stable identity).
 #
 # Restored after #5359 clobbered the #5369 iterative intern while landing
 # CallSiteValue equality / formula cycle keys. Formula intern stays on
@@ -335,7 +335,7 @@ def _term_content_cid(term: "Term") -> str:
     """Permanent content coordinate for a term (wire CID).
 
     Scope-stable: the same structural term yields the same CID whether or not
-    ``term_intern_scope`` is active, and across distinct intern scopes (#5569).
+    ``term_intern_scope`` is active, and across distinct intern scopes (#5568 / #5569).
 
     Under an active intern table, memoize CID by interned object identity so
     formula keys / CallSiteValue hash-eq stay O(1) after first materialization
@@ -363,7 +363,7 @@ def _term_formula_key(term: "Term") -> tuple:
 
     Never key by ``id(_intern_term(...))``: that made ``Formula.__hash__``
     change across ``term_intern_scope`` and corrupted dict/set membership
-    (#5569). Volume is preserved by scope-local CID memoization in
+    (#5568 / #5569). Volume is preserved by scope-local CID memoization in
     ``_term_content_cid``.
     """
     return ("term-cid", _term_content_cid(term))
