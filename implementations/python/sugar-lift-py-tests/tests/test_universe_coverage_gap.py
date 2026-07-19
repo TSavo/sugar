@@ -144,7 +144,7 @@ def test_authenticated_builtin_coordinate_emits_no_universe_gap(
     )
     assert _universe_gaps(payload) == []
 
-    if callee in {"type", "dtype", "all"}:
+    if callee in {"type", "dtype"}:
         node = ast.parse(f"{callee}(value)", mode="eval").body
         context = FactoryBuildContext(
             filename="coordinate.py", catalog=default_catalog()
@@ -341,6 +341,49 @@ def test_authenticated_numpy_allclose_has_universe_support() -> None:
         edge.get("targetSymbol") == "call:numpy.allclose" for edge in payload.call_edges
     )
     assert _universe_gaps(payload) == []
+
+
+def test_authenticated_builtin_all_has_universe_support() -> None:
+    source = (
+        "def test_identity(results, val1):\n"
+        "    assert all(r is val1 for r in results)\n"
+    )
+
+    payload = lift_file_payload(source, "numpy/_core/tests/test_hashtable.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:all" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_shadowed_builtin_all_stays_unclassified() -> None:
+    source = (
+        "def test_identity(all, results, val1):\n"
+        "    assert all(r is val1 for r in results)\n"
+    )
+
+    payload = lift_file_payload(source, "shadowed_all.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:all"]
+
+
+def test_receiver_named_all_is_not_the_builtin() -> None:
+    source = (
+        "def test_identity(helper, results, val1):\n"
+        "    assert helper.all(r is val1 for r in results)\n"
+    )
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "all"
+    )
+    site = SourceFragment.from_node(call, "receiver_all.py", source=source)
+
+    assert CalleeUniverseRecognition.coordinate(site) is None
 
 
 def test_module_scope_numpy_from_import_has_universe_support() -> None:

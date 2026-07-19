@@ -25,7 +25,7 @@ _IMPORTED_SUPPORT = {
     "numpy.allclose": CalleeUniverseSupport.NUMPY_ALLCLOSE,
 }
 
-_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all"})
+_BUILTIN_COORDINATES = frozenset({"type", "dtype"})
 
 
 def recognize_callee_universe(
@@ -68,6 +68,19 @@ class CalleeUniverseRecognition:
         target = site.call_target_name()
         if target is None:
             return None
+        if target == "all":
+            # Authenticate the builtin from its source shape rather than
+            # enrolling a spelling in the generic coordinate set.  A method
+            # receiver was already rejected above; the exact builtin form has
+            # one iterable, no keywords, and no lexical binding that shadows
+            # builtins.all.
+            return (
+                target
+                if site.source
+                and len(site.call_args()) == 1
+                and cls._name_is_unshadowed(site, target)
+                else None
+            )
         if target in _BUILTIN_COORDINATES:
             # Without source there is no evidence of shadowing; keep the bare
             # builtin warrant. With source, parameters and local rebinds revoke.

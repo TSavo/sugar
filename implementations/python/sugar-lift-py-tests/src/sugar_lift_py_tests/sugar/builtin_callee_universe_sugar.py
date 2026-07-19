@@ -66,9 +66,9 @@ class BuiltinCalleeUniverseSugar(
     @classmethod
     def witnesses(cls):
         return (
+            _builtin_all_witness(),
             _coordinate_witness("type", "5", "6"),
             _coordinate_witness("dtype", "'i4'", "'i8'"),
-            _coordinate_witness("all", "True", "False"),
             _imported_coordinate_witness(
                 name="get_handler_name",
                 setup=("from numpy._core.multiarray import get_handler_name\n"),
@@ -85,6 +85,29 @@ class BuiltinCalleeUniverseSugar(
 
     def walk_children(self):
         return self.call.walk_children()
+
+
+def _builtin_all_witness():
+    prefix = (
+        "def A(values):\n"
+        "    return all(value == 1 for value in values)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="all_builtin_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=(
+            prefix
+            + "def test_a():\n"
+            + "    assert A((1, 1)) == True and A((1, 1)) == True\n"
+        ),
+        lying=(
+            prefix
+            + "def test_a():\n"
+            + "    assert A((1, 1)) == True and A((1, 1)) != True\n"
+        ),
+        family="builtin-universe-coordinate",
+    )
 
 
 def _coordinate_witness(callee: str, argument: str, lying_value: str):
