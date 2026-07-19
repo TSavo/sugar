@@ -58,59 +58,11 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
     @staticmethod
     def decorators_preserve_identity(statement) -> bool:
         """Recognize source contracts whose decorator returns the same class."""
-        from sugar_lift_py_tests.recognition.native_shape import (
-            recognizes_identity_decorator,
+        from sugar_lift_py_tests.recognition.class_decorator import (
+            class_decorators_preserve_identity,
         )
-        from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
-        try:
-            root = SourceFragment.from_source(
-                statement.source, statement.filename or ""
-            )
-        except (SyntaxError, TypeError):
-            return False
-        authenticated_names: set[str] = set()
-        authenticated_modules: dict[str, str] = {}
-        declarations = [
-            declaration
-            for fragment in root.fragments()
-            for declaration in fragment.statements()
-        ]
-        for declaration in declarations:
-            if declaration.observed == "ImportFrom":
-                module = declaration.importfrom_module()
-                for imported, alias in declaration.importfrom_names():
-                    if recognizes_identity_decorator(module, imported):
-                        authenticated_names.add(alias or imported)
-            elif declaration.observed == "Import":
-                for imported, alias in declaration.import_names():
-                    bound_name = alias or imported.split(".", 1)[0]
-                    authenticated_modules[bound_name] = (
-                        imported if alias is not None else bound_name
-                    )
-        for decorator in statement.class_decorators():
-            if decorator.observed in {"Name", "Attribute"}:
-                receiver = decorator
-            elif decorator.observed == "Call":
-                receiver = decorator.call_func()
-            else:
-                return False
-            if receiver is None:
-                return False
-            dotted = receiver.dotted_expr_name()
-            if dotted in authenticated_names:
-                continue
-            if dotted is None:
-                return False
-            head, separator, tail = dotted.partition(".")
-            module = authenticated_modules.get(head)
-            if not separator or module is None:
-                return False
-            qualified = f"{module}.{tail}"
-            export_module, _, export_name = qualified.rpartition(".")
-            if not recognizes_identity_decorator(export_module, export_name):
-                return False
-        return True
+        return class_decorators_preserve_identity(statement)
 
     @classmethod
     def new(cls, site, ctx) -> "ClassDefSugar":
@@ -227,6 +179,17 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             "    return z\n"
             "\n"
         )
+        sqlalchemy_orm_decorated = (
+            "from sqlalchemy.orm import as_declarative\n"
+            "\n"
+            "@as_declarative()\n"
+            "class Base:\n"
+            "    pass\n"
+            "\n"
+            "def H(z):\n"
+            "    return z\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="class_def_return",
@@ -297,6 +260,17 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                 + "def test_h():\n"
                 + "    assert H(5) == 5\n",
                 lying=deprecated_decorated
+                + "def test_h():\n"
+                + "    assert H(5) == 6\n",
+                family="identity-decorated-class",
+            ),
+            _call_pair(
+                name="sqlalchemy_orm_decorated_class_return",
+                owner_sugar="ClassDefSugar",
+                truthful=sqlalchemy_orm_decorated
+                + "def test_h():\n"
+                + "    assert H(5) == 5\n",
+                lying=sqlalchemy_orm_decorated
                 + "def test_h():\n"
                 + "    assert H(5) == 6\n",
                 family="identity-decorated-class",
