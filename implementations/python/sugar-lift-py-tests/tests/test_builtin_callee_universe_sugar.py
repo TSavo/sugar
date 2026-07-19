@@ -1478,3 +1478,287 @@ def test_batch_six_witness_pairs_are_enrolled() -> None:
         "foo_universe_coordinate",
         "to-Dt_universe_coordinate",
     } <= names
+
+
+# --- SciPy / stdlib import-identity batch (#5457–#5461, window 292) ---
+
+
+def _import_leaf_call_site(source: str, leaf: str, filename: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr == leaf)
+            or (isinstance(node.func, ast.Name) and node.func.id == leaf)
+        )
+    )
+    return SourceFragment.from_node(call, filename, source=source)
+
+
+def test_authenticated_math_isclose_selects_one_factory_owner() -> None:
+    source = (
+        "import math\n"
+        "\n"
+        "def test_close(a, b):\n"
+        "    assert math.isclose(a, b)\n"
+    )
+    context = FactoryBuildContext(filename="math_isclose.py", catalog=default_catalog())
+    built = build_node(
+        _import_leaf_call_site(source, "isclose", "math_isclose.py"),
+        filename="math_isclose.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import math\n"
+            "\n"
+            "def test_close(math, a, b):\n"
+            "    assert math.isclose(a, b)\n"
+        ),
+        (
+            "import math\n"
+            "\n"
+            "def test_close(a, b):\n"
+            "    assert math.isclose(a, b)\n"
+            "    math = replacement\n"
+        ),
+        (
+            "def test_close(a, b):\n"
+            "    assert math.isclose(a, b)\n"
+        ),
+    ],
+)
+def test_unwarranted_math_isclose_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(filename="math_isclose.py", catalog=default_catalog())
+    built = build_node(
+        _import_leaf_call_site(source, "isclose", "math_isclose.py"),
+        filename="math_isclose.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_math_isclose_witness_pair_is_enrolled() -> None:
+    assert "math_isclose_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def test_authenticated_numpy_result_type_selects_one_factory_owner() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_rt(a, b):\n"
+        "    assert np.result_type(a, b) == np.result_type(a, b)\n"
+    )
+    context = FactoryBuildContext(filename="result_type.py", catalog=default_catalog())
+    built = build_node(
+        _import_leaf_call_site(source, "result_type", "result_type.py"),
+        filename="result_type.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_rt(np, a, b):\n"
+            "    assert np.result_type(a, b) == a\n"
+        ),
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_rt(a, b):\n"
+            "    assert np.result_type(a, b) == a\n"
+            "    np = replacement\n"
+        ),
+        (
+            "def test_rt(a, b):\n"
+            "    assert numpy.result_type(a, b) == a\n"
+        ),
+    ],
+)
+def test_unwarranted_numpy_result_type_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(filename="result_type.py", catalog=default_catalog())
+    built = build_node(
+        _import_leaf_call_site(source, "result_type", "result_type.py"),
+        filename="result_type.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_numpy_result_type_witness_pair_is_enrolled() -> None:
+    assert "numpy_result_type_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def test_authenticated_scipy_issymmetric_selects_one_factory_owner() -> None:
+    source = (
+        "import numpy as np\n"
+        "from scipy.linalg import issymmetric\n"
+        "\n"
+        "def test_sym(a):\n"
+        "    assert issymmetric(a)\n"
+    )
+    context = FactoryBuildContext(filename="issym.py", catalog=default_catalog())
+    built = build_node(
+        _import_leaf_call_site(source, "issymmetric", "issym.py"),
+        filename="issym.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "from scipy.linalg import issymmetric\n"
+            "\n"
+            "def test_sym(issymmetric, a):\n"
+            "    assert issymmetric(a)\n"
+        ),
+        (
+            "def test_sym(a):\n"
+            "    assert scipy.linalg.issymmetric(a)\n"
+        ),
+    ],
+)
+def test_unwarranted_scipy_issymmetric_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(filename="issym.py", catalog=default_catalog())
+    built = build_node(
+        _import_leaf_call_site(source, "issymmetric", "issym.py"),
+        filename="issym.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_scipy_issymmetric_witness_pair_is_enrolled() -> None:
+    assert "scipy_linalg_issymmetric_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def test_authenticated_scipy_ishermitian_selects_one_factory_owner() -> None:
+    source = (
+        "import numpy as np\n"
+        "from scipy.linalg import ishermitian\n"
+        "\n"
+        "def test_herm(a):\n"
+        "    assert ishermitian(a)\n"
+    )
+    context = FactoryBuildContext(filename="isherm.py", catalog=default_catalog())
+    built = build_node(
+        _import_leaf_call_site(source, "ishermitian", "isherm.py"),
+        filename="isherm.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "from scipy.linalg import ishermitian\n"
+            "\n"
+            "def test_herm(ishermitian, a):\n"
+            "    assert ishermitian(a)\n"
+        ),
+        (
+            "def test_herm(a):\n"
+            "    assert scipy.linalg.ishermitian(a)\n"
+        ),
+    ],
+)
+def test_unwarranted_scipy_ishermitian_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(filename="isherm.py", catalog=default_catalog())
+    built = build_node(
+        _import_leaf_call_site(source, "ishermitian", "isherm.py"),
+        filename="isherm.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_scipy_ishermitian_witness_pair_is_enrolled() -> None:
+    assert "scipy_linalg_ishermitian_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def test_authenticated_scipy_fft_get_workers_selects_one_factory_owner() -> None:
+    source = (
+        "import scipy.fft as fft\n"
+        "\n"
+        "def test_workers():\n"
+        "    assert fft.get_workers() == fft.get_workers()\n"
+    )
+    context = FactoryBuildContext(filename="get_workers.py", catalog=default_catalog())
+    built = build_node(
+        _import_leaf_call_site(source, "get_workers", "get_workers.py"),
+        filename="get_workers.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import scipy.fft as fft\n"
+            "\n"
+            "def test_workers(fft):\n"
+            "    assert fft.get_workers() == 1\n"
+        ),
+        (
+            "import scipy.fft as fft\n"
+            "\n"
+            "def test_workers():\n"
+            "    assert fft.get_workers() == 1\n"
+            "    fft = replacement\n"
+        ),
+        (
+            "def test_workers():\n"
+            "    assert scipy.fft.get_workers() == 1\n"
+        ),
+    ],
+)
+def test_unwarranted_scipy_fft_get_workers_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(filename="get_workers.py", catalog=default_catalog())
+    built = build_node(
+        _import_leaf_call_site(source, "get_workers", "get_workers.py"),
+        filename="get_workers.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_scipy_fft_get_workers_witness_pair_is_enrolled() -> None:
+    assert "scipy_fft_get_workers_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
