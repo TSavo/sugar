@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 
 from sugar_lift_python_source.source_tables import (
-    locate_parsed_node,
     parsed_parents,
     source_symtable,
 )
@@ -21,23 +20,22 @@ def visible_declarations(statement):
     if parsed is None:
         return (), frozenset()
     tree, parents = parsed
+    # Prefer live statement.node when it is already this parse-tree identity.
+    # Otherwise walk *this* tree — locate_parsed_node may mint a foreign node
+    # not present in ``parents``, which would collapse ancestry to one frame.
     if statement.node is tree or statement.node in parents:
         target = statement.node
     else:
-        target = locate_parsed_node(
-            source, type(statement.node), statement.line, statement.col
+        target = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if type(node) is type(statement.node)
+                and getattr(node, "lineno", None) == statement.line
+                and getattr(node, "col_offset", None) == statement.col
+            ),
+            None,
         )
-        if target is None:
-            target = next(
-                (
-                    node
-                    for node in ast.walk(tree)
-                    if type(node) is type(statement.node)
-                    and getattr(node, "lineno", None) == statement.line
-                    and getattr(node, "col_offset", None) == statement.col
-                ),
-                None,
-            )
     if target is None:
         return (), frozenset()
     path = [target]
@@ -227,20 +225,16 @@ def _source_path(statement):
     if statement.node is tree or statement.node in parents:
         target = statement.node
     else:
-        target = locate_parsed_node(
-            source, type(statement.node), statement.line, statement.col
+        target = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if type(node) is type(statement.node)
+                and getattr(node, "lineno", None) == statement.line
+                and getattr(node, "col_offset", None) == statement.col
+            ),
+            None,
         )
-        if target is None:
-            target = next(
-                (
-                    node
-                    for node in ast.walk(tree)
-                    if type(node) is type(statement.node)
-                    and getattr(node, "lineno", None) == statement.line
-                    and getattr(node, "col_offset", None) == statement.col
-                ),
-                None,
-            )
     if target is None:
         return None
     path = [target]

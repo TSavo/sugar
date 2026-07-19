@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from enum import Enum, auto
 
-from sugar_lift_python_source.source_tables import locate_parsed_node, parsed_parents
+from sugar_lift_python_source.source_tables import parsed_parents
 from sugar_lift_py_tests.recognition.visible_declarations import (
     declarations_are_function_local,
     lexical_function_bindings,
@@ -641,25 +641,22 @@ def _source_path(statement):
     if parsed is None:
         return None
     tree, parents = parsed
-    # Prefer live statement.node when it is already the parse-tree identity
-    # (fixture/class-decorator ancestry reuse); fall back to locate, then walk.
+    # Prefer live statement.node when it is already this parse-tree identity
+    # (fixture/class-decorator ancestry reuse). Otherwise walk *this* tree —
+    # locate_parsed_node may mint a foreign node not present in ``parents``.
     if statement.node is tree or statement.node in parents:
         target = statement.node
     else:
-        target = locate_parsed_node(
-            source, type(statement.node), statement.line, statement.col
+        target = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if type(node) is type(statement.node)
+                and getattr(node, "lineno", None) == statement.line
+                and getattr(node, "col_offset", None) == statement.col
+            ),
+            None,
         )
-        if target is None:
-            target = next(
-                (
-                    node
-                    for node in ast.walk(tree)
-                    if type(node) is type(statement.node)
-                    and getattr(node, "lineno", None) == statement.line
-                    and getattr(node, "col_offset", None) == statement.col
-                ),
-                None,
-            )
     if target is None:
         return None
     path = [target]
