@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, cast
 
@@ -9,17 +10,119 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
+# Deferred body statements (#5321) are factory-built only when dig demands them.
+# Residual post-#5321 hang profiles show the same statement sites re-entering
+# factory.select / factory.new on every SequentialDigBody.reduce (set_module
+# bodies 9–18× per residual file). Structure is content-addressed and immutable;
+# live reduce still uses the call-site temporal. Capacity is resident ownership
+# only (eviction recomputes; not invalidation).
+DEFERRED_STATEMENT_STRUCTURE_CAPACITY = 1024
+_MISSING = object()
+
+
+class DeferredStatementStructureOracle:
+    """Sole memo for deferred function-body statement *structure*.
+
+    Identity is the recognized source fragment's content pin (file + span +
+    observed kind + exact source segment). The published value is the
+    factory-built ``SugarBody`` — the complete immutable structure for that
+    pin.
+
+    Publishing rules (match InstallSourceValueOracle / DigBodyOracle):
+      - Successfully factory-built SugarBody is published under the key.
+      - FactoryPanic propagates and never publishes.
+      - Incomplete / None are reduce outcomes, never stored as success.
+      - Live ``reduce`` always re-runs against the call-site context; only
+        structure is memoized, never a Complete/Incomplete desugar result.
+    """
+
+    __slots__ = ("_capacity", "_table", "construct_count", "hit_count")
+
+    def __init__(self, capacity: int = DEFERRED_STATEMENT_STRUCTURE_CAPACITY) -> None:
+        self._capacity = max(int(capacity), 1)
+        self._table: OrderedDict[tuple[Any, ...], SugarBody] = OrderedDict()
+        self.construct_count = 0
+        self.hit_count = 0
+
+    def identity_key(self, site: Any) -> tuple[Any, ...] | None:
+        """Content identity for one deferred body statement fragment."""
+        filename = str(getattr(site, "filename", "") or "")
+        line = int(getattr(site, "line", -1) or -1)
+        col = int(getattr(site, "col", -1) or -1)
+        observed = str(getattr(site, "observed", "") or "")
+        if not filename or line < 0 or not observed:
+            return None
+        segment = ""
+        source = getattr(site, "source", None)
+        node = getattr(site, "node", None)
+        if isinstance(source, str) and node is not None:
+            try:
+                from sugar_lift_python_source.source_tables import source_segment
+
+                text = source_segment(source, node)
+                if isinstance(text, str):
+                    segment = text
+            except Exception:
+                segment = ""
+        return (filename, line, col, observed, segment)
+
+    def resolve(self, site: Any, build_ctx: Any) -> SugarBody:
+        """Return factory-built statement structure; construct once per identity."""
+        key = self.identity_key(site)
+        if key is not None:
+            known = self._lookup(key)
+            if known is not _MISSING:
+                return known  # type: ignore[return-value]
+
+        # Structure is built against the definition-time factory context.
+        # Call-site temporal is applied only at reduce time (NameSugar etc.).
+        self.construct_count += 1
+        body = build_ctx.build_body(site, SugarRole.STATEMENT)
+        if key is not None:
+            self._publish(key, body)
+        return body
+
+    def _lookup(self, key: tuple[Any, ...]) -> Any:
+        value = self._table.get(key, _MISSING)
+        if value is _MISSING:
+            return _MISSING
+        self._table.move_to_end(key)
+        self.hit_count += 1
+        return value
+
+    def _publish(self, key: tuple[Any, ...], value: SugarBody) -> None:
+        if value is None:  # pragma: no cover - defensive; build_body never returns None
+            return
+        if key in self._table:
+            self._table.move_to_end(key)
+        self._table[key] = value
+        while len(self._table) > self._capacity:
+            self._table.popitem(last=False)
+
+    def clear(self) -> None:
+        self._table.clear()
+        self.construct_count = 0
+        self.hit_count = 0
+
+
+# Process-lifetime sole structure memo for deferred body statements.
+DEFERRED_STATEMENT_STRUCTURE_ORACLE = DeferredStatementStructureOracle()
+
 
 @dataclass(frozen=True)
 class _DeferredFactoryStatement:
-    """Construct one function-body statement only when dig reaches it."""
+    """Construct one function-body statement only when dig reaches it.
+
+    Structure is memoized by content identity after the first successful
+    factory build. Each dig still reduces against the live call-site context.
+    """
 
     site: Any
     build_ctx: Any
 
     def reduce(self, ctx):
-        factory_ctx = self.build_ctx.with_temporal(ctx.temporal)
-        return factory_ctx.build_body(self.site, SugarRole.STATEMENT).reduce(ctx)
+        body = DEFERRED_STATEMENT_STRUCTURE_ORACLE.resolve(self.site, self.build_ctx)
+        return body.reduce(ctx)
 
 
 @dataclass(frozen=True)

@@ -26,6 +26,7 @@ from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witn
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
 from sugar_lift_py_tests.sugar.keyword_call_sugar import KeywordCallSugar
 from sugar_lift_py_tests.sugar.statement_function_def_sugar import (
+    DEFERRED_STATEMENT_STRUCTURE_ORACLE,
     StatementFunctionDefSugar,
 )
 
@@ -83,6 +84,77 @@ def test_statement_function_body_factory_construction_is_deferred(
         observed in {"Assign", "Return"} and role is SugarRole.STATEMENT
         for observed, role in built
     )
+
+
+def test_deferred_statement_structure_is_memoized_by_content_identity(
+    monkeypatch,
+) -> None:
+    """Second dig of the same deferred body reuses structure; never Incomplete/None.
+
+    Residual reduce_body profiles after #5321 re-factory the same statement
+    sites on every SequentialDigBody walk (e.g. set_module decorator bodies).
+    Structure is content-addressed; reduce still runs with the live context.
+    """
+    root = SourceFragment.from_source(
+        "def helper():\n"
+        "    return 1\n",
+        "deferred_memo.py",
+    )
+    function = next(
+        fragment for fragment in root.walk() if fragment.observed == "FunctionDef"
+    )
+    ctx = FactoryBuildContext(
+        filename="deferred_memo.py",
+        catalog=default_catalog(),
+        defer_function_body_construction=True,
+    )
+    DEFERRED_STATEMENT_STRUCTURE_ORACLE.clear()
+    original = FactoryBuildContext.build_body
+    statement_builds: list[str] = []
+
+    def counted_build_body(self, site, role):
+        if role is SugarRole.STATEMENT:
+            statement_builds.append(str(getattr(site, "observed", "?")))
+        return original(self, site, role)
+
+    monkeypatch.setattr(FactoryBuildContext, "build_body", counted_build_body)
+
+    sugar = StatementFunctionDefSugar.new(function, ctx)
+    callable_value = complete_value(
+        sugar.desugar(ctx), owner="deferred structure memo first bind"
+    )
+    assert isinstance(callable_value, FunctionCallable)
+    assert callable_value.body is not None
+
+    first = complete_value(
+        callable_value.body.reduce(ctx), owner="deferred structure memo first dig"
+    )
+    constructs_after_first = DEFERRED_STATEMENT_STRUCTURE_ORACLE.construct_count
+    builds_after_first = list(statement_builds)
+    hits_after_first = DEFERRED_STATEMENT_STRUCTURE_ORACLE.hit_count
+
+    second = complete_value(
+        callable_value.body.reduce(ctx), owner="deferred structure memo second dig"
+    )
+    assert first == second
+    # Structure constructed once per body statement identity; second dig hits.
+    assert DEFERRED_STATEMENT_STRUCTURE_ORACLE.construct_count == constructs_after_first
+    assert DEFERRED_STATEMENT_STRUCTURE_ORACLE.hit_count > hits_after_first
+    assert statement_builds == builds_after_first
+    # Never publish Incomplete/None as structure success.
+    assert all(
+        value is not None
+        for value in DEFERRED_STATEMENT_STRUCTURE_ORACLE._table.values()
+    )
+    assert DEFERRED_STATEMENT_STRUCTURE_ORACLE.construct_count >= 1
+
+
+def test_deferred_statement_structure_oracle_never_publishes_none() -> None:
+    """None is not a complete structure; identity table stays empty."""
+    DEFERRED_STATEMENT_STRUCTURE_ORACLE.clear()
+    key = ("file.py", 1, 0, "Pass", "pass")
+    DEFERRED_STATEMENT_STRUCTURE_ORACLE._publish(key, None)  # type: ignore[arg-type]
+    assert key not in DEFERRED_STATEMENT_STRUCTURE_ORACLE._table
 
 
 def test_nested_def_binds_named_callable_and_later_call_digs_body() -> None:
