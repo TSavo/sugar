@@ -7,17 +7,22 @@ riding in the sentence itself."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from factory_reduce import compose_block, reduce_value
 
 from sugar_lift_py_tests.floor import (
+    ArrayLiteral,
     CallSiteValue,
     InvValue,
     ListValue,
+    StringValue,
     SymbolicValue,
     TermValue,
 )
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.ir import ctor, make_var, num, py_eq, str_const
 
 
@@ -33,23 +38,68 @@ def test_range_call_constructs_finite_elements_at_call_sugar_owner() -> None:
     assert value == ListValue((TermValue(1), TermValue(3), TermValue(5)))
 
 
-def test_large_range_call_stays_callsite_not_materialized_list() -> None:
-    """#5323: range larger than STATIC_UNFOLD_LIMIT must not allocate O(n) ListValue.
+def test_large_range_call_is_a_typed_loud_finite_unfold_terminal() -> None:
+    """#5361: over-cap decidable range is loud, never opaque Complete.
 
     numpy/lib/tests/test_loadtxt.py joins a generator over range(1, 110001);
     the prior unbounded range fold dominated reduce_body heartbeats.
     """
     from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
 
-    value = reduce_value(f"range(0, {STATIC_UNFOLD_LIMIT + 1})")
+    with pytest.raises(FactoryPanic) as panic:
+        reduce_value(f"range(0, {STATIC_UNFOLD_LIMIT + 1})")
 
-    assert isinstance(value, CallSiteValue)
-    assert value.target_name == "range"
-    assert value.term == ctor(
-        "call:range",
-        [num(0), num(STATIC_UNFOLD_LIMIT + 1)],
-        symbol_kind="builtin",
+    assert panic.value.info.owner == "finite_unfold"
+    assert panic.value.info.observed == f"range cardinality={STATIC_UNFOLD_LIMIT + 1}"
+
+
+def test_enormous_range_length_overflow_is_a_typed_loud_terminal() -> None:
+    with pytest.raises(FactoryPanic) as panic:
+        reduce_value(f"range(0, {2**100})")
+
+    assert panic.value.info.owner == "finite_unfold"
+    assert panic.value.info.observed == "range cardinality exceeds sys.maxsize"
+
+
+def test_over_cap_ground_tuple_repetition_stays_typed_loud() -> None:
+    from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
+
+    with pytest.raises(FactoryPanic) as panic:
+        reduce_value(f"(0,) * {STATIC_UNFOLD_LIMIT + 1}")
+
+    assert panic.value.info.owner == "finite_unfold"
+
+
+@pytest.mark.parametrize("sugar_name", ["list", "generator"])
+def test_over_cap_finite_comprehensions_stay_typed_loud(sugar_name: str) -> None:
+    from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
+    from sugar_lift_py_tests.sugar.generator_exp_sugar import GeneratorExpSugar
+    from sugar_lift_py_tests.sugar.list_comp_sugar import ListCompSugar
+
+    sugar_type = ListCompSugar if sugar_name == "list" else GeneratorExpSugar
+    sugar = sugar_type(clauses=(), elt_body=None, site="over-cap finite test")
+    iterable = ListValue((TermValue(0),) * (STATIC_UNFOLD_LIMIT + 1))
+
+    with pytest.raises(FactoryPanic) as panic:
+        sugar._finite_or_coordinate(iterable, None)
+
+    assert panic.value.info.owner == "finite_unfold"
+
+
+def test_over_cap_static_string_join_stays_typed_loud() -> None:
+    from sugar_lift_py_tests.floor.string_value import _fold_string_method
+    from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
+
+    operation = SimpleNamespace(
+        name="join",
+        arguments=(ArrayLiteral((StringValue("x"),) * (STATIC_UNFOLD_LIMIT + 1)),),
+        blame="over-cap finite test",
     )
+
+    with pytest.raises(FactoryPanic) as panic:
+        _fold_string_method(StringValue(","), operation)
+
+    assert panic.value.info.owner == "finite_unfold"
 
 
 def test_range_at_static_unfold_limit_still_materializes() -> None:

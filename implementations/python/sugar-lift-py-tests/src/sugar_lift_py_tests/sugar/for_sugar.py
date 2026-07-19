@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import NoReturn
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -11,8 +12,8 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 STATIC_UNFOLD_LIMIT = 1024
 # Static unfold × branch multiplies GuardedValue/scope state super-linearly
-# (microbench: 8×(abs,)+If+InOp ~0.5s; 14× ~113s). Cap branched bodies so
-# the random-test Call/InOp/If cluster (#5323) force-curries instead of hangs.
+# (microbench: 8×(abs,)+If+InOp ~0.5s; 14× ~113s). Over-cap decidable work
+# stays a typed loud terminal until an exact compact construction exists.
 BRANCHED_STATIC_UNFOLD_LIMIT = 8
 
 
@@ -41,6 +42,29 @@ def is_ground_loop_datum(value) -> bool:
     if type_name == "TupleLiteralValue":
         return all(is_ground_loop_datum(item) for item in value.items)
     return False
+
+
+def finite_unfold_cap_panic(
+    *,
+    construction: str,
+    site: object,
+    observed: str,
+    limit: int,
+) -> NoReturn:
+    """Keep decidable over-cap work loud until exact bounded IR exists."""
+    from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+    factory_panic_gap(
+        owner="finite_unfold",
+        blame=str(site),
+        observed=observed,
+        requested=f"{construction} within static cap={limit}",
+        fix=(
+            "construct an exact compact representation that preserves the "
+            "finite Python semantics; do not return opaque Complete, force-curry, "
+            "truncate, or mint RuntimeEffect authority"
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -142,13 +166,6 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             "    return 0\n"
             "\n"
         )
-        large_static_prefix = (
-            "def B():\n"
-            "    for x in range(1025):\n"
-            "        pass\n"
-            "    return 0\n"
-            "\n"
-        )
         bound_finite_getattr_prefix = (
             "class Box:\n"
             "    def __init__(self):\n"
@@ -161,18 +178,6 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             "    return 0\n"
             "\n"
         )
-        structural_mutation_prefix = (
-            "class Holder:\n"
-            "    def __init__(self):\n"
-            "        self.value = 0\n"
-            "\n"
-            "def D():\n"
-            "    holder = Holder()\n"
-            "    for item in range(1025):\n"
-            "        holder.value = 7\n"
-            "    return 1\n"
-            "\n"
-        )
         return (
             _call_pair(
                 name="for_return",
@@ -181,27 +186,12 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
                 lying=prefix + "def test_a():\n    assert A(5) == 1\n",
             ),
             _call_pair(
-                name="for_large_static_unfold",
-                owner_sugar="ForSugar",
-                truthful=large_static_prefix + "def test_b():\n    assert B() == 0\n",
-                lying=large_static_prefix + "def test_b():\n    assert B() == 1\n",
-            ),
-            _call_pair(
                 name="for_bound_finite_getattr_return",
                 owner_sugar="ForSugar",
                 truthful=bound_finite_getattr_prefix
                 + "def test_c():\n    assert C() == 7\n",
                 lying=bound_finite_getattr_prefix
                 + "def test_c():\n    assert C() == 8\n",
-            ),
-            _call_pair(
-                name="for_structural_mutation_projection",
-                owner_sugar="ForSugar",
-                truthful=structural_mutation_prefix
-                + "def test_d():\n    assert D() == 1\n",
-                lying=structural_mutation_prefix
-                + "def test_d():\n    assert D() == 2\n",
-                family="loop-mutation-projection",
             ),
         )
 
@@ -239,7 +229,12 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             if self._body_has_branching_statement():
                 limit = min(limit, BRANCHED_STATIC_UNFOLD_LIMIT)
             if len(elements) > limit:
-                return self._bind_and_body(iterable, ctx, force_curry=True)
+                finite_unfold_cap_panic(
+                    construction="ForSugar finite iterable",
+                    site=self.site,
+                    observed=f"iterable cardinality={len(elements)}",
+                    limit=limit,
+                )
             return self._unfold_values(elements, ctx)
         return self._bind_and_body(iterable, ctx)
 

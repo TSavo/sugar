@@ -16,7 +16,6 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
     ComprehensionValue,
-    GroundSequenceRepetitionValue,
     ListValue,
     ImportAliasValue,
     OpaqueOpCallsite,
@@ -185,49 +184,6 @@ def test_term_times_len_witness_truthful_sat_lying_unsat(
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
-def test_large_ground_list_repetition_witness_truthful_sat_lying_unsat(
-    tmp_path: Path,
-) -> None:
-    pair = next(
-        witness
-        for witness in MultiplyOpSugar.witnesses()
-        if isinstance(witness, SugarWitnessPair)
-        and witness.name == "large_list_repetition_length_return"
-    )
-
-    truthful = run_source_through_real_solver(
-        tmp_path / "large-repeat-truthful", pair.truthful.source
-    )
-    lying = run_source_through_real_solver(
-        tmp_path / "large-repeat-lying", pair.lying.source
-    )
-
-    assert truthful.verdict == pair.truthful.expected == "sat"
-    assert lying.verdict == pair.lying.expected == "unsat"
-
-
-def test_test_loc_list_repetition_100000_witness_truthful_sat_lying_unsat(
-    tmp_path: Path,
-) -> None:
-    """#4922 locus: compact ground ``[0] * 100000`` length is solver-discharged."""
-    pair = next(
-        witness
-        for witness in MultiplyOpSugar.witnesses()
-        if isinstance(witness, SugarWitnessPair)
-        and witness.name == "test_loc_list_repetition_100000_length_return"
-    )
-
-    truthful = run_source_through_real_solver(
-        tmp_path / "test-loc-100000-truthful", pair.truthful.source
-    )
-    lying = run_source_through_real_solver(
-        tmp_path / "test-loc-100000-lying", pair.lying.source
-    )
-
-    assert truthful.verdict == pair.truthful.expected == "sat"
-    assert lying.verdict == pair.lying.expected == "unsat"
-
-
 def test_imported_list_repetition_count_remains_a_named_loud_gap() -> None:
     count = ImportAliasValue("start_caching_at", "start_caching_at")
     receiver = ListValue((StringValue("2024-01-01"),))
@@ -261,10 +217,9 @@ def test_runtime_list_repetition_count_is_a_named_typed_effect(
     )
 
 
-def test_ground_sequence_repeat_100000_constructs_compact_floor() -> None:
-    """#4922: ground TermValue(100000) constructs; never mints RuntimeEffect."""
+def test_ground_sequence_repeat_100000_is_typed_loud_not_complete() -> None:
+    """#5361: a decidable over-cap repeat stays loud, never opaque Complete."""
     from sugar_lift_py_tests.effect import genuine_runtime_operand
-    from sugar_lift_py_tests.outcome import Complete, complete_value
 
     site = SourceFragment.from_source(
         "index = [0] * 100000\n",
@@ -273,14 +228,10 @@ def test_ground_sequence_repeat_100000_constructs_compact_floor() -> None:
     items = ListValue((TermValue(0),))
     count = TermValue(100000)
 
-    outcome = items.multiply(count, site)
-
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, GroundSequenceRepetitionValue)
-    assert outcome.value.repetitions == 100000
-    assert complete_value(outcome.value.length(site), owner="length") == TermValue(
-        100000
-    )
+    with pytest.raises(FactoryPanic) as panic:
+        items.multiply(count, site)
+    assert panic.value.info.owner == "finite_unfold"
+    assert panic.value.info.observed == "list repetition cardinality=100000"
 
     # Law: the ground operand cannot mint SequenceRepetitionRuntimeEffect evidence.
     with pytest.raises(TypeError, match="genuine runtime-dependent operand"):
@@ -429,9 +380,6 @@ def test_finite_ground_list_repetition_constructs_not_runtime_effect() -> None:
     items = ListValue((TermValue(0),))
     small = items.multiply(TermValue(3), _SITE)
     at_limit = items.multiply(TermValue(STATIC_UNFOLD_LIMIT), _SITE)
-    large = items.multiply(TermValue(100000), _SITE)
-    # #5323: mid-size above unfold budget is compact (was 65520 materialize).
-    mid_compact = items.multiply(TermValue(STATIC_UNFOLD_LIMIT + 1), _SITE)
 
     assert isinstance(small, Complete)
     assert isinstance(small.value, ListValue)
@@ -441,13 +389,13 @@ def test_finite_ground_list_repetition_constructs_not_runtime_effect() -> None:
     assert isinstance(at_limit.value, ListValue)
     assert len(at_limit.value.elements) == STATIC_UNFOLD_LIMIT
 
-    assert isinstance(mid_compact, Complete)
-    assert isinstance(mid_compact.value, GroundSequenceRepetitionValue)
-    assert mid_compact.value.repetitions == STATIC_UNFOLD_LIMIT + 1
+    with pytest.raises(FactoryPanic) as mid_panic:
+        items.multiply(TermValue(STATIC_UNFOLD_LIMIT + 1), _SITE)
+    assert mid_panic.value.info.owner == "finite_unfold"
 
-    assert isinstance(large, Complete)
-    assert isinstance(large.value, GroundSequenceRepetitionValue)
-    assert large.value.repetitions == 100000
+    with pytest.raises(FactoryPanic) as large_panic:
+        items.multiply(TermValue(100000), _SITE)
+    assert large_panic.value.info.owner == "finite_unfold"
     with pytest.raises(TypeError, match="genuine runtime-dependent operand"):
         genuine_runtime_operand("py.sequence_repeat", TermValue(100000))
 

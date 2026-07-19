@@ -4,9 +4,12 @@ import ast
 import inspect
 from pathlib import Path
 
+import pytest
+
 import sugar_lift_py_tests.sugar.for_sugar as for_sugar_module
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.factory.build import build_node
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkStatus
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.idd.sugar_witness_instruments import (
@@ -63,7 +66,7 @@ def test_large_static_range_unfold_is_stack_safe() -> None:
     assert len(payload.factory_walk) >= 4
 
 
-def test_large_static_range_projects_the_callable_loop_floor() -> None:
+def test_large_static_range_is_a_typed_loud_finite_unfold_terminal() -> None:
     source = (
         "def f():\n"
         "    total = 0\n"
@@ -72,14 +75,10 @@ def test_large_static_range_projects_the_callable_loop_floor() -> None:
         "    return total\n"
     )
 
-    payload = lift_file_payload(source, "large.py")
+    with pytest.raises(FactoryPanic) as panic:
+        lift_file_payload(source, "large.py")
 
-    assert payload.effects == []
-    assert any(
-        row.output == "ForSugar" and row.status == FactoryWalkStatus.WARRANTED
-        for row in payload.factory_walk
-    )
-    assert "call:loop:large.py:3:4" in str(payload.ir[0].post)
+    assert panic.value.info.owner == "finite_unfold"
 
 
 def test_literal_tuple_uses_tuple_literal_recognizer() -> None:
@@ -88,28 +87,8 @@ def test_literal_tuple_uses_tuple_literal_recognizer() -> None:
     assert type(sugar.iterable.sugar).__name__ == "TupleLiteralSugar"
 
 
-def test_large_static_unfold_witness_refutes_wrong_twin(tmp_path: Path) -> None:
-    seed = next(
-        item
-        for item in DEFAULT_SUGAR_WITNESS_SEEDS
-        if item.name == "for_large_static_unfold"
-    )
-
-    truthful = run_source_through_real_solver(
-        tmp_path / "large-static-truthful", seed.truthful.source
-    )
-    lying = run_source_through_real_solver(
-        tmp_path / "large-static-lying", seed.lying.source
-    )
-
-    assert "ForSugar" in truthful.selected_sugars
-    assert truthful.verdict == "sat"
-    assert "ForSugar" in lying.selected_sugars
-    assert lying.verdict == "unsat"
-
-
-def test_branched_static_for_over_callable_tuple_force_curries_not_hangs() -> None:
-    """#5323: ForSugar static unfold × If × InOp over 14 callables must not hang.
+def test_branched_static_for_over_cap_is_typed_loud_not_force_curried() -> None:
+    """#5361: over-cap finite branch work never becomes opaque force-curry.
 
     Microbench before BRANCHED_STATIC_UNFOLD_LIMIT: 14×abs+if+in ~113s;
     after force-curry above 8 branched iterations: ~1.5s.
@@ -129,9 +108,7 @@ def test_branched_static_for_over_callable_tuple_force_curries_not_hangs() -> No
         "        out = func(x)\n"
         "    assert True\n"
     )
-    payload = lift_file_payload(source, "branched-for.py")
-    assert payload.effects == []
-    assert any(
-        row.output == "ForSugar" and row.status == FactoryWalkStatus.WARRANTED
-        for row in payload.factory_walk
-    )
+    with pytest.raises(FactoryPanic) as panic:
+        lift_file_payload(source, "branched-for.py")
+
+    assert panic.value.info.owner == "finite_unfold"

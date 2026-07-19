@@ -97,17 +97,20 @@ class ArrayLiteral(FloorValue):
 
     def multiply(self, other, site):
         if type(other) is TermValue and type(other.value) is int:
-            from sugar_lift_py_tests.floor.ground_sequence_repetition_value import (
-                GroundSequenceRepetitionValue,
-            )
             from sugar_lift_py_tests.outcome import Complete
 
             repeated = len(self.items) * max(other.value, 0)
-            from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
+            from sugar_lift_py_tests.sugar.for_sugar import (
+                STATIC_UNFOLD_LIMIT,
+                finite_unfold_cap_panic,
+            )
 
             if repeated > STATIC_UNFOLD_LIMIT:
-                return Complete(
-                    GroundSequenceRepetitionValue("array", self.items, other.value)
+                finite_unfold_cap_panic(
+                    construction="ArrayLiteral repetition",
+                    site=site,
+                    observed=f"array repetition cardinality={repeated}",
+                    limit=STATIC_UNFOLD_LIMIT,
                 )
             return Complete(ArrayLiteral(self.items * other.value))
         if type(other) is SymbolicValue:
