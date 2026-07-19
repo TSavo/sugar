@@ -16,7 +16,11 @@ from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import ctor, make_var
+from sugar_lift_py_tests.idd.sugar_witness_instruments import (
+    evaluate_seed_witnesses,
+)
 from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.sugar.yield_sugar import YieldSugar
 from sugar_lift_py_tests.temporal import TemporalContext
 
 
@@ -81,6 +85,30 @@ def test_yield_and_yield_from_owners_are_disjoint() -> None:
     built = build_node(site, filename="vendor.py", role=SugarRole.TERM)
 
     assert type(built.sugar).__name__ == "YieldSugar"
+
+
+def test_source_less_function_body_preserves_yield_owner() -> None:
+    """Callable-body dig retains the function gateway after source detaches."""
+    source = "def generate(value):\n    yield value\n"
+    function = ast.parse(source).body[0]
+    function_site = SourceFragment.from_node(function, "vendor.py")
+    yield_site = function_site.function_body_block().statements()[0].terms()[0]
+
+    candidates = default_catalog().candidates_for(SugarRole.TERM, yield_site)
+
+    assert [candidate.name for candidate in candidates] == ["YieldSugar"]
+
+
+def test_yield_runtime_effect_witness_truthful_and_wrong_twin(
+    tmp_path,
+) -> None:
+    report = evaluate_seed_witnesses(
+        (YieldSugar.witnesses(),),
+        tmp_path / "yield-runtime-effect",
+        catalog_count=1,
+    )
+
+    assert report.is_zero
 
 
 def test_yield_from_outside_function_stays_loud() -> None:
