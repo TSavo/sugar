@@ -1,9 +1,10 @@
-"""#5421 fix-forward: fixture providers without vendor-name dispatch.
+"""#5578: fixture providers via general pytest.fixture protocol + exact seats.
 
 Permanent floors:
-- R_vendor_special_case = 0 (no hard-coded vendor spelling compares)
+- R_vendor_special_case = 0 by construction (no vendor fixture keys in recognition)
 - Provider bodies are anchored to exact source seats (module + line/col)
 - Lying twins stay loud: dual class fixtures, lookalike imports, shadow, mismatch
+- Protocol authenticates via pytest.fixture only — never a vendor fixture key
 """
 
 from __future__ import annotations
@@ -79,17 +80,20 @@ def test_pytest_fixture_protocol_authenticates_without_sqlalchemy_name(
 def test_identical_fixture_names_in_two_classes_use_exact_seat(
     monkeypatch,
 ) -> None:
-    """Name-only search would pick WrongBase.registry (first in module)."""
+    """Name-only search would pick WrongBase.registry (first in module).
+
+    Both methods use the general pytest.fixture protocol — no vendor fixture key.
+    """
     provider_source = (
-        "from sqlalchemy.testing import config\n"
+        "import pytest\n"
         "from sqlalchemy.orm import registry\n"
         "class WrongBase:\n"
-        "    @config.fixture()\n"
+        "    @pytest.fixture()\n"
         "    def registry(self, metadata):\n"
         "        yield object()  # not a native registry shape\n"
         "\n"
         "class FixtureBase:\n"
-        "    @config.fixture()\n"
+        "    @pytest.fixture()\n"
         "    def registry(self, metadata):\n"
         "        value = registry(metadata=metadata)\n"
         "        yield value\n"
@@ -146,9 +150,9 @@ def test_identical_fixture_names_in_two_classes_use_exact_seat(
 
 
 def test_imported_lookalike_config_fixture_stays_loud(monkeypatch) -> None:
-    """Lookalike `config.fixture` from a non-registered module is not a fixture."""
+    """Lookalike `config.fixture` (including SA testing.config) is not protocol."""
     provider_source = (
-        "from pretend.testing import config\n"
+        "from sqlalchemy.testing import config\n"
         "from sqlalchemy.orm import registry\n"
         "class FixtureBase:\n"
         "    @config.fixture()\n"
@@ -184,12 +188,17 @@ def test_imported_lookalike_config_fixture_stays_loud(monkeypatch) -> None:
 
 
 def test_aliased_shadowed_fixture_decorator_stays_loud(monkeypatch) -> None:
+    """Decorator spelling ``fixture`` after import-as-alias is not protocol-resolved.
+
+    The import binds ``real_fixture``; the decorator uses unbound name ``fixture``
+    (local lambda). Import map has no ``fixture`` key → not authenticated.
+    """
     provider_source = (
-        "from sqlalchemy.testing import config\n"
+        "from pytest import fixture as real_fixture\n"
         "from sqlalchemy.orm import registry\n"
-        "config = type('C', (), {'fixture': staticmethod(lambda: (lambda f: f))})()\n"
+        "fixture = lambda fn: fn\n"
         "class FixtureBase:\n"
-        "    @config.fixture()\n"
+        "    @fixture()\n"
         "    def registry(self, metadata):\n"
         "        value = registry(metadata=metadata)\n"
         "        yield value\n"
@@ -224,10 +233,10 @@ def test_aliased_shadowed_fixture_decorator_stays_loud(monkeypatch) -> None:
 def test_mismatched_provider_class_stays_loud(monkeypatch) -> None:
     """Resolver returns None for wrong class — parameter stays unauthenticated."""
     provider_source = (
-        "from sqlalchemy.testing import config\n"
+        "import pytest\n"
         "from sqlalchemy.orm import registry\n"
         "class OtherBase:\n"
-        "    @config.fixture()\n"
+        "    @pytest.fixture()\n"
         "    def registry(self, metadata):\n"
         "        value = registry(metadata=metadata)\n"
         "        yield value\n"

@@ -179,9 +179,12 @@ _NATIVE_DECORATORS = {
 # Fixture / inject-provider protocol: registered import coordinates only.
 # Consumers authenticate via recognize_native_fixture_decorator(qualified),
 # never by comparing against a vendor-name string literal in recognition code.
+#
+# Protocol is the general testing fixture decorator (pytest.fixture). Vendor-
+# specific fixture spellings are intentionally NOT registered — that would be
+# logo dispatch by relocation (#5578 bounce).
 _FIXTURE_DECORATORS = {
     "pytest.fixture": NativeShape.FIXTURE_DECORATOR,
-    "sqlalchemy.testing.config.fixture": NativeShape.FIXTURE_DECORATOR,
 }
 
 _NATIVE_INSTANCE_CLASS_DECORATORS = {
