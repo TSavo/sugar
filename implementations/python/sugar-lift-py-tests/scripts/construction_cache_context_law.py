@@ -391,6 +391,7 @@ def _module_table_construction_caches(
                 if "filename" in name
                 or "path" in name
                 or name.endswith("_rel")
+                or "seat" in name
                 or name in {"file", "seat"}
             }
             seat_partitions_payload = any(
@@ -526,6 +527,7 @@ def _module_context_tables(
                 if "filename" in name
                 or "path" in name
                 or name.endswith("_rel")
+                or "seat" in name
                 or name in {"file", "seat"}
             }
             if not seat_parameters:
