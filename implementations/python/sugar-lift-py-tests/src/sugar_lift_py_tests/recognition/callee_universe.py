@@ -244,6 +244,23 @@ class CalleeUniverseSupport(Enum):
     PANDAS_INDEX_GET_LOC = auto()
     PANDAS_INDEX_IS_ = auto()
     PANDAS_INDEX_SLICE_LOCS = auto()
+    # #5913 member drain (third increment): call:to_html (#5645, DataFrame),
+    # call:_categories_match_up_to_permutation (#5646, Categorical). Same
+    # empty-by-construction law as above — kit-manifest only. Two other
+    # highest-row candidates this pass (#5625 call:_has_no_reference,
+    # #5647 call:has_reference) were investigated and left loud: every corpus
+    # call site is a chained attribute receiver (`df._mgr` /
+    # `df._mgr.blocks[i].refs`), never a directly-assigned/annotated name of a
+    # known vendor type, so authenticating them needs a genuine recognizer
+    # extension (BlockManager/BlockValuesRefs property-return provenance),
+    # not twins-only acceptance. Two more (#5632 call:drepr, #5642 call:hash)
+    # were investigated and found to be corpus/recensus artifacts, not vendor
+    # attribute calls at all: `drepr` is a locally-bound test-file lambda
+    # (`drepr = lambda x: x._repr_base()`) and `call:hash` is the builtin
+    # `hash(x)` function call, not `x.hash()`. Neither belongs to this shape;
+    # left unclaimed for the same reason #5643 call:lookup was left unclaimed.
+    PANDAS_DATAFRAME_TO_HTML = auto()
+    PANDAS_CATEGORICAL_MATCH_UP_TO_PERMUTATION = auto()
 
     # #5577 pydantic method-receiver drain (first mass increment): the top two
     # ranked pydantic method-mass families (#5577 ranking: to_python 533,
