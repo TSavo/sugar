@@ -3,14 +3,20 @@
 
 Sugar, factory, and recognition may dispatch on source shape and first-class
 Sugar/value types. They may not decide behavior by matching a specific vendor
-module/class name or by applying ``isinstance`` to a vendor class.
+module/class name, by applying ``isinstance`` to a vendor class, or by
+embedding vendor spellings as keys/values in dispatch dictionaries, sets,
+tuples, lists, or registry initializers.
+
+A logo string is never sufficient construction evidence — relocating a vendor
+name from a comparison into a mapping literal must not green this floor.
 
 Scanned vendor roots: numpy, pandas, datetime, scipy, pydantic, sqlalchemy,
-cryptography, requests.
+cryptography, requests, pytest, sklearn.
 
 Exit 1 whenever R_vendor_special_case > 0. There is no baseline, threshold, or
-allowlist. Replacement: register the source shape and construct/reduce it
-through the ordinary Sugar + SugarBody + floor path.
+allowlist. Replacement: source shape → registered Sugar → SugarBody children →
+floor; fixture/vendor semantics only via explicit kit/bridge/proof contract,
+never production recognition coordinates.
 
 Portability: every load/parse failure is a loud structured diagnostic row (or
 process-level structured ERROR exit), never an unhandled process crash. Windows
@@ -38,6 +44,16 @@ VENDORS = frozenset(
         "sqlalchemy",
         "cryptography",
         "requests",
+        "pytest",
+        "sklearn",
+    }
+)
+
+_LOGO_DISPATCH_KINDS = frozenset(
+    {
+        "vendor-name-match",
+        "vendor-isinstance",
+        "vendor-table-literal",
     }
 )
 
@@ -138,6 +154,48 @@ def _isinstance_vendor(node: ast.Call) -> str | None:
         if vendor is not None:
             return vendor
     return None
+
+
+def _table_literal_vendor_hits(node: ast.AST) -> list[tuple[str, str]]:
+    """Vendor logos embedded as dispatch table / registry constants.
+
+    Hits Constant string (or nested tuple/list/set of strings) that name a
+    scanned vendor root when they appear as:
+
+    - dict keys or values
+    - set / list / tuple elements
+    - nested tuple keys used by registry initializers
+
+    Returns (vendor, expression) pairs. One Constant may contribute one hit.
+    """
+    hits: list[tuple[str, str]] = []
+
+    def consider_constant(constant: ast.Constant) -> None:
+        if not isinstance(constant.value, str):
+            return
+        vendor = _vendor_from_text(constant.value)
+        if vendor is None:
+            return
+        hits.append((vendor, repr(constant.value)))
+
+    def walk_collection(collection: ast.AST) -> None:
+        if isinstance(collection, ast.Constant):
+            consider_constant(collection)
+            return
+        if isinstance(collection, ast.Tuple | ast.List | ast.Set):
+            for elt in collection.elts:
+                walk_collection(elt)
+            return
+        if isinstance(collection, ast.Dict):
+            for key, value in zip(collection.keys, collection.values, strict=False):
+                if key is not None:
+                    walk_collection(key)
+                if value is not None:
+                    walk_collection(value)
+
+    if isinstance(node, (ast.Dict, ast.Set, ast.List, ast.Tuple)):
+        walk_collection(node)
+    return hits
 
 
 def _rel_path(root: Path, path: Path) -> str:
@@ -264,6 +322,26 @@ def scan_file(path: Path, *, rel: str) -> list[VendorSpecialCase]:
                             ),
                         )
                     )
+            elif isinstance(node, (ast.Dict, ast.Set, ast.List, ast.Tuple)):
+                # Only top-level-ish collection literals that embed logos as
+                # dispatch coordinates. Nested collections are visited as their
+                # own walk nodes too; de-dupe by (line, vendor, expression).
+                for vendor, expression in _table_literal_vendor_hits(node):
+                    offenders.append(
+                        VendorSpecialCase(
+                            path=rel,
+                            line=getattr(node, "lineno", 0) or 0,
+                            kind="vendor-table-literal",
+                            vendor=vendor,
+                            expression=expression,
+                            note=(
+                                "logo string in dispatch dict/set/tuple/list is "
+                                "still vendor identity; relocate into kit/"
+                                "bridge/proof contract or delete — never "
+                                "construction evidence"
+                            ),
+                        )
+                    )
     except Exception as exc:  # noqa: BLE001 — per-file containment
         offenders.append(
             VendorSpecialCase(
@@ -275,7 +353,16 @@ def scan_file(path: Path, *, rel: str) -> list[VendorSpecialCase]:
                 note=f"scan aborted for file: {exc}",
             )
         )
-    return offenders
+    # De-dupe nested collection double-counts: same path/line/kind/vendor/expr.
+    deduped: list[VendorSpecialCase] = []
+    seen: set[tuple[str, int, str, str, str]] = set()
+    for row in offenders:
+        key = (row.path, row.line, row.kind, row.vendor, row.expression)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
 
 
 def scan_roots(roots: Sequence[Path]) -> list[VendorSpecialCase]:
@@ -334,11 +421,7 @@ def r_vendor_special_case(offenders: Sequence[VendorSpecialCase]) -> int:
     # They still fail the run (exit 1) via main when present, but are counted
     # separately from R_vendor_special_case so a portable crash-fix does not
     # inflate the logo-dispatch floor.
-    return sum(
-        1
-        for row in offenders
-        if row.kind in {"vendor-name-match", "vendor-isinstance"}
-    )
+    return sum(1 for row in offenders if row.kind in _LOGO_DISPATCH_KINDS)
 
 
 def r_auditor_errors(offenders: Sequence[VendorSpecialCase]) -> int:
