@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 
 from sugar_lift_python_source.source_tables import (
-    locate_parsed_node,
     parsed_parents,
     source_symtable,
 )
@@ -17,14 +16,26 @@ def visible_declarations(statement):
     source = getattr(statement, "source", None)
     if not source:
         return (), frozenset()
-    parsed = parsed_parents(source)
+    parsed = parsed_parents(source, statement.filename or "<unknown>")
     if parsed is None:
         return (), frozenset()
     tree, parents = parsed
-    del tree
-    target = locate_parsed_node(
-        source, type(statement.node), statement.line, statement.col
-    )
+    # Prefer live statement.node when it is already this parse-tree identity.
+    # Otherwise walk *this* tree — locate_parsed_node may mint a foreign node
+    # not present in ``parents``, which would collapse ancestry to one frame.
+    if statement.node is tree or statement.node in parents:
+        target = statement.node
+    else:
+        target = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if type(node) is type(statement.node)
+                and getattr(node, "lineno", None) == statement.line
+                and getattr(node, "col_offset", None) == statement.col
+            ),
+            None,
+        )
     if target is None:
         return (), frozenset()
     path = [target]
@@ -170,15 +181,21 @@ def declaration_is_function_local(statement, declaration) -> bool:
     Nested lambda/comprehension scopes never own outer declarations.
     """
 
+    return declarations_are_function_local(statement, (declaration,))[0]
+
+
+def declarations_are_function_local(statement, declarations) -> tuple[bool, ...]:
+    """Classify a declaration sequence against one shared source-path lookup."""
+
     path = _source_path(statement)
     if path is None:
-        return False
+        return tuple(False for _ in declarations)
     innermost = next(iter(reversed(_symbol_table_scopes(path))), None)
     if isinstance(
         innermost,
         (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
     ):
-        return False
+        return tuple(False for _ in declarations)
     function = next(
         (
             node
@@ -190,22 +207,34 @@ def declaration_is_function_local(statement, declaration) -> bool:
     if function is None:
         # Module-level site: ``visible_declarations`` already filters to
         # preceding module statements, which share this scope.
-        return True
+        return tuple(True for _ in declarations)
     end_line = getattr(function, "end_lineno", function.lineno)
-    return function.lineno < declaration.line <= end_line
+    return tuple(
+        function.lineno < declaration.line <= end_line for declaration in declarations
+    )
 
 
 def _source_path(statement):
     source = getattr(statement, "source", None)
     if not source:
         return None
-    parsed = parsed_parents(source)
+    parsed = parsed_parents(source, statement.filename or "<unknown>")
     if parsed is None:
         return None
-    _tree, parents = parsed
-    target = locate_parsed_node(
-        source, type(statement.node), statement.line, statement.col
-    )
+    tree, parents = parsed
+    if statement.node is tree or statement.node in parents:
+        target = statement.node
+    else:
+        target = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if type(node) is type(statement.node)
+                and getattr(node, "lineno", None) == statement.line
+                and getattr(node, "col_offset", None) == statement.col
+            ),
+            None,
+        )
     if target is None:
         return None
     path = [target]
