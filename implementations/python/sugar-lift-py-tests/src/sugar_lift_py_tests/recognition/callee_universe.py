@@ -244,14 +244,11 @@ class CalleeUniverseRecognition:
 
         if not site.source:
             return None
-        # Plain Name call: resolve import/assignment identity, then accept only
-        # when the result is an authenticated support coordinate. Leaf spelling
-        # is a fast path; from-import aliases (``shares_memory as overlaps``)
-        # still authenticate when identity maps to a registered coordinate.
-        identity = imported_call_identity(site)
-        if recognize_authenticated_callee_identity(identity) is not None:
-            return identity
-        return None
+        # Plain Name call: only resolve import identity when the leaf can still
+        # land on an authenticated imported coordinate.
+        if target not in _IMPORTED_ATTRIBUTE_LEAVES:
+            return None
+        return imported_call_identity(site)
 
     @classmethod
     def _name_is_unshadowed(cls, site, name: str) -> bool:

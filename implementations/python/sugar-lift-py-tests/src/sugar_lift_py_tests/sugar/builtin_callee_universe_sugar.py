@@ -148,12 +148,6 @@ class BuiltinCalleeUniverseSugar(
             _coordinate_witness("hasattr", "True", "False"),
             _item_receiver_coordinate_witness(),
             _imported_coordinate_witness(
-                name="numpy_shares_memory",
-                setup=("from numpy import shares_memory\n"),
-                callee="shares_memory",
-                argument="5, 5",
-            ),
-            _imported_coordinate_witness(
                 name="get_handler_name",
                 setup=("from numpy._core.multiarray import get_handler_name\n"),
                 callee="get_handler_name",
@@ -175,6 +169,7 @@ class BuiltinCalleeUniverseSugar(
                 "binomial", "conv_intp", "create", "exists", "func", "iter_goto", "median",
             )),
             _numpy_may_share_memory_witness(),
+            _numpy_shares_memory_witness(),
             _bound_source_callable_witness(),
             _numpy_dtype_result_witness(),
             _json_loads_witness(),
@@ -367,6 +362,23 @@ def _numpy_may_share_memory_witness():
     )
     return _call_pair(
         name="numpy_may_share_memory_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_shares_memory_witness():
+    prefix = (
+        "import numpy as np\n"
+        "\n"
+        "def A():\n"
+        "    return np.shares_memory(np.array([1]), np.array([1]))\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_shares_memory_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() != A()\n",
