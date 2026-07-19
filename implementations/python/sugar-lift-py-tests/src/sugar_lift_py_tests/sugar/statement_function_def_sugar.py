@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import ast
+import hashlib
 from collections import OrderedDict
-from dataclasses import dataclass, field as dataclass_field
+from collections.abc import Mapping
+from dataclasses import dataclass, fields, is_dataclass, field as dataclass_field
+from enum import Enum
 from typing import Any, cast
 
 from sugar_lift_py_tests.claim import SugarRole
@@ -20,13 +24,128 @@ DEFERRED_STATEMENT_STRUCTURE_CAPACITY = 1024
 _MISSING = object()
 
 
+@dataclass(frozen=True)
+class _ObjectIdentity:
+    """Hashable strong identity for opaque recognition inputs.
+
+    Holding the object prevents Python from reusing its id while a cache entry
+    is resident. Equality is deliberately object identity, never a potentially
+    context-blind ``__eq__`` implementation.
+    """
+
+    value: Any = dataclass_field(compare=False, hash=False, repr=False)
+
+    def __hash__(self) -> int:
+        return id(self.value)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _ObjectIdentity) and self.value is other.value
+
+
+def _immutable_recognition_identity(
+    value: Any, seen: frozenset[int] = frozenset()
+) -> Any:
+    """Freeze one factory-recognition input into an immutable cache-key part."""
+    if value is None or isinstance(value, (bool, int, float, str, bytes)):
+        return value
+    if isinstance(value, Enum):
+        return (type(value).__module__, type(value).__qualname__, value.value)
+    if isinstance(value, ast.AST):
+        return ("ast", ast.dump(value, annotate_fields=True, include_attributes=True))
+    marker = id(value)
+    if marker in seen:
+        return ("cycle", _ObjectIdentity(value))
+    nested_seen = seen | {marker}
+    if isinstance(value, Mapping):
+        frozen = tuple(
+            (
+                _immutable_recognition_identity(key, nested_seen),
+                _immutable_recognition_identity(item, nested_seen),
+            )
+            for key, item in value.items()
+        )
+        return (
+            "mapping",
+            tuple(sorted(frozen, key=repr)),
+        )
+    if isinstance(value, (tuple, list)):
+        return (
+            type(value).__name__,
+            tuple(_immutable_recognition_identity(item, nested_seen) for item in value),
+        )
+    if isinstance(value, (set, frozenset)):
+        frozen = tuple(
+            _immutable_recognition_identity(item, nested_seen) for item in value
+        )
+        return (type(value).__name__, tuple(sorted(frozen, key=repr)))
+    if is_dataclass(value) and not isinstance(value, type):
+        return (
+            type(value).__module__,
+            type(value).__qualname__,
+            tuple(
+                (
+                    item.name,
+                    _immutable_recognition_identity(
+                        getattr(value, item.name), nested_seen
+                    ),
+                )
+                for item in fields(value)
+            ),
+        )
+    if isinstance(value, type):
+        return ("type", value.__module__, value.__qualname__)
+    if callable(value):
+        return (
+            "callable",
+            getattr(value, "__module__", type(value).__module__),
+            getattr(value, "__qualname__", type(value).__qualname__),
+            _ObjectIdentity(value),
+        )
+    return _ObjectIdentity(value)
+
+
+# These fields are mutable construction telemetry, not candidate-recognition
+# inputs. Their object identity still belongs in the cache key so a structure
+# never crosses output membranes; their growing contents must not invalidate a
+# successfully constructed immutable body.
+_FACTORY_OUTPUT_FIELDS = frozenset(
+    {
+        "external_bridge_sink",
+        "audit_sink",
+        "factory_audit_sink",
+        "proof_sink",
+        "report_sink",
+        "operation_log",
+        "module_rewrite_log",
+        "dig_sink",
+        "record_operation",
+    }
+)
+
+
+def _factory_recognition_identity(build_ctx: Any) -> tuple[Any, ...]:
+    """Complete identity of every input carried by FactoryBuildContext."""
+    return tuple(
+        (
+            item.name,
+            (
+                _ObjectIdentity(value)
+                if item.name in _FACTORY_OUTPUT_FIELDS and value is not None
+                else _immutable_recognition_identity(value)
+            ),
+        )
+        for item in fields(build_ctx)
+        for value in (getattr(build_ctx, item.name),)
+    )
+
+
 class DeferredStatementStructureOracle:
     """Sole memo for deferred function-body statement *structure*.
 
-    Identity is the recognized source fragment's content pin (file + span +
-    observed kind + exact source segment). The published value is the
-    factory-built ``SugarBody`` — the complete immutable structure for that
-    pin.
+    Identity is the recognized source fragment's complete enclosing source plus
+    every FactoryBuildContext input that can participate in factory recognition.
+    The published value is the factory-built ``SugarBody`` — the complete
+    immutable structure for that construction identity.
 
     Publishing rules (match InstallSourceValueOracle / DigBodyOracle):
       - Successfully factory-built SugarBody is published under the key.
@@ -44,38 +163,43 @@ class DeferredStatementStructureOracle:
         self.construct_count = 0
         self.hit_count = 0
 
-    def identity_key(self, site: Any) -> tuple[Any, ...] | None:
-        """Content identity for one deferred body statement fragment."""
+    def identity_key(self, site: Any, build_ctx: Any) -> tuple[Any, ...] | None:
+        """Complete construction identity for one deferred body statement."""
         filename = str(getattr(site, "filename", "") or "")
-        line = int(getattr(site, "line", -1) or -1)
-        col = int(getattr(site, "col", -1) or -1)
+        line_raw = getattr(site, "line", None)
+        col_raw = getattr(site, "col", None)
+        line = int(line_raw) if line_raw is not None else -1
+        col = int(col_raw) if col_raw is not None else -1
         observed = str(getattr(site, "observed", "") or "")
         if not filename or line < 0 or not observed:
             return None
-        segment = ""
         source = getattr(site, "source", None)
         node = getattr(site, "node", None)
-        if isinstance(source, str) and node is not None:
-            try:
-                from sugar_lift_python_source.source_tables import source_segment
+        if not isinstance(source, str) or node is None:
+            return None
+        from sugar_lift_python_source.source_tables import source_segment
 
-                text = source_segment(source, node)
-                if isinstance(text, str):
-                    segment = text
-            except Exception:
-                segment = ""
-        return (filename, line, col, observed, segment)
+        segment = source_segment(source, node)
+        if not isinstance(segment, str):
+            return None
+        return (
+            filename,
+            line,
+            col,
+            observed,
+            hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            segment,
+            _factory_recognition_identity(build_ctx),
+        )
 
     def resolve(self, site: Any, build_ctx: Any) -> SugarBody:
         """Return factory-built statement structure; construct once per identity."""
-        key = self.identity_key(site)
+        key = self.identity_key(site, build_ctx)
         if key is not None:
             known = self._lookup(key)
             if known is not _MISSING:
                 return known  # type: ignore[return-value]
 
-        # Structure is built against the definition-time factory context.
-        # Call-site temporal is applied only at reduce time (NameSugar etc.).
         self.construct_count += 1
         body = build_ctx.build_body(site, SugarRole.STATEMENT)
         if key is not None:

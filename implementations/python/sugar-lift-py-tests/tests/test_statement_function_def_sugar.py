@@ -96,8 +96,7 @@ def test_deferred_statement_structure_is_memoized_by_content_identity(
     Structure is content-addressed; reduce still runs with the live context.
     """
     root = SourceFragment.from_source(
-        "def helper():\n"
-        "    return 1\n",
+        "def helper():\n" "    return 1\n",
         "deferred_memo.py",
     )
     function = next(
@@ -155,6 +154,67 @@ def test_deferred_statement_structure_oracle_never_publishes_none() -> None:
     key = ("file.py", 1, 0, "Pass", "pass")
     DEFERRED_STATEMENT_STRUCTURE_ORACLE._publish(key, None)  # type: ignore[arg-type]
     assert key not in DEFERRED_STATEMENT_STRUCTURE_ORACLE._table
+
+
+def test_deferred_statement_structure_never_crosses_factory_contexts() -> None:
+    """Identical statement text must not reuse structure from another resolver."""
+
+    def class_node(field_value: int) -> ast.ClassDef:
+        node = ast.parse(
+            "class Foo:\n"
+            "    def __init__(self):\n"
+            f"        self.x = {field_value}\n"
+        ).body[0]
+        assert isinstance(node, ast.ClassDef)
+        return node
+
+    statement = SourceFragment.from_source("return Foo()\n", "same.py").statements()[0]
+    catalog = default_catalog()
+    first_ctx = FactoryBuildContext(
+        filename="same.py",
+        catalog=catalog,
+        name_resolver={"Foo": class_node(1)},
+    )
+    second_ctx = FactoryBuildContext(
+        filename="same.py",
+        catalog=catalog,
+        name_resolver={"Foo": class_node(2)},
+    )
+
+    DEFERRED_STATEMENT_STRUCTURE_ORACLE.clear()
+    first_body = DEFERRED_STATEMENT_STRUCTURE_ORACLE.resolve(statement, first_ctx)
+    first = complete_value(first_body.reduce(first_ctx), owner="first resolver")
+    second_body = DEFERRED_STATEMENT_STRUCTURE_ORACLE.resolve(statement, second_ctx)
+    second = complete_value(second_body.reduce(second_ctx), owner="second resolver")
+
+    assert "ObjectField(name='x', value=TermValue(value=1))" in repr(first)
+    assert "ObjectField(name='x', value=TermValue(value=2))" in repr(second)
+    assert first_body is not second_body
+
+
+def test_deferred_statement_identity_includes_enclosing_source() -> None:
+    """Equal statement segments in different sources are distinct structures."""
+    first_root = SourceFragment.from_source(
+        "seed = 1\n" "def helper():\n" "    return seed\n",
+        "same.py",
+    )
+    second_root = SourceFragment.from_source(
+        "seed = 2\n" "def helper():\n" "    return seed\n",
+        "same.py",
+    )
+    first_return = next(
+        fragment for fragment in first_root.walk() if fragment.observed == "Return"
+    )
+    second_return = next(
+        fragment for fragment in second_root.walk() if fragment.observed == "Return"
+    )
+    ctx = FactoryBuildContext(filename="same.py", catalog=default_catalog())
+
+    first_key = DEFERRED_STATEMENT_STRUCTURE_ORACLE.identity_key(first_return, ctx)
+    second_key = DEFERRED_STATEMENT_STRUCTURE_ORACLE.identity_key(second_return, ctx)
+
+    assert first_return.blame == second_return.blame
+    assert first_key != second_key
 
 
 def test_nested_def_binds_named_callable_and_later_call_digs_body() -> None:
