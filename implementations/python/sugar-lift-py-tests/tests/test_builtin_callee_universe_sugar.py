@@ -12,12 +12,12 @@ from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
     assert {
+        "all",
         "numpy._core.multiarray.get_handler_name",
         "numpy._core._multiarray_tests.run_byteorder_converter",
-    } <= (
-        BuiltinCalleeUniverseSugar.universe_coordinates
-    )
+    } <= (BuiltinCalleeUniverseSugar.universe_coordinates)
     assert {
+        "all_builtin_universe_coordinate",
         "get_handler_name_builtin_universe_coordinate",
         "conv_builtin_universe_coordinate",
     } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
@@ -28,9 +28,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
     BuiltinCalleeUniverseSugar.witnesses(),
     ids=lambda pair: pair.name,
 )
-def test_builtin_callee_universe_witness_refutes_bad_twin(
-    pair, tmp_path: Path
-) -> None:
+def test_builtin_callee_universe_witness_refutes_bad_twin(pair, tmp_path: Path) -> None:
     truthful = run_source_through_real_solver(
         tmp_path / f"{pair.name}-truthful", pair.truthful.source
     )

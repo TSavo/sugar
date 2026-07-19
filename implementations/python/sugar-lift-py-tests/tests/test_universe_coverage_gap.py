@@ -110,6 +110,10 @@ def test_builtin_covered_callee_emits_no_universe_gap() -> None:
             "def test_dtype():\n    assert dtype('i4') == 'i4'\n",
         ),
         (
+            "all",
+            "def test_all(value):\n    assert all(value)\n",
+        ),
+        (
             "get_handler_name",
             "from numpy._core.multiarray import get_handler_name\n"
             "def test_handler():\n"
@@ -140,7 +144,7 @@ def test_authenticated_builtin_coordinate_emits_no_universe_gap(
     )
     assert _universe_gaps(payload) == []
 
-    if callee in {"type", "dtype"}:
+    if callee in {"type", "dtype", "all"}:
         node = ast.parse(f"{callee}(value)", mode="eval").body
         context = FactoryBuildContext(
             filename="coordinate.py", catalog=default_catalog()
@@ -154,12 +158,9 @@ def test_authenticated_builtin_coordinate_emits_no_universe_gap(
         assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
 
 
-@pytest.mark.parametrize("callee", ["get_handler_name", "conv"])
+@pytest.mark.parametrize("callee", ["get_handler_name", "conv", "all"])
 def test_shadowed_authenticated_coordinate_stays_unclassified(callee: str) -> None:
-    source = (
-        f"def test_shadowed({callee}):\n"
-        f"    assert {callee}(5) == 5\n"
-    )
+    source = f"def test_shadowed({callee}):\n" f"    assert {callee}(5) == 5\n"
 
     payload = lift_file_payload(source, f"shadowed_{callee}.py")
 
