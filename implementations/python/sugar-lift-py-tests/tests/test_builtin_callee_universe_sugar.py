@@ -23,6 +23,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "numpy.issubdtype",
         "numpy.isnan",
         "numpy.all",
+        "numpy.dtype",
         "numpy._core.multiarray.get_handler_name",
         "numpy._core._multiarray_tests.run_byteorder_converter",
     } <= (BuiltinCalleeUniverseSugar.universe_coordinates)
@@ -33,6 +34,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "numpy_issubdtype_universe_coordinate",
         "numpy_isnan_universe_coordinate",
         "numpy_all_universe_coordinate",
+        "numpy_dtype_universe_coordinate",
         "get_handler_name_builtin_universe_coordinate",
         "conv_builtin_universe_coordinate",
     } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
@@ -352,6 +354,87 @@ def test_unwarranted_isnan_receiver_is_not_factory_owned(source: str) -> None:
 
 def test_numpy_isnan_witness_pair_is_enrolled() -> None:
     assert "numpy_isnan_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def _numpy_dtype_call_site(source: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "dtype"
+    )
+    return SourceFragment.from_node(call, "numpy_dtype.py", source=source)
+
+
+def test_authenticated_numpy_dtype_selects_one_factory_owner() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_dtype(value):\n"
+        "    assert np.dtype(value) == np.dtype(value)\n"
+    )
+    context = FactoryBuildContext(
+        filename="numpy_dtype.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _numpy_dtype_call_site(source),
+        filename="numpy_dtype.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(np, value):\n"
+            "    assert np.dtype(value) == np.dtype(value)\n"
+        ),
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(value):\n"
+            "    assert np.dtype(value) == np.dtype(value)\n"
+            "    np = replacement\n"
+        ),
+        (
+            "import struct as np\n"
+            "\n"
+            "def test_dtype(value):\n"
+            "    assert np.dtype(value) == np.dtype(value)\n"
+        ),
+        (
+            "def test_dtype(value):\n"
+            "    assert numpy.dtype(value) == numpy.dtype(value)\n"
+        ),
+    ],
+)
+def test_unwarranted_numpy_dtype_receiver_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="numpy_dtype.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _numpy_dtype_call_site(source),
+        filename="numpy_dtype.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_numpy_dtype_witness_pair_is_enrolled() -> None:
+    assert "numpy_dtype_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
