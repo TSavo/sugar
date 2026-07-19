@@ -20,7 +20,29 @@ _ACTIVE_DIG_DEMAND: ContextVar[int] = ContextVar(
 
 
 def _term_cycle_key(term: Term) -> str:
-    """Return a canonical, heap-backed identity for an arbitrarily deep term."""
+    """Return a canonical, heap-backed identity for an arbitrarily deep term.
+
+    Under ``term_intern_scope``, request-scoped term hash-cons already gives
+    structural identity as object identity after ``_intern_term``. Key by that
+    identity — never rebuild a full ``TermTableBuilder`` CID walk per dig
+    cycle check or ``CallSiteValue`` hash/eq.
+
+    Product residual (#5338 / #5449 disposition): ``sklearn/utils/tests/test_stats.py``
+    hard-timeout on ``reduce_body`` tip ``AddOpSugar`` at ``stats.py:205``
+    (``array[...] + array[...]``). Profile: two ``CallSiteValue.add`` calls paid
+    ~5s each; wall was 36× ``_term_cycle_key`` → fresh ``TermTableBuilder().reference``
+    blake3 materialization of deep callsite term DAGs. Same class as #5435's
+    formula-key CID thrash — not a sklearn special-case.
+
+    Outside an intern scope (ad-hoc tests / one-shot builders), fall back to a
+    content CID so structural twins still collide without a live table. The
+    encoder remains heap-backed (no native recursion on deep spines).
+    """
+    from sugar_lift_py_tests.ir import _TERM_INTERN_TABLE, _intern_term
+
+    tables = _TERM_INTERN_TABLE.get()
+    if tables is not None:
+        return f"term-id:{id(_intern_term(term))}"
     return TermTableBuilder().reference(term)["cid"]
 
 
