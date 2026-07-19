@@ -8,6 +8,15 @@ from sugar_lift_python_source.source_tables import parsed_parents
 
 
 @dataclass(frozen=True)
+class LoopMutationBinding:
+    """A structurally addressed loop mutation and its pre-loop input source."""
+
+    coordinate: str
+    source: object
+    requires_input: bool
+
+
+@dataclass(frozen=True)
 class LoopControlScopeClassification:
     """Sugar-owned testimony about one loop/control-flow source scope."""
 
@@ -19,6 +28,7 @@ class LoopControlScopeClassification:
     definite_break_output_names: tuple[str, ...]
     contains_terminal_control: bool
     target_bindings: tuple[tuple[str, tuple[int, ...]], ...] | None
+    mutation_bindings: tuple[LoopMutationBinding, ...]
 
 
 class LoopControlScopeRecognition:
@@ -138,20 +148,81 @@ class LoopControlScopeRecognition:
 
     @classmethod
     def has_unclassified_loop_mutation(cls, site) -> bool:
-        for node in ast.walk(site.node):
-            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-                targets = (
-                    node.targets if isinstance(node, ast.Assign) else (node.target,)
+        _, unclassified = cls.loop_mutation_bindings(site)
+        return unclassified
+
+    @classmethod
+    def loop_mutation_bindings(
+        cls, site
+    ) -> tuple[tuple[LoopMutationBinding, ...], bool]:
+        """Recognize mutation roots whose post-state has a structural address."""
+        from sugar_lift_py_tests.source_fragment import SourceFragment
+
+        stored_names = set(cls.own_scope_stored_names(site))
+        carried_names = set(
+            cls.loop_carried_names(
+                site,
+                target_name=(
+                    site.for_target_name() if site.observed == "For" else None
+                ),
+            )
+        )
+        bindings: list[LoopMutationBinding] = []
+        unclassified = False
+
+        def add(target: ast.AST) -> None:
+            nonlocal unclassified
+            if isinstance(target, (ast.Name, ast.Tuple)):
+                return
+            if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name):
+                return
+
+            source = target
+            while isinstance(source, ast.Subscript):
+                source = source.value
+            fragment = SourceFragment.from_node(source, site.filename, site.source)
+            coordinate = fragment.dotted_expr_name()
+            if coordinate is None:
+                unclassified = True
+                return
+            if any(binding.coordinate == coordinate for binding in bindings):
+                return
+            simple_local = "." not in coordinate and coordinate in stored_names
+            bindings.append(
+                LoopMutationBinding(
+                    coordinate=coordinate,
+                    source=fragment,
+                    requires_input=not simple_local or coordinate in carried_names,
                 )
-                for target in targets:
-                    if isinstance(target, (ast.Name, ast.Tuple)):
-                        continue
-                    if isinstance(target, ast.Subscript) and isinstance(
-                        target.value, ast.Name
-                    ):
-                        continue
-                    return True
-        return False
+            )
+
+        class OwnLoopMutations(ast.NodeVisitor):
+            def visit_Assign(self, node: ast.Assign) -> None:
+                for target in node.targets:
+                    add(target)
+
+            def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+                add(node.target)
+
+            def visit_AugAssign(self, node: ast.AugAssign) -> None:
+                add(node.target)
+
+            def stop_at_nested_owner(self, node: ast.AST) -> None:
+                del node
+
+            visit_Lambda = stop_at_nested_owner
+            visit_FunctionDef = stop_at_nested_owner
+            visit_AsyncFunctionDef = stop_at_nested_owner
+            visit_ClassDef = stop_at_nested_owner
+            visit_ListComp = stop_at_nested_owner
+            visit_SetComp = stop_at_nested_owner
+            visit_DictComp = stop_at_nested_owner
+            visit_GeneratorExp = stop_at_nested_owner
+
+        visitor = OwnLoopMutations()
+        for statement in site.node.body:
+            visitor.visit(statement)
+        return tuple(bindings), unclassified
 
     @classmethod
     def loop_carried_names(
@@ -548,14 +619,15 @@ class LoopControlScopeRecognition:
                 return tuple(bindings)
             return None
 
+        mutation_bindings, unclassified_mutation = (
+            cls.loop_mutation_bindings(site) if is_loop else ((), False)
+        )
         return LoopControlScopeClassification(
             carried_names=carried_names,
             stored_names=stored_names,
             has_loop_control=control.has_break or control.has_continue,
             has_owned_break=control.has_break,
-            has_unclassified_mutation=(
-                cls.has_unclassified_loop_mutation(site) if is_loop else False
-            ),
+            has_unclassified_mutation=unclassified_mutation,
             definite_break_output_names=(
                 cls.while_definite_break_output_names(site)
                 if isinstance(site.node, ast.While)
@@ -563,4 +635,5 @@ class LoopControlScopeRecognition:
             ),
             contains_terminal_control=contains_terminal_control,
             target_bindings=target_bindings(site.node, ()),
+            mutation_bindings=mutation_bindings,
         )

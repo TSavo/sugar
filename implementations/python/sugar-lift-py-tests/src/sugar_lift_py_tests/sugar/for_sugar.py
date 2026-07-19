@@ -35,6 +35,8 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     curried: bool
     unclassified_mutation: bool
     deferred_outputs: tuple[str, ...]
+    mutation_inputs: tuple[tuple[str, SugarBody], ...]
+    mutation_outputs: tuple[str, ...]
     site: object = dataclass_field(compare=False)
 
     @staticmethod
@@ -65,14 +67,30 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         append_carried = set(scope.carried_names) & set(
             LoopControlScopeSugar.loop_append_rebind_names(site)
         )
+        mutation_inputs = tuple(
+            (
+                binding.coordinate,
+                ctx.build_body(binding.source, SugarRole.TERM),
+            )
+            for binding in scope.mutation_bindings
+            if binding.requires_input
+        )
         return cls(
             target_name=target_name,
             iterable=ctx.build_body(site.for_iter(), SugarRole.TERM),
             body=ctx.build_body(site.for_body_block(), SugarRole.STATEMENT),
             carried=scope.carried_names,
-            curried=scope.has_loop_control or bool(append_carried),
+            curried=(
+                scope.has_loop_control
+                or bool(append_carried)
+                or bool(scope.mutation_bindings)
+            ),
             unclassified_mutation=scope.has_unclassified_mutation,
             deferred_outputs=_finite_loop_output_names(site, target_name),
+            mutation_inputs=mutation_inputs,
+            mutation_outputs=tuple(
+                binding.coordinate for binding in scope.mutation_bindings
+            ),
             site=site,
         )
 
@@ -108,6 +126,18 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             "    return 0\n"
             "\n"
         )
+        structural_mutation_prefix = (
+            "class Holder:\n"
+            "    def __init__(self):\n"
+            "        self.value = 0\n"
+            "\n"
+            "def D():\n"
+            "    holder = Holder()\n"
+            "    for item in range(1025):\n"
+            "        holder.value = 7\n"
+            "    return 1\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="for_return",
@@ -128,6 +158,15 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
                 + "def test_c():\n    assert C() == 7\n",
                 lying=bound_finite_getattr_prefix
                 + "def test_c():\n    assert C() == 8\n",
+            ),
+            _call_pair(
+                name="for_structural_mutation_projection",
+                owner_sugar="ForSugar",
+                truthful=structural_mutation_prefix
+                + "def test_d():\n    assert D() == 1\n",
+                lying=structural_mutation_prefix
+                + "def test_d():\n    assert D() == 2\n",
+                family="loop-mutation-projection",
             ),
         )
 
@@ -178,6 +217,42 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     def _bind_and_body(
         self, iterable, ctx: object, *, force_curry: bool = False
     ) -> Outcome:
+        return self._bind_mutation_inputs(
+            iterable,
+            ctx,
+            force_curry=force_curry,
+        )
+
+    def _bind_mutation_inputs(
+        self,
+        iterable,
+        ctx,
+        *,
+        force_curry: bool,
+        remaining=None,
+    ):
+        from sugar_lift_py_tests.floor import ScopeRebind
+
+        pending = self.mutation_inputs if remaining is None else remaining
+        if not pending:
+            return self._bind_and_body_ready(
+                iterable,
+                ctx,
+                force_curry=force_curry,
+            )
+        (name, source), *tail = pending
+        return source.reduce(ctx).and_then(
+            lambda value: self._bind_mutation_inputs(
+                iterable,
+                ScopeRebind(name, value).extend_scope(ctx),
+                force_curry=force_curry,
+                remaining=tuple(tail),
+            )
+        )
+
+    def _bind_and_body_ready(
+        self, iterable, ctx: object, *, force_curry: bool = False
+    ) -> Outcome:
         from sugar_lift_py_tests.floor import CallSiteValue, ScopeRebind
         from sugar_lift_py_tests.ir import ctor
 
@@ -215,8 +290,14 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
                     fix="rewrite attribute or subscript mutation as explicit carried locals",
                 )
 
-            input_names = self.carried
-            output_names = self.deferred_outputs if force_curry else self.carried
+            input_names = _unique_names(
+                (*self.carried, *(name for name, _ in self.mutation_inputs))
+            )
+            output_names = (
+                self.deferred_outputs
+                if force_curry
+                else _unique_names((*self.carried, *self.mutation_outputs))
+            )
             values = tuple(
                 body_ctx.temporal.value_if_bound(name) for name in input_names
             )
@@ -250,7 +331,11 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         return self.body.reduce(body_ctx)
 
     def walk_children(self):
-        return (self.iterable, self.body)
+        return (
+            self.iterable,
+            self.body,
+            *(source for _, source in self.mutation_inputs),
+        )
 
 
 def _post_loop_bindings(initial_ctx, final_ctx):
@@ -263,6 +348,10 @@ def _post_loop_bindings(initial_ctx, final_ctx):
         for binding in final_ctx.temporal.bindings
         if before.get(binding.name) is not binding.value
     )
+
+
+def _unique_names(names) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(names))
 
 
 def _finite_loop_output_names(site, target_name: str) -> tuple[str, ...]:
