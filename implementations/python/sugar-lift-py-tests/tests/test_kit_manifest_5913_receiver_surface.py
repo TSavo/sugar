@@ -108,10 +108,13 @@ def _load_manifest():
 
 def test_manifest_declares_the_two_claimed_members() -> None:
     document = json.loads(_MANIFEST_PATH.read_text())
-    assert document["call_shape"] == {
-        "pandas.DataFrame": "PANDAS_DATAFRAME",
-        "pandas.Series": "PANDAS_SERIES",
-    }
+    # Subset check, not exact-equality: this manifest is a shared file across
+    # #5913 member-drain increments (see test_kit_manifest_5913_receiver_
+    # surface_increment2.py), so later increments legitimately add more
+    # call_shape / instance_call entries. This test only asserts THIS file's
+    # original two claims are still present and correct.
+    assert document["call_shape"]["pandas.DataFrame"] == "PANDAS_DATAFRAME"
+    assert document["call_shape"]["pandas.Series"] == "PANDAS_SERIES"
     assert document["instance_call"]["PANDAS_DATAFRAME.equals"] == "pandas.DataFrame.equals"
     assert document["instance_call"]["PANDAS_SERIES.equals"] == "pandas.Series.equals"
     assert document["instance_call"]["PANDAS_DATAFRAME.items"] == "pandas.DataFrame.items"
