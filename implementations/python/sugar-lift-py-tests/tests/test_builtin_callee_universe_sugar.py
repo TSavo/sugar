@@ -34,6 +34,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "numpy.dtype",
         "numpy._core.multiarray.get_handler_name",
         "numpy._core._multiarray_tests.run_byteorder_converter",
+        "re.Pattern.search",
     } <= (BuiltinCalleeUniverseSugar.universe_coordinates)
     assert {
         "all_builtin_universe_coordinate",
@@ -47,6 +48,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "numpy_dtype_universe_coordinate",
         "get_handler_name_builtin_universe_coordinate",
         "conv_builtin_universe_coordinate",
+        "regex_search_builtin_universe_coordinate",
     } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
 
 
@@ -95,6 +97,76 @@ def test_all_nine_authenticated_conv_rows_select_the_converter_owner() -> None:
             ctx=context,
         )
         assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def _method_call_site(source: str, member: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == member
+    )
+    return SourceFragment.from_node(call, f"{member}_call.py", source=source)
+
+
+def test_import_authenticated_regex_search_selects_one_factory_owner() -> None:
+    source = (
+        "import re\n"
+        "\n"
+        "def test_search(value):\n"
+        "    pattern = re.compile('x')\n"
+        "    assert pattern.search(value) is not None\n"
+    )
+    built = build_node(
+        _method_call_site(source, "search"),
+        filename="search_call.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(
+            filename="search_call.py",
+            catalog=default_catalog(),
+        ),
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "def test_search(pattern, value):\n"
+            "    assert pattern.search(value) is not None\n"
+        ),
+        (
+            "import re\n"
+            "\n"
+            "def test_search(value):\n"
+            "    pattern = re.compile('x')\n"
+            "    pattern = replacement\n"
+            "    assert pattern.search(value) is not None\n"
+        ),
+        (
+            "import pretend_re as re\n"
+            "\n"
+            "def test_search(value):\n"
+            "    pattern = re.compile('x')\n"
+            "    assert pattern.search(value) is not None\n"
+        ),
+    ],
+)
+def test_unwarranted_search_receiver_stays_outside_factory_owner(source: str) -> None:
+    built = build_node(
+        _method_call_site(source, "search"),
+        filename="search_call.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(
+            filename="search_call.py",
+            catalog=default_catalog(),
+        ),
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
 
 
 def _bare_builtin_call_site(source: str, callee: str) -> SourceFragment:
