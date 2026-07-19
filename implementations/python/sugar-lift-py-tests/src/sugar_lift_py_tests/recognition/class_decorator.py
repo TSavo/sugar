@@ -100,7 +100,9 @@ def _fixture_parameter_native_shape(statement, parameter: str) -> NativeShape | 
     """Authenticate an injected fixture through its source-declared provider."""
     from sugar_lift_python_source.source_tables import parsed_parents
 
-    parsed = parsed_parents(getattr(statement, "source", ""))
+    parsed = parsed_parents(
+        getattr(statement, "source", ""), statement.filename or "<unknown>"
+    )
     if parsed is None:
         return None
     tree, parents = parsed

@@ -101,14 +101,16 @@ def parsed_tree(source: str, filename: str = "<unknown>") -> ast.Module:
 
 
 @functools.lru_cache(maxsize=SOURCE_TABLE_CAPACITY)
-def parsed_parents(source: str) -> "tuple[ast.Module, dict[ast.AST, ast.AST]] | None":
+def parsed_parents(
+    source: str, filename: str = "<unknown>"
+) -> "tuple[ast.Module, dict[ast.AST, ast.AST]] | None":
     """The parsed tree plus its child->parent map, or None on a syntax error.
 
     One parse and one walk per source; every ancestor query over the same
     module shares the same table.
     """
     try:
-        tree = parsed_tree(source)
+        tree = parsed_tree(source, filename=filename)
     except SyntaxError:
         return None
     parents = {
