@@ -74,7 +74,15 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
         from sugar_lift_py_tests.audit_only import collect_factory_panic
         from sugar_lift_py_tests.effect import effect_reason, effect_status
         from sugar_lift_py_tests.lift_rpc import lift_file_payload
+        from sugar_lift_py_tests.recognition.kit_manifest import (
+            load_kit_manifest_from_env,
+        )
 
+        # #5907: load a declared kit/bridge contract into THIS process before
+        # lift, so a real corpus row can authenticate under it. With no
+        # SUGAR_KIT_MANIFEST set, this loads nothing — protocol tables stay
+        # empty by construction and rows stay loud (the law, not a bug).
+        kit_provenance = load_kit_manifest_from_env()
         try:
             source = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
@@ -97,6 +105,9 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
                 "exception_type": "FactoryPanic",
                 "reason": panic_gap.message.splitlines()[-1][:1000],
                 "gap": panic_gap.info,
+                "kit_manifest": (
+                    kit_provenance.to_json() if kit_provenance is not None else None
+                ),
             }, 3
         assert payload is not None
     except KeyboardInterrupt:
@@ -119,6 +130,11 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
         "factory_walk_rows": len(payload.factory_walk),
         "R_factory_walk_unclassified": len(unclassified_rows),
         "unclassified_rows": unclassified_rows,
+        # #5907: which kit manifest (if any) was loaded into this child
+        # process before lift — provenance, not silent ambient state.
+        "kit_manifest": (
+            kit_provenance.to_json() if kit_provenance is not None else None
+        ),
         "effects": [
             {
                 "effect": type(row.effect).__name__,
@@ -263,6 +279,11 @@ def _run_parent(args: argparse.Namespace) -> int:
         ]
         env = dict(os.environ)
         env["PYTHONFAULTHANDLER"] = "1"
+        if args.kit_manifest:
+            # #5907: propagate the declared kit manifest to the child process
+            # that actually mints this file. Absolute path so the child's cwd
+            # cannot silently change which contract loads.
+            env["SUGAR_KIT_MANIFEST"] = str(Path(args.kit_manifest).resolve())
         try:
             result = subprocess.run(
                 command,
@@ -356,6 +377,12 @@ def _run_parent(args: argparse.Namespace) -> int:
         retained_loci = retained_loci[:COMPACT_LOCUS_LIMIT]
     report: dict[str, Any] = {
         "package_versions": versions,
+        # #5907: which kit manifest (path only — the child recomputes and
+        # records its own sha256) governed this run. null means every child
+        # minted with no contract: empty-by-construction, rows stay loud.
+        "kit_manifest": (
+            str(Path(args.kit_manifest).resolve()) if args.kit_manifest else None
+        ),
         "shard": {"index": args.shard_index, "count": args.shard_count},
         "census": dict(sorted(assertion_counts.items())),
         "terminal_categories": dict(sorted(categories.items())),
@@ -410,6 +437,15 @@ def main() -> int:
     parser.add_argument("--output")
     parser.add_argument("--child-file")
     parser.add_argument("--child-rel")
+    parser.add_argument(
+        "--kit-manifest",
+        help=(
+            "Path to a kit/bridge contract manifest (#5907) whose declared "
+            "coordinates load into every mint child process before lift. "
+            "Omit to mint with no contract — the empty-by-construction "
+            "default; rows without a matching recognizer stay loud."
+        ),
+    )
     args = parser.parse_args()
     if args.child_file or args.child_rel:
         if not args.child_file or not args.child_rel:
