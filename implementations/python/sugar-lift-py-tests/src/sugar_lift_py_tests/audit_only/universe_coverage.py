@@ -154,9 +154,14 @@ def _assertion_call_loci(module) -> frozenset[tuple[int, int]]:
 
 
 def _has_builtin_universe_claim(site, *, callee: str, catalog, filename: str) -> bool:
-    del filename
-    if catalog.claims_universe_coordinate(callee):
-        return True
+    """Site-authenticated universe claim only.
+
+    Name-only ``claims_universe_coordinate`` is not sufficient: a later local
+    rebind or parameter shadow must keep the edge loud even when the edge's
+    target symbol spells an enrolled coordinate.
+    """
+
+    del filename, callee
     if site is None:
         return False
     names = {
