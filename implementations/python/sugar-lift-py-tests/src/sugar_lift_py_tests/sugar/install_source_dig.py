@@ -64,7 +64,23 @@ class _ContextIdentity:
 # Consumer ``temporal`` / ``module_temporal`` are never recognition inputs for
 # the published floor value — partitioning on them multiplies module_seed work
 # (one miss per seed frame) without changing the constructed answer.
-_VALUE_ORACLE_CONTEXT_EXCLUDED = frozenset({"temporal", "module_temporal"})
+_VALUE_ORACLE_CONTEXT_EXCLUDED = frozenset(
+    {
+        "temporal",
+        "module_temporal",
+        # These are observers/ledgers, not factory-recognition inputs. Keeping
+        # their identity in the key made every nested reduction a cache miss.
+        "operation_log",
+        "module_rewrite_log",
+        "external_bridge_sink",
+        "audit_sink",
+        "factory_audit_sink",
+        "proof_sink",
+        "report_sink",
+        "dig_sink",
+        "record_operation",
+    }
+)
 
 
 def _factory_context_identity(ctx: Any) -> tuple[tuple[str, Any], ...]:
