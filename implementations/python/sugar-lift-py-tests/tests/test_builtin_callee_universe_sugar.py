@@ -20,6 +20,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "all",
         "list",
         "numpy.can_cast",
+        "numpy.issubdtype",
         "numpy.isnan",
         "numpy.all",
         "numpy._core.multiarray.get_handler_name",
@@ -29,6 +30,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "all_builtin_universe_coordinate",
         "list_builtin_universe_coordinate",
         "numpy_can_cast_universe_coordinate",
+        "numpy_issubdtype_universe_coordinate",
         "numpy_isnan_universe_coordinate",
         "numpy_all_universe_coordinate",
         "get_handler_name_builtin_universe_coordinate",
@@ -185,6 +187,85 @@ def test_unwarranted_can_cast_receiver_is_not_factory_owned(source: str) -> None
 
 def test_numpy_can_cast_witness_pair_is_enrolled() -> None:
     assert "numpy_can_cast_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def _issubdtype_call_site(source: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "issubdtype"
+    )
+    return SourceFragment.from_node(call, "issubdtype.py", source=source)
+
+
+def test_authenticated_numpy_issubdtype_selects_one_factory_owner() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_dtype(left, right):\n"
+        "    assert np.issubdtype(left, right)\n"
+    )
+    context = FactoryBuildContext(
+        filename="issubdtype.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _issubdtype_call_site(source),
+        filename="issubdtype.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(np, left, right):\n"
+            "    assert np.issubdtype(left, right)\n"
+        ),
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(left, right):\n"
+            "    assert np.issubdtype(left, right)\n"
+            "    np = replacement\n"
+        ),
+        (
+            "class PretendNumpy:\n"
+            "    def issubdtype(self, left, right):\n"
+            "        return True\n"
+            "\n"
+            "def test_dtype(np, left, right):\n"
+            "    assert np.issubdtype(left, right)\n"
+        ),
+    ],
+)
+def test_unwarranted_issubdtype_receiver_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="issubdtype.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _issubdtype_call_site(source),
+        filename="issubdtype.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_numpy_issubdtype_witness_pair_is_enrolled() -> None:
+    assert "numpy_issubdtype_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
