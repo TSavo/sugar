@@ -50,6 +50,9 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "numpy.zeros.tobytes",
         "numpy.lib.stride_tricks.as_strided.tobytes",
         "numpy._core.multiarray.get_handler_name",
+        "numpy._core.multiarray.get_handler_version",
+        "checks.test_get_multi_index_iter_next",
+        "numpy.f2py.extension.sum_and_double",
         "re.Pattern.search",
         "pathlib.Path",
         "pathlib.Path.resolve",
@@ -91,7 +94,10 @@ _OWNED_IMPORTED_SUPPORT = frozenset(
         CalleeUniverseSupport.NUMPY_DTYPE,
         CalleeUniverseSupport.NUMPY_MAY_SHARE_MEMORY,
         CalleeUniverseSupport.NUMPY_HANDLER_NAME,
+        CalleeUniverseSupport.NUMPY_HANDLER_VERSION,
         CalleeUniverseSupport.NUMPY_CONVERTER,
+        CalleeUniverseSupport.NUMPY_CHECKS,
+        CalleeUniverseSupport.NUMPY_F2PY_EXTENSION,
         CalleeUniverseSupport.REGEX_SEARCH,
         CalleeUniverseSupport.JSON_LOADS,
         CalleeUniverseSupport.DATACLASSES_ASDICT,
@@ -137,11 +143,18 @@ class BuiltinCalleeUniverseSugar(
             return False
         receiver = site.call_receiver()
         if receiver is None:
+            # Bound-source / nested FunctionDef warrants take precedence over
+            # bare-leaf spelling (a local ``def dtype`` is not the builtin).
+            if (
+                recognize_callee_universe(site=site)
+                is CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
+            ):
+                return True
             if target not in _AUTHENTICATED_PLAIN_LEAVES:
                 return recognize_callee_universe(site=site) is not None
         elif receiver.observed == "Attribute":
-            # Nested Attribute receivers (``self.module.t0``) authenticate only
-            # through provenance-bound support — never by leaf spelling.
+            # Nested Attribute receivers (``self.module.t0`` / F2Py chains)
+            # authenticate only through provenance-bound support.
             return recognize_callee_universe(site=site) is not None
         elif receiver.observed != "Name":
             # Only instance-parameter method form can authenticate converters.
@@ -180,9 +193,20 @@ class BuiltinCalleeUniverseSugar(
                 callee="get_handler_name",
                 argument="5",
             ),
+            _imported_coordinate_witness(
+                name="get_handler_version",
+                setup=(
+                    "from numpy._core.multiarray import get_handler_version\n"
+                ),
+                callee="get_handler_version",
+                argument="5",
+            ),
             _imported_method_coordinate_witness(
                 setup=("import numpy._core._multiarray_tests as mt\n"),
             ),
+            _checks_test_get_multi_index_iter_next_witness(),
+            _compare_dtypes_local_source_witness(),
+            _f2py_sum_and_double_witness(),
             _regex_search_coordinate_witness(),
             _numpy_can_cast_witness(),
             _numpy_issubdtype_witness(),
@@ -474,6 +498,73 @@ def _bound_source_callable_witness():
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "    assert f(0) == f(0) and f(0) == f(0)\n",
         lying=prefix + "    assert f(0) == f(0) and f(0) != f(0)\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _checks_test_get_multi_index_iter_next_witness():
+    prefix = (
+        "import checks\n"
+        "\n"
+        "def A():\n"
+        "    return checks.test_get_multi_index_iter_next(0, 0)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="checks_test_get_multi_index_iter_next_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        # Conjunction keeps deterministic call substitution load-bearing.
+        truthful=prefix + "def test_a():\n    assert A() == 0 and A() == 0\n",
+        lying=prefix + "def test_a():\n    assert A() == 0 and A() != 0\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _compare_dtypes_local_source_witness():
+    # Nested FunctionDef matches the corpus shape (``test_drop_metadata``).
+    truthful = (
+        "def test_a():\n"
+        "    def _compare_dtypes(dt1, dt2):\n"
+        "        return dt1\n"
+        "    assert _compare_dtypes(0, 1) == 0 and _compare_dtypes(0, 1) == 0\n"
+    )
+    lying = (
+        "def test_a():\n"
+        "    def _compare_dtypes(dt1, dt2):\n"
+        "        return dt1\n"
+        "    assert _compare_dtypes(0, 1) == 0 and _compare_dtypes(0, 1) != 0\n"
+    )
+    return _call_pair(
+        name="compare_dtypes_local_source_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=truthful,
+        lying=lying,
+        family="builtin-universe-coordinate",
+    )
+
+
+def _f2py_sum_and_double_witness():
+    truthful = (
+        "from . import util\n"
+        "\n"
+        "class TestUsedModule(util.F2PyTest):\n"
+        "    def test_a(self):\n"
+        "        assert self.module.useops.sum_and_double(3, 7) == 0 and "
+        "self.module.useops.sum_and_double(3, 7) == 0\n"
+    )
+    lying = (
+        "from . import util\n"
+        "\n"
+        "class TestUsedModule(util.F2PyTest):\n"
+        "    def test_a(self):\n"
+        "        assert self.module.useops.sum_and_double(3, 7) == 0 and "
+        "self.module.useops.sum_and_double(3, 7) != 0\n"
+    )
+    return _call_pair(
+        name="f2py_sum_and_double_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=truthful,
+        lying=lying,
         family="builtin-universe-coordinate",
     )
 
