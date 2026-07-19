@@ -84,6 +84,7 @@ class NativeShape(Enum):
     # only through a loaded kit manifest's call_shape section.
     PANDAS_DATAFRAME = auto()
     PANDAS_SERIES = auto()
+    PANDAS_INDEX = auto()
 
 
 # Language / builtin protocol coordinates only (#5603).

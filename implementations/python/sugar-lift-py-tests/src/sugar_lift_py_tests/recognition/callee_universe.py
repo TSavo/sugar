@@ -234,6 +234,16 @@ class CalleeUniverseSupport(Enum):
     PANDAS_SERIES_EQUALS = auto()
     PANDAS_DATAFRAME_ITEMS = auto()
     PANDAS_SERIES_ITEMS = auto()
+    # #5913 member drain (second increment): call:to_csv (#5644, DataFrame +
+    # Series), call:identical (#5640, Index), call:get_loc (#5639, Index),
+    # call:is_ (#5636, Index), call:slice_locs (#5637, Index). Same
+    # empty-by-construction law as above — kit-manifest only.
+    PANDAS_DATAFRAME_TO_CSV = auto()
+    PANDAS_SERIES_TO_CSV = auto()
+    PANDAS_INDEX_IDENTICAL = auto()
+    PANDAS_INDEX_GET_LOC = auto()
+    PANDAS_INDEX_IS_ = auto()
+    PANDAS_INDEX_SLICE_LOCS = auto()
 
 
 # Empty: numpy dtype-result coordinates are external kit contracts (#5603).
