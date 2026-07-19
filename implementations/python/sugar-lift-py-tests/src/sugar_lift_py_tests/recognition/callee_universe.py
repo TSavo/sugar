@@ -11,6 +11,10 @@ from sugar_lift_py_tests.recognition.visible_declarations import (
     lexical_function_bindings,
     visible_declarations,
 )
+from sugar_lift_py_tests.recognition.native_shape import (
+    recognize_native_call,
+    recognize_native_instance_call,
+)
 
 
 class CalleeUniverseSupport(Enum):
@@ -25,6 +29,7 @@ class CalleeUniverseSupport(Enum):
     NUMPY_MAY_SHARE_MEMORY = auto()
     NUMPY_HANDLER_NAME = auto()
     NUMPY_CONVERTER = auto()
+    REGEX_SEARCH = auto()
 
 
 _IMPORTED_SUPPORT = {
@@ -62,6 +67,7 @@ _IMPORTED_SUPPORT = {
     "numpy._core._multiarray_tests.run_intp_converter": (
         CalleeUniverseSupport.NUMPY_CONVERTER
     ),
+    "re.Pattern.search": CalleeUniverseSupport.REGEX_SEARCH,
 }
 
 _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list", "set", "hasattr"})
@@ -133,6 +139,11 @@ class CalleeUniverseRecognition:
                 imported = imported_call_identity(site)
                 if recognize_authenticated_callee_identity(imported) is not None:
                     return imported
+            bound_receiver = _bound_native_receiver_coordinate(
+                site, receiver.name_id(), target
+            )
+            if bound_receiver is not None:
+                return bound_receiver
             return cls._method_coordinate(site, receiver)
 
         target = site.call_target_name()
@@ -302,6 +313,31 @@ def imported_call_identity(site) -> str | None:
     if head in lexical_function_bindings(site) and not function_local:
         return None
     return origin if not separator else f"{origin}.{tail}"
+
+
+def _bound_native_receiver_coordinate(
+    site, receiver_name: str, member: str
+) -> str | None:
+    """Resolve a member through the latest source-authenticated receiver binding."""
+
+    shape = None
+    declarations, shadowed_parameters = visible_declarations(site)
+    if receiver_name in shadowed_parameters:
+        return None
+    for declaration in declarations:
+        stored = declaration.stored_or_deleted_names()
+        if receiver_name not in stored:
+            continue
+        shape = None
+        if declaration.observed != "Assign" or len(stored) != 1:
+            continue
+        value = declaration.assign_value()
+        if value.observed != "Call":
+            continue
+        shape = recognize_native_call(imported_call_identity(value))
+    if shape is None:
+        return None
+    return recognize_native_instance_call(shape, member)
 
 
 def _enclosing_method_and_class(site):

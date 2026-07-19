@@ -42,6 +42,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "numpy.dtype",
         "numpy.may_share_memory",
         "numpy._core.multiarray.get_handler_name",
+        "re.Pattern.search",
         *_CONVERTER_COORDINATES,
     }
 )
@@ -67,6 +68,7 @@ _OWNED_IMPORTED_SUPPORT = frozenset(
         CalleeUniverseSupport.NUMPY_MAY_SHARE_MEMORY,
         CalleeUniverseSupport.NUMPY_HANDLER_NAME,
         CalleeUniverseSupport.NUMPY_CONVERTER,
+        CalleeUniverseSupport.REGEX_SEARCH,
     }
 )
 
@@ -144,6 +146,7 @@ class BuiltinCalleeUniverseSugar(
             _imported_method_coordinate_witness(
                 setup=("import numpy._core._multiarray_tests as mt\n"),
             ),
+            _regex_search_coordinate_witness(),
             _numpy_can_cast_witness(),
             _numpy_issubdtype_witness(),
             _numpy_isnan_witness(),
@@ -224,6 +227,32 @@ def _imported_method_coordinate_witness(*, setup: str):
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=truthful,
         lying=lying,
+        family="builtin-universe-coordinate",
+    )
+
+
+def _regex_search_coordinate_witness():
+    prefix = (
+        "import re\n"
+        "\n"
+        "def A(value):\n"
+        "    pattern = re.compile('x')\n"
+        "    return pattern.search(value)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="regex_search_builtin_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=(
+            prefix
+            + "def test_a():\n"
+            + "    assert A('x') == A('x') and A('x') == A('x')\n"
+        ),
+        lying=(
+            prefix
+            + "def test_a():\n"
+            + "    assert A('x') == A('x') and A('x') != A('x')\n"
+        ),
         family="builtin-universe-coordinate",
     )
 

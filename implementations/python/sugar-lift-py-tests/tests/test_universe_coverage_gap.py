@@ -89,6 +89,35 @@ def test_diggable_callee_emits_no_universe_gap() -> None:
     assert _universe_gaps(payload) == []
 
 
+def test_import_authenticated_regex_search_has_universe_support() -> None:
+    source = (
+        "import re\n"
+        "\n"
+        "def test_search(value):\n"
+        "    pattern = re.compile('x')\n"
+        "    assert pattern.search(value) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "regex_search_covered.py")
+
+    assert _universe_gaps(payload) == []
+
+
+def test_unresolved_search_receiver_stays_loud() -> None:
+    source = (
+        "def test_search(pattern, value):\n"
+        "    assert pattern.search(value) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "regex_search_unresolved.py")
+
+    gaps = _universe_gaps(payload)
+    assert len(gaps) == 1
+    assert gaps[0].ast_kind == "call:search"
+    assert gaps[0].selected is None
+    assert "owner=python.factory" in gaps[0].reason
+
+
 def test_builtin_covered_callee_emits_no_universe_gap() -> None:
     source = "def test_len(value):\n    assert len(value) >= 0\n"
 

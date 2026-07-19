@@ -40,6 +40,7 @@ class NativeShape(Enum):
     GENERIC_CLASS = auto()
     PYDANTIC_BASE_MODEL = auto()
     PYDANTIC_EXTRA_ALLOW_CLASS_OPTION = auto()
+    REGEX_PATTERN = auto()
 
 
 _CALL_SHAPES = {
@@ -84,6 +85,7 @@ _CALL_SHAPES = {
     "numpy.testing._private.utils.assert_raises_regex": NativeShape.ASSERTING_MANAGER,
     "pandas._testing.external_error_raised": NativeShape.ASSERTING_MANAGER,
     "sqlalchemy.orm.registry": NativeShape.SQLALCHEMY_ORM_REGISTRY,
+    "re.compile": NativeShape.REGEX_PATTERN,
 }
 
 _NEVER_SUPPRESSING_MANAGERS = {
@@ -136,6 +138,10 @@ _NATIVE_INSTANCE_CLASS_DECORATORS = {
     (NativeShape.SQLALCHEMY_ORM_REGISTRY, "mapped_as_dataclass"): (
         NativeShape.CLASS_IDENTITY_DECORATOR
     ),
+}
+
+_NATIVE_INSTANCE_CALLS = {
+    (NativeShape.REGEX_PATTERN, "search"): "re.Pattern.search",
 }
 
 _CLASS_IMPORT_SHAPES = {
@@ -249,6 +255,15 @@ def recognize_native_instance_class_decorator(
     """Recognize a class decorator projected from an authenticated instance."""
 
     return _NATIVE_INSTANCE_CLASS_DECORATORS.get((receiver, member))
+
+
+def recognize_native_instance_call(
+    receiver: NativeShape,
+    member: str,
+) -> str | None:
+    """Resolve a member call from its authenticated constructed receiver shape."""
+
+    return _NATIVE_INSTANCE_CALLS.get((receiver, member))
 
 
 def recognize_native_decorator(target: str | None) -> NativeShape | None:
