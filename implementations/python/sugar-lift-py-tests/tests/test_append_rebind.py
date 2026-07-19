@@ -120,6 +120,84 @@ def test_append_on_callsite_rebinds_to_list_append_coordinate() -> None:
     assert returned.value.term.name == "py.list_append"
 
 
+def test_append_on_loop_callsite_rebinds_through_list_append() -> None:
+    """Curried For list post-state (``loop:…``) stays list-shaped for append.
+
+    Red residual after #5574 compact projection: public_api's second
+    ``module_names.append`` hit ``CallSiteValue(loop:…)`` and panicked.
+    """
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+
+    prior = CallSiteValue(
+        target_name="loop:f.py:1",
+        arg_values=(ListValue((TermValue(1),)),),
+        parameters=("xs",),
+        term=ctor("call:loop:f.py:1", ()),
+        body=None,
+        site="f.py:1",
+    )
+    outcome = prior.append_with(TermValue(2), "f.py:2")
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, CallSiteValue)
+    assert outcome.value.target_name == "list.append"
+    assert outcome.value.term.name == "py.list_append"
+
+
+def test_chained_list_append_callsite_rebinds_through_list_append() -> None:
+    """The coordinate ``append_with`` mints must accept a further append."""
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Complete
+
+    prior = CallSiteValue(
+        target_name="list.append",
+        arg_values=(ListValue((TermValue(1),)), TermValue(2)),
+        parameters=(),
+        term=ctor("py.list_append", ()),
+        body=None,
+        site="f.py:1",
+    )
+    outcome = prior.append_with(TermValue(3), "f.py:2")
+    assert isinstance(outcome, Complete)
+    assert isinstance(outcome.value, CallSiteValue)
+    assert outcome.value.target_name == "list.append"
+    assert outcome.value.term.name == "py.list_append"
+
+
+def test_append_after_compact_curried_for_does_not_panic() -> None:
+    """Product shape: over-cap branched for append-carries a list, then appends.
+
+    Before: FactoryPanic owner=CallSiteValue.append_with on loop: post-state.
+    After: construction continues (no append_with panic on that face).
+    """
+    from sugar_lift_py_tests.audit_only import collect_factory_panic
+    from sugar_lift_py_tests.lift_rpc import lift_file_payload
+
+    source = """
+PUBLIC = list(range(32))
+
+def check(x):
+    return False
+
+def test():
+    module_names = []
+    for module_name in PUBLIC:
+        if not check(module_name):
+            module_names.append(module_name)
+    module_names.append(99)
+    return module_names
+"""
+    _payload, gap = collect_factory_panic(
+        "compact_for_append.py",
+        lambda: lift_file_payload(source, "compact_for_append.py"),
+    )
+    if gap is not None:
+        assert "CallSiteValue.append_with" not in gap.message, gap.message
+        assert "loop:" not in gap.message or "append_with" not in gap.message, (
+            gap.message
+        )
+
+
 def test_list_copy_appends_exact_post_state() -> None:
     """``[1].copy().append(2)`` folds exact element history, never opaque."""
     record = compose_block(
