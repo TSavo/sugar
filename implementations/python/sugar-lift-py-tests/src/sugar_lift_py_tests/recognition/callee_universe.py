@@ -22,6 +22,7 @@ class CalleeUniverseSupport(Enum):
 
     NUMPY_DTYPE_RESULT = auto()
     NUMPY_ISSUBDTYPE = auto()
+    NUMPY_ISNAT = auto()
     NUMPY_ALLCLOSE = auto()
     NUMPY_CAN_CAST = auto()
     NUMPY_ISNAN = auto()

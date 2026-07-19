@@ -65,6 +65,7 @@ _OWNED_IMPORTED_SUPPORT = frozenset(
     | {
         CalleeUniverseSupport.NUMPY_CAN_CAST,
         CalleeUniverseSupport.NUMPY_ISSUBDTYPE,
+        CalleeUniverseSupport.NUMPY_ISNAT,
         CalleeUniverseSupport.NUMPY_ISNAN,
         CalleeUniverseSupport.NUMPY_ALL,
         CalleeUniverseSupport.NUMPY_DTYPE,
