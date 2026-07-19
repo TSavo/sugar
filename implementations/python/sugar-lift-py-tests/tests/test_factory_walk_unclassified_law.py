@@ -56,6 +56,31 @@ def test_extract_from_recensus_red_statuses() -> None:
     assert _SCANNER.r_factory_walk_unclassified(_SCANNER.extract_walk_rows(payload)) == 1389
 
 
+def test_extract_from_factory_walk_statuses_aggregate() -> None:
+    """Historical recensus shards emit factory_walk_statuses, not statusCounts."""
+    payload = {
+        "factory_walk_statuses": {"unclassified": 8470, "warranted": 75505},
+        "census": {"files_total": 890},
+    }
+    rows = _SCANNER.extract_walk_rows(payload)
+    assert _SCANNER.r_factory_walk_unclassified(rows) == 8470
+
+
+def test_extract_from_map_shaped_factory_walk() -> None:
+    payload = {"factory_walk": {"unclassified": 12, "warranted": 40}}
+    assert _SCANNER.r_factory_walk_unclassified(_SCANNER.extract_walk_rows(payload)) == 12
+
+
+def test_extract_from_nested_accounting_factory() -> None:
+    payload = {
+        "accounting": {
+            "factory": {"unclassified": 393, "warranted": 2061},
+            "typed_effect": 26,
+        }
+    }
+    assert _SCANNER.r_factory_walk_unclassified(_SCANNER.extract_walk_rows(payload)) == 393
+
+
 def test_cli_red_on_planted_json(tmp_path: Path) -> None:
     path = tmp_path / "walk.json"
     path.write_text(

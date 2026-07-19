@@ -54,6 +54,22 @@ def r_factory_walk_unclassified(rows: Sequence[Any] | Iterable[Any]) -> int:
     return sum(1 for row in rows if is_unclassified_row(row))
 
 
+def _synthesize_unclassified_from_counts(counts: Mapping[Any, Any]) -> list[dict[str, str]]:
+    """Expand a status→count map into opaque unclassified/unresolved rows."""
+    synthetic: list[dict[str, str]] = []
+    for status_name in ("unclassified", "unresolved"):
+        n = int(counts.get(status_name) or 0)
+        synthetic.extend({"status": status_name} for _ in range(n))
+    return synthetic
+
+
+def _looks_like_walk_row(row: Any) -> bool:
+    """True when a list element is a walk locus (has status), not a terminal-file row."""
+    if isinstance(row, Mapping):
+        return "status" in row
+    return hasattr(row, "status")
+
+
 def extract_walk_rows(payload: Any) -> list[Any]:
     """Pull factory-walk rows from common recensus / audit / DTO shapes."""
     if payload is None:
@@ -63,11 +79,47 @@ def extract_walk_rows(payload: Any) -> list[Any]:
     if not isinstance(payload, Mapping):
         return []
 
-    # Direct walk lists
-    for key in ("factoryWalk", "factory_walk", "rows", "walk"):
+    # Prefer aggregate status maps (historical recensus shards) before generic lists.
+    # pandas-shard*.json only has factory_walk_statuses — never fake R=0 from that.
+    for key in (
+        "statusCounts",
+        "status_counts",
+        "factory_walk_statuses",
+        "factory_walk_red_statuses",
+        "factory_accounting",
+    ):
+        counts = payload.get(key)
+        if isinstance(counts, Mapping):
+            synthetic = _synthesize_unclassified_from_counts(counts)
+            if synthetic:
+                return synthetic
+
+    # nested accounting.factory (requests/datetime ledger shape)
+    accounting = payload.get("accounting")
+    if isinstance(accounting, Mapping):
+        factory_counts = accounting.get("factory")
+        if isinstance(factory_counts, Mapping):
+            synthetic = _synthesize_unclassified_from_counts(factory_counts)
+            if synthetic:
+                return synthetic
+
+    # Direct walk lists (row objects with status) or aggregate factory_walk maps
+    for key in ("factoryWalk", "factory_walk", "walk"):
         value = payload.get(key)
         if isinstance(value, list):
             return list(value)
+        if isinstance(value, Mapping):
+            synthetic = _synthesize_unclassified_from_counts(value)
+            if synthetic:
+                return synthetic
+
+    # Bare "rows" only when elements look like walk loci (have status).
+    # File-terminal ledgers (requests/pydantic completed) also use "rows".
+    rows = payload.get("rows")
+    if isinstance(rows, list) and rows and _looks_like_walk_row(rows[0]):
+        return list(rows)
+    if isinstance(rows, list) and not rows:
+        return []
 
     # Nested audit summary
     for key in ("factoryAuditSummary", "factory_audit_summary", "audit"):
@@ -81,26 +133,6 @@ def extract_walk_rows(payload: Any) -> list[Any]:
     sites = payload.get("unresolvedSites") or payload.get("unresolved_sites")
     if isinstance(sites, list):
         return list(sites)
-
-    # statusCounts-only summary: synthesize opaque rows for the count
-    counts = payload.get("statusCounts") or payload.get("status_counts")
-    if isinstance(counts, Mapping):
-        synthetic: list[dict[str, str]] = []
-        for status_name in ("unclassified", "unresolved"):
-            n = int(counts.get(status_name) or 0)
-            synthetic.extend({"status": status_name} for _ in range(n))
-        if synthetic:
-            return synthetic
-
-    # recensus shard: factory_walk_red_statuses.unclassified
-    red = payload.get("factory_walk_red_statuses")
-    if isinstance(red, Mapping):
-        synthetic = []
-        for status_name in ("unclassified", "unresolved"):
-            n = int(red.get(status_name) or 0)
-            synthetic.extend({"status": status_name} for _ in range(n))
-        if synthetic:
-            return synthetic
 
     # R already computed
     if "R_factory_walk_unclassified" in payload:
