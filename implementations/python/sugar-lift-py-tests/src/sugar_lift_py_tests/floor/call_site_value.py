@@ -111,6 +111,28 @@ class CallSiteValue(FloorValue):
             )
         )
 
+    def __eq__(self, other: object) -> bool:
+        """Compare the same finite authenticated coordinate used by ``__hash__``.
+
+        The dataclass-generated equality walks ``body`` recursively; deferred
+        callsites can retain themselves, so that path is not total.  Body is
+        intentionally excluded from identity: the finite term coordinate is
+        the authenticated callsite identity and already distinguishes twins.
+        """
+        if not isinstance(other, CallSiteValue):
+            return NotImplemented
+        return (
+            type(self),
+            self.target_name,
+            self.parameters,
+            _term_cycle_key(self.term),
+        ) == (
+            type(other),
+            other.target_name,
+            other.parameters,
+            _term_cycle_key(other.term),
+        )
+
     def to_term(self, *, owner: str):
         del owner
         return self.term
@@ -177,26 +199,7 @@ class CallSiteValue(FloorValue):
 
         if self.target_name == "except" and isinstance(other, NoneValue):
             return Complete(FalseBoolLiteralSugar(site))
-        # Deep/cyclic callsite term spines blow recursive dataclass hashing when
-        # building the identity atom (vendor bare RecursionError on `is`/`is not`).
-        # That is a missing heap-backed identity path, never soft success/effect.
-        try:
-            return super().is_identical(other, site)
-        except RecursionError:
-            factory_panic_gap(
-                owner="CallSiteValue.is_identical",
-                blame=str(site),
-                observed=(
-                    f"deep/cyclic callsite term identity for `{self.target_name}`"
-                ),
-                requested="FOL identity atom over callsite terms",
-                fix=(
-                    "emit identity through a heap-backed term coordinate "
-                    f"(TermTableBuilder CID), or leave `{self.target_name}` as an "
-                    "axiomatic EUF face; never convert RecursionError into "
-                    "RuntimeEffect or silent success"
-                ),
-            )
+        return super().is_identical(other, site)
 
     def bitwise_invert(self, site):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
