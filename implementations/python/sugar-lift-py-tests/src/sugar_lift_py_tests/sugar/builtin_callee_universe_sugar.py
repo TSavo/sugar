@@ -43,6 +43,12 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "numpy.dtype",
         "numpy.may_share_memory",
         "numpy.shares_memory",
+        "numpy.ndarray.tobytes",
+        "numpy.array.tobytes",
+        "numpy.empty.tobytes",
+        "numpy.empty_like.tobytes",
+        "numpy.zeros.tobytes",
+        "numpy.lib.stride_tricks.as_strided.tobytes",
         "numpy._core.multiarray.get_handler_name",
         "re.Pattern.search",
         "pathlib.Path.resolve",
@@ -179,6 +185,7 @@ class BuiltinCalleeUniverseSugar(
                 "binomial", "conv_intp", "create", "exists", "func", "iter_goto", "median",
             )),
             _numpy_may_share_memory_witness(),
+            _numpy_array_tobytes_witness(),
             _bound_source_callable_witness(),
             _numpy_dtype_result_witness(),
             _json_loads_witness(),
@@ -379,6 +386,24 @@ def _numpy_may_share_memory_witness():
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_array_tobytes_witness():
+    prefix = (
+        "import numpy as np\n"
+        "\n"
+        "def A():\n"
+        "    value = np.array(b'abc')\n"
+        "    return value.tobytes()\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_array_tobytes_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
         family="builtin-universe-coordinate",
     )
 

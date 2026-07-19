@@ -61,6 +61,7 @@ class CalleeUniverseSupport(Enum):
     SELECTEDINTKIND = auto()
     FOO = auto()
     TO_DT = auto()
+    NUMPY_ARRAY_TOBYTES = auto()
 
 
 _DTYPE_RESULT_SUPPORT = {
@@ -148,6 +149,18 @@ _IMPORTED_SUPPORT = {
     "dataclasses.asdict": CalleeUniverseSupport.DATACLASSES_ASDICT,
     "pathlib.Path.resolve": CalleeUniverseSupport.PATH_RESOLVE,
     "numpy.ufunc": CalleeUniverseSupport.UFUNC,
+    # Bound-native shape coordinate (``value = np.array(...); value.tobytes()``
+    # via ``_bound_native_receiver_coordinate``).
+    "numpy.ndarray.tobytes": CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES,
+    # Result-call identity form (``_result_call_identity`` joins the
+    # constructor import with the member): same family, same leaf.
+    "numpy.array.tobytes": CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES,
+    "numpy.empty.tobytes": CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES,
+    "numpy.empty_like.tobytes": CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES,
+    "numpy.zeros.tobytes": CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES,
+    "numpy.lib.stride_tricks.as_strided.tobytes": (
+        CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES
+    ),
 }
 
 _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list", "set", "hasattr"})
