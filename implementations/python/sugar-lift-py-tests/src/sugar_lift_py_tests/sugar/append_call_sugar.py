@@ -187,6 +187,9 @@ class AppendCallSugar(
             lambda updated: Complete(ScopeRebind(self.receiver_name, updated))
         )
 
+    def walk_children(self):
+        return (self.value,)
+
 
 def _is_pandas_index_like(receiver) -> bool:
     """True when the callsite is a known Index constructor or Index-preserving chain."""

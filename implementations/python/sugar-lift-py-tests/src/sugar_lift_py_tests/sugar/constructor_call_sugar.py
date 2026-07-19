@@ -371,6 +371,12 @@ class ConstructorCallSugar(Sugar, role=SugarRole.TERM, comes_before=("CallSugar"
     def desugar(self, ctx=None) -> Outcome:
         return self.strategy.emit(self, ctx)
 
+    def walk_children(self):
+        # Constructor arguments are ordinary source children already built by
+        # the factory.  The strategy controls reduction, but must not hide
+        # those bodies from source-to-factory conservation.
+        return self.strategy.arguments
+
 
 def _panic(site, observed: str, requested: str, fix: str):
     info = FactoryGapInfo(

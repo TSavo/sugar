@@ -81,3 +81,19 @@ def test_builtin_covered_callee_emits_no_universe_gap() -> None:
 
     assert any(edge.get("targetSymbol") == "call:len" for edge in payload.call_edges)
     assert _universe_gaps(payload) == []
+
+
+def test_floor_protocol_method_named_test_is_not_an_assertion_source() -> None:
+    source = (
+        "class Protocol:\n"
+        "    def test_python_type(self, value):\n"
+        "        return native_type_tester(value)\n"
+    )
+
+    payload = lift_file_payload(source, "floor_protocol.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:native_type_tester"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
