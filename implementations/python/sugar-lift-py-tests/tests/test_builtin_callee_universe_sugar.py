@@ -20,6 +20,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "all",
         "numpy.can_cast",
         "numpy.isnan",
+        "numpy.all",
         "numpy._core.multiarray.get_handler_name",
         "numpy._core._multiarray_tests.run_byteorder_converter",
     } <= (BuiltinCalleeUniverseSugar.universe_coordinates)
@@ -27,6 +28,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "all_builtin_universe_coordinate",
         "numpy_can_cast_universe_coordinate",
         "numpy_isnan_universe_coordinate",
+        "numpy_all_universe_coordinate",
         "get_handler_name_builtin_universe_coordinate",
         "conv_builtin_universe_coordinate",
     } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
@@ -200,6 +202,92 @@ def test_unwarranted_isnan_receiver_is_not_factory_owned(source: str) -> None:
 
 def test_numpy_isnan_witness_pair_is_enrolled() -> None:
     assert "numpy_isnan_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def _numpy_all_call_site(source: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr == "all")
+            or (isinstance(node.func, ast.Name) and node.func.id == "all")
+        )
+    )
+    return SourceFragment.from_node(call, "numpy_all.py", source=source)
+
+
+def test_authenticated_numpy_all_selects_one_factory_owner() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_all(value):\n"
+        "    assert np.all(value)\n"
+    )
+    context = FactoryBuildContext(
+        filename="numpy_all.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _numpy_all_call_site(source),
+        filename="numpy_all.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_all(np, value):\n"
+            "    assert np.all(value)\n"
+        ),
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_all(value):\n"
+            "    assert np.all(value)\n"
+            "    np = replacement\n"
+        ),
+        (
+            "class PretendNumpy:\n"
+            "    def all(self, value):\n"
+            "        return True\n"
+            "\n"
+            "def test_all(np, value):\n"
+            "    assert np.all(value)\n"
+        ),
+        (
+            # Unauthenticated FQN spelling alone must not own the coordinate.
+            "def test_all(value):\n"
+            "    assert numpy.all(value)\n"
+        ),
+    ],
+)
+def test_unwarranted_numpy_all_receiver_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="numpy_all.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _numpy_all_call_site(source),
+        filename="numpy_all.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_numpy_all_witness_pair_is_enrolled() -> None:
+    assert "numpy_all_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
