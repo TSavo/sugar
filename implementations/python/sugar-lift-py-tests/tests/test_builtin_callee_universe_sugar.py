@@ -57,7 +57,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "numpy_all_universe_coordinate",
         "numpy_dtype_universe_coordinate",
         "numpy_dtype_result_universe_coordinate",
-        "numpy_shares_memory_builtin_universe_coordinate",
+        "numpy_shares_memory_universe_coordinate",
         "numpy_array_tobytes_universe_coordinate",
         "get_handler_name_builtin_universe_coordinate",
         "conv_builtin_universe_coordinate",
