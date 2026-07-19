@@ -96,8 +96,17 @@ def test_context_omitting_factory_structure_cache_trips_scanner() -> None:
     scanner = _scanner()
     planted = """
 class BadConstructionCache:
+    def __init__(self):
+        self._table = {}
+
     def identity_key(self, site):
         return site.filename
+
+    def _lookup(self, key):
+        return self._table.get(key)
+
+    def _publish(self, key, value):
+        self._table[key] = value
 
     def resolve(self, site, build_ctx):
         key = self.identity_key(site)
@@ -116,6 +125,115 @@ class BadConstructionCache:
     assert len(offenders) == 1
     assert offenders[0].owner == "BadConstructionCache"
     assert "factory-recognition context" in offenders[0].reason
+
+
+def test_delegated_factory_constructor_cache_trips_scanner() -> None:
+    scanner = _scanner()
+    planted = """
+from collections import OrderedDict
+
+class DelegatedConstructionCache:
+    def __init__(self):
+        self._table = OrderedDict()
+
+    def identity_key(self, site):
+        return site.filename
+
+    def _lookup(self, key):
+        return self._table.get(key)
+
+    def _publish(self, key, value):
+        self._table[key] = value
+
+    def resolve(self, site, build_ctx):
+        key = self.identity_key(site)
+        known = self._lookup(key)
+        if known is not None:
+            return known
+        value = _construct_value(site, build_ctx)
+        self._publish(key, value)
+        return value
+
+def _construct_value(site, build_ctx):
+    return build_ctx.build_body(site, role="statement")
+"""
+
+    offenders = scanner.context_incomplete_construction_caches(
+        ast.parse(planted), file="delegated.py"
+    )
+
+    assert [offender.owner for offender in offenders] == [
+        "DelegatedConstructionCache"
+    ]
+
+
+def test_direct_table_construction_cache_trips_scanner() -> None:
+    scanner = _scanner()
+    planted = """
+class DirectTableConstructionCache:
+    def __init__(self):
+        self._table = {}
+
+    def identity_key(self, site):
+        return site.filename
+
+    def resolve(self, site, build_ctx):
+        key = self.identity_key(site)
+        known = self._table.get(key)
+        if known is not None:
+            return known
+        value = build_ctx.build_body(site, role="statement")
+        self._table[key] = value
+        return value
+"""
+
+    offenders = scanner.context_incomplete_construction_caches(
+        ast.parse(planted), file="direct_table.py"
+    )
+
+    assert [offender.owner for offender in offenders] == [
+        "DirectTableConstructionCache"
+    ]
+
+
+def test_externally_driven_construction_oracle_trips_scanner() -> None:
+    scanner = _scanner()
+    planted = """
+from collections import OrderedDict
+
+class ExternalConstructionOracle:
+    def __init__(self):
+        self._table = OrderedDict()
+
+    def identity_key(self, site):
+        return site.filename
+
+    def get(self, key):
+        return self._table.get(key)
+
+    def put(self, key, value):
+        self._table[key] = value
+
+ORACLE = ExternalConstructionOracle()
+
+def construct(site, build_ctx):
+    oracle = ORACLE
+    key = oracle.identity_key(site)
+    known = oracle.get(key)
+    if known is not None:
+        return known
+    value = build_ctx.build_body(site, role="statement")
+    oracle.put(key, value)
+    return value
+"""
+
+    offenders = scanner.context_incomplete_construction_caches(
+        ast.parse(planted), file="external.py"
+    )
+
+    assert [offender.owner for offender in offenders] == [
+        "ExternalConstructionOracle"
+    ]
 
 
 def test_context_keyed_factory_structure_cache_is_scanner_green() -> None:
