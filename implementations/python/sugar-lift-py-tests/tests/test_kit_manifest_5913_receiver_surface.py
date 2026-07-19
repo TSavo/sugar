@@ -107,15 +107,76 @@ def _load_manifest():
 
 
 def test_manifest_declares_the_two_claimed_members() -> None:
+    """The manifest is a growing, honest surface, not a frozen snapshot.
+
+    This test does NOT pin the manifest to the exact set of coordinates the
+    first increment shipped (#5918) — later increments (#5920, and the
+    pydantic work in #5922) legitimately extend ``call_shape`` and
+    ``instance_call`` with more receivers and members, and a snapshot
+    equality would break on every honest addition without ever catching a
+    dishonest one.
+
+    Instead this enforces the LAW the snapshot was reaching for, over the
+    manifest's full current contents:
+
+    1. Every ``call_shape`` value names a real ``NativeShape`` member — a
+       misspelled or retired enum name in the manifest fails loudly here
+       instead of silently dropping out at kit-load time.
+    2. Every ``instance_call`` key follows the ``<SHAPE>.<attr>`` convention,
+       and the ``<SHAPE>`` half names a shape this SAME manifest's
+       ``call_shape`` section actually declares a receiver for — no
+       instance_call row can reference a shape the manifest never
+       constructs.
+    3. Every ``imported_callee`` value names a real ``CalleeUniverseSupport``
+       member — the same dangling-coordinate guard, one layer up.
+    4. The two members THIS file was written to prove — DataFrame/Series
+       ``equals`` and ``items`` — are still present. This is a presence
+       check, not an exclusivity check: later increments are free to add
+       more without breaking it.
+    """
+
     document = json.loads(_MANIFEST_PATH.read_text())
-    assert document["call_shape"] == {
-        "pandas.DataFrame": "PANDAS_DATAFRAME",
-        "pandas.Series": "PANDAS_SERIES",
-    }
-    assert document["instance_call"]["PANDAS_DATAFRAME.equals"] == "pandas.DataFrame.equals"
-    assert document["instance_call"]["PANDAS_SERIES.equals"] == "pandas.Series.equals"
-    assert document["instance_call"]["PANDAS_DATAFRAME.items"] == "pandas.DataFrame.items"
-    assert document["instance_call"]["PANDAS_SERIES.items"] == "pandas.Series.items"
+
+    call_shape = document["call_shape"]
+    instance_call = document["instance_call"]
+    imported_callee = document["imported_callee"]
+
+    # (1) every declared call_shape value resolves to a real NativeShape member.
+    for fqn, shape_name in call_shape.items():
+        assert shape_name in NativeShape.__members__, (
+            f"call_shape[{fqn!r}] = {shape_name!r} is not a NativeShape member"
+        )
+
+    # (2) every instance_call key is <declared-shape>.<attr>.
+    for shape_member, coordinate in instance_call.items():
+        shape_name, sep, attr = shape_member.partition(".")
+        assert sep == "." and attr, (
+            f"instance_call key {shape_member!r} must be <SHAPE>.<attr>"
+        )
+        assert shape_name in NativeShape.__members__, (
+            f"instance_call key {shape_member!r} names an unknown NativeShape"
+        )
+        assert shape_name in call_shape.values(), (
+            f"instance_call key {shape_member!r} references shape "
+            f"{shape_name!r}, which this manifest's call_shape section never "
+            "declares a receiver for"
+        )
+        assert coordinate, f"instance_call[{shape_member!r}] must be non-empty"
+
+    # (3) every imported_callee value resolves to a real CalleeUniverseSupport member.
+    for coordinate, support_name in imported_callee.items():
+        assert support_name in CalleeUniverseSupport.__members__, (
+            f"imported_callee[{coordinate!r}] = {support_name!r} is not a "
+            "CalleeUniverseSupport member"
+        )
+
+    # (4) the two members this file was written to prove are still declared.
+    assert call_shape["pandas.DataFrame"] == "PANDAS_DATAFRAME"
+    assert call_shape["pandas.Series"] == "PANDAS_SERIES"
+    assert instance_call["PANDAS_DATAFRAME.equals"] == "pandas.DataFrame.equals"
+    assert instance_call["PANDAS_SERIES.equals"] == "pandas.Series.equals"
+    assert instance_call["PANDAS_DATAFRAME.items"] == "pandas.DataFrame.items"
+    assert instance_call["PANDAS_SERIES.items"] == "pandas.Series.items"
 
 
 def test_production_tables_never_embed_the_5913_vendor_fqns() -> None:
