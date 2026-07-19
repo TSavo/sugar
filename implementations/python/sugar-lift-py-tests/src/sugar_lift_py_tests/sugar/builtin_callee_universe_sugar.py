@@ -8,7 +8,6 @@ from sugar_lift_py_tests.recognition.callee_universe import (
     CalleeUniverseSupport,
     CalleeUniverseRecognition,
     recognize_authenticated_callee_identity,
-    recognize_callee_universe,
 )
 from sugar_lift_py_tests.sugar.call_sugar import CallSugar
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
@@ -41,7 +40,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         *_CONVERTER_COORDINATES,
     }
 )
-_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all"})
+_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list"})
 # Leaf spellings that can still resolve into an authenticated coordinate.
 # Plain-call owns refuses full import-identity work when the callee leaf cannot
 # match; method receivers keep the Name-only path (class attribute aliases).
@@ -81,9 +80,11 @@ class BuiltinCalleeUniverseSugar(
 
     @classmethod
     def owns(cls, site) -> bool:
-        # factory.select asks every TERM claim. Import-identity resolution is
-        # O(module) without a locus index; refuse the expensive coordinate path
-        # when the callee leaf cannot be an authenticated coordinate.
+        # factory.select asks every TERM claim. After parsed_locus_index, the
+        # residual wall is import-identity / symtable work on Attribute Calls
+        # whose attr cannot authenticate (``random.multinomial``, …). Refuse
+        # that path structurally; one coordinate resolution is enough — do not
+        # double-pay recognize_callee_universe + coordinate.
         if site.observed != "Call" or site.call_has_keywords():
             return False
         target = site.call_target_name()
@@ -96,10 +97,9 @@ class BuiltinCalleeUniverseSugar(
         elif receiver.observed != "Name":
             # Only instance-parameter method form can authenticate converters.
             return False
-        support = recognize_callee_universe(site=site)
-        if support in _OWNED_IMPORTED_SUPPORT:
-            return True
         coordinate = CalleeUniverseRecognition.coordinate(site)
+        if coordinate is None:
+            return False
         if coordinate in _BUILTIN_COORDINATES:
             return True
         return (

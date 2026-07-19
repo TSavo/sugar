@@ -61,6 +61,13 @@ _IMPORTED_SUPPORT = {
 }
 
 _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list"})
+# Attribute leaves that can still resolve into an imported authenticated
+# coordinate (``np.can_cast``, ``np.all``, converter helpers, …). Class-body
+# aliases (``self.conv = mt.run_byteorder_converter``) use arbitrary attr
+# names and never match this set — they take the method-coordinate path only.
+_IMPORTED_ATTRIBUTE_LEAVES = frozenset(
+    identity.rsplit(".", 1)[-1] for identity in _IMPORTED_SUPPORT
+)
 
 
 def recognize_callee_universe(
@@ -106,11 +113,22 @@ class CalleeUniverseRecognition:
 
         receiver = site.call_receiver()
         if receiver is not None:
+            if receiver.observed != "Name":
+                return None
             if not site.source:
                 return None
-            imported = imported_call_identity(site)
-            if recognize_authenticated_callee_identity(imported) is not None:
-                return imported
+            target = site.call_target_name()
+            if target is None:
+                return None
+            # Import-bound authenticated coordinates always spell a registered
+            # leaf (``np.all`` / ``np.can_cast`` / converter helpers). Paying
+            # full ``imported_call_identity`` for every ``random.X`` /
+            # ``module.Y`` Call is the factory.select residual after
+            # parsed_locus_index drained the AST-walk half of the path.
+            if target in _IMPORTED_ATTRIBUTE_LEAVES:
+                imported = imported_call_identity(site)
+                if recognize_authenticated_callee_identity(imported) is not None:
+                    return imported
             return cls._method_coordinate(site, receiver)
 
         target = site.call_target_name()
@@ -124,6 +142,10 @@ class CalleeUniverseRecognition:
             return target if cls._name_is_unshadowed(site, target) else None
 
         if not site.source:
+            return None
+        # Plain Name call: only resolve import identity when the leaf can still
+        # land on an authenticated imported coordinate.
+        if target not in _IMPORTED_ATTRIBUTE_LEAVES:
             return None
         return imported_call_identity(site)
 

@@ -15,6 +15,7 @@ from sugar_lift_python_source.source_tables import (
     source_lines,
     source_segment,
     source_splitlines,
+    source_symtable,
 )
 
 
@@ -25,7 +26,13 @@ def test_capacity_is_finite_and_positive() -> None:
 
 def test_source_tables_are_lru_bounded_not_unbounded() -> None:
     """R axis: no maxsize=None on the process-lifetime tables."""
-    for fn in (source_splitlines, source_lines, parsed_parents, parsed_locus_index):
+    for fn in (
+        source_splitlines,
+        source_lines,
+        parsed_parents,
+        parsed_locus_index,
+        source_symtable,
+    ):
         info = fn.cache_info()
         # lru_cache exposes maxsize; None would mean unbounded.
         assert info.maxsize is not None, f"{fn.__name__} must be bounded"
@@ -42,6 +49,7 @@ def test_tables_evict_past_capacity_without_losing_semantics() -> None:
     source_tables._parsed.cache_clear()
     parsed_parents.cache_clear()
     parsed_locus_index.cache_clear()
+    source_symtable.cache_clear()
 
     n = SOURCE_TABLE_CAPACITY + 8
     bodies = [f"x_{i} = {i}\n" for i in range(n)]
@@ -55,6 +63,8 @@ def test_tables_evict_past_capacity_without_losing_semantics() -> None:
         assert isinstance(parents[0], ast.Module)
         index = parsed_locus_index(body)
         assert index is not None
+        table = source_symtable(body)
+        assert table is not None
 
     # Oldest entries may be gone; re-query still correct (recompute path).
     first = bodies[0]
@@ -63,6 +73,7 @@ def test_tables_evict_past_capacity_without_losing_semantics() -> None:
     assert parsed_tree(first).body[0].targets[0].id == "x_0"  # type: ignore[attr-defined]
     assign = parsed_tree(first).body[0]
     assert locate_parsed_node(first, type(assign), assign.lineno, assign.col_offset) is assign
+    assert source_symtable(first) is not None
 
     # Cache never grows past capacity.
     assert source_splitlines.cache_info().currsize <= SOURCE_TABLE_CAPACITY
@@ -70,6 +81,7 @@ def test_tables_evict_past_capacity_without_losing_semantics() -> None:
     assert source_tables._parsed.cache_info().currsize <= SOURCE_TABLE_CAPACITY
     assert parsed_parents.cache_info().currsize <= SOURCE_TABLE_CAPACITY
     assert parsed_locus_index.cache_info().currsize <= SOURCE_TABLE_CAPACITY
+    assert source_symtable.cache_info().currsize <= SOURCE_TABLE_CAPACITY
 
 
 def test_source_segment_still_uses_line_table() -> None:
