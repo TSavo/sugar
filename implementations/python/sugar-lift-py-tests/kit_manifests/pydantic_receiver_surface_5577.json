@@ -1,0 +1,14 @@
+{
+  "call_shape": {
+    "pydantic_core.SchemaValidator": "SCHEMA_VALIDATOR",
+    "pydantic_core.SchemaSerializer": "SCHEMA_SERIALIZER"
+  },
+  "instance_call": {
+    "SCHEMA_VALIDATOR.validate_python": "pydantic_core.SchemaValidator.validate_python",
+    "SCHEMA_SERIALIZER.to_python": "pydantic_core.SchemaSerializer.to_python"
+  },
+  "imported_callee": {
+    "pydantic_core.SchemaValidator.validate_python": "PYDANTIC_CORE_SCHEMA_VALIDATOR_VALIDATE_PYTHON",
+    "pydantic_core.SchemaSerializer.to_python": "PYDANTIC_CORE_SCHEMA_SERIALIZER_TO_PYTHON"
+  }
+}
