@@ -62,7 +62,7 @@ _IMPORTED_SUPPORT = {
     ),
 }
 
-_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list"})
+_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list", "set", "hasattr"})
 # Attribute leaves that can still resolve into an imported authenticated
 # coordinate (``np.can_cast``, ``np.all``, converter helpers, …). Class-body
 # aliases (``self.conv = mt.run_byteorder_converter``) use arbitrary attr
@@ -159,7 +159,7 @@ class CalleeUniverseRecognition:
         if name in shadowed_parameters:
             return False
         if name in lexical_function_bindings(site):
-            # A function-local binding of ``type``/``dtype``/``all`` (parameter
+            # A function-local binding of a bare builtin coordinate (parameter
             # or later assignment) is never the builtin coordinate.
             return False
         # Module-level assignment before the site also revokes.
