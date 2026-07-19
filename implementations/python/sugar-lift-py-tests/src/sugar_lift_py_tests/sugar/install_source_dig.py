@@ -865,8 +865,14 @@ def resolve_source_exit_contract(
     Every other shape remains ``None`` so WithSugar stays loud. Never invent
     non-suppression from missing evidence.
     """
-    if not import_target or "." not in import_target or import_target in _stack:
+    if not import_target or "." not in import_target:
         return None
+    if import_target in _stack:
+        _install_source_cycle_panic(
+            guard="exit-contract",
+            target=import_target,
+            active=_stack,
+        )
     contract = resolve_contextmanager_exit_contract(import_target)
     if contract is not None:
         return contract
