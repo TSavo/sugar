@@ -15,7 +15,13 @@ class YieldSugar(Sugar, role=SugarRole.TERM):
 
     @classmethod
     def owns(cls, site) -> bool:
-        return site.observed == "Yield" and site.has_enclosing_function()
+        if site.observed != "Yield":
+            return False
+        from sugar_lift_py_tests.recognition.generator_scope import (
+            GeneratorScopeRecognition,
+        )
+
+        return GeneratorScopeRecognition.contains(site)
 
     @classmethod
     def new(cls, site, ctx) -> "YieldSugar":
