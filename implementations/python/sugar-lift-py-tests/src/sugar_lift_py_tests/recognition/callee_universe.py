@@ -163,21 +163,28 @@ def recognize_callee_universe(
             if target is not None and target != f"call:{leaf}":
                 return None
             return CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
-        # Nested FunctionDef binding (structural source provenance, no logo).
+        # Nested FunctionDef / Assign-lambda / for-unpacked lambda (#5411).
         local = _local_source_function_identity(site)
         if local is not None:
             if not _target_matches_call(target, local, site):
                 return None
             return CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
+        # Receiver-surface / item receiver coordinate (e.g. arr.item()).
         coordinate = CalleeUniverseRecognition.coordinate(site)
         if coordinate is None:
             return None
         support = recognize_authenticated_callee_identity(coordinate)
-        if support is None:
-            return None
-        if not _target_matches_call(target, coordinate, site):
-            return None
-        return support
+        if support is not None:
+            if not _target_matches_call(target, coordinate, site):
+                return None
+            return support
+        # Bare surface leaves such as ``item`` after import-authenticated
+        # constructor binding (#5410) — coordinate is the member leaf itself.
+        if coordinate == site.call_target_name() and _target_matches_call(
+            target, coordinate, site
+        ):
+            return CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
+        return None
     result_support = _DTYPE_RESULT_SUPPORT.get(identity)
     if result_support is not None and target in {None, "call:dtype"}:
         return result_support
@@ -194,14 +201,21 @@ def recognize_callee_universe(
         # coordinate is the surface FQN (``re.Pattern.search``). Prefer the
         # Assign-bound surface registry over the raw result join.
         surface = CalleeUniverseRecognition._surface_method_coordinate(site)
-        if surface is None:
-            return None
-        support = recognize_authenticated_callee_identity(surface)
-        if support is None:
-            return None
-        if not _target_matches_call(target, surface, site):
-            return None
-        return support
+        if surface is not None:
+            support = recognize_authenticated_callee_identity(surface)
+            if support is not None and _target_matches_call(target, surface, site):
+                return support
+        # Import-authenticated constructor receiver + bare member leaf
+        # (``arr = np.array(...); arr.item()`` — #5410). Result identity may
+        # be ``numpy.array.item`` without a logo table entry.
+        coordinate = CalleeUniverseRecognition.coordinate(site)
+        if (
+            coordinate is not None
+            and coordinate == site.call_target_name()
+            and _target_matches_call(target, coordinate, site)
+        ):
+            return CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
+        return None
     if not _target_matches_call(target, identity, site):
         return None
     return support
@@ -662,10 +676,20 @@ def _bare_factory_result_callable_identity(site) -> str | None:
 
 
 def _local_source_function_identity(site) -> str | None:
-    """Authenticate a bare call to a visible nested/module FunctionDef.
+    """Authenticate a bare call through local source-callable provenance.
 
-    Source provenance is the FunctionDef binding itself. Later assignments or
-    imports of the same name revoke the warrant; parameters always revoke.
+    Forms (leaf spelling alone grants nothing):
+
+    1. Nested FunctionDef in the enclosing function
+       (``def extractor(x): ...`` then ``extractor(res)``).
+    2. Function-local Assign of a Lambda
+       (``extractor = lambda res: res`` then ``extractor(res)``).
+    3. For-unpacked name fed by a same-module generator FunctionDef that
+       assigns a Lambda to that name before yielding it
+       (numpy ``interesting_binop_operands`` → ``for …, extractor, …``).
+
+    Parameters, rebinds to non-callables, and unresolved for-iterables stay
+    loud. No vendor logo strings.
     """
 
     if site is None or site.observed != "Call" or site.call_receiver() is not None:
@@ -676,23 +700,136 @@ def _local_source_function_identity(site) -> str | None:
     declarations, shadowed_parameters = visible_declarations(site)
     if target in shadowed_parameters:
         return None
+
+    # (1) Nested FunctionDef / (2) Assign of Lambda in enclosing function.
     binding = None
+    lambda_assign = None
     for declaration in declarations:
         if declaration.observed in {"FunctionDef", "AsyncFunctionDef"}:
             if declaration.function_name() == target:
                 binding = declaration
+                lambda_assign = None
             continue
-        if target in declaration.stored_or_deleted_names():
-            # Assign / import / delete after the def shadows the function.
-            binding = None
-    if binding is None:
+        if target not in declaration.stored_or_deleted_names():
+            continue
+        # Later store of the name revokes a prior FunctionDef.
+        binding = None
+        if (
+            declaration.observed == "Assign"
+            and declaration.stored_or_deleted_names() == frozenset({target})
+            and declaration.assign_value().observed == "Lambda"
+            and declaration_is_function_local(site, declaration)
+        ):
+            lambda_assign = declaration
+        else:
+            lambda_assign = None
+    if binding is not None and declaration_is_function_local(site, binding):
+        return target
+    if lambda_assign is not None:
+        return target
+
+    # (3) For-unpacked lambda from a local generator FunctionDef.
+    return _for_unpacked_lambda_identity(site, target)
+
+
+def _for_unpacked_lambda_identity(site, target: str) -> str | None:
+    """For-target name fed by a generator that assigns ``target = lambda …``."""
+
+    path = _source_path(site)
+    if path is None:
         return None
-    # Module-level ``def A`` witness wrappers stay outside this family so they
-    # cannot steal BuiltinCalleeUniverse ownership from the inner call. Nested
-    # corpus helpers (``def _compare_dtypes`` inside a test) remain in scope.
-    if not declaration_is_function_local(site, binding):
+    for_node = None
+    for node in reversed(path):
+        if isinstance(node, ast.For):
+            for_node = node
+            break
+    if for_node is None:
+        return None
+    if target not in _for_target_names(for_node.target):
+        return None
+
+    # Resolve for.iter to a same-module FunctionDef (Call or Name→Assign Call).
+    gen_def = _generator_function_def_for_iter(site, for_node.iter)
+    if gen_def is None:
+        return None
+    if not _function_assigns_lambda_to(gen_def, target):
         return None
     return target
+
+
+def _for_target_names(target: ast.AST) -> frozenset[str]:
+    names: set[str] = set()
+
+    def walk(node: ast.AST) -> None:
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+            return
+        if isinstance(node, ast.Tuple | ast.List):
+            for elt in node.elts:
+                walk(elt)
+
+    walk(target)
+    return frozenset(names)
+
+
+def _generator_function_def_for_iter(site, iter_node: ast.AST) -> ast.FunctionDef | None:
+    """Resolve ``for … in name()`` / ``for … in name`` to a module FunctionDef."""
+
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    filename = site.filename or ""
+    source = site.source
+    if not source:
+        return None
+
+    gen_name: str | None = None
+    if isinstance(iter_node, ast.Call) and isinstance(iter_node.func, ast.Name):
+        gen_name = iter_node.func.id
+    elif isinstance(iter_node, ast.Name):
+        # ``to_check = interesting_binop_operands(...); for … in to_check``
+        # Build a synthetic Call site at the for.iter Name for declaration walk.
+        name_site = SourceFragment.from_node(iter_node, filename, source=source)
+        declarations, _ = visible_declarations(name_site)
+        binding = None
+        for declaration in declarations:
+            if iter_node.id not in declaration.stored_or_deleted_names():
+                continue
+            binding = declaration
+        if (
+            binding is not None
+            and binding.observed == "Assign"
+            and binding.stored_or_deleted_names() == frozenset({iter_node.id})
+            and binding.assign_value().observed == "Call"
+        ):
+            call_func = binding.assign_value().call_func()
+            if call_func is not None and call_func.observed == "Name":
+                gen_name = call_func.name_id()
+    if gen_name is None:
+        return None
+
+    path = _source_path(site)
+    if path is None:
+        return None
+    tree = path[0]
+    for stmt in getattr(tree, "body", ()):
+        if isinstance(stmt, ast.FunctionDef) and stmt.name == gen_name:
+            return stmt
+    return None
+
+
+def _function_assigns_lambda_to(func: ast.FunctionDef, name: str) -> bool:
+    """True when ``func`` assigns a Lambda to ``name`` (possibly in nested fors)."""
+
+    for node in ast.walk(func):
+        if not isinstance(node, ast.Assign):
+            continue
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        if node.targets[0].id != name:
+            continue
+        if isinstance(node.value, ast.Lambda):
+            return True
+    return False
 
 
 def _f2py_extension_coordinate(site) -> str | None:
