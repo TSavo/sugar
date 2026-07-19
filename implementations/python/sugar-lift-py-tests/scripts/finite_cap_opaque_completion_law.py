@@ -70,7 +70,17 @@ def _looks_like_finite_cardinality(node: ast.AST) -> bool:
             return True
         if isinstance(child, ast.Name) and any(
             word in child.id.lower()
-            for word in ("count", "length", "size", "cardinality", "repeated")
+            for word in (
+                "active",
+                "cardinality",
+                "count",
+                "demand",
+                "depth",
+                "length",
+                "repeated",
+                "seen",
+                "size",
+            )
         ):
             return True
         if isinstance(child, ast.Attribute) and child.attr.lower() in {
@@ -79,20 +89,37 @@ def _looks_like_finite_cardinality(node: ast.AST) -> bool:
             "length",
             "size",
             "repeated",
+            "depth",
+            "demand",
         }:
             return True
     return False
 
 
 def _is_finite_cap_test(node: ast.AST) -> bool:
-    if not isinstance(node, ast.Compare):
-        return False
-    if not any(isinstance(op, (ast.Lt, ast.LtE, ast.Gt, ast.GtE)) for op in node.ops):
-        return False
-    operands = (node.left, *node.comparators)
-    return any(_looks_like_finite_cardinality(item) for item in operands) and any(
-        _looks_like_bound(item) for item in operands
-    )
+    return _cap_comparison(node) is not None
+
+
+def _cap_comparison(node: ast.AST) -> ast.Compare | None:
+    """Find a bounded-work comparison inside a direct/compound predicate."""
+    if isinstance(node, ast.Compare):
+        if not any(
+            isinstance(op, (ast.Lt, ast.LtE, ast.Gt, ast.GtE))
+            for op in node.ops
+        ):
+            return None
+        operands = (node.left, *node.comparators)
+        if any(
+            _looks_like_finite_cardinality(item) for item in operands
+        ) and any(_looks_like_bound(item) for item in operands):
+            return node
+        return None
+    if isinstance(node, ast.BoolOp):
+        for child in ast.iter_child_nodes(node):
+            comparison = _cap_comparison(child)
+            if comparison is not None:
+                return comparison
+    return None
 
 
 def _call_has_true_keyword(node: ast.Call, keyword: str) -> bool:
@@ -118,24 +145,66 @@ def _is_forbidden_cap_complete(node: ast.Call) -> bool:
     return constructor not in _EXACT_COMPACT_CONSTRUCTORS
 
 
+_LOUD_TERMINALS = frozenset(
+    {
+        "_force_floor_gap",
+        "factory_panic_gap",
+        "finite_unfold_cap_panic",
+    }
+)
+
+
+def _direct_helper(
+    call: ast.Call, parents: dict[ast.AST, ast.AST]
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    helper_name = _name(call.func).split(".")[-1]
+    if not helper_name:
+        return None
+    cursor: ast.AST | None = call
+    while cursor is not None:
+        body = getattr(cursor, "body", None)
+        if isinstance(body, list):
+            matches = [
+                item
+                for item in body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name == helper_name
+            ]
+            if len(matches) == 1:
+                return matches[0]
+        cursor = parents.get(cursor)
+    return None
+
+
 def _forbidden_exit(
     node: ast.Return,
-    helpers: dict[str, list[ast.Return]],
-    resolving: frozenset[str] = frozenset(),
+    parents: dict[ast.AST, ast.AST],
+    resolving: frozenset[int] = frozenset(),
 ) -> tuple[str, ast.AST] | None:
     if node.value is None:
         return "finite-cap-none-success", node
     if isinstance(node.value, ast.Constant) and node.value.value is None:
         return "finite-cap-none-success", node.value
-    if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
-        helper = node.value.func.id
-        if helper not in resolving:
-            for returned in helpers.get(helper, ()):
+    if isinstance(node.value, ast.Call):
+        called = _name(node.value.func).split(".")[-1]
+        if called in _LOUD_TERMINALS or called.endswith("_panic"):
+            return None
+        if called == "Incomplete":
+            return None
+        if called == "Complete" and not _is_forbidden_cap_complete(node.value):
+            return None
+        helper = _direct_helper(node.value, parents)
+        if helper is not None and id(helper) not in resolving:
+            returns = _returns_in(helper.body)
+            if not returns:
+                return "finite-cap-opaque-delegation", node.value
+            for returned in returns:
                 forbidden = _forbidden_exit(
-                    returned, helpers, resolving | {helper}
+                    returned, parents, resolving | {id(helper)}
                 )
                 if forbidden is not None:
                     return forbidden
+            return None
     for child in ast.walk(node.value):
         if not isinstance(child, ast.Call):
             continue
@@ -146,26 +215,45 @@ def _forbidden_exit(
             return "finite-cap-opaque-coordinate", child
         if _is_forbidden_cap_complete(child):
             return "finite-cap-opaque-complete", child
-    return None
+    return "finite-cap-opaque-return", node.value
 
 
 def _returns_in(statements: Sequence[ast.stmt]) -> list[ast.Return]:
+    def scoped_returns(node: ast.AST) -> list[ast.Return]:
+        returns: list[ast.Return] = []
+        for child in ast.iter_child_nodes(node):
+            if isinstance(
+                child, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+            ):
+                continue
+            if isinstance(child, ast.Return):
+                returns.append(child)
+            else:
+                returns.extend(scoped_returns(child))
+        return returns
+
     returns: list[ast.Return] = []
     for statement in statements:
-        returns.extend(
-            child for child in ast.walk(statement) if isinstance(child, ast.Return)
-        )
+        if isinstance(
+            statement, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            continue
+        if isinstance(statement, ast.Return):
+            returns.append(statement)
+        else:
+            returns.extend(scoped_returns(statement))
     return returns
 
 
 def _over_cap_returns(tree: ast.AST, node: ast.If) -> list[ast.Return]:
     """Select only the comparison arm in which cardinality exceeds the bound."""
-    assert isinstance(node.test, ast.Compare)
-    if len(node.test.ops) != 1 or len(node.test.comparators) != 1:
+    comparison = _cap_comparison(node.test)
+    assert comparison is not None
+    if len(comparison.ops) != 1 or len(comparison.comparators) != 1:
         return _returns_in((*node.body, *node.orelse))
-    left_is_cardinality = _looks_like_finite_cardinality(node.test.left)
-    right_is_cardinality = _looks_like_finite_cardinality(node.test.comparators[0])
-    op = node.test.ops[0]
+    left_is_cardinality = _looks_like_finite_cardinality(comparison.left)
+    right_is_cardinality = _looks_like_finite_cardinality(comparison.comparators[0])
+    op = comparison.ops[0]
     body_is_over = (
         left_is_cardinality and isinstance(op, (ast.Gt, ast.GtE))
     ) or (right_is_cardinality and isinstance(op, (ast.Lt, ast.LtE)))
@@ -270,15 +358,9 @@ def scan_source(source: str, *, path: str) -> list[FiniteCapOpaqueCompletion]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.If) or not _is_finite_cap_test(node.test):
             continue
-        helpers = {
-            item.name: _returns_in(item.body)
-            for item in ast.walk(tree)
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and item.name
-        }
         controlled = _over_cap_returns(tree, node)
         for returned in controlled:
-            forbidden = _forbidden_exit(returned, helpers)
+            forbidden = _forbidden_exit(returned, parents)
             if forbidden is None:
                 continue
             kind, expression = forbidden
@@ -298,6 +380,42 @@ def scan_source(source: str, *, path: str) -> list[FiniteCapOpaqueCompletion]:
                     ),
                 )
             )
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.IfExp):
+            continue
+        comparison = _cap_comparison(node.test)
+        if comparison is None or len(comparison.ops) != 1:
+            continue
+        left_is_cardinality = _looks_like_finite_cardinality(comparison.left)
+        right_is_cardinality = _looks_like_finite_cardinality(
+            comparison.comparators[0]
+        )
+        op = comparison.ops[0]
+        body_is_over = (
+            left_is_cardinality and isinstance(op, (ast.Gt, ast.GtE))
+        ) or (right_is_cardinality and isinstance(op, (ast.Lt, ast.LtE)))
+        expression = node.body if body_is_over else node.orelse
+        returned = ast.copy_location(ast.Return(value=expression), expression)
+        forbidden = _forbidden_exit(returned, parents)
+        if forbidden is None:
+            continue
+        kind, offending_expression = forbidden
+        key = (getattr(offending_expression, "lineno", 0) or 0, kind)
+        if key in seen:
+            continue
+        seen.add(key)
+        offenders.append(
+            FiniteCapOpaqueCompletion(
+                path,
+                key[0],
+                kind,
+                _safe_unparse(offending_expression),
+                (
+                    "finite authenticated work must end in a loud typed "
+                    "terminal or an exact/witnessed symbolic value"
+                ),
+            )
+        )
     return offenders
 
 

@@ -132,6 +132,88 @@ def reduce(values):
     assert [row.kind for row in rows] == ["finite-cap-none-success"]
 
 
+def test_cap_arbitrary_raw_return_is_closed_by_default() -> None:
+    rows = _scan(
+        """
+def reduce(values):
+    if len(values) > cap:
+        return values[:cap]
+    return unfold(values)
+"""
+    )
+    assert [row.kind for row in rows] == ["finite-cap-opaque-return"]
+
+
+def test_compound_cap_predicate_trips() -> None:
+    rows = _scan(
+        """
+def reduce(values, enabled):
+    if enabled and len(values) > cap:
+        return values[:cap]
+    return unfold(values)
+"""
+    )
+    assert [row.kind for row in rows] == ["finite-cap-opaque-return"]
+
+
+def test_cap_conditional_expression_trips() -> None:
+    rows = _scan(
+        """
+def reduce(values):
+    return values[:cap] if len(values) > cap else unfold(values)
+"""
+    )
+    assert [row.kind for row in rows] == ["finite-cap-opaque-return"]
+
+
+def test_non_cardinality_bounded_work_trips() -> None:
+    rows = _scan(
+        """
+def reduce(node, depth):
+    if depth >= recursion_budget:
+        return node
+    return descend(node, depth + 1)
+"""
+    )
+    assert [row.kind for row in rows] == ["finite-cap-opaque-return"]
+
+
+def test_helper_resolution_is_lexical() -> None:
+    rows = _scan(
+        """
+def opaque_helper(values):
+    return factory_panic_gap(owner="module", observed=len(values))
+
+class Reducer:
+    def opaque_helper(self, values):
+        return values[:cap]
+
+    def reduce(self, values):
+        if len(values) > cap:
+            return self.opaque_helper(values)
+        return unfold(values)
+"""
+    )
+    assert [row.kind for row in rows] == ["finite-cap-opaque-return"]
+
+
+def test_nested_helper_return_does_not_make_outer_helper_opaque() -> None:
+    rows = _scan(
+        """
+def loud_helper(values):
+    def unrelated():
+        return values[:cap]
+    return factory_panic_gap(owner="finite", observed=len(values))
+
+def reduce(values):
+    if len(values) > cap:
+        return loud_helper(values)
+    return unfold(values)
+"""
+    )
+    assert rows == []
+
+
 def test_loud_terminal_and_exact_symbolic_stay_green() -> None:
     assert (
         _scan(
