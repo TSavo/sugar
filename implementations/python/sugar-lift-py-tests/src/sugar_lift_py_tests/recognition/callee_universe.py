@@ -5,9 +5,9 @@ from __future__ import annotations
 import ast
 from enum import Enum, auto
 
-from sugar_lift_python_source.source_tables import parsed_parents
+from sugar_lift_python_source.source_tables import locate_parsed_node, parsed_parents
 from sugar_lift_py_tests.recognition.visible_declarations import (
-    declarations_are_function_local,
+    declaration_is_function_local,
     lexical_function_bindings,
     visible_declarations,
 )
@@ -372,10 +372,9 @@ def imported_call_identity(site) -> str | None:
 
     declarations, shadowed_parameters = visible_declarations(site)
     imported: dict[str, tuple[str, bool]] = {}
-    # Keep #5452 tuple form (origin, function_local); batch locality from this PR.
     assigned: dict[str, tuple[str, bool] | None] = {}
-    function_locality = declarations_are_function_local(site, declarations)
-    for declaration, function_local in zip(declarations, function_locality):
+    for declaration in declarations:
+        function_local = declaration_is_function_local(site, declaration)
         if declaration.observed == "ImportFrom":
             module = declaration.importfrom_module()
             if module is not None:
@@ -628,9 +627,8 @@ def _name_reassigned_before(site, name: str) -> bool:
     """True when a preceding statement in the same function stores ``name``."""
 
     declarations, _shadowed = visible_declarations(site)
-    function_locality = declarations_are_function_local(site, declarations)
-    for declaration, function_local in zip(declarations, function_locality):
-        if not function_local:
+    for declaration in declarations:
+        if not declaration_is_function_local(site, declaration):
             continue
         if declaration.observed in {"Import", "ImportFrom"}:
             continue
@@ -692,8 +690,8 @@ def _module_import_origin(site, head: str) -> str | None:
     if head in shadowed:
         return None
     imported: dict[str, tuple[str, bool]] = {}
-    function_locality = declarations_are_function_local(site, declarations)
-    for declaration, function_local in zip(declarations, function_locality):
+    for declaration in declarations:
+        function_local = declaration_is_function_local(site, declaration)
         if declaration.observed == "ImportFrom":
             module = declaration.importfrom_module()
             if module is not None:
@@ -723,26 +721,13 @@ def _source_path(statement):
     source = getattr(statement, "source", None)
     if not source:
         return None
-    parsed = parsed_parents(source, statement.filename or "<unknown>")
+    parsed = parsed_parents(source)
     if parsed is None:
         return None
-    tree, parents = parsed
-    # Prefer live statement.node when it is already this parse-tree identity
-    # (fixture/class-decorator ancestry reuse). Otherwise walk *this* tree —
-    # locate_parsed_node may mint a foreign node not present in ``parents``.
-    if statement.node is tree or statement.node in parents:
-        target = statement.node
-    else:
-        target = next(
-            (
-                node
-                for node in ast.walk(tree)
-                if type(node) is type(statement.node)
-                and getattr(node, "lineno", None) == statement.line
-                and getattr(node, "col_offset", None) == statement.col
-            ),
-            None,
-        )
+    _tree, parents = parsed
+    target = locate_parsed_node(
+        source, type(statement.node), statement.line, statement.col
+    )
     if target is None:
         return None
     path = [target]
