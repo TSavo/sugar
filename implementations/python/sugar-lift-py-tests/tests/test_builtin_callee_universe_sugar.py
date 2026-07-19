@@ -44,6 +44,53 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
     } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
 
 
+def test_all_nine_authenticated_conv_rows_select_the_converter_owner() -> None:
+    """The #5409 corpus family is bound class testimony, never the name ``conv``."""
+
+    source = (
+        "import numpy._core._multiarray_tests as mt\n"
+        "\n"
+        "class TestClipmodeConverter:\n"
+        "    conv = mt.run_clipmode_converter\n"
+        "    def test_valid(self):\n"
+        "        assert self.conv(0) == 'NPY_CLIP'\n"
+        "        assert self.conv(1) == 'NPY_WRAP'\n"
+        "        assert self.conv(2) == 'NPY_RAISE'\n"
+        "\n"
+        "class TestIntpConverter:\n"
+        "    conv = mt.run_intp_converter\n"
+        "    def test_basic(self):\n"
+        "        assert self.conv(1) == (1,)\n"
+        "        assert self.conv((1, 2)) == (1, 2)\n"
+        "        assert self.conv([1, 2]) == (1, 2)\n"
+        "        assert self.conv(()) == ()\n"
+        "        assert self.conv(None) == ()\n"
+        "        assert self.conv([1] * 64) == (1,) * 64\n"
+    )
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "conv"
+    ]
+
+    assert len(calls) == 9
+    for call in calls:
+        site = SourceFragment.from_node(call, "test_conversion_utils.py", source=source)
+        context = FactoryBuildContext(
+            filename="test_conversion_utils.py",
+            catalog=default_catalog(),
+        )
+        built = build_node(
+            site,
+            filename="test_conversion_utils.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
 def _bare_builtin_call_site(source: str, callee: str) -> SourceFragment:
     call = next(
         node
