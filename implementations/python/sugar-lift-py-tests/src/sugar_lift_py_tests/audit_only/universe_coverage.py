@@ -61,8 +61,8 @@ def universe_coverage_gaps(
         if _edge_carries_external_universe(edge):
             continue
         node = call_nodes.get((line, col))
-        if node is not None and _has_builtin_universe_claim(
-            node, catalog=catalog, filename=filename
+        if _has_builtin_universe_claim(
+            node, callee=callee, catalog=catalog, filename=filename
         ):
             continue
         blame = f"{file}:{line}:{col}"
@@ -146,8 +146,14 @@ def _assertion_call_loci(module) -> frozenset[tuple[int, int]]:
     )
 
 
-def _has_builtin_universe_claim(site, *, catalog, filename: str) -> bool:
+def _has_builtin_universe_claim(
+    site, *, callee: str, catalog, filename: str
+) -> bool:
     del filename
+    if catalog.claims_universe_coordinate(callee):
+        return True
+    if site is None:
+        return False
     names = {
         candidate.name for candidate in catalog.candidates_for(SugarRole.TERM, site)
     }

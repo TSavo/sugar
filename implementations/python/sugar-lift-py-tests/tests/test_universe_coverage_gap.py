@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import ast
+
+import pytest
+
+from sugar_lift_py_tests.claim import SugarRole
+from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
+from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkRedRowDto
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
@@ -81,6 +88,40 @@ def test_builtin_covered_callee_emits_no_universe_gap() -> None:
 
     assert any(edge.get("targetSymbol") == "call:len" for edge in payload.call_edges)
     assert _universe_gaps(payload) == []
+
+
+@pytest.mark.parametrize(
+    ("callee", "source"),
+    [
+        (
+            "type",
+            "def test_type(value):\n    assert type(value) == int\n",
+        ),
+        (
+            "dtype",
+            "def test_dtype():\n    assert dtype('i4') == 'i4'\n",
+        ),
+    ],
+)
+def test_authenticated_builtin_coordinate_emits_no_universe_gap(
+    callee: str, source: str
+) -> None:
+    payload = lift_file_payload(source, f"{callee}_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == f"call:{callee}" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+    node = ast.parse(f"{callee}(value)", mode="eval").body
+    context = FactoryBuildContext(filename="coordinate.py", catalog=default_catalog())
+    built = build_node(
+        node,
+        filename="coordinate.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
 
 
 def test_floor_protocol_method_named_test_is_not_an_assertion_source() -> None:

@@ -132,6 +132,7 @@ class Sugar(ABC):
 
     role: SugarRole
     effect_consumer_reason: ClassVar[str | None] = None
+    universe_coordinates: ClassVar[frozenset[str]] = frozenset()
 
     def __init_subclass__(
         cls,
@@ -160,6 +161,7 @@ class Sugar(ABC):
             owns=cls.owns,
             comes_before=tuple(comes_before),
             witnesses=cls.witnesses,
+            universe_coordinates=frozenset(cls.universe_coordinates),
             new=cls.new,
         )
         _REGISTRY.append(claim)
