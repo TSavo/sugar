@@ -93,6 +93,14 @@ class _FactoryConstructionScanner(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        # factory/recognize_* and factory/recognizes_* are semantic side doors
+        # even when they avoid raw ast.isinstance (TypedDict loophole: auditor
+        # only flagged classify_* names before). Recognition belongs under
+        # recognition/ or inside the owning Sugar.
+        if self.scope == "factory" and (
+            node.name.startswith("recognize_") or node.name.startswith("recognizes_")
+        ):
+            self.add(node, "semantic-recognition-in-factory")
         has_ast_classification = _has_ast_classification(node)
         if (
             has_ast_classification
@@ -386,6 +394,12 @@ _REPLACEMENT: dict[str, str] = {
         "are lawful. Behavior-driving raw-AST classification promotes to the "
         "owning Sugar; delete classify_loop_control_scope and leaf-sugar "
         "Match/Subscript walkers."
+    ),
+    "semantic-recognition-in-factory": (
+        "factory/ may only select a registered Sugar or FactoryPanic. Move "
+        "recognize_*/recognizes_* helpers to recognition/ (consumed by Sugar "
+        "owns/new) or inline them in the owning Sugar. Do not leave semantic "
+        "recognition under factory/ — the classify_* ban is not enough."
     ),
     "auditor-root-error": (
         "Restore the configured scan root; an absent surface is never R=0."

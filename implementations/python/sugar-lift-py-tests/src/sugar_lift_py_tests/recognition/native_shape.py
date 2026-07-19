@@ -1,7 +1,8 @@
-"""Factory-owned recognition of imported native source shapes.
+"""Recognition of imported native source shapes.
 
-Sugars consume these semantic shape claims.  They never reinterpret qualified
-vendor spellings themselves.
+Sugars consume these structural shape claims. They never reinterpret qualified
+vendor spellings themselves. Lives under ``recognition/`` — not ``factory/`` —
+so the factory boundary stays select-or-panic only.
 """
 
 from __future__ import annotations
