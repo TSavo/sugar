@@ -101,6 +101,30 @@ def test_engine_live_log_is_flushed_outside_log_capture(tmp_path) -> None:
         engine_log._LIVE_HANDLER = previous
 
 
+def test_heartbeat_only_live_log_omits_high_volume_debug_spans(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "heartbeat-engine.jsonl"
+    previous = engine_log._LIVE_HANDLER
+    engine_log._LIVE_HANDLER = None
+    monkeypatch.setenv("SUGAR_ENGINE_TRACE_EVENTS", "0")
+    try:
+        engine_log.configure_live_log(str(path))
+        with engine_log.reduction_span(
+            sugar="NameSugar", role="term", site="t.py:1:0"
+        ):
+            engine_log._emit_heartbeats(
+                now=time.monotonic() + 1.0, minimum_seconds=0.01
+            )
+        payloads = [json.loads(line) for line in path.read_text().splitlines()]
+        assert [payload["event"] for payload in payloads] == ["heartbeat"]
+    finally:
+        if engine_log._LIVE_HANDLER is not None:
+            engine_log.LOGGER.removeHandler(engine_log._LIVE_HANDLER)
+            engine_log._LIVE_HANDLER.close()
+        engine_log._LIVE_HANDLER = previous
+
+
 def test_engine_log_serialization_cannot_break_deep_reduction(
     monkeypatch, caplog
 ) -> None:

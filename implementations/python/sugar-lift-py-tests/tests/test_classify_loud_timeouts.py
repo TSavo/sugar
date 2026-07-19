@@ -90,6 +90,34 @@ def test_sqlalchemy_is_a_supported_timeout_corpus(
     assert captured == [(("sqlalchemy",), True, Path("vendor/sqlalchemy"))]
 
 
+def test_bounded_child_uses_heartbeat_only_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured_env: dict[str, str] = {}
+
+    def fake_run(*args, **kwargs):  # noqa: ANN002, ANN003
+        del args
+        captured_env.update(kwargs["env"])
+        return mod.subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        mod,
+        "_classify_child",
+        lambda **kwargs: {"category": "completed", "file": kwargs["rel"]},
+    )
+
+    mod.run_child_at_bound(
+        script=tmp_path / "child.py",
+        path=tmp_path / "source.py",
+        rel="sqlalchemy/test_example.py",
+        timeout_seconds=30,
+    )
+
+    assert captured_env["SUGAR_ENGINE_PROGRESS"] == "1"
+    assert captured_env["SUGAR_ENGINE_TRACE_EVENTS"] == "0"
+
+
 def test_discovery_finish_is_not_timeout_blob(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[int] = []
 

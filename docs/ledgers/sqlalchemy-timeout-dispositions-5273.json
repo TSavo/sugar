@@ -1,11 +1,10 @@
 {
   "discovery_bound_seconds": 30,
-  "note": "Final #5273 dispositions at the unchanged 30-second per-file bound: completed, bounded-loud FactoryPanic, or genuinely-timeout.",
+  "note": "Final #5273 dispositions at the unchanged 30-second per-file bound after the test_reconnect.py performance drain: completed or bounded-loud FactoryPanic.",
   "scanned": 47,
   "terminal_counts": {
     "completed": 7,
-    "factory-construction-panic": 39,
-    "timeout-or-hang": 1
+    "factory-construction-panic": 40
   },
   "terminal_rows": [
     {
@@ -280,10 +279,24 @@
       "disposition": "bounded-loud"
     },
     {
-      "category": "timeout-or-hang",
+      "category": "factory-construction-panic",
       "file": "sqlalchemy/test/engine/test_reconnect.py",
-      "testimony": null,
-      "disposition": "genuinely-timeout"
+      "testimony": {
+        "exception_type": "FactoryPanic",
+        "file": "sqlalchemy/test/engine/test_reconnect.py",
+        "gap": {
+          "blame": "sqlalchemy/test/engine/test_reconnect.py:773:17",
+          "fix": "construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration",
+          "gap_kind": "Floor",
+          "gap_locus": "Construction",
+          "observed": "missing callsite body for decorator factory `deprecated_params`",
+          "owner": "FunctionCallable decorator factory:deprecated_params",
+          "requested": "decorator callable floor or implementation-preserving decorator contract"
+        },
+        "outcome": "factory-panic",
+        "reason": "write more Floor for this Construction: owner=FunctionCallable decorator factory:deprecated_params blame=sqlalchemy/test/engine/test_reconnect.py:773:17 observed=missing callsite body for decorator factory `deprecated_params` requested=decorator callable floor or implementation-preserving decorator contract fix=construct a factory-built body for `deprecated_params`, resolve partial/import aliases to the real FunctionCallable, or enroll an implementation-preserving contract when the public API body is exactly the decorated implementation (see array_function_dispatch); never soft-continue implication enumeration"
+      },
+      "disposition": "bounded-loud"
     },
     {
       "category": "factory-construction-panic",
@@ -899,13 +912,11 @@
       "disposition": "bounded-loud"
     }
   ],
-  "timeout_count": 1,
-  "timeout_files": [
-    "sqlalchemy/test/engine/test_reconnect.py"
-  ],
+  "timeout_count": 0,
+  "timeout_files": [],
   "disposition_counts": {
-    "bounded-loud": 39,
+    "bounded-loud": 40,
     "completed": 7,
-    "genuinely-timeout": 1
+    "genuinely-timeout": 0
   }
 }

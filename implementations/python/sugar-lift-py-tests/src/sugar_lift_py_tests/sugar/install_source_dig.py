@@ -517,6 +517,39 @@ def module_sibling_function_nodes(module_name: str) -> dict:
     return _materialize_index_definitions(index)
 
 
+def _module_sibling_function_node(module_name: str, *keys: str):
+    """Materialize one indexed definition without deepcopying its siblings."""
+    index = _installed_source_index(module_name)
+    if index is None:
+        return None
+    wanted = next(
+        (definition for definition in index.definitions if definition.key in keys),
+        None,
+    )
+    if wanted is None:
+        return None
+    parsed = parsed_tree(index.source, index.sourcefile)
+    node = next(
+        (
+            candidate
+            for candidate in ast.walk(parsed)
+            if isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and candidate.name == wanted.name
+            and candidate.lineno == wanted.lineno
+            and candidate.col_offset == wanted.col_offset
+        ),
+        None,
+    )
+    if node is None:
+        return None
+    node = copy.deepcopy(node)
+    node.decorator_list = []
+    node._sugar_source = index.source  # type: ignore[attr-defined]
+    node._sugar_file = index.sourcefile  # type: ignore[attr-defined]
+    node._sugar_bridge_name = wanted.bridge_name  # type: ignore[attr-defined]
+    return node
+
+
 def _literal_string_sequence(node: ast.AST) -> tuple[str, ...] | None:
     if not isinstance(node, (ast.List, ast.Tuple)):
         return None
@@ -2046,9 +2079,10 @@ def resolve_install_source_class_method(qualified_class: str, method_name: str):
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
     module_name, class_name = qualified_class.rsplit(".", 1)
-    siblings = module_sibling_function_nodes(module_name)
-    node = siblings.get(f"{module_name}.{class_name}.{method_name}") or siblings.get(
-        f"{class_name}.{method_name}"
+    node = _module_sibling_function_node(
+        module_name,
+        f"{module_name}.{class_name}.{method_name}",
+        f"{class_name}.{method_name}",
     )
     if node is not None:
         node._sugar_defining_module = module_name  # type: ignore[attr-defined]
@@ -2129,8 +2163,7 @@ def resolve_call_funcdef(target_name: str, ctx: Any):
         mod, attr = from_imports[target_name]
         qualified = f"{mod}.{attr}" if mod else attr
         if mod:
-            siblings = module_sibling_function_nodes(mod)
-            n = siblings.get(qualified) or siblings.get(attr)
+            n = _module_sibling_function_node(mod, qualified, attr)
             if n is not None:
                 return SourceFragment.from_node(
                     n, getattr(n, "_sugar_file", f"<{mod}>")
