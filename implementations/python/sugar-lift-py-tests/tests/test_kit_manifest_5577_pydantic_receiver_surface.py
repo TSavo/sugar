@@ -124,11 +124,13 @@ def _load_manifest():
 
 
 def test_manifest_declares_the_two_claimed_members() -> None:
+    # Increment 2 (#5921) additively extends this same manifest with more
+    # call_shape/instance_call entries (to_json/validate_json/errors); this
+    # test only asserts increment 1's two entries are still present, not that
+    # the section is exactly these two (additive, not exclusive).
     document = json.loads(_MANIFEST_PATH.read_text())
-    assert document["call_shape"] == {
-        "pydantic_core.SchemaValidator": "SCHEMA_VALIDATOR",
-        "pydantic_core.SchemaSerializer": "SCHEMA_SERIALIZER",
-    }
+    assert document["call_shape"]["pydantic_core.SchemaValidator"] == "SCHEMA_VALIDATOR"
+    assert document["call_shape"]["pydantic_core.SchemaSerializer"] == "SCHEMA_SERIALIZER"
     assert (
         document["instance_call"]["SCHEMA_VALIDATOR.validate_python"]
         == "pydantic_core.SchemaValidator.validate_python"

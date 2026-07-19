@@ -13,6 +13,7 @@ from sugar_lift_py_tests.recognition.visible_declarations import (
     visible_declarations,
 )
 from sugar_lift_py_tests.recognition.native_shape import (
+    NativeShape,
     recognize_native_call,
     recognize_native_instance_call,
 )
@@ -276,6 +277,27 @@ class CalleeUniverseSupport(Enum):
     # never resolves a NativeShape and stays loud FactoryPanic.
     PYDANTIC_CORE_SCHEMA_SERIALIZER_TO_PYTHON = auto()
     PYDANTIC_CORE_SCHEMA_VALIDATOR_VALIDATE_PYTHON = auto()
+
+    # #5921 increment 2: the two keyword-bearing pydantic method-mass families
+    # left loud by increment 1 (#5922). Same Assign-bound Name receiver
+    # (SchemaSerializer/SchemaValidator) and the SAME `_surface_method_coordinate`
+    # path — that path never blanket-refused on keywords (it only skips the
+    # *positional* free-function branch for keyword sites); increment 1 simply
+    # never enrolled these two members. No recognizer change needed, only
+    # kit-manifest entries (kit_manifests/pydantic_receiver_surface_5577.json).
+    PYDANTIC_CORE_SCHEMA_SERIALIZER_TO_JSON = auto()
+    PYDANTIC_CORE_SCHEMA_VALIDATOR_VALIDATE_JSON = auto()
+
+    # #5921 increment 2: ``exc_info.value.errors(...)`` — an Attribute-chain
+    # receiver (``exc_info.value``, not a bare Name), authenticated by a NEW
+    # partition: a with-bound context-manager name whose context expression is
+    # an import-authenticated ``pytest.raises(SomeImportedClass)`` and whose
+    # sole positional argument itself resolves (via the SAME call_shape kit
+    # table, reused for a class-reference role) to a NativeShape. Only the
+    # exact `<with-bound name>.value` attribute is honored — any other
+    # attribute, or any receiver not sourced from that exact with-binding,
+    # stays loud. See `_pytest_raises_value_coordinate` below.
+    PYDANTIC_CORE_VALIDATION_ERROR_ERRORS = auto()
 
 
 # Empty: numpy dtype-result coordinates are external kit contracts (#5603).
@@ -669,8 +691,14 @@ class CalleeUniverseRecognition:
         receiver = site.call_receiver()
         if receiver is not None:
             if receiver.observed != "Name":
-                # Attribute-chain receivers (``self.module.useops.member``) only
-                # authenticate through F2PyTest class import provenance.
+                # Attribute-chain receivers only authenticate through one of
+                # two narrow, structurally-distinct provenances: F2PyTest
+                # class import testimony (``self.module.useops.member``), or
+                # a with-bound pytest.raises() exception-info receiver
+                # (``exc_info.value.member(...)``, #5921 inc2).
+                pytest_raises = _pytest_raises_value_coordinate(site)
+                if pytest_raises is not None:
+                    return pytest_raises
                 return _f2py_extension_coordinate(site)
             if not site.source:
                 return None
@@ -1217,6 +1245,105 @@ def _function_assigns_lambda_to(func: ast.FunctionDef, name: str) -> bool:
         if isinstance(node.value, ast.Lambda):
             return True
     return False
+
+
+def _pytest_raises_value_coordinate(site) -> str | None:
+    """Authenticate ``<with-bound name>.value.<member>(...)`` (#5921 inc2).
+
+    Structural warrant, not a logo match:
+
+    1. The receiver is exactly ``name.value`` — an Attribute whose own
+       receiver is a bare Name, and whose attribute is literally ``value``.
+       Any other attribute stays loud.
+    2. ``name`` must be the ``as`` target of a lexically enclosing
+       ``with pytest.raises(SomeImportedClass) as name:`` — both the
+       context-manager call identity (``pytest.raises``) and its sole
+       positional argument (the raised class reference) authenticate through
+       the SAME ``recognize_native_call`` / call_shape kit table reused for a
+       class-reference role, never a new table.
+    3. ``name`` must not be shadowed by a parameter, nor reassigned between
+       the with-binding and this call site — both revoke the warrant exactly
+       like every other receiver-surface path in this module.
+    """
+
+    if site is None or site.observed != "Call" or not site.source:
+        return None
+    member = site.call_target_name()
+    receiver = site.call_receiver()
+    if member is None or receiver is None or receiver.observed != "Attribute":
+        return None
+    if receiver.attr_name() != "value":
+        return None
+    root = receiver.attr_receiver()
+    if root.observed != "Name":
+        return None
+    name = root.name_id()
+    shape = _pytest_raises_bound_shape(site, name)
+    if shape is None:
+        return None
+    return recognize_native_instance_call(shape, member)
+
+
+def _pytest_raises_bound_shape(site, name: str) -> "NativeShape | None":
+    """Resolve the raised-class shape bound to ``name`` by an enclosing
+    ``with pytest.raises(Cls) as name:`` (see ``_pytest_raises_value_coordinate``).
+
+    ``name``'s with-binding is a *sibling* declaration of the later call site
+    (a preceding statement in the same block), not a syntactic ancestor —
+    ``visible_declarations`` surfaces it directly. The with-as target itself
+    counts as a "stored name" under ``stored_or_deleted_names`` (correctly:
+    it establishes the binding); only a store *after* the matched with-block
+    revokes the warrant, mirroring every other rebind check in this module.
+    """
+
+    declarations, shadowed_parameters = visible_declarations(site)
+    if name in shadowed_parameters:
+        return None
+    matched_index: int | None = None
+    shape: "NativeShape | None" = None
+    for index, declaration in enumerate(declarations):
+        if declaration.observed not in ("With", "AsyncWith"):
+            continue
+        for item_index in range(declaration.with_item_count()):
+            if declaration.with_optional_vars_name(item_index) != name:
+                continue
+            candidate = _raises_argument_shape(
+                declaration.with_context_expr(item_index), site
+            )
+            if candidate is not None:
+                matched_index = index
+                shape = candidate
+    if shape is None or matched_index is None:
+        return None
+    for declaration in declarations[matched_index + 1 :]:
+        if declaration.observed in ("With", "AsyncWith"):
+            continue
+        if name in declaration.stored_or_deleted_names():
+            return None
+    return shape
+
+
+def _raises_argument_shape(call_fragment, site) -> "NativeShape | None":
+    """Authenticate ``pytest.raises(Cls)`` and resolve ``Cls``'s own shape.
+
+    Both the context-manager call identity and its sole positional argument
+    (a bare imported Name reference to the raised class) resolve through the
+    SAME call_shape kit table (``recognize_native_call``), reused for a
+    class-reference role instead of a constructor-call role — no new table.
+    """
+
+    if call_fragment.observed != "Call" or call_fragment.call_has_keywords():
+        return None
+    call_identity = imported_call_identity(call_fragment)
+    if recognize_native_call(call_identity) is not NativeShape.PYTEST_RAISES_CONTEXT:
+        return None
+    args = call_fragment.call_args()
+    if len(args) != 1 or args[0].observed != "Name":
+        return None
+    arg_origin = _module_import_origin(site, args[0].name_id())
+    if arg_origin is None:
+        return None
+    return recognize_native_call(arg_origin)
 
 
 def _f2py_extension_coordinate(site) -> str | None:
