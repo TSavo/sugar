@@ -57,6 +57,7 @@ class NativeShape(Enum):
     PYDANTIC_BASE_MODEL = auto()
     PYDANTIC_EXTRA_ALLOW_CLASS_OPTION = auto()
     REGEX_PATTERN = auto()
+    PATH = auto()
 
 
 _CALL_SHAPES = {
@@ -122,6 +123,7 @@ _CALL_SHAPES = {
     "pandas._testing.external_error_raised": NativeShape.ASSERTING_MANAGER,
     "sqlalchemy.orm.registry": NativeShape.SQLALCHEMY_ORM_REGISTRY,
     "re.compile": NativeShape.REGEX_PATTERN,
+    "pathlib.Path": NativeShape.PATH,
 }
 
 _NEVER_SUPPRESSING_MANAGERS = {
@@ -178,6 +180,7 @@ _NATIVE_INSTANCE_CLASS_DECORATORS = {
 
 _NATIVE_INSTANCE_CALLS = {
     (NativeShape.REGEX_PATTERN, "search"): "re.Pattern.search",
+    (NativeShape.PATH, "resolve"): "pathlib.Path.resolve",
 }
 
 _CLASS_IMPORT_SHAPES = {
