@@ -72,6 +72,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "scipy.fft.get_workers",
         "numpy.isdtype",
         "numpy.datetime_data",
+        "numpy._core._multiarray_umath._get_sfloat_dtype",
         "numpy.f2py.crackfortran.markinnerspaces",
         "numpy._core._multiarray_tests.identity_hash_set_item_default",
         *_CONVERTER_COORDINATES,
@@ -120,7 +121,9 @@ _OWNED_IMPORTED_SUPPORT = frozenset(
 class BuiltinCalleeUniverseSugar(
     Sugar,
     role=SugarRole.TERM,
-    comes_before=("CallSugar", "MethodCallSugar"),
+    # ConstructorCallSugar also claims capitalized/factory-result callables
+    # (``SF = _get_sfloat_dtype(); SF(...)``); universe ownership must precede it.
+    comes_before=("CallSugar", "MethodCallSugar", "ConstructorCallSugar"),
 ):
     """Authenticated deterministic call coordinates.
 
@@ -277,6 +280,7 @@ class BuiltinCalleeUniverseSugar(
             _scipy_fft_get_workers_witness(),
             _numpy_isdtype_witness(),
             _numpy_datetime_data_witness(),
+            _numpy_sfloat_dtype_witness(),
             _numpy_markinnerspaces_witness(),
             _numpy_identity_hash_set_item_default_witness(),
         )
@@ -1006,6 +1010,26 @@ def _numpy_identity_hash_set_item_default_witness():
     )
     return _call_pair(
         name="numpy_identity_hash_set_item_default_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_sfloat_dtype_witness():
+    """Factory-result callable: SF = _get_sfloat_dtype(); SF(...)."""
+    prefix = (
+        "from numpy._core._multiarray_umath import _get_sfloat_dtype\n"
+        "\n"
+        "SF = _get_sfloat_dtype()\n"
+        "\n"
+        "def A():\n"
+        "    return SF(1.0)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_sfloat_dtype_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",

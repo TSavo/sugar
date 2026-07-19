@@ -76,6 +76,8 @@ class CalleeUniverseSupport(Enum):
     SCIPY_FFT_GET_WORKERS = auto()
     NUMPY_ISDTYPE = auto()
     NUMPY_DATETIME_DATA = auto()
+    # SF = _get_sfloat_dtype(); SF(...) — factory-result callable.
+    NUMPY_SFLOAT_DTYPE = auto()
     NUMPY_MARKINNERSPACES = auto()
     NUMPY_IDENTITY_HASH_SET_ITEM_DEFAULT = auto()
 
@@ -205,6 +207,12 @@ _IMPORTED_SUPPORT = {
     "scipy.fft.get_workers": CalleeUniverseSupport.SCIPY_FFT_GET_WORKERS,
     "numpy.isdtype": CalleeUniverseSupport.NUMPY_ISDTYPE,
     "numpy.datetime_data": CalleeUniverseSupport.NUMPY_DATETIME_DATA,
+    # Corpus: numpy/_core/tests/test_custom_dtypes.py
+    # ``SF = _get_sfloat_dtype()`` then ``SF(...)`` — factory import, not the
+    # local alias spelling.
+    "numpy._core._multiarray_umath._get_sfloat_dtype": (
+        CalleeUniverseSupport.NUMPY_SFLOAT_DTYPE
+    ),
     # Corpus: numpy/f2py/tests/test_crackfortran.py — from-import.
     "numpy.f2py.crackfortran.markinnerspaces": (
         CalleeUniverseSupport.NUMPY_MARKINNERSPACES
@@ -246,17 +254,15 @@ def recognize_callee_universe(
         return None
     identity = _result_call_identity(site)
     if identity is None:
-        # Nested FunctionDef binding (e.g. NumPy ``_compare_dtypes``).
-        local = _local_source_function_identity(site)
-        if local is not None:
-            if not _target_matches_call(target, local, site):
-                return None
-            return CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
-        # Bound native receivers (``path = pathlib.Path(...); path.resolve()``)
-        # and multi-hop instance-module Attribute calls authenticate through
-        # coordinate / bound-source provenance, not a bare import identity.
+        # Factory-result callables resolve without a direct imported-call
+        # identity on the Call leaf itself (``SF = factory(); SF(...)``).
         bound = _bound_source_callable_identity(site)
         if bound is not None:
+            support = recognize_authenticated_callee_identity(bound)
+            if support is not None:
+                if not _target_matches_call(target, bound, site):
+                    return None
+                return support
             leaf = site.call_target_name()
             if target is not None and target != f"call:{leaf}":
                 return None
@@ -589,27 +595,33 @@ def _enclosing_instance_parameter(site) -> str | None:
 
 
 def _bound_source_callable_identity(site) -> str | None:
-    """Authenticate a call through source-bound dotted provenance.
+    """Authenticate a call through source-bound provenance.
 
-    Two structural forms (leaf spelling grants nothing):
+    Structural forms (leaf spelling grants nothing):
 
     1. Bare call after a single-name assignment whose dotted value is anchored
-       in lexical import testimony **or** a multi-hop instance-parameter
-       Attribute chain (``selectedintkind = self.module.selectedintkind``).
-    2. Multi-hop Attribute call rooted at the enclosing method's instance
-       parameter (``self.module.t0(...)``, ``self.module.foo()``).
+       in lexical import testimony (``eval_scalar = crackfortran._eval_scalar``).
+    2. Bare call after assignment of an import-authenticated factory Call
+       (``SF = _get_sfloat_dtype()``; then ``SF(...)``).
+    3. Multi-hop Attribute call rooted at the enclosing method's instance
+       parameter (``self.module.t0(...)``).
 
-    Parameters used as the call leaf, unresolved names, and lookalike bindings
-    stay outside this family.
+    Unresolved parameters, lookalike bindings, and non-import values stay
+    outside this family. Pytest-parametrize injection is intentionally not
+    authenticated here — that requires a protocol/bridge contract (#5603),
+    not a vendor-string match on the decorator.
     """
 
     if site is None or site.observed != "Call":
         return None
-    identity = imported_call_identity(site)
-    if identity is None:
-        return None
     receiver = site.call_receiver()
     if receiver is None:
+        factory = _bare_factory_result_callable_identity(site)
+        if factory is not None:
+            return factory
+        identity = imported_call_identity(site)
+        if identity is None:
+            return None
         target = site.call_target_name()
         if target is None:
             return None
@@ -631,6 +643,9 @@ def _bound_source_callable_identity(site) -> str | None:
         return identity
     # Attribute call: multi-hop instance-parameter paths only
     # (``self.module.t0``, not ``self.conv``).
+    identity = imported_call_identity(site)
+    if identity is None:
+        return None
     parts = identity.split(".")
     if len(parts) < 3:
         return None
@@ -638,6 +653,39 @@ def _bound_source_callable_identity(site) -> str | None:
     if instance_param is None or parts[0] != instance_param:
         return None
     return identity
+
+
+def _bare_factory_result_callable_identity(site) -> str | None:
+    """``SF = _get_sfloat_dtype(); SF(...)`` — name bound to factory Call result.
+
+    The factory Call must resolve through import provenance to a registered
+    support coordinate. Parameters and non-Call assignments stay unowned.
+    """
+
+    target = site.call_target_name()
+    if target is None:
+        return None
+    declarations, shadowed_parameters = visible_declarations(site)
+    if target in shadowed_parameters:
+        return None
+    binding = None
+    for declaration in declarations:
+        if target not in declaration.stored_or_deleted_names():
+            continue
+        binding = declaration
+    if binding is None or binding.observed != "Assign":
+        return None
+    if binding.stored_or_deleted_names() != frozenset({target}):
+        return None
+    value = binding.assign_value()
+    if value.observed != "Call":
+        return None
+    factory = imported_call_identity(value)
+    if factory is None:
+        return None
+    if recognize_authenticated_callee_identity(factory) is None:
+        return None
+    return factory
 
 
 def _local_source_function_identity(site) -> str | None:
