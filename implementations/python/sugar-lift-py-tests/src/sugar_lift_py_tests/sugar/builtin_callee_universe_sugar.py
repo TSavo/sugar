@@ -31,6 +31,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "all",
         "numpy.can_cast",
         "numpy.isnan",
+        "numpy.all",
         "numpy._core.multiarray.get_handler_name",
         *_CONVERTER_COORDINATES,
     }
@@ -103,6 +104,7 @@ class BuiltinCalleeUniverseSugar(
             ),
             _numpy_can_cast_witness(),
             _numpy_isnan_witness(),
+            _numpy_all_witness(),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -189,6 +191,20 @@ def _numpy_isnan_witness():
         owner_sugar="BuiltinCalleeUniverseSugar",
         # Conjunction gives the consistency checker a sibling constraint so
         # determinism of the authenticated coordinate is load-bearing.
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_all_witness():
+    prefix = "import numpy as np\n" "\n" "def A():\n" "    return np.all(True)\n" "\n"
+    return _call_pair(
+        name="numpy_all_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        # Conjunction gives the consistency checker a sibling constraint so
+        # determinism of the authenticated coordinate is load-bearing.
+        # Distinct from bare builtin ``all``: import-bound ``numpy.all``.
         truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
         family="builtin-universe-coordinate",

@@ -20,6 +20,7 @@ class CalleeUniverseSupport(Enum):
     NUMPY_ALLCLOSE = auto()
     NUMPY_CAN_CAST = auto()
     NUMPY_ISNAN = auto()
+    NUMPY_ALL = auto()
 
 
 _IMPORTED_SUPPORT = {
@@ -27,6 +28,7 @@ _IMPORTED_SUPPORT = {
     "numpy.allclose": CalleeUniverseSupport.NUMPY_ALLCLOSE,
     "numpy.can_cast": CalleeUniverseSupport.NUMPY_CAN_CAST,
     "numpy.isnan": CalleeUniverseSupport.NUMPY_ISNAN,
+    "numpy.all": CalleeUniverseSupport.NUMPY_ALL,
 }
 
 _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all"})

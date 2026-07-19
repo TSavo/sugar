@@ -502,6 +502,127 @@ def test_unauthenticated_isnan_fqn_alone_stays_loud() -> None:
     assert recognize_callee_universe("call:numpy.isnan", site=site) is None
 
 
+def test_authenticated_numpy_all_has_universe_support() -> None:
+    """Qualified numpy.all is distinct from bare builtin all (#5422)."""
+
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_all(value):\n"
+        "    assert np.all(value)\n"
+    )
+
+    payload = lift_file_payload(source, "numpy_all_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.all" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "all"
+    )
+    site = SourceFragment.from_node(call, "numpy_all_covered_fixture.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) == "numpy.all"
+    context = FactoryBuildContext(
+        filename="numpy_all_covered_fixture.py", catalog=default_catalog()
+    )
+    built = build_node(
+        site,
+        filename="numpy_all_covered_fixture.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_module_scope_numpy_from_import_all_has_universe_support() -> None:
+    """from numpy import all; all(...) authenticates as numpy.all, not bare all."""
+
+    source = "from numpy import all\nassert all([True])\n"
+
+    payload = lift_file_payload(source, "numpy_all_from_import_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.all" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_shadowed_numpy_alias_cannot_warrant_all_support() -> None:
+    """Lying twin: parameter receiver is not the authenticated numpy import."""
+
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_all(np, value):\n"
+        "    assert np.all(value)\n"
+    )
+
+    payload = lift_file_payload(source, "numpy_all_shadowed_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:numpy.all"]
+
+
+def test_later_local_rebind_revokes_numpy_all_import_warrant() -> None:
+    """Lying twin: later function-local rebind must break false recognition."""
+
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_all(value):\n"
+        "    assert np.all(value)\n"
+        "    np = replacement\n"
+    )
+
+    payload = lift_file_payload(source, "numpy_all_late_rebind.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:numpy.all"]
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "all"
+    )
+    site = SourceFragment.from_node(call, "numpy_all_late_rebind.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) is None
+
+
+def test_unauthenticated_numpy_all_fqn_alone_stays_loud() -> None:
+    """Lying twin: FQN spelling without import provenance must not silence."""
+
+    source = "def test_all(value):\n" "    assert numpy.all(value)\n"
+
+    payload = lift_file_payload(source, "numpy_all_unauthenticated_fqn.py")
+
+    gaps = _universe_gaps(payload)
+    assert gaps
+    # Without import provenance the leaf spelling is the only testimony
+    # (call:all), not the qualified numpy.all coordinate.
+    assert all(gap.ast_kind in {"call:all", "call:numpy.all"} for gap in gaps)
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "all"
+    )
+    site = SourceFragment.from_node(
+        call, "numpy_all_unauthenticated_fqn.py", source=source
+    )
+    assert CalleeUniverseRecognition.coordinate(site) is None
+    assert recognize_callee_universe("call:numpy.all", site=site) is None
+
+
 def test_authenticated_numpy_issubdtype_has_universe_support() -> None:
     source = (
         "import numpy as np\n"
@@ -576,7 +697,9 @@ def test_shadowed_numpy_alias_cannot_warrant_allclose_support() -> None:
     assert [gap.ast_kind for gap in gaps] == ["call:numpy.allclose"]
 
 
-@pytest.mark.parametrize("callee", ["issubdtype", "allclose", "can_cast", "isnan"])
+@pytest.mark.parametrize(
+    "callee", ["issubdtype", "allclose", "can_cast", "isnan", "all"]
+)
 def test_later_function_local_binding_revokes_numpy_import_warrant(
     callee: str,
 ) -> None:
