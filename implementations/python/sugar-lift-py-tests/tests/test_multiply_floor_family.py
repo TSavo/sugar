@@ -424,14 +424,26 @@ def test_tuple_ndim_is_a_warranted_runtime_repetition_count() -> None:
 def test_finite_ground_list_repetition_constructs_not_runtime_effect() -> None:
     """#5111 law: ground literal count constructs; never mints RuntimeEffect."""
     from sugar_lift_py_tests.effect import genuine_runtime_operand
+    from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
 
     items = ListValue((TermValue(0),))
     small = items.multiply(TermValue(3), _SITE)
+    at_limit = items.multiply(TermValue(STATIC_UNFOLD_LIMIT), _SITE)
     large = items.multiply(TermValue(100000), _SITE)
+    # #5323: mid-size above unfold budget is compact (was 65520 materialize).
+    mid_compact = items.multiply(TermValue(STATIC_UNFOLD_LIMIT + 1), _SITE)
 
     assert isinstance(small, Complete)
     assert isinstance(small.value, ListValue)
     assert small.value.elements == (TermValue(0),) * 3
+
+    assert isinstance(at_limit, Complete)
+    assert isinstance(at_limit.value, ListValue)
+    assert len(at_limit.value.elements) == STATIC_UNFOLD_LIMIT
+
+    assert isinstance(mid_compact, Complete)
+    assert isinstance(mid_compact.value, GroundSequenceRepetitionValue)
+    assert mid_compact.value.repetitions == STATIC_UNFOLD_LIMIT + 1
 
     assert isinstance(large, Complete)
     assert isinstance(large.value, GroundSequenceRepetitionValue)

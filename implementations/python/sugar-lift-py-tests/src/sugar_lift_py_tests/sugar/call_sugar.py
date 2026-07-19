@@ -276,12 +276,32 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     for value in accumulated
                 )
             ):
+                # Materialize only ranges that ForSugar can static-unfold.
+                # Larger ranges stay call:range(...) — never allocate O(n)
+                # TermValue lists (loadtxt genexp over range(110000) was a
+                # 30s reduce_body hang under the prior unbounded fold).
+                from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
+
+                span = range(*(item.value for item in accumulated))
+                if len(span) <= STATIC_UNFOLD_LIMIT:
+                    return Complete(
+                        ListValue(tuple(TermValue(value) for value in span))
+                    )
                 return Complete(
-                    ListValue(
-                        tuple(
-                            TermValue(value)
-                            for value in range(*(item.value for item in accumulated))
-                        )
+                    CallSiteValue(
+                        target_name="range",
+                        arg_values=accumulated,
+                        parameters=(),
+                        term=ctor(
+                            "call:range",
+                            [
+                                value.to_term(owner=str(self.site))
+                                for value in accumulated
+                            ],
+                            symbol_kind="builtin",
+                        ),
+                        body=None,
+                        site=self.site,
                     )
                 )
 

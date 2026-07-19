@@ -10,6 +10,10 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 STATIC_UNFOLD_LIMIT = 1024
+# Static unfold × branch multiplies GuardedValue/scope state super-linearly
+# (microbench: 8×(abs,)+If+InOp ~0.5s; 14× ~113s). Cap branched bodies so
+# the random-test Call/InOp/If cluster (#5323) force-curries instead of hangs.
+BRANCHED_STATIC_UNFOLD_LIMIT = 8
 
 
 @dataclass(frozen=True)
@@ -195,10 +199,38 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         ):
             elements = iterable.finite_elements
         if elements is not None:
-            if len(elements) > STATIC_UNFOLD_LIMIT:
+            limit = STATIC_UNFOLD_LIMIT
+            if self._body_has_branching_statement():
+                limit = min(limit, BRANCHED_STATIC_UNFOLD_LIMIT)
+            if len(elements) > limit:
                 return self._bind_and_body(iterable, ctx, force_curry=True)
             return self._unfold_values(elements, ctx)
         return self._bind_and_body(iterable, ctx)
+
+    def _body_has_branching_statement(self) -> bool:
+        """True when the loop body owns an if/match/if-exp face.
+
+        Used only to choose the static-unfold budget; recognition is unchanged.
+        """
+        branch_names = {"IfSugar", "MatchSugar", "IfExpSugar"}
+        stack: list[object] = [self.body.sugar]
+        seen: set[int] = set()
+        while stack:
+            sugar = stack.pop()
+            sugar_id = id(sugar)
+            if sugar_id in seen:
+                continue
+            seen.add(sugar_id)
+            if type(sugar).__name__ in branch_names:
+                return True
+            walk = getattr(sugar, "walk_children", None)
+            if walk is None:
+                continue
+            for child in walk():
+                inner = getattr(child, "sugar", child)
+                if inner is not None:
+                    stack.append(inner)
+        return False
 
     def _unfold_values(self, values, ctx, entries=()):
         from sugar_lift_py_tests.floor import BlockValue, ScopeRebind

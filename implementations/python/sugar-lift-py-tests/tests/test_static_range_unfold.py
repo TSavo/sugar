@@ -106,3 +106,32 @@ def test_large_static_unfold_witness_refutes_wrong_twin(tmp_path: Path) -> None:
     assert truthful.verdict == "sat"
     assert "ForSugar" in lying.selected_sugars
     assert lying.verdict == "unsat"
+
+
+def test_branched_static_for_over_callable_tuple_force_curries_not_hangs() -> None:
+    """#5323: ForSugar static unfold × If × InOp over 14 callables must not hang.
+
+    Microbench before BRANCHED_STATIC_UNFOLD_LIMIT: 14×abs+if+in ~113s;
+    after force-curry above 8 branched iterations: ~1.5s.
+    """
+    from sugar_lift_py_tests.sugar.for_sugar import BRANCHED_STATIC_UNFOLD_LIMIT
+
+    funcs = ", ".join(["abs"] * (BRANCHED_STATIC_UNFOLD_LIMIT + 6))
+    source = (
+        "def test_branched():\n"
+        f"    funcs = ({funcs})\n"
+        "    probfuncs = (abs, abs)\n"
+        "    for func in funcs:\n"
+        "        if func in probfuncs:\n"
+        "            x = 1\n"
+        "        else:\n"
+        "            x = 2\n"
+        "        out = func(x)\n"
+        "    assert True\n"
+    )
+    payload = lift_file_payload(source, "branched-for.py")
+    assert payload.effects == []
+    assert any(
+        row.output == "ForSugar" and row.status == FactoryWalkStatus.WARRANTED
+        for row in payload.factory_walk
+    )
