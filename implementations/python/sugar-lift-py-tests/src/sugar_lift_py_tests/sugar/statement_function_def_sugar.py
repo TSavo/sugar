@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 from collections import OrderedDict
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, fields, field as dataclass_field
 from typing import Any, cast
 
 from sugar_lift_py_tests.claim import SugarRole
@@ -20,13 +21,78 @@ DEFERRED_STATEMENT_STRUCTURE_CAPACITY = 1024
 _MISSING = object()
 
 
+@dataclass(frozen=True)
+class _ObjectIdentity:
+    """Hashable strong identity for opaque recognition inputs.
+
+    Holding the object prevents Python from reusing its id while a cache entry
+    is resident. Equality is deliberately object identity, never a potentially
+    context-blind ``__eq__`` implementation.
+    """
+
+    value: Any = dataclass_field(compare=False, hash=False, repr=False)
+
+    def __hash__(self) -> int:
+        return id(self.value)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _ObjectIdentity) and self.value is other.value
+
+
+# Keep the owner object alongside each memoized identity.  A bare ``id`` key
+# would be unsound after garbage collection reused that id for another context.
+_RECOGNITION_IDENTITY_CACHE: OrderedDict[int, tuple[Any, tuple[Any, ...]]] = (
+    OrderedDict()
+)
+_SOURCE_HASH_CACHE: OrderedDict[int, tuple[str, str]] = OrderedDict()
+
+
+def _resident_identity_cache_put(cache, key, value) -> None:
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > DEFERRED_STATEMENT_STRUCTURE_CAPACITY:
+        cache.popitem(last=False)
+
+
+def _factory_recognition_identity(build_ctx: Any) -> tuple[Any, ...]:
+    """Complete O(1) identity of every input carried by FactoryBuildContext."""
+    cached = _RECOGNITION_IDENTITY_CACHE.get(id(build_ctx))
+    if cached is not None and cached[0] is build_ctx:
+        _RECOGNITION_IDENTITY_CACHE.move_to_end(id(build_ctx))
+        return cached[1]
+    # The frozen context is the construction boundary. Strong identity for
+    # every field partitions resolver, source, temporal, catalog, import, and
+    # output inputs without recursively traversing mutable graphs.
+    identity = tuple(
+        (item.name, None if value is None else _ObjectIdentity(value))
+        for item in fields(build_ctx)
+        for value in (getattr(build_ctx, item.name),)
+    )
+    _resident_identity_cache_put(
+        _RECOGNITION_IDENTITY_CACHE, id(build_ctx), (build_ctx, identity)
+    )
+    return identity
+
+
+def _source_content_id(source: str) -> str:
+    """Hash each resident source once while retaining its strong owner."""
+    source_id = id(source)
+    cached = _SOURCE_HASH_CACHE.get(source_id)
+    if cached is not None and cached[0] is source:
+        _SOURCE_HASH_CACHE.move_to_end(source_id)
+        return cached[1]
+    content_id = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    _resident_identity_cache_put(_SOURCE_HASH_CACHE, source_id, (source, content_id))
+    return content_id
+
+
 class DeferredStatementStructureOracle:
     """Sole memo for deferred function-body statement *structure*.
 
-    Identity is the recognized source fragment's content pin (file + span +
-    observed kind + exact source segment). The published value is the
-    factory-built ``SugarBody`` — the complete immutable structure for that
-    pin.
+    Identity is the recognized source fragment's complete enclosing source plus
+    every FactoryBuildContext input that can participate in factory recognition.
+    The published value is the factory-built ``SugarBody`` — the complete
+    immutable structure for that construction identity.
 
     Publishing rules (match InstallSourceValueOracle / DigBodyOracle):
       - Successfully factory-built SugarBody is published under the key.
@@ -44,38 +110,50 @@ class DeferredStatementStructureOracle:
         self.construct_count = 0
         self.hit_count = 0
 
-    def identity_key(self, site: Any) -> tuple[Any, ...] | None:
-        """Content identity for one deferred body statement fragment."""
+    def identity_key(self, site: Any, build_ctx: Any) -> tuple[Any, ...] | None:
+        """Complete construction identity for one deferred body statement."""
         filename = str(getattr(site, "filename", "") or "")
-        line = int(getattr(site, "line", -1) or -1)
-        col = int(getattr(site, "col", -1) or -1)
+        line_raw = getattr(site, "line", None)
+        col_raw = getattr(site, "col", None)
+        line = int(line_raw) if line_raw is not None else -1
+        col = int(col_raw) if col_raw is not None else -1
         observed = str(getattr(site, "observed", "") or "")
         if not filename or line < 0 or not observed:
             return None
-        segment = ""
         source = getattr(site, "source", None)
         node = getattr(site, "node", None)
-        if isinstance(source, str) and node is not None:
-            try:
-                from sugar_lift_python_source.source_tables import source_segment
+        if not isinstance(source, str) or node is None:
+            return None
+        from sugar_lift_python_source.source_tables import source_segment
 
-                text = source_segment(source, node)
-                if isinstance(text, str):
-                    segment = text
-            except Exception:
-                segment = ""
-        return (filename, line, col, observed, segment)
+        segment = source_segment(source, node)
+        if not isinstance(segment, str):
+            return None
+        return (
+            filename,
+            line,
+            col,
+            observed,
+            _source_content_id(source),
+            segment,
+            _factory_recognition_identity(build_ctx),
+        )
 
-    def resolve(self, site: Any, build_ctx: Any) -> SugarBody:
+    def resolve(
+        self,
+        site: Any,
+        build_ctx: Any,
+        precomputed_key: tuple[Any, ...] | None = None,
+    ) -> SugarBody:
         """Return factory-built statement structure; construct once per identity."""
-        key = self.identity_key(site)
+        key = precomputed_key
+        if key is None:
+            key = self.identity_key(site, build_ctx)
         if key is not None:
             known = self._lookup(key)
             if known is not _MISSING:
                 return known  # type: ignore[return-value]
 
-        # Structure is built against the definition-time factory context.
-        # Call-site temporal is applied only at reduce time (NameSugar etc.).
         self.construct_count += 1
         body = build_ctx.build_body(site, SugarRole.STATEMENT)
         if key is not None:
@@ -119,9 +197,23 @@ class _DeferredFactoryStatement:
 
     site: Any
     build_ctx: Any
+    cache_key: tuple[Any, ...] | None = dataclass_field(init=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "cache_key", None)
 
     def reduce(self, ctx):
-        body = DEFERRED_STATEMENT_STRUCTURE_ORACLE.resolve(self.site, self.build_ctx)
+        if self.cache_key is None:
+            object.__setattr__(
+                self,
+                "cache_key",
+                DEFERRED_STATEMENT_STRUCTURE_ORACLE.identity_key(
+                    self.site, self.build_ctx
+                ),
+            )
+        body = DEFERRED_STATEMENT_STRUCTURE_ORACLE.resolve(
+            self.site, self.build_ctx, self.cache_key
+        )
         return body.reduce(ctx)
 
 
