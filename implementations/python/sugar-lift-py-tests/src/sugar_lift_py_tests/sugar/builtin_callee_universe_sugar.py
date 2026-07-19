@@ -8,6 +8,7 @@ from sugar_lift_py_tests.recognition.callee_universe import (
     CalleeUniverseSupport,
     CalleeUniverseRecognition,
     recognize_authenticated_callee_identity,
+    recognize_callee_universe,
 )
 from sugar_lift_py_tests.sugar.call_sugar import CallSugar
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
@@ -108,7 +109,10 @@ class BuiltinCalleeUniverseSugar(
         receiver = site.call_receiver()
         if receiver is None:
             if target not in _AUTHENTICATED_PLAIN_LEAVES:
-                return False
+                return (
+                    recognize_callee_universe(site=site)
+                    is CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
+                )
         elif receiver.observed != "Name":
             # Only instance-parameter method form can authenticate converters.
             return False
@@ -160,6 +164,7 @@ class BuiltinCalleeUniverseSugar(
                 "binomial", "conv_intp", "create", "exists", "func", "iter_goto", "median",
             )),
             _numpy_may_share_memory_witness(),
+            _bound_source_callable_witness(),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -368,5 +373,22 @@ def _numpy_batch_witness(name: str):
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _bound_source_callable_witness():
+    prefix = (
+        "import numpy as np\n"
+        "_ArrayMemoryError = np._core._exceptions._ArrayMemoryError\n"
+        "\n"
+        "def test_a():\n"
+        "    f = _ArrayMemoryError._size_to_string\n"
+    )
+    return _call_pair(
+        name="bound_source_callable_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "    assert f(0) == f(0) and f(0) == f(0)\n",
+        lying=prefix + "    assert f(0) == f(0) and f(0) != f(0)\n",
         family="builtin-universe-coordinate",
     )

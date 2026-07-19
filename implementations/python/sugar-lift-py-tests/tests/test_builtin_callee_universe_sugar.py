@@ -9,6 +9,10 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+from sugar_lift_py_tests.recognition.callee_universe import (
+    CalleeUniverseSupport,
+    recognize_callee_universe,
+)
 from sugar_lift_py_tests.sugar.builtin_callee_universe_sugar import (
     BuiltinCalleeUniverseSugar,
 )
@@ -521,6 +525,84 @@ def test_unwarranted_issubdtype_receiver_is_not_factory_owned(source: str) -> No
 
 def test_numpy_issubdtype_witness_pair_is_enrolled() -> None:
     assert "numpy_issubdtype_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def _bound_callable_call_site(source: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "f"
+    )
+    return SourceFragment.from_node(call, "bound_callable.py", source=source)
+
+
+def test_import_anchored_receiver_binding_authenticates_bare_callable() -> None:
+    source = (
+        "import numpy as np\n"
+        "_ArrayMemoryError = np._core._exceptions._ArrayMemoryError\n"
+        "\n"
+        "def test_size():\n"
+        "    f = _ArrayMemoryError._size_to_string\n"
+        "    assert f(0) == '0 bytes'\n"
+    )
+    site = _bound_callable_call_site(source)
+
+    assert (
+        recognize_callee_universe("call:f", site=site)
+        is CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
+    )
+    built = build_node(
+        site,
+        filename="bound_callable.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(
+            filename="bound_callable.py",
+            catalog=default_catalog(),
+        ),
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def test_size():\n    assert f(0) == '0 bytes'\n",
+        (
+            "def test_size(receiver):\n"
+            "    f = receiver._size_to_string\n"
+            "    assert f(0) == '0 bytes'\n"
+        ),
+        (
+            "import numpy as np\n"
+            "_ArrayMemoryError = np._core._exceptions._ArrayMemoryError\n"
+            "\n"
+            "def test_size(f):\n"
+            "    assert f(0) == '0 bytes'\n"
+        ),
+    ],
+)
+def test_unresolved_or_lookalike_f_stays_unowned(source: str) -> None:
+    site = _bound_callable_call_site(source)
+
+    assert recognize_callee_universe("call:f", site=site) is None
+    built = build_node(
+        site,
+        filename="bound_callable.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(
+            filename="bound_callable.py",
+            catalog=default_catalog(),
+        ),
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_bound_source_callable_witness_pair_is_enrolled() -> None:
+    assert "bound_source_callable_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 

@@ -50,6 +50,7 @@ class CalleeUniverseSupport(Enum):
     NUMPY_HANDLER_NAME = auto()
     NUMPY_CONVERTER = auto()
     REGEX_SEARCH = auto()
+    BOUND_SOURCE_CALLABLE = auto()
 
 
 _IMPORTED_SUPPORT = {
@@ -139,8 +140,13 @@ def recognize_callee_universe(
         return None
     support = recognize_authenticated_callee_identity(identity)
     if support is None:
-        return None
-    if target is not None and target != f"call:{identity}":
+        if _bound_source_callable_identity(site) != identity:
+            return None
+        support = CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
+        coordinate = site.call_target_name()
+    else:
+        coordinate = identity
+    if target is not None and target != f"call:{coordinate}":
         return None
     return support
 
@@ -292,7 +298,7 @@ def imported_call_identity(site) -> str | None:
 
     declarations, shadowed_parameters = visible_declarations(site)
     imported: dict[str, tuple[str, bool]] = {}
-    assigned: dict[str, str | None] = {}
+    assigned: dict[str, tuple[str, bool] | None] = {}
     for declaration in declarations:
         function_local = declaration_is_function_local(site, declaration)
         if declaration.observed == "ImportFrom":
@@ -330,13 +336,18 @@ def imported_call_identity(site) -> str | None:
             continue
         origin_entry = imported.get(value_head)
         if origin_entry is None:
+            origin_entry = assigned.get(value_head)
+        if origin_entry is None:
             assigned[bound] = None
             continue
         origin, origin_local = origin_entry
         if value_head in lexical_function_bindings(site) and not origin_local:
             assigned[bound] = None
             continue
-        assigned[bound] = origin if not value_sep else f"{origin}.{value_tail}"
+        assigned[bound] = (
+            origin if not value_sep else f"{origin}.{value_tail}",
+            function_local,
+        )
 
     head, separator, tail = dotted.partition(".")
     if head in shadowed_parameters:
@@ -344,7 +355,13 @@ def imported_call_identity(site) -> str | None:
 
     # Prefer explicit assignment identity for the leaf name (``conv = mt.x``).
     if not separator and head in assigned:
-        return assigned[head]
+        assigned_identity = assigned[head]
+        if assigned_identity is None:
+            return None
+        origin, function_local = assigned_identity
+        if head in lexical_function_bindings(site) and not function_local:
+            return None
+        return origin
 
     resolved = imported.get(head)
     if resolved is None:
@@ -378,6 +395,38 @@ def _bound_native_receiver_coordinate(
     if shape is None:
         return None
     return recognize_native_instance_call(shape, member)
+
+
+def _bound_source_callable_identity(site) -> str | None:
+    """Authenticate a bare call through its exact dotted assignment binding.
+
+    The leaf spelling grants nothing. The call must resolve to a preceding
+    single-name assignment whose dotted receiver chain is itself anchored in
+    lexical import testimony. Parameters and non-dotted/lookalike assignments
+    stay outside this family.
+    """
+
+    if site is None or site.observed != "Call" or site.call_receiver() is not None:
+        return None
+    target = site.call_target_name()
+    if target is None:
+        return None
+    declarations, shadowed_parameters = visible_declarations(site)
+    if target in shadowed_parameters:
+        return None
+    binding = None
+    for declaration in declarations:
+        if target not in declaration.stored_or_deleted_names():
+            continue
+        binding = declaration
+    if binding is None or binding.observed != "Assign":
+        return None
+    if binding.stored_or_deleted_names() != frozenset({target}):
+        return None
+    value_name = binding.assign_value().dotted_expr_name()
+    if value_name is None or "." not in value_name:
+        return None
+    return imported_call_identity(site)
 
 
 def _enclosing_method_and_class(site):
