@@ -5,6 +5,7 @@ from sugar_lift_py_tests.recognition.native_shape import (
     recognize_native_decorator,
     recognizes_identity_decorator,
     recognizes_module_name,
+    recognize_source_callable,
 )
 
 
@@ -42,3 +43,19 @@ def test_functools_wraps_is_an_authenticated_native_decorator_shape() -> None:
     )
     assert recognize_native_decorator("project.wraps") is None
     assert recognize_native_decorator("wraps") is None
+
+
+def test_source_callable_authentication_has_lying_unresolved_twin() -> None:
+    class Resolved:
+        name = "extractor"
+        body = object()
+
+    class Unresolved:
+        name = "extractor"
+        body = None
+
+    assert (
+        recognize_source_callable(Resolved())
+        is NativeShape.SOURCE_AUTHENTICATED_CALLABLE
+    )
+    assert recognize_source_callable(Unresolved()) is None
