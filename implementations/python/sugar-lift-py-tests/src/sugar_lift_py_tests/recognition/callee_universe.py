@@ -52,6 +52,8 @@ class CalleeUniverseSupport(Enum):
     NUMPY_CONVERTER = auto()
     REGEX_SEARCH = auto()
     BOUND_SOURCE_CALLABLE = auto()
+    JSON_LOADS = auto()
+    DATACLASSES_ASDICT = auto()
 
 
 _DTYPE_RESULT_SUPPORT = {
@@ -134,6 +136,8 @@ _IMPORTED_SUPPORT = {
         CalleeUniverseSupport.NUMPY_CONVERTER
     ),
     "re.Pattern.search": CalleeUniverseSupport.REGEX_SEARCH,
+    "json.loads": CalleeUniverseSupport.JSON_LOADS,
+    "dataclasses.asdict": CalleeUniverseSupport.DATACLASSES_ASDICT,
 }
 
 _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list", "set", "hasattr"})

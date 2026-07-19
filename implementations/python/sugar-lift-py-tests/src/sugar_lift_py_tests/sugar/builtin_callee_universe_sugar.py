@@ -44,6 +44,8 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "numpy.may_share_memory",
         "numpy._core.multiarray.get_handler_name",
         "re.Pattern.search",
+        "json.loads",
+        "dataclasses.asdict",
         *_CONVERTER_COORDINATES,
     }
 )
@@ -71,6 +73,8 @@ _OWNED_IMPORTED_SUPPORT = frozenset(
         CalleeUniverseSupport.NUMPY_HANDLER_NAME,
         CalleeUniverseSupport.NUMPY_CONVERTER,
         CalleeUniverseSupport.REGEX_SEARCH,
+        CalleeUniverseSupport.JSON_LOADS,
+        CalleeUniverseSupport.DATACLASSES_ASDICT,
     }
 )
 
@@ -166,6 +170,8 @@ class BuiltinCalleeUniverseSugar(
             _numpy_may_share_memory_witness(),
             _bound_source_callable_witness(),
             _numpy_dtype_result_witness(),
+            _json_loads_witness(),
+            _dataclasses_asdict_witness(),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -399,6 +405,45 @@ def _numpy_dtype_result_witness():
     )
     return _call_pair(
         name="numpy_dtype_result_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _json_loads_witness():
+    prefix = (
+        "import json\n"
+        "\n"
+        "def A():\n"
+        "    return json.loads('0')\n"
+        "\n"
+    )
+    return _call_pair(
+        name="json_loads_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        # Conjunction makes deterministic call substitution load-bearing.
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _dataclasses_asdict_witness():
+    prefix = (
+        "from dataclasses import asdict, dataclass\n"
+        "\n"
+        "@dataclass\n"
+        "class Point:\n"
+        "    x: int\n"
+        "\n"
+        "def A():\n"
+        "    return asdict(Point(0))\n"
+        "\n"
+    )
+    return _call_pair(
+        name="dataclasses_asdict_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
