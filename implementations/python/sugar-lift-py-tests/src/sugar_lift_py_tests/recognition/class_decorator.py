@@ -178,7 +178,9 @@ def _fixture_provider_native_shape(provider) -> NativeShape | None:
         return None
     imports = _module_imports(tree, module_name)
     function = _function_at_provider_seat(tree, provider)
-    if function is None or not _is_authenticated_fixture(function, imports):
+    if function is None or not _is_authenticated_fixture(
+        function, imports, tree=tree
+    ):
         return None
     constructed: dict[str, NativeShape] = {}
     for node in ast.walk(function):
@@ -228,14 +230,29 @@ def _function_at_provider_seat(
 def _is_authenticated_fixture(
     function: ast.FunctionDef | ast.AsyncFunctionDef,
     imports: dict[str, str],
+    *,
+    tree: ast.Module | None = None,
 ) -> bool:
     """True when a decorator is a registered fixture protocol shape.
 
-    Uses native_shape recognition tables — never a vendor-name string compare
-    in this module (R_vendor_special_case floor).
+    Resolves the decorator through the module import map (rebinding revokes
+    warrants) and refuses class-body shadows of the decorator head. Lookup is
+    only in the kit-loaded fixture protocol table — never a vendor-name string
+    Compare in this module (R_vendor_special_case floor).
     """
+    class_shadows = (
+        _enclosing_class_stored_names(function, tree) if tree is not None else frozenset()
+    )
     for decorator in function.decorator_list:
         target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        dotted = _ast_dotted_name(target)
+        if dotted is None:
+            continue
+        head, _sep, _tail = dotted.partition(".")
+        if head in class_shadows:
+            # Class-body rebind of the import head revokes the module warrant
+            # (methods' decorators evaluate in the class body namespace).
+            continue
         qualified = _qualified_ast_name(target, imports)
         if (
             recognize_native_fixture_decorator(qualified)
@@ -243,6 +260,46 @@ def _is_authenticated_fixture(
         ):
             return True
     return False
+
+
+def _enclosing_class_stored_names(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    tree: ast.Module,
+) -> frozenset[str]:
+    """Names stored on the enclosing class body before ``function`` (shadows)."""
+    owner = _enclosing_class_for_function(function, tree)
+    if owner is None:
+        return frozenset()
+    names: list[str] = []
+    for statement in owner.body:
+        if statement is function:
+            break
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            # Nested defs/classes bind their name but do not replace an import
+            # used as a decorator head in the typical fixture pattern; skip.
+            continue
+        names.extend(_top_level_stored_names(statement))
+    return frozenset(names)
+
+
+def _enclosing_class_for_function(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    tree: ast.Module,
+) -> ast.ClassDef | None:
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for child in node.body:
+            if child is function:
+                return node
+    # Nested / multi-level: walk
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for child in node.body:
+            if child is function:
+                return node
+    return None
 
 
 def _ast_call_native_shape(

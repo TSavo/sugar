@@ -54,6 +54,10 @@ class NativeShape(Enum):
     IMPLEMENTATION_PRESERVING_DECORATOR = auto()
     FIXTURE_DECORATOR = auto()
     PARAMETRIZE_DECORATOR = auto()
+    # Kit-loaded constructor receiver (no vendor logo key in production tables).
+    # External kit/bridge/proof contracts install coordinates into protocol
+    # overlays; production recognition never hard-codes vendor-rooted strings.
+    KIT_LOADED_CONSTRUCTOR = auto()
     # SQLALCHEMY_ORM_REGISTRY retired (#5603): hard-coded sqlalchemy.orm.registry /
     # as_declarative / mapped coordinates were illegal logo branches — deleted.
     # ClassDef identity for those shapes stays loud until an external kit contract.
@@ -119,6 +123,10 @@ _FIXTURE_DECORATORS: dict[str, NativeShape] = {}
 # Parametrize providers: empty until an explicit kit/bridge contract
 # loads the decorator coordinate (#5603 class: no hard-coded pytest logos).
 _PARAMETRIZE_DECORATORS: dict[str, NativeShape] = {}
+
+# Kit-loaded call coordinates (overlay on language-only _CALL_SHAPES). Empty
+# by construction — vendor-rooted keys arrive only via load_call_shape_protocol.
+_PROTOCOL_CALL_SHAPES: dict[str, NativeShape] = {}
 
 # Instance class-decorators derived from vendor shapes are retired until those
 # shapes arrive via external contract (not hard-coded coordinates).
@@ -187,7 +195,10 @@ _MODULE_NAMES = {
 
 
 def recognize_native_call(target: str | None) -> NativeShape | None:
-    return _CALL_SHAPES.get(target)
+    """Language table first, then kit-loaded protocol overlay (never logo Compare)."""
+    if target is None:
+        return None
+    return _CALL_SHAPES.get(target) or _PROTOCOL_CALL_SHAPES.get(target)
 
 
 def has_native_shape(target: str | None, shape: NativeShape) -> bool:
@@ -252,10 +263,64 @@ def recognize_native_decorator(target: str | None) -> NativeShape | None:
 def recognize_native_fixture_decorator(target: str | None) -> NativeShape | None:
     """Fixture protocol table is empty until a kit/bridge contract loads it.
 
-    #5603: no hard-coded pytest/vendor fixture logos. Missing → None → loud.
+    Authentication is by import-resolved identity lookup in the loaded table,
+    never by comparing a decorator spelling to a vendor logo string.
+    #5603 / #5617 class: missing → None → loud.
     """
 
-    return _FIXTURE_DECORATORS.get(target) if target is not None else None
+    if target is None:
+        return None
+    return _FIXTURE_DECORATORS.get(target)
+
+
+def load_fixture_protocol(coordinates: dict[str, NativeShape]) -> None:
+    """Install fixture decorator coordinates from a kit/bridge contract.
+
+    Production stays empty-by-construction. Tests and future kit loaders call
+    this with coordinates proved by external evidence — not hard-coded logos
+    in the recognition module itself.
+    """
+
+    _FIXTURE_DECORATORS.clear()
+    _FIXTURE_DECORATORS.update(coordinates)
+
+
+def clear_fixture_protocol() -> None:
+    """Remove all loaded fixture coordinates (test isolation / unload)."""
+
+    _FIXTURE_DECORATORS.clear()
+
+
+def load_call_shape_protocol(coordinates: dict[str, NativeShape]) -> None:
+    """Install call-shape coordinates from a kit/bridge contract (overlay).
+
+    Production language table is unchanged. Vendor-rooted keys must not appear
+    hard-coded in this module; they arrive only through this loader.
+    """
+
+    _PROTOCOL_CALL_SHAPES.clear()
+    _PROTOCOL_CALL_SHAPES.update(coordinates)
+
+
+def clear_call_shape_protocol() -> None:
+    """Remove kit-loaded call-shape coordinates."""
+
+    _PROTOCOL_CALL_SHAPES.clear()
+
+
+def load_instance_class_decorator_protocol(
+    coordinates: dict[tuple[NativeShape, str], NativeShape],
+) -> None:
+    """Install instance class-decorator coordinates from a kit/bridge contract."""
+
+    _NATIVE_INSTANCE_CLASS_DECORATORS.clear()
+    _NATIVE_INSTANCE_CLASS_DECORATORS.update(coordinates)
+
+
+def clear_instance_class_decorator_protocol() -> None:
+    """Remove kit-loaded instance class-decorator coordinates."""
+
+    _NATIVE_INSTANCE_CLASS_DECORATORS.clear()
 
 
 def recognize_parametrize_decorator(target: str | None) -> NativeShape | None:
