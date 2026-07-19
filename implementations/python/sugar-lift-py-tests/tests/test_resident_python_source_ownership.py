@@ -43,6 +43,68 @@ def test_installed_source_index_is_bounded_and_evicted_entries_are_collectible(
     assert first_ref() is None
 
 
+def test_installed_source_index_same_bytes_different_seats_do_not_alias(monkeypatch):
+    install_source_dig._installed_source_index.cache_clear()
+    monkeypatch.setattr(
+        install_source_dig,
+        "_installed_source",
+        lambda _module: ("def helper(value):\n    return value\n", "/same.py"),
+    )
+    first = install_source_dig._installed_source_index(
+        "same_module", source_seat="seat/one.py"
+    )
+    second = install_source_dig._installed_source_index(
+        "same_module", source_seat="seat/two.py"
+    )
+    assert first is not None and second is not None
+    assert first is not second
+
+
+def test_installed_source_index_content_drift_is_not_stale(monkeypatch):
+    """Index hits revalidate by authenticated source CID after source changes."""
+    install_source_dig._installed_source_index.cache_clear()
+    sources = {"bytes": "def helper():\n    return 1\n"}
+
+    monkeypatch.setattr(
+        install_source_dig,
+        "_installed_source",
+        lambda _module: (sources["bytes"], "/drift.py"),
+    )
+    first = install_source_dig._installed_source_index("drift_module")
+    assert first is not None
+    assert first.source == "def helper():\n    return 1\n"
+    same = install_source_dig._installed_source_index("drift_module")
+    assert same is first
+
+    sources["bytes"] = "def helper():\n    return 2\n"
+    second = install_source_dig._installed_source_index("drift_module")
+    assert second is not None
+    assert second.source == "def helper():\n    return 2\n"
+    assert second is not first
+
+
+def test_installed_source_index_absence_is_not_negative_cached(monkeypatch):
+    """A miss must not poison a later successful index of the same module name."""
+    install_source_dig._installed_source_index.cache_clear()
+    present = {"value": False}
+
+    def installed(_module):
+        if not present["value"]:
+            return None
+        return ("def helper():\n    return 1\n", "/late.py")
+
+    monkeypatch.setattr(install_source_dig, "_installed_source", installed)
+    monkeypatch.setattr(
+        install_source_dig, "_imported_module_source", lambda _module: None
+    )
+
+    assert install_source_dig._installed_source_index("late_module") is None
+    present["value"] = True
+    resolved = install_source_dig._installed_source_index("late_module")
+    assert resolved is not None
+    assert resolved.source == "def helper():\n    return 1\n"
+
+
 def test_installed_source_resolvers_return_fresh_ast_nodes(
     tmp_path, monkeypatch
 ) -> None:

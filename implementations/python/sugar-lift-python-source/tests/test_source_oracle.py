@@ -74,6 +74,68 @@ def test_installed_source_resolves_nested_module_without_importing_parent(
     assert filename.endswith("outer/inner/module.py")
 
 
+def test_installed_source_same_bytes_different_seats_do_not_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "seatpkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "mod.py").write_text("VALUE = 7\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    installed_module_source.cache_clear()
+    first = installed_module_source("seatpkg.mod", source_seat="seat/one.py")
+    second = installed_module_source("seatpkg.mod", source_seat="seat/two.py")
+    assert first is not None and second is not None
+    assert first is not second
+    assert first[0] == second[0] and first[2] == second[2]
+
+
+def test_installed_source_content_drift_is_not_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Positive cache hits revalidate by source CID after re-reading disk."""
+    package = tmp_path / "driftpkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    module_path = package / "mod.py"
+    module_path.write_text("VALUE = 1\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    installed_module_source.cache_clear()
+
+    first = installed_module_source("driftpkg.mod")
+    assert first is not None
+    assert first[0] == "VALUE = 1\n"
+    same = installed_module_source("driftpkg.mod")
+    assert same is first
+
+    module_path.write_text("VALUE = 2\n", encoding="utf-8")
+    second = installed_module_source("driftpkg.mod")
+    assert second is not None
+    assert second[0] == "VALUE = 2\n"
+    assert second is not first
+
+
+def test_installed_source_absence_is_not_negative_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A miss must not poison a later successful construction of the same name."""
+    package = tmp_path / "latepkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    installed_module_source.cache_clear()
+
+    assert installed_module_source("latepkg.mod") is None
+    (package / "mod.py").write_text("VALUE = 9\n", encoding="utf-8")
+    # PathFinder may have cached the prior miss; invalidate so discovery is honest.
+    import importlib
+
+    importlib.invalidate_caches()
+    resolved = installed_module_source("latepkg.mod")
+    assert resolved is not None
+    assert resolved[0] == "VALUE = 9\n"
+
+
 def test_oracle_resolves_dotted_method_envelope_name(tmp_path: Path) -> None:
     src = 'class Algo:\n    def get_signature(self, key, value):\n        return b""\n'
     rel = "pkg/signer.py"
