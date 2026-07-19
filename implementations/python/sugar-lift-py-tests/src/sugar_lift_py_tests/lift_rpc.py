@@ -3961,29 +3961,6 @@ def _serve() -> None:
         request_count += 1
         try:
             keep_serving = _dispatch_request(msg)
-        except RecursionError:
-            # Loud and typed: the request is rejected with an error frame; the
-            # transport stays alive for the next request.
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg.get("id"),
-                    "error": {
-                        "code": -32603,
-                        "message": (
-                            "recursion limit exceeded while serving request: "
-                            "input nests deeper than the lifter's bounded "
-                            "recursion depth"
-                        ),
-                        "data": {
-                            "exception_type": "RecursionError",
-                            "stage": "dispatch",
-                        },
-                    },
-                }
-            )
-            _log_resident_profile(request_count, msg.get("method"))
-            continue
         except FactoryPanic as panic:
             _send(
                 {
