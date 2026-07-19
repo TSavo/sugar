@@ -1004,3 +1004,255 @@ def test_floor_protocol_method_named_test_is_not_an_assertion_source() -> None:
         for edge in payload.call_edges
     )
     assert _universe_gaps(payload) == []
+
+
+def test_authenticated_json_loads_has_universe_support() -> None:
+    source = (
+        "import json\n"
+        "\n"
+        "def test_loads(payload):\n"
+        "    assert json.loads(payload) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "json_loads_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:json.loads" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "loads"
+    )
+    site = SourceFragment.from_node(
+        call, "json_loads_covered_fixture.py", source=source
+    )
+    assert CalleeUniverseRecognition.coordinate(site) == "json.loads"
+    context = FactoryBuildContext(
+        filename="json_loads_covered_fixture.py", catalog=default_catalog()
+    )
+    built = build_node(
+        site,
+        filename="json_loads_covered_fixture.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_authenticated_from_import_json_loads_has_universe_support() -> None:
+    # Prefer non-equality use of the free parameter so install-source dig does
+    # not recurse into the stdlib json body under this fixture.
+    source = (
+        "from json import loads\n"
+        "\n"
+        "def test_loads(payload):\n"
+        "    assert loads(payload) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "json_loads_from_covered.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:json.loads" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_shadowed_json_alias_cannot_warrant_loads_support() -> None:
+    """Lying twin: parameter receiver is not the authenticated json import."""
+
+    source = (
+        "import json\n"
+        "\n"
+        "def test_loads(json, payload):\n"
+        "    assert json.loads(payload) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "json_loads_shadowed_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:json.loads"]
+
+
+def test_later_local_rebind_revokes_json_loads_import_warrant() -> None:
+    """Lying twin: later function-local rebind must break false recognition."""
+
+    source = (
+        "import json\n"
+        "\n"
+        "def test_loads(payload):\n"
+        "    assert json.loads(payload) is not None\n"
+        "    json = replacement\n"
+    )
+
+    payload = lift_file_payload(source, "json_loads_late_rebind.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:json.loads"]
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "loads"
+    )
+    site = SourceFragment.from_node(call, "json_loads_late_rebind.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) is None
+
+
+def test_unauthenticated_json_loads_fqn_alone_stays_loud() -> None:
+    """Lying twin: FQN spelling without import provenance must not silence."""
+
+    source = (
+        "def test_loads(payload):\n"
+        "    assert json.loads(payload) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "json_loads_unauthenticated_fqn.py")
+
+    gaps = _universe_gaps(payload)
+    assert gaps
+    assert all("loads" in gap.ast_kind for gap in gaps)
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "loads"
+    )
+    site = SourceFragment.from_node(
+        call, "json_loads_unauthenticated_fqn.py", source=source
+    )
+    assert CalleeUniverseRecognition.coordinate(site) is None
+    assert recognize_callee_universe("call:json.loads", site=site) is None
+
+
+def test_authenticated_dataclasses_asdict_has_universe_support() -> None:
+    source = (
+        "import dataclasses\n"
+        "\n"
+        "def test_asdict(value):\n"
+        "    assert dataclasses.asdict(value) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "asdict_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:dataclasses.asdict"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "asdict"
+    )
+    site = SourceFragment.from_node(call, "asdict_covered_fixture.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) == "dataclasses.asdict"
+    context = FactoryBuildContext(
+        filename="asdict_covered_fixture.py", catalog=default_catalog()
+    )
+    built = build_node(
+        site,
+        filename="asdict_covered_fixture.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_authenticated_from_import_asdict_has_universe_support() -> None:
+    source = (
+        "from dataclasses import asdict\n"
+        "\n"
+        "def test_asdict(value):\n"
+        "    assert asdict(value) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "asdict_from_covered.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:dataclasses.asdict"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_shadowed_dataclasses_alias_cannot_warrant_asdict_support() -> None:
+    """Lying twin: parameter receiver is not the authenticated dataclasses import."""
+
+    source = (
+        "import dataclasses\n"
+        "\n"
+        "def test_asdict(dataclasses, value):\n"
+        "    assert dataclasses.asdict(value) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "asdict_shadowed_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:dataclasses.asdict"]
+
+
+def test_later_local_rebind_revokes_asdict_import_warrant() -> None:
+    """Lying twin: later function-local rebind must break false recognition."""
+
+    source = (
+        "from dataclasses import asdict\n"
+        "\n"
+        "def test_asdict(value):\n"
+        "    assert asdict(value) is not None\n"
+        "    asdict = replacement\n"
+    )
+
+    payload = lift_file_payload(source, "asdict_late_rebind.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:dataclasses.asdict"]
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "asdict"
+    )
+    site = SourceFragment.from_node(call, "asdict_late_rebind.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) is None
+
+
+def test_unauthenticated_asdict_fqn_alone_stays_loud() -> None:
+    """Lying twin: FQN spelling without import provenance must not silence."""
+
+    source = (
+        "def test_asdict(value):\n"
+        "    assert dataclasses.asdict(value) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "asdict_unauthenticated_fqn.py")
+
+    gaps = _universe_gaps(payload)
+    assert gaps
+    assert all("asdict" in gap.ast_kind for gap in gaps)
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "asdict"
+    )
+    site = SourceFragment.from_node(
+        call, "asdict_unauthenticated_fqn.py", source=source
+    )
+    assert CalleeUniverseRecognition.coordinate(site) is None
+    assert recognize_callee_universe("call:dataclasses.asdict", site=site) is None

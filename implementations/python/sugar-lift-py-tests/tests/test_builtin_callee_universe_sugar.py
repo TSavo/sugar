@@ -40,6 +40,8 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "numpy._core.multiarray.get_handler_name",
         "numpy._core._multiarray_tests.run_byteorder_converter",
         "re.Pattern.search",
+        "json.loads",
+        "dataclasses.asdict",
     } <= (BuiltinCalleeUniverseSugar.universe_coordinates)
     assert {
         "all_builtin_universe_coordinate",
@@ -56,6 +58,8 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "get_handler_name_builtin_universe_coordinate",
         "conv_builtin_universe_coordinate",
         "regex_search_builtin_universe_coordinate",
+        "json_loads_universe_coordinate",
+        "dataclasses_asdict_universe_coordinate",
     } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
 
 
@@ -1099,3 +1103,209 @@ def test_numpy_can_cast_requires_authenticated_receiver() -> None:
     )
     with pytest.raises(FactoryPanic):
         BuiltinCalleeUniverseSugar.new(site, lying)
+
+
+def _stdlib_attr_call_site(source: str, member: str, filename: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == member
+    )
+    return SourceFragment.from_node(call, filename, source=source)
+
+
+def _stdlib_name_call_site(source: str, name: str, filename: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == name
+    )
+    return SourceFragment.from_node(call, filename, source=source)
+
+
+def test_authenticated_json_loads_selects_one_factory_owner() -> None:
+    source = (
+        "import json\n"
+        "\n"
+        "def test_loads(payload):\n"
+        "    assert json.loads(payload) == json.loads(payload)\n"
+    )
+    context = FactoryBuildContext(
+        filename="json_loads.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _stdlib_attr_call_site(source, "loads", "json_loads.py"),
+        filename="json_loads.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_authenticated_from_import_json_loads_selects_one_factory_owner() -> None:
+    source = (
+        "from json import loads\n"
+        "\n"
+        "def test_loads(payload):\n"
+        "    assert loads(payload) == loads(payload)\n"
+    )
+    context = FactoryBuildContext(
+        filename="json_loads_from.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _stdlib_name_call_site(source, "loads", "json_loads_from.py"),
+        filename="json_loads_from.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import json\n"
+            "\n"
+            "def test_loads(json, payload):\n"
+            "    assert json.loads(payload) == json.loads(payload)\n"
+        ),
+        (
+            "import json\n"
+            "\n"
+            "def test_loads(payload):\n"
+            "    assert json.loads(payload) == json.loads(payload)\n"
+            "    json = replacement\n"
+        ),
+        (
+            "import math as json\n"
+            "\n"
+            "def test_loads(payload):\n"
+            "    assert json.loads(payload) == json.loads(payload)\n"
+        ),
+        (
+            "def test_loads(payload):\n"
+            "    assert json.loads(payload) == json.loads(payload)\n"
+        ),
+    ],
+)
+def test_unwarranted_json_loads_receiver_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="json_loads.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _stdlib_attr_call_site(source, "loads", "json_loads.py"),
+        filename="json_loads.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_json_loads_witness_pair_is_enrolled() -> None:
+    assert "json_loads_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def test_authenticated_dataclasses_asdict_selects_one_factory_owner() -> None:
+    source = (
+        "import dataclasses\n"
+        "\n"
+        "def test_asdict(value):\n"
+        "    assert dataclasses.asdict(value) == dataclasses.asdict(value)\n"
+    )
+    context = FactoryBuildContext(
+        filename="dataclasses_asdict.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _stdlib_attr_call_site(source, "asdict", "dataclasses_asdict.py"),
+        filename="dataclasses_asdict.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_authenticated_from_import_asdict_selects_one_factory_owner() -> None:
+    source = (
+        "from dataclasses import asdict\n"
+        "\n"
+        "def test_asdict(value):\n"
+        "    assert asdict(value) == asdict(value)\n"
+    )
+    context = FactoryBuildContext(
+        filename="asdict_from.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _stdlib_name_call_site(source, "asdict", "asdict_from.py"),
+        filename="asdict_from.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import dataclasses\n"
+            "\n"
+            "def test_asdict(dataclasses, value):\n"
+            "    assert dataclasses.asdict(value) == dataclasses.asdict(value)\n"
+        ),
+        (
+            "import dataclasses\n"
+            "\n"
+            "def test_asdict(value):\n"
+            "    assert dataclasses.asdict(value) == dataclasses.asdict(value)\n"
+            "    dataclasses = replacement\n"
+        ),
+        (
+            "import math as dataclasses\n"
+            "\n"
+            "def test_asdict(value):\n"
+            "    assert dataclasses.asdict(value) == dataclasses.asdict(value)\n"
+        ),
+        (
+            "def test_asdict(value):\n"
+            "    assert dataclasses.asdict(value) == dataclasses.asdict(value)\n"
+        ),
+    ],
+)
+def test_unwarranted_dataclasses_asdict_receiver_is_not_factory_owned(
+    source: str,
+) -> None:
+    context = FactoryBuildContext(
+        filename="dataclasses_asdict.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _stdlib_attr_call_site(source, "asdict", "dataclasses_asdict.py"),
+        filename="dataclasses_asdict.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_dataclasses_asdict_witness_pair_is_enrolled() -> None:
+    assert "dataclasses_asdict_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
