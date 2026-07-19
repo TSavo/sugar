@@ -148,6 +148,7 @@ class CallSiteValue(FloorValue):
         return None
 
     def is_identical(self, other, site):
+        from sugar_lift_py_tests.factory import factory_panic_gap
         from sugar_lift_py_tests.floor.none_value import NoneValue
         from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -156,7 +157,26 @@ class CallSiteValue(FloorValue):
 
         if self.target_name == "except" and isinstance(other, NoneValue):
             return Complete(FalseBoolLiteralSugar(site))
-        return super().is_identical(other, site)
+        # Deep/cyclic callsite term spines blow recursive dataclass hashing when
+        # building the identity atom (vendor bare RecursionError on `is`/`is not`).
+        # That is a missing heap-backed identity path, never soft success/effect.
+        try:
+            return super().is_identical(other, site)
+        except RecursionError:
+            factory_panic_gap(
+                owner="CallSiteValue.is_identical",
+                blame=str(site),
+                observed=(
+                    f"deep/cyclic callsite term identity for `{self.target_name}`"
+                ),
+                requested="FOL identity atom over callsite terms",
+                fix=(
+                    "emit identity through a heap-backed term coordinate "
+                    f"(TermTableBuilder CID), or leave `{self.target_name}` as an "
+                    "axiomatic EUF face; never convert RecursionError into "
+                    "RuntimeEffect or silent success"
+                ),
+            )
 
     def bitwise_invert(self, site):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
