@@ -48,3 +48,20 @@ python scripts/corpus_fatal_triage.py numpy \
 Omitting `--kit-manifest` mints with no contract: the five coordinates above
 stay unrecognized and their rows stay `FactoryPanic`/unclassified — the
 correct, honest default.
+
+## `pandas_import_binding_5911.json`
+
+Declares 130 `imported_callee` coordinates for the qualified/dotted
+import-binding-resolvable Call shape (#5911, drained in #5915).
+
+## `pandas_receiver_surface_5913.json`
+
+Part of #5913 (bare attribute/bound-method Call whose receiver type is
+lexically authenticated by assignment provenance — `df = pd.DataFrame(...)`
+then `df.equals(...)`). Uses a NEW manifest section, `instance_call`, wired
+into `kit_manifest.py` by this same PR (`(NativeShape, member) → coordinate`,
+mirroring the existing `instance_class_decorator` section's `"Shape.attr"`
+key format). Declares two receiver shapes (`PANDAS_DATAFRAME`,
+`PANDAS_SERIES`) and two members each (`equals`, `items`) — 4 of #5913's 143
+member tickets. Every other member ticket is untouched by this manifest and
+stays loud `FactoryPanic`.
