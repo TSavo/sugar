@@ -28,6 +28,13 @@ class BuiltinTypeCallSugar(CallSugar, role=SugarRole.TERM, comes_before=("CallSu
         )
 
     @classmethod
+    def new(cls, site, ctx):
+        return super().new(site, ctx)
+
+    def desugar(self, ctx: object = None):
+        return super().desugar(ctx)
+
+    @classmethod
     def witnesses(cls):
         return _call_pair(
             name="builtin_type_call_authentication",
