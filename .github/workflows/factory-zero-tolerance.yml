@@ -101,3 +101,14 @@ jobs:
           implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests
           --live-root
           implementations/python/sugar-lift-py-tests/scripts
+      - name: R_finite_cap_opaque_completions discrimination
+        if: always()
+        run: >-
+          python -m pytest --noconftest
+          implementations/python/sugar-lift-py-tests/tests/test_finite_cap_opaque_completion_law.py
+          -q
+      - name: R_finite_cap_opaque_completions = 0
+        if: always()
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/finite_cap_opaque_completion_law.py
