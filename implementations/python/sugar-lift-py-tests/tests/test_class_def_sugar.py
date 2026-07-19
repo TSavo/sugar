@@ -238,6 +238,26 @@ def test_pydantic_dataclass_class_witness_truthful_sat_wrong_twin_unsat(
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_pydantic_base_model_extra_class_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in ClassDefSugar.witnesses()
+        if witness.name == "pydantic_base_model_extra_class_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "pydantic-base-model-extra-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "pydantic-base-model-extra-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_typed_dict_total_class_witness_truthful_sat_wrong_twin_unsat(
     tmp_path: Path,
 ) -> None:
@@ -349,6 +369,112 @@ def test_same_named_local_pydantic_dataclasses_namespace_stays_loud() -> None:
         "    value: int\n"
     )
     site = SourceFragment.from_node(ast.parse(source).body[-1], "t.py", source=source)
+    assert ClassDefSugar.owns(site) is False
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic) as raised:
+        build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert raised.value.info.observed == "ClassDef"
+
+
+@pytest.mark.parametrize(
+    ("import_statement", "base"),
+    (
+        ("from pydantic import BaseModel as ModelBase", "ModelBase"),
+        ("import pydantic as pd", "pd.BaseModel"),
+    ),
+)
+def test_owns_authenticated_pydantic_base_model_extra_class(
+    import_statement: str,
+    base: str,
+) -> None:
+    source = (
+        f"{import_statement}\n"
+        f'class Payload({base}, extra="allow"):\n'
+        "    value: int\n"
+    )
+    site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is True
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    result = build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert result.audit_row.selected == "ClassDefSugar"
+    assert len(result.sugar.class_options) == 1
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        (
+            "class BaseModel:\n"
+            "    pass\n"
+            'class Payload(BaseModel, extra="allow"):\n'
+            "    value: int\n"
+        ),
+        (
+            "from pydantic import BaseModel\n"
+            "class Payload(BaseModel, from_attributes=True):\n"
+            "    value: int\n"
+        ),
+        (
+            "from pydantic import BaseModel\n"
+            'class Payload(BaseModel, extra="forbid"):\n'
+            "    value: int\n"
+        ),
+        (
+            "from pydantic import BaseModel\n"
+            'class Payload(BaseModel, extra="allow", frozen=True):\n'
+            "    value: int\n"
+        ),
+    ),
+)
+def test_unsupported_pydantic_base_model_keyword_partitions_stay_loud(
+    source: str,
+) -> None:
+    site = SourceFragment.from_node(
+        ast.parse(source).body[-1], "t.py", source=source
+    )
+    assert ClassDefSugar.owns(site) is False
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic) as raised:
+        build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert raised.value.info.observed == "ClassDef"
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        (
+            "from pydantic import BaseModel\n"
+            "class BaseModel:\n"
+            "    pass\n"
+            'class Payload(BaseModel, extra="allow"):\n'
+            "    value: int\n"
+        ),
+        (
+            "import pydantic as pd\n"
+            "pd = object()\n"
+            'class Payload(pd.BaseModel, extra="allow"):\n'
+            "    value: int\n"
+        ),
+        (
+            'class Payload(BaseModel, extra="allow"):\n'
+            "    value: int\n"
+            "from pydantic import BaseModel\n"
+        ),
+    ),
+)
+def test_shadowed_or_late_pydantic_base_model_import_stays_loud(
+    source: str,
+) -> None:
+    node = next(
+        statement
+        for statement in ast.parse(source).body
+        if isinstance(statement, ast.ClassDef) and statement.name == "Payload"
+    )
+    site = SourceFragment.from_node(node, "t.py", source=source)
     assert ClassDefSugar.owns(site) is False
 
     ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
