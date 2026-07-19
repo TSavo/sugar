@@ -138,9 +138,7 @@ def test_import_constructed_item_receiver_emits_no_universe_gap() -> None:
 
     payload = lift_file_payload(source, "item_covered_fixture.py")
 
-    assert any(
-        edge.get("targetSymbol") == "call:item" for edge in payload.call_edges
-    )
+    assert any(edge.get("targetSymbol") == "call:item" for edge in payload.call_edges)
     assert _universe_gaps(payload) == []
 
 
@@ -168,6 +166,22 @@ def test_unresolved_item_receiver_stays_unclassified() -> None:
         (
             "all",
             "def test_all(value):\n    assert all(value)\n",
+        ),
+        (
+            "any",
+            "def test_any(value):\n    assert any(value)\n",
+        ),
+        (
+            "min",
+            "def test_min(value):\n    assert min(value) == 0\n",
+        ),
+        (
+            "max",
+            "def test_max(value):\n    assert max(value) == 0\n",
+        ),
+        (
+            "sum",
+            "def test_sum(value):\n    assert sum(value) == 0\n",
         ),
         (
             "list",
@@ -212,7 +226,18 @@ def test_authenticated_builtin_coordinate_emits_no_universe_gap(
     )
     assert _universe_gaps(payload) == []
 
-    if callee in {"type", "dtype", "all", "list", "set", "hasattr"}:
+    if callee in {
+        "type",
+        "dtype",
+        "all",
+        "any",
+        "min",
+        "max",
+        "sum",
+        "list",
+        "set",
+        "hasattr",
+    }:
         node = ast.parse(f"{callee}(value)", mode="eval").body
         context = FactoryBuildContext(
             filename="coordinate.py", catalog=default_catalog()
@@ -226,9 +251,7 @@ def test_authenticated_builtin_coordinate_emits_no_universe_gap(
         # bare type() is BuiltinTypeCallSugar; remaining builtins share the
         # BuiltinCalleeUniverseSugar universe-coordinate leaf.
         expected = (
-            "BuiltinTypeCallSugar"
-            if callee == "type"
-            else "BuiltinCalleeUniverseSugar"
+            "BuiltinTypeCallSugar" if callee == "type" else "BuiltinCalleeUniverseSugar"
         )
         assert built.audit_row.selected == expected
 
@@ -241,17 +264,15 @@ def test_py_subscript_floor_coordinate_is_not_a_callee_universe_gap() -> None:
     locus. That must not demand BuiltinCalleeUniverse coverage.
     """
 
-    source = (
-        "def test_index(values):\n"
-        "    assert values.astype(int)[()] == 0\n"
-    )
+    source = "def test_index(values):\n" "    assert values.astype(int)[()] == 0\n"
     payload = lift_file_payload(source, "py_subscript_floor.py")
 
     assert any(
-        edge.get("targetSymbol") == "call:py.subscript"
-        for edge in payload.call_edges
+        edge.get("targetSymbol") == "call:py.subscript" for edge in payload.call_edges
     )
-    assert not any(gap.ast_kind == "call:py.subscript" for gap in _universe_gaps(payload))
+    assert not any(
+        gap.ast_kind == "call:py.subscript" for gap in _universe_gaps(payload)
+    )
 
 
 def test_bare_subscript_under_assert_is_not_a_callee_universe_gap() -> None:
@@ -259,14 +280,25 @@ def test_bare_subscript_under_assert_is_not_a_callee_universe_gap() -> None:
     payload = lift_file_payload(source, "bare_subscript.py")
 
     assert any(
-        edge.get("targetSymbol") == "call:py.subscript"
-        for edge in payload.call_edges
+        edge.get("targetSymbol") == "call:py.subscript" for edge in payload.call_edges
     )
     assert _universe_gaps(payload) == []
 
 
 @pytest.mark.parametrize(
-    "callee", ["get_handler_name", "conv", "all", "list", "set", "hasattr"]
+    "callee",
+    [
+        "get_handler_name",
+        "conv",
+        "all",
+        "any",
+        "min",
+        "max",
+        "sum",
+        "list",
+        "set",
+        "hasattr",
+    ],
 )
 def test_shadowed_authenticated_coordinate_stays_unclassified(callee: str) -> None:
     source = f"def test_shadowed({callee}):\n" f"    assert {callee}(5) == 5\n"
@@ -575,9 +607,7 @@ def test_non_numpy_import_refutes_numpy_dtype_support() -> None:
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "dtype"
     )
-    site = SourceFragment.from_node(
-        call, "numpy_dtype_lying_fixture.py", source=source
-    )
+    site = SourceFragment.from_node(call, "numpy_dtype_lying_fixture.py", source=source)
 
     assert recognize_callee_universe("call:numpy.dtype", site=site) is None
 
@@ -956,8 +986,7 @@ def test_authenticated_numpy_shares_memory_has_universe_support() -> None:
             "call:numpy.shares_memory",
         ),
         (
-            "def test_values(left, right):\n"
-            "    assert shares_memory(left, right)\n",
+            "def test_values(left, right):\n" "    assert shares_memory(left, right)\n",
             "call:shares_memory",
         ),
     ),
@@ -984,8 +1013,7 @@ def test_authenticated_numpy_isdtype_has_universe_support() -> None:
     payload = lift_file_payload(source, "isdtype_covered_fixture.py")
 
     assert any(
-        edge.get("targetSymbol") == "call:numpy.isdtype"
-        for edge in payload.call_edges
+        edge.get("targetSymbol") == "call:numpy.isdtype" for edge in payload.call_edges
     )
     assert _universe_gaps(payload) == []
 
@@ -1000,15 +1028,12 @@ def test_authenticated_numpy_isdtype_has_universe_support() -> None:
             "call:numpy.isdtype",
         ),
         (
-            "def test_values(dt):\n"
-            "    assert isdtype(dt, 'real floating')\n",
+            "def test_values(dt):\n" "    assert isdtype(dt, 'real floating')\n",
             "call:isdtype",
         ),
     ),
 )
-def test_unowned_isdtype_lookalikes_stay_loud(
-    source: str, expected_kind: str
-) -> None:
+def test_unowned_isdtype_lookalikes_stay_loud(source: str, expected_kind: str) -> None:
     """Parameter shadow and unimported spelling stay loud universe gaps."""
 
     payload = lift_file_payload(source, "isdtype_unowned_fixture.py")
@@ -1044,8 +1069,7 @@ def test_authenticated_numpy_datetime_data_has_universe_support() -> None:
             "call:numpy.datetime_data",
         ),
         (
-            "def test_values(dt):\n"
-            "    assert datetime_data(dt) == 0\n",
+            "def test_values(dt):\n" "    assert datetime_data(dt) == 0\n",
             "call:datetime_data",
         ),
     ),
@@ -1313,10 +1337,7 @@ def test_later_local_rebind_revokes_json_loads_import_warrant() -> None:
 def test_unauthenticated_json_loads_fqn_alone_stays_loud() -> None:
     """Lying twin: FQN spelling without import provenance must not silence."""
 
-    source = (
-        "def test_loads(payload):\n"
-        "    assert json.loads(payload) is not None\n"
-    )
+    source = "def test_loads(payload):\n" "    assert json.loads(payload) is not None\n"
 
     payload = lift_file_payload(source, "json_loads_unauthenticated_fqn.py")
 
@@ -1439,8 +1460,7 @@ def test_unauthenticated_asdict_fqn_alone_stays_loud() -> None:
     """Lying twin: FQN spelling without import provenance must not silence."""
 
     source = (
-        "def test_asdict(value):\n"
-        "    assert dataclasses.asdict(value) is not None\n"
+        "def test_asdict(value):\n" "    assert dataclasses.asdict(value) is not None\n"
     )
 
     payload = lift_file_payload(source, "asdict_unauthenticated_fqn.py")
@@ -1461,3 +1481,250 @@ def test_unauthenticated_asdict_fqn_alone_stays_loud() -> None:
     )
     assert CalleeUniverseRecognition.coordinate(site) is None
     assert recognize_callee_universe("call:dataclasses.asdict", site=site) is None
+
+
+def test_authenticated_dataclasses_is_dataclass_has_universe_support() -> None:
+    source = (
+        "import dataclasses\n"
+        "\n"
+        "def test_is_dataclass(value):\n"
+        "    assert dataclasses.is_dataclass(value) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "is_dataclass_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:dataclasses.is_dataclass"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "is_dataclass"
+    )
+    site = SourceFragment.from_node(
+        call, "is_dataclass_covered_fixture.py", source=source
+    )
+    assert CalleeUniverseRecognition.coordinate(site) == "dataclasses.is_dataclass"
+    context = FactoryBuildContext(
+        filename="is_dataclass_covered_fixture.py", catalog=default_catalog()
+    )
+    built = build_node(
+        site,
+        filename="is_dataclass_covered_fixture.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_authenticated_from_import_is_dataclass_has_universe_support() -> None:
+    source = (
+        "from dataclasses import is_dataclass\n"
+        "\n"
+        "def test_is_dataclass(value):\n"
+        "    assert is_dataclass(value) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "is_dataclass_from_covered.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:dataclasses.is_dataclass"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_shadowed_dataclasses_alias_cannot_warrant_is_dataclass_support() -> None:
+    """Lying twin: parameter receiver is not the authenticated dataclasses import."""
+
+    source = (
+        "import dataclasses\n"
+        "\n"
+        "def test_is_dataclass(dataclasses, value):\n"
+        "    assert dataclasses.is_dataclass(value) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "is_dataclass_shadowed_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:dataclasses.is_dataclass"]
+
+
+def test_later_local_rebind_revokes_is_dataclass_import_warrant() -> None:
+    """Lying twin: later function-local rebind must break false recognition."""
+
+    source = (
+        "from dataclasses import is_dataclass\n"
+        "\n"
+        "def test_is_dataclass(value):\n"
+        "    assert is_dataclass(value) is not None\n"
+        "    is_dataclass = replacement\n"
+    )
+
+    payload = lift_file_payload(source, "is_dataclass_late_rebind.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:dataclasses.is_dataclass"]
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "is_dataclass"
+    )
+    site = SourceFragment.from_node(call, "is_dataclass_late_rebind.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) is None
+
+
+def test_unauthenticated_is_dataclass_fqn_alone_stays_loud() -> None:
+    """Lying twin: FQN spelling without import provenance must not silence."""
+
+    source = (
+        "def test_is_dataclass(value):\n"
+        "    assert dataclasses.is_dataclass(value) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "is_dataclass_unauthenticated_fqn.py")
+
+    gaps = _universe_gaps(payload)
+    assert gaps
+    assert all("is_dataclass" in gap.ast_kind for gap in gaps)
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "is_dataclass"
+    )
+    site = SourceFragment.from_node(
+        call, "is_dataclass_unauthenticated_fqn.py", source=source
+    )
+    assert CalleeUniverseRecognition.coordinate(site) is None
+    assert recognize_callee_universe("call:dataclasses.is_dataclass", site=site) is None
+
+
+def test_authenticated_math_isclose_has_universe_support() -> None:
+    source = (
+        "import math\n"
+        "\n"
+        "def test_isclose(a, b):\n"
+        "    assert math.isclose(a, b) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "isclose_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:math.isclose" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "isclose"
+    )
+    site = SourceFragment.from_node(call, "isclose_covered_fixture.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) == "math.isclose"
+    context = FactoryBuildContext(
+        filename="isclose_covered_fixture.py", catalog=default_catalog()
+    )
+    built = build_node(
+        site,
+        filename="isclose_covered_fixture.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_authenticated_from_import_isclose_has_universe_support() -> None:
+    source = (
+        "from math import isclose\n"
+        "\n"
+        "def test_isclose(a, b):\n"
+        "    assert isclose(a, b) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "isclose_from_covered.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:math.isclose" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_shadowed_math_alias_cannot_warrant_isclose_support() -> None:
+    """Lying twin: parameter receiver is not the authenticated math import."""
+
+    source = (
+        "import math\n"
+        "\n"
+        "def test_isclose(math, a, b):\n"
+        "    assert math.isclose(a, b) is not None\n"
+    )
+
+    payload = lift_file_payload(source, "isclose_shadowed_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:math.isclose"]
+
+
+def test_later_local_rebind_revokes_isclose_import_warrant() -> None:
+    """Lying twin: later function-local rebind must break false recognition."""
+
+    source = (
+        "from math import isclose\n"
+        "\n"
+        "def test_isclose(a, b):\n"
+        "    assert isclose(a, b) is not None\n"
+        "    isclose = replacement\n"
+    )
+
+    payload = lift_file_payload(source, "isclose_late_rebind.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:math.isclose"]
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "isclose"
+    )
+    site = SourceFragment.from_node(call, "isclose_late_rebind.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) is None
+
+
+def test_unauthenticated_isclose_fqn_alone_stays_loud() -> None:
+    """Lying twin: FQN spelling without import provenance must not silence."""
+
+    source = "def test_isclose(a, b):\n" "    assert math.isclose(a, b) is not None\n"
+
+    payload = lift_file_payload(source, "isclose_unauthenticated_fqn.py")
+
+    gaps = _universe_gaps(payload)
+    assert gaps
+    assert all("isclose" in gap.ast_kind for gap in gaps)
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "isclose"
+    )
+    site = SourceFragment.from_node(
+        call, "isclose_unauthenticated_fqn.py", source=source
+    )
+    assert CalleeUniverseRecognition.coordinate(site) is None
+    assert recognize_callee_universe("call:math.isclose", site=site) is None

@@ -58,6 +58,7 @@ class CalleeUniverseSupport(Enum):
     NUMPY_EVAL_SCALAR = auto()
     JSON_LOADS = auto()
     DATACLASSES_ASDICT = auto()
+    DATACLASSES_IS_DATACLASS = auto()
     PATH_RESOLVE = auto()
     UFUNC = auto()
     T0 = auto()
@@ -157,6 +158,7 @@ _IMPORTED_SUPPORT = {
     "re.Pattern.search": CalleeUniverseSupport.REGEX_SEARCH,
     "json.loads": CalleeUniverseSupport.JSON_LOADS,
     "dataclasses.asdict": CalleeUniverseSupport.DATACLASSES_ASDICT,
+    "dataclasses.is_dataclass": CalleeUniverseSupport.DATACLASSES_IS_DATACLASS,
     # Exact import identity (``import pathlib`` / ``from pathlib import Path``).
     # Corpus: numpy/tests/test_configtool.py — not a module-prefix warrant.
     "pathlib.Path": CalleeUniverseSupport.PATHLIB_PATH,
@@ -193,7 +195,9 @@ _IMPORTED_SUPPORT = {
     "numpy.datetime_data": CalleeUniverseSupport.NUMPY_DATETIME_DATA,
 }
 
-_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list", "set", "hasattr"})
+_BUILTIN_COORDINATES = frozenset(
+    {"type", "dtype", "all", "any", "min", "max", "sum", "list", "set", "hasattr"}
+)
 # Attribute leaves that can still resolve into an imported authenticated
 # coordinate (``np.can_cast``, ``np.all``, converter helpers, …). Class-body
 # aliases (``self.conv = mt.run_byteorder_converter``) use arbitrary attr
@@ -257,9 +261,7 @@ def recognize_callee_universe(
     return support
 
 
-def _target_matches_call(
-    target: str | None, coordinate: str | None, site
-) -> bool:
+def _target_matches_call(target: str | None, coordinate: str | None, site) -> bool:
     """Accept full identity, identity leaf, or the call's written leaf/target.
 
     Local assignment aliases (``eval_scalar = crackfortran._eval_scalar``)
@@ -377,9 +379,7 @@ class CalleeUniverseRecognition:
         attr = site.call_target_name()
         if attr is None:
             return None
-        if attr == "item" and _receiver_has_imported_call_definition(
-            site, receiver
-        ):
+        if attr == "item" and _receiver_has_imported_call_definition(site, receiver):
             return attr
         receiver_name = receiver.name_id()
         method, class_def = _enclosing_method_and_class(site)
