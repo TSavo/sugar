@@ -32,6 +32,7 @@ class NativeShape(Enum):
     NEVER_SUPPRESSING_MANAGER = auto()
     ASSERTING_MANAGER = auto()
     CLASS_IDENTITY_DECORATOR = auto()
+    IMPLEMENTATION_PRESERVING_DECORATOR = auto()
 
 
 _CALL_SHAPES = {
@@ -103,6 +104,10 @@ _IDENTITY_DECORATORS = {
     )
 }
 
+_NATIVE_DECORATORS = {
+    "functools.wraps": NativeShape.IMPLEMENTATION_PRESERVING_DECORATOR,
+}
+
 _MODULE_NAMES = {
     name: True
     for name in (
@@ -171,3 +176,9 @@ def recognizes_module_name(name: str) -> bool:
 
 def recognizes_identity_decorator(module: str, name: str) -> bool:
     return bool(_IDENTITY_DECORATORS.get((module, name)))
+
+
+def recognize_native_decorator(target: str | None) -> NativeShape | None:
+    """Recognize a decorator only from its authenticated import coordinate."""
+
+    return _NATIVE_DECORATORS.get(target)
