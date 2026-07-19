@@ -2994,7 +2994,11 @@ def _build_dig_body_impl(
 
         formal_ctx = ControlFlowBodySugar.build_context(fn_site, body_ctx)
         oracle = DIG_BODY_ORACLE
-        key = oracle.cache_key(fn_site, body_ctx)
+        # Partition on the caller factory context, not body_ctx: body_ctx is a
+        # per-call replace (building / method bindings / sibling resolvers) whose
+        # object identities would never hit under context-identity keys. Those
+        # local mutations are pure functions of (fn_site, caller ctx).
+        key = oracle.cache_key(fn_site, ctx)
         if key is not None and oracle_variant is not None:
             key = (key, oracle_variant)
         core = oracle.get(key) if key is not None else _MISSING
