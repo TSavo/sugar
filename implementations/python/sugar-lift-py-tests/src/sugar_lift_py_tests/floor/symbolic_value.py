@@ -8,6 +8,27 @@ from sugar_lift_py_tests.ir import Term
 from .floor_value import FloorValue
 
 
+def _pep604_type_union_leaves(term: Term) -> tuple[Term, ...] | None:
+    """Flatten a ground PEP 604 ``|`` tree of ``python:type`` leaves.
+
+    Returns ``None`` when any arm is not a type coordinate (or nested union of
+    them). Callers keep the dynamic / loud path for non-type ``|`` operands.
+    """
+    from sugar_lift_py_tests.ir import _ConstStr, _Ctor
+
+    if type(term) is _Ctor and term.name == "python:type":
+        if len(term.args) == 1 and type(term.args[0]) is _ConstStr:
+            return (term,)
+        return None
+    if type(term) is _Ctor and term.name == "|" and len(term.args) == 2:
+        left = _pep604_type_union_leaves(term.args[0])
+        right = _pep604_type_union_leaves(term.args[1])
+        if left is None or right is None:
+            return None
+        return (*left, *right)
+    return None
+
+
 @dataclass(frozen=True)
 class SymbolicValue(FloorValue):
     """A sort-neutral symbolic ProofIR term: a free variable, or a term composed
@@ -66,7 +87,13 @@ class SymbolicValue(FloorValue):
         return super().python_isinstance(type_name, type_term, site)
 
     def test_python_type(self, value, site):
-        """Dispatch a vendor type test from an existing ``python:type`` term."""
+        """Dispatch a vendor type test from an existing ``python:type`` term.
+
+        PEP 604 runtime unions of type coordinates (``str | bytes``) are the
+        same multi-arm isinstance surface as tuple-of-types. They reduce to a
+        ground ``|`` of ``python:type`` leaves — never mint RuntimeEffect for
+        that decidable union (#5340 sklearn test_stats / _pytest.approx path).
+        """
         from sugar_lift_py_tests.ir import _ConstStr, _Ctor, ctor
 
         term = self.term
@@ -77,6 +104,17 @@ class SymbolicValue(FloorValue):
             and type(term.args[0]) is _ConstStr
         ):
             return value.python_isinstance(term.args[0].value, term, site)
+
+        type_terms = _pep604_type_union_leaves(term)
+        if type_terms is not None:
+            # Same disjunction as ``isinstance(x, (T, U, …))`` — reuse the
+            # TupleValue multi-arm collector; no vendor-path special case.
+            from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+            return TupleValue(
+                tuple(SymbolicValue(type_term) for type_term in type_terms)
+            ).test_python_type(value, site)
+
         from sugar_lift_py_tests.effect import (
             DynamicTypeOperandRuntimeEffect,
             runtime_effect_evidence_from_terms,
