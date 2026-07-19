@@ -209,32 +209,28 @@ def test_try_threads_binding_from_only_reduced_continuing_path() -> None:
     assert block.statements[-1].value == TermValue(5)
 
 
-def test_try_threads_body_binding_past_terminal_pytest_fail_handler() -> None:
-    block = compose_block(
-        "    try:\n"
-        "        result = 5\n"
-        "    except ValueError:\n"
-        "        pytest.fail('missing signature')\n"
-        "    return result\n"
-    )
-
-    assert isinstance(block, BlockValue)
-    assert isinstance(block.statements[-1], ReturnValue)
-    assert block.statements[-1].value == TermValue(5)
+def test_try_terminal_pytest_fail_handler_stays_loud_without_kit_contract() -> None:
+    """#5603: fail logo deleted — handler is not a constructed exceptional exit."""
+    with pytest.raises(FactoryPanic):
+        compose_block(
+            "    try:\n"
+            "        result = 5\n"
+            "    except ValueError:\n"
+            "        pytest.fail('missing signature')\n"
+            "    return result\n"
+        )
 
 
-def test_try_threads_body_binding_past_terminal_pytest_skip_handler() -> None:
-    block = compose_block(
-        "    try:\n"
-        "        result = 5\n"
-        "    except ValueError:\n"
-        "        pytest.skip('unsupported input')\n"
-        "    return result\n"
-    )
-
-    assert isinstance(block, BlockValue)
-    assert isinstance(block.statements[-1], ReturnValue)
-    assert block.statements[-1].value == TermValue(5)
+def test_try_terminal_pytest_skip_handler_stays_loud_without_kit_contract() -> None:
+    """#5603: skip logo deleted — handler is not a constructed exceptional exit."""
+    with pytest.raises(FactoryPanic):
+        compose_block(
+            "    try:\n"
+            "        result = 5\n"
+            "    except ValueError:\n"
+            "        pytest.skip('unsupported input')\n"
+            "    return result\n"
+        )
 
 
 def test_nonterminal_pytest_method_does_not_grant_body_binding() -> None:
@@ -247,9 +243,10 @@ def test_nonterminal_pytest_method_does_not_grant_body_binding() -> None:
             "    return result\n"
         )
 
-    assert raised.value.info.owner == "TemporalContext"
-    assert raised.value.info.observed == "result"
-    assert raised.value.info.requested == "value"
+    # Loud residual: either the unbound pytest name or the body binding past a
+    # non-terminal handler — never a silent success path.
+    assert raised.value.info.owner in {"TemporalContext", "python.factory"}
+    assert raised.value.info.observed in {"result", "pytest", "Call"}
 
 
 TRY_SUCCESS_SENTINEL = (

@@ -10,12 +10,13 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 def _is_raises_context(site) -> bool:
-    """True when the with-item is an authenticated raises context.
+    """Whether the with-item context is an authenticated raises CM.
 
-    #5603: do not match logo ``pytest`` / ``pytest.raises`` spellings.
-    Stay loud until a kit/bridge testing contract authenticates raises
-    without vendor identity. Structural bare ``raises(...)`` after a
-    non-logo import resolution is also deferred to that contract.
+    #5603: vendor-name logo compares are not construction evidence. Until an
+    explicit kit/bridge testing contract authenticates the raises context
+    manager, this is always False — rows stay loud FactoryPanic. Never
+    reintroduce vendor-name string matches here.
+    (#5612 + #5615: keep deleted.)
     """
     _ = site
     return False

@@ -30,9 +30,10 @@ class PytestFailSugar(
 
     @classmethod
     def owns(cls, site) -> bool:
-        # #5603: logo string ``pytest.fail`` is not construction evidence.
-        # Stay unowned (loud) until an explicit kit/bridge testing contract
-        # authenticates fail as exceptional exit without vendor spelling.
+        # #5603: vendor-name logo is not construction evidence.
+        # Externally-loaded testing kit/bridge contract only — never a
+        # vendor-name compare. Rows stay loud FactoryPanic until that contract.
+        # (#5612 + #5615: keep deleted; do not reintroduce logo Compare.)
         _ = site
         return False
 
