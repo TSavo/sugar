@@ -281,6 +281,26 @@ def test_dataclass_decorated_class_witness_truthful_sat_wrong_twin_unsat(
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_guarded_import_dataclass_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in ClassDefSugar.witnesses()
+        if witness.name == "guarded_import_dataclass_class_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "guarded-import-dataclass-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "guarded-import-dataclass-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_pydantic_dataclass_class_witness_truthful_sat_wrong_twin_unsat(
     tmp_path: Path,
 ) -> None:
@@ -440,6 +460,78 @@ def test_owns_authenticated_module_qualified_stdlib_dataclass() -> None:
     site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
 
     assert ClassDefSugar.owns(site) is True
+
+
+def test_owns_guarded_import_module_qualified_stdlib_dataclass() -> None:
+    source = (
+        "try:\n"
+        "    import dataclasses\n"
+        "except ImportError:\n"
+        "    pass\n"
+        "\n"
+        "class Fixture:\n"
+        "    @classmethod\n"
+        "    def make(cls):\n"
+        "        @dataclasses.dataclass\n"
+        "        class Dog:\n"
+        "            name: str\n"
+        "        return Dog\n"
+    )
+    class_node = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ClassDef) and node.name == "Dog"
+    )
+    site = SourceFragment.from_node(class_node, "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is True
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    result = build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert result.audit_row.selected == "ClassDefSugar"
+
+
+def test_guarded_lookalike_dataclass_import_stays_loud() -> None:
+    source = (
+        "try:\n"
+        "    import provider as dataclasses\n"
+        "except ImportError:\n"
+        "    pass\n"
+        "\n"
+        "@dataclasses.dataclass\n"
+        "class Dog:\n"
+        "    name: str\n"
+    )
+    site = SourceFragment.from_node(ast.parse(source).body[-1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is False
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic) as raised:
+        build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert raised.value.info.observed == "ClassDef"
+
+
+def test_guarded_dataclass_import_over_prior_binding_stays_loud() -> None:
+    source = (
+        "import provider as dataclasses\n"
+        "try:\n"
+        "    import dataclasses\n"
+        "except ImportError:\n"
+        "    pass\n"
+        "\n"
+        "@dataclasses.dataclass\n"
+        "class Dog:\n"
+        "    name: str\n"
+    )
+    site = SourceFragment.from_node(ast.parse(source).body[-1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is False
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic) as raised:
+        build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert raised.value.info.observed == "ClassDef"
 
 
 @pytest.mark.parametrize(
