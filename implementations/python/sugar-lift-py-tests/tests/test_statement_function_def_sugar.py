@@ -192,6 +192,31 @@ def test_deferred_statement_structure_never_crosses_factory_contexts() -> None:
     assert first_body is not second_body
 
 
+def test_deferred_statement_structure_rebuilds_for_temporal_and_catalog_contexts() -> None:
+    """The same source fragment must rebuild for temporal/catalog twins."""
+    from dataclasses import replace
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    statement = SourceFragment.from_source("return 1\n", "same.py").statements()[0]
+    catalog = default_catalog()
+    first_ctx = FactoryBuildContext(
+        filename="same.py",
+        catalog=catalog,
+        temporal=TemporalContext.empty().bind_value("marker", TermValue(1)),
+    )
+    second_ctx = replace(
+        first_ctx,
+        catalog=type(catalog)(claims=tuple(reversed(tuple(catalog.claims)))),
+        temporal=TemporalContext.empty().bind_value("marker", TermValue(2)),
+    )
+
+    DEFERRED_STATEMENT_STRUCTURE_ORACLE.clear()
+    first_body = DEFERRED_STATEMENT_STRUCTURE_ORACLE.resolve(statement, first_ctx)
+    second_body = DEFERRED_STATEMENT_STRUCTURE_ORACLE.resolve(statement, second_ctx)
+
+    assert first_body is not second_body
+
+
 def test_deferred_statement_identity_includes_enclosing_source() -> None:
     """Equal statement segments in different sources are distinct structures."""
     first_root = SourceFragment.from_source(
