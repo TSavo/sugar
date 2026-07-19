@@ -64,17 +64,15 @@ def test_guarded_raises_as_binding_is_not_definite_in_continuation() -> None:
     assert guarded.extend_scope(original) is original
 
 
-def test_symbolic_if_with_pytest_raises_constructs_guarded_fact() -> None:
-    block = compose_block(
-        "    if p:\n"
-        "        with pytest.raises(ValueError):\n"
-        "            raise ValueError()\n",
-        {"p": SymbolicValue(make_var("p"))},
-    )
-
-    formulas = block.inv_contribution()
-    assert formulas
-    assert all("implies" in repr(formula) for formula in formulas)
+def test_symbolic_if_with_pytest_raises_stays_loud_without_kit_contract() -> None:
+    """#5603: raises logo deleted — nested with-form is not constructed testimony."""
+    with pytest.raises(FactoryPanic):
+        compose_block(
+            "    if p:\n"
+            "        with pytest.raises(ValueError):\n"
+            "            raise ValueError()\n",
+            {"p": SymbolicValue(make_var("p"))},
+        )
 
 
 def test_unrepresentable_guard_context_stays_loud() -> None:
