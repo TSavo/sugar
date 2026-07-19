@@ -1653,7 +1653,7 @@ class _AuditFileContext:
 # Bounded process-lifetime context for the resident kit. File content CID is
 # the sole key; _remember_file_context applies the same explicit capacity as
 # enumeration contexts so evicted source/AST ownership is collectible.
-_AUDIT_FILE_CONTEXTS: collections.OrderedDict[str, _AuditFileContext] = (
+_AUDIT_FILE_CONTEXTS: collections.OrderedDict[tuple[str, str], _AuditFileContext] = (
     collections.OrderedDict()
 )
 
@@ -1670,9 +1670,10 @@ def _audit_file_context(
     # caller consumes those failures as audit data. Normal lifting must
     # reconstruct the context without a recovery sink so the first seed
     # FactoryPanic propagates and no completed payload can be emitted.
-    cached = _AUDIT_FILE_CONTEXTS.get(file_cid) if hold_seed_panics else None
+    cache_key = (filename, file_cid)
+    cached = _AUDIT_FILE_CONTEXTS.get(cache_key) if hold_seed_panics else None
     if cached is not None:
-        _AUDIT_FILE_CONTEXTS.move_to_end(file_cid)
+        _AUDIT_FILE_CONTEXTS.move_to_end(cache_key)
         _TRANSPORT_LOG.info(
             "enumeration_file_context",
             extra={
@@ -1759,7 +1760,7 @@ def _audit_file_context(
         definitions_by_cid=definitions_by_cid,
     )
     if hold_seed_panics:
-        _remember_file_context(_AUDIT_FILE_CONTEXTS, file_cid, context)
+        _remember_file_context(_AUDIT_FILE_CONTEXTS, cache_key, context)
     _observe_enumeration_phase(
         "audit_context.build", (time.monotonic() - started) * 1000
     )
@@ -3025,7 +3026,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         ],
                     )
                     return
-                context_hit = file_cid in _AUDIT_FILE_CONTEXTS
+                context_hit = (file_rel, file_cid) in _AUDIT_FILE_CONTEXTS
                 context = _audit_file_context(
                     source,
                     file_rel,
@@ -3078,7 +3079,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     )
                     return
                 file_cid = actual_file_cid
-                context_hit = file_cid in _AUDIT_FILE_CONTEXTS
+                context_hit = (file_rel, file_cid) in _AUDIT_FILE_CONTEXTS
                 context = _audit_file_context(
                     source,
                     file_rel,
