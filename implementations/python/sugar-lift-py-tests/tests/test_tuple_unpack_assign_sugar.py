@@ -121,6 +121,24 @@ def test_list_target_with_star_constructs_concrete_bindings() -> None:
     ) == BlockValue((ReturnValue(TermValue(10)),))
 
 
+def test_nested_prefix_with_star_constructs_concrete_bindings() -> None:
+    assert compose_block(
+        "    ((q_raw, tau), r, *rest) = ((2, 3), 4, 5, 6)\n"
+        "    return q_raw + tau + r + rest[0] + rest[1]\n"
+    ) == BlockValue(
+        (ReturnValue(TermValue(20)),),
+        can_fall_through=False,
+    )
+
+
+def test_nested_star_unpack_call_rooted_store_stays_loud() -> None:
+    node = ast.parse("((factory().q, tau), r, *rest) = values").body[0]
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+
+    with pytest.raises(FactoryPanic, match=r"None => panic"):
+        build_node(node, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+
+
 def test_star_unpack_runtime_length_is_a_named_effect() -> None:
     result = compose_block(
         "    head, *middle, tail = values\n    return head\n",
@@ -161,6 +179,29 @@ def test_sequence_unpack_runtime_effect_has_typed_red_bad_twin() -> None:
         witness.truthful.expectation.reason_needle
         != witness.lying.expectation.reason_needle
     )
+
+
+def test_nested_star_unpack_has_truthful_and_lying_witness(tmp_path: Path) -> None:
+    witness = next(
+        witness
+        for witness in SequenceUnpackAssignSugar.witnesses()
+        if witness.name == "nested_sequence_unpack_assign_return"
+    )
+    assert witness.truthful.expected == "sat"
+    assert witness.lying.expected == "unsat"
+
+    seeds = Path(__file__).parent / "witness_seeds"
+    truthful = run_source_through_real_solver(
+        tmp_path / "nested-star-truthful",
+        (seeds / "nested_star_unpack_truthful.py").read_text(),
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "nested-star-lying",
+        (seeds / "nested_star_unpack_lying.py").read_text(),
+    )
+
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
 
 
 @pytest.mark.parametrize(
