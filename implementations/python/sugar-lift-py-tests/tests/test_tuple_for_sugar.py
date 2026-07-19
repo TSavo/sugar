@@ -53,8 +53,59 @@ def test_finite_tuple_for_unfolds_and_constructs_target_truth() -> None:
     assert any(entry.value == TermValue(1) for entry in returns)
 
 
-def test_starred_target_stays_loud() -> None:
-    source = "for a, *rest in rows:\n    pass\n"
+def test_used_starred_target_stays_loud() -> None:
+    """Star names that are loaded remain a loud factory gap (not discarded)."""
+    source = "for a, *rest in rows:\n    return rest\n"
+    ctx = FactoryBuildContext(filename="vendor.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic) as raised:
+        build_node(
+            ast.parse(source).body[0],
+            filename="vendor.py",
+            role=SugarRole.STATEMENT,
+            ctx=ctx,
+        )
+    assert raised.value.info.owner == "python.factory"
+    assert raised.value.info.observed == "For"
+
+
+def test_discarded_star_trailing_rest_owns_starred_tuple_for() -> None:
+    from sugar_lift_py_tests.sugar.starred_tuple_for_sugar import StarredTupleForSugar
+
+    site = _site("for name, trans, *_ in rows:\n    return name\n")
+    assert StarredTupleForSugar.owns(site)
+    catalog = default_catalog()
+    assert [
+        candidate.name
+        for candidate in catalog.candidates_for(SugarRole.STATEMENT, site)
+    ] == ["StarredTupleForSugar"]
+
+
+def test_discarded_star_trailing_binds_prefix_projections() -> None:
+    block = compose_block(
+        "    for name, trans, *_ in rows:\n" "        return name\n",
+        binds={"rows": SymbolicValue(make_var("rows"))},
+    )
+    returned = next(
+        entry for entry in block.statements if isinstance(entry, ReturnValue)
+    )
+    element = ctor("py.iter_elem", [make_var("rows")])
+    assert returned.value.term == ctor("py.subscript", [element, num(0)])
+
+
+def test_discarded_star_prefix_projects_negative_suffix() -> None:
+    block = compose_block(
+        "    for *_, last in rows:\n" "        return last\n",
+        binds={"rows": SymbolicValue(make_var("rows"))},
+    )
+    returned = next(
+        entry for entry in block.statements if isinstance(entry, ReturnValue)
+    )
+    element = ctor("py.iter_elem", [make_var("rows")])
+    assert returned.value.term == ctor("py.subscript", [element, num(-1)])
+
+
+def test_discarded_star_for_else_stays_loud() -> None:
+    source = "for a, *rest in rows:\n    pass\nelse:\n    pass\n"
     ctx = FactoryBuildContext(filename="vendor.py", catalog=default_catalog())
     with pytest.raises(FactoryPanic):
         build_node(
@@ -63,6 +114,17 @@ def test_starred_target_stays_loud() -> None:
             role=SugarRole.STATEMENT,
             ctx=ctx,
         )
+
+
+def test_starred_tuple_for_witness_truthful_and_lying(tmp_path) -> None:
+    from sugar_lift_py_tests.idd.sugar_witness_instruments import (
+        evaluate_seed_witnesses,
+    )
+    from sugar_lift_py_tests.sugar.starred_tuple_for_sugar import StarredTupleForSugar
+
+    witness = StarredTupleForSugar.witnesses()
+    assert witness.name == "starred_tuple_for_discard_return"
+    assert evaluate_seed_witnesses((witness,), tmp_path).is_zero
 
 
 def test_tuple_for_else_uses_break_projection_owner() -> None:
