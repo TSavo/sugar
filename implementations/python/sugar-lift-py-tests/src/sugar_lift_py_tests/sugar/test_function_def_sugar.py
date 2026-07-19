@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import field as dataclass_field, dataclass, replace
 from itertools import product
-from typing import Any
+from typing import Any, cast
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -151,6 +151,7 @@ class TestFunctionDefSugar(
         from sugar_lift_py_tests.floor import (
             BlockValue,
             NoneValue,
+            RaiseValue,
             StringValue,
             SymbolicValue,
             TermValue,
@@ -167,26 +168,45 @@ class TestFunctionDefSugar(
 
         rows: tuple[tuple[tuple[str, object], ...], ...] = self.parameter_rows or ((),)
 
-        def reduce_row(index, statements):
-            if index == len(rows):
-                return Complete(
-                    TestimonyValue(
-                        name=self.name,
-                        formals=self.formals,
-                        record=BlockValue(tuple(statements)),
-                    )
-                )
+        statements = []
+        for row in rows:
             temporal = ctx.temporal
             for formal in self.formals:
                 temporal = temporal.bind_value(formal, SymbolicValue(make_var(formal)))
-            for formal, value in rows[index]:
+            for formal, value in row:
                 temporal = temporal.bind_value(formal, floor_literal(value))
             scoped = replace(ctx, temporal=temporal)
-            return self.body.reduce(scoped).and_then(
-                lambda record: reduce_row(index + 1, (*statements, *record.statements))
-            )
+            outcome = self.body.reduce(scoped)
+            if not isinstance(outcome, Complete):
+                return outcome
+            record = outcome.value
+            # Match Complete.and_then: a constructed raise halts the enclosing
+            # reduction and does not evaluate later parameter rows.
+            if isinstance(record, RaiseValue):
+                return outcome
+            if not isinstance(record, BlockValue):
+                from sugar_lift_py_tests.factory import factory_panic_gap
 
-        return reduce_row(0, ())
+                factory_panic_gap(
+                    owner="TestFunctionDefSugar",
+                    blame=self.site,
+                    observed=type(record).__name__,
+                    requested="parameter-row statement block",
+                    fix=(
+                        "construct the test body on the statement BlockValue "
+                        "floor before reducing literal parameter rows"
+                    ),
+                )
+            record = cast(BlockValue, record)
+            statements.extend(record.statements)
+
+        return Complete(
+            TestimonyValue(
+                name=self.name,
+                formals=self.formals,
+                record=BlockValue(tuple(statements)),
+            )
+        )
 
     def walk_children(self):
         return (self.body,)

@@ -121,22 +121,44 @@ def is_lift_time_decidable(term: Term) -> bool:
         _Var,
     )
 
-    if isinstance(term, (_ConstBool, _ConstInt, _ConstReal, _ConstStr)):
-        return True
-    if isinstance(term, _Var):
-        return False
-    if isinstance(term, _Ctor):
+    decisions: dict[int, bool] = {}
+    work: list[tuple[Term, bool]] = [(term, False)]
+    while work:
+        current, finishing = work.pop()
+        identity = id(current)
+        if identity in decisions:
+            continue
+        if isinstance(current, (_ConstBool, _ConstInt, _ConstReal, _ConstStr)):
+            decisions[identity] = True
+            continue
+        if isinstance(current, _Var):
+            decisions[identity] = False
+            continue
+        if not isinstance(current, _Ctor):
+            raise TypeError(
+                f"unknown RuntimeEffect operand term: {type(current).__name__}"
+            )
         # A call coordinate denotes a result that does not exist until the
         # call executes, even when every argument to that call is ground.
-        if term.name.startswith("call:"):
-            return False
+        if current.name.startswith("call:"):
+            decisions[identity] = False
+            continue
         # Handler selection records whether Python raised this exception while
         # executing the guarded operation. The exception class coordinate may
         # be ground, but the occurrence testimony is runtime-by-nature.
-        if term.name == "py.except":
-            return False
-        return all(is_lift_time_decidable(arg) for arg in term.args)
-    raise TypeError(f"unknown RuntimeEffect operand term: {term!r}")
+        if current.name == "py.except":
+            decisions[identity] = False
+            continue
+        if not finishing:
+            work.append((current, True))
+            work.extend(
+                (child, False)
+                for child in reversed(current.args)
+                if id(child) not in decisions
+            )
+            continue
+        decisions[identity] = all(decisions[id(child)] for child in current.args)
+    return decisions[id(term)]
 
 
 @dataclass(frozen=True)

@@ -10,6 +10,7 @@ from sugar_lift_py_tests.effect import (
     RuntimeEffectWitness,
     SubscriptStoreRuntimeEffect,
     genuine_runtime_operand,
+    is_lift_time_decidable,
     runtime_effect_evidence,
 )
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
@@ -131,3 +132,14 @@ def test_ground_boolean_constructor_still_cannot_mint_runtime_authority() -> Non
             ctor("py.not", [ctor("py.and", [])]),
             site,
         )
+
+
+def test_deep_runtime_operand_decision_is_construction_closed() -> None:
+    ground = str_const("ground")
+    runtime = ctor("call:opaque", [])
+    for _ in range(2_000):
+        ground = ctor("wrapper", [ground])
+        runtime = ctor("wrapper", [runtime])
+
+    assert is_lift_time_decidable(ground)
+    assert not is_lift_time_decidable(runtime)
