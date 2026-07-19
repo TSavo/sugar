@@ -50,7 +50,10 @@ class CalleeUniverseSupport(Enum):
     NUMPY_MAY_SHARE_MEMORY = auto()
     NUMPY_SHARES_MEMORY = auto()
     NUMPY_HANDLER_NAME = auto()
+    NUMPY_HANDLER_VERSION = auto()
     NUMPY_CONVERTER = auto()
+    NUMPY_CHECKS = auto()
+    NUMPY_F2PY_EXTENSION = auto()
     REGEX_SEARCH = auto()
     BOUND_SOURCE_CALLABLE = auto()
     PATHLIB_PATH = auto()
@@ -129,6 +132,13 @@ _IMPORTED_SUPPORT = {
     "numpy.shares_memory": CalleeUniverseSupport.NUMPY_SHARES_MEMORY,
     "numpy._core.multiarray.get_handler_name": (
         CalleeUniverseSupport.NUMPY_HANDLER_NAME
+    ),
+    "numpy._core.multiarray.get_handler_version": (
+        CalleeUniverseSupport.NUMPY_HANDLER_VERSION
+    ),
+    "checks.test_get_multi_index_iter_next": CalleeUniverseSupport.NUMPY_CHECKS,
+    "numpy.f2py.extension.sum_and_double": (
+        CalleeUniverseSupport.NUMPY_F2PY_EXTENSION
     ),
     "numpy._core._multiarray_tests.run_byteorder_converter": (
         CalleeUniverseSupport.NUMPY_CONVERTER
@@ -222,6 +232,12 @@ def recognize_callee_universe(
         return None
     identity = _result_call_identity(site)
     if identity is None:
+        # Nested FunctionDef binding (e.g. NumPy ``_compare_dtypes``).
+        local = _local_source_function_identity(site)
+        if local is not None:
+            if not _target_matches_call(target, local, site):
+                return None
+            return CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
         # Bound native receivers (``path = pathlib.Path(...); path.resolve()``)
         # and multi-hop instance-module Attribute calls authenticate through
         # coordinate / bound-source provenance, not a bare import identity.
@@ -300,7 +316,9 @@ class CalleeUniverseRecognition:
         receiver = site.call_receiver()
         if receiver is not None:
             if receiver.observed != "Name":
-                return None
+                # Attribute-chain receivers (``self.module.useops.member``) only
+                # authenticate through F2PyTest class import provenance.
+                return _f2py_extension_coordinate(site)
             if not site.source:
                 return None
             target = site.call_target_name()
@@ -337,6 +355,9 @@ class CalleeUniverseRecognition:
 
         if not site.source:
             return None
+        # Nested FunctionDef binding is source provenance for the bare call.
+        if _local_source_function_identity(site) is not None:
+            return target
         # Plain Name call: only resolve import identity when the leaf can still
         # land on an authenticated imported coordinate. From-import aliases
         # whose spelling is not a registered leaf remain loud — the universe
@@ -607,6 +628,109 @@ def _bound_source_callable_identity(site) -> str | None:
     if instance_param is None or parts[0] != instance_param:
         return None
     return identity
+
+
+def _local_source_function_identity(site) -> str | None:
+    """Authenticate a bare call to a visible nested/module FunctionDef.
+
+    Source provenance is the FunctionDef binding itself. Later assignments or
+    imports of the same name revoke the warrant; parameters always revoke.
+    """
+
+    if site is None or site.observed != "Call" or site.call_receiver() is not None:
+        return None
+    target = site.call_target_name()
+    if target is None:
+        return None
+    declarations, shadowed_parameters = visible_declarations(site)
+    if target in shadowed_parameters:
+        return None
+    binding = None
+    for declaration in declarations:
+        if declaration.observed in {"FunctionDef", "AsyncFunctionDef"}:
+            if declaration.function_name() == target:
+                binding = declaration
+            continue
+        if target in declaration.stored_or_deleted_names():
+            # Assign / import / delete after the def shadows the function.
+            binding = None
+    if binding is None:
+        return None
+    # Module-level ``def A`` witness wrappers stay outside this family so they
+    # cannot steal BuiltinCalleeUniverse ownership from the inner call. Nested
+    # corpus helpers (``def _compare_dtypes`` inside a test) remain in scope.
+    if not declaration_is_function_local(site, binding):
+        return None
+    return target
+
+
+def _f2py_extension_coordinate(site) -> str | None:
+    """Authenticate ``self.module...member`` via F2PyTest class import provenance.
+
+    No member-name whitelist: any attribute under the instance's ``module``
+    tree is coordinated once the enclosing class base resolves to F2PyTest
+    through import/relative-import testimony.
+    """
+
+    if site is None or site.observed != "Call" or not site.source:
+        return None
+    member = site.call_target_name()
+    receiver = site.call_receiver()
+    if member is None or receiver is None:
+        return None
+    dotted = receiver.dotted_expr_name()
+    if dotted is None:
+        return None
+    method, class_def = _enclosing_method_and_class(site)
+    if method is None or class_def is None:
+        return None
+    instance = _instance_parameter_name(method)
+    if instance is None:
+        return None
+    module_prefix = f"{instance}.module"
+    if dotted != module_prefix and not dotted.startswith(f"{module_prefix}."):
+        return None
+    if _name_reassigned_before(site, instance):
+        return None
+    if not _class_has_f2py_testimony(class_def, site):
+        return None
+    return f"numpy.f2py.extension.{member}"
+
+
+def _class_has_f2py_testimony(class_def: ast.ClassDef, site) -> bool:
+    """Require an import-resolved F2PyTest base, never the bare spelling alone."""
+
+    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+    filename = site.filename or ""
+    for base in class_def.bases:
+        fragment = SourceFragment.from_node(base, filename, source=site.source)
+        dotted = fragment.dotted_expr_name()
+        if dotted is None:
+            continue
+        head, separator, tail = dotted.partition(".")
+        origin = _module_import_origin(site, head)
+        if origin is None and _relative_import_bound(site, head):
+            origin = head
+        coordinate = origin if not separator else f"{origin}.{tail}"
+        if coordinate == "F2PyTest" or coordinate.endswith(".F2PyTest"):
+            return True
+    return False
+
+
+def _relative_import_bound(site, head: str) -> bool:
+    """True when ``head`` is bound by a package-relative ``from . import …``."""
+
+    declarations, _shadowed = visible_declarations(site)
+    for declaration in declarations:
+        if declaration.observed != "ImportFrom":
+            continue
+        if declaration.importfrom_module() is not None:
+            continue
+        for name, alias in declaration.importfrom_names():
+            if (alias or name) == head:
+                return True
+    return False
 
 
 def _result_call_identity(site) -> str | None:
