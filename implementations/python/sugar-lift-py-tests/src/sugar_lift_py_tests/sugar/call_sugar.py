@@ -291,14 +291,14 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                         observed="range cardinality exceeds sys.maxsize",
                         limit=STATIC_UNFOLD_LIMIT,
                     )
-                if cardinality > STATIC_UNFOLD_LIMIT:
-                    finite_unfold_cap_panic(
-                        construction="CallSugar range",
-                        site=self.site,
-                        observed=f"range cardinality={cardinality}",
-                        limit=STATIC_UNFOLD_LIMIT,
+                # Under-cap: exact ListValue materialize for static for-unfold.
+                # Over-cap: fall through to CallSiteValue projection (shared
+                # compact range door). Never materialize O(n) floors, never
+                # force-curry, never opaque Complete on the cap arm (#5338).
+                if cardinality <= STATIC_UNFOLD_LIMIT:
+                    return Complete(
+                        ListValue(tuple(TermValue(value) for value in span))
                     )
-                return Complete(ListValue(tuple(TermValue(value) for value in span)))
 
             bound = ctx.temporal.value_if_bound(self.target_name)
             if bound is None and ctx.module_temporal is not None:
