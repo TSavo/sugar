@@ -139,7 +139,21 @@ class _Ctor:
 
 Term = Union[_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor]
 
-_TERM_INTERN_TABLE: ContextVar[dict[Term, Term] | None] = ContextVar(
+# Intern tables are keyed by finite structural tuples, never by Term objects:
+# frozen-dataclass ``__hash__`` walks ctor spines recursively and SEGVs on
+# cyclic / over-deep graphs (sklearn fenwick / #5340). Keys for compound nodes
+# use child *identities after child intern*, so bottom-up hash-cons stays O(1)
+# per node and equal trees share identity without recursive hashing.
+#
+# Each active term table is ``(by_key, by_id)``: ``by_id`` remembers every object
+# already hash-consed so building a linear spine via repeated ``ctor`` stays
+# O(depth) total, not O(depth²) re-walks.
+#
+# Restored after #5359 clobbered the #5369 iterative intern while landing
+# CallSiteValue equality / formula cycle keys. Formula intern stays on
+# ``_formula_cycle_key`` (also finite / iterative).
+_TermInternTables = tuple[dict[tuple[object, ...], Term], dict[int, Term]]
+_TERM_INTERN_TABLE: ContextVar[_TermInternTables | None] = ContextVar(
     "sugar_term_intern_table", default=None
 )
 _FORMULA_INTERN_TABLE: ContextVar[dict[tuple, "Formula"] | None] = ContextVar(
@@ -158,7 +172,7 @@ def term_intern_scope() -> Iterator[None]:
     share object identity inside the scope; tables are discarded on exit so
     separate lifts never share identity.
     """
-    intern_token = _TERM_INTERN_TABLE.set({})
+    intern_token = _TERM_INTERN_TABLE.set(({}, {}))
     formula_token = _FORMULA_INTERN_TABLE.set({})
     symbols_token = _CONSTRUCTOR_SYMBOL_KINDS.set({})
     try:
@@ -169,17 +183,146 @@ def term_intern_scope() -> Iterator[None]:
         _TERM_INTERN_TABLE.reset(intern_token)
 
 
+def _panic_cyclic_term(term: Term) -> None:
+    from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+    name = getattr(term, "name", None)
+    observed = f"cyclic IR term graph at {type(term).__name__}"
+    if isinstance(name, str):
+        observed = f"{observed} name={name!r}"
+    factory_panic_gap(
+        owner="ir._intern_term",
+        blame="term_intern_scope",
+        observed=observed,
+        requested="DAG term hash-cons (finite structural intern key)",
+        fix=(
+            "IR terms must be finite DAGs; refuse cyclic _Ctor graphs with "
+            "FactoryPanic at intern. Never soft-complete, never timeout-launder, "
+            "never leave recursive dataclass __hash__ as the intern seat, and "
+            "never convert this into RuntimeEffect"
+        ),
+    )
+
+
+def _term_leaf_intern_key(term: Term) -> tuple[object, ...]:
+    if isinstance(term, _Var):
+        return ("var", term.name)
+    if isinstance(term, _ConstInt):
+        return ("const-int", term.value, getattr(term.sort, "name", term.sort))
+    if isinstance(term, _ConstStr):
+        return ("const-str", term.value, getattr(term.sort, "name", term.sort))
+    if isinstance(term, _ConstBool):
+        return ("const-bool", term.value, getattr(term.sort, "name", term.sort))
+    if isinstance(term, _ConstReal):
+        return ("const-real", term.value, getattr(term.sort, "name", term.sort))
+    raise TypeError(f"unknown Term for intern: {type(term)!r}")
+
+
+def _commit_interned_term(
+    by_key: dict[tuple[object, ...], Term],
+    by_id: dict[int, Term],
+    term: Term,
+    interned_args: tuple[Term, ...],
+) -> Term:
+    if isinstance(term, _Ctor):
+        if interned_args != term.args:
+            term = _Ctor(term.name, interned_args)
+        key: tuple[object, ...] = (
+            "ctor",
+            term.name,
+            tuple(id(arg) for arg in interned_args),
+        )
+    else:
+        key = _term_leaf_intern_key(term)
+    existing = by_key.get(key)
+    if existing is not None:
+        # Never index throwaway input ids: CPython reuses ``id()`` after the
+        # ephemeral ``_Ctor`` is freed, which would alias the next mint.
+        return existing
+    by_key[key] = term
+    # Only the canonical representative is id-indexed; it stays alive via by_key.
+    by_id[id(term)] = term
+    return term
+
+
 def _intern_term(term: Term) -> Term:
-    table = _TERM_INTERN_TABLE.get()
-    if table is None:
+    """Hash-cons ``term`` under the active request scope.
+
+    Walks the term DAG iteratively (post-order). Cyclic graphs — illegal for
+    IR terms — raise ``FactoryPanic`` instead of recursive ``__hash__`` SEGV.
+    """
+    tables = _TERM_INTERN_TABLE.get()
+    if tables is None:
         return term
-    return table.setdefault(term, term)
+    by_key, by_id = tables
+
+    # Idempotent only for *canonical* objects retained in by_key (never for
+    # throwaway constructor inputs whose ids can be recycled by the allocator).
+    known = by_id.get(id(term))
+    if known is not None and known is term:
+        return known
+
+    # id(node) -> interned representative once children are committed.
+    done: dict[int, Term] = {}
+    visiting: set[int] = set()
+    # (node, phase): phase 0 = enter, phase 1 = children ready.
+    stack: list[tuple[Term, int]] = [(term, 0)]
+
+    while stack:
+        node, phase = stack.pop()
+        node_id = id(node)
+        if node_id in done:
+            continue
+        cached = by_id.get(node_id)
+        if cached is not None and cached is node:
+            done[node_id] = cached
+            continue
+        if phase == 0:
+            if node_id in visiting:
+                _panic_cyclic_term(node)
+            if not isinstance(node, _Ctor) or not node.args:
+                done[node_id] = _commit_interned_term(by_key, by_id, node, ())
+                continue
+            visiting.add(node_id)
+            stack.append((node, 1))
+            for child in reversed(node.args):
+                child_id = id(child)
+                if child_id in done:
+                    continue
+                cached_child = by_id.get(child_id)
+                if cached_child is not None and cached_child is child:
+                    done[child_id] = cached_child
+                    continue
+                stack.append((child, 0))
+            continue
+
+        # phase == 1: every child is interned (or the graph was cyclic).
+        visiting.discard(node_id)
+        interned_args_list: list[Term] = []
+        for child in node.args:
+            child_id = id(child)
+            mapped = done.get(child_id)
+            if mapped is None:
+                cached_child = by_id.get(child_id)
+                if cached_child is not None and cached_child is child:
+                    mapped = cached_child
+                else:
+                    raise AssertionError(
+                        "term intern reached parent commit before child intern"
+                    )
+            interned_args_list.append(mapped)
+        done[node_id] = _commit_interned_term(
+            by_key, by_id, node, tuple(interned_args_list)
+        )
+
+    return done[id(term)]
 
 
 def _intern_formula(formula: "Formula") -> "Formula":
     table = _FORMULA_INTERN_TABLE.get()
     if table is None:
         return formula
+    # Finite structural key from #5359 — never hash Formula objects recursively.
     return table.setdefault(_formula_cycle_key(formula), formula)
 
 
