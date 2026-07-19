@@ -165,17 +165,21 @@ def test_is_none_guard_emits_guarded_implications() -> None:
     )
 
 
-def test_deep_callsite_is_not_none_is_factory_panic_not_bare_recursion() -> None:
+def test_deep_callsite_is_not_none_emits_identity_not_bare_recursion() -> None:
     """Deep callsite term spines must not leak bare RecursionError on identity.
 
     Vendor surface: scipy/signal/tests/test_ltisys.py `X_dtype is not None`
     after deep call-term construction (#5339 residual bare of the 52-file board).
-    Production lifts intern formulas inside term_intern_scope, where recursive
-    dataclass hashing of a deep spine exceeds the CPython recursion limit.
+    Production lifts intern formulas inside term_intern_scope. Recursive
+    dataclass hashing of a deep spine used to exceed the CPython recursion
+    limit; #5340 replaced that with finite structural intern keys so identity
+    emits a PredicateValue atom instead of bare RecursionError / SEGV.
     """
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.none_value import NoneValue
-    from sugar_lift_py_tests.ir import _Ctor, make_var, term_intern_scope
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import _Atomic, _Ctor, make_var, term_intern_scope
+    from sugar_lift_py_tests.outcome import Complete
 
     term = make_var("leaf")
     for index in range(1_200):
@@ -189,8 +193,8 @@ def test_deep_callsite_is_not_none_is_factory_panic_not_bare_recursion() -> None
         site="deep_is_not_none",
     )
     with term_intern_scope():
-        with pytest.raises(FactoryPanic) as raised:
-            callsite.is_identical(NoneValue(), "deep_is_not_none")
-    assert raised.value.info.owner == "CallSiteValue.is_identical"
-    assert "deep/cyclic" in raised.value.info.observed
-    assert "RuntimeEffect" in raised.value.info.fix
+        result = callsite.is_identical(NoneValue(), "deep_is_not_none")
+    assert isinstance(result, Complete)
+    assert isinstance(result.value, PredicateValue)
+    assert isinstance(result.value.formula, _Atomic)
+    assert result.value.formula.name == "identity"
