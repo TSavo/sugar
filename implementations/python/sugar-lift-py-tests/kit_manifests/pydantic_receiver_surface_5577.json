@@ -1,14 +1,22 @@
 {
   "call_shape": {
     "pydantic_core.SchemaValidator": "SCHEMA_VALIDATOR",
-    "pydantic_core.SchemaSerializer": "SCHEMA_SERIALIZER"
+    "pydantic_core.SchemaSerializer": "SCHEMA_SERIALIZER",
+    "pytest.raises": "PYTEST_RAISES_CONTEXT",
+    "pydantic_core.ValidationError": "VALIDATION_ERROR"
   },
   "instance_call": {
     "SCHEMA_VALIDATOR.validate_python": "pydantic_core.SchemaValidator.validate_python",
-    "SCHEMA_SERIALIZER.to_python": "pydantic_core.SchemaSerializer.to_python"
+    "SCHEMA_SERIALIZER.to_python": "pydantic_core.SchemaSerializer.to_python",
+    "SCHEMA_VALIDATOR.validate_json": "pydantic_core.SchemaValidator.validate_json",
+    "SCHEMA_SERIALIZER.to_json": "pydantic_core.SchemaSerializer.to_json",
+    "VALIDATION_ERROR.errors": "pydantic_core.ValidationError.errors"
   },
   "imported_callee": {
     "pydantic_core.SchemaValidator.validate_python": "PYDANTIC_CORE_SCHEMA_VALIDATOR_VALIDATE_PYTHON",
-    "pydantic_core.SchemaSerializer.to_python": "PYDANTIC_CORE_SCHEMA_SERIALIZER_TO_PYTHON"
+    "pydantic_core.SchemaSerializer.to_python": "PYDANTIC_CORE_SCHEMA_SERIALIZER_TO_PYTHON",
+    "pydantic_core.SchemaValidator.validate_json": "PYDANTIC_CORE_SCHEMA_VALIDATOR_VALIDATE_JSON",
+    "pydantic_core.SchemaSerializer.to_json": "PYDANTIC_CORE_SCHEMA_SERIALIZER_TO_JSON",
+    "pydantic_core.ValidationError.errors": "PYDANTIC_CORE_VALIDATION_ERROR_ERRORS"
   }
 }

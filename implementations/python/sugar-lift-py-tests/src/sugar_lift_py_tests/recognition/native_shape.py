@@ -86,6 +86,16 @@ class NativeShape(Enum):
     PANDAS_SERIES = auto()
     PANDAS_INDEX = auto()
     PANDAS_CATEGORICAL = auto()
+    # #5921 increment 2: the with-bound context-manager receiver shape for
+    # ``with pytest.raises(SomeImportedClass) as exc_info:``. Kit-loaded only
+    # via call_shape (recognize_native_call("pytest.raises")); production
+    # tables never carry that key. It marks the *context manager itself*, not
+    # exc_info.value's type — the latter comes from resolving the raises()
+    # argument's own import identity through the SAME call_shape table (e.g.
+    # "pydantic_core.ValidationError" -> VALIDATION_ERROR), reusing the
+    # existing table for a class-reference role instead of a constructor-call
+    # role. No new protocol plumbing required.
+    PYTEST_RAISES_CONTEXT = auto()
 
 
 # Language / builtin protocol coordinates only (#5603).

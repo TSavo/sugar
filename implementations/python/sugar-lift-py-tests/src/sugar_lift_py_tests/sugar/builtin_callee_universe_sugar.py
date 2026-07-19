@@ -94,7 +94,16 @@ class BuiltinCalleeUniverseSugar(
     role=SugarRole.TERM,
     # ConstructorCallSugar also claims capitalized/factory-result callables
     # (``SF = _get_sfloat_dtype(); SF(...)``); universe ownership must precede it.
-    comes_before=("CallSugar", "MethodCallSugar", "ConstructorCallSugar"),
+    # KeywordCallSugar claims every keyword-bearing call by default (#5921
+    # inc2 is the first member to actually authenticate a keyword-bearing
+    # receiver-surface coordinate, exposing the previously-latent ambiguity);
+    # authenticated universe coverage must win over the generic keyword path.
+    comes_before=(
+        "CallSugar",
+        "MethodCallSugar",
+        "ConstructorCallSugar",
+        "KeywordCallSugar",
+    ),
 ):
     """Authenticated deterministic call coordinates.
 
