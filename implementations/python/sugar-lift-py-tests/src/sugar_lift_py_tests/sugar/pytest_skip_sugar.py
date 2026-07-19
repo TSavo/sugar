@@ -30,10 +30,11 @@ class PytestSkipSugar(
 
     @classmethod
     def owns(cls, site) -> bool:
-        return (
-            site.observed == "Call"
-            and site.call_qualified_target_name() == "pytest.skip"
-        )
+        # #5603: logo string ``pytest.skip`` is not construction evidence.
+        # Stay unowned (loud) until an explicit kit/bridge testing contract
+        # authenticates skip as exceptional exit without vendor spelling.
+        _ = site
+        return False
 
     @classmethod
     def new(cls, site, ctx) -> "PytestSkipSugar":

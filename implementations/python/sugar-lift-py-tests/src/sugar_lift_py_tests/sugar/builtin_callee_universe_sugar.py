@@ -15,21 +15,11 @@ from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
-_CONVERTER_COORDINATES = frozenset(
-    {
-        "numpy._core._multiarray_tests.run_byteorder_converter",
-        "numpy._core._multiarray_tests.run_sortkind_converter",
-        "numpy._core._multiarray_tests.run_selectkind_converter",
-        "numpy._core._multiarray_tests.run_searchside_converter",
-        "numpy._core._multiarray_tests.run_order_converter",
-        "numpy._core._multiarray_tests.run_clipmode_converter",
-        "numpy._core._multiarray_tests.run_casting_converter",
-        "numpy._core._multiarray_tests.run_intp_converter",
-    }
-)
+_CONVERTER_COORDINATES: frozenset[str] = frozenset()
+# Empty: multiarray converter logos deleted (#5603). Loud until kit contract.
 _AUTHENTICATED_COORDINATES = frozenset(
     {
-        # bare ``type`` is owned by BuiltinTypeCallSugar (construction + universe).
+        # bare builtins owned by this leaf / BuiltinTypeCallSugar.
         "dtype",
         "all",
         "any",
@@ -40,44 +30,18 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "set",
         "hasattr",
         "item",
-        "numpy.can_cast",
-        "numpy.issubdtype",
-        "numpy.isnan",
-        "numpy.all",
-        "numpy.dtype",
-        "numpy.may_share_memory",
-        "numpy.shares_memory",
-        "numpy.ndarray.tobytes",
-        "numpy.array.tobytes",
-        "numpy.empty.tobytes",
-        "numpy.empty_like.tobytes",
-        "numpy.zeros.tobytes",
-        "numpy.lib.stride_tricks.as_strided.tobytes",
-        "numpy._core.multiarray.get_handler_name",
-        "numpy._core.multiarray.get_handler_version",
-        "checks.test_get_multi_index_iter_next",
-        "numpy.f2py.extension.sum_and_double",
+        # Language / stdlib protocol only — no vendor-root module paths.
         "re.Pattern.search",
         "pathlib.Path",
         "pathlib.Path.resolve",
-        "numpy.random.Generator.standard_gamma",
-        "numpy.f2py.crackfortran._eval_scalar",
         "json.loads",
         "dataclasses.asdict",
         "dataclasses.is_dataclass",
         "math.isclose",
-        "numpy.result_type",
-        "scipy.linalg.issymmetric",
-        "scipy.linalg.ishermitian",
-        "scipy.fft.get_workers",
-        "numpy.isdtype",
-        "numpy.datetime_data",
-        "numpy._core._multiarray_umath._get_sfloat_dtype",
-        "numpy.f2py.crackfortran.markinnerspaces",
-        "numpy._core._multiarray_tests.identity_hash_set_item_default",
-        *_CONVERTER_COORDINATES,
+        # No vendor-root module paths (#5603 drain).
     }
 )
+
 # Must match recognition.callee_universe bare-builtin warrants this leaf owns.
 # ``type`` is intentionally absent: BuiltinTypeCallSugar is its construction owner.
 _BUILTIN_COORDINATES = frozenset(

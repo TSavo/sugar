@@ -82,147 +82,31 @@ class CalleeUniverseSupport(Enum):
     NUMPY_IDENTITY_HASH_SET_ITEM_DEFAULT = auto()
 
 
-_DTYPE_RESULT_SUPPORT = {
-    coordinate: CalleeUniverseSupport.NUMPY_DTYPE_RESULT
-    for coordinate in {
-        "numpy.abs",
-        "numpy.add",
-        "numpy.all",
-        "numpy.any",
-        "numpy.arange",
-        "numpy.argmax",
-        "numpy.array",
-        "numpy.array.astype",
-        "numpy.asarray",
-        "numpy.choose",
-        "numpy.dtype",
-        "numpy.empty",
-        "numpy.empty_like",
-        "numpy.equal",
-        "numpy.power",
-        "numpy.sinc",
-        "numpy.zeros",
-        "numpy.zeros_like",
-    }
+_DTYPE_RESULT_SUPPORT: dict[str, CalleeUniverseSupport] = {
+    # Empty: numpy dtype-result coordinates are external kit contracts (#5603).
+    # Hard-coded vendor logos deleted; rows stay loud until bridge evidence.
 }
 
 _IMPORTED_SUPPORT = {
-    "numpy.issubdtype": CalleeUniverseSupport.NUMPY_ISSUBDTYPE,
-    "numpy.allclose": CalleeUniverseSupport.NUMPY_ALLCLOSE,
-    "numpy.can_cast": CalleeUniverseSupport.NUMPY_CAN_CAST,
-    "numpy.isnan": CalleeUniverseSupport.NUMPY_ISNAN,
-    "numpy.all": CalleeUniverseSupport.NUMPY_ALL,
-    "numpy.dtype": CalleeUniverseSupport.NUMPY_DTYPE,
-    "numpy.timedelta64": CalleeUniverseSupport.NUMPY_TIMDELTA64,
-    "numpy.asarray": CalleeUniverseSupport.NUMPY_ASARRAY,
-    "numpy.median": CalleeUniverseSupport.NUMPY_MEDIAN,
-    "numpy.array": CalleeUniverseSupport.NUMPY_ARRAY,
-    "numpy.lib._utils_impl.drop_metadata": CalleeUniverseSupport.NUMPY_LIB_DROP_METADATA,
-    "numpy.read": CalleeUniverseSupport.NUMPY_READ,
-    "numpy.__array_wrap__": CalleeUniverseSupport.NUMPY_ARRAY_WRAP,
-    "numpy.__dlpack_device__": CalleeUniverseSupport.NUMPY_DLPACK_DEVICE,
-    "numpy.astype": CalleeUniverseSupport.NUMPY_ASTYPE,
-    "numpy.dtypes": CalleeUniverseSupport.NUMPY_DTYPES,
-    "numpy.get_npyiter_ndim": CalleeUniverseSupport.NUMPY_GET_NPYITER_NDIM,
-    "numpy.get_npyiter_size": CalleeUniverseSupport.NUMPY_GET_NPYITER_SIZE,
-    "numpy._has_method_heading": CalleeUniverseSupport.NUMPY_HAS_METHOD_HEADING,
-    "numpy._repr_latex_": CalleeUniverseSupport.NUMPY_REPR_LATEX,
-    "numpy.binomial": CalleeUniverseSupport.NUMPY_BINOMIAL,
-    "numpy.conv_intp": CalleeUniverseSupport.NUMPY_CONV_INTP,
-    "numpy.create": CalleeUniverseSupport.NUMPY_CREATE,
-    "numpy.exists": CalleeUniverseSupport.NUMPY_EXISTS,
-    "numpy.func": CalleeUniverseSupport.NUMPY_FUNC,
-    "numpy.iter_goto": CalleeUniverseSupport.NUMPY_ITER_GOTO,
-    "numpy.may_share_memory": CalleeUniverseSupport.NUMPY_MAY_SHARE_MEMORY,
-    "numpy.shares_memory": CalleeUniverseSupport.NUMPY_SHARES_MEMORY,
-    "numpy._core.multiarray.get_handler_name": (
-        CalleeUniverseSupport.NUMPY_HANDLER_NAME
-    ),
-    "numpy._core.multiarray.get_handler_version": (
-        CalleeUniverseSupport.NUMPY_HANDLER_VERSION
-    ),
-    "checks.test_get_multi_index_iter_next": CalleeUniverseSupport.NUMPY_CHECKS,
-    "numpy.f2py.extension.sum_and_double": (
-        CalleeUniverseSupport.NUMPY_F2PY_EXTENSION
-    ),
-    "numpy._core._multiarray_tests.run_byteorder_converter": (
-        CalleeUniverseSupport.NUMPY_CONVERTER
-    ),
-    "numpy._core._multiarray_tests.run_sortkind_converter": (
-        CalleeUniverseSupport.NUMPY_CONVERTER
-    ),
-    "numpy._core._multiarray_tests.run_selectkind_converter": (
-        CalleeUniverseSupport.NUMPY_CONVERTER
-    ),
-    "numpy._core._multiarray_tests.run_searchside_converter": (
-        CalleeUniverseSupport.NUMPY_CONVERTER
-    ),
-    "numpy._core._multiarray_tests.run_order_converter": (
-        CalleeUniverseSupport.NUMPY_CONVERTER
-    ),
-    "numpy._core._multiarray_tests.run_clipmode_converter": (
-        CalleeUniverseSupport.NUMPY_CONVERTER
-    ),
-    "numpy._core._multiarray_tests.run_casting_converter": (
-        CalleeUniverseSupport.NUMPY_CONVERTER
-    ),
-    "numpy._core._multiarray_tests.run_intp_converter": (
-        CalleeUniverseSupport.NUMPY_CONVERTER
-    ),
+    # Language / stdlib protocol only (#5603 adjudication).
+    # Vendor-root coordinates (numpy/scipy/…) deleted — external kit contract
+    # or loud FactoryPanic. Do not re-add logo strings to green the floor.
     "re.Pattern.search": CalleeUniverseSupport.REGEX_SEARCH,
     "json.loads": CalleeUniverseSupport.JSON_LOADS,
     "dataclasses.asdict": CalleeUniverseSupport.DATACLASSES_ASDICT,
     "dataclasses.is_dataclass": CalleeUniverseSupport.DATACLASSES_IS_DATACLASS,
     # Exact import identity (``import pathlib`` / ``from pathlib import Path``).
     # Corpus: numpy/tests/test_configtool.py — not a module-prefix warrant.
+    # Language / stdlib only (#5603 adjudication) — not vendor logos.
     "pathlib.Path": CalleeUniverseSupport.PATHLIB_PATH,
-    # Import-constructed Generator receiver method.
-    # Corpus: numpy/random/tests/test_generator_mt19937_regressions.py.
-    "numpy.random.Generator.standard_gamma": (
-        CalleeUniverseSupport.NUMPY_STANDARD_GAMMA
-    ),
-    # Assignment alias of crackfortran source binding.
-    # Corpus: numpy/f2py/tests/test_crackfortran.py.
-    "numpy.f2py.crackfortran._eval_scalar": CalleeUniverseSupport.NUMPY_EVAL_SCALAR,
     "pathlib.Path.resolve": CalleeUniverseSupport.PATH_RESOLVE,
-    "numpy.ufunc": CalleeUniverseSupport.UFUNC,
-    # Bound-native shape coordinate (``value = np.array(...); value.tobytes()``
-    # via ``_bound_native_receiver_coordinate``).
-    "numpy.ndarray.tobytes": CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES,
-    # Result-call identity form (``_result_call_identity`` joins the
-    # constructor import with the member): same family, same leaf.
-    "numpy.array.tobytes": CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES,
-    "numpy.empty.tobytes": CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES,
-    "numpy.empty_like.tobytes": CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES,
-    "numpy.zeros.tobytes": CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES,
-    "numpy.lib.stride_tricks.as_strided.tobytes": (
-        CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES
-    ),
-    # SciPy verified-live import identities remaining after numpy all/dtype
-    # merges (#5457–#5461). Provenance via imported_call_identity only.
     "math.isclose": CalleeUniverseSupport.MATH_ISCLOSE,
-    "numpy.result_type": CalleeUniverseSupport.NUMPY_RESULT_TYPE,
-    "scipy.linalg.issymmetric": CalleeUniverseSupport.SCIPY_LINALG_ISSYMMETRIC,
-    "scipy.linalg.ishermitian": CalleeUniverseSupport.SCIPY_LINALG_ISHERMITIAN,
-    "scipy.fft.get_workers": CalleeUniverseSupport.SCIPY_FFT_GET_WORKERS,
-    "numpy.isdtype": CalleeUniverseSupport.NUMPY_ISDTYPE,
-    "numpy.datetime_data": CalleeUniverseSupport.NUMPY_DATETIME_DATA,
-    # Corpus: numpy/_core/tests/test_custom_dtypes.py
-    # ``SF = _get_sfloat_dtype()`` then ``SF(...)`` — factory import, not the
-    # local alias spelling.
-    "numpy._core._multiarray_umath._get_sfloat_dtype": (
-        CalleeUniverseSupport.NUMPY_SFLOAT_DTYPE
-    ),
-    # Corpus: numpy/f2py/tests/test_crackfortran.py — from-import.
-    "numpy.f2py.crackfortran.markinnerspaces": (
-        CalleeUniverseSupport.NUMPY_MARKINNERSPACES
-    ),
-    # Corpus: numpy/_core/tests/test_hashtable.py — multiarray_tests import.
-    "numpy._core._multiarray_tests.identity_hash_set_item_default": (
-        CalleeUniverseSupport.NUMPY_IDENTITY_HASH_SET_ITEM_DEFAULT
-    ),
+    # Vendor-root coordinates (numpy/scipy/SF factory logos) deleted (#5603).
+    # External kit/bridge only — including call:SF provenance when it lands
+    # via contract, not hard-coded production logos.
 }
 
+# Language / builtin coordinates only (#5603 adjudication).
 _BUILTIN_COORDINATES = frozenset(
     {"type", "dtype", "all", "any", "min", "max", "sum", "list", "set", "hasattr"}
 )

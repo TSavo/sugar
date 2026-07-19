@@ -111,70 +111,12 @@ class RemainingSemanticRecognition:
 
     @staticmethod
     def literal_pytest_parametrize_rows(site):
-        from sugar_lift_py_tests.recognition.call_identity import (
-            CallIdentityRecognition,
-        )
-        from sugar_lift_py_tests.source_fragment import SourceFragment
+        """Literal parametrize rows — logo-free stub until kit contract lands.
 
-        recognized = []
-        for decorator in site.node.decorator_list:
-            if not isinstance(decorator, ast.Call):
-                continue
-            function = SourceFragment.from_node(
-                decorator.func, site.filename, source=site.source
-            )
-            if (
-                CallIdentityRecognition.qualified_name(function)
-                != "pytest.mark.parametrize"
-                or len(decorator.args) < 2
-                or decorator.keywords
-            ):
-                continue
-            try:
-                raw_names = ast.literal_eval(decorator.args[0])
-                raw_rows = ast.literal_eval(decorator.args[1])
-            except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
-                continue
-            if isinstance(raw_names, str):
-                names = tuple(part.strip() for part in raw_names.split(","))
-            elif isinstance(raw_names, (tuple, list)):
-                names = tuple(raw_names)
-            else:
-                continue
-            if not names or any(
-                not isinstance(name, str) or not name for name in names
-            ):
-                continue
-            if not isinstance(raw_rows, (tuple, list)):
-                continue
-            rows = []
-            for raw_row in raw_rows:
-                if len(names) == 1:
-                    row = (raw_row,)
-                elif isinstance(raw_row, (tuple, list)):
-                    row = tuple(raw_row)
-                else:
-                    rows = []
-                    break
-                if len(row) != len(names):
-                    rows = []
-                    break
-                rows.append(row)
-            if not rows:
-                continue
-            indexes = tuple(
-                index
-                for index in range(len(names))
-                if all(
-                    type(row[index]) in (str, int, float, bool, type(None))
-                    for row in rows
-                )
-            )
-            if indexes:
-                recognized.append(
-                    (
-                        tuple(names[index] for index in indexes),
-                        tuple(tuple(row[index] for index in indexes) for row in rows),
-                    )
-                )
-        return tuple(recognized)
+        #5603: hard-coded ``pytest.mark.parametrize`` / ``pytest`` string
+        compares are illegal construction evidence. Window 289 owns the real
+        parametrize protocol (kit/bridge/proof). Until that ships, return no
+        rows (loud / unowned) rather than matching vendor spellings.
+        """
+        _ = site
+        return ()
