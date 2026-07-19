@@ -1,0 +1,9 @@
+{
+  "imported_callee": {
+    "numpy.all": "NUMPY_ALL",
+    "numpy.dtype": "NUMPY_DTYPE",
+    "numpy.issubdtype": "NUMPY_ISSUBDTYPE",
+    "numpy.isnat": "NUMPY_ISNAT",
+    "numpy.isnan": "NUMPY_ISNAN"
+  }
+}
