@@ -1,0 +1,580 @@
+{
+  "categories": {
+    "factory-construction-panic": 196,
+    "timeout-or-hang": 5,
+    "completed": 11
+  },
+  "owners": {
+    "FunctionCallable": 20,
+    "FunctionCallable decorator factory:wraps": 117,
+    "TemporalContext": 10,
+    "bitwise_or": 3,
+    "python.factory": 12,
+    "ConstructorCallSugar": 8,
+    "RaiseSugar": 2,
+    "RuntimeEffect": 4,
+    "subtract": 4,
+    "ForSugar": 1,
+    "FunctionCallable decorator result": 1,
+    "FunctionCallable decorator factory:contextmanager": 1,
+    "ComputedCallableSugar": 1,
+    "AttributeDeleteSugar": 1,
+    "ForElseSugar": 1,
+    "multiply": 2,
+    "modulo": 1,
+    "divide": 1,
+    "FunctionCallable decorator factory:filterwarnings": 1,
+    "SequentialDigBody": 1,
+    "StarImportFromSugar": 1,
+    "add": 1,
+    "AttributeSugar": 1,
+    "sklearn/utils/tests/test_validation.py:434:4": 1
+  },
+  "fronts": [
+    {
+      "count": 117,
+      "owner": "FunctionCallable decorator factory:wraps",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "missing callsite body for decorator factory `wraps`",
+      "requested": "decorator callable floor or implementation-preserving decorator contract",
+      "representative_files": [
+        "sklearn/callback/tests/test_scoring_monitor.py",
+        "sklearn/cluster/tests/test_dbscan.py",
+        "sklearn/callback/tests/test_pickle.py",
+        "sklearn/cluster/tests/test_affinity_propagation.py",
+        "sklearn/cluster/tests/test_birch.py"
+      ]
+    },
+    {
+      "count": 20,
+      "owner": "FunctionCallable",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "ImportAliasValue",
+      "requested": "decorator callable substitution",
+      "representative_files": [
+        "sklearn/_loss/tests/test_link.py",
+        "sklearn/covariance/tests/test_graphical_lasso.py",
+        "sklearn/ensemble/tests/test_voting.py",
+        "sklearn/linear_model/tests/test_logistic.py",
+        "sklearn/linear_model/tests/test_ridge.py"
+      ]
+    },
+    {
+      "count": 8,
+      "owner": "python.factory",
+      "gap_kind": "Sugar",
+      "gap_locus": "AST",
+      "observed": "For",
+      "requested": "statement",
+      "representative_files": [
+        "sklearn/compose/_column_transformer.py",
+        "sklearn/frozen/tests/test_frozen.py",
+        "sklearn/metrics/_plot/tests/test_common_curve_display.py",
+        "sklearn/metrics/_plot/tests/test_confusion_matrix_display.py",
+        "sklearn/metrics/_plot/tests/test_precision_recall_display.py"
+      ]
+    },
+    {
+      "count": 3,
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "__file__",
+      "requested": "value",
+      "representative_files": [
+        "sklearn/tests/test_docstring_parameters.py",
+        "sklearn/tests/test_common.py",
+        "sklearn/tests/test_public_functions.py"
+      ]
+    },
+    {
+      "count": 2,
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "xp_capabilities_table",
+      "requested": "value",
+      "representative_files": [
+        "sklearn/_loss/tests/test_loss.py",
+        "sklearn/decomposition/tests/test_online_lda.py"
+      ]
+    },
+    {
+      "count": 2,
+      "owner": "bitwise_or",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "SetValue",
+      "requested": "stand on the runtime bitwise or floor",
+      "representative_files": [
+        "sklearn/cluster/tests/test_hdbscan.py",
+        "sklearn/metrics/tests/test_common.py"
+      ]
+    },
+    {
+      "count": 2,
+      "owner": "RaiseSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "CallSiteValue",
+      "requested": "constructed exception floor",
+      "representative_files": [
+        "sklearn/datasets/tests/test_openml.py",
+        "sklearn/manifold/_locally_linear.py"
+      ]
+    },
+    {
+      "count": 2,
+      "owner": "subtract",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "TermValue",
+      "requested": "stand on the subtraction floor",
+      "representative_files": [
+        "sklearn/linear_model/tests/test_passive_aggressive.py",
+        "sklearn/utils/tests/test_user_interface.py"
+      ]
+    },
+    {
+      "count": 2,
+      "owner": "python.factory",
+      "gap_kind": "Sugar",
+      "gap_locus": "AST",
+      "observed": "ClassDef",
+      "requested": "statement",
+      "representative_files": [
+        "sklearn/utils/tests/test_deprecation.py",
+        "sklearn/utils/tests/test_set_output.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "DummyCheckerListRegressor MRO selected sklearn.dummy.DummyRegressor.__init__",
+      "requested": "statically constructed inherited constructor body",
+      "representative_files": [
+        "sklearn/compose/tests/test_target.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "RuntimeEffect",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "py.setitem operand=NoneValue()",
+      "requested": "genuine runtime-dependent operand",
+      "representative_files": [
+        "sklearn/decomposition/tests/test_factor_analysis.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "subtract",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "TupleValue",
+      "requested": "stand on the subtraction floor",
+      "representative_files": [
+        "sklearn/decomposition/_pca.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "ForSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "nonlocal mutation",
+      "requested": "classifiable loop-carried local state",
+      "representative_files": [
+        "sklearn/externals/_numpydoc/docscrape.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "FunctionCallable decorator result",
+      "gap_kind": "Floor",
+      "gap_locus": "Projection",
+      "observed": "missing callsite body",
+      "requested": "force callsite floor",
+      "representative_files": [
+        "sklearn/externals/array_api_compat/common/_helpers.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "RuntimeEffect",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "RuntimeEffect operand=_Ctor(name='|', args=(_Ctor(name='python:type', args=(_ConstStr(value='int', sort=PrimitiveSort(name='String')),)), _Ctor(name='None', args=())))",
+      "requested": "genuine runtime-dependent operand",
+      "representative_files": [
+        "sklearn/externals/array_api_extra/_lib/_lazy.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "RuntimeEffect",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "RuntimeEffect operand=_Ctor(name='|', args=(_Ctor(name='|', args=(_Ctor(name='python:type', args=(_ConstStr(value='int', sort=PrimitiveSort(name='String')),)), _Ctor(name='python:type', args=(_ConstSt",
+      "requested": "genuine runtime-dependent operand",
+      "representative_files": [
+        "sklearn/externals/array_api_extra/_lib/_utils/_helpers.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "FunctionCallable decorator factory:contextmanager",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "missing callsite body for decorator factory `contextmanager`",
+      "requested": "decorator callable floor or implementation-preserving decorator contract",
+      "representative_files": [
+        "sklearn/externals/array_api_extra/testing.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "ComputedCallableSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "SymbolicValue",
+      "requested": "callable_application_with",
+      "representative_files": [
+        "sklearn/gaussian_process/tests/test_kernels.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "AttributeDeleteSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "CallSiteValue._stop_words_id",
+      "requested": "attribute deletion data-model method",
+      "representative_files": [
+        "sklearn/feature_extraction/tests/test_text.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "ForElseSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "nonlocal mutation",
+      "requested": "classifiable loop-carried local state",
+      "representative_files": [
+        "sklearn/linear_model/_glm/_newton_solver.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "multiply",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "FalseBoolLiteralSugar",
+      "requested": "stand on the multiplication floor",
+      "representative_files": [
+        "sklearn/impute/tests/test_impute.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "BinomialRegressor MRO selected sklearn.linear_model._glm._GeneralizedLinearRegressor.__init__",
+      "requested": "statically constructed inherited constructor body",
+      "representative_files": [
+        "sklearn/linear_model/_glm/tests/test_glm.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "modulo",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "StringValue",
+      "requested": "stand on the modulo floor",
+      "representative_files": [
+        "sklearn/linear_model/_ridge.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "subtract",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "ListValue",
+      "requested": "stand on the subtraction floor",
+      "representative_files": [
+        "sklearn/linear_model/tests/test_least_angle.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "divide",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "TermValue",
+      "requested": "stand on the division floor",
+      "representative_files": [
+        "sklearn/linear_model/tests/test_sag.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "_distance_wrap",
+      "requested": "value",
+      "representative_files": [
+        "sklearn/manifold/_t_sne.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "ARRAY_API_COMPAT_FUNCTIONAL",
+      "requested": "value",
+      "representative_files": [
+        "sklearn/metrics/cluster/tests/test_common.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "X_mmap",
+      "requested": "value",
+      "representative_files": [
+        "sklearn/metrics/tests/test_dist_metrics.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "SometimesFailClassifier.__init__ contains Expr",
+      "requested": "constructed source initializer",
+      "representative_files": [
+        "sklearn/model_selection/tests/test_successive_halving.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "LinearSVCNoScore MRO selected sklearn.svm.LinearSVC.__init__",
+      "requested": "statically constructed inherited constructor body",
+      "representative_files": [
+        "sklearn/model_selection/tests/test_search.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "X",
+      "requested": "value",
+      "representative_files": [
+        "sklearn/neighbors/tests/test_ball_tree.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "python.factory",
+      "gap_kind": "Sugar",
+      "gap_locus": "AST",
+      "observed": "Try",
+      "requested": "statement",
+      "representative_files": [
+        "sklearn/model_selection/tests/test_validation.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "multiply",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "ListValue",
+      "requested": "stand on the multiplication floor",
+      "representative_files": [
+        "sklearn/model_selection/tests/test_split.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "FunctionCallable decorator factory:filterwarnings",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "missing callsite body for decorator factory `filterwarnings`",
+      "requested": "decorator callable floor or implementation-preserving decorator contract",
+      "representative_files": [
+        "sklearn/neighbors/tests/test_neighbors.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "RuntimeEffect",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "py.setitem operand=SliceValue(lower=None, upper=None, step=None)",
+      "requested": "genuine runtime-dependent operand",
+      "representative_files": [
+        "sklearn/preprocessing/tests/test_function_transformer.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "SequentialDigBody",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "If",
+      "requested": "reduced guarded returns with an unguarded fallback",
+      "representative_files": [
+        "sklearn/preprocessing/tests/test_target_encoder.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "python.factory",
+      "gap_kind": "Sugar",
+      "gap_locus": "AST",
+      "observed": "Call",
+      "requested": "term",
+      "representative_files": [
+        "sklearn/svm/tests/test_svm.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "StarImportFromSugar",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "from sklearn import *",
+      "requested": "resolved static star-import exports",
+      "representative_files": [
+        "sklearn/tests/test_init.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "add",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "PredicateValue",
+      "requested": "stand on the addition floor",
+      "representative_files": [
+        "sklearn/tests/test_discriminant_analysis.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "TreeBadVersion MRO selected sklearn.tree.DecisionTreeClassifier.__init__",
+      "requested": "statically constructed inherited constructor body",
+      "representative_files": [
+        "sklearn/tests/test_base.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "DummyRegressorWithFitParams MRO selected sklearn.dummy.DummyRegressor.__init__",
+      "requested": "statically constructed inherited constructor body",
+      "representative_files": [
+        "sklearn/tests/test_multioutput.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "bitwise_or",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "PredicateValue",
+      "requested": "stand on the runtime bitwise or floor",
+      "representative_files": [
+        "sklearn/tree/tests/test_split.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "recursive-constructor-method",
+      "requested": "finite constructor method graph for `MockDataFrame`",
+      "representative_files": [
+        "sklearn/utils/_mocking.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "AttributeSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "Construction",
+      "observed": "AvailableParameterEstimator.available_func",
+      "requested": "constructor-bound field",
+      "representative_files": [
+        "sklearn/utils/tests/test_metaestimators.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "TemporalContext",
+      "gap_kind": "Floor",
+      "gap_locus": "Construction",
+      "observed": "update_wrapper",
+      "requested": "value",
+      "representative_files": [
+        "sklearn/utils/tests/test_indexing.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "ConstructorCallSugar",
+      "gap_kind": "Constructor",
+      "gap_locus": "AST",
+      "observed": "UntaggedBinaryClassifier MRO selected sklearn.linear_model.SGDClassifier.__init__",
+      "requested": "statically constructed inherited constructor body",
+      "representative_files": [
+        "sklearn/utils/tests/test_estimator_checks.py"
+      ]
+    },
+    {
+      "count": 1,
+      "owner": "sklearn/utils/tests/test_validation.py:434:4",
+      "gap_kind": "Floor",
+      "gap_locus": "Projection",
+      "observed": "RaiseValue",
+      "requested": "project this floor value to a term",
+      "representative_files": [
+        "sklearn/utils/tests/test_validation.py"
+      ]
+    }
+  ],
+  "python_factory_count": 12,
+  "python_factory_observed": {
+    "For": 8,
+    "Try": 1,
+    "Call": 1,
+    "ClassDef": 2
+  },
+  "remeasured_from_historical_pf": 212,
+  "main_sha": "0f3b5a0e1"
+}
