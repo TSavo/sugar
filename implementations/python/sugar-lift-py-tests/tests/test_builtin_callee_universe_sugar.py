@@ -10,6 +10,19 @@ from sugar_lift_py_tests.sugar.builtin_callee_universe_sugar import (
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
+def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
+    assert {
+        "numpy._core.multiarray.get_handler_name",
+        "numpy._core._multiarray_tests.run_byteorder_converter",
+    } <= (
+        BuiltinCalleeUniverseSugar.universe_coordinates
+    )
+    assert {
+        "get_handler_name_builtin_universe_coordinate",
+        "conv_builtin_universe_coordinate",
+    } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
+
+
 @pytest.mark.parametrize(
     "pair",
     BuiltinCalleeUniverseSugar.witnesses(),

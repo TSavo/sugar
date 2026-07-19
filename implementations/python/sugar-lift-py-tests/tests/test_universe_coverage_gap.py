@@ -11,6 +11,7 @@ from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkRedRowDto
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
 from sugar_lift_py_tests.recognition.callee_universe import (
+    CalleeUniverseRecognition,
     recognize_callee_universe,
 )
 from sugar_lift_py_tests.recognition.visible_declarations import (
@@ -108,6 +109,20 @@ def test_builtin_covered_callee_emits_no_universe_gap() -> None:
             "dtype",
             "def test_dtype():\n    assert dtype('i4') == 'i4'\n",
         ),
+        (
+            "get_handler_name",
+            "from numpy._core.multiarray import get_handler_name\n"
+            "def test_handler():\n"
+            "    assert get_handler_name() == get_handler_name()\n",
+        ),
+        (
+            "conv",
+            "import numpy._core._multiarray_tests as mt\n"
+            "class TestConverter:\n"
+            "    conv = mt.run_byteorder_converter\n"
+            "    def test_converter(self):\n"
+            "        assert self.conv(5) == self.conv(5)\n",
+        ),
     ],
 )
 def test_authenticated_builtin_coordinate_emits_no_universe_gap(
@@ -115,20 +130,169 @@ def test_authenticated_builtin_coordinate_emits_no_universe_gap(
 ) -> None:
     payload = lift_file_payload(source, f"{callee}_covered_fixture.py")
 
+    expected_target = (
+        "call:numpy._core.multiarray.get_handler_name"
+        if callee == "get_handler_name"
+        else f"call:{callee}"
+    )
     assert any(
-        edge.get("targetSymbol") == f"call:{callee}" for edge in payload.call_edges
+        edge.get("targetSymbol") == expected_target for edge in payload.call_edges
     )
     assert _universe_gaps(payload) == []
 
-    node = ast.parse(f"{callee}(value)", mode="eval").body
-    context = FactoryBuildContext(filename="coordinate.py", catalog=default_catalog())
-    built = build_node(
-        node,
-        filename="coordinate.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    if callee in {"type", "dtype"}:
+        node = ast.parse(f"{callee}(value)", mode="eval").body
+        context = FactoryBuildContext(
+            filename="coordinate.py", catalog=default_catalog()
+        )
+        built = build_node(
+            node,
+            filename="coordinate.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize("callee", ["get_handler_name", "conv"])
+def test_shadowed_authenticated_coordinate_stays_unclassified(callee: str) -> None:
+    source = (
+        f"def test_shadowed({callee}):\n"
+        f"    assert {callee}(5) == 5\n"
     )
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+    payload = lift_file_payload(source, f"shadowed_{callee}.py")
+
+    gaps = _universe_gaps(payload)
+    assert len(gaps) == 1
+    assert gaps[0].ast_kind == f"call:{callee}"
+
+
+def test_unwarranted_receiver_converter_stays_unclassified() -> None:
+    source = (
+        "import math as mt\n"
+        "class TestConverter:\n"
+        "    conv = mt.sqrt\n"
+        "    def test_shadowed(self):\n"
+        "        assert self.conv(5) == 5\n"
+    )
+
+    payload = lift_file_payload(source, "shadowed_receiver_conv.py")
+
+    gaps = _universe_gaps(payload)
+    assert len(gaps) == 1
+    assert gaps[0].ast_kind == "call:conv"
+
+
+def test_later_local_rebind_revokes_get_handler_name_warrant() -> None:
+    """Lying twin: later function-local rebind must break false recognition."""
+
+    source = (
+        "from numpy._core.multiarray import get_handler_name\n"
+        "\n"
+        "def test_handler():\n"
+        "    assert get_handler_name() == get_handler_name()\n"
+        "    get_handler_name = replacement\n"
+    )
+
+    payload = lift_file_payload(source, "handler_late_rebind.py")
+
+    gaps = _universe_gaps(payload)
+    assert gaps
+    assert {gap.ast_kind for gap in gaps} == {
+        "call:numpy._core.multiarray.get_handler_name"
+    }
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "get_handler_name"
+    )
+    site = SourceFragment.from_node(call, "handler_late_rebind.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) is None
+
+
+def test_arbitrary_parameter_receiver_refuses_converter_warrant() -> None:
+    """Lying twin: any parameter receiver is not the authenticated instance."""
+
+    source = (
+        "import numpy._core._multiarray_tests as mt\n"
+        "\n"
+        "class TestConverter:\n"
+        "    conv = mt.run_byteorder_converter\n"
+        "\n"
+        "    def test_converter(self, other):\n"
+        "        assert other.conv(5) == other.conv(5)\n"
+    )
+
+    payload = lift_file_payload(source, "arb_param_receiver.py")
+
+    gaps = _universe_gaps(payload)
+    assert len(gaps) >= 1
+    assert all(gap.ast_kind == "call:conv" for gap in gaps)
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "conv"
+    )
+    site = SourceFragment.from_node(call, "arb_param_receiver.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) is None
+
+
+def test_instance_overwrite_before_call_revokes_converter_warrant() -> None:
+    """Lying twin: preceding instance reassignment revokes the method warrant."""
+
+    source = (
+        "import numpy._core._multiarray_tests as mt\n"
+        "\n"
+        "class TestConverter:\n"
+        "    conv = mt.run_byteorder_converter\n"
+        "\n"
+        "    def test_converter(self):\n"
+        "        replacement = self\n"
+        "        self = replacement\n"
+        "        assert self.conv(5) == self.conv(5)\n"
+    )
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "conv"
+    )
+    site = SourceFragment.from_node(call, "instance_overwrite.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) is None
+
+    payload = lift_file_payload(source, "instance_overwrite.py")
+    gaps = _universe_gaps(payload)
+    assert len(gaps) >= 1
+    assert all(gap.ast_kind == "call:conv" for gap in gaps)
+
+
+def test_later_local_rebind_revokes_type_builtin_warrant() -> None:
+    """type/dtype early path must still honor lexical rebinding."""
+
+    source = (
+        "def test_type(value):\n"
+        "    assert type(value) == int\n"
+        "    type = replacement\n"
+    )
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "type"
+    )
+    site = SourceFragment.from_node(call, "type_late_rebind.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) is None
 
 
 def test_authenticated_numpy_issubdtype_has_universe_support() -> None:
