@@ -856,6 +856,65 @@ def test_non_numpy_receiver_refutes_isnan_support() -> None:
     assert recognize_callee_universe("call:numpy.isnan", site=site) is None
 
 
+def test_authenticated_numpy_shares_memory_has_universe_support() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_values(left, right):\n"
+        "    assert np.shares_memory(left, right)\n"
+    )
+
+    payload = lift_file_payload(source, "shares_memory_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.shares_memory"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_authenticated_shares_memory_from_import_alias_has_universe_support() -> None:
+    source = (
+        "from numpy import shares_memory as overlaps\n"
+        "\n"
+        "def test_values(left, right):\n"
+        "    assert overlaps(left, right)\n"
+    )
+
+    payload = lift_file_payload(source, "shares_memory_alias_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.shares_memory"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_kind"),
+    (
+        (
+            "import numpy as np\n"
+            "def test_values(np, left, right):\n"
+            "    assert np.shares_memory(left, right)\n",
+            "call:numpy.shares_memory",
+        ),
+        (
+            "def test_values(left, right):\n"
+            "    assert shares_memory(left, right)\n",
+            "call:shares_memory",
+        ),
+    ),
+)
+def test_unowned_shares_memory_lookalikes_stay_loud(
+    source: str, expected_kind: str
+) -> None:
+    payload = lift_file_payload(source, "shares_memory_unowned_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == [expected_kind]
+
+
 def test_module_scope_numpy_from_import_has_universe_support() -> None:
     """Module-level imports establish the name; do not revoke as free-var shadow."""
 

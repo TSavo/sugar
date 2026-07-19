@@ -42,6 +42,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "numpy.all",
         "numpy.dtype",
         "numpy.may_share_memory",
+        "numpy.shares_memory",
         "numpy._core.multiarray.get_handler_name",
         "re.Pattern.search",
         "json.loads",
@@ -146,6 +147,12 @@ class BuiltinCalleeUniverseSugar(
             _coordinate_witness("set", "[]", "[0]"),
             _coordinate_witness("hasattr", "True", "False"),
             _item_receiver_coordinate_witness(),
+            _imported_coordinate_witness(
+                name="numpy_shares_memory",
+                setup=("from numpy import shares_memory\n"),
+                callee="shares_memory",
+                argument="5, 5",
+            ),
             _imported_coordinate_witness(
                 name="get_handler_name",
                 setup=("from numpy._core.multiarray import get_handler_name\n"),
