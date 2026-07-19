@@ -20,30 +20,19 @@ _ACTIVE_DIG_DEMAND: ContextVar[int] = ContextVar(
 
 
 def _term_cycle_key(term: Term) -> str:
-    """Return a canonical, heap-backed identity for an arbitrarily deep term.
+    """Return a permanent content coordinate for an arbitrarily deep term.
 
-    Under ``term_intern_scope``, request-scoped term hash-cons already gives
-    structural identity as object identity after ``_intern_term``. Key by that
-    identity — never rebuild a full ``TermTableBuilder`` CID walk per dig
-    cycle check or ``CallSiteValue`` hash/eq.
+    Always a TermTableBuilder wire CID — never ``id(_intern_term(...))``.
+    Object-id keys made ``CallSiteValue.__hash__`` change across
+    ``term_intern_scope`` and corrupted dict/set membership (#5569). Volume
+    under an active intern scope is preserved by scope-local CID memoization
+    in ``ir._term_content_cid`` (first materialize pays; repeats are O(1)).
 
-    Product residual (#5338 / #5449 disposition): ``sklearn/utils/tests/test_stats.py``
-    hard-timeout on ``reduce_body`` tip ``AddOpSugar`` at ``stats.py:205``
-    (``array[...] + array[...]``). Profile: two ``CallSiteValue.add`` calls paid
-    ~5s each; wall was 36× ``_term_cycle_key`` → fresh ``TermTableBuilder().reference``
-    blake3 materialization of deep callsite term DAGs. Same class as #5435's
-    formula-key CID thrash — not a sklearn special-case.
-
-    Outside an intern scope (ad-hoc tests / one-shot builders), fall back to a
-    content CID so structural twins still collide without a live table. The
-    encoder remains heap-backed (no native recursion on deep spines).
+    The encoder remains heap-backed (no native recursion on deep spines).
     """
-    from sugar_lift_py_tests.ir import _TERM_INTERN_TABLE, _intern_term
+    from sugar_lift_py_tests.ir import _term_content_cid
 
-    tables = _TERM_INTERN_TABLE.get()
-    if tables is not None:
-        return f"term-id:{id(_intern_term(term))}"
-    return TermTableBuilder().reference(term)["cid"]
+    return _term_content_cid(term)
 
 
 @dataclass(frozen=True)

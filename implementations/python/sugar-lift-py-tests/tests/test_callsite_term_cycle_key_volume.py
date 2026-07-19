@@ -20,9 +20,10 @@ Microbench before fix (depth 250, under intern scope):
 That is the same shared mechanism as #5435's formula-key thrash, now on the
 callsite dig/identity door rather than formula intern.
 
-Replacement architecture:
-  under ``term_intern_scope``, cycle keys use interned term identity after
-  ``_intern_term``; outside scope, keep content CID (heap-backed encoder).
+Replacement architecture (#5569):
+  cycle keys are **always** permanent content CIDs (scope-stable). Under
+  ``term_intern_scope``, memoize CID by interned object so repeated keys do
+  not re-pay blake3 — never use ``id()`` as the identity itself.
 
 This instrument stays red while CallSiteValue identity/dig keys re-pay full
 CID materialization under an active intern scope. Never soft-complete; never
@@ -56,18 +57,20 @@ def test_term_cycle_key_under_intern_scope_stays_under_budget() -> None:
     budget_seconds = 0.05
     with term_intern_scope():
         term = _deep_term(depth)
+        warm = _term_cycle_key(term)  # first materialize may pay; must be content CID
         started = time.perf_counter()
         keys = [_term_cycle_key(term) for _ in range(repeats)]
         elapsed = time.perf_counter() - started
-    assert len(set(keys)) == 1
-    assert keys[0].startswith("term-id:"), (
-        "under term_intern_scope, cycle keys must be interned-term identity, "
-        f"not TermTableBuilder CID; got {keys[0]!r}"
+    assert warm.startswith("blake3-512:")
+    assert len(set(keys)) == 1 and keys[0] == warm
+    assert not warm.startswith("term-id:"), (
+        "term-id: keys are the scope-dependent #5477 bug (#5569)."
     )
     assert elapsed < budget_seconds, (
-        f"R=1 _term_cycle_key×{repeats} over depth={depth} paid {elapsed:.3f}s "
-        f"(budget {budget_seconds}s). Replacement: key by interned term identity "
-        "under term_intern_scope, not TermTableBuilder().reference CID. "
+        f"R=1 memoized _term_cycle_key×{repeats} over depth={depth} paid "
+        f"{elapsed:.3f}s (budget {budget_seconds}s after first materialize). "
+        "Replacement: memoize content CID under term_intern_scope "
+        "(never id() as identity). "
         "Do not raise product timeout, soft-complete, or mint RuntimeEffect."
     )
 
@@ -83,6 +86,7 @@ def test_callsite_hash_eq_under_intern_scope_stays_under_budget() -> None:
         assert term is twin
         left = CallSiteValue("xp.searchsorted", (), (), term, None)
         right = CallSiteValue("xp.searchsorted", (), (), twin, None)
+        assert hash(left) == hash(right) and left == right  # warm CID memo
         started = time.perf_counter()
         for _ in range(repeats):
             assert hash(left) == hash(right)
@@ -90,8 +94,8 @@ def test_callsite_hash_eq_under_intern_scope_stays_under_budget() -> None:
         elapsed = time.perf_counter() - started
     assert elapsed < budget_seconds, (
         f"R=1 CallSiteValue hash/eq×{repeats} depth={depth} paid {elapsed:.3f}s "
-        f"(budget {budget_seconds}s). __hash__/__eq__ must use interned term "
-        "identity via _term_cycle_key under term_intern_scope."
+        f"(budget {budget_seconds}s after warm). __hash__/__eq__ must use "
+        "memoized content CID via _term_cycle_key (scope-stable, #5569)."
     )
 
 

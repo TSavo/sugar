@@ -14,9 +14,10 @@ That is not a pandas special-case. Any membership / equality formula over a
 large interned CallSiteValue term re-pays full wire-CID materialization for
 hash-cons keys that already have request-scoped term identity.
 
-Replacement architecture:
-  under ``term_intern_scope``, formula keys use interned term identity
-  (after ``_intern_term``), never a per-key fresh TermTableBuilder CID walk.
+Replacement architecture (#5569):
+  formula keys always use permanent content CIDs (scope-stable). Under
+  ``term_intern_scope``, memoize CID so repeated interns do not re-pay
+  blake3 — never ``id(_intern_term)`` as identity.
   ``finite_membership_value`` refuses non-literal domain elements (docstring
   already requires literal domains) so opaque column membership does not
   re-enter equals → formula-intern volume.
@@ -72,8 +73,8 @@ def test_formula_intern_of_deep_terms_stays_under_budget() -> None:
     assert elapsed < budget_seconds, (
         f"R=1 formula intern over deep terms paid {elapsed:.3f}s "
         f"(budget {budget_seconds}s at depth={depth}). "
-        "Replacement: _formula_cycle_key must key atomic args by interned term "
-        "identity under term_intern_scope, not TermTableBuilder().reference CID. "
+        "Replacement: memoize permanent content CID under term_intern_scope "
+        "(never id() as formula identity; #5569). "
         "Do not raise product timeout, soft-complete, or mint RuntimeEffect."
     )
 
@@ -93,8 +94,8 @@ def test_repeated_formula_intern_does_not_scale_with_cid_rebuilds() -> None:
     assert elapsed < budget_seconds, (
         f"R=1 repeated formula intern paid {elapsed:.3f}s for {repeats}× "
         f"depth={depth} (budget {budget_seconds}s). "
-        "Keys must reuse interned term identity, not rebuild TermTableBuilder "
-        "CIDs on every atomic."
+        "Keys must reuse memoized content CIDs, not rebuild TermTableBuilder "
+        "walks on every atomic (#5569)."
     )
 
 
