@@ -33,6 +33,9 @@ Manifest schema (JSON)::
       "fixture_decorator": {"pytest.fixture": "FIXTURE_DECORATOR", ...},
       "instance_class_decorator": {
         "KIT_LOADED_CONSTRUCTOR.mapped": "CLASS_IDENTITY_DECORATOR"
+      },
+      "instance_call": {
+        "PANDAS_DATAFRAME.equals": "pandas.DataFrame.equals"
       }
     }
 
@@ -56,9 +59,11 @@ from sugar_lift_py_tests.recognition.native_shape import (
     NativeShape,
     clear_call_shape_protocol,
     clear_fixture_protocol,
+    clear_instance_call_protocol,
     clear_instance_class_decorator_protocol,
     load_call_shape_protocol,
     load_fixture_protocol,
+    load_instance_call_protocol,
     load_instance_class_decorator_protocol,
 )
 
@@ -68,6 +73,7 @@ _IMPORTED_CALLEE_SECTION = "imported_callee"
 _CALL_SHAPE_SECTION = "call_shape"
 _FIXTURE_DECORATOR_SECTION = "fixture_decorator"
 _INSTANCE_CLASS_DECORATOR_SECTION = "instance_class_decorator"
+_INSTANCE_CALL_SECTION = "instance_call"
 
 _KNOWN_SECTIONS = frozenset(
     {
@@ -75,6 +81,7 @@ _KNOWN_SECTIONS = frozenset(
         _CALL_SHAPE_SECTION,
         _FIXTURE_DECORATOR_SECTION,
         _INSTANCE_CLASS_DECORATOR_SECTION,
+        _INSTANCE_CALL_SECTION,
     }
 )
 
@@ -120,6 +127,7 @@ def clear_all_kit_protocols() -> None:
     clear_call_shape_protocol()
     clear_fixture_protocol()
     clear_instance_class_decorator_protocol()
+    clear_instance_call_protocol()
 
 
 def load_kit_manifest_text(text: str, *, source: str) -> KitManifestProvenance:
@@ -193,6 +201,28 @@ def load_kit_manifest_text(text: str, *, source: str) -> KitManifestProvenance:
             coordinates[(shape, tail)] = result_shape
         load_instance_class_decorator_protocol(coordinates)
         counts[_INSTANCE_CLASS_DECORATOR_SECTION] = len(coordinates)
+
+    instance_call_raw = document.get(_INSTANCE_CALL_SECTION) or {}
+    if instance_call_raw:
+        coordinates_str: dict[tuple[NativeShape, str], str] = {}
+        for key, value in instance_call_raw.items():
+            head, _sep, tail = key.partition(".")
+            if not _sep:
+                raise KitManifestError(
+                    f"kit manifest {source!r} instance_call key "
+                    f"{key!r} must be 'NativeShapeMember.attr'"
+                )
+            shape = _resolve_enum(
+                NativeShape, head, section=_INSTANCE_CALL_SECTION, key=key
+            )
+            if not isinstance(value, str):
+                raise KitManifestError(
+                    f"kit manifest {source!r} instance_call value for "
+                    f"{key!r} must be a coordinate string, not {value!r}"
+                )
+            coordinates_str[(shape, tail)] = value
+        load_instance_call_protocol(coordinates_str)
+        counts[_INSTANCE_CALL_SECTION] = len(coordinates_str)
 
     return KitManifestProvenance(path=source, sha256=sha256, loaded_counts=counts)
 

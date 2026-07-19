@@ -220,6 +220,21 @@ class CalleeUniverseSupport(Enum):
     TSLIBS_TIMEZONES_TZ_COMPARE = auto()
     UTIL_VALIDATORS_VALIDATE_BOOL_KWARG = auto()
 
+    # #5913 — bare attribute/bound-method Call whose receiver type is
+    # authenticated by assignment provenance (``df = pd.DataFrame(...)``)
+    # through the existing receiver-surface recognizer
+    # (CalleeUniverseRecognition._surface_method_coordinate →
+    # _bound_native_receiver_coordinate → native_shape.recognize_native_call /
+    # recognize_native_instance_call, built for #5577). These coordinates
+    # arrive ONLY via a loaded kit manifest's instance_call + imported_callee
+    # sections — production tables never carry the "pandas.DataFrame.equals"
+    # string. A same-named method on an unauthenticated/unrelated receiver
+    # never resolves a NativeShape and stays loud FactoryPanic.
+    PANDAS_DATAFRAME_EQUALS = auto()
+    PANDAS_SERIES_EQUALS = auto()
+    PANDAS_DATAFRAME_ITEMS = auto()
+    PANDAS_SERIES_ITEMS = auto()
+
 
 # Empty: numpy dtype-result coordinates are external kit contracts (#5603).
 # Hard-coded vendor logos deleted; rows stay loud until bridge evidence.

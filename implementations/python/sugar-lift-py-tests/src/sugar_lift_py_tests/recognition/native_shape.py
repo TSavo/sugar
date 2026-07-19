@@ -77,6 +77,13 @@ class NativeShape(Enum):
     SCHEMA_VALIDATOR = auto()
     SCHEMA_SERIALIZER = auto()
     VALIDATION_ERROR = auto()
+    # Receiver-surface shapes for #5913 (bare attribute/bound-method Call on a
+    # lexically-authenticated constructor receiver). Same empty-kit-table law:
+    # these members are typed coordinate identifiers only — _CALL_SHAPES below
+    # stays free of "pandas.*" keys; a receiver lands on one of these shapes
+    # only through a loaded kit manifest's call_shape section.
+    PANDAS_DATAFRAME = auto()
+    PANDAS_SERIES = auto()
 
 
 # Language / builtin protocol coordinates only (#5603).

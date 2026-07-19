@@ -1,0 +1,18 @@
+{
+  "call_shape": {
+    "pandas.DataFrame": "PANDAS_DATAFRAME",
+    "pandas.Series": "PANDAS_SERIES"
+  },
+  "instance_call": {
+    "PANDAS_DATAFRAME.equals": "pandas.DataFrame.equals",
+    "PANDAS_SERIES.equals": "pandas.Series.equals",
+    "PANDAS_DATAFRAME.items": "pandas.DataFrame.items",
+    "PANDAS_SERIES.items": "pandas.Series.items"
+  },
+  "imported_callee": {
+    "pandas.DataFrame.equals": "PANDAS_DATAFRAME_EQUALS",
+    "pandas.Series.equals": "PANDAS_SERIES_EQUALS",
+    "pandas.DataFrame.items": "PANDAS_DATAFRAME_ITEMS",
+    "pandas.Series.items": "PANDAS_SERIES_ITEMS"
+  }
+}
