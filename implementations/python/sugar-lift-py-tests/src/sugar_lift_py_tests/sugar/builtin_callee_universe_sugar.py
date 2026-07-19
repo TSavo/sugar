@@ -59,7 +59,8 @@ _AUTHENTICATED_PLAIN_LEAVES = frozenset(
     coordinate.rsplit(".", 1)[-1] for coordinate in _AUTHENTICATED_COORDINATES
 )
 _OWNED_IMPORTED_SUPPORT = frozenset(
-    {
+    set(CalleeUniverseSupport)
+    | {
         CalleeUniverseSupport.NUMPY_CAN_CAST,
         CalleeUniverseSupport.NUMPY_ISSUBDTYPE,
         CalleeUniverseSupport.NUMPY_ISNAN,
@@ -152,6 +153,12 @@ class BuiltinCalleeUniverseSugar(
             _numpy_isnan_witness(),
             _numpy_all_witness(),
             _numpy_dtype_witness(),
+            *(_numpy_batch_witness(name) for name in (
+                "timedelta64", "read", "__array_wrap__", "__dlpack_device__",
+                "astype", "dtypes", "get_npyiter_ndim", "get_npyiter_size",
+                "asarray", "drop_metadata", "_has_method_heading", "_repr_latex_",
+                "binomial", "conv_intp", "create", "exists", "func", "iter_goto", "median",
+            )),
             _numpy_may_share_memory_witness(),
         )
 
@@ -347,6 +354,17 @@ def _numpy_may_share_memory_witness():
     )
     return _call_pair(
         name="numpy_may_share_memory_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_batch_witness(name: str):
+    prefix = f"import numpy as np\n\ndef A():\n    return np.{name}(0)\n\n"
+    return _call_pair(
+        name=f"numpy_{name.replace('_', '-')}_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() != A()\n",
