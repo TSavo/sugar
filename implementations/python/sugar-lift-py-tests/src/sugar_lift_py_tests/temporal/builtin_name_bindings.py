@@ -95,8 +95,21 @@ def builtin_constant_names() -> frozenset[str]:
     )
 
 
+_EMPTY_BUILTIN_TEMPORAL = None
+
+
 def builtin_name_temporal():
-    """Construct lexical coordinates for Python's builtin name values."""
+    """Return the shared immutable lexical floor for Python's builtin names.
+
+    The empty temporal is a pure value: every ordinary scope starts with the
+    same builtin bindings. Constructing it once keeps module-seed frames from
+    reallocating the entire builtin surface on every dig.module_seed entry
+    (stata/typing module_seed cascade tip).
+    """
+    global _EMPTY_BUILTIN_TEMPORAL
+    if _EMPTY_BUILTIN_TEMPORAL is not None:
+        return _EMPTY_BUILTIN_TEMPORAL
+
     from sugar_lift_py_tests.floor import (
         BlockValue,
         BuiltinExceptionClassValue,
@@ -126,4 +139,5 @@ def builtin_name_temporal():
             name,
             BuiltinExceptionClassValue(name=name, bases=(), record=BlockValue(())),
         )
+    _EMPTY_BUILTIN_TEMPORAL = temporal
     return temporal

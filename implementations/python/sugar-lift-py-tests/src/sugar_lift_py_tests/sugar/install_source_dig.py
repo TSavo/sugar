@@ -59,8 +59,16 @@ class _ContextIdentity:
         return isinstance(other, _ContextIdentity) and self.value is other.value
 
 
+# Install-source value construction always reseeds lexical state from
+# ``TemporalContext.empty()`` inside ``_ctx_with_required_module_bindings``.
+# Consumer ``temporal`` / ``module_temporal`` are never recognition inputs for
+# the published floor value — partitioning on them multiplies module_seed work
+# (one miss per seed frame) without changing the constructed answer.
+_VALUE_ORACLE_CONTEXT_EXCLUDED = frozenset({"temporal", "module_temporal"})
+
+
 def _factory_context_identity(ctx: Any) -> tuple[tuple[str, Any], ...]:
-    """Partition install-source construction by every FactoryBuildContext field."""
+    """Partition dig-body / class-bases construction by every context field."""
     if ctx is None or not hasattr(ctx, "__dataclass_fields__"):
         return ()
     return tuple(
@@ -69,6 +77,23 @@ def _factory_context_identity(ctx: Any) -> tuple[tuple[str, Any], ...]:
             None if (value := getattr(ctx, item.name)) is None else _ContextIdentity(value),
         )
         for item in fields(ctx)
+    )
+
+
+def _value_oracle_context_identity(ctx: Any) -> tuple[tuple[str, Any], ...]:
+    """Partition install-source *values* by recognition fields construct consumes.
+
+    Excludes consumer temporal frames: construct resets them before build_body.
+    """
+    if ctx is None or not hasattr(ctx, "__dataclass_fields__"):
+        return ()
+    return tuple(
+        (
+            item.name,
+            None if (value := getattr(ctx, item.name)) is None else _ContextIdentity(value),
+        )
+        for item in fields(ctx)
+        if item.name not in _VALUE_ORACLE_CONTEXT_EXCLUDED
     )
 
 
@@ -145,10 +170,11 @@ class InstallSourceValueOracle:
         base = self.identity_key(import_target)
         if base is None:
             return None
-        # The source CID is the enclosing source identity; the complete
-        # context tuple partitions every factory-recognition input, including
-        # resolver, temporal, catalog, aliases, sinks, and build flags.
-        return (*base, _factory_context_identity(ctx))
+        # Source CID + name is the construction identity. Partition only by
+        # recognition fields the value construct path actually consumes —
+        # not by consumer temporal, which is always reseeded from empty
+        # before build_body (see ``_value_oracle_context_identity``).
+        return (*base, _value_oracle_context_identity(ctx))
 
     def resolve(
         self,

@@ -152,22 +152,24 @@ def test_same_module_prior_is_sole_constructor_across_sibling_resolves(
 def test_value_oracle_wrong_context_rebuilds_and_matches_fresh_second(
     tmp_path, monkeypatch
 ) -> None:
-    """A context change is a cache miss, never a stale successful value."""
+    """A recognition-context change is a cache miss, never a stale success.
+
+    Consumer temporal is *not* a recognition input for install-source values
+    (construct reseeds from empty). Partition on a field construct consumes —
+    here ``name_resolver`` — so a different recognition context rebuilds.
+    """
     (tmp_path / "oracle_context.py").write_text("ANSWER = 7\n", encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path))
     importlib.invalidate_caches()
     INSTALL_SOURCE_VALUE_ORACLE.clear()
 
     ctx_one = _ctx()
-    ctx_two = _ctx()
-    ctx_two = ctx_two.with_temporal(
-        ctx_two.temporal.bind_value("marker", TermValue(2))
-    )
+    ctx_two = replace(_ctx(), name_resolver="partition-b")
 
     import sugar_lift_py_tests.sugar.install_source_dig as module
 
     def construct(_target, ctx, *, _resolving=frozenset()):
-        return TermValue(id(ctx.temporal))
+        return TermValue(id(ctx.name_resolver) if ctx.name_resolver is not None else 0)
 
     monkeypatch.setattr(module, "_construct_install_source_value", construct)
     first = resolve_install_source_value("oracle_context.ANSWER", ctx_one)
@@ -180,6 +182,85 @@ def test_value_oracle_wrong_context_rebuilds_and_matches_fresh_second(
     assert second != first
     assert constructs == 2
     assert second == fresh_second
+
+
+def test_value_oracle_ignores_consumer_temporal_partition(
+    tmp_path, monkeypatch
+) -> None:
+    """Module-seed frames must not re-factory the same CID+name.
+
+    ``_ctx_with_required_module_bindings`` opens every seed with a fresh empty
+    temporal (and may bind priors). Consumer temporal identity is discarded
+    before build_body, so successive seed frames hit the value oracle.
+    """
+    (tmp_path / "seed_frame.py").write_text("FLAG = 3\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    INSTALL_SOURCE_VALUE_ORACLE.clear()
+
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    base = _ctx()
+    seed_a = replace(
+        base,
+        temporal=TemporalContext.empty(),
+        module_temporal=TemporalContext.empty(),
+    )
+    seed_b = replace(
+        base,
+        temporal=TemporalContext.empty().bind_value("prior", TermValue(1)),
+        module_temporal=TemporalContext.empty(),
+    )
+
+    first = resolve_install_source_value("seed_frame.FLAG", seed_a)
+    constructs = INSTALL_SOURCE_VALUE_ORACLE.construct_count
+    second = resolve_install_source_value("seed_frame.FLAG", seed_b)
+
+    assert first == TermValue(3)
+    assert second is first
+    assert INSTALL_SOURCE_VALUE_ORACLE.construct_count == constructs
+    assert INSTALL_SOURCE_VALUE_ORACLE.hit_count >= 1
+
+
+def test_stdlib_typing_seed_frames_reuse_tp_cache_construction() -> None:
+    """stata module_seed cascade tip: typing._tp_cache is one identity.
+
+    Product hang re-entered StatementFunctionDefSugar for typing.py:376 under
+    successive dig.module_seed frames. Consumer temporal must not multiply
+    construction of the same stdlib source name.
+    """
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    INSTALL_SOURCE_VALUE_ORACLE.clear()
+    base = _ctx()
+    frames = [
+        replace(
+            base,
+            temporal=TemporalContext.empty(),
+            module_temporal=TemporalContext.empty(),
+        )
+        for _ in range(5)
+    ]
+    # Distinct bound frames (as after seeding prior imports) still share.
+    frames.append(
+        replace(
+            base,
+            temporal=TemporalContext.empty().bind_value("marker", TermValue(9)),
+            module_temporal=TemporalContext.empty(),
+        )
+    )
+
+    first = resolve_install_source_value("typing._tp_cache", frames[0])
+    constructs = INSTALL_SOURCE_VALUE_ORACLE.construct_count
+    assert first is not None
+    assert constructs >= 1
+
+    for frame in frames[1:]:
+        again = resolve_install_source_value("typing._tp_cache", frame)
+        assert again is first
+
+    assert INSTALL_SOURCE_VALUE_ORACLE.construct_count == constructs
+    assert INSTALL_SOURCE_VALUE_ORACLE.hit_count >= len(frames) - 1
 
 
 def test_class_bases_negative_is_not_published_and_context_is_partitioned(
