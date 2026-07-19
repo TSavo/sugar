@@ -16,6 +16,8 @@ from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+from sugar_lift_py_tests.floor import ImportAliasValue, TermValue
+from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
@@ -557,13 +559,21 @@ def test_numpy_can_cast_requires_authenticated_receiver() -> None:
     ctx = FactoryBuildContext(
         filename="numpy_can_cast.py",
         catalog=default_catalog(),
-        import_aliases={"np": "numpy"},
+        temporal=TemporalContext.empty().bind_value(
+            "np",
+            ImportAliasValue(
+                "numpy", "np", import_target="numpy", install_source_checked=True,
+                resolved_value=TermValue("numpy"),
+            ),
+        ),
     )
     sugar = BuiltinCalleeUniverseSugar.new(site, ctx)
     assert isinstance(sugar, BuiltinCalleeUniverseSugar)
 
     lying = FactoryBuildContext(
-        filename="numpy_can_cast.py", catalog=default_catalog(), import_aliases={"np": "other"}
+        filename="numpy_can_cast.py", catalog=default_catalog(), temporal=TemporalContext.empty().bind_value(
+            "np", ImportAliasValue("other", "np", import_target="other")
+        )
     )
     with pytest.raises(FactoryPanic):
         BuiltinCalleeUniverseSugar.new(site, lying)
