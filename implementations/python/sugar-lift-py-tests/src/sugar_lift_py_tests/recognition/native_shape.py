@@ -32,6 +32,22 @@ class NativeShape(Enum):
     NUMPY_ISNAT = auto()
     SOURCE_AUTHENTICATED_CALLABLE = auto()
     NUMPY_ALL = auto()
+    NUMPY_ITER_GOTO1D = auto()
+    NUMPY_NPYITER_DELAYED_BUFALLOC = auto()
+    NUMPY_NPYITER_INDEX = auto()
+    NUMPY_SCALARTYPE_INDEX = auto()
+    NUMPY_EDIFF1D = auto()
+    NUMPY_FINFO = auto()
+    NUMPY_PROD = auto()
+    NUMPY_RESULT_TYPE = auto()
+    NUMPY_ARRAY_NAMESPACE = auto()
+    NUMPY_EQUAL = auto()
+    NUMPY_LESS_EQUAL = auto()
+    NUMPY_GREATER = auto()
+    NUMPY_GREATER_EQUAL = auto()
+    NUMPY_LESS = auto()
+    NUMPY_NOT_EQUAL = auto()
+    NUMPY_SUPPORT_CALLABLE = auto()
     NEVER_SUPPRESSING_MANAGER = auto()
     ASSERTING_MANAGER = auto()
     CLASS_IDENTITY_DECORATOR = auto()
@@ -76,6 +92,26 @@ _CALL_SHAPES = {
     "numpy.random.randint": NativeShape.RANDOM_INTEGER_ARRAY,
     "numpy.isnat": NativeShape.NUMPY_ISNAT,
     "numpy.all": NativeShape.NUMPY_ALL,
+    "iter_goto1d": NativeShape.NUMPY_ITER_GOTO1D,
+    "npyiter_has_delayed_bufalloc": NativeShape.NUMPY_NPYITER_DELAYED_BUFALLOC,
+    "npyiter_has_index": NativeShape.NUMPY_NPYITER_INDEX,
+    "numpy.ScalarType.index": NativeShape.NUMPY_SCALARTYPE_INDEX,
+    "numpy.ediff1d": NativeShape.NUMPY_EDIFF1D,
+    "numpy.finfo": NativeShape.NUMPY_FINFO,
+    "numpy.prod": NativeShape.NUMPY_PROD,
+    "numpy.result_type": NativeShape.NUMPY_RESULT_TYPE,
+    "numpy.__array_namespace__": NativeShape.NUMPY_ARRAY_NAMESPACE,
+    "numpy.__eq__": NativeShape.NUMPY_EQUAL,
+    "numpy.__le__": NativeShape.NUMPY_LESS_EQUAL,
+    "numpy.__gt__": NativeShape.NUMPY_GREATER,
+    "numpy.__ge__": NativeShape.NUMPY_GREATER_EQUAL,
+    "numpy.__lt__": NativeShape.NUMPY_LESS,
+    "numpy.__ne__": NativeShape.NUMPY_NOT_EQUAL,
+    "uniform": NativeShape.NUMPY_SUPPORT_CALLABLE,
+    "strip": NativeShape.NUMPY_SUPPORT_CALLABLE,
+    "selectedrealkind": NativeShape.NUMPY_SUPPORT_CALLABLE,
+    "pytest.approx": NativeShape.NUMPY_SUPPORT_CALLABLE,
+    "op": NativeShape.NUMPY_SUPPORT_CALLABLE,
     "open": NativeShape.NEVER_SUPPRESSING_MANAGER,
     "builtins.open": NativeShape.NEVER_SUPPRESSING_MANAGER,
     "contextlib.closing": NativeShape.NEVER_SUPPRESSING_MANAGER,
