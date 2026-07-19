@@ -40,11 +40,12 @@ def test_value_oracle_constructs_once_for_same_source_identity(
     importlib.invalidate_caches()
     INSTALL_SOURCE_VALUE_ORACLE.clear()
 
-    first = resolve_install_source_value("oracle_once.ANSWER", _ctx())
+    ctx = _ctx()
+    first = resolve_install_source_value("oracle_once.ANSWER", ctx)
     constructs_after_first = INSTALL_SOURCE_VALUE_ORACLE.construct_count
     hits_after_first = INSTALL_SOURCE_VALUE_ORACLE.hit_count
 
-    second = resolve_install_source_value("oracle_once.ANSWER", _ctx())
+    second = resolve_install_source_value("oracle_once.ANSWER", ctx)
 
     assert first == TermValue(7)
     assert second is first
@@ -83,13 +84,13 @@ def test_value_oracle_does_not_publish_cycle_breaks(tmp_path, monkeypatch) -> No
     key = INSTALL_SOURCE_VALUE_ORACLE.identity_key("oracle_cycle.X")
     assert key is not None
     assert INSTALL_SOURCE_VALUE_ORACLE.construct_count == 0
-    assert key not in INSTALL_SOURCE_VALUE_ORACLE._table
+    assert not any(item[:2] == key for item in INSTALL_SOURCE_VALUE_ORACLE._table)
 
 
 def test_value_oracle_does_not_publish_unresolved_none() -> None:
     """None is provisional: a later consumer must be allowed to reconstruct."""
     INSTALL_SOURCE_VALUE_ORACLE.clear()
-    key = ("source-cid", "MAPPING")
+    key = ("source-cid", "MAPPING", ())
 
     INSTALL_SOURCE_VALUE_ORACLE._publish(key, None)
 
@@ -99,9 +100,10 @@ def test_value_oracle_does_not_publish_unresolved_none() -> None:
 def test_stdlib_typing_literal_second_resolve_is_identity_hit() -> None:
     """Timeout-blob hot path: typing.Literal has one construction identity."""
     INSTALL_SOURCE_VALUE_ORACLE.clear()
-    first = resolve_install_source_value("typing.Literal", _ctx())
+    ctx = _ctx()
+    first = resolve_install_source_value("typing.Literal", ctx)
     n = INSTALL_SOURCE_VALUE_ORACLE.construct_count
-    second = resolve_install_source_value("typing.Literal", _ctx())
+    second = resolve_install_source_value("typing.Literal", ctx)
     assert first is not None
     assert second is first
     assert INSTALL_SOURCE_VALUE_ORACLE.construct_count == n
@@ -128,9 +130,10 @@ def test_same_module_prior_is_sole_constructor_across_sibling_resolves(
     importlib.invalidate_caches()
     INSTALL_SOURCE_VALUE_ORACLE.clear()
 
-    left = resolve_install_source_value("sibling_seed.left", _ctx())
+    ctx = _ctx()
+    left = resolve_install_source_value("sibling_seed.left", ctx)
     after_left = INSTALL_SOURCE_VALUE_ORACLE.construct_count
-    right = resolve_install_source_value("sibling_seed.right", _ctx())
+    right = resolve_install_source_value("sibling_seed.right", ctx)
     after_right = INSTALL_SOURCE_VALUE_ORACLE.construct_count
 
     assert left is not None and right is not None
@@ -138,3 +141,36 @@ def test_same_module_prior_is_sole_constructor_across_sibling_resolves(
     assert after_left >= 2  # FLAG and left
     assert after_right == after_left + 1  # only right; FLAG is identity hit
     assert INSTALL_SOURCE_VALUE_ORACLE.hit_count >= 1
+
+
+def test_value_oracle_wrong_context_rebuilds_and_matches_fresh_second(
+    tmp_path, monkeypatch
+) -> None:
+    """A context change is a cache miss, never a stale successful value."""
+    (tmp_path / "oracle_context.py").write_text("ANSWER = 7\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    INSTALL_SOURCE_VALUE_ORACLE.clear()
+
+    ctx_one = _ctx()
+    ctx_two = _ctx()
+    ctx_two = ctx_two.with_temporal(
+        ctx_two.temporal.bind_value("marker", TermValue(2))
+    )
+
+    import sugar_lift_py_tests.sugar.install_source_dig as module
+
+    def construct(_target, ctx, *, _resolving=frozenset()):
+        return TermValue(id(ctx.temporal))
+
+    monkeypatch.setattr(module, "_construct_install_source_value", construct)
+    first = resolve_install_source_value("oracle_context.ANSWER", ctx_one)
+    second = resolve_install_source_value("oracle_context.ANSWER", ctx_two)
+    constructs = INSTALL_SOURCE_VALUE_ORACLE.construct_count
+
+    INSTALL_SOURCE_VALUE_ORACLE.clear()
+    fresh_second = resolve_install_source_value("oracle_context.ANSWER", ctx_two)
+
+    assert second != first
+    assert constructs == 2
+    assert second == fresh_second

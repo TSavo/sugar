@@ -25,7 +25,7 @@ import functools
 import inspect
 import sys
 import textwrap
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dataclass_field, fields, replace
 from pathlib import Path
 from typing import Any
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
@@ -41,6 +41,32 @@ INSTALLED_SOURCE_INDEX_CAPACITY = 64
 # Capacity is resident ownership only (eviction recomputes; not invalidation).
 INSTALL_SOURCE_VALUE_CAPACITY = 256
 _MISSING = object()
+
+
+@dataclass(frozen=True)
+class _ContextIdentity:
+    """Strong, O(1) identity token for one factory-recognition input."""
+
+    value: Any = dataclass_field(compare=False, hash=False, repr=False)
+
+    def __hash__(self) -> int:
+        return id(self.value)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _ContextIdentity) and self.value is other.value
+
+
+def _factory_context_identity(ctx: Any) -> tuple[tuple[str, Any], ...]:
+    """Partition install-source construction by every FactoryBuildContext field."""
+    if ctx is None or not hasattr(ctx, "__dataclass_fields__"):
+        return ()
+    return tuple(
+        (
+            item.name,
+            None if (value := getattr(ctx, item.name)) is None else _ContextIdentity(value),
+        )
+        for item in fields(ctx)
+    )
 
 
 class InstallSourceValueOracle:
@@ -68,7 +94,7 @@ class InstallSourceValueOracle:
         from collections import OrderedDict
 
         self._capacity = max(int(capacity), 1)
-        self._table: OrderedDict[tuple[str, str], Any] = OrderedDict()
+        self._table: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
         self.construct_count = 0
         self.hit_count = 0
 
@@ -87,6 +113,15 @@ class InstallSourceValueOracle:
         # Native extension / absent module: stabilize on the qualified name only.
         return ("target", import_target)
 
+    def _cache_key(self, import_target: str, ctx: Any) -> tuple[Any, ...] | None:
+        base = self.identity_key(import_target)
+        if base is None:
+            return None
+        # The source CID is the enclosing source identity; the complete
+        # context tuple partitions every factory-recognition input, including
+        # resolver, temporal, catalog, aliases, sinks, and build flags.
+        return (*base, _factory_context_identity(ctx))
+
     def resolve(
         self,
         import_target: str,
@@ -98,7 +133,7 @@ class InstallSourceValueOracle:
         if "." not in import_target or import_target in _resolving:
             # Cycle break or ill-formed name: never publish.
             return None
-        key = self.identity_key(import_target)
+        key = self._cache_key(import_target, ctx)
         from sugar_lift_py_tests.engine_log import reduction_span
 
         if key is not None:
@@ -125,7 +160,7 @@ class InstallSourceValueOracle:
             self._publish(key, value)
         return value
 
-    def _lookup(self, key: tuple[str, str]) -> Any:
+    def _lookup(self, key: tuple[Any, ...]) -> Any:
         value = self._table.get(key, _MISSING)
         if value is _MISSING:
             return _MISSING
@@ -133,7 +168,7 @@ class InstallSourceValueOracle:
         self.hit_count += 1
         return value
 
-    def _publish(self, key: tuple[str, str], value: Any) -> None:
+    def _publish(self, key: tuple[Any, ...], value: Any) -> None:
         if value is None:
             return
         if key in self._table:
