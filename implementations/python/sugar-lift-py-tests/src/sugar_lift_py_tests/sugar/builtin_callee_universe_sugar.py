@@ -194,12 +194,27 @@ class BuiltinCalleeUniverseSugar(
             _regex_search_coordinate_witness(),
             _regex_search_keyword_surface_witness(),
             _bound_source_callable_witness(),
+            # #5410 — receiver-surface ``item`` after import-authenticated
+            # constructor binding. Structural coordinate, not a vendor logo:
+            # any import-constructed receiver's bare ``.item()`` authenticates.
+            _item_receiver_coordinate_witness(),
             _pathlib_path_witness(),
             _json_loads_witness(),
             _dataclasses_asdict_witness(),
             _dataclasses_is_dataclass_witness(),
             _path_resolve_coordinate_witness(),
             _math_isclose_witness(),
+            # Structural bound-source coordinates (BOUND_SOURCE_CALLABLE) —
+            # not vendor logos: an import-bound alias Call, or a multi-hop
+            # ``self.module.<leaf>`` access, authenticates on provenance shape
+            # alone (#5457-#5461).
+            _ufunc_coordinate_witness(),
+            _bound_leaf_coordinate_witness("t0"),
+            _bound_leaf_coordinate_witness("selectedintkind"),
+            _bound_leaf_coordinate_witness("foo"),
+            _bound_leaf_coordinate_witness("to_Dt"),
+            _numpy_subrout_default_witness(),
+            _numpy_eval_scalar_witness(),
             # #5409 — class-body import-bound converter (BOUND_SOURCE; no logo).
             _imported_method_coordinate_witness(
                 setup=("import numpy._core._multiarray_tests as mt\n"),
