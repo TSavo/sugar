@@ -73,6 +73,14 @@ def _looks_like_finite_cardinality(node: ast.AST) -> bool:
             for word in ("count", "length", "size", "cardinality", "repeated")
         ):
             return True
+        if isinstance(child, ast.Attribute) and child.attr.lower() in {
+            "cardinality",
+            "count",
+            "length",
+            "size",
+            "repeated",
+        }:
+            return True
     return False
 
 
@@ -110,9 +118,24 @@ def _is_forbidden_cap_complete(node: ast.Call) -> bool:
     return constructor not in _EXACT_COMPACT_CONSTRUCTORS
 
 
-def _forbidden_exit(node: ast.Return) -> tuple[str, ast.AST] | None:
+def _forbidden_exit(
+    node: ast.Return,
+    helpers: dict[str, list[ast.Return]],
+    resolving: frozenset[str] = frozenset(),
+) -> tuple[str, ast.AST] | None:
     if node.value is None:
-        return None
+        return "finite-cap-none-success", node
+    if isinstance(node.value, ast.Constant) and node.value.value is None:
+        return "finite-cap-none-success", node.value
+    if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
+        helper = node.value.func.id
+        if helper not in resolving:
+            for returned in helpers.get(helper, ()):
+                forbidden = _forbidden_exit(
+                    returned, helpers, resolving | {helper}
+                )
+                if forbidden is not None:
+                    return forbidden
     for child in ast.walk(node.value):
         if not isinstance(child, ast.Call):
             continue
@@ -247,9 +270,15 @@ def scan_source(source: str, *, path: str) -> list[FiniteCapOpaqueCompletion]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.If) or not _is_finite_cap_test(node.test):
             continue
+        helpers = {
+            item.name: _returns_in(item.body)
+            for item in ast.walk(tree)
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and item.name
+        }
         controlled = _over_cap_returns(tree, node)
         for returned in controlled:
-            forbidden = _forbidden_exit(returned)
+            forbidden = _forbidden_exit(returned, helpers)
             if forbidden is None:
                 continue
             kind, expression = forbidden
