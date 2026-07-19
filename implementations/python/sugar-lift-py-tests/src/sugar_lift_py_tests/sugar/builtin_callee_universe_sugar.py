@@ -39,6 +39,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "numpy.isnan",
         "numpy.all",
         "numpy.dtype",
+        "numpy.may_share_memory",
         "numpy._core.multiarray.get_handler_name",
         *_CONVERTER_COORDINATES,
     }
@@ -61,6 +62,7 @@ _OWNED_IMPORTED_SUPPORT = frozenset(
         CalleeUniverseSupport.NUMPY_ISNAN,
         CalleeUniverseSupport.NUMPY_ALL,
         CalleeUniverseSupport.NUMPY_DTYPE,
+        CalleeUniverseSupport.NUMPY_MAY_SHARE_MEMORY,
         CalleeUniverseSupport.NUMPY_HANDLER_NAME,
         CalleeUniverseSupport.NUMPY_CONVERTER,
     }
@@ -142,6 +144,7 @@ class BuiltinCalleeUniverseSugar(
             _numpy_isnan_witness(),
             _numpy_all_witness(),
             _numpy_dtype_witness(),
+            _numpy_may_share_memory_witness(),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -278,5 +281,22 @@ def _numpy_dtype_witness():
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_may_share_memory_witness():
+    prefix = (
+        "import numpy as np\n"
+        "\n"
+        "def A():\n"
+        "    return np.may_share_memory(np.array([1]), np.array([1]))\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_may_share_memory_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() != A()\n",
         family="builtin-universe-coordinate",
     )
