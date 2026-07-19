@@ -4,8 +4,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from sugar_lift_py_tests.floor import BoundVar, ModuleBoundVar, TermValue
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.factory import FactoryPanic
+from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+from sugar_lift_py_tests.floor import (
+    BoundVar,
+    ListValue,
+    ModuleBoundVar,
+    OpaqueOpCallsite,
+    SymbolicValue,
+    TermValue,
+)
+from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.temporal import TemporalContext
 
@@ -20,6 +30,15 @@ class CountingSource:
         outcome = Complete(TermValue(len(self.scopes)))
         self.outcomes.append(outcome)
         return outcome
+
+
+class FixedSource:
+    def __init__(self, outcome: Incomplete) -> None:
+        self.outcome = outcome
+
+    def reduce(self, ctx: object) -> Incomplete:
+        del ctx
+        return self.outcome
 
 
 @pytest.mark.parametrize("binding_type", [BoundVar, ModuleBoundVar])
@@ -71,3 +90,23 @@ def test_unscoped_binding_does_not_reuse_context_dependent_outcomes() -> None:
     assert first is not repeated
     assert repeated is not second
     assert [outcome.value.value for outcome in (first, repeated, second)] == [1, 2, 3]
+
+
+def test_incomplete_bound_source_panics_loudly_when_a_completed_term_is_requested() -> (
+    None
+):
+    site = SourceFragment.from_source(
+        "control_row = [True] * len(data[0])\n",
+        "pandas/io/excel/_base.py",
+    ).statements()[0]
+    count = OpaqueOpCallsite(
+        callee="len",
+        arg=SymbolicValue(make_var("runtime_data_row")),
+        computed=None,
+    )
+    outcome = ListValue((TermValue(True),)).multiply(count, site)
+    assert isinstance(outcome, Incomplete)
+    binding = BoundVar("control_row", FixedSource(outcome), scope=object())
+
+    with pytest.raises(FactoryPanic, match="BoundVar.to_term"):
+        binding.to_term(owner="fill_mi_header argument")

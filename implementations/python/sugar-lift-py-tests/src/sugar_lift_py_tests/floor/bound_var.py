@@ -66,9 +66,31 @@ class BoundVar(FloorValue):
         return outcome
 
     def to_term(self, *, owner: str):
-        from sugar_lift_py_tests.outcome import complete_value
+        from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
         outcome = self.answer(self.scope)
+        from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
+
+        if isinstance(outcome, Incomplete) and isinstance(
+            outcome.effect, SequenceRepetitionRuntimeEffect
+        ):
+            from sugar_lift_py_tests.factory import factory_panic_gap
+            from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
+            effect = outcome.effect
+            factory_panic_gap(
+                owner="BoundVar.to_term",
+                blame=effect.witness.site,
+                observed=type(effect).__name__,
+                requested="completed term substitution",
+                fix=(
+                    "add a Floor recognizer that can carry this runtime-dependent "
+                    "binding into the requesting operation; never collapse an "
+                    "incomplete effect as a completed value"
+                ),
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.CONSTRUCTION,
+            )
         value = complete_value(outcome, owner=f"{owner} bound source")
         return value.to_term(owner=owner)
 
