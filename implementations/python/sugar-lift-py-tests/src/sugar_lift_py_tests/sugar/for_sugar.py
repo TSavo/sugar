@@ -16,6 +16,24 @@ STATIC_UNFOLD_LIMIT = 1024
 # work projects through the shared compact recognition door — never force-curry
 # opacity, never soft Complete, never a bound raise (#5338 / #5375 / #5383).
 BRANCHED_STATIC_UNFOLD_LIMIT = 8
+# Static unfold × subscript/attribute store multiplies setitem post-state
+# super-linearly (product: shortest_path star_graph 9× ~2s; 99× hard timeout).
+# Same compact door and budget as branched bodies (#5338 post-#5574).
+STORE_BODY_STATIC_UNFOLD_LIMIT = BRANCHED_STATIC_UNFOLD_LIMIT
+
+# Body sugars whose reduce cites subscript/attribute post-state. Simple
+# Name augassign (`total += x`) stays on the pure static-unfold budget;
+# store faces do not.
+_STORE_BODY_SUGAR_NAMES = frozenset(
+    {
+        "SubscriptAugAssignSugar",
+        "ResidualSubscriptAugAssignSugar",
+        "SubscriptAssignSugar",
+        "AttributeAugAssignSugar",
+        "NestedAttributeAugAssignSugar",
+        "SelectedAttributeAugAssignSugar",
+    }
+)
 
 
 def is_ground_loop_datum(value) -> bool:
@@ -240,6 +258,8 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             limit = STATIC_UNFOLD_LIMIT
             if self._body_has_branching_statement():
                 limit = min(limit, BRANCHED_STATIC_UNFOLD_LIMIT)
+            if self._body_has_store_statement():
+                limit = min(limit, STORE_BODY_STATIC_UNFOLD_LIMIT)
             needs_compact = element_count > limit or (
                 self._body_has_while() and self._while_reads_non_ground_outer(ctx)
             )
@@ -252,9 +272,10 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         """Shared compact For door for finite work outside the unfold budget.
 
         Recognition projection: bind the target to ``py.iter_elem`` and reduce
-        the body once. Covers branched over-cap lists, pure over-cap
-        materialize, and non-ground while under a finite for. Does not
-        force-curry, soft-complete, truncate, or mint RuntimeEffect.
+        the body once. Covers branched over-cap lists, store-body over-cap
+        lists, pure over-cap materialize, and non-ground while under a finite
+        for. Does not force-curry, soft-complete, truncate, or mint
+        RuntimeEffect.
         """
         return self._bind_and_body(iterable, ctx)
 
@@ -264,6 +285,15 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         Used only to choose the static-unfold budget; recognition is unchanged.
         """
         return self._body_owns_sugar_names({"IfSugar", "MatchSugar", "IfExpSugar"})
+
+    def _body_has_store_statement(self) -> bool:
+        """True when the loop body owns a subscript/attribute store face.
+
+        Used only to choose the static-unfold budget; recognition is unchanged.
+        Store faces multiply setitem post-state under N-fold unfold
+        (shortest_path star_graph residual after #5574).
+        """
+        return self._body_owns_sugar_names(_STORE_BODY_SUGAR_NAMES)
 
     def _body_has_while(self) -> bool:
         """True when the loop body owns a While face (empty-orelse or else)."""

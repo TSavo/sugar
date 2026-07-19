@@ -117,3 +117,105 @@ def test_branched_static_for_over_cap_projects_compact_not_force_curried() -> No
         assert panic.value.info.owner != "finite_unfold", panic.value.info
         return
     assert payload is not None
+
+
+def test_subscript_store_static_for_over_cap_projects_compact() -> None:
+    """#5338 post-#5574: finite For + subscript store must not N-fold setitem.
+
+    Product hang: scipy test_shortest_path star_graph
+      for idx in range(1, n): SP_solution[idx] += ...
+    with pytest parametrize n in (10, 100) materializes range and static-unfolds.
+    Per-iteration setitem post-state is super-linear (9× ~2s; 99× times out).
+
+    Shared door with branched over-cap: recognition projection under
+    py.iter_elem when card > BRANCHED_STATIC_UNFOLD_LIMIT — not force-curry,
+    not soft Complete, not bound raise.
+    """
+    from sugar_lift_py_tests.sugar.for_sugar import (
+        BRANCHED_STATIC_UNFOLD_LIMIT,
+        ForSugar,
+    )
+
+    n = BRANCHED_STATIC_UNFOLD_LIMIT + 1
+    indices = ", ".join(str(i) for i in range(1, n + 1))
+    source = (
+        "def test_star_store():\n"
+        f"    idxs = [{indices}]\n"
+        "    xs = [0] * 32\n"
+        "    for idx in idxs:\n"
+        "        xs[idx] += 1\n"
+        "    assert xs[1] == 1\n"
+    )
+
+    unfold_calls: list[int] = []
+    compact_calls: list[object] = []
+    orig_unfold = ForSugar._unfold_values
+    orig_compact = ForSugar._project_compact_finite
+
+    def _spy_unfold(self, values, ctx, entries=()):
+        unfold_calls.append(len(values) if hasattr(values, "__len__") else -1)
+        return orig_unfold(self, values, ctx, entries)
+
+    def _spy_compact(self, iterable, ctx):
+        compact_calls.append(type(iterable).__name__)
+        return orig_compact(self, iterable, ctx)
+
+    ForSugar._unfold_values = _spy_unfold  # type: ignore[method-assign]
+    ForSugar._project_compact_finite = _spy_compact  # type: ignore[method-assign]
+    try:
+        try:
+            payload = lift_file_payload(source, "store-for.py")
+        except FactoryPanic as panic:
+            owner = getattr(panic.info, "owner", None)
+            assert owner != "finite_unfold", panic.info
+            # Still must have preferred compact over unfold for the store body.
+            assert unfold_calls == [], unfold_calls
+            assert compact_calls, "expected compact projection for store body"
+            return
+        assert payload is not None
+        assert unfold_calls == [], f"static unfold must not fire for store body: {unfold_calls}"
+        assert compact_calls, "expected compact projection for store body over branched cap"
+    finally:
+        ForSugar._unfold_values = orig_unfold  # type: ignore[method-assign]
+        ForSugar._project_compact_finite = orig_compact  # type: ignore[method-assign]
+
+
+def test_parametrize_star_store_for_completes_under_product_shape() -> None:
+    """Product micro of shortest_path star_graph store loop must not hang.
+
+    Mirrors parametrize n in (10, 100) × method × directed expansion of
+    ``for idx in range(1, n): SP_solution[idx] += ...``. List store is
+    enough to trip super-linear unfold history; hang is the residual.
+    """
+    import time
+
+    from sugar_lift_py_tests.sugar.for_sugar import BRANCHED_STATIC_UNFOLD_LIMIT
+
+    assert BRANCHED_STATIC_UNFOLD_LIMIT < 10
+    source = (
+        "import pytest\n"
+        "\n"
+        "@pytest.mark.parametrize('n', (10, 100))\n"
+        "@pytest.mark.parametrize('method', ['FW', 'J', 'BF'])\n"
+        "@pytest.mark.parametrize('directed', (True, False))\n"
+        "def test_star_graph(n, method, directed):\n"
+        "    xs = [0] * 128\n"
+        "    for idx in range(1, n):\n"
+        "        xs[idx] += 1\n"
+        "    assert method is not None or directed is not None\n"
+    )
+    t0 = time.perf_counter()
+    try:
+        payload = lift_file_payload(source, "star-store-param.py")
+    except FactoryPanic as panic:
+        info = getattr(panic, "info", None) or getattr(
+            getattr(panic, "value", None), "info", None
+        )
+        owner = getattr(info, "owner", None)
+        assert owner != "finite_unfold", info
+        elapsed = time.perf_counter() - t0
+        assert elapsed < 8.0, f"store-for product micro too slow before panic: {elapsed:.2f}s"
+        return
+    elapsed = time.perf_counter() - t0
+    assert payload is not None
+    assert elapsed < 8.0, f"store-for product micro hung: {elapsed:.2f}s"
