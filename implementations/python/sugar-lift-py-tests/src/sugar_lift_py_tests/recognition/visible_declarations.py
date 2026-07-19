@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import ast
-import symtable
 
-from sugar_lift_python_source.source_tables import locate_parsed_node, parsed_parents
+from sugar_lift_python_source.source_tables import (
+    locate_parsed_node,
+    parsed_parents,
+    source_symtable,
+)
 
 
 def visible_declarations(statement):
@@ -114,7 +117,9 @@ def lexical_function_bindings(statement) -> frozenset[str]:
     if path is None:
         return frozenset()
     source = statement.source
-    table = symtable.symtable(source, statement.filename or "", "exec")
+    table = source_symtable(source)
+    if table is None:
+        return frozenset()
     table_parent = path[0]
     for scope in _symbol_table_scopes(path):
         if isinstance(scope, (ast.ListComp, ast.SetComp, ast.DictComp)):

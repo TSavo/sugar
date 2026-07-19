@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import ast
 import functools
+import symtable
 
 __all__ = [
     "SOURCE_TABLE_CAPACITY",
@@ -33,6 +34,7 @@ __all__ = [
     "source_lines",
     "source_segment",
     "source_splitlines",
+    "source_symtable",
 ]
 
 # Align with install-source index capacity (install_source_dig): hot working
@@ -153,3 +155,19 @@ def locate_parsed_node(
     if index is None:
         return None
     return index.get((node_type, int(line), int(col)))
+
+
+@functools.lru_cache(maxsize=SOURCE_TABLE_CAPACITY)
+def source_symtable(source: str) -> "symtable.SymbolTable | None":
+    """Content-keyed ``symtable.symtable`` for one module source.
+
+    ``lexical_function_bindings`` re-enters symbol-table construction for every
+    Call site during factory.select. A full re-parse per site is O(module ×
+    sites) and dominated residual wall after parsed_locus_index drained the
+    AST-walk half of the same path. One table per source is the replacement;
+    failures are not cached (SyntaxError returns None each call).
+    """
+    try:
+        return symtable.symtable(source, "<unknown>", "exec")
+    except SyntaxError:
+        return None
