@@ -30,6 +30,8 @@ class NativeShape(Enum):
     RANGE_ARRAY = auto()
     RANDOM_INTEGER_ARRAY = auto()
     NUMPY_ISNAT = auto()
+    NUMPY_ALL = auto()
+    NUMPY_DTYPE = auto()
     NEVER_SUPPRESSING_MANAGER = auto()
     ASSERTING_MANAGER = auto()
     CLASS_IDENTITY_DECORATOR = auto()
@@ -72,6 +74,8 @@ _CALL_SHAPES = {
     "numpy.arange": NativeShape.RANGE_ARRAY,
     "numpy.random.randint": NativeShape.RANDOM_INTEGER_ARRAY,
     "numpy.isnat": NativeShape.NUMPY_ISNAT,
+    "numpy.all": NativeShape.NUMPY_ALL,
+    "numpy.dtype": NativeShape.NUMPY_DTYPE,
     "open": NativeShape.NEVER_SUPPRESSING_MANAGER,
     "builtins.open": NativeShape.NEVER_SUPPRESSING_MANAGER,
     "contextlib.closing": NativeShape.NEVER_SUPPRESSING_MANAGER,
