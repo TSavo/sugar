@@ -36,13 +36,46 @@ def owns(value):
     )
 
     offenders = _SCANNER.scan_roots((sugar,))
+    kinds = {(row.kind, row.vendor) for row in offenders}
 
-    assert [(row.kind, row.vendor) for row in offenders] == [
-        ("vendor-name-match", "pandas"),
-        ("vendor-name-match", "requests"),
-        ("vendor-isinstance", "numpy"),
-    ]
-    assert _SCANNER.r_vendor_special_case(offenders) == 3
+    assert ("vendor-name-match", "pandas") in kinds
+    assert ("vendor-isinstance", "numpy") in kinds
+    # Relocating a logo into a set/dict must still trip — never a green hide.
+    assert ("vendor-table-literal", "requests") in kinds
+    assert _SCANNER.r_vendor_special_case(offenders) >= 3
+
+
+def test_planted_mapping_literal_twin_trips_floor(tmp_path: Path) -> None:
+    """Moving a vendor name from == into a dispatch dict cannot green the floor."""
+    sugar = tmp_path / "sugar"
+    sugar.mkdir()
+    (sugar / "registry.py").write_text(
+        """
+# No comparisons — only a recognition-style registry initializer.
+_CALL_SHAPES = {
+    "numpy.arange": "RANGE_ARRAY",
+    "sqlalchemy.orm.registry": "SQLALCHEMY_ORM_REGISTRY",
+}
+_IDENTITY = {("pandas.api.extensions", "register_series_accessor")}
+_FIXTURE = {"pytest.fixture"}
+""",
+        encoding="utf-8",
+    )
+
+    offenders = _SCANNER.scan_roots((sugar,))
+    kinds = {(row.kind, row.vendor, row.expression) for row in offenders}
+
+    assert ("vendor-table-literal", "numpy", "'numpy.arange'") in kinds
+    assert (
+        "vendor-table-literal",
+        "sqlalchemy",
+        "'sqlalchemy.orm.registry'",
+    ) in kinds
+    assert ("vendor-table-literal", "pandas", "'pandas.api.extensions'") in kinds
+    assert ("vendor-table-literal", "pytest", "'pytest.fixture'") in kinds
+    assert _SCANNER.r_vendor_special_case(offenders) >= 4
+    # Pure mapping hide: no compare / isinstance required
+    assert all(row.kind == "vendor-table-literal" for row in offenders)
 
 
 def test_shape_checks_do_not_trip_floor(tmp_path: Path) -> None:
@@ -59,25 +92,41 @@ def owns(value):
     assert _SCANNER.scan_roots((sugar,)) == []
 
 
+def test_language_protocol_string_without_vendor_root_stays_quiet(
+    tmp_path: Path,
+) -> None:
+    """stdlib / language coordinates are not scanned vendor roots."""
+    sugar = tmp_path / "sugar"
+    sugar.mkdir()
+    (sugar / "lang.py").write_text(
+        """
+_LANG = {
+    "functools.wraps": "IMPLEMENTATION_PRESERVING_DECORATOR",
+    "pathlib.Path": "PATH",
+    "re.compile": "REGEX_PATTERN",
+    "dataclasses.dataclass": True,
+}
+""",
+        encoding="utf-8",
+    )
+
+    assert _SCANNER.scan_roots((sugar,)) == []
+
+
 def test_unreadable_or_invalid_source_is_structured_not_crash(tmp_path: Path) -> None:
     """Windows portability: auditor must not process-crash on bad files (#5253)."""
     sugar = tmp_path / "sugar"
     sugar.mkdir()
-    # Invalid UTF-8 bytes that still look like a .py path
     bad = sugar / "binaryish.py"
     bad.write_bytes(b"\xff\xfe\x00not-valid-python\x00")
-    # Unparseable Python
     (sugar / "syntax_error.py").write_text("def (\n", encoding="utf-8")
-    # Missing root should also not raise
     missing = tmp_path / "does-not-exist"
 
     offenders = _SCANNER.scan_roots((sugar, missing))
     kinds = {row.kind for row in offenders}
     assert "auditor-parse-error" in kinds or "auditor-read-error" in kinds
     assert "auditor-root-error" in kinds
-    # Logo floor stays zero for pure auditor diagnostics
     assert _SCANNER.r_vendor_special_case(offenders) == 0
     assert _SCANNER.r_auditor_errors(offenders) >= 1
-    # CLI exits 1 (red structured), never raises
     code = _SCANNER.main([str(sugar), str(missing)])
     assert code == 1

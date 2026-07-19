@@ -178,16 +178,14 @@ _NATIVE_DECORATORS = {
     "functools.wraps": NativeShape.IMPLEMENTATION_PRESERVING_DECORATOR,
 }
 
-# Fixture / inject-provider protocol: registered import coordinates only.
-# Consumers authenticate via recognize_native_fixture_decorator(qualified),
-# never by comparing against a vendor-name string literal in recognition code.
+# Fixture / inject-provider protocol coordinates.
 #
-# Protocol is the general testing fixture decorator (pytest.fixture). Vendor-
-# specific fixture spellings are intentionally NOT registered — that would be
-# logo dispatch by relocation (#5578 bounce).
-_FIXTURE_DECORATORS = {
-    "pytest.fixture": NativeShape.FIXTURE_DECORATOR,
-}
+# Empty by doctrine: no logo string (including ``pytest.fixture``) is
+# sufficient construction evidence. Fixture-dependent ClassDef / parameter
+# rows stay loud until fixture semantics arrive through an explicit
+# kit/bridge/proof contract — not a production recognition mapping.
+# See R_vendor_special_case vendor-table-literal census.
+_FIXTURE_DECORATORS: dict[str, NativeShape] = {}
 
 _NATIVE_INSTANCE_CLASS_DECORATORS = {
     (NativeShape.SQLALCHEMY_ORM_REGISTRY, "mapped"): (
