@@ -108,8 +108,8 @@ def test_chained_subscript_targets_construct_through_the_one_door() -> None:
 @pytest.mark.parametrize(
     "source",
     (
-        # Chained multi-target with a tuple leaf stays unowned (not ChainedAssign).
-        "x = y = (a, b) = z",
+        # A dynamically rooted tuple leaf stays outside the chained owner.
+        "x = y = (factory().a, b) = z",
         # Dynamic attribute root is still outside NestedAttribute / AttributeAssign.
         "f().x = g().y = value",
     ),

@@ -14,10 +14,12 @@ from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContex
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import ReturnValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.sugar.attribute_assign_sugar import AttributeAssignSugar
 from sugar_lift_py_tests.sugar.chained_assign_sugar import ChainedAssignSugar
 from sugar_lift_py_tests.sugar.subscript_assign_sugar import SubscriptAssignSugar
+from sugar_lift_py_tests.sugar.tuple_unpack_assign_sugar import TupleNameStore
 
 
 def _build(source: str):
@@ -64,11 +66,37 @@ def test_chained_mixed_targets_reuse_existing_store_owners() -> None:
     assert subscript.structural_indices == ()
 
 
+def test_chained_tuple_then_attribute_targets_reuse_existing_store_owners() -> None:
+    built = _build("(db1, db2, db3, db4) = self._dbs = self.dbs = result")
+
+    assert isinstance(built.sugar, ChainedAssignSugar)
+    assert [type(store.sugar).__name__ for store in built.sugar.stores] == [
+        TupleNameStore.__name__,
+        TupleNameStore.__name__,
+        TupleNameStore.__name__,
+        TupleNameStore.__name__,
+        AttributeAssignSugar.__name__,
+        AttributeAssignSugar.__name__,
+    ]
+
+
+def test_chained_tuple_target_witness_truthful_sat_lying_unsat(
+    tmp_path: Path,
+) -> None:
+    witness = next(
+        pair
+        for pair in ChainedAssignSugar.witnesses()
+        if pair.name == "chained_tuple_target_return"
+    )
+
+    assert evaluate_seed_witnesses((witness,), tmp_path).is_zero
+
+
 @pytest.mark.parametrize(
     "source",
     (
         "factory().value = alias = result",
-        "left = (right, other) = result",
+        "left = (factory().right, other) = result",
     ),
 )
 def test_adjacent_chained_target_shapes_stay_loud(source: str) -> None:
