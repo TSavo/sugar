@@ -108,6 +108,48 @@ class UnaryOpSugar(Sugar, role=SugarRole.TERM):
                 lying=predicate_minus_prefix
                 + "    assert -(value == 1) and (value == 1)\n",
             ),
+            _call_pair(
+                name="bool_unary_minus",
+                owner_sugar=cls.__name__,
+                truthful=(
+                    "def A():\n"
+                    "    return -True\n"
+                    "\n"
+                    "def test_a():\n"
+                    "    assert A() == -1\n"
+                ),
+                lying=(
+                    "def A():\n"
+                    "    return -True\n"
+                    "\n"
+                    "def test_a():\n"
+                    "    assert A() == 0\n"
+                ),
+            ),
+            _call_pair(
+                name="native_coordinate_unary_minus",
+                owner_sugar=cls.__name__,
+                truthful=(
+                    "from pandas import NaT\n"
+                    "\n"
+                    "def A(z):\n"
+                    "    value = -NaT\n"
+                    "    return z\n"
+                    "\n"
+                    "def test_a():\n"
+                    "    assert A(5) == 5\n"
+                ),
+                lying=(
+                    "from pandas import NaT\n"
+                    "\n"
+                    "def A(z):\n"
+                    "    value = -NaT\n"
+                    "    return z\n"
+                    "\n"
+                    "def test_a():\n"
+                    "    assert A(5) == 0\n"
+                ),
+            ),
             typed_red_effect_witness(
                 name="runtime_callsite_unary_plus",
                 owner_sugar=cls.__name__,

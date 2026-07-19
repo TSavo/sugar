@@ -22,13 +22,19 @@ from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSug
 
 
 @pytest.mark.parametrize(
-    "expr",
-    ["-True", "+True", "~True", "-False", "~False"],
+    ("expr", "expected"),
+    [("-True", -1), ("~True", -2), ("-False", 0), ("~False", -1)],
 )
-def test_bool_unary_panics_cleanly_not_attribute_error(expr: str) -> None:
-    """Repro inputs that AttributeError'd before #4135 now FactoryPanic."""
+def test_bool_integer_unary_operators_construct_exact_values(
+    expr: str, expected: int
+) -> None:
+    assert reduce_value(expr) == TermValue(expected)
+
+
+def test_unbuilt_bool_unary_plus_panics_cleanly_not_attribute_error() -> None:
+    """The still-unbuilt bool unary-plus floor stays a loud FactoryPanic."""
     with pytest.raises(FactoryPanic) as raised:
-        reduce_value(expr)
+        reduce_value("+True")
     assert raised.value.info.gap_kind.name == "FLOOR" or (
         raised.value.info.requested
         and "unary" in raised.value.info.requested
@@ -55,24 +61,17 @@ def test_not_true_as_expression_statement_does_not_attribute_error() -> None:
     )
 
 
-def test_audit_door_holds_unary_on_bool_as_floor_gap() -> None:
-    """audit_lift_file over return -True yields a Floor gap row, not a crash.
+def test_audit_lift_constructs_bool_unary_minus_function_contract() -> None:
+    """Normal audit over return -True constructs the exact integer result.
 
     (x = -True alone does not reduce the unary -- BoundVar holds the source
     until a use recomposes it. return -True forces desugar of the unary.)
     """
     source = "def f():\n    return -True\n"
-    payload, gaps = audit_lift_file(source, "t.py", hold_panic=True)
-    assert gaps, "audit door must hold the Floor gap, not crash"
-    assert any(
-        g.info.get("observed") == "TrueBoolLiteralSugar"
-        and "unary-minus" in g.info.get("requested", "")
-        for g in gaps
-    ) or any(g.info.get("gap_kind") == "Floor" for g in gaps), [g.info for g in gaps]
-    # The def panicked -- no function-contract row; the gap is the signal.
-    assert not any(
-        getattr(row, "kind", None) == "function-contract" for row in payload.ir
-    )
+    payload, gaps = audit_lift_file(source, "t.py")
+
+    assert not gaps
+    assert any(getattr(row, "kind", None) == "function-contract" for row in payload.ir)
 
 
 # -- do not regress ground folds -------------------------------------------

@@ -52,6 +52,18 @@ class NativeCallableValue(FloorValue):
             return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
         return super().add(other, site)
 
+    def unary_minus(self, site):
+        """Construct negation of the exact installed-native coordinate.
+
+        This does not claim the native symbol's Python type or fold its value.
+        The source already names both the installed coordinate and unary
+        operation, so the lawful result is the same ``py.neg`` term used by the
+        symbolic floor.
+        """
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        return SymbolicValue(self.to_term(owner=str(site))).unary_minus(site)
+
     def divide(self, other, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
