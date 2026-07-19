@@ -18,6 +18,7 @@ from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
     assert {
         "all",
+        "list",
         "numpy.can_cast",
         "numpy.isnan",
         "numpy.all",
@@ -26,12 +27,80 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
     } <= (BuiltinCalleeUniverseSugar.universe_coordinates)
     assert {
         "all_builtin_universe_coordinate",
+        "list_builtin_universe_coordinate",
         "numpy_can_cast_universe_coordinate",
         "numpy_isnan_universe_coordinate",
         "numpy_all_universe_coordinate",
         "get_handler_name_builtin_universe_coordinate",
         "conv_builtin_universe_coordinate",
     } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
+
+
+def _list_call_site(source: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "list"
+    )
+    return SourceFragment.from_node(call, "list_call.py", source=source)
+
+
+def test_authenticated_list_selects_one_factory_owner() -> None:
+    source = "def test_list(values):\n    assert list(values) == []\n"
+    context = FactoryBuildContext(
+        filename="list_call.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _list_call_site(source),
+        filename="list_call.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def test_list(list, values):\n    assert list(values) == []\n",
+        (
+            "def test_list(values):\n"
+            "    assert list(values) == []\n"
+            "    list = replacement\n"
+        ),
+        (
+            "class PretendList:\n"
+            "    def __call__(self, values):\n"
+            "        return values\n"
+            "\n"
+            "def test_list(list, values):\n"
+            "    assert list(values) == []\n"
+        ),
+    ],
+)
+def test_unwarranted_list_receiver_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="list_call.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _list_call_site(source),
+        filename="list_call.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_list_witness_pair_is_enrolled() -> None:
+    assert "list_builtin_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
 
 
 def _can_cast_call_site(source: str) -> SourceFragment:

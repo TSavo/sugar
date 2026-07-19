@@ -15,6 +15,13 @@ _GENERIC_COORDINATE_CLAIMS = frozenset(
     {"CallSugar", "KeywordCallSugar", "MethodCallSugar"}
 )
 
+# Floor coordinates that reuse CallSiteValue/call-edge machinery but are not
+# diggable callees. ``py.subscript`` is SubscriptSugar's symbolic term spelling;
+# it is not a BuiltinCalleeUniverse family. Nested ``call(...)[i]`` shares the
+# Call's left-edge col_offset with the Subscript, so these edges can land on an
+# assertion Call locus without belonging to that Call.
+_NON_CALLABLE_FLOOR_COORDINATES = frozenset({"py.subscript"})
+
 
 def universe_coverage_gaps(
     payload,
@@ -56,11 +63,17 @@ def universe_coverage_gaps(
             continue
         seen.add(key)
         callee = _callee_name(target)
+        if callee in _NON_CALLABLE_FLOOR_COORDINATES:
+            # Floor coordinate (e.g. py.subscript), not a callable universe.
+            continue
         if callee in body_symbols:
             continue
         if _edge_carries_external_universe(edge):
             continue
         node = call_nodes.get((line, col))
+        if not _edge_belongs_to_call(target, node):
+            # Co-located floor/callsite edge sharing the Call's col_offset.
+            continue
         from sugar_lift_py_tests.recognition.callee_universe import (
             recognize_callee_universe,
         )
@@ -111,6 +124,24 @@ def _contract_symbols(contract) -> set[str]:
 
 def _callee_name(target: str) -> str:
     return target.split(":", 1)[1] if ":" in target else target
+
+
+def _edge_belongs_to_call(target: str, site) -> bool:
+    """True when the edge names this Call, not a co-located floor coordinate.
+
+    Python gives nested ``recv.method(args)[index]`` the same left-edge
+    ``col_offset`` for the Call and the wrapping Subscript. Call-edge
+    testimony from ``py.subscript`` therefore collides with the Call locus
+    filter without being that Call's callee.
+    """
+
+    if site is None or site.observed != "Call":
+        return False
+    leaf = site.call_target_name()
+    if leaf is None:
+        return False
+    callee = _callee_name(target)
+    return callee == leaf or callee.endswith(f".{leaf}")
 
 
 def _edge_carries_external_universe(edge: Mapping[str, object]) -> bool:

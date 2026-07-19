@@ -31,7 +31,7 @@ _IMPORTED_SUPPORT = {
     "numpy.all": CalleeUniverseSupport.NUMPY_ALL,
 }
 
-_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all"})
+_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list"})
 
 
 def recognize_callee_universe(

@@ -114,6 +114,10 @@ def test_builtin_covered_callee_emits_no_universe_gap() -> None:
             "def test_all(value):\n    assert all(value)\n",
         ),
         (
+            "list",
+            "def test_list(value):\n    assert list(value) == []\n",
+        ),
+        (
             "get_handler_name",
             "from numpy._core.multiarray import get_handler_name\n"
             "def test_handler():\n"
@@ -144,7 +148,7 @@ def test_authenticated_builtin_coordinate_emits_no_universe_gap(
     )
     assert _universe_gaps(payload) == []
 
-    if callee in {"type", "dtype", "all"}:
+    if callee in {"type", "dtype", "all", "list"}:
         node = ast.parse(f"{callee}(value)", mode="eval").body
         context = FactoryBuildContext(
             filename="coordinate.py", catalog=default_catalog()
@@ -158,7 +162,39 @@ def test_authenticated_builtin_coordinate_emits_no_universe_gap(
         assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
 
 
-@pytest.mark.parametrize("callee", ["get_handler_name", "conv", "all"])
+def test_py_subscript_floor_coordinate_is_not_a_callee_universe_gap() -> None:
+    """call:py.subscript is SubscriptSugar's floor coordinate, not a callee.
+
+    Nested ``call(...)[i]`` shares the Call's left-edge col_offset with the
+    Subscript, so a call-edge for py.subscript can land on an assertion Call
+    locus. That must not demand BuiltinCalleeUniverse coverage.
+    """
+
+    source = (
+        "def test_index(values):\n"
+        "    assert values.astype(int)[()] == 0\n"
+    )
+    payload = lift_file_payload(source, "py_subscript_floor.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:py.subscript"
+        for edge in payload.call_edges
+    )
+    assert not any(gap.ast_kind == "call:py.subscript" for gap in _universe_gaps(payload))
+
+
+def test_bare_subscript_under_assert_is_not_a_callee_universe_gap() -> None:
+    source = "def test_index(values, i):\n    assert values[i] == 0\n"
+    payload = lift_file_payload(source, "bare_subscript.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:py.subscript"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+@pytest.mark.parametrize("callee", ["get_handler_name", "conv", "all", "list"])
 def test_shadowed_authenticated_coordinate_stays_unclassified(callee: str) -> None:
     source = f"def test_shadowed({callee}):\n" f"    assert {callee}(5) == 5\n"
 

@@ -29,6 +29,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "type",
         "dtype",
         "all",
+        "list",
         "numpy.can_cast",
         "numpy.isnan",
         "numpy.all",
@@ -93,6 +94,7 @@ class BuiltinCalleeUniverseSugar(
             _coordinate_witness("type", "5", "6"),
             _coordinate_witness("dtype", "'i4'", "'i8'"),
             _coordinate_witness("all", "True", "False"),
+            _coordinate_witness("list", "[]", "[0]"),
             _imported_coordinate_witness(
                 name="get_handler_name",
                 setup=("from numpy._core.multiarray import get_handler_name\n"),
