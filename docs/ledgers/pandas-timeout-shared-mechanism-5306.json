@@ -1,0 +1,871 @@
+{
+  "schema": "sugar.pandas.timeout.drain.v1",
+  "issue": 5306,
+  "baseline_commit": "419c7c5dfb16ed5c3f4094a5b10c12a1bd9c82f1",
+  "final_rebase_commit": "a8a6939321ee4468b6efa2d5dfd161a4adcfa14f",
+  "environment": {
+    "python": "3.12.3",
+    "numpy": "2.5.1",
+    "pandas": "3.0.3",
+    "per_file_timeout_seconds": 30
+  },
+  "mechanism": "defer factory construction of function bodies until callable dig demands each statement; decorators and defaults remain eager",
+  "before": {
+    "timeout-or-hang": 130
+  },
+  "after": {
+    "bare-exception": 2,
+    "completed": 49,
+    "factory-construction-panic": 13,
+    "timeout-or-hang": 66
+  },
+  "conservation": {
+    "input_files": 130,
+    "silent": 0
+  },
+  "files": [
+    {
+      "file": "pandas/_testing/asserters.py",
+      "disposition": "completed",
+      "elapsed_seconds": 15,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/algorithms.py",
+      "disposition": "completed",
+      "elapsed_seconds": 29,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/apply.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 27,
+      "terminal": {
+        "owner": "FunctionCallable decorator factory:cache",
+        "observed": "missing callsite body for decorator factory `cache`",
+        "blame": "pandas/core/apply.py:1115:24"
+      }
+    },
+    {
+      "file": "pandas/core/arrays/_mixins.py",
+      "disposition": "completed",
+      "elapsed_seconds": 23,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/arrays/base.py",
+      "disposition": "completed",
+      "elapsed_seconds": 25,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/arrays/categorical.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/arrays/datetimelike.py",
+      "disposition": "completed",
+      "elapsed_seconds": 24,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/arrays/datetimes.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 25,
+      "terminal": {
+        "owner": "RuntimeEffect",
+        "observed": "py.lt operand=NoneValue()",
+        "blame": "pandas/core/arrays/datetimes.py:3004:27"
+      }
+    },
+    {
+      "file": "pandas/core/arrays/interval.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 23,
+      "terminal": {
+        "owner": "ConstructorCallSugar",
+        "observed": "IntervalArray bases=('IntervalMixin', 'ExtensionArray')",
+        "blame": "pandas/core/arrays/interval.py:1269:20"
+      }
+    },
+    {
+      "file": "pandas/core/arrays/masked.py",
+      "disposition": "completed",
+      "elapsed_seconds": 28,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/arrays/sparse/array.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/generic.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/groupby/generic.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/groupby/ops.py",
+      "disposition": "completed",
+      "elapsed_seconds": 22,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/indexes/datetimes.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/indexes/multi.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 24,
+      "terminal": {
+        "owner": "ForSugar",
+        "observed": [
+          "codes",
+          "levels",
+          "names",
+          "mi"
+        ],
+        "blame": "pandas/core/indexes/multi.py:2611:12"
+      }
+    },
+    {
+      "file": "pandas/core/indexes/period.py",
+      "disposition": "completed",
+      "elapsed_seconds": 16,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/methods/describe.py",
+      "disposition": "completed",
+      "elapsed_seconds": 21,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/nanops.py",
+      "disposition": "completed",
+      "elapsed_seconds": 14,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/resample.py",
+      "disposition": "completed",
+      "elapsed_seconds": 23,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/reshape/merge.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 23,
+      "terminal": {
+        "owner": "TemporalContext",
+        "observed": "lidx",
+        "blame": "pandas/core/reshape/merge.py:2156:11"
+      }
+    },
+    {
+      "file": "pandas/core/reshape/pivot.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/series.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/tools/datetimes.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/core/window/rolling.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 24,
+      "terminal": {
+        "owner": "add",
+        "observed": "ComprehensionValue",
+        "blame": "pandas/core/window/rolling.py:827:23"
+      }
+    },
+    {
+      "file": "pandas/io/formats/format.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 17,
+      "terminal": {
+        "owner": "CallSiteValue.append_with",
+        "observed": "CallSiteValue(iter_elem)",
+        "blame": "pandas/io/formats/format.py:733:16"
+      }
+    },
+    {
+      "file": "pandas/plotting/_matplotlib/groupby.py",
+      "disposition": "completed",
+      "elapsed_seconds": 18,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/apply/test_frame_apply.py",
+      "disposition": "bare-exception",
+      "elapsed_seconds": 13,
+      "terminal": {
+        "exception_type": "TypeError",
+        "reason": "PartialFunctionCallable.callsite() got an unexpected keyword argument 'native_shape'"
+      }
+    },
+    {
+      "file": "pandas/tests/apply/test_series_apply.py",
+      "disposition": "completed",
+      "elapsed_seconds": 25,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/arithmetic/test_datetime64.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 28,
+      "terminal": {
+        "owner": "unary_minus",
+        "observed": "NativeCallableValue",
+        "blame": "pandas/tests/arithmetic/test_datetime64.py:1944:31"
+      }
+    },
+    {
+      "file": "pandas/tests/arithmetic/test_numeric.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/arithmetic/test_period.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/copy_view/test_functions.py",
+      "disposition": "completed",
+      "elapsed_seconds": 24,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/copy_view/test_interp_fillna.py",
+      "disposition": "completed",
+      "elapsed_seconds": 18,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/copy_view/test_methods.py",
+      "disposition": "completed",
+      "elapsed_seconds": 27,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/dtypes/test_missing.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/extension/test_arrow.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 27,
+      "terminal": {
+        "owner": "SequentialDigBody",
+        "observed": "Return",
+        "blame": ".venv312/lib/python3.12/site-packages/pandas/core/dtypes/dtypes.py:2401:8"
+      }
+    },
+    {
+      "file": "pandas/tests/frame/common.py",
+      "disposition": "completed",
+      "elapsed_seconds": 19,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/frame/indexing/test_getitem.py",
+      "disposition": "completed",
+      "elapsed_seconds": 25,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/frame/indexing/test_setitem.py",
+      "disposition": "completed",
+      "elapsed_seconds": 22,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/frame/indexing/test_xs.py",
+      "disposition": "completed",
+      "elapsed_seconds": 21,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/frame/methods/test_asfreq.py",
+      "disposition": "completed",
+      "elapsed_seconds": 19,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/frame/methods/test_astype.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 27,
+      "terminal": {
+        "owner": "FunctionCallable",
+        "observed": "ImportAliasValue",
+        "blame": "pandas/tests/frame/methods/test_astype.py:909:9"
+      }
+    },
+    {
+      "file": "pandas/tests/frame/methods/test_drop_duplicates.py",
+      "disposition": "completed",
+      "elapsed_seconds": 22,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/frame/methods/test_join.py",
+      "disposition": "completed",
+      "elapsed_seconds": 17,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/frame/methods/test_set_index.py",
+      "disposition": "completed",
+      "elapsed_seconds": 24,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/frame/methods/test_to_csv.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/frame/test_stack_unstack.py",
+      "disposition": "completed",
+      "elapsed_seconds": 26,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/frame/test_subclass.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/groupby/aggregate/test_aggregate.py",
+      "disposition": "bare-exception",
+      "elapsed_seconds": 29,
+      "terminal": {
+        "exception_type": "TypeError",
+        "reason": "PartialFunctionCallable.callsite() got an unexpected keyword argument 'native_shape'"
+      }
+    },
+    {
+      "file": "pandas/tests/groupby/aggregate/test_other.py",
+      "disposition": "completed",
+      "elapsed_seconds": 22,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/groupby/methods/test_rank.py",
+      "disposition": "completed",
+      "elapsed_seconds": 28,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/groupby/test_groupby.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/groupby/transform/test_transform.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/datetimes/methods/test_to_period.py",
+      "disposition": "completed",
+      "elapsed_seconds": 21,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/datetimes/test_constructors.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/datetimes/test_join.py",
+      "disposition": "completed",
+      "elapsed_seconds": 21,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/interval/test_astype.py",
+      "disposition": "completed",
+      "elapsed_seconds": 21,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/interval/test_constructors.py",
+      "disposition": "completed",
+      "elapsed_seconds": 21,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/interval/test_interval_range.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/multi/test_analytics.py",
+      "disposition": "completed",
+      "elapsed_seconds": 19,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/period/test_constructors.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/period/test_indexing.py",
+      "disposition": "completed",
+      "elapsed_seconds": 28,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/period/test_partial_slicing.py",
+      "disposition": "completed",
+      "elapsed_seconds": 19,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/period/test_setops.py",
+      "disposition": "completed",
+      "elapsed_seconds": 24,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexes/test_base.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexing/test_iloc.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/indexing/test_indexing.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/internals/test_internals.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/excel/test_writers.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/json/test_pandas.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/parser/common/test_chunksize.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/parser/common/test_iterator.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/parser/test_c_parser_only.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/parser/test_network.py",
+      "disposition": "completed",
+      "elapsed_seconds": 26,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/pytables/test_append.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/pytables/test_categorical.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/pytables/test_compat.py",
+      "disposition": "completed",
+      "elapsed_seconds": 27,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/pytables/test_put.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/pytables/test_select.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/pytables/test_store.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/test_fsspec.py",
+      "disposition": "completed",
+      "elapsed_seconds": 28,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/test_pickle.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/test_sql.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/io/test_stata.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/plotting/test_datetimelike.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/plotting/test_misc.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/plotting/test_series.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reductions/test_reductions.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/resample/test_base.py",
+      "disposition": "completed",
+      "elapsed_seconds": 29,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/resample/test_datetime_index.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/resample/test_period_index.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_append.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_concat.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_dataframe.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_datetimes.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_empty.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_index.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/concat/test_series.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/merge/test_join.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 27,
+      "terminal": {
+        "owner": "FunctionCallable",
+        "observed": "ImportAliasValue",
+        "blame": "pandas/tests/reshape/merge/test_join.py:571:13"
+      }
+    },
+    {
+      "file": "pandas/tests/reshape/merge/test_merge.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/merge/test_merge_asof.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/test_cut.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/test_get_dummies.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/test_melt.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/reshape/test_pivot.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/accessors/test_dt_accessor.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/indexing/test_datetime.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/indexing/test_getitem.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/indexing/test_indexing.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/indexing/test_setitem.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/methods/test_align.py",
+      "disposition": "completed",
+      "elapsed_seconds": 25,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/methods/test_asof.py",
+      "disposition": "completed",
+      "elapsed_seconds": 29,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/methods/test_combine_first.py",
+      "disposition": "completed",
+      "elapsed_seconds": 26,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/methods/test_fillna.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/methods/test_infer_objects.py",
+      "disposition": "completed",
+      "elapsed_seconds": 23,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/test_constructors.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/series/test_subclass.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/test_sorting.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/tools/test_to_numeric.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 21,
+      "terminal": {
+        "owner": "FunctionCallable",
+        "observed": "ImportAliasValue",
+        "blame": "pandas/tests/tools/test_to_numeric.py:78:9"
+      }
+    },
+    {
+      "file": "pandas/tests/tseries/frequencies/test_inference.py",
+      "disposition": "completed",
+      "elapsed_seconds": 29,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/tslibs/test_parsing.py",
+      "disposition": "factory-construction-panic",
+      "elapsed_seconds": 15,
+      "terminal": {
+        "owner": "FunctionCallable",
+        "observed": "ImportAliasValue",
+        "blame": "pandas/tests/tslibs/test_parsing.py:395:9"
+      }
+    },
+    {
+      "file": "pandas/tests/util/test_hashing.py",
+      "disposition": "completed",
+      "elapsed_seconds": 25,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/window/moments/test_moments_consistency_ewm.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/window/test_api.py",
+      "disposition": "completed",
+      "elapsed_seconds": 29,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/window/test_apply.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/window/test_base_indexer.py",
+      "disposition": "completed",
+      "elapsed_seconds": 28,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/window/test_rolling.py",
+      "disposition": "timeout-or-hang",
+      "elapsed_seconds": 30,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/window/test_rolling_quantile.py",
+      "disposition": "completed",
+      "elapsed_seconds": 29,
+      "terminal": null
+    },
+    {
+      "file": "pandas/tests/window/test_win_type.py",
+      "disposition": "completed",
+      "elapsed_seconds": 24,
+      "terminal": null
+    }
+  ]
+}

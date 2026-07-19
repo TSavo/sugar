@@ -45,6 +45,46 @@ def _root_universe(source: str) -> UniverseValue:
     return value
 
 
+def test_statement_function_body_factory_construction_is_deferred(
+    monkeypatch,
+) -> None:
+    root = SourceFragment.from_source(
+        "def helper(value=1):\n"
+        "    first = value + 1\n"
+        "    second = first + 1\n"
+        "    return second\n",
+        "deferred.py",
+    )
+    function = next(
+        fragment for fragment in root.walk() if fragment.observed == "FunctionDef"
+    )
+    catalog = default_catalog()
+    ctx = FactoryBuildContext(
+        filename="deferred.py",
+        catalog=catalog,
+        defer_function_body_construction=True,
+    )
+    original = FactoryBuildContext.build_body
+    built: list[tuple[str, SugarRole]] = []
+
+    def counted_build_body(self, site, role):
+        built.append((site.observed, role))
+        return original(self, site, role)
+
+    monkeypatch.setattr(FactoryBuildContext, "build_body", counted_build_body)
+
+    sugar = StatementFunctionDefSugar.new(function, ctx)
+    value = complete_value(sugar.desugar(ctx), owner="deferred statement function body")
+
+    assert isinstance(value, FunctionCallable)
+    assert value.body is not None
+    assert ("Block", SugarRole.STATEMENT) not in built
+    assert not any(
+        observed in {"Assign", "Return"} and role is SugarRole.STATEMENT
+        for observed, role in built
+    )
+
+
 def test_nested_def_binds_named_callable_and_later_call_digs_body() -> None:
     universe = _root_universe(
         "def outer(x):\n"
@@ -179,10 +219,7 @@ def test_authenticated_functools_module_wraps_carries_native_contract() -> None:
         owner="functools module decorator identity",
     )
     assert isinstance(decorator, CallSiteValue)
-    assert (
-        decorator.native_shape
-        is NativeShape.IMPLEMENTATION_PRESERVING_DECORATOR
-    )
+    assert decorator.native_shape is NativeShape.IMPLEMENTATION_PRESERVING_DECORATOR
 
 
 def test_unqualified_wraps_lookalike_stays_loud() -> None:
@@ -286,9 +323,7 @@ def test_lookalike_attribute_wraps_without_functools_import_stays_loud() -> None
     assert decorator_value_preserves_implementation(decorator) is False
     impl = FunctionCallable(name="wrapper", body=object())
     with pytest.raises(FactoryPanic) as raised:
-        replace(impl, decorators=(decorator,)).callsite(
-            (TermValue(3),), (), wraps_call
-        )
+        replace(impl, decorators=(decorator,)).callsite((TermValue(3),), (), wraps_call)
     assert "decorator factory:wraps" in raised.value.info.owner
 
 

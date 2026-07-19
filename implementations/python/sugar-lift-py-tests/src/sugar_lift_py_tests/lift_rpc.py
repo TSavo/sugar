@@ -1435,6 +1435,7 @@ def _module_import_temporal(
                 temporal=temporal,
                 module_temporal=temporal,
                 name_resolver=module_function_resolver,
+                defer_function_body_construction=True,
             )
             # FactoryPanic propagates (#5238); no seed soft-continue.
             outcome = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
@@ -1448,6 +1449,7 @@ def _module_import_temporal(
                 temporal=temporal,
                 module_temporal=temporal,
                 name_resolver=module_function_resolver,
+                defer_function_body_construction=True,
             )
             # FunctionDef owns body panics; seed must not swallow them (#5238).
             callable_value = ctx.build_body(stmt, SugarRole.STATEMENT).reduce(ctx)
