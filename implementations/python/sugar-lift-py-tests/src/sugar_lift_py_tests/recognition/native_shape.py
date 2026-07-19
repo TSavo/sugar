@@ -53,6 +53,7 @@ class NativeShape(Enum):
     CLASS_IDENTITY_DECORATOR = auto()
     IMPLEMENTATION_PRESERVING_DECORATOR = auto()
     FIXTURE_DECORATOR = auto()
+    PARAMETRIZE_DECORATOR = auto()
     # SQLALCHEMY_ORM_REGISTRY retired (#5603): hard-coded sqlalchemy.orm.registry /
     # as_declarative / mapped coordinates were illegal logo branches — deleted.
     # ClassDef identity for those shapes stays loud until an external kit contract.
@@ -114,6 +115,10 @@ _NATIVE_DECORATORS = {
 # Fixture providers: no hard-coded logo. Stay loud until an explicit kit/bridge
 # contract loads a fixture protocol (#5603). Empty by construction.
 _FIXTURE_DECORATORS: dict[str, NativeShape] = {}
+
+# Parametrize providers: empty until an explicit kit/bridge contract
+# loads the decorator coordinate (#5603 class: no hard-coded pytest logos).
+_PARAMETRIZE_DECORATORS: dict[str, NativeShape] = {}
 
 # Instance class-decorators derived from vendor shapes are retired until those
 # shapes arrive via external contract (not hard-coded coordinates).
@@ -251,6 +256,37 @@ def recognize_native_fixture_decorator(target: str | None) -> NativeShape | None
     """
 
     return _FIXTURE_DECORATORS.get(target) if target is not None else None
+
+
+def recognize_parametrize_decorator(target: str | None) -> NativeShape | None:
+    """Parametrize protocol table is empty until a kit/bridge contract loads it.
+
+    Authentication is by import-resolved identity lookup in the loaded table,
+    never by comparing a decorator spelling to a vendor logo string.
+    """
+
+    if target is None:
+        return None
+    return _PARAMETRIZE_DECORATORS.get(target)
+
+
+def load_parametrize_protocol(coordinates: dict[str, NativeShape]) -> None:
+    """Install parametrize decorator coordinates from a kit/bridge contract.
+
+    Production stays empty-by-construction. Tests and future kit loaders call
+    this with coordinates proved by external evidence — not hard-coded logos
+    in the recognition module itself.
+    """
+
+    _PARAMETRIZE_DECORATORS.clear()
+    _PARAMETRIZE_DECORATORS.update(coordinates)
+
+
+def clear_parametrize_protocol() -> None:
+    """Remove all loaded parametrize coordinates (test isolation / unload)."""
+
+    _PARAMETRIZE_DECORATORS.clear()
+
 
 
 def recognize_native_class_import(module: str, name: str) -> NativeShape | None:

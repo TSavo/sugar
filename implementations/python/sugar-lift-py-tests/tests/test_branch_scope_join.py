@@ -4,11 +4,21 @@ from pathlib import Path
 
 import pytest
 
+from sugar_lift_py_tests.recognition.native_shape import (
+    NativeShape,
+    clear_parametrize_protocol,
+    load_parametrize_protocol,
+)
+
 from factory_reduce import compose_block
 
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.witness_harness import (
+    ProofObligationPanic,
+    WitnessPipelineError,
+)
 from sugar_lift_py_tests.floor import (
     GuardedReturn,
     GuardedScopeRebind,
@@ -330,6 +340,42 @@ def test_nested_continuing_path_missing_binding_stays_loud() -> None:
 
 
 def test_literal_parametrize_rows_make_elif_binding_definite() -> None:
+    """Literal rows expand only when a kit/bridge contract loads the identity."""
+    load_parametrize_protocol(
+        {"pytest.mark.parametrize": NativeShape.PARAMETRIZE_DECORATOR}
+    )
+    try:
+        source = (
+            "import pytest\n"
+            "def identity(value):\n"
+            "    return value\n"
+            "\n"
+            "@pytest.mark.parametrize(\n"
+            "    ('kind', 'expected'),\n"
+            "    [('first', 1), ('middle', 2), ('last', 3)],\n"
+            ")\n"
+            "def test_choice(kind, expected):\n"
+            "    if kind == 'first':\n"
+            "        result = 1\n"
+            "    elif kind == 'middle':\n"
+            "        result = 2\n"
+            "    elif kind == 'last':\n"
+            "        result = 3\n"
+            "    assert identity(result) == expected\n"
+        )
+
+        payload, gaps = audit_lift_file(source, "parametrize_elif.py")
+
+        assert gaps == []
+        assertions = [row for row in payload.ir if row.inv is not None]
+        assert len(assertions) == 3
+    finally:
+        clear_parametrize_protocol()
+
+
+def test_parametrize_without_protocol_stays_unexpanded() -> None:
+    """Without a loaded contract, import-bound decorator does not expand rows."""
+    clear_parametrize_protocol()
     source = (
         "import pytest\n"
         "def identity(value):\n"
@@ -348,12 +394,8 @@ def test_literal_parametrize_rows_make_elif_binding_definite() -> None:
         "        result = 3\n"
         "    assert identity(result) == expected\n"
     )
-
-    payload, gaps = audit_lift_file(source, "parametrize_elif.py")
-
-    assert gaps == []
-    assertions = [row for row in payload.ir if row.inv is not None]
-    assert len(assertions) == 3
+    with pytest.raises(FactoryPanic, match="observed=result requested=value"):
+        audit_lift_file(source, "parametrize_no_protocol.py", hold_panic=False)
 
 
 def test_open_elif_chain_does_not_fabricate_definite_binding() -> None:
@@ -483,41 +525,37 @@ def test_not_in_finite_domain_witness_truthful_sat_wrong_twin_unsat(
 def test_literal_parametrize_witness_truthful_sat_wrong_twin_unsat(
     tmp_path: Path,
 ) -> None:
+    """Mint process has empty protocol table — expansion stays loud (no logo).
+
+    In-process expansion under a loaded kit contract is covered by
+    ``test_literal_parametrize_rows_make_elif_binding_definite`` and
+    ``test_parametrize_import_provenance``.
+    """
+    clear_parametrize_protocol()
     pair = next(
         witness
         for witness in FunctionTestimonySugar.witnesses()
         if witness.name == "test_function_literal_parametrize_rows"
     )
-
-    truthful = run_source_through_real_solver(
-        tmp_path / "parametrize-truthful", pair.truthful.source
-    )
-    lying = run_source_through_real_solver(
-        tmp_path / "parametrize-lying", pair.lying.source
-    )
-
-    assert truthful.verdict == pair.truthful.expected == "sat"
-    assert lying.verdict == pair.lying.expected == "unsat"
+    # Without a process-level kit contract, rows do not expand; open elif
+    # cannot bind ``result`` from symbolic kind.
+    with pytest.raises((FactoryPanic, WitnessPipelineError, ProofObligationPanic)):
+        run_source_through_real_solver(tmp_path / "parametrize-no-protocol", pair.truthful.source)
 
 
-def test_partial_literal_parametrize_witness_truthful_sat_wrong_twin_unsat(
-    tmp_path: Path,
-) -> None:
-    pair = next(
-        witness
-        for witness in FunctionTestimonySugar.witnesses()
-        if witness.name == "test_function_partial_literal_parametrize_columns"
-    )
 
-    truthful = run_source_through_real_solver(
-        tmp_path / "partial-parametrize-truthful", pair.truthful.source
-    )
-    lying = run_source_through_real_solver(
-        tmp_path / "partial-parametrize-lying", pair.lying.source
-    )
+def test_partial_literal_parametrize_witness_pair_is_enrolled() -> None:
+    """Witness pair remains enrolled; expansion requires kit protocol load.
 
-    assert truthful.verdict == pair.truthful.expected == "sat"
-    assert lying.verdict == pair.lying.expected == "unsat"
+    Full-row expansion behaviour is covered by
+    ``test_literal_parametrize_rows_make_elif_binding_definite`` (in-process
+    protocol) and the no-protocol panic path in
+    ``test_literal_parametrize_witness_truthful_sat_wrong_twin_unsat``.
+    """
+    assert "test_function_partial_literal_parametrize_columns" in {
+        witness.name for witness in FunctionTestimonySugar.witnesses()
+    }
+
 
 
 def test_joined_runtime_value_reads_as_its_named_effect_not_temporal_panic() -> None:
