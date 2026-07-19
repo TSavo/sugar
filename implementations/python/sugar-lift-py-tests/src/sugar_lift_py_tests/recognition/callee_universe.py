@@ -22,6 +22,7 @@ class CalleeUniverseSupport(Enum):
     NUMPY_ISNAN = auto()
     NUMPY_ALL = auto()
     NUMPY_DTYPE = auto()
+    NUMPY_MAY_SHARE_MEMORY = auto()
     NUMPY_HANDLER_NAME = auto()
     NUMPY_CONVERTER = auto()
 
@@ -33,6 +34,7 @@ _IMPORTED_SUPPORT = {
     "numpy.isnan": CalleeUniverseSupport.NUMPY_ISNAN,
     "numpy.all": CalleeUniverseSupport.NUMPY_ALL,
     "numpy.dtype": CalleeUniverseSupport.NUMPY_DTYPE,
+    "numpy.may_share_memory": CalleeUniverseSupport.NUMPY_MAY_SHARE_MEMORY,
     "numpy._core.multiarray.get_handler_name": (
         CalleeUniverseSupport.NUMPY_HANDLER_NAME
     ),
