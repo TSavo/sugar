@@ -21,9 +21,9 @@
 from __future__ import annotations
 
 import ast
-import functools
 import importlib.machinery
 import os
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -43,15 +43,28 @@ class SourceOracleRefusal(Exception):
 
 
 INSTALLED_SOURCE_CAPACITY = 64
+# Success-only resident answers. Key is (module_name, source_seat, source_cid):
+# authenticated content + seat identity. Absence, I/O failure, and parse failure
+# never publish — a negative cannot poison a later successful construction.
+_INSTALLED_MODULE_SOURCE_CACHE: OrderedDict[
+    tuple[str, str, str], tuple[str, str, str]
+] = OrderedDict()
 
 
-@functools.lru_cache(maxsize=INSTALLED_SOURCE_CAPACITY)
-def installed_module_source(module_name: str) -> tuple[str, str, str] | None:
+def installed_module_source(
+    module_name: str,
+    *,
+    source_seat: str | None = None,
+) -> tuple[str, str, str] | None:
     """Resolve installed Python source once through the SourceOracle boundary.
 
     The returned identity is ``(source, filename, content CID)``.  Callers may
     derive views from it, but must not independently discover/read/parse the
     module.  Content-keyed ``parsed_tree`` then owns the one parsed AST.
+
+    Successful answers partition by authenticated source CID and source seat.
+    Discovery re-reads installed bytes so content drift and late appearance
+    cannot reuse a prior answer; only a successful parse is published.
     """
     if not module_name:
         return None
@@ -81,14 +94,38 @@ def installed_module_source(module_name: str) -> tuple[str, str, str] | None:
         UnicodeError,
         ValueError,
     ):
+        # Absence and read failures are not reusable successes.
         return None
+
+    source_cid = blake3_512_of(source.encode("utf-8"))
+    seat = str(source_seat or origin)
+    key = (module_name, seat, source_cid)
+    cached = _INSTALLED_MODULE_SOURCE_CACHE.get(key)
+    if cached is not None:
+        _INSTALLED_MODULE_SOURCE_CACHE.move_to_end(key)
+        return cached
+
     # Parse before publishing a successful oracle answer. Syntax failures are
     # not cached as completed source.
     try:
         parsed_tree(source, origin)
     except SyntaxError:
         return None
-    return source, origin, blake3_512_of(source.encode("utf-8"))
+
+    result = (source, origin, source_cid)
+    _INSTALLED_MODULE_SOURCE_CACHE[key] = result
+    while len(_INSTALLED_MODULE_SOURCE_CACHE) > INSTALLED_SOURCE_CAPACITY:
+        _INSTALLED_MODULE_SOURCE_CACHE.popitem(last=False)
+    return result
+
+
+def _installed_module_source_cache_clear() -> None:
+    _INSTALLED_MODULE_SOURCE_CACHE.clear()
+
+
+installed_module_source.cache_clear = (  # type: ignore[attr-defined]
+    _installed_module_source_cache_clear
+)
 
 
 def resolve_source_memento(

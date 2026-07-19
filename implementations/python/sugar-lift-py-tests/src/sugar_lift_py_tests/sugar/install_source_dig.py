@@ -315,6 +315,13 @@ class _InstalledSourceIndex:
     definitions: tuple[_InstalledDefinition, ...]
 
 
+# Success-only index answers. Key is (module_name, source_seat, source_cid):
+# authenticated content + seat identity. Misses and parse failures never publish.
+_INSTALLED_SOURCE_INDEX_CACHE: OrderedDict[
+    tuple[str, str, str], _InstalledSourceIndex
+] = OrderedDict()
+
+
 def _definition_locator(
     key: str,
     node: ast.FunctionDef | ast.AsyncFunctionDef,
@@ -329,14 +336,32 @@ def _definition_locator(
     )
 
 
-@functools.lru_cache(maxsize=INSTALLED_SOURCE_INDEX_CAPACITY)
-def _installed_source_index(module_name: str) -> _InstalledSourceIndex | None:
+def _installed_source_index(
+    module_name: str,
+    *,
+    source_seat: str | None = None,
+) -> _InstalledSourceIndex | None:
+    """Index one installed module by authenticated source CID + seat.
+
+    Discovery always re-resolves installed bytes (via SourceOracle). Only a
+    successfully parsed index is published — absence and syntax failure stay
+    ephemeral so a later finite construction is not poisoned.
+    """
+    from sugar_lift_python_source.canonical import blake3_512_of
+
     installed = _installed_source(module_name)
     if installed is None:
         installed = _imported_module_source(module_name)
     if installed is None:
         return None
     source, sourcefile = installed
+    source_cid = blake3_512_of(source.encode("utf-8"))
+    seat = str(source_seat or sourcefile)
+    cache_key = (module_name, seat, source_cid)
+    cached = _INSTALLED_SOURCE_INDEX_CACHE.get(cache_key)
+    if cached is not None:
+        _INSTALLED_SOURCE_INDEX_CACHE.move_to_end(cache_key)
+        return cached
     try:
         parsed = parsed_tree(source, sourcefile)
     except SyntaxError:
@@ -358,12 +383,36 @@ def _installed_source_index(module_name: str) -> _InstalledSourceIndex | None:
                     bridge_name,
                 ):
                     definitions[key] = _definition_locator(key, statement, bridge_name)
-    return _InstalledSourceIndex(
+    result = _InstalledSourceIndex(
         module_name=module_name,
         source=source,
         sourcefile=sourcefile,
         definitions=tuple(definitions.values()),
     )
+    _INSTALLED_SOURCE_INDEX_CACHE[cache_key] = result
+    while len(_INSTALLED_SOURCE_INDEX_CACHE) > INSTALLED_SOURCE_INDEX_CAPACITY:
+        _INSTALLED_SOURCE_INDEX_CACHE.popitem(last=False)
+    return result
+
+
+def _installed_source_index_cache_clear() -> None:
+    _INSTALLED_SOURCE_INDEX_CACHE.clear()
+
+
+def _installed_source_index_cache_info():
+    from collections import namedtuple
+
+    return namedtuple("CacheInfo", "hits misses maxsize currsize")(
+        0, 0, INSTALLED_SOURCE_INDEX_CAPACITY, len(_INSTALLED_SOURCE_INDEX_CACHE)
+    )
+
+
+_installed_source_index.cache_clear = (  # type: ignore[attr-defined]
+    _installed_source_index_cache_clear
+)
+_installed_source_index.cache_info = (  # type: ignore[attr-defined]
+    _installed_source_index_cache_info
+)
 
 
 def _installed_source(module_name: str) -> tuple[str, str] | None:
