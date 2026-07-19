@@ -165,15 +165,21 @@ def declaration_is_function_local(statement, declaration) -> bool:
     Nested lambda/comprehension scopes never own outer declarations.
     """
 
+    return declarations_are_function_local(statement, (declaration,))[0]
+
+
+def declarations_are_function_local(statement, declarations) -> tuple[bool, ...]:
+    """Classify declarations against one shared source-path lookup."""
+
     path = _source_path(statement)
     if path is None:
-        return False
+        return tuple(False for _ in declarations)
     innermost = next(iter(reversed(_symbol_table_scopes(path))), None)
     if isinstance(
         innermost,
         (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
     ):
-        return False
+        return tuple(False for _ in declarations)
     function = next(
         (
             node
@@ -185,9 +191,11 @@ def declaration_is_function_local(statement, declaration) -> bool:
     if function is None:
         # Module-level site: ``visible_declarations`` already filters to
         # preceding module statements, which share this scope.
-        return True
+        return tuple(True for _ in declarations)
     end_line = getattr(function, "end_lineno", function.lineno)
-    return function.lineno < declaration.line <= end_line
+    return tuple(
+        function.lineno < declaration.line <= end_line for declaration in declarations
+    )
 
 
 def _source_path(statement):
@@ -274,6 +282,7 @@ def _direct_symbol_scopes(parent):
 
 __all__ = [
     "declaration_is_function_local",
+    "declarations_are_function_local",
     "lexical_function_bindings",
     "visible_declarations",
 ]

@@ -7,7 +7,7 @@ from enum import Enum, auto
 
 from sugar_lift_python_source.source_tables import locate_parsed_node, parsed_parents
 from sugar_lift_py_tests.recognition.visible_declarations import (
-    declaration_is_function_local,
+    declarations_are_function_local,
     lexical_function_bindings,
     visible_declarations,
 )
@@ -149,8 +149,8 @@ def imported_call_identity(site) -> str | None:
     declarations, shadowed_parameters = visible_declarations(site)
     imported: dict[str, tuple[str, bool]] = {}
     assigned: dict[str, str | None] = {}
-    for declaration in declarations:
-        function_local = declaration_is_function_local(site, declaration)
+    function_localities = declarations_are_function_local(site, declarations)
+    for declaration, function_local in zip(declarations, function_localities):
         if declaration.observed == "ImportFrom":
             module = declaration.importfrom_module()
             if module is not None:
@@ -241,8 +241,9 @@ def _name_reassigned_before(site, name: str) -> bool:
     """True when a preceding statement in the same function stores ``name``."""
 
     declarations, _shadowed = visible_declarations(site)
-    for declaration in declarations:
-        if not declaration_is_function_local(site, declaration):
+    function_localities = declarations_are_function_local(site, declarations)
+    for declaration, function_local in zip(declarations, function_localities):
+        if not function_local:
             continue
         if declaration.observed in {"Import", "ImportFrom"}:
             continue
@@ -304,8 +305,8 @@ def _module_import_origin(site, head: str) -> str | None:
     if head in shadowed:
         return None
     imported: dict[str, tuple[str, bool]] = {}
-    for declaration in declarations:
-        function_local = declaration_is_function_local(site, declaration)
+    function_localities = declarations_are_function_local(site, declarations)
+    for declaration, function_local in zip(declarations, function_localities):
         if declaration.observed == "ImportFrom":
             module = declaration.importfrom_module()
             if module is not None:
