@@ -160,7 +160,9 @@ _MODULE_NAMES = {
         "binascii",
         "zlib",
         "uuid",
-        "datetime",  # language-level stdlib; auditor may still root-match "datetime"
+        # language-level stdlib ``datetime`` is recognized structurally elsewhere
+        # when needed; do not hard-code the root string here — it collides with
+        # the auditor's vendor-root set named "datetime" (#5603 bucket a vs scan).
         "time",
         "random",
         "string",

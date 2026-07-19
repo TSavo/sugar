@@ -10,23 +10,15 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 def _is_raises_context(site) -> bool:
-    """True when the with-item context expression is pytest.raises / raises(...)."""
-    if site.observed != "Call":
-        return False
-    # pytest.raises(...) — Attribute receiver pytest, method raises
-    if site.call_receiver() is not None:
-        name = site.call_target_name()
-        if name != "raises":
-            return False
-        recv = site.call_receiver()
-        if recv.observed == "Name" and recv.name_id() == "pytest":
-            return True
-        if recv.observed == "Attribute" and recv.attr_name() == "raises":
-            return True
-        # bare attr chain ending in raises already handled by target_name
-        return name == "raises"
-    # bare raises(...) if imported as from pytest import raises
-    return site.call_target_name() == "raises"
+    """True when the with-item is an authenticated raises context.
+
+    #5603: do not match logo ``pytest`` / ``pytest.raises`` spellings.
+    Stay loud until a kit/bridge testing contract authenticates raises
+    without vendor identity. Structural bare ``raises(...)`` after a
+    non-logo import resolution is also deferred to that contract.
+    """
+    _ = site
+    return False
 
 
 def _raises_exception_type_name(site) -> str | None:
