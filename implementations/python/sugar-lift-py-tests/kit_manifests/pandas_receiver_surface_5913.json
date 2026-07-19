@@ -1,18 +1,31 @@
 {
   "call_shape": {
     "pandas.DataFrame": "PANDAS_DATAFRAME",
-    "pandas.Series": "PANDAS_SERIES"
+    "pandas.Series": "PANDAS_SERIES",
+    "pandas.Index": "PANDAS_INDEX"
   },
   "instance_call": {
     "PANDAS_DATAFRAME.equals": "pandas.DataFrame.equals",
     "PANDAS_SERIES.equals": "pandas.Series.equals",
     "PANDAS_DATAFRAME.items": "pandas.DataFrame.items",
-    "PANDAS_SERIES.items": "pandas.Series.items"
+    "PANDAS_SERIES.items": "pandas.Series.items",
+    "PANDAS_DATAFRAME.to_csv": "pandas.DataFrame.to_csv",
+    "PANDAS_SERIES.to_csv": "pandas.Series.to_csv",
+    "PANDAS_INDEX.identical": "pandas.Index.identical",
+    "PANDAS_INDEX.get_loc": "pandas.Index.get_loc",
+    "PANDAS_INDEX.is_": "pandas.Index.is_",
+    "PANDAS_INDEX.slice_locs": "pandas.Index.slice_locs"
   },
   "imported_callee": {
     "pandas.DataFrame.equals": "PANDAS_DATAFRAME_EQUALS",
     "pandas.Series.equals": "PANDAS_SERIES_EQUALS",
     "pandas.DataFrame.items": "PANDAS_DATAFRAME_ITEMS",
-    "pandas.Series.items": "PANDAS_SERIES_ITEMS"
+    "pandas.Series.items": "PANDAS_SERIES_ITEMS",
+    "pandas.DataFrame.to_csv": "PANDAS_DATAFRAME_TO_CSV",
+    "pandas.Series.to_csv": "PANDAS_SERIES_TO_CSV",
+    "pandas.Index.identical": "PANDAS_INDEX_IDENTICAL",
+    "pandas.Index.get_loc": "PANDAS_INDEX_GET_LOC",
+    "pandas.Index.is_": "PANDAS_INDEX_IS_",
+    "pandas.Index.slice_locs": "PANDAS_INDEX_SLICE_LOCS"
   }
 }
