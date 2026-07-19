@@ -2,7 +2,8 @@
   "call_shape": {
     "pandas.DataFrame": "PANDAS_DATAFRAME",
     "pandas.Series": "PANDAS_SERIES",
-    "pandas.Index": "PANDAS_INDEX"
+    "pandas.Index": "PANDAS_INDEX",
+    "pandas.Categorical": "PANDAS_CATEGORICAL"
   },
   "instance_call": {
     "PANDAS_DATAFRAME.equals": "pandas.DataFrame.equals",
@@ -14,7 +15,9 @@
     "PANDAS_INDEX.identical": "pandas.Index.identical",
     "PANDAS_INDEX.get_loc": "pandas.Index.get_loc",
     "PANDAS_INDEX.is_": "pandas.Index.is_",
-    "PANDAS_INDEX.slice_locs": "pandas.Index.slice_locs"
+    "PANDAS_INDEX.slice_locs": "pandas.Index.slice_locs",
+    "PANDAS_DATAFRAME.to_html": "pandas.DataFrame.to_html",
+    "PANDAS_CATEGORICAL._categories_match_up_to_permutation": "pandas.Categorical._categories_match_up_to_permutation"
   },
   "imported_callee": {
     "pandas.DataFrame.equals": "PANDAS_DATAFRAME_EQUALS",
@@ -26,6 +29,8 @@
     "pandas.Index.identical": "PANDAS_INDEX_IDENTICAL",
     "pandas.Index.get_loc": "PANDAS_INDEX_GET_LOC",
     "pandas.Index.is_": "PANDAS_INDEX_IS_",
-    "pandas.Index.slice_locs": "PANDAS_INDEX_SLICE_LOCS"
+    "pandas.Index.slice_locs": "PANDAS_INDEX_SLICE_LOCS",
+    "pandas.DataFrame.to_html": "PANDAS_DATAFRAME_TO_HTML",
+    "pandas.Categorical._categories_match_up_to_permutation": "PANDAS_CATEGORICAL_MATCH_UP_TO_PERMUTATION"
   }
 }
