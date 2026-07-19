@@ -61,15 +61,31 @@ class _ContextIdentity:
 
 # Install-source value construction always reseeds lexical state from
 # ``TemporalContext.empty()`` inside ``_ctx_with_required_module_bindings``.
-# Consumer ``temporal`` / ``module_temporal`` are never recognition inputs for
-# the published floor value — partitioning on them multiplies module_seed work
-# (one miss per seed frame) without changing the constructed answer.
+# Consumer frames that construct does not read for the published floor value
+# must not partition the oracle — object-identity thrash on those fields is the
+# post-#5425 / post-#5441 CallSugar dig residual (stata tip CallSugar construct;
+# dual_annealing recursive_function_construct pays the same re-resolve wall).
+#
+# Kept recognition fields (see ``_value_oracle_context_identity``): catalog,
+# source_oracle, name_resolver, prefer_ground_module_bindings,
+# defer_function_body_construction, nested_external_bridge.
 _VALUE_ORACLE_CONTEXT_EXCLUDED = frozenset(
     {
+        # Reseeded / consumer lexical frame (#5425).
         "temporal",
         "module_temporal",
-        # These are observers/ledgers, not factory-recognition inputs. Keeping
-        # their identity in the key made every nested reduction a cache miss.
+        # Consumer blame and function-scope route — defining source lives on the
+        # install-source fragment, not on the consumer FactoryBuildContext.
+        "filename",
+        "global_names",
+        "nonlocal_names",
+        "expected_role",
+        # Consumer import map / contract ledger — construct seeds the defining
+        # module's imports through resolve_install_source_value, not these maps.
+        "import_aliases",
+        "from_imports",
+        "contract_bindings",
+        # Side-effect ledgers and sinks: not factory-recognition inputs.
         "operation_log",
         "module_rewrite_log",
         "external_bridge_sink",
@@ -79,6 +95,10 @@ _VALUE_ORACLE_CONTEXT_EXCLUDED = frozenset(
         "report_sink",
         "dig_sink",
         "record_operation",
+        # Dig-body cycle set. Value construction uses ``_resolving`` for cycles;
+        # partitioning on consumer ``building`` multiplies set_module / typing
+        # constructs once per dig stack frame.
+        "building",
     }
 )
 
@@ -99,7 +119,8 @@ def _factory_context_identity(ctx: Any) -> tuple[tuple[str, Any], ...]:
 def _value_oracle_context_identity(ctx: Any) -> tuple[tuple[str, Any], ...]:
     """Partition install-source *values* by recognition fields construct consumes.
 
-    Excludes consumer temporal frames: construct resets them before build_body.
+    Excludes consumer frames that construct reseeds or ignores for the published
+    floor value (temporal, filename, empty collection identity, sinks, building).
     """
     if ctx is None or not hasattr(ctx, "__dataclass_fields__"):
         return ()
@@ -188,8 +209,8 @@ class InstallSourceValueOracle:
             return None
         # Source CID + name is the construction identity. Partition only by
         # recognition fields the value construct path actually consumes —
-        # not by consumer temporal, which is always reseeded from empty
-        # before build_body (see ``_value_oracle_context_identity``).
+        # not by consumer temporal, filename, empty collection identity,
+        # sinks, or dig-body building (see ``_value_oracle_context_identity``).
         return (*base, _value_oracle_context_identity(ctx))
 
     def resolve(
