@@ -62,6 +62,8 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "scipy.linalg.issymmetric",
         "scipy.linalg.ishermitian",
         "scipy.fft.get_workers",
+        "numpy.isdtype",
+        "numpy.datetime_data",
         *_CONVERTER_COORDINATES,
     }
 )
@@ -212,6 +214,8 @@ class BuiltinCalleeUniverseSugar(
             _scipy_linalg_issymmetric_witness(),
             _scipy_linalg_ishermitian_witness(),
             _scipy_fft_get_workers_witness(),
+            _numpy_isdtype_witness(),
+            _numpy_datetime_data_witness(),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -783,5 +787,39 @@ def _bound_leaf_coordinate_witness(name: str):
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=truthful,
         lying=lying,
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_isdtype_witness():
+    prefix = (
+        "import numpy as np\n"
+        "\n"
+        "def A():\n"
+        "    return np.isdtype(np.float64, 'real floating')\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_isdtype_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_datetime_data_witness():
+    prefix = (
+        "import numpy as np\n"
+        "\n"
+        "def A():\n"
+        "    return np.datetime_data(np.dtype('M8[D]'))\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_datetime_data_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
         family="builtin-universe-coordinate",
     )

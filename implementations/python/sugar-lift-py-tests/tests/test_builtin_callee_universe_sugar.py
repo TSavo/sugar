@@ -38,6 +38,8 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "numpy.all",
         "numpy.dtype",
         "numpy.shares_memory",
+        "numpy.isdtype",
+        "numpy.datetime_data",
         "numpy.ndarray.tobytes",
         "numpy._core.multiarray.get_handler_name",
         "numpy._core._multiarray_tests.run_byteorder_converter",
@@ -58,6 +60,8 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "numpy_dtype_universe_coordinate",
         "numpy_dtype_result_universe_coordinate",
         "numpy_shares_memory_universe_coordinate",
+        "numpy_isdtype_universe_coordinate",
+        "numpy_datetime_data_universe_coordinate",
         "numpy_array_tobytes_universe_coordinate",
         "get_handler_name_builtin_universe_coordinate",
         "conv_builtin_universe_coordinate",
@@ -1604,6 +1608,108 @@ def test_unwarranted_numpy_result_type_is_not_factory_owned(source: str) -> None
 
 def test_numpy_result_type_witness_pair_is_enrolled() -> None:
     assert "numpy_result_type_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def test_authenticated_numpy_isdtype_selects_one_factory_owner() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_id(dt):\n"
+        "    assert np.isdtype(dt, 'real floating')\n"
+    )
+    context = FactoryBuildContext(filename="isdtype.py", catalog=default_catalog())
+    built = build_node(
+        _import_leaf_call_site(source, "isdtype", "isdtype.py"),
+        filename="isdtype.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_id(np, dt):\n"
+            "    assert np.isdtype(dt, 'real floating')\n"
+        ),
+        (
+            "def test_id(dt):\n"
+            "    assert isdtype(dt, 'real floating')\n"
+        ),
+    ],
+)
+def test_unwarranted_numpy_isdtype_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(filename="isdtype.py", catalog=default_catalog())
+    built = build_node(
+        _import_leaf_call_site(source, "isdtype", "isdtype.py"),
+        filename="isdtype.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_numpy_isdtype_witness_pair_is_enrolled() -> None:
+    assert "numpy_isdtype_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def test_authenticated_numpy_datetime_data_selects_one_factory_owner() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_dd(dt):\n"
+        "    assert np.datetime_data(dt) == np.datetime_data(dt)\n"
+    )
+    context = FactoryBuildContext(
+        filename="datetime_data.py", catalog=default_catalog()
+    )
+    built = build_node(
+        _import_leaf_call_site(source, "datetime_data", "datetime_data.py"),
+        filename="datetime_data.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_dd(np, dt):\n"
+            "    assert np.datetime_data(dt) == 0\n"
+        ),
+        (
+            "def test_dd(dt):\n"
+            "    assert datetime_data(dt) == 0\n"
+        ),
+    ],
+)
+def test_unwarranted_numpy_datetime_data_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="datetime_data.py", catalog=default_catalog()
+    )
+    built = build_node(
+        _import_leaf_call_site(source, "datetime_data", "datetime_data.py"),
+        filename="datetime_data.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_numpy_datetime_data_witness_pair_is_enrolled() -> None:
+    assert "numpy_datetime_data_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 

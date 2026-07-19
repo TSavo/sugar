@@ -973,6 +973,94 @@ def test_unowned_shares_memory_lookalikes_stay_loud(
     assert [gap.ast_kind for gap in gaps] == [expected_kind]
 
 
+def test_authenticated_numpy_isdtype_has_universe_support() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_values(dt):\n"
+        "    assert np.isdtype(dt, 'real floating')\n"
+    )
+
+    payload = lift_file_payload(source, "isdtype_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.isdtype"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_kind"),
+    (
+        (
+            "import numpy as np\n"
+            "def test_values(np, dt):\n"
+            "    assert np.isdtype(dt, 'real floating')\n",
+            "call:numpy.isdtype",
+        ),
+        (
+            "def test_values(dt):\n"
+            "    assert isdtype(dt, 'real floating')\n",
+            "call:isdtype",
+        ),
+    ),
+)
+def test_unowned_isdtype_lookalikes_stay_loud(
+    source: str, expected_kind: str
+) -> None:
+    """Parameter shadow and unimported spelling stay loud universe gaps."""
+
+    payload = lift_file_payload(source, "isdtype_unowned_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == [expected_kind]
+
+
+def test_authenticated_numpy_datetime_data_has_universe_support() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_values(dt):\n"
+        "    assert np.datetime_data(dt) == np.datetime_data(dt)\n"
+    )
+
+    payload = lift_file_payload(source, "datetime_data_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.datetime_data"
+        for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_kind"),
+    (
+        (
+            "import numpy as np\n"
+            "def test_values(np, dt):\n"
+            "    assert np.datetime_data(dt) == 0\n",
+            "call:numpy.datetime_data",
+        ),
+        (
+            "def test_values(dt):\n"
+            "    assert datetime_data(dt) == 0\n",
+            "call:datetime_data",
+        ),
+    ),
+)
+def test_unowned_datetime_data_lookalikes_stay_loud(
+    source: str, expected_kind: str
+) -> None:
+    """Parameter shadow and unimported spelling stay loud universe gaps."""
+
+    payload = lift_file_payload(source, "datetime_data_unowned_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == [expected_kind]
+
+
 def test_module_scope_numpy_from_import_has_universe_support() -> None:
     """Module-level imports establish the name; do not revoke as free-var shadow."""
 

@@ -70,6 +70,8 @@ class CalleeUniverseSupport(Enum):
     SCIPY_LINALG_ISSYMMETRIC = auto()
     SCIPY_LINALG_ISHERMITIAN = auto()
     SCIPY_FFT_GET_WORKERS = auto()
+    NUMPY_ISDTYPE = auto()
+    NUMPY_DATETIME_DATA = auto()
 
 
 _DTYPE_RESULT_SUPPORT = {
@@ -187,6 +189,8 @@ _IMPORTED_SUPPORT = {
     "scipy.linalg.issymmetric": CalleeUniverseSupport.SCIPY_LINALG_ISSYMMETRIC,
     "scipy.linalg.ishermitian": CalleeUniverseSupport.SCIPY_LINALG_ISHERMITIAN,
     "scipy.fft.get_workers": CalleeUniverseSupport.SCIPY_FFT_GET_WORKERS,
+    "numpy.isdtype": CalleeUniverseSupport.NUMPY_ISDTYPE,
+    "numpy.datetime_data": CalleeUniverseSupport.NUMPY_DATETIME_DATA,
 }
 
 _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list", "set", "hasattr"})
