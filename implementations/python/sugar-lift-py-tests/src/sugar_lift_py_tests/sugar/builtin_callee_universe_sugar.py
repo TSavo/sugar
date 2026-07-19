@@ -34,6 +34,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "list",
         "set",
         "hasattr",
+        "item",
         "numpy.can_cast",
         "numpy.issubdtype",
         "numpy.isnan",
@@ -49,6 +50,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
 _BUILTIN_COORDINATES = frozenset(
     {"dtype", "all", "list", "set", "hasattr"}
 )
+_RECEIVER_COORDINATES = frozenset({"item"})
 # Leaf spellings that can still resolve into an authenticated coordinate.
 # Plain-call owns refuses full import-identity work when the callee leaf cannot
 # match; method receivers keep the Name-only path (class attribute aliases).
@@ -112,6 +114,8 @@ class BuiltinCalleeUniverseSugar(
             return False
         if coordinate in _BUILTIN_COORDINATES:
             return True
+        if coordinate in _RECEIVER_COORDINATES:
+            return True
         return (
             recognize_authenticated_callee_identity(coordinate)
             in _OWNED_IMPORTED_SUPPORT
@@ -130,6 +134,7 @@ class BuiltinCalleeUniverseSugar(
             _coordinate_witness("list", "[]", "[0]"),
             _coordinate_witness("set", "[]", "[0]"),
             _coordinate_witness("hasattr", "True", "False"),
+            _item_receiver_coordinate_witness(),
             _imported_coordinate_witness(
                 name="get_handler_name",
                 setup=("from numpy._core.multiarray import get_handler_name\n"),
@@ -177,6 +182,24 @@ def _imported_coordinate_witness(*, name: str, setup: str, callee: str, argument
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=(prefix + "def test_a():\n" + "    assert A() == 0 and A() == 0\n"),
         lying=(prefix + "def test_a():\n" + "    assert A() == 0 and A() != 0\n"),
+        family="builtin-universe-coordinate",
+    )
+
+
+def _item_receiver_coordinate_witness():
+    prefix = (
+        "import numpy as np\n"
+        "\n"
+        "def A(value):\n"
+        "    arr = np.array([value], dtype=object)\n"
+        "    return arr.item()\n"
+        "\n"
+    )
+    return _call_pair(
+        name="item_receiver_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A(5) == A(5)\n",
+        lying=prefix + "def test_a():\n    assert A(5) == A(5) and A(5) != A(5)\n",
         family="builtin-universe-coordinate",
     )
 

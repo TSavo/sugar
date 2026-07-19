@@ -184,6 +184,10 @@ class CalleeUniverseRecognition:
         attr = site.call_target_name()
         if attr is None:
             return None
+        if attr == "item" and _receiver_has_imported_call_definition(
+            site, receiver
+        ):
+            return attr
         receiver_name = receiver.name_id()
         method, class_def = _enclosing_method_and_class(site)
         if method is None or class_def is None:
@@ -194,6 +198,30 @@ class CalleeUniverseRecognition:
         if _name_reassigned_before(site, receiver_name):
             return None
         return _class_attribute_coordinate(class_def, attr, site)
+
+
+def _receiver_has_imported_call_definition(site, receiver) -> bool:
+    """Authenticate a local receiver through its latest visible definition.
+
+    The constructor coordinate comes from import/source testimony resolved by
+    ``imported_call_identity``.  No vendor spelling is classified here.
+    Parameters, locally-produced calls, branch-owned stores, and later rebinds
+    therefore remain unowned.
+    """
+
+    receiver_name = receiver.name_id()
+    declarations, _shadowed = visible_declarations(site)
+    for declaration in reversed(declarations):
+        if receiver_name not in declaration.stored_or_deleted_names():
+            continue
+        if declaration.observed != "Assign":
+            return False
+        stored = declaration.stored_or_deleted_names()
+        if stored != frozenset({receiver_name}):
+            return False
+        value = declaration.assign_value()
+        return value.observed == "Call" and imported_call_identity(value) is not None
+    return False
 
 
 def imported_call_identity(site) -> str | None:

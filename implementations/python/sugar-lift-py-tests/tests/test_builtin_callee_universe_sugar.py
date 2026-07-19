@@ -27,6 +27,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "list",
         "set",
         "hasattr",
+        "item",
         "numpy.can_cast",
         "numpy.issubdtype",
         "numpy.isnan",
@@ -40,6 +41,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "list_builtin_universe_coordinate",
         "set_builtin_universe_coordinate",
         "hasattr_builtin_universe_coordinate",
+        "item_receiver_universe_coordinate",
         "numpy_can_cast_universe_coordinate",
         "numpy_issubdtype_universe_coordinate",
         "numpy_isnan_universe_coordinate",
@@ -700,6 +702,89 @@ def test_unwarranted_numpy_all_receiver_is_not_factory_owned(source: str) -> Non
 
 def test_numpy_all_witness_pair_is_enrolled() -> None:
     assert "numpy_all_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def _item_call_site(source: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "item"
+    )
+    return SourceFragment.from_node(call, "item.py", source=source)
+
+
+def test_import_constructed_item_receiver_selects_one_factory_owner() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_item(value):\n"
+        "    arr = np.array([value], dtype=object)\n"
+        "    assert arr.item() == value\n"
+    )
+    context = FactoryBuildContext(
+        filename="item.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _item_call_site(source),
+        filename="item.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def test_item(arr):\n    assert arr.item() == 0\n",
+        (
+            "def make(value):\n"
+            "    return value\n"
+            "\n"
+            "def test_item(value):\n"
+            "    arr = make(value)\n"
+            "    assert arr.item() == value\n"
+        ),
+        (
+            "def make(value):\n"
+            "    return value\n"
+            "\n"
+            "def test_item(value):\n"
+            "    assert make(value).item() == value\n"
+        ),
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_item(value):\n"
+            "    arr = np.array([value], dtype=object)\n"
+            "    arr = replacement\n"
+            "    assert arr.item() == value\n"
+        ),
+    ],
+)
+def test_unresolved_item_receiver_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="item.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _item_call_site(source),
+        filename="item.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_item_witness_pair_is_enrolled() -> None:
+    assert "item_receiver_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
