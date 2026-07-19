@@ -52,6 +52,7 @@ class NativeShape(Enum):
     ASSERTING_MANAGER = auto()
     CLASS_IDENTITY_DECORATOR = auto()
     IMPLEMENTATION_PRESERVING_DECORATOR = auto()
+    FIXTURE_DECORATOR = auto()
     SQLALCHEMY_ORM_REGISTRY = auto()
     GENERIC_CLASS = auto()
     PYDANTIC_BASE_MODEL = auto()
@@ -173,6 +174,14 @@ _IDENTITY_DECORATORS = {
 
 _NATIVE_DECORATORS = {
     "functools.wraps": NativeShape.IMPLEMENTATION_PRESERVING_DECORATOR,
+}
+
+# Fixture / inject-provider protocol: registered import coordinates only.
+# Consumers authenticate via recognize_native_fixture_decorator(qualified),
+# never by comparing against a vendor-name string literal in recognition code.
+_FIXTURE_DECORATORS = {
+    "pytest.fixture": NativeShape.FIXTURE_DECORATOR,
+    "sqlalchemy.testing.config.fixture": NativeShape.FIXTURE_DECORATOR,
 }
 
 _NATIVE_INSTANCE_CLASS_DECORATORS = {
@@ -316,6 +325,16 @@ def recognize_native_decorator(target: str | None) -> NativeShape | None:
     """Recognize a decorator only from its authenticated import coordinate."""
 
     return _NATIVE_DECORATORS.get(target)
+
+
+def recognize_native_fixture_decorator(target: str | None) -> NativeShape | None:
+    """Recognize a fixture/provider decorator from its import coordinate only.
+
+    Shape registration lives here; recognition code must never compare a
+    resolved name to a hard-coded vendor spelling (R_vendor_special_case).
+    """
+
+    return _FIXTURE_DECORATORS.get(target)
 
 
 def recognize_native_class_import(module: str, name: str) -> NativeShape | None:
