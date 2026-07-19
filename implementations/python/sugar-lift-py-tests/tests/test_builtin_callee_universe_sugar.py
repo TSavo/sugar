@@ -1762,3 +1762,162 @@ def test_scipy_fft_get_workers_witness_pair_is_enrolled() -> None:
     assert "scipy_fft_get_workers_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
+
+
+def test_pathlib_path_authenticates_unresolved_stays_loud() -> None:
+    good = (
+        "import pathlib\n"
+        "\n"
+        "def test_a(value):\n"
+        "    assert pathlib.Path(value) is not None\n"
+    )
+    bad = (
+        "def test_a(pathlib, value):\n"
+        "    assert pathlib.Path(value) is not None\n"
+    )
+    good_site = _leaf_attr_call_site(good, "Path")
+    bad_site = _leaf_attr_call_site(bad, "Path")
+    assert recognize_callee_universe("call:pathlib.Path", site=good_site) is not None
+    assert recognize_callee_universe("call:pathlib.Path", site=bad_site) is None
+    good_built = build_node(
+        good_site,
+        filename="pathlib_path.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="pathlib_path.py", catalog=default_catalog()),
+    )
+    bad_built = build_node(
+        bad_site,
+        filename="pathlib_path.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="pathlib_path.py", catalog=default_catalog()),
+    )
+    assert good_built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    assert bad_built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_standard_gamma_authenticates_helper_and_direct_unresolved_stays_loud() -> None:
+    helper = (
+        "from numpy.random import MT19937, Generator\n"
+        "\n"
+        "class TestRegression:\n"
+        "    def _create_generator(self):\n"
+        "        return Generator(MT19937(121263137472525314065))\n"
+        "\n"
+        "    def test_gamma_0(self):\n"
+        "        mt19937 = self._create_generator()\n"
+        "        assert mt19937.standard_gamma(0.0) == 0.0\n"
+    )
+    direct = (
+        "from numpy.random import MT19937, Generator\n"
+        "\n"
+        "def test_gamma():\n"
+        "    mt19937 = Generator(MT19937(1))\n"
+        "    assert mt19937.standard_gamma(0.0) == 0.0\n"
+    )
+    lookalike = (
+        "def test_gamma(mt19937):\n"
+        "    assert mt19937.standard_gamma(0.0) == 0.0\n"
+    )
+    helper_site = _leaf_attr_call_site(helper, "standard_gamma")
+    direct_site = _leaf_attr_call_site(direct, "standard_gamma")
+    bad_site = _leaf_attr_call_site(lookalike, "standard_gamma")
+    assert recognize_callee_universe("call:standard_gamma", site=helper_site) is not None
+    assert recognize_callee_universe("call:standard_gamma", site=direct_site) is not None
+    assert recognize_callee_universe("call:standard_gamma", site=bad_site) is None
+    for site, expect_owned in (
+        (helper_site, True),
+        (direct_site, True),
+        (bad_site, False),
+    ):
+        built = build_node(
+            site,
+            filename="standard_gamma.py",
+            role=SugarRole.TERM,
+            ctx=FactoryBuildContext(
+                filename="standard_gamma.py", catalog=default_catalog()
+            ),
+        )
+        if expect_owned:
+            assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+        else:
+            assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_subrout_default_authenticates_unresolved_module_stays_loud() -> None:
+    good = (
+        "class _Mod:\n"
+        "    @staticmethod\n"
+        "    def subrout_default(a, b):\n"
+        "        return a + b\n"
+        "\n"
+        "class Host:\n"
+        "    module = _Mod\n"
+        "\n"
+        "    def test_a(self):\n"
+        "        assert self.module.subrout_default(200, 12) == 212\n"
+    )
+    bad = (
+        "def test_a(module):\n"
+        "    assert module.subrout_default(200, 12) == 212\n"
+    )
+    good_site = _leaf_attr_call_site(good, "subrout_default")
+    bad_site = _leaf_attr_call_site(bad, "subrout_default")
+    assert recognize_callee_universe("call:subrout_default", site=good_site) is not None
+    assert recognize_callee_universe("call:subrout_default", site=bad_site) is None
+    good_built = build_node(
+        good_site,
+        filename="subrout.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="subrout.py", catalog=default_catalog()),
+    )
+    bad_built = build_node(
+        bad_site,
+        filename="subrout.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="subrout.py", catalog=default_catalog()),
+    )
+    assert good_built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    assert bad_built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_eval_scalar_authenticates_parameter_lookalike_stays_loud() -> None:
+    good = (
+        "from numpy.f2py import crackfortran\n"
+        "\n"
+        "class TestEval:\n"
+        "    def test_eval_scalar(self):\n"
+        "        eval_scalar = crackfortran._eval_scalar\n"
+        "        assert eval_scalar('123', {}) == '123'\n"
+    )
+    bad = (
+        "def test_eval_scalar(eval_scalar):\n"
+        "    assert eval_scalar('123', {}) == '123'\n"
+    )
+    good_site = _bare_call_site(good, "eval_scalar")
+    bad_site = _bare_call_site(bad, "eval_scalar")
+    assert recognize_callee_universe("call:eval_scalar", site=good_site) is not None
+    assert recognize_callee_universe("call:eval_scalar", site=bad_site) is None
+    good_built = build_node(
+        good_site,
+        filename="eval_scalar.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="eval_scalar.py", catalog=default_catalog()),
+    )
+    bad_built = build_node(
+        bad_site,
+        filename="eval_scalar.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="eval_scalar.py", catalog=default_catalog()),
+    )
+    assert good_built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    assert bad_built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_numpy_batch_four_witness_pairs_are_enrolled() -> None:
+    names = {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
+    assert {
+        "pathlib_path_universe_coordinate",
+        "numpy_standard_gamma_universe_coordinate",
+        "numpy_subrout_default_universe_coordinate",
+        "numpy_eval_scalar_universe_coordinate",
+    } <= names

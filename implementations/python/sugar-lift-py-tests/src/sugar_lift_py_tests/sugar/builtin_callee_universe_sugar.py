@@ -51,7 +51,10 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "numpy.lib.stride_tricks.as_strided.tobytes",
         "numpy._core.multiarray.get_handler_name",
         "re.Pattern.search",
+        "pathlib.Path",
         "pathlib.Path.resolve",
+        "numpy.random.Generator.standard_gamma",
+        "numpy.f2py.crackfortran._eval_scalar",
         "json.loads",
         "dataclasses.asdict",
         "math.isclose",
@@ -192,6 +195,10 @@ class BuiltinCalleeUniverseSugar(
             _numpy_shares_memory_witness(),
             _numpy_array_tobytes_witness(),
             _bound_source_callable_witness(),
+            _pathlib_path_witness(),
+            _numpy_standard_gamma_witness(),
+            _numpy_subrout_default_witness(),
+            _numpy_eval_scalar_witness(),
             _numpy_dtype_result_witness(),
             _json_loads_witness(),
             _dataclasses_asdict_witness(),
@@ -604,6 +611,109 @@ def _dataclasses_asdict_witness():
         lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
         family="builtin-universe-coordinate",
     )
+
+def _pathlib_path_witness():
+    """Import-bound ``pathlib.Path`` constructor (corpus: test_configtool)."""
+    prefix = (
+        "import pathlib\n"
+        "\n"
+        "def A(value):\n"
+        "    return pathlib.Path(value)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="pathlib_path_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix
+        + "def test_a():\n    assert A('.') == A('.') and A('.') == A('.')\n",
+        lying=prefix
+        + "def test_a():\n    assert A('.') == A('.') and A('.') != A('.')\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_standard_gamma_witness():
+    """Generator-bound standard_gamma via import-constructed receiver."""
+    prefix = (
+        "from numpy.random import MT19937, Generator\n"
+        "\n"
+        "def A():\n"
+        "    mt19937 = Generator(MT19937(1))\n"
+        "    return mt19937.standard_gamma(0.0)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_standard_gamma_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_subrout_default_witness():
+    """Multi-hop instance-module call ``self.module.subrout_default``."""
+    truthful = (
+        "class _Mod:\n"
+        "    @staticmethod\n"
+        "    def subrout_default(a, b):\n"
+        "        return a + b\n"
+        "\n"
+        "class Host:\n"
+        "    module = _Mod\n"
+        "\n"
+        "    def test_a(self):\n"
+        "        assert (\n"
+        "            self.module.subrout_default(200, 12)\n"
+        "            == self.module.subrout_default(200, 12)\n"
+        "            and self.module.subrout_default(200, 12)\n"
+        "            == self.module.subrout_default(200, 12)\n"
+        "        )\n"
+    )
+    lying = (
+        "class _Mod:\n"
+        "    @staticmethod\n"
+        "    def subrout_default(a, b):\n"
+        "        return a + b\n"
+        "\n"
+        "class Host:\n"
+        "    module = _Mod\n"
+        "\n"
+        "    def test_a(self):\n"
+        "        assert (\n"
+        "            self.module.subrout_default(200, 12)\n"
+        "            == self.module.subrout_default(200, 12)\n"
+        "            and self.module.subrout_default(200, 12)\n"
+        "            != self.module.subrout_default(200, 12)\n"
+        "        )\n"
+    )
+    return _call_pair(
+        name="numpy_subrout_default_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=truthful,
+        lying=lying,
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_eval_scalar_witness():
+    """Assignment alias of crackfortran._eval_scalar (corpus locus shape)."""
+    prefix = (
+        "from numpy.f2py import crackfortran\n"
+        "\n"
+        "def A():\n"
+        "    eval_scalar = crackfortran._eval_scalar\n"
+        "    return eval_scalar('123', {})\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_eval_scalar_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
 
 def _path_resolve_coordinate_witness():
     prefix = (

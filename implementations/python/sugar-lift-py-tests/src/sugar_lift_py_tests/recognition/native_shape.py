@@ -60,6 +60,7 @@ class NativeShape(Enum):
     REGEX_PATTERN = auto()
     PATH = auto()
     NUMPY_ARRAY = auto()
+    NUMPY_GENERATOR = auto()
 
 
 _CALL_SHAPES = {
@@ -131,6 +132,7 @@ _CALL_SHAPES = {
     "numpy.empty_like": NativeShape.NUMPY_ARRAY,
     "numpy.zeros": NativeShape.NUMPY_ARRAY,
     "numpy.lib.stride_tricks.as_strided": NativeShape.NUMPY_ARRAY,
+    "numpy.random.Generator": NativeShape.NUMPY_GENERATOR,
 }
 
 _NEVER_SUPPRESSING_MANAGERS = {
@@ -200,6 +202,9 @@ _NATIVE_INSTANCE_CALLS = {
     (NativeShape.REGEX_PATTERN, "search"): "re.Pattern.search",
     (NativeShape.PATH, "resolve"): "pathlib.Path.resolve",
     (NativeShape.NUMPY_ARRAY, "tobytes"): "numpy.ndarray.tobytes",
+    (NativeShape.NUMPY_GENERATOR, "standard_gamma"): (
+        "numpy.random.Generator.standard_gamma"
+    ),
 }
 
 _CLASS_IMPORT_SHAPES = {
