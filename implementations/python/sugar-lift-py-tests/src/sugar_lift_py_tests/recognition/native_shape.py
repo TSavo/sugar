@@ -169,6 +169,15 @@ _NATIVE_DECORATORS = {
     "functools.wraps": NativeShape.IMPLEMENTATION_PRESERVING_DECORATOR,
 }
 
+# Fixture *provider* decorators: a loaded testing protocol, never matched by
+# Compare against a vendor-spelled string in call-site recognition. Keys are
+# import coordinates (module, leaf); lookalikes that do not resolve here stay
+# unauthenticated (#5578).
+_FIXTURE_PROVIDER_DECORATORS = {
+    ("pytest", "fixture"): True,
+    ("sqlalchemy.testing.config", "fixture"): True,
+}
+
 _NATIVE_INSTANCE_CLASS_DECORATORS = {
     (NativeShape.SQLALCHEMY_ORM_REGISTRY, "mapped"): (
         NativeShape.CLASS_IDENTITY_DECORATOR
@@ -309,6 +318,21 @@ def recognize_native_decorator(target: str | None) -> NativeShape | None:
     """Recognize a decorator only from its authenticated import coordinate."""
 
     return _NATIVE_DECORATORS.get(target)
+
+
+def recognize_fixture_provider_decorator(target: str | None) -> bool:
+    """True when ``target`` is a registered fixture-provider protocol coordinate.
+
+    Import-resolved only. Spelling ``fixture`` or a lookalike ``config.fixture``
+    that does not resolve to a registered coordinate stays unauthenticated.
+    """
+
+    if target is None:
+        return False
+    module, separator, name = target.rpartition(".")
+    if not separator:
+        return False
+    return bool(_FIXTURE_PROVIDER_DECORATORS.get((module, name)))
 
 
 def recognize_native_class_import(module: str, name: str) -> NativeShape | None:

@@ -789,6 +789,226 @@ def test_fixture_parameter_without_authenticated_provider_stays_loud() -> None:
     assert ClassDefSugar.owns(site) is False
 
 
+def _user_class_site(source: str) -> SourceFragment:
+    class_node = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ClassDef) and node.name == "User"
+    )
+    return SourceFragment.from_node(class_node, "t.py", source=source)
+
+
+def _provider_fragment(source: str, *, class_name: str, method_name: str, module: str):
+    tree = ast.parse(source)
+    owner = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == class_name
+    )
+    provider = next(
+        node
+        for node in owner.body
+        if isinstance(node, ast.FunctionDef) and node.name == method_name
+    )
+    setattr(provider, "_sugar_defining_module", module)
+    return SourceFragment.from_node(provider, f"{module.replace('.', '/')}.py", source=source)
+
+
+def test_same_named_fixture_methods_in_two_classes_use_exact_seat(
+    monkeypatch,
+) -> None:
+    """#5578 twin (a): identical fixture names — wrong class must not win.
+
+    WrongBase.registry yields a real ORM registry (would authenticate).
+    RightBase.registry yields a bare int (no native class-decorator shape).
+    TestThing inherits RightBase only. Name-only module walk finds WrongBase
+    first and would falsely own; seat-anchored resolve must stay loud.
+    """
+    provider_source = (
+        "from sqlalchemy.testing import config\n"
+        "from sqlalchemy.orm import registry\n"
+        "class WrongBase:\n"
+        "    @config.fixture()\n"
+        "    def registry(self, metadata):\n"
+        "        value = registry(metadata=metadata)\n"
+        "        yield value\n"
+        "class RightBase:\n"
+        "    @config.fixture()\n"
+        "    def registry(self, metadata):\n"
+        "        yield 0\n"
+    )
+    right = _provider_fragment(
+        provider_source,
+        class_name="RightBase",
+        method_name="registry",
+        module="example.fixtures",
+    )
+    monkeypatch.setattr(
+        "sugar_lift_py_tests.sugar.install_source_dig."
+        "resolve_install_source_class_method",
+        lambda qualified, method: (
+            right if (qualified, method) == ("example.RightBase", "registry") else None
+        ),
+    )
+    monkeypatch.setattr(
+        "sugar_lift_python_source.source_oracle.installed_module_source",
+        lambda module: (
+            (provider_source, "example/fixtures.py", "cid")
+            if module == "example.fixtures"
+            else None
+        ),
+    )
+    source = (
+        "from example import RightBase\n"
+        "class TestThing(RightBase):\n"
+        "    def test_it(self, registry):\n"
+        "        @registry.mapped\n"
+        "        class User:\n"
+        "            pass\n"
+    )
+    assert ClassDefSugar.owns(_user_class_site(source)) is False
+
+
+def test_imported_lookalike_config_fixture_stays_loud(monkeypatch) -> None:
+    """#5578 twin (b): local lookalike config.fixture must not authenticate."""
+    provider_source = (
+        "class config:\n"
+        "    @staticmethod\n"
+        "    def fixture(fn=None):\n"
+        "        return fn if fn is not None else (lambda f: f)\n"
+        "from sqlalchemy.orm import registry\n"
+        "class FixtureBase:\n"
+        "    @config.fixture()\n"
+        "    def registry(self, metadata):\n"
+        "        value = registry(metadata=metadata)\n"
+        "        yield value\n"
+    )
+    provider = _provider_fragment(
+        provider_source,
+        class_name="FixtureBase",
+        method_name="registry",
+        module="example.fixtures",
+    )
+    monkeypatch.setattr(
+        "sugar_lift_py_tests.sugar.install_source_dig."
+        "resolve_install_source_class_method",
+        lambda qualified, method: (
+            provider
+            if (qualified, method) == ("example.FixtureBase", "registry")
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        "sugar_lift_python_source.source_oracle.installed_module_source",
+        lambda module: (
+            (provider_source, "example/fixtures.py", "cid")
+            if module == "example.fixtures"
+            else None
+        ),
+    )
+    source = (
+        "from example import FixtureBase\n"
+        "class TestThing(FixtureBase):\n"
+        "    def test_it(self, registry):\n"
+        "        @registry.mapped\n"
+        "        class User:\n"
+        "            pass\n"
+    )
+    assert ClassDefSugar.owns(_user_class_site(source)) is False
+
+
+def test_shadowed_fixture_decorator_stays_loud(monkeypatch) -> None:
+    """#5578 twin (c): local rebinding of fixture leaves the provider unauthenticated."""
+    provider_source = (
+        "from sqlalchemy.testing.config import fixture as real_fixture\n"
+        "from sqlalchemy.orm import registry\n"
+        "fixture = lambda fn: fn\n"
+        "class FixtureBase:\n"
+        "    @fixture()\n"
+        "    def registry(self, metadata):\n"
+        "        value = registry(metadata=metadata)\n"
+        "        yield value\n"
+    )
+    provider = _provider_fragment(
+        provider_source,
+        class_name="FixtureBase",
+        method_name="registry",
+        module="example.fixtures",
+    )
+    monkeypatch.setattr(
+        "sugar_lift_py_tests.sugar.install_source_dig."
+        "resolve_install_source_class_method",
+        lambda qualified, method: (
+            provider
+            if (qualified, method) == ("example.FixtureBase", "registry")
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        "sugar_lift_python_source.source_oracle.installed_module_source",
+        lambda module: (
+            (provider_source, "example/fixtures.py", "cid")
+            if module == "example.fixtures"
+            else None
+        ),
+    )
+    source = (
+        "from example import FixtureBase\n"
+        "class TestThing(FixtureBase):\n"
+        "    def test_it(self, registry):\n"
+        "        @registry.mapped\n"
+        "        class User:\n"
+        "            pass\n"
+    )
+    assert ClassDefSugar.owns(_user_class_site(source)) is False
+
+
+def test_mismatched_provider_class_stays_loud(monkeypatch) -> None:
+    """#5578 twin (d): provider class other than the inherited base stays loud."""
+    provider_source = (
+        "from sqlalchemy.testing import config\n"
+        "from sqlalchemy.orm import registry\n"
+        "class OtherBase:\n"
+        "    @config.fixture()\n"
+        "    def registry(self, metadata):\n"
+        "        value = registry(metadata=metadata)\n"
+        "        yield value\n"
+        "class FixtureBase:\n"
+        "    pass\n"
+    )
+    other = _provider_fragment(
+        provider_source,
+        class_name="OtherBase",
+        method_name="registry",
+        module="example.fixtures",
+    )
+    monkeypatch.setattr(
+        "sugar_lift_py_tests.sugar.install_source_dig."
+        "resolve_install_source_class_method",
+        lambda qualified, method: (
+            # Only OtherBase is resolvable — FixtureBase has no fixture method.
+            other if (qualified, method) == ("example.OtherBase", "registry") else None
+        ),
+    )
+    monkeypatch.setattr(
+        "sugar_lift_python_source.source_oracle.installed_module_source",
+        lambda module: (
+            (provider_source, "example/fixtures.py", "cid")
+            if module == "example.fixtures"
+            else None
+        ),
+    )
+    source = (
+        "from example import FixtureBase\n"
+        "class TestThing(FixtureBase):\n"
+        "    def test_it(self, registry):\n"
+        "        @registry.mapped\n"
+        "        class User:\n"
+        "            pass\n"
+    )
+    assert ClassDefSugar.owns(_user_class_site(source)) is False
+
+
 @pytest.mark.parametrize(
     "import_statement",
     ("import pydantic", "import pydantic.dataclasses"),

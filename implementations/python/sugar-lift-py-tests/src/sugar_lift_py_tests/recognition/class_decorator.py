@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from sugar_lift_py_tests.recognition.native_shape import (
     NativeShape,
+    recognize_fixture_provider_decorator,
     recognize_native_call,
     recognize_native_class_decorator,
     recognize_native_instance_class_decorator,
@@ -158,43 +159,86 @@ def _fixture_parameter_native_shape(statement, parameter: str) -> NativeShape | 
 
 
 def _fixture_provider_native_shape(provider) -> NativeShape | None:
+    """Read the native yield/return shape of one *exact* provider seat.
+
+    The provider fragment is already resolved to a class method. Re-selection
+    by function name across the module is illegal (#5578 wrong-answer): two
+    classes can share a fixture method spelling. Anchor by name + line + col
+    (and defining module source), never by bare name walk.
+    """
     from sugar_lift_python_source.source_oracle import installed_module_source
 
     module_name = getattr(provider.node, "_sugar_defining_module", None)
-    if not module_name:
-        return None
-    installed = installed_module_source(module_name)
-    if installed is None:
-        return None
-    source, _, _ = installed
+    source = getattr(provider, "source", None) or getattr(
+        provider.node, "_sugar_source", None
+    )
+    if not source:
+        if not module_name:
+            return None
+        installed = installed_module_source(module_name)
+        if installed is None:
+            return None
+        source, _, _ = installed
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return None
     imports = _module_imports(tree, module_name)
-    for function in ast.walk(tree):
-        if (
-            not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
-            or function.name != provider.function_name()
-            or not _is_authenticated_fixture(function, imports)
-        ):
+    function = _function_at_exact_seat(
+        tree,
+        name=provider.function_name(),
+        line=provider.line,
+        col=provider.col,
+    )
+    if function is None or not _is_authenticated_fixture(function, imports):
+        return None
+    return _yield_or_return_native_shape(function, imports)
+
+
+def _function_at_exact_seat(
+    tree: ast.Module,
+    *,
+    name: str,
+    line: int,
+    col: int,
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Locate one FunctionDef by name and source seat — never name alone."""
+
+    if not name or line < 1:
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        constructed: dict[str, NativeShape] = {}
-        for node in ast.walk(function):
-            if isinstance(node, ast.Assign):
-                shape = _ast_call_native_shape(node.value, imports)
-                if shape is None:
-                    continue
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        constructed[target.id] = shape
-            elif isinstance(node, (ast.Yield, ast.Return)):
-                value = node.value
-                if isinstance(value, ast.Name) and value.id in constructed:
-                    return constructed[value.id]
-                shape = _ast_call_native_shape(value, imports)
-                if shape is not None:
-                    return shape
+        if node.name != name:
+            continue
+        if getattr(node, "lineno", None) != line:
+            continue
+        if getattr(node, "col_offset", None) != col:
+            continue
+        return node
+    return None
+
+
+def _yield_or_return_native_shape(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    imports: dict[str, str],
+) -> NativeShape | None:
+    constructed: dict[str, NativeShape] = {}
+    for node in ast.walk(function):
+        if isinstance(node, ast.Assign):
+            shape = _ast_call_native_shape(node.value, imports)
+            if shape is None:
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    constructed[target.id] = shape
+        elif isinstance(node, (ast.Yield, ast.Return)):
+            value = node.value
+            if isinstance(value, ast.Name) and value.id in constructed:
+                return constructed[value.id]
+            shape = _ast_call_native_shape(value, imports)
+            if shape is not None:
+                return shape
     return None
 
 
@@ -202,14 +246,15 @@ def _is_authenticated_fixture(
     function: ast.FunctionDef | ast.AsyncFunctionDef,
     imports: dict[str, str],
 ) -> bool:
-    return any(
-        _qualified_ast_name(
-            decorator.func if isinstance(decorator, ast.Call) else decorator,
-            imports,
-        )
-        == "sqlalchemy.testing.config.fixture"
-        for decorator in function.decorator_list
-    )
+    """Fixture protocol via import-resolved decorator coordinate, not vendor spelling."""
+
+    for decorator in function.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if recognize_fixture_provider_decorator(
+            _qualified_ast_name(target, imports)
+        ):
+            return True
+    return False
 
 
 def _ast_call_native_shape(
