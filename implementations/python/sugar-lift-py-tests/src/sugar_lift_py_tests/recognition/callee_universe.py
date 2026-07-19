@@ -20,6 +20,7 @@ from sugar_lift_py_tests.recognition.native_shape import (
 class CalleeUniverseSupport(Enum):
     """A native call coordinate whose universe is carried by existing support."""
 
+    NUMPY_DTYPE_RESULT = auto()
     NUMPY_ISSUBDTYPE = auto()
     NUMPY_ALLCLOSE = auto()
     NUMPY_CAN_CAST = auto()
@@ -52,6 +53,30 @@ class CalleeUniverseSupport(Enum):
     REGEX_SEARCH = auto()
     BOUND_SOURCE_CALLABLE = auto()
 
+
+_DTYPE_RESULT_SUPPORT = {
+    coordinate: CalleeUniverseSupport.NUMPY_DTYPE_RESULT
+    for coordinate in {
+        "numpy.abs",
+        "numpy.add",
+        "numpy.all",
+        "numpy.any",
+        "numpy.arange",
+        "numpy.argmax",
+        "numpy.array",
+        "numpy.array.astype",
+        "numpy.asarray",
+        "numpy.choose",
+        "numpy.dtype",
+        "numpy.empty",
+        "numpy.empty_like",
+        "numpy.equal",
+        "numpy.power",
+        "numpy.sinc",
+        "numpy.zeros",
+        "numpy.zeros_like",
+    }
+}
 
 _IMPORTED_SUPPORT = {
     "numpy.issubdtype": CalleeUniverseSupport.NUMPY_ISSUBDTYPE,
@@ -119,6 +144,9 @@ _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list", "set", "hasatt
 _IMPORTED_ATTRIBUTE_LEAVES = frozenset(
     identity.rsplit(".", 1)[-1] for identity in _IMPORTED_SUPPORT
 )
+_DTYPE_RESULT_ATTRIBUTE_LEAVES = frozenset(
+    identity.rsplit(".", 1)[-1] for identity in _DTYPE_RESULT_SUPPORT
+)
 
 
 def recognize_callee_universe(
@@ -135,9 +163,12 @@ def recognize_callee_universe(
 
     if site is None:
         return None
-    identity = imported_call_identity(site)
+    identity = _result_call_identity(site)
     if identity is None:
         return None
+    result_support = _DTYPE_RESULT_SUPPORT.get(identity)
+    if result_support is not None and target in {None, "call:dtype"}:
+        return result_support
     support = recognize_authenticated_callee_identity(identity)
     if support is None:
         if _bound_source_callable_identity(site) != identity:
@@ -181,10 +212,13 @@ class CalleeUniverseRecognition:
             # full ``imported_call_identity`` for every ``random.X`` /
             # ``module.Y`` Call is the factory.select residual after
             # parsed_locus_index drained the AST-walk half of the path.
-            if target in _IMPORTED_ATTRIBUTE_LEAVES:
-                imported = imported_call_identity(site)
+            if target in (_IMPORTED_ATTRIBUTE_LEAVES | _DTYPE_RESULT_ATTRIBUTE_LEAVES):
+                imported = _result_call_identity(site)
                 if recognize_authenticated_callee_identity(imported) is not None:
                     return imported
+                result_support = _DTYPE_RESULT_SUPPORT.get(imported)
+                if result_support is not None:
+                    return "dtype"
             bound_receiver = _bound_native_receiver_coordinate(
                 site, receiver.name_id(), target
             )
@@ -427,6 +461,45 @@ def _bound_source_callable_identity(site) -> str | None:
     if value_name is None or "." not in value_name:
         return None
     return imported_call_identity(site)
+
+
+def _result_call_identity(site) -> str | None:
+    """Resolve an imported call or one method step on its assigned result."""
+
+    direct = imported_call_identity(site)
+    if direct is not None:
+        return direct
+    receiver = site.call_receiver()
+    if receiver is None or receiver.observed != "Name":
+        return None
+    target = site.call_target_name()
+    if target is None:
+        return None
+    receiver_origin = _assigned_imported_call_identity(site, receiver.name_id())
+    if receiver_origin is None:
+        return None
+    return f"{receiver_origin}.{target}"
+
+
+def _assigned_imported_call_identity(site, name: str) -> str | None:
+    """Follow one visible assignment whose value is an authenticated import call."""
+
+    declarations, shadowed_parameters = visible_declarations(site)
+    if name in shadowed_parameters:
+        return None
+    for declaration in reversed(declarations):
+        if name not in declaration.stored_or_deleted_names():
+            continue
+        if declaration.observed != "Assign":
+            return None
+        stored = declaration.stored_or_deleted_names()
+        if stored != frozenset({name}):
+            return None
+        value = declaration.assign_value()
+        if value.observed != "Call":
+            return None
+        return imported_call_identity(value)
+    return None
 
 
 def _enclosing_method_and_class(site):

@@ -52,6 +52,7 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "numpy_isnan_universe_coordinate",
         "numpy_all_universe_coordinate",
         "numpy_dtype_universe_coordinate",
+        "numpy_dtype_result_universe_coordinate",
         "get_handler_name_builtin_universe_coordinate",
         "conv_builtin_universe_coordinate",
         "regex_search_builtin_universe_coordinate",
@@ -303,10 +304,7 @@ def test_set_witness_pair_is_enrolled() -> None:
 
 
 def test_authenticated_hasattr_selects_one_factory_owner() -> None:
-    source = (
-        "def test_hasattr(obj, name):\n"
-        "    assert hasattr(obj, name)\n"
-    )
+    source = "def test_hasattr(obj, name):\n" "    assert hasattr(obj, name)\n"
     context = FactoryBuildContext(
         filename="hasattr_call.py",
         catalog=default_catalog(),
@@ -324,10 +322,7 @@ def test_authenticated_hasattr_selects_one_factory_owner() -> None:
 @pytest.mark.parametrize(
     "source",
     [
-        (
-            "def test_hasattr(hasattr, obj, name):\n"
-            "    assert hasattr(obj, name)\n"
-        ),
+        ("def test_hasattr(hasattr, obj, name):\n" "    assert hasattr(obj, name)\n"),
         (
             "def test_hasattr(obj, name):\n"
             "    assert hasattr(obj, name)\n"
@@ -770,6 +765,121 @@ def test_unwarranted_numpy_dtype_receiver_is_not_factory_owned(source: str) -> N
 
 def test_numpy_dtype_witness_pair_is_enrolled() -> None:
     assert "numpy_dtype_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def _numpy_dtype_result_call_site(source: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr == "asarray")
+            or (isinstance(node.func, ast.Name) and node.func.id == "asarray")
+        )
+    )
+    return SourceFragment.from_node(call, "numpy_dtype_result.py", source=source)
+
+
+def test_authenticated_numpy_dtype_result_selects_one_factory_owner() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_dtype(value):\n"
+        "    assert np.asarray(value).dtype == np.asarray(value).dtype\n"
+    )
+    context = FactoryBuildContext(
+        filename="numpy_dtype_result.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _numpy_dtype_result_call_site(source),
+        filename="numpy_dtype_result.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(np, value):\n"
+            "    assert np.asarray(value).dtype == value\n"
+        ),
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(value):\n"
+            "    assert np.asarray(value).dtype == value\n"
+            "    np = replacement\n"
+        ),
+        (
+            "class PretendNumpy:\n"
+            "    def asarray(self, value):\n"
+            "        return value\n"
+            "\n"
+            "def test_dtype(np, value):\n"
+            "    assert np.asarray(value).dtype == value\n"
+        ),
+        ("def test_dtype(value):\n" "    assert numpy.asarray(value).dtype == value\n"),
+    ],
+)
+def test_unwarranted_numpy_dtype_result_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="numpy_dtype_result.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _numpy_dtype_result_call_site(source),
+        filename="numpy_dtype_result.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_numpy_dtype_result_follows_authenticated_receiver_assignment() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_dtype(value):\n"
+        "    arr = np.array(value)\n"
+        "    assert arr.astype(float).dtype == arr.astype(float).dtype\n"
+    )
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "astype"
+    )
+    context = FactoryBuildContext(
+        filename="numpy_dtype_assignment.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        SourceFragment.from_node(
+            call,
+            "numpy_dtype_assignment.py",
+            source=source,
+        ),
+        filename="numpy_dtype_assignment.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_numpy_dtype_result_witness_pair_is_enrolled() -> None:
+    assert "numpy_dtype_result_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
