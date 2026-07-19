@@ -16,6 +16,33 @@ STATIC_UNFOLD_LIMIT = 1024
 BRANCHED_STATIC_UNFOLD_LIMIT = 8
 
 
+def is_ground_loop_datum(value) -> bool:
+    """True when a bound value is safe to reduce inside a static for-unfold.
+
+    Dig-opaque / callsite / predicate / symbolic carriers are non-ground: a
+    nested While over them must not per-k Equality-reduce (#5338 family A /
+    test_shortest_path pred-chain). Concrete numbers, bools, strings, None,
+    and finite containers of those stay ground so pure for+while micros keep
+    static discharge.
+    """
+    type_name = type(value).__name__
+    if type_name in {
+        "TermValue",
+        "StringValue",
+        "NoneValue",
+        "TrueBoolLiteralSugar",
+        "FalseBoolLiteralSugar",
+    }:
+        return True
+    if type_name in {"ListValue", "TupleValue"}:
+        return all(is_ground_loop_datum(item) for item in value.elements)
+    if type_name == "ArrayLiteral":
+        return all(is_ground_loop_datum(item) for item in value.items)
+    if type_name == "TupleLiteralValue":
+        return all(is_ground_loop_datum(item) for item in value.items)
+    return False
+
+
 @dataclass(frozen=True)
 class ForSugar(Sugar, role=SugarRole.STATEMENT):
     """`for <name> in <iter>: <body>` -- thread the body over the iter element.
@@ -30,6 +57,10 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     non-empty `else:` clauses stay unowned (loud factory gap) -- never silently
     drop the iterable, body, or orelse. AsyncFor is a different observed kind
     and is not owned here.
+
+    When the body owns a While whose free names bind to non-ground (dig-opaque
+    array / callsite) values, static unfold is refused: one CurriedLoopScope
+    coordinates the whole for+while chain instead of per-k Equality reduce.
     """
 
     target_name: str
@@ -199,6 +230,11 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         ):
             elements = iterable.finite_elements
         if elements is not None:
+            # Non-ground pred-chain While under a finite for: one coordinate,
+            # not STATIC_UNFOLD_LIMIT per-k Equality reduces on dig-opaque
+            # arrays (#5338 residual A / scipy csgraph shortest_path).
+            if self._body_has_while() and self._while_reads_non_ground_outer(ctx):
+                return self._bind_and_body(iterable, ctx, force_curry=True)
             limit = STATIC_UNFOLD_LIMIT
             if self._body_has_branching_statement():
                 limit = min(limit, BRANCHED_STATIC_UNFOLD_LIMIT)
@@ -212,7 +248,13 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
 
         Used only to choose the static-unfold budget; recognition is unchanged.
         """
-        branch_names = {"IfSugar", "MatchSugar", "IfExpSugar"}
+        return self._body_owns_sugar_names({"IfSugar", "MatchSugar", "IfExpSugar"})
+
+    def _body_has_while(self) -> bool:
+        """True when the loop body owns a While face (empty-orelse or else)."""
+        return self._body_owns_sugar_names({"WhileSugar", "WhileElseSugar"})
+
+    def _body_owns_sugar_names(self, names: set[str]) -> bool:
         stack: list[object] = [self.body.sugar]
         seen: set[int] = set()
         while stack:
@@ -221,7 +263,7 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
             if sugar_id in seen:
                 continue
             seen.add(sugar_id)
-            if type(sugar).__name__ in branch_names:
+            if type(sugar).__name__ in names:
                 return True
             walk = getattr(sugar, "walk_children", None)
             if walk is None:
@@ -230,6 +272,43 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
                 inner = getattr(child, "sugar", child)
                 if inner is not None:
                     stack.append(inner)
+        return False
+
+    def _while_reads_non_ground_outer(self, ctx) -> bool:
+        """True when a nested While loads an outer name bound to non-ground.
+
+        Walks sugar children only (no AST): NameSugar leaves under WhileSugar /
+        WhileElseSugar whose temporal binding is dig-opaque / callsite /
+        symbolic force the enclosing for to curry. Names unbound in the outer
+        ctx (loop-locals assigned in the for body) are ignored here — the
+        free outer carriers (pred, sources) are the hang signal.
+        """
+        stack: list[object] = [self.body.sugar]
+        seen: set[int] = set()
+        under_while = False
+        while stack:
+            item = stack.pop()
+            if isinstance(item, tuple):
+                sugar, under_while = item
+            else:
+                sugar = item
+            sugar_id = id(sugar)
+            if sugar_id in seen:
+                continue
+            seen.add(sugar_id)
+            kind = type(sugar).__name__
+            in_while = under_while or kind in {"WhileSugar", "WhileElseSugar"}
+            if in_while and kind == "NameSugar":
+                value = ctx.temporal.value_if_bound(sugar.name)
+                if value is not None and not is_ground_loop_datum(value):
+                    return True
+            walk = getattr(sugar, "walk_children", None)
+            if walk is None:
+                continue
+            for child in walk():
+                inner = getattr(child, "sugar", child)
+                if inner is not None:
+                    stack.append((inner, in_while))
         return False
 
     def _unfold_values(self, values, ctx, entries=()):
