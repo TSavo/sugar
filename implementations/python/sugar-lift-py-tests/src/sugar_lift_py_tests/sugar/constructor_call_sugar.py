@@ -1060,17 +1060,17 @@ def _static_mro_for_named_base(name: str, ctx, stack: frozenset[str]):
         head, rest = name.split(".", 1)
         bound = ctx.temporal.value_if_bound(head)
         if isinstance(bound, ImportAliasValue) and bound.import_target is not None:
-            return _static_mro_for_import(f"{bound.import_target}.{rest}", stack)
+            return _static_mro_for_import(f"{bound.import_target}.{rest}", stack, ctx)
         return None
     bound = ctx.temporal.value_if_bound(name)
     if isinstance(bound, SymbolicValue):
         return None
     if isinstance(bound, ImportAliasValue) and bound.import_target is not None:
-        return _static_mro_for_import(bound.import_target, stack)
+        return _static_mro_for_import(bound.import_target, stack, ctx)
     return None
 
 
-def _static_mro_for_import(import_target: str, stack: frozenset[str]):
+def _static_mro_for_import(import_target: str, stack: frozenset[str], ctx=None):
     """Exact C3 MRO for an imported class, derived from its resolved source bases."""
     if import_target in stack:
         return None
@@ -1081,14 +1081,14 @@ def _static_mro_for_import(import_target: str, stack: frozenset[str]):
         resolve_install_source_class_bases,
     )
 
-    direct_bases = resolve_install_source_class_bases(import_target)
+    direct_bases = resolve_install_source_class_bases(import_target, ctx)
     if direct_bases is None:
         return None
     next_stack = stack | {import_target}
     base_mros = []
     base_heads = []
     for base in direct_bases:
-        base_mro = _static_mro_for_import(base, next_stack)
+        base_mro = _static_mro_for_import(base, next_stack, ctx)
         if base_mro is None:
             return None
         base_mros.append(base_mro)
