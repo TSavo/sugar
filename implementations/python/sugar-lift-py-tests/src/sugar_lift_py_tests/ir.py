@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import json
 import logging
 import time
+import weakref
 from typing import Any, Iterator, List, Optional, Tuple, Union
 
 from .canonicalizer import (
@@ -148,9 +149,13 @@ Term = Union[_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor]
 # Each active term table is ``(by_key, by_id, cid_by_id)``:
 # - ``by_id`` remembers every object already hash-consed so building a linear
 #   spine via repeated ``ctor`` stays O(depth) total, not O(depth²) re-walks.
-# - ``cid_by_id`` memoizes permanent content CIDs for interned terms so dunder
-#   hash/eq and formula keys stay O(1) after first materialization without
-#   keying on ``id()`` (#5568 / #5569 — scope-stable identity).
+# - ``cid_by_id`` is a request-local hot map of id → CID *string* only (no Term
+#   retention). Terms are already held by ``by_id`` for the request; this map
+#   does not add a second strong pin.
+#
+# Process-lifetime memo for content CIDs is ``_TERM_CONTENT_CID``: weakrefs
+# only (#5572). Never a strong global Term → CID dict that pins dead terms.
+# Intern scope remains a hash-cons cache, never the identity hub (#5568 / #5569).
 #
 # Restored after #5359 clobbered the #5369 iterative intern while landing
 # CallSiteValue equality / formula cycle keys. Formula intern stays on
@@ -327,50 +332,150 @@ def _intern_formula(formula: "Formula") -> "Formula":
     table = _FORMULA_INTERN_TABLE.get()
     if table is None:
         return formula
-    # Finite structural key from #5359 — never hash Formula objects recursively.
-    return table.setdefault(_formula_cycle_key(formula), formula)
+    # Intern table is a request-local CACHE. Keys may use term-id under scope
+    # for volume (#5435); they must never escape into Formula.__hash__/__eq__
+    # (those use permanent content CIDs — #5568 / #5572).
+    return table.setdefault(_formula_intern_key(formula), formula)
+
+
+# Content-CID memo: id(term) → (weakref(term), cid).
+# - Identity is the CID string (content-address), never id() (#5568 / #5569).
+# - The weakref means dead terms are not pinned for process lifetime (#5572).
+# - id() is only a memo index; the weakref ``is``-guard rejects recycled ids.
+# - Not a WeakKeyDictionary: that would invoke Term.__hash__ (recursive SEGV
+#   on deep/cyclic spines). Callback drops the slot when the referent dies.
+_TERM_CONTENT_CID: dict[int, tuple[weakref.ReferenceType, str]] = {}
+
+
+def _term_content_cid_memo_size() -> int:
+    """Live memo entries (test / diagnostics only)."""
+    return len(_TERM_CONTENT_CID)
+
+
+def _evict_term_content_cid(term: "Term") -> bool:
+    """Drop any memoized content CID for ``term``.
+
+    Clears the weak process memo and, when a request intern table is live, the
+    request-local ``cid_by_id`` hot slot. Returns True when either layer held
+    an entry for this object.
+
+    Recomputation after eviction is deterministic and total: same structural
+    term → same wire CID (#5572). Eviction is cache control only — never
+    identity.
+    """
+    removed = False
+    tid = id(term)
+    entry = _TERM_CONTENT_CID.get(tid)
+    if entry is not None:
+        wr, _cid = entry
+        if wr() is term:
+            del _TERM_CONTENT_CID[tid]
+            removed = True
+        elif wr() is None:
+            _TERM_CONTENT_CID.pop(tid, None)
+
+    tables = _TERM_INTERN_TABLE.get()
+    if tables is not None:
+        _by_key, by_id, cid_by_id = tables
+        if by_id.get(tid) is term and tid in cid_by_id:
+            del cid_by_id[tid]
+            removed = True
+    return removed
+
+
+def _remember_term_content_cid(term: "Term", cid: str) -> None:
+    tid = id(term)
+
+    def _on_die(wr: weakref.ReferenceType, *, _tid: int = tid) -> None:
+        cur = _TERM_CONTENT_CID.get(_tid)
+        if cur is not None and cur[0] is wr:
+            _TERM_CONTENT_CID.pop(_tid, None)
+
+    _TERM_CONTENT_CID[tid] = (weakref.ref(term, _on_die), cid)
 
 
 def _term_content_cid(term: "Term") -> str:
     """Permanent content coordinate for a term (wire CID).
 
     Scope-stable: the same structural term yields the same CID whether or not
-    ``term_intern_scope`` is active, and across distinct intern scopes (#5568 / #5569).
+    ``term_intern_scope`` is active, and across distinct intern scopes
+    (#5568 / #5569). Finite and total by construction (heap-backed blake3 of
+    expanded form) — content-address, do not recurse.
 
-    Under an active intern table, memoize CID by interned object identity so
-    formula keys / CallSiteValue hash-eq stay O(1) after first materialization
-    without ever using ``id()`` as the *identity* (only as a memo index for
-    already-interned canonicals that live for the request).
+    Memoization (#5572):
+    - Request-local ``cid_by_id``: id → CID *string* only (volume under
+      ``term_intern_scope``). Does not retain Term objects; ``by_id`` already
+      owns request lifetime.
+    - Process memo ``_TERM_CONTENT_CID``: weakref only — dead terms are not
+      pinned for process lifetime. ``id()`` is a memo index, never identity.
+
+    Eviction (explicit or GC) must never change the coordinate; recompute is
+    deterministic.
     """
     tables = _TERM_INTERN_TABLE.get()
     if tables is not None:
-        by_key, by_id, cid_by_id = tables
-        del by_key  # identity partition is by_id + cid_by_id
-        interned = _intern_term(term)
-        cached = cid_by_id.get(id(interned))
-        if cached is not None:
-            # Guard: only trust memo when by_id still owns this object.
-            if by_id.get(id(interned)) is interned:
+        _by_key, by_id, cid_by_id = tables
+        term = _intern_term(term)
+        tid = id(term)
+        cached = cid_by_id.get(tid)
+        if cached is not None and by_id.get(tid) is term:
+            return cached
+        # Fall through to mint; fill both layers below.
+    else:
+        tid = id(term)
+        entry = _TERM_CONTENT_CID.get(tid)
+        if entry is not None:
+            wr, cached = entry
+            if wr() is term:
                 return cached
-        cid = TermTableBuilder().reference(interned)["cid"]
-        cid_by_id[id(interned)] = cid
-        return cid
-    return TermTableBuilder().reference(term)["cid"]
+            if wr() is None:
+                _TERM_CONTENT_CID.pop(tid, None)
+
+    # Under scope, also consult weak memo for a term that outlived a prior scope.
+    if tables is not None:
+        entry = _TERM_CONTENT_CID.get(id(term))
+        if entry is not None:
+            wr, cached = entry
+            if wr() is term:
+                # Refresh request-local hot map without reminting.
+                _by_key, by_id, cid_by_id = tables
+                if by_id.get(id(term)) is term:
+                    cid_by_id[id(term)] = cached
+                return cached
+
+    cid = TermTableBuilder().reference(term)["cid"]
+    _remember_term_content_cid(term, cid)
+    if tables is not None:
+        _by_key, by_id, cid_by_id = tables
+        if by_id.get(id(term)) is term:
+            cid_by_id[id(term)] = cid
+    return cid
 
 
-def _term_formula_key(term: "Term") -> tuple:
-    """Finite key for one atomic formula arg — permanent content CID only.
-
-    Never key by ``id(_intern_term(...))``: that made ``Formula.__hash__``
-    change across ``term_intern_scope`` and corrupted dict/set membership
-    (#5568 / #5569). Volume is preserved by scope-local CID memoization in
-    ``_term_content_cid``.
-    """
+def _term_content_key(term: "Term") -> tuple:
+    """Permanent content key for Formula.__hash__/__eq__ (#5568 / #5572)."""
     return ("term-cid", _term_content_cid(term))
 
 
-def _formula_cycle_key(formula: "Formula") -> tuple:
-    """Build a finite structural key without invoking dataclass hash/equality."""
+def _term_intern_arg_key(term: "Term") -> tuple:
+    """Request-local cache key for formula *intern* only — never dunder identity.
+
+    Under ``term_intern_scope``, interned term object identity is O(1) after
+    hash-cons (#5435 volume). Outside a scope, fall back to content CID so
+    structural twins still collide without a live table.
+    """
+    tables = _TERM_INTERN_TABLE.get()
+    if tables is not None:
+        return ("term-id", id(_intern_term(term)))
+    return ("term-cid", _term_content_cid(term))
+
+
+# Historic name: identity path for formula args (content CID only).
+_term_formula_key = _term_content_key
+
+
+def _formula_key(formula: "Formula", *, term_key) -> tuple:
+    """Finite structural formula key; ``term_key`` selects intern vs identity."""
     memo: dict[int, tuple] = {}
     active: set[int] = set()
     stack: list[tuple[Formula, bool]] = [(formula, False)]
@@ -388,12 +493,22 @@ def _formula_cycle_key(formula: "Formula") -> tuple:
                 memo[marker] = (
                     "atomic",
                     node.name,
-                    tuple(_term_formula_key(t) for t in node.args),
+                    tuple(term_key(t) for t in node.args),
                 )
             elif isinstance(node, _Connective):
-                memo[marker] = ("connective", node.kind, tuple(memo[id(child)] for child in node.operands))
+                memo[marker] = (
+                    "connective",
+                    node.kind,
+                    tuple(memo[id(child)] for child in node.operands),
+                )
             elif isinstance(node, _Quantifier):
-                memo[marker] = ("quantifier", node.kind, node.name, repr(node.sort), memo[id(node.body)])
+                memo[marker] = (
+                    "quantifier",
+                    node.kind,
+                    node.name,
+                    repr(node.sort),
+                    memo[id(node.body)],
+                )
             continue
         active.add(marker)
         stack.append((node, True))
@@ -402,6 +517,29 @@ def _formula_cycle_key(formula: "Formula") -> tuple:
         elif isinstance(node, _Quantifier):
             stack.append((node.body, False))
     return memo[id(formula)]
+
+
+def _formula_intern_key(formula: "Formula") -> tuple:
+    """Cache key for request-scoped formula intern — may use term-id under scope."""
+    return _formula_key(formula, term_key=_term_intern_arg_key)
+
+
+def _formula_content_key(formula: "Formula") -> tuple:
+    """Permanent content coordinate for Formula.__hash__/__eq__ (#5568).
+
+    Always content-addressed term CIDs. Never ``id(_intern_term(...))``.
+    Hash and equality share this one key (no hash-on-A / eq-on-B split).
+    """
+    return _formula_key(formula, term_key=_term_content_key)
+
+
+def _formula_cycle_key(formula: "Formula") -> tuple:
+    """Back-compat alias for the permanent content identity key.
+
+    New code: ``_formula_intern_key`` (cache) or ``_formula_content_key``
+    (identity). Kept so external callers of the old name keep working.
+    """
+    return _formula_content_key(formula)
 
 
 def make_var(name: str) -> Term:
