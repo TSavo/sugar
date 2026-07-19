@@ -54,6 +54,11 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "pathlib.Path.resolve",
         "json.loads",
         "dataclasses.asdict",
+        "math.isclose",
+        "numpy.result_type",
+        "scipy.linalg.issymmetric",
+        "scipy.linalg.ishermitian",
+        "scipy.fft.get_workers",
         *_CONVERTER_COORDINATES,
     }
 )
@@ -83,6 +88,11 @@ _OWNED_IMPORTED_SUPPORT = frozenset(
         CalleeUniverseSupport.REGEX_SEARCH,
         CalleeUniverseSupport.JSON_LOADS,
         CalleeUniverseSupport.DATACLASSES_ASDICT,
+        CalleeUniverseSupport.MATH_ISCLOSE,
+        CalleeUniverseSupport.NUMPY_RESULT_TYPE,
+        CalleeUniverseSupport.SCIPY_LINALG_ISSYMMETRIC,
+        CalleeUniverseSupport.SCIPY_LINALG_ISHERMITIAN,
+        CalleeUniverseSupport.SCIPY_FFT_GET_WORKERS,
     }
 )
 
@@ -190,6 +200,11 @@ class BuiltinCalleeUniverseSugar(
             *(_bound_leaf_coordinate_witness(name) for name in (
                 "t0", "selectedintkind", "foo", "to_Dt",
             )),
+            _math_isclose_witness(),
+            _numpy_result_type_witness(),
+            _scipy_linalg_issymmetric_witness(),
+            _scipy_linalg_ishermitian_witness(),
+            _scipy_fft_get_workers_witness(),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -477,6 +492,93 @@ def _json_loads_witness():
         name="json_loads_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
         # Conjunction makes deterministic call substitution load-bearing.
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _math_isclose_witness():
+    prefix = (
+        "import math\n"
+        "\n"
+        "def A():\n"
+        "    return math.isclose(1.0, 1.0)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="math_isclose_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_result_type_witness():
+    prefix = (
+        "import numpy as np\n"
+        "\n"
+        "def A():\n"
+        "    return np.result_type(np.float32, np.float64)\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_result_type_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _scipy_linalg_issymmetric_witness():
+    prefix = (
+        "import numpy as np\n"
+        "from scipy.linalg import issymmetric\n"
+        "\n"
+        "def A():\n"
+        "    return issymmetric(np.eye(2))\n"
+        "\n"
+    )
+    return _call_pair(
+        name="scipy_linalg_issymmetric_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _scipy_linalg_ishermitian_witness():
+    prefix = (
+        "import numpy as np\n"
+        "from scipy.linalg import ishermitian\n"
+        "\n"
+        "def A():\n"
+        "    return ishermitian(np.eye(2))\n"
+        "\n"
+    )
+    return _call_pair(
+        name="scipy_linalg_ishermitian_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _scipy_fft_get_workers_witness():
+    prefix = (
+        "import scipy.fft as fft\n"
+        "\n"
+        "def A():\n"
+        "    return fft.get_workers()\n"
+        "\n"
+    )
+    return _call_pair(
+        name="scipy_fft_get_workers_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
         family="builtin-universe-coordinate",

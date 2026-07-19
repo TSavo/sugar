@@ -62,6 +62,11 @@ class CalleeUniverseSupport(Enum):
     FOO = auto()
     TO_DT = auto()
     NUMPY_ARRAY_TOBYTES = auto()
+    MATH_ISCLOSE = auto()
+    NUMPY_RESULT_TYPE = auto()
+    SCIPY_LINALG_ISSYMMETRIC = auto()
+    SCIPY_LINALG_ISHERMITIAN = auto()
+    SCIPY_FFT_GET_WORKERS = auto()
 
 
 _DTYPE_RESULT_SUPPORT = {
@@ -161,6 +166,13 @@ _IMPORTED_SUPPORT = {
     "numpy.lib.stride_tricks.as_strided.tobytes": (
         CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES
     ),
+    # SciPy verified-live import identities remaining after numpy all/dtype
+    # merges (#5457–#5461). Provenance via imported_call_identity only.
+    "math.isclose": CalleeUniverseSupport.MATH_ISCLOSE,
+    "numpy.result_type": CalleeUniverseSupport.NUMPY_RESULT_TYPE,
+    "scipy.linalg.issymmetric": CalleeUniverseSupport.SCIPY_LINALG_ISSYMMETRIC,
+    "scipy.linalg.ishermitian": CalleeUniverseSupport.SCIPY_LINALG_ISHERMITIAN,
+    "scipy.fft.get_workers": CalleeUniverseSupport.SCIPY_FFT_GET_WORKERS,
 }
 
 _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all", "list", "set", "hasattr"})
