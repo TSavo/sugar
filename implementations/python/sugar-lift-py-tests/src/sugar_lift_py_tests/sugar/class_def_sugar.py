@@ -215,6 +215,18 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             "    return z\n"
             "\n"
         )
+        # Call-form identity decorator: PEP 702 warnings.deprecated returns the
+        # same class after stamping deprecation metadata (sklearn residual shape).
+        deprecated_decorated = (
+            "from warnings import deprecated\n"
+            "\n"
+            "def H(z):\n"
+            '    @deprecated("use other")\n'
+            "    class Point:\n"
+            "        value = 1\n"
+            "    return z\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="class_def_return",
@@ -277,6 +289,17 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                 + "def test_g():\n"
                 + "    assert G(5) == 6\n",
                 family="pydantic-base-model-extra-class",
+            ),
+            _call_pair(
+                name="deprecated_decorated_class_return",
+                owner_sugar="ClassDefSugar",
+                truthful=deprecated_decorated
+                + "def test_h():\n"
+                + "    assert H(5) == 5\n",
+                lying=deprecated_decorated
+                + "def test_h():\n"
+                + "    assert H(5) == 6\n",
+                family="identity-decorated-class",
             ),
         )
 

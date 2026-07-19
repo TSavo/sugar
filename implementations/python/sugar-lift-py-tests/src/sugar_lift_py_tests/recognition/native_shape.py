@@ -99,6 +99,12 @@ _IDENTITY_DECORATORS = {
     for key in (
         ("dataclasses", "dataclass"),
         ("pydantic.dataclasses", "dataclass"),
+        # PEP 702 deprecation: mutates the class in place and returns it.
+        ("warnings", "deprecated"),
+        ("typing_extensions", "deprecated"),
+        # Corpus-native class-identity deprecation (same contract as warnings).
+        ("sklearn.utils.deprecation", "deprecated"),
+        ("sklearn.utils", "deprecated"),
         ("pandas.core.indexes.extension", "inherit_names"),
         ("pandas.util._decorators", "set_module"),
         ("pandas.api.extensions", "register_dataframe_accessor"),
