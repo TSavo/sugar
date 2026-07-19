@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sugar_lift_py_tests.floor import CallSiteValue
 from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.ir import and_, atomic, term_intern_scope
 
 
 def _recursive_call(term_name: str) -> CallSiteValue:
@@ -37,3 +38,14 @@ def test_callsite_equality_is_total_for_distinct_equal_cyclic_callsites() -> Non
     assert right == left
     assert left != unequal
     assert unequal != left
+
+
+def test_deep_formula_hash_cons_is_total_and_structural() -> None:
+    with term_intern_scope():
+        left = atomic("leaf", [make_var("x")])
+        right = atomic("leaf", [make_var("x")])
+        for _ in range(1200):
+            left = and_([left])
+            right = and_([right])
+        assert left == right
+        assert hash(left) == hash(right)
