@@ -400,6 +400,108 @@ def test_unauthenticated_can_cast_fqn_alone_stays_loud() -> None:
     assert recognize_callee_universe("call:numpy.can_cast", site=site) is None
 
 
+def test_authenticated_numpy_isnan_has_universe_support() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_nan(value):\n"
+        "    assert np.isnan(value)\n"
+    )
+
+    payload = lift_file_payload(source, "isnan_covered_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.isnan" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "isnan"
+    )
+    site = SourceFragment.from_node(call, "isnan_covered_fixture.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) == "numpy.isnan"
+    context = FactoryBuildContext(
+        filename="isnan_covered_fixture.py", catalog=default_catalog()
+    )
+    built = build_node(
+        site,
+        filename="isnan_covered_fixture.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_shadowed_numpy_alias_cannot_warrant_isnan_support() -> None:
+    """Lying twin: parameter receiver is not the authenticated numpy import."""
+
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_nan(np, value):\n"
+        "    assert np.isnan(value)\n"
+    )
+
+    payload = lift_file_payload(source, "isnan_shadowed_fixture.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:numpy.isnan"]
+
+
+def test_later_local_rebind_revokes_isnan_import_warrant() -> None:
+    """Lying twin: later function-local rebind must break false recognition."""
+
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_nan(value):\n"
+        "    assert np.isnan(value)\n"
+        "    np = replacement\n"
+    )
+
+    payload = lift_file_payload(source, "isnan_late_rebind.py")
+
+    gaps = _universe_gaps(payload)
+    assert [gap.ast_kind for gap in gaps] == ["call:numpy.isnan"]
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "isnan"
+    )
+    site = SourceFragment.from_node(call, "isnan_late_rebind.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) is None
+
+
+def test_unauthenticated_isnan_fqn_alone_stays_loud() -> None:
+    """Lying twin: FQN spelling without import provenance must not silence."""
+
+    source = "def test_nan(value):\n" "    assert numpy.isnan(value)\n"
+
+    payload = lift_file_payload(source, "isnan_unauthenticated_fqn.py")
+
+    gaps = _universe_gaps(payload)
+    assert gaps
+    assert all("isnan" in gap.ast_kind for gap in gaps)
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "isnan"
+    )
+    site = SourceFragment.from_node(call, "isnan_unauthenticated_fqn.py", source=source)
+    assert CalleeUniverseRecognition.coordinate(site) is None
+    assert recognize_callee_universe("call:numpy.isnan", site=site) is None
+
+
 def test_authenticated_numpy_issubdtype_has_universe_support() -> None:
     source = (
         "import numpy as np\n"
@@ -474,7 +576,7 @@ def test_shadowed_numpy_alias_cannot_warrant_allclose_support() -> None:
     assert [gap.ast_kind for gap in gaps] == ["call:numpy.allclose"]
 
 
-@pytest.mark.parametrize("callee", ["issubdtype", "allclose", "can_cast"])
+@pytest.mark.parametrize("callee", ["issubdtype", "allclose", "can_cast", "isnan"])
 def test_later_function_local_binding_revokes_numpy_import_warrant(
     callee: str,
 ) -> None:

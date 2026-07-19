@@ -19,12 +19,14 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
     assert {
         "all",
         "numpy.can_cast",
+        "numpy.isnan",
         "numpy._core.multiarray.get_handler_name",
         "numpy._core._multiarray_tests.run_byteorder_converter",
     } <= (BuiltinCalleeUniverseSugar.universe_coordinates)
     assert {
         "all_builtin_universe_coordinate",
         "numpy_can_cast_universe_coordinate",
+        "numpy_isnan_universe_coordinate",
         "get_handler_name_builtin_universe_coordinate",
         "conv_builtin_universe_coordinate",
     } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
@@ -112,6 +114,92 @@ def test_unwarranted_can_cast_receiver_is_not_factory_owned(source: str) -> None
 
 def test_numpy_can_cast_witness_pair_is_enrolled() -> None:
     assert "numpy_can_cast_universe_coordinate" in {
+        pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
+    }
+
+
+def _isnan_call_site(source: str) -> SourceFragment:
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr == "isnan")
+            or (isinstance(node.func, ast.Name) and node.func.id == "isnan")
+        )
+    )
+    return SourceFragment.from_node(call, "isnan.py", source=source)
+
+
+def test_authenticated_numpy_isnan_selects_one_factory_owner() -> None:
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_nan(value):\n"
+        "    assert np.isnan(value)\n"
+    )
+    context = FactoryBuildContext(
+        filename="isnan.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _isnan_call_site(source),
+        filename="isnan.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_nan(np, value):\n"
+            "    assert np.isnan(value)\n"
+        ),
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_nan(value):\n"
+            "    assert np.isnan(value)\n"
+            "    np = replacement\n"
+        ),
+        (
+            "class PretendNumpy:\n"
+            "    def isnan(self, value):\n"
+            "        return True\n"
+            "\n"
+            "def test_nan(np, value):\n"
+            "    assert np.isnan(value)\n"
+        ),
+        (
+            # Unauthenticated FQN spelling alone must not own the coordinate.
+            "def test_nan(value):\n"
+            "    assert numpy.isnan(value)\n"
+        ),
+    ],
+)
+def test_unwarranted_isnan_receiver_is_not_factory_owned(source: str) -> None:
+    context = FactoryBuildContext(
+        filename="isnan.py",
+        catalog=default_catalog(),
+    )
+    built = build_node(
+        _isnan_call_site(source),
+        filename="isnan.py",
+        role=SugarRole.TERM,
+        ctx=context,
+    )
+
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_numpy_isnan_witness_pair_is_enrolled() -> None:
+    assert "numpy_isnan_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 

@@ -30,6 +30,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "dtype",
         "all",
         "numpy.can_cast",
+        "numpy.isnan",
         "numpy._core.multiarray.get_handler_name",
         *_CONVERTER_COORDINATES,
     }
@@ -101,6 +102,7 @@ class BuiltinCalleeUniverseSugar(
                 setup=("import numpy._core._multiarray_tests as mt\n"),
             ),
             _numpy_can_cast_witness(),
+            _numpy_isnan_witness(),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -171,6 +173,19 @@ def _numpy_can_cast_witness():
     )
     return _call_pair(
         name="numpy_can_cast_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        # Conjunction gives the consistency checker a sibling constraint so
+        # determinism of the authenticated coordinate is load-bearing.
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_isnan_witness():
+    prefix = "import numpy as np\n" "\n" "def A():\n" "    return np.isnan(0.0)\n" "\n"
+    return _call_pair(
+        name="numpy_isnan_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
         # Conjunction gives the consistency checker a sibling constraint so
         # determinism of the authenticated coordinate is load-bearing.
