@@ -66,9 +66,28 @@ class BoundVar(FloorValue):
         return outcome
 
     def to_term(self, *, owner: str):
-        from sugar_lift_py_tests.outcome import complete_value
+        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+        from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
         outcome = self.answer(self.scope)
+        if isinstance(outcome, Incomplete):
+            # The source lawfully remains a typed Incomplete at its producer.
+            # Collapsing that incomplete effect into a completed term is a missing
+            # Floor recognizer: structured FactoryPanic, never bare RuntimeError.
+            factory_panic_gap(
+                owner=owner,
+                blame=self.name,
+                observed=type(outcome.effect).__name__,
+                requested="completed BoundVar term substitution",
+                fix=(
+                    "construct the bound source's runtime-dependent result before "
+                    "projecting BoundVar to a term; never read an incomplete effect "
+                    f"as a completed call argument ({outcome.reason})"
+                ),
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.PROJECTION,
+            )
         value = complete_value(outcome, owner=f"{owner} bound source")
         return value.to_term(owner=owner)
 
