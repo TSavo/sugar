@@ -79,8 +79,11 @@ class ListCompSugar(Sugar, role=SugarRole.TERM):
 
     def _finite_or_coordinate(self, iterable, ctx):
         from sugar_lift_py_tests.floor import ListValue, TupleValue
+        from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
 
         if isinstance(iterable, (ListValue, TupleValue)):
+            if len(iterable.elements) > STATIC_UNFOLD_LIMIT:
+                return self._coordinate(ctx, iterable)
             return self._collect_finite(iterable.elements, (), ctx)
         return self._coordinate(ctx, iterable)
 

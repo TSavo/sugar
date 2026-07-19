@@ -121,7 +121,12 @@ class ListValue(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             repeated = len(self.elements) * max(other.value, 0)
-            if repeated > 65520:
+            # Compact form shares the ForSugar static-unfold budget: sequences
+            # larger than STATIC_UNFOLD_LIMIT must not force O(n) ListValue
+            # allocation (numpy loadtxt `[row] * 50000` was a reduce_body hang).
+            from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
+
+            if repeated > STATIC_UNFOLD_LIMIT:
                 return Complete(
                     GroundSequenceRepetitionValue("array", self.elements, other.value)
                 )

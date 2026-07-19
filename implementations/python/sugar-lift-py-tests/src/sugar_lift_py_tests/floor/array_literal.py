@@ -103,7 +103,9 @@ class ArrayLiteral(FloorValue):
             from sugar_lift_py_tests.outcome import Complete
 
             repeated = len(self.items) * max(other.value, 0)
-            if repeated > 65520:
+            from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
+
+            if repeated > STATIC_UNFOLD_LIMIT:
                 return Complete(
                     GroundSequenceRepetitionValue("array", self.items, other.value)
                 )

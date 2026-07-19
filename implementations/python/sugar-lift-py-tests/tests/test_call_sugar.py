@@ -33,6 +33,34 @@ def test_range_call_constructs_finite_elements_at_call_sugar_owner() -> None:
     assert value == ListValue((TermValue(1), TermValue(3), TermValue(5)))
 
 
+def test_large_range_call_stays_callsite_not_materialized_list() -> None:
+    """#5323: range larger than STATIC_UNFOLD_LIMIT must not allocate O(n) ListValue.
+
+    numpy/lib/tests/test_loadtxt.py joins a generator over range(1, 110001);
+    the prior unbounded range fold dominated reduce_body heartbeats.
+    """
+    from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
+
+    value = reduce_value(f"range(0, {STATIC_UNFOLD_LIMIT + 1})")
+
+    assert isinstance(value, CallSiteValue)
+    assert value.target_name == "range"
+    assert value.term == ctor(
+        "call:range",
+        [num(0), num(STATIC_UNFOLD_LIMIT + 1)],
+        symbol_kind="builtin",
+    )
+
+
+def test_range_at_static_unfold_limit_still_materializes() -> None:
+    from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
+
+    value = reduce_value(f"range({STATIC_UNFOLD_LIMIT})")
+
+    assert isinstance(value, ListValue)
+    assert len(value.elements) == STATIC_UNFOLD_LIMIT
+
+
 def test_symbolic_argument_rides_into_the_coordinate() -> None:
     value = reduce_value("f(z)", binds={"z": SymbolicValue(make_var("z"))})
     assert value.term == ctor("call:f", [make_var("z")])

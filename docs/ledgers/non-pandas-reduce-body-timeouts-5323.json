@@ -1,0 +1,231 @@
+{
+  "issue": 5323,
+  "title": "non-pandas reduce_body timeout family",
+  "measurement": {
+    "bound_seconds": 30,
+    "python": "3.12.3",
+    "head": "65c59392912c3537fe451ff3af5cb79ec8640de3"
+  },
+  "shared_mechanisms": [
+    {
+      "name": "finite_sequence_materialize_budget",
+      "limit": 1024,
+      "limit_name": "STATIC_UNFOLD_LIMIT",
+      "changes": [
+        "CallSugar range materializes only when len(range) <= STATIC_UNFOLD_LIMIT; else call:range CallSiteValue",
+        "List/Tuple/ArrayLiteral multiply compactifies at STATIC_UNFOLD_LIMIT (was 65520)",
+        "str.join folds at most STATIC_UNFOLD_LIMIT static parts",
+        "GeneratorExp/ListComp finite collect refuse iterables larger than STATIC_UNFOLD_LIMIT"
+      ]
+    },
+    {
+      "name": "branched_static_for_unfold_budget",
+      "limit": 8,
+      "limit_name": "BRANCHED_STATIC_UNFOLD_LIMIT",
+      "changes": [
+        "ForSugar body with If/Match/IfExp caps static unfold at 8; larger finite iterables force-curry"
+      ],
+      "evidence": "14\u00d7(abs,)+If+InOp microbench: ~113s before, <1s after"
+    }
+  ],
+  "partitions_residual": [
+    {
+      "id": "P1",
+      "name": "scipy dual_annealing install-source dig cascade",
+      "files": [
+        "scipy/optimize/tests/test__dual_annealing.py"
+      ],
+      "dominant_mechanism": "recursive_function_construct",
+      "status": "timeout-or-hang"
+    },
+    {
+      "id": "P2",
+      "name": "scipy shortest_path while/for reduce_body",
+      "files": [
+        "scipy/sparse/csgraph/tests/test_shortest_path.py"
+      ],
+      "dominant_mechanism": "reduce_body",
+      "status": "timeout-or-hang"
+    },
+    {
+      "id": "P0-advanced",
+      "name": "loadtxt compact sequence + add residual (now loud FactoryPanic)",
+      "files": [
+        "numpy/lib/tests/test_loadtxt.py"
+      ],
+      "status": "factory-construction-panic",
+      "note": "compact [row]*50000 is correct; list+concat needs GroundSequenceRepetitionValue.add"
+    }
+  ],
+  "dispositions": [
+    {
+      "file": "numpy/lib/tests/test_loadtxt.py",
+      "category": "factory-construction-panic",
+      "elapsed_seconds": 9.582,
+      "dominant_mechanism": "reduce_body",
+      "mechanism_heartbeat_counts": {
+        "recursive_function_construct": 1,
+        "module_seed_cascade": 0,
+        "assign_construct": 0,
+        "other_dig": 0,
+        "factory_build": 2,
+        "reduce_body": 3,
+        "root_or_other": 1
+      },
+      "timeout_last_sugar": "BlockSugar",
+      "timeout_last_site": "numpy/lib/tests/test_loadtxt.py:894:8",
+      "gap": {
+        "owner_hint": "GroundSequenceRepetitionValue.add",
+        "blame": "numpy/lib/tests/test_loadtxt.py:952:11",
+        "fix": "write more Floor: implement GroundSequenceRepetitionValue.add",
+        "gap_kind": "Floor"
+      },
+      "fingerprint": null,
+      "reason": null,
+      "advanced_to": "FactoryPanic"
+    },
+    {
+      "file": "numpy/random/tests/test_generator_mt19937.py",
+      "category": "completed",
+      "elapsed_seconds": 29.776,
+      "dominant_mechanism": "factory_build",
+      "mechanism_heartbeat_counts": {
+        "recursive_function_construct": 0,
+        "module_seed_cascade": 0,
+        "assign_construct": 0,
+        "other_dig": 6,
+        "factory_build": 10,
+        "reduce_body": 6,
+        "root_or_other": 2
+      },
+      "timeout_last_sugar": "lift_file_payload",
+      "timeout_last_site": "numpy/random/tests/test_generator_mt19937.py",
+      "gap": null,
+      "fingerprint": null,
+      "reason": null
+    },
+    {
+      "file": "numpy/random/tests/test_random.py",
+      "category": "completed",
+      "elapsed_seconds": 19.875,
+      "dominant_mechanism": "factory_build",
+      "mechanism_heartbeat_counts": {
+        "recursive_function_construct": 3,
+        "module_seed_cascade": 1,
+        "assign_construct": 0,
+        "other_dig": 0,
+        "factory_build": 9,
+        "reduce_body": 3,
+        "root_or_other": 1
+      },
+      "timeout_last_sugar": "lift_file_payload",
+      "timeout_last_site": "numpy/random/tests/test_random.py",
+      "gap": null,
+      "fingerprint": null,
+      "reason": null
+    },
+    {
+      "file": "numpy/random/tests/test_randomstate.py",
+      "category": "completed",
+      "elapsed_seconds": 16.444,
+      "dominant_mechanism": "factory_build",
+      "mechanism_heartbeat_counts": {
+        "recursive_function_construct": 1,
+        "module_seed_cascade": 0,
+        "assign_construct": 0,
+        "other_dig": 0,
+        "factory_build": 9,
+        "reduce_body": 2,
+        "root_or_other": 2
+      },
+      "timeout_last_sugar": "lift_file_payload",
+      "timeout_last_site": "numpy/random/tests/test_randomstate.py",
+      "gap": null,
+      "fingerprint": null,
+      "reason": null
+    },
+    {
+      "file": "numpy/tests/test_public_api.py",
+      "category": "completed",
+      "elapsed_seconds": 6.422,
+      "dominant_mechanism": "reduce_body",
+      "mechanism_heartbeat_counts": {
+        "recursive_function_construct": 0,
+        "module_seed_cascade": 0,
+        "assign_construct": 0,
+        "other_dig": 0,
+        "factory_build": 1,
+        "reduce_body": 2,
+        "root_or_other": 0
+      },
+      "timeout_last_sugar": "AttributeSugar",
+      "timeout_last_site": "numpy/tests/test_public_api.py:570:23",
+      "gap": null,
+      "fingerprint": null,
+      "reason": null
+    },
+    {
+      "file": "scipy/optimize/tests/test__dual_annealing.py",
+      "category": "timeout-or-hang",
+      "elapsed_seconds": 30.038,
+      "dominant_mechanism": "recursive_function_construct",
+      "mechanism_heartbeat_counts": {
+        "recursive_function_construct": 16,
+        "module_seed_cascade": 2,
+        "assign_construct": 0,
+        "other_dig": 0,
+        "factory_build": 0,
+        "reduce_body": 0,
+        "root_or_other": 0
+      },
+      "timeout_last_sugar": "scipy.optimize.OptimizeResult",
+      "timeout_last_site": "scipy.optimize.OptimizeResult",
+      "gap": null,
+      "fingerprint": null,
+      "reason": "child exceeded 30s"
+    },
+    {
+      "file": "scipy/sparse/csgraph/tests/test_shortest_path.py",
+      "category": "timeout-or-hang",
+      "elapsed_seconds": 30.037,
+      "dominant_mechanism": "reduce_body",
+      "mechanism_heartbeat_counts": {
+        "recursive_function_construct": 0,
+        "module_seed_cascade": 0,
+        "assign_construct": 0,
+        "other_dig": 4,
+        "factory_build": 1,
+        "reduce_body": 20,
+        "root_or_other": 0
+      },
+      "timeout_last_sugar": "SubscriptAugAssignSugar",
+      "timeout_last_site": "scipy/sparse/csgraph/tests/test_shortest_path.py:237:8",
+      "gap": null,
+      "fingerprint": null,
+      "reason": "child exceeded 30s"
+    }
+  ],
+  "conservation": {
+    "total": 7,
+    "completed": 4,
+    "factory_panic": 1,
+    "bare": 0,
+    "timeout": 2,
+    "silent": 0
+  },
+  "predicted_epsilon_r": {
+    "bounded_timeouts": -5,
+    "completed": 4,
+    "factory_panic": 1,
+    "bare": 0,
+    "silent": 0,
+    "note": "7 = 4 completed + 1 FactoryPanic + 2 timeout + 0 silent"
+  },
+  "hard_law": {
+    "timeout_bound_seconds": 30,
+    "no_skip": true,
+    "no_bound_increase": true,
+    "no_runtime_effect_conversion": true,
+    "silent": 0
+  }
+}

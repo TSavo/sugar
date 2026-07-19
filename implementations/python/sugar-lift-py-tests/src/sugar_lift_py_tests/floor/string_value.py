@@ -571,6 +571,12 @@ def _fold_string_method(receiver: StringValue, operation: MethodCallOperation):
         iterable = args[0]
         parts = _static_str_parts(iterable)
         if parts is not None:
+            from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
+
+            # Refuse to fold joins that exceed the finite-materialize budget.
+            # Opaque coordinate preserves honesty without O(n) string build.
+            if len(parts) > STATIC_UNFOLD_LIMIT:
+                return opaque_coordinate()
             return Complete(StringValue(receiver.value.join(parts)))
         # Opaque iterable (vendor columns, symbolic seq): coordinate only.
         return opaque_coordinate()
