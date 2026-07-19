@@ -80,7 +80,10 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                         authenticated_names.add(alias or imported)
             elif declaration.observed == "Import":
                 for imported, alias in declaration.import_names():
-                    authenticated_modules[alias or imported.split(".", 1)[0]] = imported
+                    bound_name = alias or imported.split(".", 1)[0]
+                    authenticated_modules[bound_name] = (
+                        imported if alias is not None else bound_name
+                    )
         for decorator in statement.class_decorators():
             if decorator.observed in {"Name", "Attribute"}:
                 receiver = decorator
@@ -178,6 +181,16 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
             "    return z\n"
             "\n"
         )
+        pydantic_dataclass = (
+            "import pydantic\n"
+            "\n"
+            "def F(z):\n"
+            "    @pydantic.dataclasses.dataclass\n"
+            "    class Payload:\n"
+            "        value: int\n"
+            "    return z\n"
+            "\n"
+        )
         return (
             _call_pair(
                 name="class_def_return",
@@ -220,6 +233,15 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
                 + "    assert E(5) == 5\n",
                 lying=typed_dict_total + "def test_e():\n" + "    assert E(5) == 6\n",
                 family="typed-dict-total-class",
+            ),
+            _call_pair(
+                name="pydantic_dataclass_class_return",
+                owner_sugar="ClassDefSugar",
+                truthful=pydantic_dataclass
+                + "def test_f():\n"
+                + "    assert F(5) == 5\n",
+                lying=pydantic_dataclass + "def test_f():\n" + "    assert F(5) == 6\n",
+                family="identity-decorated-class",
             ),
         )
 
