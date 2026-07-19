@@ -26,6 +26,13 @@ from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
 def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
+    """Language/stdlib + structural coordinates only (#5603 / #5614).
+
+    Vendor-root coordinates (``numpy.all``, ``numpy.dtype``, …) are not
+    hard-coded production universe keys. They re-earn via empty kit protocol
+    + import provenance (``load_imported_callee_protocol``; see
+    ``test_imported_callee_protocol_numpy_all_dtype``).
+    """
     assert {
         "all",
         "any",
@@ -36,25 +43,21 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "set",
         "hasattr",
         "item",
-        "numpy.can_cast",
-        "numpy.issubdtype",
-        "numpy.isnan",
-        "numpy.all",
-        "numpy.dtype",
-        "numpy.shares_memory",
-        "numpy.isdtype",
-        "numpy.datetime_data",
-        "numpy.f2py.crackfortran.markinnerspaces",
-        "numpy._core._multiarray_tests.identity_hash_set_item_default",
-        "numpy.ndarray.tobytes",
-        "numpy._core.multiarray.get_handler_name",
-        "numpy._core._multiarray_tests.run_byteorder_converter",
         "re.Pattern.search",
         "json.loads",
         "dataclasses.asdict",
         "dataclasses.is_dataclass",
         "math.isclose",
+        "pathlib.Path",
+        "pathlib.Path.resolve",
+        "textwrap.dedent",
     } <= (BuiltinCalleeUniverseSugar.universe_coordinates)
+    # Production tables must stay free of vendor-root logos.
+    assert not any(
+        c.startswith("numpy.") or c.startswith("scipy.")
+        for c in BuiltinCalleeUniverseSugar.universe_coordinates
+    )
+    enrolled = {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
     assert {
         "all_builtin_universe_coordinate",
         "any_builtin_universe_coordinate",
@@ -64,27 +67,16 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "list_builtin_universe_coordinate",
         "set_builtin_universe_coordinate",
         "hasattr_builtin_universe_coordinate",
-        "item_receiver_universe_coordinate",
-        "numpy_can_cast_universe_coordinate",
-        "numpy_issubdtype_universe_coordinate",
-        "numpy_isnan_universe_coordinate",
-        "numpy_all_universe_coordinate",
-        "numpy_dtype_universe_coordinate",
-        "numpy_dtype_result_universe_coordinate",
-        "numpy_shares_memory_universe_coordinate",
-        "numpy_isdtype_universe_coordinate",
-        "numpy_datetime_data_universe_coordinate",
-        "numpy_markinnerspaces_universe_coordinate",
-        "numpy_identity_hash_set_item_default_universe_coordinate",
-        "numpy_array_tobytes_universe_coordinate",
-        "get_handler_name_builtin_universe_coordinate",
-        "conv_builtin_universe_coordinate",
         "regex_search_builtin_universe_coordinate",
         "json_loads_universe_coordinate",
         "dataclasses_asdict_universe_coordinate",
         "dataclasses_is_dataclass_universe_coordinate",
         "math_isclose_universe_coordinate",
-    } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
+        "textwrap_dedent_universe_coordinate",
+    } <= enrolled
+    # Vendor mint witnesses retired with logo tables — kit protocol path only.
+    assert "numpy_all_universe_coordinate" not in enrolled
+    assert "numpy_dtype_universe_coordinate" not in enrolled
 
 
 def test_all_nine_authenticated_conv_rows_select_the_converter_owner() -> None:
@@ -876,24 +868,37 @@ def _numpy_dtype_call_site(source: str) -> SourceFragment:
 
 
 def test_authenticated_numpy_dtype_selects_one_factory_owner() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_dtype(value):\n"
-        "    assert np.dtype(value) == np.dtype(value)\n"
-    )
-    context = FactoryBuildContext(
-        filename="numpy_dtype.py",
-        catalog=default_catalog(),
-    )
-    built = build_node(
-        _numpy_dtype_call_site(source),
-        filename="numpy_dtype.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """Truthful twin under kit-loaded protocol (#5407 re-earn; no logo tables)."""
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    load_imported_callee_protocol(
+        {"numpy.dtype": CalleeUniverseSupport.NUMPY_DTYPE}
+    )
+    try:
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(value):\n"
+            "    assert np.dtype(value) == np.dtype(value)\n"
+        )
+        context = FactoryBuildContext(
+            filename="numpy_dtype.py",
+            catalog=default_catalog(),
+        )
+        built = build_node(
+            _numpy_dtype_call_site(source),
+            filename="numpy_dtype.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -940,7 +945,13 @@ def test_unwarranted_numpy_dtype_receiver_is_not_factory_owned(source: str) -> N
 
 
 def test_numpy_dtype_witness_pair_is_enrolled() -> None:
-    assert "numpy_dtype_universe_coordinate" in {
+    """Vendor mint witnesses retired with logo tables (#5614).
+
+    Re-earn path is kit protocol + import provenance (see
+    test_imported_callee_protocol_numpy_all_dtype). Production witnesses stay
+    language/stdlib only so MISSING never becomes silent mint success.
+    """
+    assert "numpy_dtype_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
@@ -1074,24 +1085,37 @@ def _numpy_all_call_site(source: str) -> SourceFragment:
 
 
 def test_authenticated_numpy_all_selects_one_factory_owner() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_all(value):\n"
-        "    assert np.all(value)\n"
-    )
-    context = FactoryBuildContext(
-        filename="numpy_all.py",
-        catalog=default_catalog(),
-    )
-    built = build_node(
-        _numpy_all_call_site(source),
-        filename="numpy_all.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """Truthful twin under kit-loaded protocol (#5408 re-earn; no logo tables)."""
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    load_imported_callee_protocol(
+        {"numpy.all": CalleeUniverseSupport.NUMPY_ALL}
+    )
+    try:
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_all(value):\n"
+            "    assert np.all(value)\n"
+        )
+        context = FactoryBuildContext(
+            filename="numpy_all.py",
+            catalog=default_catalog(),
+        )
+        built = build_node(
+            _numpy_all_call_site(source),
+            filename="numpy_all.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -1141,7 +1165,13 @@ def test_unwarranted_numpy_all_receiver_is_not_factory_owned(source: str) -> Non
 
 
 def test_numpy_all_witness_pair_is_enrolled() -> None:
-    assert "numpy_all_universe_coordinate" in {
+    """Vendor mint witnesses retired with logo tables (#5614).
+
+    Re-earn path is kit protocol + import provenance (see
+    test_imported_callee_protocol_numpy_all_dtype). Production witnesses stay
+    language/stdlib only so MISSING never becomes silent mint success.
+    """
+    assert "numpy_all_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 

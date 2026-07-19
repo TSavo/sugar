@@ -118,14 +118,26 @@ _IMPORTED_SUPPORT = {
     # land via contract, not hard-coded production logos.
 }
 
+# Kit-loaded import identities (overlay). Empty by construction — vendor-rooted
+# coordinates such as ``numpy.all`` / ``numpy.dtype`` arrive only through
+# ``load_imported_callee_protocol`` (#5618 empty-kit pattern). Production
+# recognition never hard-codes logo table keys.
+_PROTOCOL_IMPORTED_SUPPORT: dict[str, CalleeUniverseSupport] = {}
+
 # Language / builtin coordinates only (#5603 adjudication).
 _BUILTIN_COORDINATES = frozenset(
     {"type", "dtype", "all", "any", "min", "max", "sum", "list", "set", "hasattr"}
 )
-# Attribute leaves that can still resolve into an imported authenticated
-# coordinate (``np.can_cast``, ``np.all``, converter helpers, …). Class-body
-# aliases (``self.conv = mt.run_byteorder_converter``) use arbitrary attr
-# names and never match this set — they take the method-coordinate path only.
+# Attribute leaves that can still resolve into an authenticated imported
+# coordinate. Class-body aliases use arbitrary attr names and never match —
+# they take the method-coordinate path only. Includes kit-loaded leaves.
+def _imported_attribute_leaves() -> frozenset[str]:
+    return frozenset(
+        identity.rsplit(".", 1)[-1]
+        for identity in (*_IMPORTED_SUPPORT, *_PROTOCOL_IMPORTED_SUPPORT)
+    )
+
+
 _IMPORTED_ATTRIBUTE_LEAVES = frozenset(
     identity.rsplit(".", 1)[-1] for identity in _IMPORTED_SUPPORT
 )
@@ -246,9 +258,38 @@ def _target_matches_call(target: str | None, coordinate: str | None, site) -> bo
 def recognize_authenticated_callee_identity(
     identity: str | None,
 ) -> CalleeUniverseSupport | None:
-    """Type an identity only after lexical/source provenance authenticated it."""
+    """Type an identity only after lexical/source provenance authenticated it.
 
-    return _IMPORTED_SUPPORT.get(identity)
+    Production language/stdlib table first; then kit-loaded overlay. Vendor
+    identities (``numpy.all``, ``numpy.dtype``, …) are never hard-coded in
+    production — they arrive only via ``load_imported_callee_protocol``.
+    """
+
+    if identity is None:
+        return None
+    return _IMPORTED_SUPPORT.get(identity) or _PROTOCOL_IMPORTED_SUPPORT.get(
+        identity
+    )
+
+
+def load_imported_callee_protocol(
+    coordinates: dict[str, CalleeUniverseSupport],
+) -> None:
+    """Install import-identity coordinates from a kit/bridge contract.
+
+    Production stays empty of vendor-root keys. Tests and future kit loaders
+    call this with coordinates proved by external evidence — not hard-coded
+    logos in the recognition module itself (#5618 pattern).
+    """
+
+    _PROTOCOL_IMPORTED_SUPPORT.clear()
+    _PROTOCOL_IMPORTED_SUPPORT.update(coordinates)
+
+
+def clear_imported_callee_protocol() -> None:
+    """Remove kit-loaded import-identity coordinates (test isolation / unload)."""
+
+    _PROTOCOL_IMPORTED_SUPPORT.clear()
 
 
 class CalleeUniverseRecognition:
@@ -301,7 +342,8 @@ class CalleeUniverseRecognition:
             # full ``imported_call_identity`` for every ``random.X`` /
             # ``module.Y`` Call is the factory.select residual after
             # parsed_locus_index drained the AST-walk half of the path.
-            if target in (_IMPORTED_ATTRIBUTE_LEAVES | _DTYPE_RESULT_ATTRIBUTE_LEAVES):
+            leaves = _imported_attribute_leaves() | _DTYPE_RESULT_ATTRIBUTE_LEAVES
+            if target in leaves:
                 imported = _result_call_identity(site)
                 if recognize_authenticated_callee_identity(imported) is not None:
                     return imported
@@ -319,8 +361,13 @@ class CalleeUniverseRecognition:
         if target in _BUILTIN_COORDINATES:
             # Without source there is no evidence of shadowing; keep the bare
             # builtin warrant. With source, parameters and local rebinds revoke.
+            # Import-bound kit/language coordinates (``from numpy import all``
+            # under a loaded protocol) win over the bare builtin leaf.
             if not site.source:
                 return target
+            imported = imported_call_identity(site)
+            if recognize_authenticated_callee_identity(imported) is not None:
+                return imported
             return target if cls._name_is_unshadowed(site, target) else None
 
         if not site.source:
@@ -333,7 +380,7 @@ class CalleeUniverseRecognition:
         # whose spelling is not a registered leaf remain loud — the universe
         # gap auditor keys belonging by leaf spelling, so alias greens would
         # be silent twins.
-        if target not in _IMPORTED_ATTRIBUTE_LEAVES:
+        if target not in _imported_attribute_leaves():
             return None
         return imported_call_identity(site)
 
@@ -1130,7 +1177,9 @@ def _source_path(statement):
 __all__ = [
     "CalleeUniverseRecognition",
     "CalleeUniverseSupport",
+    "clear_imported_callee_protocol",
     "imported_call_identity",
+    "load_imported_callee_protocol",
     "recognize_authenticated_callee_identity",
     "recognize_callee_universe",
 ]
