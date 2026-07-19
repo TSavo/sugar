@@ -218,6 +218,26 @@ def test_dataclass_decorated_class_witness_truthful_sat_wrong_twin_unsat(
     assert lying.verdict == pair.lying.expected == "unsat"
 
 
+def test_pydantic_dataclass_class_witness_truthful_sat_wrong_twin_unsat(
+    tmp_path: Path,
+) -> None:
+    pair = next(
+        witness
+        for witness in ClassDefSugar.witnesses()
+        if witness.name == "pydantic_dataclass_class_return"
+    )
+
+    truthful = run_source_through_real_solver(
+        tmp_path / "pydantic-dataclass-truthful", pair.truthful.source
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "pydantic-dataclass-lying", pair.lying.source
+    )
+
+    assert truthful.verdict == pair.truthful.expected == "sat"
+    assert lying.verdict == pair.lying.expected == "unsat"
+
+
 def test_typed_dict_total_class_witness_truthful_sat_wrong_twin_unsat(
     tmp_path: Path,
 ) -> None:
@@ -294,6 +314,47 @@ def test_owns_authenticated_module_qualified_stdlib_dataclass() -> None:
     site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
 
     assert ClassDefSugar.owns(site) is True
+
+
+@pytest.mark.parametrize(
+    "import_statement",
+    ("import pydantic", "import pydantic.dataclasses"),
+)
+def test_owns_authenticated_module_qualified_pydantic_dataclass(
+    import_statement: str,
+) -> None:
+    source = (
+        f"{import_statement}\n"
+        "@pydantic.dataclasses.dataclass\n"
+        "class Payload:\n"
+        "    value: int\n"
+    )
+    site = SourceFragment.from_node(ast.parse(source).body[1], "t.py", source=source)
+
+    assert ClassDefSugar.owns(site) is True
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    result = build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert result.audit_row.selected == "ClassDefSugar"
+
+
+def test_same_named_local_pydantic_dataclasses_namespace_stays_loud() -> None:
+    source = (
+        "class dataclasses:\n"
+        "    dataclass = lambda cls: 7\n"
+        "class pydantic:\n"
+        "    dataclasses = dataclasses\n"
+        "@pydantic.dataclasses.dataclass\n"
+        "class Payload:\n"
+        "    value: int\n"
+    )
+    site = SourceFragment.from_node(ast.parse(source).body[-1], "t.py", source=source)
+    assert ClassDefSugar.owns(site) is False
+
+    ctx = FactoryBuildContext(filename="t.py", catalog=default_catalog())
+    with pytest.raises(FactoryPanic) as raised:
+        build_node(site, filename="t.py", role=SugarRole.STATEMENT, ctx=ctx)
+    assert raised.value.info.observed == "ClassDef"
 
 
 def test_same_named_local_dataclasses_namespace_stays_unowned() -> None:
