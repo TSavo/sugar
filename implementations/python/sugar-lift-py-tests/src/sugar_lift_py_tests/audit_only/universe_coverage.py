@@ -35,6 +35,7 @@ def universe_coverage_gaps(
         for symbol in _contract_symbols(contract)
     }
     call_nodes = _call_nodes_by_locus(module, filename)
+    assertion_call_loci = _assertion_call_loci(module)
     gaps: list[FactoryGapInfo] = []
     seen: set[tuple[str, str, int, int]] = set()
     for edge in payload.call_edges:
@@ -48,6 +49,8 @@ def universe_coverage_gaps(
         file = str(locus.get("file") or filename)
         line = int(locus.get("line") or 0)
         col = int(locus.get("col") or locus.get("column") or 0)
+        if (line, col) not in assertion_call_loci:
+            continue
         key = (target, file, line, col)
         if key in seen:
             continue
@@ -128,6 +131,19 @@ def _call_nodes_by_locus(
         for node in ast.walk(root)
         if isinstance(node, ast.Call)
     }
+
+
+def _assertion_call_loci(module) -> frozenset[tuple[int, int]]:
+    root = module.node if isinstance(module, SourceFragment) else module
+    if not isinstance(root, ast.AST):
+        root = ast.Module(body=list(root.body), type_ignores=[])
+    return frozenset(
+        (int(call.lineno), int(call.col_offset))
+        for assertion in ast.walk(root)
+        if isinstance(assertion, ast.Assert)
+        for call in ast.walk(assertion.test)
+        if isinstance(call, ast.Call)
+    )
 
 
 def _has_builtin_universe_claim(site, *, catalog, filename: str) -> bool:

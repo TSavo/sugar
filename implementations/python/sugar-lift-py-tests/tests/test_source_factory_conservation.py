@@ -122,3 +122,43 @@ def test_generator_expression_registers_its_deferred_body_universe() -> None:
     assert any(
         row.ast_kind == "GeneratorExp" and row.line == 2 for row in payload.factory_walk
     )
+
+
+def test_append_argument_comprehension_registers_its_factory_walk() -> None:
+    source = (
+        "def collect(values):\n"
+        "    rows = []\n"
+        "    rows.append([value for value in values])\n"
+        "    return rows\n"
+    )
+
+    payload, _ = audit_lift_file(source, "append_comprehension.py")
+    conservation = payload.source_factory_conservation
+
+    assert conservation is not None
+    assert conservation.complete is True
+    assert any(
+        row.ast_kind == "ListComp" and row.line == 3
+        for row in payload.factory_walk
+    )
+
+
+def test_constructor_argument_generator_registers_its_factory_walk() -> None:
+    source = (
+        "class Bindings:\n"
+        "    def __init__(self, values):\n"
+        "        self.values = values\n"
+        "\n"
+        "def collect(values):\n"
+        "    return Bindings(tuple(value for value in values))\n"
+    )
+
+    payload, _ = audit_lift_file(source, "constructor_generator.py")
+    conservation = payload.source_factory_conservation
+
+    assert conservation is not None
+    assert conservation.complete is True
+    assert any(
+        row.ast_kind == "GeneratorExp" and row.line == 6
+        for row in payload.factory_walk
+    )
