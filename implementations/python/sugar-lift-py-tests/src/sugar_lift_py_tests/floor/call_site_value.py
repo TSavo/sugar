@@ -91,6 +91,26 @@ class CallSiteValue(FloorValue):
     # The target spelling alone never grants native behavior.
     native_shape: NativeShape | None = None
 
+    def __hash__(self) -> int:
+        """Hash the finite call coordinate, never the recursively-owned body.
+
+        ``body`` can contain the callsite that owns it (recursive functions and
+        deferred constructor graphs). The frozen-dataclass-generated hash
+        walked that graph until Python raised ``RecursionError``. The term is
+        the authenticated structural coordinate; ``target_name`` and the
+        parameter shape disambiguate otherwise equal coordinates. Omitting
+        recursive payload fields is safe for hash equality (equal values still
+        receive the same hash) and makes identity total over cyclic bodies.
+        """
+        return hash(
+            (
+                type(self),
+                self.target_name,
+                self.parameters,
+                _term_cycle_key(self.term),
+            )
+        )
+
     def to_term(self, *, owner: str):
         del owner
         return self.term
@@ -922,9 +942,7 @@ class CallSiteValue(FloorValue):
             )
         token = _ACTIVE_DIG_DEMAND.set(active_demand + 1)
         try:
-            outcome = _reduce_callsite_body(
-                body, reduce_ctx, blame=self.target_name
-            )
+            outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
         finally:
             _ACTIVE_DIG_DEMAND.reset(token)
         # FactoryPanic is BaseException and process-terminal: dig must not convert
