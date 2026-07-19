@@ -178,6 +178,19 @@ def test_authenticated_numpy_allclose_has_universe_support() -> None:
     assert _universe_gaps(payload) == []
 
 
+def test_module_scope_numpy_from_import_has_universe_support() -> None:
+    """Module-level imports establish the name; do not revoke as free-var shadow."""
+
+    source = "from numpy import allclose\nassert allclose(1, 1)\n"
+
+    payload = lift_file_payload(source, "allclose_module_fixture.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.allclose" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
 def test_shadowed_numpy_alias_cannot_warrant_allclose_support() -> None:
     source = (
         "import numpy as np\n"

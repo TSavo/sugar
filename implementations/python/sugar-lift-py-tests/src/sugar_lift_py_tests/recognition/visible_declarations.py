@@ -163,7 +163,13 @@ def lexical_function_bindings(statement) -> frozenset[str]:
 
 
 def declaration_is_function_local(statement, declaration) -> bool:
-    """Whether a visible declaration belongs to the containing function."""
+    """Whether a visible declaration belongs to the site's binding scope.
+
+    Function-body declarations match the enclosing ``FunctionDef``. Module-level
+    sites share module scope with module-level imports, so a later free-variable
+    rebinding law does not revoke the import that established the name.
+    Nested lambda/comprehension scopes never own outer declarations.
+    """
 
     path = _source_path(statement)
     if path is None:
@@ -183,7 +189,9 @@ def declaration_is_function_local(statement, declaration) -> bool:
         None,
     )
     if function is None:
-        return False
+        # Module-level site: ``visible_declarations`` already filters to
+        # preceding module statements, which share this scope.
+        return True
     end_line = getattr(function, "end_lineno", function.lineno)
     return function.lineno < declaration.line <= end_line
 
