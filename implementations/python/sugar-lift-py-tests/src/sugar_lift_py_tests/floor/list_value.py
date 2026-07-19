@@ -115,20 +115,20 @@ class ListValue(FloorValue):
         # warrant needed to reach that same effect. Other opaque/import results
         # have not proved Python's __index__ contract and stay a construction gap.
         if type(other) is TermValue and type(other.value) is int:
-            from sugar_lift_py_tests.floor.ground_sequence_repetition_value import (
-                GroundSequenceRepetitionValue,
-            )
             from sugar_lift_py_tests.outcome import Complete
 
             repeated = len(self.elements) * max(other.value, 0)
-            # Compact form shares the ForSugar static-unfold budget: sequences
-            # larger than STATIC_UNFOLD_LIMIT must not force O(n) ListValue
-            # allocation (numpy loadtxt `[row] * 50000` was a reduce_body hang).
-            from sugar_lift_py_tests.sugar.for_sugar import STATIC_UNFOLD_LIMIT
+            from sugar_lift_py_tests.sugar.for_sugar import (
+                STATIC_UNFOLD_LIMIT,
+                finite_unfold_cap_panic,
+            )
 
             if repeated > STATIC_UNFOLD_LIMIT:
-                return Complete(
-                    GroundSequenceRepetitionValue("array", self.elements, other.value)
+                finite_unfold_cap_panic(
+                    construction="ListValue repetition",
+                    site=site,
+                    observed=f"list repetition cardinality={repeated}",
+                    limit=STATIC_UNFOLD_LIMIT,
                 )
             return Complete(ListValue(self.elements * other.value))
         runtime_count_kind = None

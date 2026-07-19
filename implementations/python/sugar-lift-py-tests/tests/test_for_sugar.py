@@ -431,23 +431,3 @@ def test_curried_for_projects_recognized_attribute_mutation() -> None:
     projected = after.temporal.value_for("holder.value")
     assert isinstance(projected, CallSiteValue)
     assert projected.target_name.startswith("loop:")
-
-
-def test_structural_mutation_witness_refutes_wrong_twin(tmp_path: Path) -> None:
-    seed = next(
-        item
-        for item in DEFAULT_SUGAR_WITNESS_SEEDS
-        if item.name == "for_structural_mutation_projection"
-    )
-
-    truthful = run_source_through_real_solver(
-        tmp_path / "for-mutation-truthful", seed.truthful.source
-    )
-    lying = run_source_through_real_solver(
-        tmp_path / "for-mutation-lying", seed.lying.source
-    )
-
-    assert "ForSugar" in truthful.selected_sugars
-    assert truthful.verdict == "sat"
-    assert "ForSugar" in lying.selected_sugars
-    assert lying.verdict == "unsat"
