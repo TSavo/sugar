@@ -26,6 +26,27 @@ class CalleeUniverseSupport(Enum):
     NUMPY_ISNAN = auto()
     NUMPY_ALL = auto()
     NUMPY_DTYPE = auto()
+    NUMPY_TIMDELTA64 = auto()
+    NUMPY_ASARRAY = auto()
+    NUMPY_MEDIAN = auto()
+    NUMPY_ARRAY = auto()
+    NUMPY_LIB_DROP_METADATA = auto()
+    NUMPY_READ = auto()
+    NUMPY_ARRAY_WRAP = auto()
+    NUMPY_DLPACK_DEVICE = auto()
+    NUMPY_ASTYPE = auto()
+    NUMPY_DTYPES = auto()
+    NUMPY_GET_NPYITER_NDIM = auto()
+    NUMPY_GET_NPYITER_SIZE = auto()
+    NUMPY_HAS_METHOD_HEADING = auto()
+    NUMPY_REPR_LATEX = auto()
+    NUMPY_BINOMIAL = auto()
+    NUMPY_CONV_INTP = auto()
+    NUMPY_CREATE = auto()
+    NUMPY_EXISTS = auto()
+    NUMPY_FUNC = auto()
+    NUMPY_ITER_GOTO = auto()
+    NUMPY_MAY_SHARE_MEMORY = auto()
     NUMPY_MAY_SHARE_MEMORY = auto()
     NUMPY_HANDLER_NAME = auto()
     NUMPY_CONVERTER = auto()
@@ -39,6 +60,26 @@ _IMPORTED_SUPPORT = {
     "numpy.isnan": CalleeUniverseSupport.NUMPY_ISNAN,
     "numpy.all": CalleeUniverseSupport.NUMPY_ALL,
     "numpy.dtype": CalleeUniverseSupport.NUMPY_DTYPE,
+    "numpy.timedelta64": CalleeUniverseSupport.NUMPY_TIMDELTA64,
+    "numpy.asarray": CalleeUniverseSupport.NUMPY_ASARRAY,
+    "numpy.median": CalleeUniverseSupport.NUMPY_MEDIAN,
+    "numpy.array": CalleeUniverseSupport.NUMPY_ARRAY,
+    "numpy.lib._utils_impl.drop_metadata": CalleeUniverseSupport.NUMPY_LIB_DROP_METADATA,
+    "numpy.read": CalleeUniverseSupport.NUMPY_READ,
+    "numpy.__array_wrap__": CalleeUniverseSupport.NUMPY_ARRAY_WRAP,
+    "numpy.__dlpack_device__": CalleeUniverseSupport.NUMPY_DLPACK_DEVICE,
+    "numpy.astype": CalleeUniverseSupport.NUMPY_ASTYPE,
+    "numpy.dtypes": CalleeUniverseSupport.NUMPY_DTYPES,
+    "numpy.get_npyiter_ndim": CalleeUniverseSupport.NUMPY_GET_NPYITER_NDIM,
+    "numpy.get_npyiter_size": CalleeUniverseSupport.NUMPY_GET_NPYITER_SIZE,
+    "numpy._has_method_heading": CalleeUniverseSupport.NUMPY_HAS_METHOD_HEADING,
+    "numpy._repr_latex_": CalleeUniverseSupport.NUMPY_REPR_LATEX,
+    "numpy.binomial": CalleeUniverseSupport.NUMPY_BINOMIAL,
+    "numpy.conv_intp": CalleeUniverseSupport.NUMPY_CONV_INTP,
+    "numpy.create": CalleeUniverseSupport.NUMPY_CREATE,
+    "numpy.exists": CalleeUniverseSupport.NUMPY_EXISTS,
+    "numpy.func": CalleeUniverseSupport.NUMPY_FUNC,
+    "numpy.iter_goto": CalleeUniverseSupport.NUMPY_ITER_GOTO,
     "numpy.may_share_memory": CalleeUniverseSupport.NUMPY_MAY_SHARE_MEMORY,
     "numpy._core.multiarray.get_handler_name": (
         CalleeUniverseSupport.NUMPY_HANDLER_NAME

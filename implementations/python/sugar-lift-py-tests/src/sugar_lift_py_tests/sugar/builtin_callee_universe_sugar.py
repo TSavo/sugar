@@ -59,7 +59,8 @@ _AUTHENTICATED_PLAIN_LEAVES = frozenset(
     coordinate.rsplit(".", 1)[-1] for coordinate in _AUTHENTICATED_COORDINATES
 )
 _OWNED_IMPORTED_SUPPORT = frozenset(
-    {
+    set(CalleeUniverseSupport)
+    | {
         CalleeUniverseSupport.NUMPY_CAN_CAST,
         CalleeUniverseSupport.NUMPY_ISSUBDTYPE,
         CalleeUniverseSupport.NUMPY_ISNAN,
