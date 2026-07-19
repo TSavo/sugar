@@ -16,6 +16,9 @@ AXIS_COMMANDS = {
     "R_timeouts = 0": "timeout_zero_tolerance.py",
     "R_vendor_special_case = 0": "vendor_special_case_law.py",
     "R_factory_walk_unclassified = 0": "factory_walk_unclassified_law.py",
+    "R_finite_cap_opaque_completions = 0": (
+        "finite_cap_opaque_completion_law.py"
+    ),
 }
 
 

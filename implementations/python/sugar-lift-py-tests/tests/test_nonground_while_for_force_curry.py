@@ -1,4 +1,4 @@
-"""#5338 residual A: For→While over dig-opaque array chain must force-curry.
+"""#5338 residual A / #5367: finite for+while must not mint opaque success.
 
 Product hang (scipy/sparse/csgraph/tests/test_shortest_path.py):
   for k in range(n):  # n parametrized to 10/100/1000 → materialize + unfold
@@ -10,23 +10,23 @@ Product hang (scipy/sparse/csgraph/tests/test_shortest_path.py):
 pred/sources from dig-opaque dijkstra return. Static for-unfold × per-k
 EqualityOpSugar on opaque subscript was the 30s reduce_body tip.
 
-Replacement: non-ground free names under nested While → single CurriedLoopScope
-for the outer for, not per-k Equality reduce. Ground for+while micros still
-static-unfold.
+Law (#5367 / #5375 / #5378): finite authenticated history may not become
+force-curry opacity. Non-ground while under a finite for is a typed
+finite_unfold FactoryPanic until an exact compact construction exists.
+Ground for+while micros still static-unfold.
 """
 
 from __future__ import annotations
 
 import ast
-import time
 from dataclasses import replace
 
-from factory_reduce import compose_block
+import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-from sugar_lift_py_tests.factory.block import Block
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
@@ -77,21 +77,12 @@ _PRED_CHAIN_BODY = (
 )
 
 
-def test_nonground_pred_chain_for_while_force_curries_not_hangs() -> None:
-    """Opaque pred/sources + for+while chain → CurriedLoopScope, completes fast."""
+def test_nonground_pred_chain_for_while_is_loud_not_opaque_success() -> None:
+    """Finite opaque for+while history cannot mint force-curry Complete."""
     opaque = _opaque_array("dijkstra_pred")
     binds = {"pred": opaque, "sources": opaque}
-    started = time.perf_counter()
-    value = _reduce_for(_PRED_CHAIN_BODY, binds)
-    # Full block path must also complete (scope-only contribution is empty).
-    block = compose_block(_PRED_CHAIN_BODY, binds=binds)
-    elapsed = time.perf_counter() - started
-
-    assert elapsed < 5.0, f"opaque for+while chain hung ({elapsed:.2f}s)"
-    assert isinstance(value, CurriedLoopScope), (
-        f"expected CurriedLoopScope for non-ground while chain; got {type(value).__name__}"
-    )
-    assert isinstance(block, BlockValue)
+    with pytest.raises(FactoryPanic, match="finite_unfold|non-ground while"):
+        _reduce_for(_PRED_CHAIN_BODY, binds)
 
 
 def test_ground_pred_chain_for_while_still_static_unfolds() -> None:
@@ -114,12 +105,8 @@ def test_ground_pred_chain_for_while_still_static_unfolds() -> None:
     assert not isinstance(value, CurriedLoopScope)
 
 
-def test_parametrize_nonground_pred_chain_lift_completes() -> None:
-    """File-shaped instrument: parametrize n∈{10,100,1000} + opaque dig-like call.
-
-    Mirrors product shape without scipy. Opaque arrays arrive as CallSiteValue
-    from an undiggable helper return face.
-    """
+def test_parametrize_nonground_pred_chain_lift_is_loud() -> None:
+    """File-shaped instrument: parametrize + opaque dig-like call stays loud."""
     source = (
         "def opaque_arrays():\n"
         "    return __import__('operator')\n"
@@ -135,9 +122,5 @@ def test_parametrize_nonground_pred_chain_lift_completes() -> None:
         "            assert sources[p] == s\n"
         "            p = pred[p]\n"
     )
-    started = time.perf_counter()
-    payload = lift_file_payload(source, "nonground_pred_chain.py")
-    elapsed = time.perf_counter() - started
-    assert elapsed < 15.0, f"parametrize opaque pred-chain hung ({elapsed:.2f}s)"
-    # Completion under bound is the instrument: shape moved off per-k Equality hang.
-    assert payload is not None
+    with pytest.raises(FactoryPanic):
+        lift_file_payload(source, "nonground_pred_chain.py")

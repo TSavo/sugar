@@ -220,19 +220,39 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         ):
             elements = iterable.finite_elements
         if elements is not None:
-            # Non-ground pred-chain While under a finite for: one coordinate,
-            # not STATIC_UNFOLD_LIMIT per-k Equality reduces on dig-opaque
-            # arrays (#5338 residual A / scipy csgraph shortest_path).
+            # Finite authenticated history is decidable even when the body
+            # reads dig-opaque outer names. Never replace that finite
+            # construction with force-curry opacity (#5367 / #5378): either
+            # unfold within budget or raise a typed finite_unfold terminal.
+            # #5338 residual A (scipy csgraph shortest_path) becomes loud FP
+            # rather than per-k Equality hang or opaque Complete.
+            try:
+                element_count = len(elements)
+            except OverflowError:
+                finite_unfold_cap_panic(
+                    construction="ForSugar finite iterable length",
+                    site=self.site,
+                    observed="finite iterable length overflow",
+                    limit=STATIC_UNFOLD_LIMIT,
+                )
             if self._body_has_while() and self._while_reads_non_ground_outer(ctx):
-                return self._bind_and_body(iterable, ctx, force_curry=True)
+                finite_unfold_cap_panic(
+                    construction="ForSugar finite for/while non-ground outer",
+                    site=self.site,
+                    observed=(
+                        f"iterable cardinality={element_count} with "
+                        "non-ground while body"
+                    ),
+                    limit=STATIC_UNFOLD_LIMIT,
+                )
             limit = STATIC_UNFOLD_LIMIT
             if self._body_has_branching_statement():
                 limit = min(limit, BRANCHED_STATIC_UNFOLD_LIMIT)
-            if len(elements) > limit:
+            if element_count > limit:
                 finite_unfold_cap_panic(
                     construction="ForSugar finite iterable",
                     site=self.site,
-                    observed=f"iterable cardinality={len(elements)}",
+                    observed=f"iterable cardinality={element_count}",
                     limit=limit,
                 )
             return self._unfold_values(elements, ctx)
