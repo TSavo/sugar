@@ -595,22 +595,62 @@ def test_function_decorators_present():
 
 
 def test_literal_parametrize_keeps_decidable_columns_from_mixed_rows() -> None:
-    fn = (
-        _module(
-            "@pytest.mark.parametrize(\n"
-            "    'typ, ad',\n"
-            "    [['float', {}], ['float', {'A': 1}], ['int', {}]],\n"
-            ")\n"
-            "def test_constructor(typ, ad):\n"
-            "    pass\n"
-        )
-        .fragments()[0]
-        .statements()[0]
+    """Import-bound + kit protocol → expand; non-scalar columns stay symbolic."""
+    from sugar_lift_py_tests.recognition.native_shape import (
+        NativeShape,
+        clear_parametrize_protocol,
+        load_parametrize_protocol,
     )
 
-    assert fn.literal_pytest_parametrize_rows() == (
-        (("typ",), (("float",), ("float",), ("int",))),
+    source = (
+        "import pytest\n"
+        "\n"
+        "@pytest.mark.parametrize(\n"
+        "    'typ, ad',\n"
+        "    [['float', {}], ['float', {'A': 1}], ['int', {}]],\n"
+        ")\n"
+        "def test_constructor(typ, ad):\n"
+        "    pass\n"
     )
+    load_parametrize_protocol(
+        {"pytest.mark.parametrize": NativeShape.PARAMETRIZE_DECORATOR}
+    )
+    try:
+        # from_source keeps the text so import provenance can resolve bindings.
+        fn = (
+            SourceFragment.from_source(source, "t.py")
+            .fragments()[0]
+            .statements()[1]  # FunctionDef after the Import
+        )
+
+        assert fn.literal_pytest_parametrize_rows() == (
+            (("typ",), (("float",), ("float",), ("int",))),
+        )
+    finally:
+        clear_parametrize_protocol()
+
+
+def test_literal_parametrize_without_protocol_stays_empty() -> None:
+    """Logo spelling without loaded protocol does not expand (no vendor Compare)."""
+    from sugar_lift_py_tests.recognition.native_shape import clear_parametrize_protocol
+
+    clear_parametrize_protocol()
+    source = (
+        "import pytest\n"
+        "\n"
+        "@pytest.mark.parametrize(\n"
+        "    'typ, ad',\n"
+        "    [['float', {}], ['float', {'A': 1}], ['int', {}]],\n"
+        ")\n"
+        "def test_constructor(typ, ad):\n"
+        "    pass\n"
+    )
+    fn = (
+        SourceFragment.from_source(source, "t.py")
+        .fragments()[0]
+        .statements()[1]
+    )
+    assert fn.literal_pytest_parametrize_rows() == ()
 
 
 def test_aug_assign_op():

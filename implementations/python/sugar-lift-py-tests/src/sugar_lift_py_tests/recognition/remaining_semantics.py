@@ -111,12 +111,89 @@ class RemainingSemanticRecognition:
 
     @staticmethod
     def literal_pytest_parametrize_rows(site):
-        """Literal parametrize rows — logo-free stub until kit contract lands.
+        """Expand literal parametrize rows only via import provenance + protocol.
 
-        #5603: hard-coded ``pytest.mark.parametrize`` / ``pytest`` string
-        compares are illegal construction evidence. Window 289 owns the real
-        parametrize protocol (kit/bridge/proof). Until that ships, return no
-        rows (loud / unowned) rather than matching vendor spellings.
+        Authentication path (no logo Compare) — the real contract that #5612's
+        loud stub reserved for this work:
+        1. Resolve the decorator Call through ``imported_call_identity``
+           (binding chain: import / assignment, shadow-aware).
+        2. Look up that identity in the kit-loaded parametrize protocol table
+           (``recognize_parametrize_decorator``). Production table is empty;
+           missing → no expansion → loud FactoryPanic downstream.
+
+        Spelling-only Attribute chains never authenticate. Coordinates arrive
+        only through ``load_parametrize_protocol`` (kit/bridge/proof contract),
+        never hard-coded as a vendor-string match in this module.
         """
-        _ = site
-        return ()
+        from sugar_lift_py_tests.recognition.callee_universe import (
+            imported_call_identity,
+        )
+        from sugar_lift_py_tests.recognition.native_shape import (
+            NativeShape,
+            recognize_parametrize_decorator,
+        )
+        from sugar_lift_py_tests.source_fragment import SourceFragment
+
+        recognized = []
+        for decorator in site.node.decorator_list:
+            if not isinstance(decorator, ast.Call):
+                continue
+            call = SourceFragment.from_node(
+                decorator, site.filename, source=site.source
+            )
+            identity = imported_call_identity(call)
+            if (
+                recognize_parametrize_decorator(identity)
+                is not NativeShape.PARAMETRIZE_DECORATOR
+                or len(decorator.args) < 2
+                or decorator.keywords
+            ):
+                continue
+            try:
+                raw_names = ast.literal_eval(decorator.args[0])
+                raw_rows = ast.literal_eval(decorator.args[1])
+            except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+                continue
+            if isinstance(raw_names, str):
+                names = tuple(part.strip() for part in raw_names.split(","))
+            elif isinstance(raw_names, (tuple, list)):
+                names = tuple(raw_names)
+            else:
+                continue
+            if not names or any(
+                not isinstance(name, str) or not name for name in names
+            ):
+                continue
+            if not isinstance(raw_rows, (tuple, list)):
+                continue
+            rows = []
+            for raw_row in raw_rows:
+                if len(names) == 1:
+                    row = (raw_row,)
+                elif isinstance(raw_row, (tuple, list)):
+                    row = tuple(raw_row)
+                else:
+                    rows = []
+                    break
+                if len(row) != len(names):
+                    rows = []
+                    break
+                rows.append(row)
+            if not rows:
+                continue
+            indexes = tuple(
+                index
+                for index in range(len(names))
+                if all(
+                    type(row[index]) in (str, int, float, bool, type(None))
+                    for row in rows
+                )
+            )
+            if indexes:
+                recognized.append(
+                    (
+                        tuple(names[index] for index in indexes),
+                        tuple(tuple(row[index] for index in indexes) for row in rows),
+                    )
+                )
+        return tuple(recognized)

@@ -1464,13 +1464,17 @@ class SourceFragment:
     def literal_pytest_parametrize_rows(
         self,
     ) -> "tuple[tuple[tuple[str, ...], tuple[tuple[object, ...], ...]], ...]":
-        """Return exact literal rows from ``pytest.mark.parametrize`` decorators.
+        """Return exact literal rows from an authenticated parametrize decorator.
 
-        This accessor recognizes syntax only. Dynamic argument names, factories,
-        ``pytest.param`` calls, keyword expansions, and malformed row arities are
-        deliberately absent. In otherwise literal rows, columns whose values are
-        not ground scalar floors are omitted while decidable sibling columns are
-        retained; callers keep those omitted formals symbolic.
+        Authentication is import/source provenance of the decorator Call plus a
+        kit-loaded protocol coordinate — never Attribute spelling alone. Without
+        a loaded protocol (production default), returns empty; callers keep
+        formals symbolic and stay loud.
+
+        Dynamic argument names, factories, ``pytest.param`` calls, keyword
+        expansions, and malformed row arities are deliberately absent. In
+        otherwise literal rows, columns whose values are not ground scalar floors
+        are omitted while decidable sibling columns are retained.
         """
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
         from .recognition.remaining_semantics import RemainingSemanticRecognition

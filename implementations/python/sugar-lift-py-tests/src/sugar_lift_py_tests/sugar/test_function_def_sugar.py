@@ -18,10 +18,12 @@ class TestFunctionDefSugar(
     """`def test_*(...): body` is TESTIMONY, not a contract. The pytest
     `test_` prefix IS syntax; recognition stays syntactic. Decorators
     are allowed on owns — body is still testimony. Exact literal
-    ``@pytest.mark.parametrize`` rows reduce independently; dynamic decorator
-    effects are not invented as floors. The body becomes a TestimonyValue:
-    its asserts are the vendor facts. Comes before FunctionDefSugar so
-    testimony wins over the ordinary universe path."""
+    parametrize rows (authenticated by import provenance + kit protocol)
+    reduce independently; without a loaded protocol the formals stay
+    symbolic and open branches stay loud. Dynamic decorator effects are
+    not invented as floors. The body becomes a TestimonyValue: its asserts
+    are the vendor facts. Comes before FunctionDefSugar so testimony wins
+    over the ordinary universe path."""
 
     name: str
     formals: tuple[str, ...]
@@ -44,7 +46,7 @@ class TestFunctionDefSugar(
         if not site.function_name().startswith("test_"):
             return False
         min_args, max_args = site.function_positional_arity()
-        # Deeper floors: pytest.mark.* (and similar) decorate testimony without
+        # Deeper floors: authenticated decorators decorate testimony without
         # changing owns. Require plain positional arity still; only exact
         # literal parametrize rows are constructed by new().
         return min_args == max_args
