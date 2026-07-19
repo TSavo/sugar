@@ -78,6 +78,8 @@ class CalleeUniverseSupport(Enum):
     NUMPY_DATETIME_DATA = auto()
     NUMPY_MARKINNERSPACES = auto()
     NUMPY_IDENTITY_HASH_SET_ITEM_DEFAULT = auto()
+    TEXTWRAP_DEDENT = auto()
+    NUMPY_SCALAR_TO_DEVICE = auto()
 
 
 _DTYPE_RESULT_SUPPORT = {
@@ -213,6 +215,17 @@ _IMPORTED_SUPPORT = {
     "numpy._core._multiarray_tests.identity_hash_set_item_default": (
         CalleeUniverseSupport.NUMPY_IDENTITY_HASH_SET_ITEM_DEFAULT
     ),
+    # stdlib import identity (#5561).
+    "textwrap.dedent": CalleeUniverseSupport.TEXTWRAP_DEDENT,
+    # Result-call identity only (#5563): ``scalar = np.int64(1); scalar.to_device(...)``.
+    # Parameter receivers (including pytest.parametrize injection) stay loud —
+    # no logo-string decorator match; window 289 owns the real parametrize contract.
+    "numpy.int64.to_device": CalleeUniverseSupport.NUMPY_SCALAR_TO_DEVICE,
+    "numpy.uint64.to_device": CalleeUniverseSupport.NUMPY_SCALAR_TO_DEVICE,
+    "numpy.float64.to_device": CalleeUniverseSupport.NUMPY_SCALAR_TO_DEVICE,
+    "numpy.complex128.to_device": CalleeUniverseSupport.NUMPY_SCALAR_TO_DEVICE,
+    "numpy.bool.to_device": CalleeUniverseSupport.NUMPY_SCALAR_TO_DEVICE,
+    "numpy.bool_.to_device": CalleeUniverseSupport.NUMPY_SCALAR_TO_DEVICE,
 }
 
 _BUILTIN_COORDINATES = frozenset(

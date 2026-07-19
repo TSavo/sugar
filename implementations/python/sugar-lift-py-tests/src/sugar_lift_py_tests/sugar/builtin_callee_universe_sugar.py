@@ -74,6 +74,13 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "numpy.datetime_data",
         "numpy.f2py.crackfortran.markinnerspaces",
         "numpy._core._multiarray_tests.identity_hash_set_item_default",
+        "textwrap.dedent",
+        "numpy.int64.to_device",
+        "numpy.uint64.to_device",
+        "numpy.float64.to_device",
+        "numpy.complex128.to_device",
+        "numpy.bool.to_device",
+        "numpy.bool_.to_device",
         *_CONVERTER_COORDINATES,
     }
 )
@@ -279,6 +286,12 @@ class BuiltinCalleeUniverseSugar(
             _numpy_datetime_data_witness(),
             _numpy_markinnerspaces_witness(),
             _numpy_identity_hash_set_item_default_witness(),
+            # #5555 / #5564 — multi-hop self.module.<leaf> bound-source twins
+            # (non-vacuous conjunction). #5561 textwrap. #5563 constructor to_device.
+            _bound_module_member_witness("type_subroutine"),
+            _bound_module_member_witness("simple_subroutine"),
+            _textwrap_dedent_witness(),
+            _numpy_to_device_witness(),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -1006,6 +1019,67 @@ def _numpy_identity_hash_set_item_default_witness():
     )
     return _call_pair(
         name="numpy_identity_hash_set_item_default_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _bound_module_member_witness(member: str):
+    """Truthful/lying twin for multi-hop ``self.module.<member>`` bound-source."""
+
+    call = f"self.module.{member}(1)"
+    prefix = (
+        "class _Mod:\n"
+        "    @staticmethod\n"
+        f"    def {member}(*args):\n"
+        "        return args\n"
+        "\n"
+        "class Host:\n"
+        "    module = _Mod\n"
+        "\n"
+        "    def test_a(self):\n"
+    )
+    return _call_pair(
+        name=f"{member.replace('_', '-')}_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + f"        assert {call} == {call} and {call} == {call}\n",
+        lying=prefix + f"        assert {call} == {call} and {call} != {call}\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _textwrap_dedent_witness():
+    prefix = (
+        "import textwrap\n"
+        "\n"
+        "def A():\n"
+        "    return textwrap.dedent('x')\n"
+        "\n"
+    )
+    return _call_pair(
+        name="textwrap_dedent_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_to_device_witness():
+    """Constructor-bound scalar only — not parametrize-injected parameters."""
+
+    prefix = (
+        "import numpy as np\n"
+        "\n"
+        "def A():\n"
+        "    scalar = np.int64(1)\n"
+        "    return scalar.to_device('cpu')\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_to_device_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",

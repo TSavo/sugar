@@ -54,6 +54,8 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "dataclasses.asdict",
         "dataclasses.is_dataclass",
         "math.isclose",
+        "textwrap.dedent",
+        "numpy.int64.to_device",
     } <= (BuiltinCalleeUniverseSugar.universe_coordinates)
     assert {
         "all_builtin_universe_coordinate",
@@ -84,6 +86,10 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
         "dataclasses_asdict_universe_coordinate",
         "dataclasses_is_dataclass_universe_coordinate",
         "math_isclose_universe_coordinate",
+        "textwrap_dedent_universe_coordinate",
+        "numpy_to_device_universe_coordinate",
+        "type-subroutine_universe_coordinate",
+        "simple-subroutine_universe_coordinate",
     } <= {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
 
 
@@ -2279,3 +2285,175 @@ def test_identity_hash_set_item_default_witness_pair_is_enrolled() -> None:
     assert "numpy_identity_hash_set_item_default_universe_coordinate" in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
+
+
+def test_authenticated_textwrap_dedent_selects_one_factory_owner() -> None:
+    source = (
+        "import textwrap\n"
+        "\n"
+        "def test_dedent(payload):\n"
+        "    assert textwrap.dedent(payload) == textwrap.dedent(payload)\n"
+    )
+    built = build_node(
+        _stdlib_attr_call_site(source, "dedent", "textwrap_dedent.py"),
+        filename="textwrap_dedent.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(
+            filename="textwrap_dedent.py",
+            catalog=default_catalog(),
+        ),
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        (
+            "import textwrap\n"
+            "\n"
+            "def test_dedent(textwrap, payload):\n"
+            "    assert textwrap.dedent(payload) == textwrap.dedent(payload)\n"
+        ),
+        (
+            "import math as textwrap\n"
+            "\n"
+            "def test_dedent(payload):\n"
+            "    assert textwrap.dedent(payload) == textwrap.dedent(payload)\n"
+        ),
+        (
+            "def test_dedent(payload):\n"
+            "    assert textwrap.dedent(payload) == textwrap.dedent(payload)\n"
+        ),
+    ],
+)
+def test_unwarranted_textwrap_dedent_receiver_is_not_factory_owned(source: str) -> None:
+    built = build_node(
+        _stdlib_attr_call_site(source, "dedent", "textwrap_dedent.py"),
+        filename="textwrap_dedent.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(
+            filename="textwrap_dedent.py",
+            catalog=default_catalog(),
+        ),
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+def test_authenticated_to_device_selects_one_factory_owner() -> None:
+    """Constructor-bound scalar — import identity of np.int64 + member."""
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_to_device():\n"
+        "    scalar = np.int64(1)\n"
+        "    assert scalar.to_device('cpu') is scalar\n"
+    )
+    built = build_node(
+        _method_call_site(source, "to_device"),
+        filename="to_device.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="to_device.py", catalog=default_catalog()),
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+
+def test_parametrized_to_device_stays_loud_without_logo_match() -> None:
+    """Corpus form injects the receiver via decorator parameters.
+
+    No structural decorator provenance without a vendor-literal match on
+    pytest.mark.parametrize (ruled illegal; window 289 owns the real contract).
+    The row stays loud — that is the correct outcome.
+    """
+
+    source = (
+        "import pytest\n"
+        "import numpy as np\n"
+        "\n"
+        "class TestDevice:\n"
+        "    scalars = [np.int64(1), np.float64(1.0)]\n"
+        "\n"
+        "    @pytest.mark.parametrize('scalar', scalars)\n"
+        "    def test_to_device(self, scalar):\n"
+        "        assert scalar.to_device('cpu') is scalar\n"
+    )
+    filename = "numpy/_core/tests/test_scalar_methods.py"
+    built = build_node(
+        _method_call_site(source, "to_device"),
+        filename=filename,
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename=filename, catalog=default_catalog()),
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def test_to_device(scalar):\n    assert scalar.to_device('cpu') is scalar\n",
+        (
+            "import numpy as np\n"
+            "\n"
+            "def test_to_device():\n"
+            "    scalar = np.int64(1)\n"
+            "    scalar = replacement\n"
+            "    assert scalar.to_device('cpu') is scalar\n"
+        ),
+    ],
+)
+def test_unwarranted_to_device_receiver_is_not_factory_owned(source: str) -> None:
+    built = build_node(
+        _method_call_site(source, "to_device"),
+        filename="to_device.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="to_device.py", catalog=default_catalog()),
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+
+@pytest.mark.parametrize("member", ["type_subroutine", "simple_subroutine"])
+def test_bound_f2py_module_member_selects_one_factory_owner(member: str) -> None:
+    source = (
+        "from . import util\n"
+        "\n"
+        "class TestExtension(util.F2PyTest):\n"
+        "    sources = ['x.f']\n"
+        "\n"
+        "    def test_member(self):\n"
+        f"        assert self.module.{member}(0) == 0\n"
+    )
+    filename = "numpy/f2py/tests/test_regression.py"
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == member
+    )
+    site = SourceFragment.from_node(call, filename, source=source)
+    built = build_node(
+        site,
+        filename=filename,
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename=filename, catalog=default_catalog()),
+    )
+    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    assert (
+        recognize_callee_universe(f"call:{member}", site=site)
+        is CalleeUniverseSupport.BOUND_SOURCE_CALLABLE
+    )
+
+
+@pytest.mark.parametrize("member", ["type_subroutine", "simple_subroutine"])
+def test_unwarranted_f2py_module_member_is_not_factory_owned(member: str) -> None:
+    source = (
+        "def test_member(module):\n"
+        f"    assert module.{member}(0) == 0\n"
+    )
+    built = build_node(
+        _method_call_site(source, member),
+        filename="x.py",
+        role=SugarRole.TERM,
+        ctx=FactoryBuildContext(filename="x.py", catalog=default_catalog()),
+    )
+    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
