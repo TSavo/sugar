@@ -10,8 +10,11 @@ from __future__ import annotations
 import importlib
 from dataclasses import replace
 
+import pytest
+
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.sugar.install_source_dig import (
     INSTALL_SOURCE_VALUE_ORACLE,
@@ -69,19 +72,21 @@ def test_value_oracle_keys_through_source_oracle_cid(tmp_path, monkeypatch) -> N
     assert len(source_cid) >= 32  # blake3 pin from SourceOracle
 
 
-def test_value_oracle_does_not_publish_cycle_breaks(tmp_path, monkeypatch) -> None:
-    """Cycle None is not published as the system's answer for that name."""
+def test_value_oracle_cycle_guard_is_typed_loud(tmp_path, monkeypatch) -> None:
+    """#5368: cycle detection is a terminal, never provisional opacity."""
     (tmp_path / "oracle_cycle.py").write_text("X = 1\n", encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path))
     importlib.invalidate_caches()
     INSTALL_SOURCE_VALUE_ORACLE.clear()
 
-    cycle = resolve_install_source_value(
-        "oracle_cycle.X",
-        _ctx(),
-        _resolving=frozenset({"oracle_cycle.X"}),
-    )
-    assert cycle is None
+    with pytest.raises(FactoryPanic) as panic:
+        resolve_install_source_value(
+            "oracle_cycle.X",
+            _ctx(),
+            _resolving=frozenset({"oracle_cycle.X"}),
+        )
+    assert panic.value.info.owner == "install_source_cycle_guard"
+    assert panic.value.info.observed == "value-oracle cycle: oracle_cycle.X"
     key = INSTALL_SOURCE_VALUE_ORACLE.identity_key("oracle_cycle.X")
     assert key is not None
     assert INSTALL_SOURCE_VALUE_ORACLE.construct_count == 0
