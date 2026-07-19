@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "factory-zero-tolerance.yml"
 
@@ -16,6 +15,7 @@ AXIS_COMMANDS = {
     "R_timeouts = 0": "timeout_zero_tolerance.py",
     "R_vendor_special_case = 0": "vendor_special_case_law.py",
     "R_factory_walk_unclassified = 0": "factory_walk_unclassified_law.py",
+    "R_finite_cap_opaque_completions = 0": ("finite_cap_opaque_completion_law.py"),
 }
 
 
@@ -35,6 +35,6 @@ def test_binding_job_invokes_every_permanent_axis() -> None:
                 "binding CI must census the checked-in production surface"
             )
         if axis != "R_behavior_side_doors = 0":
-            assert "if: always()" in step, (
-                f"{axis} would be skipped after an earlier honest-red axis"
-            )
+            assert (
+                "if: always()" in step
+            ), f"{axis} would be skipped after an earlier honest-red axis"

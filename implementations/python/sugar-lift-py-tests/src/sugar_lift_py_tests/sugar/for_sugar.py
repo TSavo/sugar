@@ -220,11 +220,20 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         ):
             elements = iterable.finite_elements
         if elements is not None:
-            # Non-ground pred-chain While under a finite for: one coordinate,
-            # not STATIC_UNFOLD_LIMIT per-k Equality reduces on dig-opaque
-            # arrays (#5338 residual A / scipy csgraph shortest_path).
+            # Finite history is decidable even when the body reads opaque
+            # values (#5367). Never replace that finite construction with
+            # opaque force-curry; hang avoidance stays a loud typed terminal
+            # until an exact compact finite-loop coordinate exists.
             if self._body_has_while() and self._while_reads_non_ground_outer(ctx):
-                return self._bind_and_body(iterable, ctx, force_curry=True)
+                finite_unfold_cap_panic(
+                    construction="ForSugar finite for/while",
+                    site=self.site,
+                    observed=(
+                        f"finite for/while body with "
+                        f"iterable cardinality={len(elements)}"
+                    ),
+                    limit=STATIC_UNFOLD_LIMIT,
+                )
             limit = STATIC_UNFOLD_LIMIT
             if self._body_has_branching_statement():
                 limit = min(limit, BRANCHED_STATIC_UNFOLD_LIMIT)
