@@ -93,6 +93,45 @@ def reduce(iterable):
     assert [row.kind for row in rows] == ["finite-cap-force-curry"]
 
 
+def test_cardinality_attribute_cap_force_curry_trips() -> None:
+    rows = _scan(
+        """
+def reduce(values):
+    if values.cardinality > cap:
+        return bind(values, force_curry=True)
+    return unfold(values)
+"""
+    )
+    assert [row.kind for row in rows] == ["finite-cap-force-curry"]
+
+
+def test_cap_helper_delegation_trips() -> None:
+    rows = _scan(
+        """
+def opaque_helper(values):
+    return bind(values, force_curry=True)
+
+def reduce(values):
+    if len(values) > cap:
+        return opaque_helper(values)
+    return unfold(values)
+"""
+    )
+    assert [row.kind for row in rows] == ["finite-cap-force-curry"]
+
+
+def test_cap_none_success_trips() -> None:
+    rows = _scan(
+        """
+def reduce(values):
+    if len(values) > cap:
+        return None
+    return unfold(values)
+"""
+    )
+    assert [row.kind for row in rows] == ["finite-cap-none-success"]
+
+
 def test_loud_terminal_and_exact_symbolic_stay_green() -> None:
     assert (
         _scan(
