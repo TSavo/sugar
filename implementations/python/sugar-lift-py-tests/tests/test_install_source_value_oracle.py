@@ -263,6 +263,95 @@ def test_stdlib_typing_seed_frames_reuse_tp_cache_construction() -> None:
     assert INSTALL_SOURCE_VALUE_ORACLE.hit_count >= len(frames) - 1
 
 
+def test_value_oracle_ignores_consumer_filename_and_collection_identity() -> None:
+    """R: CallSugar dig must not re-factory shared install-source values per consumer frame.
+
+    Post-#5441 product residual on ``pandas/io/stata.py``: tip CallSugar construct
+    / dig while ``factory.select`` is past. Heartbeats show the same
+    ``pandas.util._decorators.set_module`` → ``typing.overload`` chain re-entering
+    ``dig.construct.function.factory`` under successive consumer modules.
+
+    Illegal residual: ``_value_oracle_context_identity`` partitioned on consumer
+    ``filename`` and on object identity of empty default collections
+    (``global_names``, ``import_aliases``, ``operation_log``, ``building``, …).
+    Each dig frame minted a new FactoryBuildContext → full reconstruct of
+    typing/set_module even when SourceOracle CID+name was identical.
+
+    Replacement: partition only on recognition fields construct consumes for the
+    published floor value. Consumer blame, scope, import maps, sinks, ledgers,
+    and dig-body ``building`` are excluded; catalog / name_resolver / source
+    oracle / ground-bridge flags remain.
+    """
+    INSTALL_SOURCE_VALUE_ORACLE.clear()
+    catalog = default_catalog()
+    # Distinct consumer frames as minted per dig.resolve_value entry.
+    frames = [
+        FactoryBuildContext(filename="stata.py", catalog=catalog),
+        FactoryBuildContext(filename="missing.py", catalog=catalog),
+        FactoryBuildContext(filename="datetimes.py", catalog=catalog),
+        replace(
+            FactoryBuildContext(filename="common.py", catalog=catalog),
+            building=frozenset({"pandas.isna"}),
+        ),
+        replace(
+            FactoryBuildContext(filename="decorators.py", catalog=catalog),
+            global_names=frozenset({"x"}),
+            import_aliases={"np": "numpy"},
+        ),
+    ]
+
+    first = resolve_install_source_value("typing.Literal", frames[0])
+    constructs = INSTALL_SOURCE_VALUE_ORACLE.construct_count
+    assert first is not None
+    assert constructs >= 1
+
+    for frame in frames[1:]:
+        again = resolve_install_source_value("typing.Literal", frame)
+        assert again is first, (
+            "consumer filename/collection identity must not re-factory "
+            f"typing.Literal; construct_count={INSTALL_SOURCE_VALUE_ORACLE.construct_count}"
+        )
+
+    assert INSTALL_SOURCE_VALUE_ORACLE.construct_count == constructs
+    assert INSTALL_SOURCE_VALUE_ORACLE.hit_count >= len(frames) - 1
+
+
+def test_product_shaped_set_module_chain_is_one_construct_per_target() -> None:
+    """Product dig shape: set_module + typing leaves construct once across frames.
+
+    Stata CallSugar dig stack repeatedly resolved
+    ``pandas.util._decorators.set_module`` and nested typing leaves under new
+    consumer contexts. Shared structural cut: one construct per SourceOracle
+    identity across consumer frames that share recognition inputs.
+    """
+    INSTALL_SOURCE_VALUE_ORACLE.clear()
+    catalog = default_catalog()
+    targets = (
+        "pandas.util._decorators.set_module",
+        "typing.overload",
+        "typing.Literal",
+    )
+    frame_a = FactoryBuildContext(filename="consumer_a.py", catalog=catalog)
+    frame_b = FactoryBuildContext(filename="consumer_b.py", catalog=catalog)
+
+    firsts = {}
+    for target in targets:
+        firsts[target] = resolve_install_source_value(target, frame_a)
+    constructs_after_first_wave = INSTALL_SOURCE_VALUE_ORACLE.construct_count
+    assert constructs_after_first_wave >= len(targets)
+    assert all(firsts[t] is not None for t in targets)
+
+    for target in targets:
+        again = resolve_install_source_value(target, frame_b)
+        assert again is firsts[target], (
+            f"{target} must hit across consumer frames; "
+            f"constructs={INSTALL_SOURCE_VALUE_ORACLE.construct_count}"
+        )
+
+    assert INSTALL_SOURCE_VALUE_ORACLE.construct_count == constructs_after_first_wave
+    assert INSTALL_SOURCE_VALUE_ORACLE.hit_count >= len(targets)
+
+
 def test_class_bases_negative_is_not_published_and_context_is_partitioned(
     monkeypatch,
 ):
