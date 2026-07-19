@@ -10,9 +10,10 @@ Product hang (scipy/sparse/csgraph/tests/test_shortest_path.py):
 pred/sources from dig-opaque dijkstra return. Static for-unfold × per-k
 EqualityOpSugar on opaque subscript was the 30s reduce_body tip.
 
-Law (#5367 / #5375 / #5378): finite authenticated history may not become
-force-curry opacity. Non-ground while under a finite for is a typed
-finite_unfold FactoryPanic until an exact compact construction exists.
+Law (#5367 / #5375 / #5383 / compact projection): finite authenticated history
+may not become force-curry opacity. Non-ground while under a finite for uses
+the shared recognition projection door (one body under py.iter_elem) — never
+N-fold Equality, never force-curry Complete, never soft success.
 Ground for+while micros still static-unfold.
 """
 
@@ -77,12 +78,16 @@ _PRED_CHAIN_BODY = (
 )
 
 
-def test_nonground_pred_chain_for_while_is_loud_not_opaque_success() -> None:
-    """Finite opaque for+while history cannot mint force-curry Complete."""
+def test_nonground_pred_chain_for_while_projects_compact_not_opaque() -> None:
+    """Finite opaque for+while projects once — never force-curry Complete."""
     opaque = _opaque_array("dijkstra_pred")
     binds = {"pred": opaque, "sources": opaque}
-    with pytest.raises(FactoryPanic, match="finite_unfold|non-ground while"):
-        _reduce_for(_PRED_CHAIN_BODY, binds)
+    value = _reduce_for(_PRED_CHAIN_BODY, binds)
+    assert not isinstance(value, CurriedLoopScope), (
+        "finite non-ground while must not force-curry; " f"got {type(value).__name__}"
+    )
+    # Recognition projection yields a block/scope splice, not a finite_unfold panic.
+    assert value is not None
 
 
 def test_ground_pred_chain_for_while_still_static_unfolds() -> None:
@@ -99,14 +104,14 @@ def test_ground_pred_chain_for_while_still_static_unfolds() -> None:
         "            p = pred[p]\n"
     )
     value = _reduce_for(body, {"pred": pred, "sources": sources})
-    assert isinstance(value, BlockValue), (
-        f"ground for+while must static-unfold to BlockValue; got {type(value).__name__}"
-    )
+    assert isinstance(
+        value, BlockValue
+    ), f"ground for+while must static-unfold to BlockValue; got {type(value).__name__}"
     assert not isinstance(value, CurriedLoopScope)
 
 
-def test_parametrize_nonground_pred_chain_lift_is_loud() -> None:
-    """File-shaped instrument: parametrize + opaque dig-like call stays loud."""
+def test_parametrize_nonground_pred_chain_lift_not_finite_unfold() -> None:
+    """File-shaped instrument: compact projection drains finite_unfold owner."""
     source = (
         "def opaque_arrays():\n"
         "    return __import__('operator')\n"
@@ -122,5 +127,9 @@ def test_parametrize_nonground_pred_chain_lift_is_loud() -> None:
         "            assert sources[p] == s\n"
         "            p = pred[p]\n"
     )
-    with pytest.raises(FactoryPanic):
-        lift_file_payload(source, "nonground_pred_chain.py")
+    try:
+        payload = lift_file_payload(source, "nonground_pred_chain.py")
+    except FactoryPanic as panic:
+        assert panic.value.info.owner != "finite_unfold", panic.value.info
+        return
+    assert payload is not None

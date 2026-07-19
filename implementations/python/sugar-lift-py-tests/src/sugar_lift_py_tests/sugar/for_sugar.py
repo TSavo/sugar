@@ -12,8 +12,9 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 STATIC_UNFOLD_LIMIT = 1024
 # Static unfold × branch multiplies GuardedValue/scope state super-linearly
-# (microbench: 8×(abs,)+If+InOp ~0.5s; 14× ~113s). Over-cap decidable work
-# stays a typed loud terminal until an exact compact construction exists.
+# (microbench: 8×(abs,)+If+InOp ~0.5s; 14× ~113s). Outside the budget, finite
+# work projects through the shared compact recognition door — never force-curry
+# opacity, never soft Complete, never a bound raise (#5338 / #5375 / #5383).
 BRANCHED_STATIC_UNFOLD_LIMIT = 8
 
 
@@ -83,8 +84,9 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
     and is not owned here.
 
     When the body owns a While whose free names bind to non-ground (dig-opaque
-    array / callsite) values, static unfold is refused: one CurriedLoopScope
-    coordinates the whole for+while chain instead of per-k Equality reduce.
+    array / callsite) values, static unfold is refused: compact recognition
+    projection threads the body once under ``py.iter_elem`` instead of per-k
+    Equality reduce or force-curry opacity (#5338 residual A).
     """
 
     target_name: str
@@ -220,12 +222,12 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
         ):
             elements = iterable.finite_elements
         if elements is not None:
-            # Finite authenticated history is decidable even when the body
-            # reads dig-opaque outer names. Never replace that finite
-            # construction with force-curry opacity (#5367 / #5378): either
-            # unfold within budget or raise a typed finite_unfold terminal.
-            # #5338 residual A (scipy csgraph shortest_path) becomes loud FP
-            # rather than per-k Equality hang or opaque Complete.
+            # Finite authenticated history is decidable. Within budget, static
+            # unfold is exact. Outside budget (cardinality / branched cap /
+            # non-ground while), project once through recognition under
+            # py.iter_elem — the shared compact For door. Never force-curry
+            # finite history (#5383), never opaque Complete, never raise the
+            # bound. Length overflow stays a typed loud terminal.
             try:
                 element_count = len(elements)
             except OverflowError:
@@ -235,27 +237,25 @@ class ForSugar(Sugar, role=SugarRole.STATEMENT):
                     observed="finite iterable length overflow",
                     limit=STATIC_UNFOLD_LIMIT,
                 )
-            if self._body_has_while() and self._while_reads_non_ground_outer(ctx):
-                finite_unfold_cap_panic(
-                    construction="ForSugar finite for/while non-ground outer",
-                    site=self.site,
-                    observed=(
-                        f"iterable cardinality={element_count} with "
-                        "non-ground while body"
-                    ),
-                    limit=STATIC_UNFOLD_LIMIT,
-                )
             limit = STATIC_UNFOLD_LIMIT
             if self._body_has_branching_statement():
                 limit = min(limit, BRANCHED_STATIC_UNFOLD_LIMIT)
-            if element_count > limit:
-                finite_unfold_cap_panic(
-                    construction="ForSugar finite iterable",
-                    site=self.site,
-                    observed=f"iterable cardinality={element_count}",
-                    limit=limit,
-                )
+            needs_compact = element_count > limit or (
+                self._body_has_while() and self._while_reads_non_ground_outer(ctx)
+            )
+            if needs_compact:
+                return self._project_compact_finite(iterable, ctx)
             return self._unfold_values(elements, ctx)
+        return self._bind_and_body(iterable, ctx)
+
+    def _project_compact_finite(self, iterable, ctx) -> Outcome:
+        """Shared compact For door for finite work outside the unfold budget.
+
+        Recognition projection: bind the target to ``py.iter_elem`` and reduce
+        the body once. Covers branched over-cap lists, pure over-cap
+        materialize, and non-ground while under a finite for. Does not
+        force-curry, soft-complete, truncate, or mint RuntimeEffect.
+        """
         return self._bind_and_body(iterable, ctx)
 
     def _body_has_branching_statement(self) -> bool:

@@ -112,6 +112,17 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/finite_cap_opaque_completion_law.py
+      - name: R_finite_unfold_compact_gaps discrimination
+        if: always()
+        run: >-
+          python -m pytest --noconftest
+          implementations/python/sugar-lift-py-tests/tests/test_finite_unfold_compact_projection_law.py
+          -q
+      - name: R_finite_unfold_compact_gaps = 0
+        if: always()
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/finite_unfold_compact_projection_law.py
       - name: R_context_incomplete_construction_caches discrimination
         if: always()
         run: >-
