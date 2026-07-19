@@ -48,6 +48,7 @@ class CalleeUniverseSupport(Enum):
     NUMPY_FUNC = auto()
     NUMPY_ITER_GOTO = auto()
     NUMPY_MAY_SHARE_MEMORY = auto()
+    NUMPY_SHARES_MEMORY = auto()
     NUMPY_HANDLER_NAME = auto()
     NUMPY_CONVERTER = auto()
     REGEX_SEARCH = auto()
@@ -108,6 +109,7 @@ _IMPORTED_SUPPORT = {
     "numpy.func": CalleeUniverseSupport.NUMPY_FUNC,
     "numpy.iter_goto": CalleeUniverseSupport.NUMPY_ITER_GOTO,
     "numpy.may_share_memory": CalleeUniverseSupport.NUMPY_MAY_SHARE_MEMORY,
+    "numpy.shares_memory": CalleeUniverseSupport.NUMPY_SHARES_MEMORY,
     "numpy._core.multiarray.get_handler_name": (
         CalleeUniverseSupport.NUMPY_HANDLER_NAME
     ),
@@ -242,11 +244,14 @@ class CalleeUniverseRecognition:
 
         if not site.source:
             return None
-        # Plain Name call: only resolve import identity when the leaf can still
-        # land on an authenticated imported coordinate.
-        if target not in _IMPORTED_ATTRIBUTE_LEAVES:
-            return None
-        return imported_call_identity(site)
+        # Plain Name call: resolve import/assignment identity, then accept only
+        # when the result is an authenticated support coordinate. Leaf spelling
+        # is a fast path; from-import aliases (``shares_memory as overlaps``)
+        # still authenticate when identity maps to a registered coordinate.
+        identity = imported_call_identity(site)
+        if recognize_authenticated_callee_identity(identity) is not None:
+            return identity
+        return None
 
     @classmethod
     def _name_is_unshadowed(cls, site, name: str) -> bool:
