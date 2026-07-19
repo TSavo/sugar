@@ -914,12 +914,22 @@ class SourceFragment:
     def function_body(self) -> "list[SourceFragment]":
         """Return SourceFragments for the statements in a FunctionDef body."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
-        return [SourceFragment.from_node(s, self.filename, source=self.source) for s in self.node.body]  # type: ignore[attr-defined]
+        from .recognition.generator_scope import GeneratorScopeRecognition
+
+        body = GeneratorScopeRecognition.mark_function_body(self.node.body)  # type: ignore[attr-defined]
+        return [
+            SourceFragment.from_node(s, self.filename, source=self.source) for s in body
+        ]
 
     def function_body_block(self) -> "SourceFragment":
         """Return the FunctionDef body as the factory's Block gateway node."""
         self._require(ast.FunctionDef, ast.AsyncFunctionDef)
-        return SourceFragment.from_node(Block.of(self.node.body), self.filename, source=self.source)  # type: ignore[attr-defined]
+        from .recognition.generator_scope import GeneratorScopeRecognition
+
+        body = GeneratorScopeRecognition.mark_function_body(self.node.body)  # type: ignore[attr-defined]
+        return SourceFragment.from_node(
+            Block.of(body), self.filename, source=self.source
+        )
 
     def compare_ops(self) -> "list[str]":
         """Return the operator class names for a Compare node (e.g. ['Eq', 'Lt'])."""
