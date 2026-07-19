@@ -106,6 +106,192 @@ def test_decorated_callable_wrapper_fills_original_missing_argument() -> None:
     ) == TermValue(7)
 
 
+def _imported_decorator_callsite(import_target: str) -> CallSiteValue:
+    from sugar_lift_py_tests.floor import ImportAliasValue
+    from sugar_lift_py_tests.sugar.call_sugar import CallSugar
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    original = FunctionCallable(name="original", body=object())
+    site = SourceFragment.from_source("wraps(original)\n", "nested.py").statements()[0]
+    ctx = FactoryBuildContext(
+        filename="nested.py",
+        catalog=default_catalog(),
+        temporal=(
+            TemporalContext.empty()
+            .bind_value(
+                "wraps",
+                ImportAliasValue(
+                    import_target,
+                    "wraps",
+                    import_target=import_target,
+                ),
+            )
+            .bind_value("original", original)
+        ),
+    )
+    decorator = complete_value(
+        CallSugar(
+            target_name="wraps",
+            args=(),
+            keyword_names=(),
+            site=site,
+        )._collect((), (original,), ctx),
+        owner="decorator import identity",
+    )
+    assert isinstance(decorator, CallSiteValue)
+    return decorator
+
+
+def test_authenticated_functools_wraps_preserves_wrapped_callable() -> None:
+    from dataclasses import replace
+
+    impl = FunctionCallable(name="wrapper", body=object())
+    decorator = _imported_decorator_callsite("functools.wraps")
+    decorated = replace(impl, decorators=(decorator,))
+    assert decorated._apply_decorators(decorator.site) == impl
+
+
+def test_authenticated_functools_module_wraps_carries_native_contract() -> None:
+    from sugar_lift_py_tests.floor import ImportAliasValue
+    from sugar_lift_py_tests.recognition.native_shape import NativeShape
+    from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    original = FunctionCallable(name="original", body=object())
+    module = ImportAliasValue("functools", "functools", import_target="functools")
+    site = SourceFragment.from_source(
+        "functools.wraps(original)\n", "nested.py"
+    ).statements()[0]
+    ctx = FactoryBuildContext(
+        filename="nested.py",
+        catalog=default_catalog(),
+        temporal=TemporalContext.empty(),
+    )
+    decorator = complete_value(
+        MethodCallSugar(
+            method_name="wraps",
+            import_target="functools.wraps",
+            receiver=object(),
+            args=(),
+            keyword_names=(),
+            site=site,
+        )._collect((), (module, original), ctx),
+        owner="functools module decorator identity",
+    )
+    assert isinstance(decorator, CallSiteValue)
+    assert (
+        decorator.native_shape
+        is NativeShape.IMPLEMENTATION_PRESERVING_DECORATOR
+    )
+
+
+def test_unqualified_wraps_lookalike_stays_loud() -> None:
+    from dataclasses import replace
+
+    impl = FunctionCallable(name="wrapper", body=object())
+    decorator = _imported_decorator_callsite("project.wraps")
+    decorated = replace(impl, decorators=(decorator,))
+    with pytest.raises(FactoryPanic) as raised:
+        decorated.callsite((TermValue(3),), (), decorator.site)
+    assert raised.value.info.owner == (
+        "FunctionCallable decorator factory:project.wraps"
+    )
+
+
+def test_site_authenticated_functools_wraps_without_native_shape_stamp() -> None:
+    """Corpus shape: MethodCall target_name is bare ``wraps``; site is functools.wraps.
+
+    Nested dig often loses import_aliases, so native_shape is unset. Recognition
+    re-authenticates from the decorator Call AST + defining-module imports.
+    """
+    import ast
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.recognition.decorator_contracts import (
+        decorator_value_preserves_implementation,
+    )
+
+    source = (
+        "import functools\n"
+        "\n"
+        "def outer(func):\n"
+        "    @functools.wraps(func)\n"
+        "    def wrapper(*args, **kwargs):\n"
+        "        return func(*args, **kwargs)\n"
+        "    return wrapper\n"
+    )
+    mod = ast.parse(source)
+    wraps_call = None
+    for node in ast.walk(mod):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "wraps":
+                wraps_call = SourceFragment.from_node(node, "mod.py", source=source)
+                break
+    assert wraps_call is not None
+
+    decorator = CallSiteValue(
+        target_name="wraps",
+        arg_values=(FunctionCallable(name="func", body=object()),),
+        parameters=(),
+        term=ctor("call:wraps", [], symbol_kind="coordinate"),
+        body=None,
+        site=wraps_call,
+        native_shape=None,
+    )
+    assert decorator_value_preserves_implementation(decorator) is True
+    impl = FunctionCallable(name="wrapper", body=object())
+    applied = replace(impl, decorators=(decorator,))._apply_decorators(wraps_call)
+    assert applied == impl
+
+
+def test_lookalike_attribute_wraps_without_functools_import_stays_loud() -> None:
+    import ast
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.recognition.decorator_contracts import (
+        decorator_value_preserves_implementation,
+    )
+
+    source = (
+        "import lookalike as functools\n"
+        "\n"
+        "@functools.wraps(func)\n"
+        "def wrapper(*args, **kwargs):\n"
+        "    return func(*args, **kwargs)\n"
+    )
+    mod = ast.parse(source)
+    wraps_call = None
+    for node in ast.walk(mod):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "wraps":
+                wraps_call = SourceFragment.from_node(node, "fake.py", source=source)
+                break
+    assert wraps_call is not None
+
+    decorator = CallSiteValue(
+        target_name="wraps",
+        arg_values=(FunctionCallable(name="func", body=object()),),
+        parameters=(),
+        term=ctor("call:wraps", [], symbol_kind="coordinate"),
+        body=None,
+        site=wraps_call,
+        native_shape=None,
+    )
+    # dotted AST name is ``functools.wraps`` but import warrants lookalike.
+    # recognize_native_decorator on dotted still matches the spelling — ensure
+    # lookalike module alias does NOT free-pass via bare Attribute spelling alone.
+    # The site path must require the authenticated module head.
+    assert decorator_value_preserves_implementation(decorator) is False
+    impl = FunctionCallable(name="wrapper", body=object())
+    with pytest.raises(FactoryPanic) as raised:
+        replace(impl, decorators=(decorator,)).callsite(
+            (TermValue(3),), (), wraps_call
+        )
+    assert "decorator factory:wraps" in raised.value.info.owner
+
+
 def test_decorator_result_projects_static_typing_cast_callable() -> None:
     universe = _root_universe(
         "def outer():\n"

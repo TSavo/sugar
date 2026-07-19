@@ -103,6 +103,7 @@ class FunctionCallable(FloorValue):
         *,
         source_arg_values=None,
         term=None,
+        native_shape=None,
     ):
         from sugar_lift_py_tests.factory import factory_panic_gap
         from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
@@ -120,6 +121,7 @@ class FunctionCallable(FloorValue):
                 site,
                 source_arg_values=source_arg_values,
                 term=term,
+                native_shape=native_shape,
             )
 
         if self.body is None:
@@ -481,6 +483,7 @@ class FunctionCallable(FloorValue):
                 body=body,
                 site=site,
                 exit_suppression=self.exit_suppression,
+                native_shape=native_shape,
             )
         )
 
@@ -495,8 +498,19 @@ class FunctionCallable(FloorValue):
         )
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
+        from sugar_lift_py_tests.recognition.decorator_contracts import (
+            decorator_value_preserves_implementation,
+        )
+
         current = replace(self, decorators=())
         for decorator in reversed(self.decorators):
+            # Implementation-preserving decorator factories leave the decorated
+            # FunctionCallable as the public-API body:
+            # * authenticated native shape / Call site (functools.wraps via
+            #   recognition/decorator_contracts — never a bare-name logo pass)
+            # * NEP-18 array_function_dispatch enrollment (floor name set)
+            if decorator_value_preserves_implementation(decorator):
+                continue
             if isinstance(decorator, CallSiteValue) and (
                 _implementation_preserving_decorator_factory(decorator.target_name)
             ):
@@ -528,7 +542,8 @@ class FunctionCallable(FloorValue):
                             f"FunctionCallable, or enroll an implementation-"
                             f"preserving contract when the public API body is "
                             f"exactly the decorated implementation (see "
-                            f"array_function_dispatch); never soft-continue "
+                            f"array_function_dispatch / functools.wraps via "
+                            f"recognition native_shape); never soft-continue "
                             f"implication enumeration"
                         ),
                     )
