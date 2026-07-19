@@ -1044,10 +1044,36 @@ def _c3_merge(sequences):
                 del seq[0]
 
 
+def _constructor_mro_cycle_panic(
+    *,
+    guard: str,
+    target: str,
+    active: frozenset[str],
+) -> None:
+    """A constructor MRO recursion guard is a typed terminal, never opacity."""
+    from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+    active_names = ", ".join(sorted(active)) or "<empty>"
+    factory_panic_gap(
+        owner="constructor_mro_cycle_guard",
+        blame=str(target),
+        observed=f"{guard} cycle: {target}",
+        requested=f"acyclic static constructor MRO; active={active_names}",
+        fix=(
+            "construct a finite cited recursive base coordinate or keep this "
+            "exact cycle loud; never return None or opaque Complete"
+        ),
+    )
+
+
 def _static_mro_for_named_base(name: str, ctx, stack: frozenset[str]):
     """Resolve one base name to its static MRO entry list, or None if undecidable."""
     if name in stack:
-        return None
+        _constructor_mro_cycle_panic(
+            guard="named-base",
+            target=name,
+            active=stack,
+        )
     resolved = (ctx.name_resolver or {}).get(name)
     if resolved is not None:
         resolved_site = SourceFragment.from_node(resolved, ctx.filename)
@@ -1073,7 +1099,11 @@ def _static_mro_for_named_base(name: str, ctx, stack: frozenset[str]):
 def _static_mro_for_import(import_target: str, stack: frozenset[str], ctx=None):
     """Exact C3 MRO for an imported class, derived from its resolved source bases."""
     if import_target in stack:
-        return None
+        _constructor_mro_cycle_panic(
+            guard="import-mro",
+            target=import_target,
+            active=stack,
+        )
     if import_target == "builtins.object":
         return (("import", import_target),)
 
@@ -1109,7 +1139,11 @@ def _static_constructor_mro(class_name: str, class_site, ctx, *, stack=frozenset
     Returns None when any base is undecidable or the linearization is inconsistent.
     """
     if class_name in stack:
-        return None
+        _constructor_mro_cycle_panic(
+            guard="constructor-mro",
+            target=class_name,
+            active=stack,
+        )
     next_stack = stack | {class_name}
     base_mros = []
     base_heads = []

@@ -63,10 +63,9 @@ class FactoryBuildContext:
     dig_sink: Any = None
     record_operation: OperationRecorder | None = None
     # The set of callee names whose body is CURRENTLY being built, up the build stack.
-    # CallSugar.build emits a construction-gap effect for a callee already in this
-    # set: eagerly building a recursive universe never terminates, and an infinite
-    # recursion is not finitely constructible -> the bridge stays the vendor's axiom
-    # rather than hanging the lifter.
+    # A callee already in this set hits the install-source cycle guard: eagerly
+    # building a recursive universe never terminates, so the missing finite
+    # recursive coordinate stays a typed loud FactoryPanic rather than opacity.
     building: frozenset[str] = field(default_factory=frozenset[str])
     # Opt-in: when True, a resolved callee whose body cannot open during dig
     # emits symbolic call:f (ExternalBridge) so outer towers can finish.

@@ -11,7 +11,8 @@ Bridge/dig doctrine:
 - Resolve first; None means body stays None (coordinate only / dig opaque).
 - Prefer real source file (Download Sources / site-packages) over invention.
 - nested_external_bridge stays default False — not flipped here.
-- Failures are None (opaque) or leave force_floor to panic — never silent invent.
+- Open-domain misses may remain None; active recursion guards are typed loud.
+- Never turn a detected construction cycle into opacity or silent invention.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ import textwrap
 from collections import OrderedDict
 from dataclasses import dataclass, field as dataclass_field, fields, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 from sugar_lift_python_source.source_oracle import installed_module_source
 from sugar_lift_python_source.source_tables import parsed_tree
@@ -71,6 +72,30 @@ def _factory_context_identity(ctx: Any) -> tuple[tuple[str, Any], ...]:
     )
 
 
+def _install_source_cycle_panic(
+    *,
+    guard: str,
+    target: str,
+    active: frozenset[str],
+    blame: object | None = None,
+) -> NoReturn:
+    """A recursion guard is a typed construction terminal, never opacity."""
+    from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+
+    active_names = ", ".join(sorted(active)) or "<empty>"
+    factory_panic_gap(
+        owner="install_source_cycle_guard",
+        blame=str(blame or target),
+        observed=f"{guard} cycle: {target}",
+        requested=f"acyclic install-source construction; active={active_names}",
+        fix=(
+            "construct a finite cited recursive coordinate or keep this exact "
+            "cycle loud; never return None, False, an unresolved alias, an "
+            "empty body, force-curry, or opaque Complete"
+        ),
+    )
+
+
 class InstallSourceValueOracle:
     """The one constructor for source-backed named floor values.
 
@@ -86,7 +111,8 @@ class InstallSourceValueOracle:
 
     Publishing rules:
       - Complete constructed values are published under the key.
-      - Unresolved ``None`` and cycle breaks return without publishing.
+      - Unresolved ``None`` returns without publishing.
+      - Cycle guards raise a typed FactoryPanic and never publish.
       - FactoryPanic propagates and never publishes.
     """
 
@@ -132,9 +158,14 @@ class InstallSourceValueOracle:
         _resolving: frozenset[str] = frozenset(),
     ) -> Any:
         """Sole construction entry for install-source named values."""
-        if "." not in import_target or import_target in _resolving:
-            # Cycle break or ill-formed name: never publish.
+        if "." not in import_target:
             return None
+        if import_target in _resolving:
+            _install_source_cycle_panic(
+                guard="value-oracle",
+                target=import_target,
+                active=_resolving,
+            )
         key = self._cache_key(import_target, ctx)
         from sugar_lift_py_tests.engine_log import reduction_span
 
@@ -446,8 +477,14 @@ def _resolve_qualified_native_callable(
     bound. ExceptionClassValue remains decidable only from already-resident
     modules or from a top-level extension cold import (stdlib ``_csv``-class).
     """
-    if "." not in import_target or import_target in resolving:
+    if "." not in import_target:
         return None
+    if import_target in resolving:
+        _install_source_cycle_panic(
+            guard="native-callable",
+            target=import_target,
+            active=resolving,
+        )
     resolving = resolving | {import_target}
     module_name, attr = import_target.rsplit(".", 1)
     origin = _installed_native_extension(module_name)
@@ -828,8 +865,14 @@ def resolve_source_exit_contract(
     Every other shape remains ``None`` so WithSugar stays loud. Never invent
     non-suppression from missing evidence.
     """
-    if not import_target or "." not in import_target or import_target in _stack:
+    if not import_target or "." not in import_target:
         return None
+    if import_target in _stack:
+        _install_source_cycle_panic(
+            guard="exit-contract",
+            target=import_target,
+            active=_stack,
+        )
     contract = resolve_contextmanager_exit_contract(import_target)
     if contract is not None:
         return contract
@@ -1098,8 +1141,14 @@ def _is_overload_declaration(
 def _resolve_qualified_function_fragment(
     import_target: str, *, resolving: frozenset[str] = frozenset()
 ):
-    if "." not in import_target or import_target in resolving:
+    if "." not in import_target:
         return None
+    if import_target in resolving:
+        _install_source_cycle_panic(
+            guard="function-fragment",
+            target=import_target,
+            active=resolving,
+        )
     resolving = resolving | {import_target}
     module_name, attr = import_target.rsplit(".", 1)
     index = _installed_source_index(module_name)
@@ -1504,7 +1553,14 @@ def _construct_install_source_value(
         reexport = _definite_star_reexport_target(module_name, attr, parsed)
     if reexport is None:
         reexport = _definite_setup_reexport_target(module_name, attr, parsed)
-    if reexport is not None and reexport not in resolving:
+    if reexport is not None:
+        if reexport in resolving:
+            _install_source_cycle_panic(
+                guard="re-export",
+                target=reexport,
+                active=resolving,
+                blame=sourcefile,
+            )
         resolved = resolve_install_source_value(
             reexport,
             ctx,
@@ -1734,7 +1790,11 @@ def _installed_class_is_exception(
     """Prove one exact source class has transitive exception ancestry."""
     qualified = f"{module_name}.{class_name}"
     if qualified in resolving:
-        return False
+        _install_source_cycle_panic(
+            guard="exception-ancestry",
+            target=qualified,
+            active=resolving,
+        )
     resolving = resolving | {qualified}
     declarations = [
         statement
@@ -1790,8 +1850,14 @@ def _base_is_exception(
             imported = imports.get(head)
             if imported is not None:
                 target = f"{imported}.{rest}" if separator else imported
-    if target is None or "." not in target or target in resolving:
+    if target is None or "." not in target:
         return False
+    if target in resolving:
+        _install_source_cycle_panic(
+            guard="exception-base",
+            target=target,
+            active=resolving,
+        )
     target_module, target_name = target.rsplit(".", 1)
     installed = _installed_source(target_module)
     if installed is None:
@@ -2064,12 +2130,14 @@ def resolve_install_source_class_bases(
 def _resolve_install_source_class_bases(
     qualified_class: str, resolving: frozenset[str], ctx: Any | None = None
 ) -> tuple[str, ...] | None:
-    if (
-        not qualified_class
-        or "." not in qualified_class
-        or qualified_class in resolving
-    ):
+    if not qualified_class or "." not in qualified_class:
         return None
+    if qualified_class in resolving:
+        _install_source_cycle_panic(
+            guard="class-bases",
+            target=qualified_class,
+            active=resolving,
+        )
     resolving = resolving | {qualified_class}
     module_name, class_name = qualified_class.rsplit(".", 1)
     installed = _installed_source(module_name)
@@ -2985,8 +3053,12 @@ def _build_dig_body_impl(
     name = fn_site.function_name()
     bridge = getattr(fn_site.node, "_sugar_bridge_name", None) or name
     if name in building or bridge in building:
-        # Cycle: never publish a half-body.
-        return None
+        _install_source_cycle_panic(
+            guard="dig-body",
+            target=name if name in building else str(bridge),
+            active=building,
+            blame=getattr(fn_site, "blame", None) or name,
+        )
 
     from sugar_lift_py_tests.engine_log import reduction_span
 
