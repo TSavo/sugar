@@ -706,6 +706,46 @@ def test_authenticated_numpy_allclose_has_universe_support() -> None:
     assert _universe_gaps(payload) == []
 
 
+def test_authenticated_numpy_isnan_has_universe_support() -> None:
+    """Truthful corpus shape: the imported receiver warrants ``numpy.isnan``."""
+
+    source = (
+        "import numpy as np\n"
+        "\n"
+        "def test_floor_division(div):\n"
+        "    assert np.isnan(div), f'div: {div}'\n"
+    )
+
+    payload = lift_file_payload(source, "test_umath.py")
+
+    assert any(
+        edge.get("targetSymbol") == "call:numpy.isnan" for edge in payload.call_edges
+    )
+    assert _universe_gaps(payload) == []
+
+
+def test_non_numpy_receiver_refutes_isnan_support() -> None:
+    """Lying twin: identical spelling from another import remains unclassified."""
+
+    source = (
+        "import math as np\n"
+        "\n"
+        "def test_floor_division(div):\n"
+        "    assert np.isnan(div), f'div: {div}'\n"
+    )
+    tree = ast.parse(source)
+    call = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "isnan"
+    )
+    site = SourceFragment.from_node(call, "lying_test_umath.py", source=source)
+
+    assert recognize_callee_universe("call:numpy.isnan", site=site) is None
+
+
 def test_module_scope_numpy_from_import_has_universe_support() -> None:
     """Module-level imports establish the name; do not revoke as free-var shadow."""
 
