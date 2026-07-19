@@ -192,13 +192,19 @@ def _has_builtin_universe_claim(site, *, callee: str, catalog, filename: str) ->
     target symbol spells an enrolled coordinate.
     """
 
-    del filename, callee
+    del filename
     if site is None:
         return False
     names = {
         candidate.name for candidate in catalog.candidates_for(SugarRole.TERM, site)
     }
-    return bool(names - _GENERIC_COORDINATE_CLAIMS)
+    if not names - _GENERIC_COORDINATE_CLAIMS:
+        return False
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseRecognition,
+    )
+
+    return CalleeUniverseRecognition.coordinate(site) == callee
 
 
 __all__ = ["universe_absence_reason", "universe_coverage_gaps"]

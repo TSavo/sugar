@@ -165,6 +165,7 @@ class BuiltinCalleeUniverseSugar(
             )),
             _numpy_may_share_memory_witness(),
             _bound_source_callable_witness(),
+            _numpy_dtype_result_witness(),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -333,13 +334,7 @@ def _numpy_all_witness():
 
 
 def _numpy_dtype_witness():
-    prefix = (
-        "import numpy as np\n"
-        "\n"
-        "def A():\n"
-        "    return np.dtype('i4')\n"
-        "\n"
-    )
+    prefix = "import numpy as np\n" "\n" "def A():\n" "    return np.dtype('i4')\n" "\n"
     return _call_pair(
         name="numpy_dtype_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
@@ -390,5 +385,22 @@ def _bound_source_callable_witness():
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "    assert f(0) == f(0) and f(0) == f(0)\n",
         lying=prefix + "    assert f(0) == f(0) and f(0) != f(0)\n",
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_dtype_result_witness():
+    prefix = (
+        "import numpy as np\n"
+        "\n"
+        "def A():\n"
+        "    return np.asarray([1]).dtype\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_dtype_result_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A() and A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() == A() and A() != A()\n",
         family="builtin-universe-coordinate",
     )
