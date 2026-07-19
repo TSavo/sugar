@@ -31,6 +31,17 @@ def test_add():
 """
 
 
+def test_audit_context_same_bytes_different_seats_do_not_alias() -> None:
+    """Identical source bytes in distinct seats require independent contexts."""
+    source = "x = 1\n"
+    cid = blake3_512_of(source.encode())
+    lift_rpc._AUDIT_FILE_CONTEXTS.clear()
+    first = lift_rpc._audit_file_context(source, "pkg/first.py", cid)
+    second = lift_rpc._audit_file_context(source, "pkg/second.py", cid)
+    assert first is not second
+    assert len(lift_rpc._AUDIT_FILE_CONTEXTS) == 2
+
+
 @pytest.fixture()
 def project(tmp_path: Path) -> Path:
     (tmp_path / "mathy.py").write_text(FIXTURE_SOURCE, encoding="utf-8")
