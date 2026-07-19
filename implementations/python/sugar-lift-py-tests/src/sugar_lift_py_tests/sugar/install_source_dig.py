@@ -24,7 +24,7 @@ import copy
 import functools
 import inspect
 import textwrap
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
@@ -1514,6 +1514,14 @@ def _construct_install_source_value(
                 )
             if module_ctx is None:
                 return None
+            # Resolving an imported function constructs its definition-time
+            # faces now (decorators/defaults), but Python does not execute its
+            # body until a call. Carry body fragments into SequentialDigBody
+            # and let the ordinary factory construct each statement on demand.
+            module_ctx = replace(
+                module_ctx,
+                defer_function_body_construction=True,
+            )
             with reduction_span(
                 sugar=import_target,
                 role="dig.construct.function.factory",

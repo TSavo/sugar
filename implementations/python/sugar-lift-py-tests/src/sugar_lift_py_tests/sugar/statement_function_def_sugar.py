@@ -11,6 +11,18 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
+class _DeferredFactoryStatement:
+    """Construct one function-body statement only when dig reaches it."""
+
+    site: Any
+    build_ctx: Any
+
+    def reduce(self, ctx):
+        factory_ctx = self.build_ctx.with_temporal(ctx.temporal)
+        return factory_ctx.build_body(self.site, SugarRole.STATEMENT).reduce(ctx)
+
+
+@dataclass(frozen=True)
 class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
     """An executable ``def`` binds a named callable without reducing its body."""
 
@@ -19,7 +31,7 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
     decorators: tuple[SugarBody, ...]
     positional_defaults: tuple[SugarBody, ...]
     keyword_only_defaults: tuple[SugarBody | None, ...]
-    body: SugarBody
+    body: SugarBody | tuple[_DeferredFactoryStatement, ...]
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -43,7 +55,18 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
                 None if default is None else ctx.build_body(default, SugarRole.TERM)
                 for default in site.function_keyword_only_defaults()
             ),
-            body=ctx.build_body(site.function_body_block(), SugarRole.STATEMENT),
+            # Python constructs decorators/defaults when executing ``def``;
+            # the body itself is not executed. Preserve the recognized source
+            # fragments for SequentialDigBody instead of recursively
+            # factory-building every descendant merely to bind the callable.
+            body=(
+                tuple(
+                    _DeferredFactoryStatement(statement, ctx)
+                    for statement in site.function_body()
+                )
+                if ctx.defer_function_body_construction
+                else ctx.build_body(site.function_body_block(), SugarRole.STATEMENT)
+            ),
             site=site,
         )
 
@@ -499,11 +522,23 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
             resolve_contextmanager_exit_contract,
         )
 
-        callable_body = self.body
         site = cast(Any, self.site)
         contextmanager_contract = contextmanager_exit_contract_for_fragment(site)
-        if isinstance(self.body.sugar, BlockSugar):
-            body_ctx = type(self).module_context_for(site, ctx)
+        callable_body = self.body
+        body_ctx = type(self).module_context_for(site, ctx)
+        if isinstance(self.body, tuple):
+            callable_body = _contextualized_dig_body(
+                SugarBody(
+                    sugar=SequentialDigBody(
+                        self.body,
+                        fn_site=site,
+                        contextmanager_yield=contextmanager_contract is not None,
+                    ),
+                    role=SugarRole.TERM,
+                ),
+                body_ctx,
+            )
+        elif isinstance(self.body.sugar, BlockSugar):
             callable_body = _contextualized_dig_body(
                 SugarBody(
                     sugar=SequentialDigBody(
@@ -533,9 +568,11 @@ class StatementFunctionDefSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def walk_children(self):
-        return (
+        children = (
             *self.decorators,
             *self.positional_defaults,
             *(default for default in self.keyword_only_defaults if default is not None),
-            self.body,
         )
+        if isinstance(self.body, SugarBody):
+            return (*children, self.body)
+        return children

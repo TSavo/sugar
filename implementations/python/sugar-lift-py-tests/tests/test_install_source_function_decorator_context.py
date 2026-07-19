@@ -6,7 +6,7 @@ import pytest
 
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic, factory_panic_gap
 from sugar_lift_py_tests.floor import FunctionCallable, ImportAliasValue, TermValue
 from sugar_lift_py_tests.sugar.install_source_dig import (
     resolve_contextmanager_exit_contract,
@@ -51,6 +51,69 @@ def test_install_source_function_constructs_direct_imported_decorator(
     assert len(resolved.decorators) == 1
     assert isinstance(resolved.decorators[0], ImportAliasValue)
     assert resolved.decorators[0].import_target == "contextlib.contextmanager"
+
+
+def test_install_source_function_defers_body_factory_construction(
+    tmp_path, monkeypatch
+) -> None:
+    target = _module(
+        tmp_path,
+        monkeypatch,
+        "deferred_install_source_body",
+        "def managed():\n" "    local = 7\n" "    return local\n",
+    )
+    original = FactoryBuildContext.build_body
+    built: list[tuple[str, str]] = []
+
+    def recording_build_body(self, node, role):
+        observed = getattr(node, "observed", None)
+        built.append((str(observed), role.value))
+        return original(self, node, role)
+
+    monkeypatch.setattr(FactoryBuildContext, "build_body", recording_build_body)
+
+    resolved = resolve_install_source_value(target, _ctx())
+
+    assert isinstance(resolved, FunctionCallable)
+    assert ("Block", "statement") not in built
+    built.clear()
+    outcome = resolved.body.reduce(_ctx())
+    assert isinstance(outcome.value, TermValue)
+    assert outcome.value.value == 7
+    assert ("Assign", "statement") in built
+    assert ("Return", "statement") in built
+
+
+def test_deferred_install_source_body_keeps_factory_gap_loud(
+    tmp_path, monkeypatch
+) -> None:
+    target = _module(
+        tmp_path,
+        monkeypatch,
+        "loud_deferred_install_source_body",
+        "def managed():\n" "    return 7\n",
+    )
+    original = FactoryBuildContext.build_body
+
+    def planted_gap_on_return(self, node, role):
+        if str(getattr(node, "observed", None)) == "Return":
+            factory_panic_gap(
+                owner="python.factory",
+                blame=str(getattr(node, "blame", "<deferred-return>")),
+                observed="Return",
+                requested="statement",
+                fix="register the missing statement Sugar",
+            )
+        return original(self, node, role)
+
+    monkeypatch.setattr(FactoryBuildContext, "build_body", planted_gap_on_return)
+
+    resolved = resolve_install_source_value(target, _ctx())
+    assert isinstance(resolved, FunctionCallable)
+    with pytest.raises(FactoryPanic) as raised:
+        resolved.body.reduce(_ctx())
+    assert raised.value.info.owner == "python.factory"
+    assert raised.value.info.observed == "Return"
 
 
 def test_install_source_function_constructs_aliased_imported_decorator(

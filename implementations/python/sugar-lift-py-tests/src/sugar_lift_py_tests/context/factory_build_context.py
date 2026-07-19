@@ -55,6 +55,11 @@ class FactoryBuildContext:
     # testimony. EqualitySugar consumes this ledger into ProofIR provenance.
     module_rewrite_log: list[Any] = field(default_factory=list[Any])
     prefer_ground_module_bindings: bool = False
+    # Executing a module-level ``def`` must construct decorators/defaults now,
+    # but its body is demanded only by a later call. The module seed opts into
+    # carrying those body statements to SequentialDigBody without recursively
+    # factory-building every descendant.
+    defer_function_body_construction: bool = False
     dig_sink: Any = None
     record_operation: OperationRecorder | None = None
     # The set of callee names whose body is CURRENTLY being built, up the build stack.
@@ -129,6 +134,7 @@ class FactoryBuildContext:
             operation_log=self.operation_log,
             module_rewrite_log=self.module_rewrite_log,
             prefer_ground_module_bindings=self.prefer_ground_module_bindings,
+            defer_function_body_construction=self.defer_function_body_construction,
             dig_sink=self.dig_sink,
             record_operation=self.record_operation,
             building=self.building,
