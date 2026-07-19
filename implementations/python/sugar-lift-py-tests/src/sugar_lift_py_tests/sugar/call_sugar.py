@@ -193,6 +193,30 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                 truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
                 lying=prefix + "def test_a():\n    assert A(5) == 6\n",
             ),
+            _call_pair(
+                name="functools_wraps_preserves_implementation",
+                owner_sugar="CallSugar",
+                truthful=(
+                    "from functools import wraps\n"
+                    "def implementation(value):\n"
+                    "    return value + 1\n"
+                    "@wraps(implementation)\n"
+                    "def public(value):\n"
+                    "    return implementation(value)\n"
+                    "def test_public():\n"
+                    "    assert public(3) == 4\n"
+                ),
+                lying=(
+                    "from functools import wraps\n"
+                    "def implementation(value):\n"
+                    "    return value + 1\n"
+                    "@wraps(implementation)\n"
+                    "def public(value):\n"
+                    "    return implementation(value)\n"
+                    "def test_public():\n"
+                    "    assert public(3) == 5\n"
+                ),
+            ),
             typed_red_effect_witness(
                 name="call_starred_positional_runtime_effect",
                 owner_sugar="CallSugar",
@@ -269,7 +293,15 @@ class CallSugar(Sugar, role=SugarRole.TERM):
             from sugar_lift_py_tests.floor import ImportAliasValue
 
             imported_callable_target = None
+            imported_native_shape = None
             if isinstance(bound, ImportAliasValue):
+                from sugar_lift_py_tests.recognition.native_shape import (
+                    recognize_native_decorator,
+                )
+
+                imported_native_shape = recognize_native_decorator(
+                    bound.import_target or bound.name
+                )
                 resolved_value = bound.resolve_value()
                 if isinstance(resolved_value, ExceptionClassValue):
                     bound = resolved_value
@@ -300,6 +332,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                             exit_suppression=_static_exit_suppression_contract(
                                 native.qualified_name, accumulated
                             ),
+                            native_shape=imported_native_shape,
                         )
                     )
                 else:
@@ -331,6 +364,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                             exit_suppression=_static_exit_suppression_contract(
                                 target, accumulated
                             ),
+                            native_shape=imported_native_shape,
                         )
                     )
             if isinstance(bound, FunctionCallable):
@@ -354,6 +388,7 @@ class CallSugar(Sugar, role=SugarRole.TERM):
                     self.keyword_names,
                     self.site,
                     source_arg_values=accumulated,
+                    native_shape=imported_native_shape,
                 )
 
             if type(bound) in (

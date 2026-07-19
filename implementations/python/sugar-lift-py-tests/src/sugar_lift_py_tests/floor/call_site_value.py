@@ -5,6 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from typing import Any, NoReturn
 
 from sugar_lift_py_tests.ir import Term, TermTableBuilder
+from sugar_lift_py_tests.recognition.native_shape import NativeShape
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -86,6 +87,9 @@ class CallSiteValue(FloorValue):
     exception_type_coordinate: Term | None = dataclass_field(
         default=None, compare=False
     )
+    # Issued by a registered Call Sugar from an authenticated import target.
+    # The target spelling alone never grants native behavior.
+    native_shape: NativeShape | None = None
 
     def to_term(self, *, owner: str):
         del owner

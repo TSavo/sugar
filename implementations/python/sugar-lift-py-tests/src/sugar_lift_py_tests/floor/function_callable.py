@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field, replace
 from typing import Any
 
+from sugar_lift_py_tests.recognition.native_shape import NativeShape
+
 from .floor_value import FloorValue
 from .term_value import TermValue
 
@@ -103,6 +105,7 @@ class FunctionCallable(FloorValue):
         *,
         source_arg_values=None,
         term=None,
+        native_shape: NativeShape | None = None,
     ):
         from sugar_lift_py_tests.factory import factory_panic_gap
         from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
@@ -120,6 +123,7 @@ class FunctionCallable(FloorValue):
                 site,
                 source_arg_values=source_arg_values,
                 term=term,
+                native_shape=native_shape,
             )
 
         if self.body is None:
@@ -481,6 +485,7 @@ class FunctionCallable(FloorValue):
                 body=body,
                 site=site,
                 exit_suppression=self.exit_suppression,
+                native_shape=native_shape,
             )
         )
 
@@ -497,6 +502,12 @@ class FunctionCallable(FloorValue):
 
         current = replace(self, decorators=())
         for decorator in reversed(self.decorators):
+            if (
+                isinstance(decorator, CallSiteValue)
+                and decorator.native_shape
+                is NativeShape.IMPLEMENTATION_PRESERVING_DECORATOR
+            ):
+                continue
             if isinstance(decorator, CallSiteValue) and (
                 _implementation_preserving_decorator_factory(decorator.target_name)
             ):

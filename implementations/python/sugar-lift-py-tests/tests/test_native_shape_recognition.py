@@ -2,6 +2,7 @@ from sugar_lift_py_tests.recognition.native_shape import (
     NativeShape,
     has_native_shape,
     recognize_native_call,
+    recognize_native_decorator,
     recognizes_identity_decorator,
     recognizes_module_name,
 )
@@ -23,3 +24,12 @@ def test_similar_unregistered_coordinates_do_not_gain_native_behavior() -> None:
         "project.api.extensions", "register_series_accessor"
     )
     assert not recognizes_module_name("local_vendor")
+
+
+def test_functools_wraps_is_an_authenticated_native_decorator_shape() -> None:
+    assert (
+        recognize_native_decorator("functools.wraps")
+        is NativeShape.IMPLEMENTATION_PRESERVING_DECORATOR
+    )
+    assert recognize_native_decorator("project.wraps") is None
+    assert recognize_native_decorator("wraps") is None

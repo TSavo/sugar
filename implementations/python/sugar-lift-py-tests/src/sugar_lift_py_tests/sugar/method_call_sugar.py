@@ -125,7 +125,9 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             from sugar_lift_py_tests.recognition.native_shape import (
                 NativeShape,
                 has_native_shape,
+                recognize_native_decorator,
             )
+            native_shape = recognize_native_decorator(self.import_target)
 
             if (
                 has_native_shape(source_name, NativeShape.OPTION_UPDATE)
@@ -195,6 +197,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                         runtime_dispatch_receiver=(
                             receiver_floor if self.import_target is None else None
                         ),
+                        native_shape=native_shape,
                     )
                 )
 
@@ -216,6 +219,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
                         runtime_dispatch_receiver=(
                             receiver_floor if self.import_target is None else None
                         ),
+                        native_shape=native_shape,
                     )
                 )
             )

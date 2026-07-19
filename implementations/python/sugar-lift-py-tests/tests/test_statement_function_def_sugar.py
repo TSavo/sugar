@@ -24,6 +24,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.ir import atomic, ctor, make_var, num
 from sugar_lift_py_tests.idd.sugar_witness_instruments import evaluate_seed_witnesses
 from sugar_lift_py_tests.outcome import Incomplete, complete_value
+from sugar_lift_py_tests.sugar.call_sugar import CallSugar
 from sugar_lift_py_tests.sugar.keyword_call_sugar import KeywordCallSugar
 from sugar_lift_py_tests.sugar.statement_function_def_sugar import (
     StatementFunctionDefSugar,
@@ -104,6 +105,107 @@ def test_decorated_callable_wrapper_fills_original_missing_argument() -> None:
     assert callsite.force_floor(
         ctx, owner="decorated callable curry floor", project_callsite=False
     ) == TermValue(7)
+
+
+def _imported_decorator_callsite(import_target: str) -> CallSiteValue:
+    from sugar_lift_py_tests.floor import ImportAliasValue
+    from sugar_lift_py_tests.sugar.call_sugar import CallSugar
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    original = FunctionCallable(name="original", body=object())
+    site = SourceFragment.from_source("wraps(original)\n", "nested.py").statements()[0]
+    ctx = FactoryBuildContext(
+        filename="nested.py",
+        catalog=default_catalog(),
+        temporal=(
+            TemporalContext.empty()
+            .bind_value(
+                "wraps",
+                ImportAliasValue(
+                    import_target,
+                    "wraps",
+                    import_target=import_target,
+                ),
+            )
+            .bind_value("original", original)
+        ),
+    )
+    decorator = complete_value(
+        CallSugar(
+            target_name="wraps",
+            args=(),
+            keyword_names=(),
+            site=site,
+        )._collect((), (original,), ctx),
+        owner="decorator import identity",
+    )
+    assert isinstance(decorator, CallSiteValue)
+    return decorator
+
+
+def test_authenticated_functools_wraps_preserves_wrapped_callable() -> None:
+    from dataclasses import replace
+
+    impl = FunctionCallable(name="wrapper", body=object())
+    decorator = _imported_decorator_callsite("functools.wraps")
+    decorated = replace(impl, decorators=(decorator,))
+    assert decorated._apply_decorators(decorator.site) == impl
+
+
+def test_authenticated_functools_module_wraps_carries_native_contract() -> None:
+    from sugar_lift_py_tests.floor import ImportAliasValue
+    from sugar_lift_py_tests.recognition.native_shape import NativeShape
+    from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+    from sugar_lift_py_tests.temporal import TemporalContext
+
+    original = FunctionCallable(name="original", body=object())
+    module = ImportAliasValue("functools", "functools", import_target="functools")
+    site = SourceFragment.from_source(
+        "functools.wraps(original)\n", "nested.py"
+    ).statements()[0]
+    ctx = FactoryBuildContext(
+        filename="nested.py",
+        catalog=default_catalog(),
+        temporal=TemporalContext.empty(),
+    )
+    decorator = complete_value(
+        MethodCallSugar(
+            method_name="wraps",
+            import_target="functools.wraps",
+            receiver=object(),
+            args=(),
+            keyword_names=(),
+            site=site,
+        )._collect((), (module, original), ctx),
+        owner="functools module decorator identity",
+    )
+    assert isinstance(decorator, CallSiteValue)
+    assert (
+        decorator.native_shape
+        is NativeShape.IMPLEMENTATION_PRESERVING_DECORATOR
+    )
+
+
+def test_unqualified_wraps_lookalike_stays_loud() -> None:
+    from dataclasses import replace
+
+    impl = FunctionCallable(name="wrapper", body=object())
+    decorator = _imported_decorator_callsite("project.wraps")
+    decorated = replace(impl, decorators=(decorator,))
+    with pytest.raises(FactoryPanic):
+        decorated.callsite((TermValue(3),), (), decorator.site)
+
+
+def test_functools_wraps_witness_truthful_sat_and_lying_unsat(tmp_path) -> None:
+    witness = next(
+        witness
+        for witness in CallSugar.witnesses()
+        if witness.name == "functools_wraps_preserves_implementation"
+    )
+
+    report = evaluate_seed_witnesses((witness,), tmp_path)
+
+    assert report.is_zero
 
 
 def test_decorator_result_projects_static_typing_cast_callable() -> None:
