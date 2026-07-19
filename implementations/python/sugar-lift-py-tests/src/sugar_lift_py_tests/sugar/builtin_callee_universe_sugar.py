@@ -29,6 +29,7 @@ _AUTHENTICATED_COORDINATES = frozenset(
         "type",
         "dtype",
         "all",
+        "numpy.dtype",
         "numpy._core.multiarray.get_handler_name",
         *_CONVERTER_COORDINATES,
     }
@@ -78,6 +79,7 @@ class BuiltinCalleeUniverseSugar(
             _imported_method_coordinate_witness(
                 setup=("import numpy._core._multiarray_tests as mt\n"),
             ),
+            _numpy_dtype_itemsize_witness(),
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
@@ -134,5 +136,22 @@ def _imported_method_coordinate_witness(*, setup: str):
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=truthful,
         lying=lying,
+        family="builtin-universe-coordinate",
+    )
+
+
+def _numpy_dtype_itemsize_witness():
+    prefix = (
+        "import numpy as np\n"
+        "\n"
+        "def A():\n"
+        "    return np.dtype(np.int64).itemsize\n"
+        "\n"
+    )
+    return _call_pair(
+        name="numpy_dtype_itemsize_builtin_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=(prefix + "def test_a():\n" + "    assert A() == A()\n"),
+        lying=(prefix + "def test_a():\n" + "    assert A() != A()\n"),
         family="builtin-universe-coordinate",
     )

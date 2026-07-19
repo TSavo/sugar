@@ -127,6 +127,13 @@ def test_builtin_covered_callee_emits_no_universe_gap() -> None:
             "    def test_converter(self):\n"
             "        assert self.conv(5) == self.conv(5)\n",
         ),
+        (
+            "itemsize",
+            "import numpy as np\n"
+            "def test_itemsize():\n"
+            "    assert np.dtype(np.int64).itemsize "
+            "== np.dtype(np.int64).itemsize\n",
+        ),
     ],
 )
 def test_authenticated_builtin_coordinate_emits_no_universe_gap(
@@ -183,6 +190,26 @@ def test_unwarranted_receiver_converter_stays_unclassified() -> None:
     gaps = _universe_gaps(payload)
     assert len(gaps) == 1
     assert gaps[0].ast_kind == "call:conv"
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        "import math as np\n"
+        "def test_itemsize():\n"
+        "    assert np.dtype(1).itemsize == np.dtype(1).itemsize\n",
+        "import numpy as np\n"
+        "np = object()\n"
+        "def test_itemsize():\n"
+        "    assert np.dtype(1).itemsize == np.dtype(1).itemsize\n",
+    ),
+)
+def test_unwarranted_itemsize_receiver_stays_unclassified(source: str) -> None:
+    payload = lift_file_payload(source, "unwarranted_itemsize.py")
+
+    gaps = _universe_gaps(payload)
+    assert len(gaps) == 2
+    assert {gap.ast_kind for gap in gaps} == {"call:itemsize"}
 
 
 def test_later_local_rebind_revokes_get_handler_name_warrant() -> None:

@@ -63,7 +63,10 @@ class CalleeUniverseRecognition:
         if receiver is not None:
             if not site.source:
                 return None
-            return cls._method_coordinate(site, receiver)
+            method_coordinate = cls._method_coordinate(site, receiver)
+            if method_coordinate is not None:
+                return method_coordinate
+            return imported_call_identity(site)
 
         target = site.call_target_name()
         if target is None:
