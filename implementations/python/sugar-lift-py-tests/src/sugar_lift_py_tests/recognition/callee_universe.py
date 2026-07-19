@@ -87,6 +87,8 @@ class CalleeUniverseSupport(Enum):
 
 # Empty: numpy dtype-result coordinates are external kit contracts (#5603).
 # Hard-coded vendor logos deleted; rows stay loud until bridge evidence.
+# Kit-loaded overlay only (#5618/#5902 empty-kit pattern) — see
+# load_dtype_result_protocol / clear_dtype_result_protocol below.
 _DTYPE_RESULT_SUPPORT: dict[str, CalleeUniverseSupport] = {}
 
 # Authenticated import identities that are language/stdlib protocol only.
@@ -142,9 +144,14 @@ def _imported_attribute_leaves() -> frozenset[str]:
 _IMPORTED_ATTRIBUTE_LEAVES = frozenset(
     identity.rsplit(".", 1)[-1] for identity in _IMPORTED_SUPPORT
 )
-_DTYPE_RESULT_ATTRIBUTE_LEAVES = frozenset(
-    identity.rsplit(".", 1)[-1] for identity in _DTYPE_RESULT_SUPPORT
-)
+
+
+def _dtype_result_attribute_leaves() -> frozenset[str]:
+    # Function, not a frozen constant: _DTYPE_RESULT_SUPPORT is a kit-loaded
+    # overlay (load_dtype_result_protocol), mutated after module import.
+    return frozenset(
+        identity.rsplit(".", 1)[-1] for identity in _DTYPE_RESULT_SUPPORT
+    )
 
 
 def recognize_callee_universe(
@@ -305,6 +312,26 @@ def clear_imported_callee_protocol() -> None:
     _PROTOCOL_IMPORTED_SUPPORT.clear()
 
 
+def load_dtype_result_protocol(
+    coordinates: dict[str, CalleeUniverseSupport],
+) -> None:
+    """Install dtype-result coordinates (e.g. ``numpy.asarray``) from a kit contract.
+
+    Same empty-by-construction discipline as ``load_imported_callee_protocol``
+    (#5618): production ``_DTYPE_RESULT_SUPPORT`` stays empty of vendor-root
+    keys; only a loaded kit/bridge contract supplies the coordinate.
+    """
+
+    _DTYPE_RESULT_SUPPORT.clear()
+    _DTYPE_RESULT_SUPPORT.update(coordinates)
+
+
+def clear_dtype_result_protocol() -> None:
+    """Remove kit-loaded dtype-result coordinates (test isolation / unload)."""
+
+    _DTYPE_RESULT_SUPPORT.clear()
+
+
 class CalleeUniverseRecognition:
     """Resolve a call's authenticated source-bound callee coordinate.
 
@@ -355,7 +382,7 @@ class CalleeUniverseRecognition:
             # full ``imported_call_identity`` for every ``random.X`` /
             # ``module.Y`` Call is the factory.select residual after
             # parsed_locus_index drained the AST-walk half of the path.
-            leaves = _imported_attribute_leaves() | _DTYPE_RESULT_ATTRIBUTE_LEAVES
+            leaves = _imported_attribute_leaves() | _dtype_result_attribute_leaves()
             if target in leaves:
                 imported = _result_call_identity(site)
                 if recognize_authenticated_callee_identity(imported) is not None:
@@ -1190,8 +1217,10 @@ def _source_path(statement):
 __all__ = [
     "CalleeUniverseRecognition",
     "CalleeUniverseSupport",
+    "clear_dtype_result_protocol",
     "clear_imported_callee_protocol",
     "imported_call_identity",
+    "load_dtype_result_protocol",
     "load_imported_callee_protocol",
     "recognize_authenticated_callee_identity",
     "recognize_callee_universe",

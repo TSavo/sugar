@@ -7,6 +7,7 @@ import pytest
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import build_node, default_catalog
+from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import FactoryWalkRedRowDto
 from sugar_lift_py_tests.lift_rpc import lift_file_payload
@@ -453,39 +454,57 @@ def test_later_local_rebind_revokes_type_builtin_warrant() -> None:
 
 
 def test_authenticated_numpy_can_cast_has_universe_support() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_cast(from_, to):\n"
-        "    assert np.can_cast(from_, to)\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "can_cast_covered_fixture.py")
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.can_cast": CalleeUniverseSupport.NUMPY_CAN_CAST}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_cast(from_, to):\n"
+            "    assert np.can_cast(from_, to)\n"
+        )
 
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.can_cast" for edge in payload.call_edges
-    )
-    assert _universe_gaps(payload) == []
+        payload = lift_file_payload(source, "can_cast_covered_fixture.py")
 
-    call = next(
-        node
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "can_cast"
-    )
-    site = SourceFragment.from_node(call, "can_cast_covered_fixture.py", source=source)
-    assert CalleeUniverseRecognition.coordinate(site) == "numpy.can_cast"
-    context = FactoryBuildContext(
-        filename="can_cast_covered_fixture.py", catalog=default_catalog()
-    )
-    built = build_node(
-        site,
-        filename="can_cast_covered_fixture.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.can_cast"
+            for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+
+        call = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "can_cast"
+        )
+        site = SourceFragment.from_node(
+            call, "can_cast_covered_fixture.py", source=source
+        )
+        assert CalleeUniverseRecognition.coordinate(site) == "numpy.can_cast"
+        context = FactoryBuildContext(
+            filename="can_cast_covered_fixture.py", catalog=default_catalog()
+        )
+        built = build_node(
+            site,
+            filename="can_cast_covered_fixture.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 def test_shadowed_numpy_alias_cannot_warrant_can_cast_support() -> None:
@@ -532,15 +551,19 @@ def test_later_local_rebind_revokes_can_cast_import_warrant() -> None:
 
 
 def test_unauthenticated_can_cast_fqn_alone_stays_loud() -> None:
-    """Lying twin: FQN spelling without import provenance must not silence."""
+    """Lying twin: FQN spelling without import provenance must not silence.
+
+    ``numpy`` is a wholly unbound name here (no import, no parameter) — the
+    stronger, more honest current law is that reducing it panics loud at the
+    unbound-name floor (``TemporalContext``) rather than silently degrading
+    to a graceful universe-coverage gap. Both are refusals; the panic fires
+    earlier and cannot be missed.
+    """
 
     source = "def test_cast(from_, to):\n" "    assert numpy.can_cast(from_, to)\n"
 
-    payload = lift_file_payload(source, "can_cast_unauthenticated_fqn.py")
-
-    gaps = _universe_gaps(payload)
-    assert gaps
-    assert all("can_cast" in gap.ast_kind for gap in gaps)
+    with pytest.raises(FactoryPanic):
+        lift_file_payload(source, "can_cast_unauthenticated_fqn.py")
 
     call = next(
         node
@@ -557,55 +580,88 @@ def test_unauthenticated_can_cast_fqn_alone_stays_loud() -> None:
 
 
 def test_authenticated_numpy_isnan_has_universe_support() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_nan(value):\n"
-        "    assert np.isnan(value)\n"
+    """#5404 / #5905: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "isnan_covered_fixture.py")
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.isnan": CalleeUniverseSupport.NUMPY_ISNAN}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_nan(value):\n"
+            "    assert np.isnan(value)\n"
+        )
 
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.isnan" for edge in payload.call_edges
-    )
-    assert _universe_gaps(payload) == []
+        payload = lift_file_payload(source, "isnan_covered_fixture.py")
 
-    call = next(
-        node
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "isnan"
-    )
-    site = SourceFragment.from_node(call, "isnan_covered_fixture.py", source=source)
-    assert CalleeUniverseRecognition.coordinate(site) == "numpy.isnan"
-    context = FactoryBuildContext(
-        filename="isnan_covered_fixture.py", catalog=default_catalog()
-    )
-    built = build_node(
-        site,
-        filename="isnan_covered_fixture.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.isnan"
+            for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+
+        call = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "isnan"
+        )
+        site = SourceFragment.from_node(
+            call, "isnan_covered_fixture.py", source=source
+        )
+        assert CalleeUniverseRecognition.coordinate(site) == "numpy.isnan"
+        context = FactoryBuildContext(
+            filename="isnan_covered_fixture.py", catalog=default_catalog()
+        )
+        built = build_node(
+            site,
+            filename="isnan_covered_fixture.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 def test_authenticated_numpy_dtype_has_universe_support() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_dtype(value):\n"
-        "    assert np.dtype(value) == np.dtype(value)\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "numpy_dtype_covered_fixture.py")
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.dtype": CalleeUniverseSupport.NUMPY_DTYPE}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(value):\n"
+            "    assert np.dtype(value) == np.dtype(value)\n"
+        )
 
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.dtype" for edge in payload.call_edges
-    )
-    assert _universe_gaps(payload) == []
+        payload = lift_file_payload(source, "numpy_dtype_covered_fixture.py")
+
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.dtype" for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+    finally:
+        clear_imported_callee_protocol()
 
 
 def test_non_numpy_import_refutes_numpy_dtype_support() -> None:
@@ -671,15 +727,17 @@ def test_later_local_rebind_revokes_isnan_import_warrant() -> None:
 
 
 def test_unauthenticated_isnan_fqn_alone_stays_loud() -> None:
-    """Lying twin: FQN spelling without import provenance must not silence."""
+    """Lying twin: FQN spelling without import provenance must not silence.
+
+    ``numpy`` is a wholly unbound name — the stronger, more honest current
+    law panics loud at the unbound-name floor (``TemporalContext``) rather
+    than silently degrading to a graceful universe-coverage gap.
+    """
 
     source = "def test_nan(value):\n" "    assert numpy.isnan(value)\n"
 
-    payload = lift_file_payload(source, "isnan_unauthenticated_fqn.py")
-
-    gaps = _universe_gaps(payload)
-    assert gaps
-    assert all("isnan" in gap.ast_kind for gap in gaps)
+    with pytest.raises(FactoryPanic):
+        lift_file_payload(source, "isnan_unauthenticated_fqn.py")
 
     call = next(
         node
@@ -694,54 +752,88 @@ def test_unauthenticated_isnan_fqn_alone_stays_loud() -> None:
 
 
 def test_authenticated_numpy_all_has_universe_support() -> None:
-    """Qualified numpy.all is distinct from bare builtin all (#5422)."""
+    """Qualified numpy.all is distinct from bare builtin all (#5422).
 
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_all(value):\n"
-        "    assert np.all(value)\n"
+    #5906: kit protocol + import provenance (see protocol test module).
+    """
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "numpy_all_covered_fixture.py")
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.all": CalleeUniverseSupport.NUMPY_ALL}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_all(value):\n"
+            "    assert np.all(value)\n"
+        )
 
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.all" for edge in payload.call_edges
-    )
-    assert _universe_gaps(payload) == []
+        payload = lift_file_payload(source, "numpy_all_covered_fixture.py")
 
-    call = next(
-        node
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "all"
-    )
-    site = SourceFragment.from_node(call, "numpy_all_covered_fixture.py", source=source)
-    assert CalleeUniverseRecognition.coordinate(site) == "numpy.all"
-    context = FactoryBuildContext(
-        filename="numpy_all_covered_fixture.py", catalog=default_catalog()
-    )
-    built = build_node(
-        site,
-        filename="numpy_all_covered_fixture.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.all" for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+
+        call = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "all"
+        )
+        site = SourceFragment.from_node(
+            call, "numpy_all_covered_fixture.py", source=source
+        )
+        assert CalleeUniverseRecognition.coordinate(site) == "numpy.all"
+        context = FactoryBuildContext(
+            filename="numpy_all_covered_fixture.py", catalog=default_catalog()
+        )
+        built = build_node(
+            site,
+            filename="numpy_all_covered_fixture.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 def test_module_scope_numpy_from_import_all_has_universe_support() -> None:
-    """from numpy import all; all(...) authenticates as numpy.all, not bare all."""
+    """from numpy import all; all(...) authenticates as numpy.all, not bare all.
 
-    source = "from numpy import all\nassert all([True])\n"
+    #5906: kit protocol + import provenance (see protocol test module).
+    """
 
-    payload = lift_file_payload(source, "numpy_all_from_import_fixture.py")
-
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.all" for edge in payload.call_edges
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    assert _universe_gaps(payload) == []
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.all": CalleeUniverseSupport.NUMPY_ALL}
+        )
+        source = "from numpy import all\nassert all([True])\n"
+
+        payload = lift_file_payload(source, "numpy_all_from_import_fixture.py")
+
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.all" for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+    finally:
+        clear_imported_callee_protocol()
 
 
 def test_shadowed_numpy_alias_cannot_warrant_all_support() -> None:
@@ -788,17 +880,17 @@ def test_later_local_rebind_revokes_numpy_all_import_warrant() -> None:
 
 
 def test_unauthenticated_numpy_all_fqn_alone_stays_loud() -> None:
-    """Lying twin: FQN spelling without import provenance must not silence."""
+    """Lying twin: FQN spelling without import provenance must not silence.
+
+    ``numpy`` is a wholly unbound name — the stronger, more honest current
+    law panics loud at the unbound-name floor (``TemporalContext``) rather
+    than silently degrading to a graceful universe-coverage gap.
+    """
 
     source = "def test_all(value):\n" "    assert numpy.all(value)\n"
 
-    payload = lift_file_payload(source, "numpy_all_unauthenticated_fqn.py")
-
-    gaps = _universe_gaps(payload)
-    assert gaps
-    # Without import provenance the leaf spelling is the only testimony
-    # (call:all), not the qualified numpy.all coordinate.
-    assert all(gap.ast_kind in {"call:all", "call:numpy.all"} for gap in gaps)
+    with pytest.raises(FactoryPanic):
+        lift_file_payload(source, "numpy_all_unauthenticated_fqn.py")
 
     call = next(
         node
@@ -870,37 +962,72 @@ def test_shadowed_numpy_alias_cannot_warrant_issubdtype_support() -> None:
 
 
 def test_authenticated_numpy_allclose_has_universe_support() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_values(left, right):\n"
-        "    assert np.allclose(left, right)\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "allclose_covered_fixture.py")
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.allclose": CalleeUniverseSupport.NUMPY_ALLCLOSE}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_values(left, right):\n"
+            "    assert np.allclose(left, right)\n"
+        )
 
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.allclose" for edge in payload.call_edges
+        payload = lift_file_payload(source, "allclose_covered_fixture.py")
+
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.allclose"
+            for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+    finally:
+        clear_imported_callee_protocol()
+
+
+def test_authenticated_numpy_isnan_has_universe_support_corpus_shape() -> None:
+    """Truthful corpus shape: the imported receiver warrants ``numpy.isnan``.
+
+    #5404 / #5905: kit protocol + import provenance (see protocol test
+    module). Distinct fixture name from
+    ``test_authenticated_numpy_isnan_has_universe_support`` above — same law,
+    the corpus-realistic ``test_umath.py`` shape (#5905 repro).
+    """
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    assert _universe_gaps(payload) == []
 
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.isnan": CalleeUniverseSupport.NUMPY_ISNAN}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_floor_division(div):\n"
+            "    assert np.isnan(div), f'div: {div}'\n"
+        )
 
-def test_authenticated_numpy_isnan_has_universe_support() -> None:
-    """Truthful corpus shape: the imported receiver warrants ``numpy.isnan``."""
+        payload = lift_file_payload(source, "test_umath.py")
 
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_floor_division(div):\n"
-        "    assert np.isnan(div), f'div: {div}'\n"
-    )
-
-    payload = lift_file_payload(source, "test_umath.py")
-
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.isnan" for edge in payload.call_edges
-    )
-    assert _universe_gaps(payload) == []
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.isnan" for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+    finally:
+        clear_imported_callee_protocol()
 
 
 def test_non_numpy_receiver_refutes_isnan_support() -> None:
@@ -926,39 +1053,59 @@ def test_non_numpy_receiver_refutes_isnan_support() -> None:
 
 
 def test_authenticated_numpy_array_tobytes_has_universe_support() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_bytes():\n"
-        "    value = np.array(b'abc')\n"
-        "    assert value.tobytes() == b'abc'\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "tobytes_covered_fixture.py")
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {
+                "numpy.array.tobytes": CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES,
+                "numpy.ndarray.tobytes": CalleeUniverseSupport.NUMPY_ARRAY_TOBYTES,
+            }
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_bytes():\n"
+            "    value = np.array(b'abc')\n"
+            "    assert value.tobytes() == b'abc'\n"
+        )
 
-    assert any(
-        row.get("selected") == "BuiltinCalleeUniverseSugar"
-        and row.get("blame") == "tobytes_covered_fixture.py:5:11"
-        for row in payload.factory_audits
-    )
-    assert _universe_gaps(payload) == []
+        payload = lift_file_payload(source, "tobytes_covered_fixture.py")
 
-    call = next(
-        node
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "tobytes"
-    )
-    site = SourceFragment.from_node(call, "tobytes_covered_fixture.py", source=source)
-    # Result-call identity joins the constructor import with the member
-    # (``numpy.array.tobytes``); bound-native shape spells the class coordinate
-    # (``numpy.ndarray.tobytes``). Both are the same authenticated family.
-    assert CalleeUniverseRecognition.coordinate(site) in {
-        "numpy.array.tobytes",
-        "numpy.ndarray.tobytes",
-    }
-    assert recognize_callee_universe("call:tobytes", site=site) is not None
+        assert any(
+            row.get("selected") == "BuiltinCalleeUniverseSugar"
+            and row.get("blame") == "tobytes_covered_fixture.py:5:11"
+            for row in payload.factory_audits
+        )
+        assert _universe_gaps(payload) == []
+
+        call = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "tobytes"
+        )
+        site = SourceFragment.from_node(
+            call, "tobytes_covered_fixture.py", source=source
+        )
+        # Result-call identity joins the constructor import with the member
+        # (``numpy.array.tobytes``); bound-native shape spells the class coordinate
+        # (``numpy.ndarray.tobytes``). Both are the same authenticated family.
+        assert CalleeUniverseRecognition.coordinate(site) in {
+            "numpy.array.tobytes",
+            "numpy.ndarray.tobytes",
+        }
+        assert recognize_callee_universe("call:tobytes", site=site) is not None
+    finally:
+        clear_imported_callee_protocol()
 
 
 def test_tobytes_spelling_without_native_receiver_stays_loud() -> None:
@@ -999,20 +1146,35 @@ def test_tobytes_native_receiver_warrant_is_revoked_by_rebind() -> None:
 
 
 def test_authenticated_numpy_shares_memory_has_universe_support() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_values(left, right):\n"
-        "    assert np.shares_memory(left, right)\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "shares_memory_covered_fixture.py")
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.shares_memory": CalleeUniverseSupport.NUMPY_SHARES_MEMORY}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_values(left, right):\n"
+            "    assert np.shares_memory(left, right)\n"
+        )
 
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.shares_memory"
-        for edge in payload.call_edges
-    )
-    assert _universe_gaps(payload) == []
+        payload = lift_file_payload(source, "shares_memory_covered_fixture.py")
+
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.shares_memory"
+            for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -1042,19 +1204,35 @@ def test_unowned_shares_memory_lookalikes_stay_loud(
 
 
 def test_authenticated_numpy_isdtype_has_universe_support() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_values(dt):\n"
-        "    assert np.isdtype(dt, 'real floating')\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "isdtype_covered_fixture.py")
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.isdtype": CalleeUniverseSupport.NUMPY_ISDTYPE}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_values(dt):\n"
+            "    assert np.isdtype(dt, 'real floating')\n"
+        )
 
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.isdtype" for edge in payload.call_edges
-    )
-    assert _universe_gaps(payload) == []
+        payload = lift_file_payload(source, "isdtype_covered_fixture.py")
+
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.isdtype"
+            for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -1082,20 +1260,35 @@ def test_unowned_isdtype_lookalikes_stay_loud(source: str, expected_kind: str) -
 
 
 def test_authenticated_numpy_datetime_data_has_universe_support() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_values(dt):\n"
-        "    assert np.datetime_data(dt) == np.datetime_data(dt)\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "datetime_data_covered_fixture.py")
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.datetime_data": CalleeUniverseSupport.NUMPY_DATETIME_DATA}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_values(dt):\n"
+            "    assert np.datetime_data(dt) == np.datetime_data(dt)\n"
+        )
 
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.datetime_data"
-        for edge in payload.call_edges
-    )
-    assert _universe_gaps(payload) == []
+        payload = lift_file_payload(source, "datetime_data_covered_fixture.py")
+
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.datetime_data"
+            for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -1126,21 +1319,40 @@ def test_unowned_datetime_data_lookalikes_stay_loud(
 
 
 def test_authenticated_numpy_markinnerspaces_has_universe_support() -> None:
-    source = (
-        "from numpy.f2py.crackfortran import markinnerspaces\n"
-        "\n"
-        "def test_values(s):\n"
-        "    assert markinnerspaces(s) == markinnerspaces(s)\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "markinnerspaces_covered_fixture.py")
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {
+                "numpy.f2py.crackfortran.markinnerspaces": (
+                    CalleeUniverseSupport.NUMPY_MARKINNERSPACES
+                )
+            }
+        )
+        source = (
+            "from numpy.f2py.crackfortran import markinnerspaces\n"
+            "\n"
+            "def test_values(s):\n"
+            "    assert markinnerspaces(s) == markinnerspaces(s)\n"
+        )
 
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.f2py.crackfortran.markinnerspaces"
-        or edge.get("targetSymbol") == "call:markinnerspaces"
-        for edge in payload.call_edges
-    )
-    assert _universe_gaps(payload) == []
+        payload = lift_file_payload(source, "markinnerspaces_covered_fixture.py")
+
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.f2py.crackfortran.markinnerspaces"
+            or edge.get("targetSymbol") == "call:markinnerspaces"
+            for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -1169,22 +1381,41 @@ def test_unowned_markinnerspaces_lookalikes_stay_loud(
 
 
 def test_authenticated_identity_hash_set_item_default_has_universe_support() -> None:
-    source = (
-        "from numpy._core._multiarray_tests import identity_hash_set_item_default\n"
-        "\n"
-        "def test_values(ht, key, value):\n"
-        "    assert identity_hash_set_item_default(ht, key, value) is value\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "identity_hash_covered_fixture.py")
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {
+                "numpy._core._multiarray_tests.identity_hash_set_item_default": (
+                    CalleeUniverseSupport.NUMPY_IDENTITY_HASH_SET_ITEM_DEFAULT
+                )
+            }
+        )
+        source = (
+            "from numpy._core._multiarray_tests import identity_hash_set_item_default\n"
+            "\n"
+            "def test_values(ht, key, value):\n"
+            "    assert identity_hash_set_item_default(ht, key, value) is value\n"
+        )
 
-    assert any(
-        edge.get("targetSymbol")
-        == "call:numpy._core._multiarray_tests.identity_hash_set_item_default"
-        or edge.get("targetSymbol") == "call:identity_hash_set_item_default"
-        for edge in payload.call_edges
-    )
-    assert _universe_gaps(payload) == []
+        payload = lift_file_payload(source, "identity_hash_covered_fixture.py")
+
+        assert any(
+            edge.get("targetSymbol")
+            == "call:numpy._core._multiarray_tests.identity_hash_set_item_default"
+            or edge.get("targetSymbol") == "call:identity_hash_set_item_default"
+            for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -1214,16 +1445,33 @@ def test_unowned_identity_hash_set_item_default_lookalikes_stay_loud(
 
 
 def test_module_scope_numpy_from_import_has_universe_support() -> None:
-    """Module-level imports establish the name; do not revoke as free-var shadow."""
+    """Module-level imports establish the name; do not revoke as free-var shadow.
 
-    source = "from numpy import allclose\nassert allclose(1, 1)\n"
+    #5906: kit protocol + import provenance (see protocol test module).
+    """
 
-    payload = lift_file_payload(source, "allclose_module_fixture.py")
-
-    assert any(
-        edge.get("targetSymbol") == "call:numpy.allclose" for edge in payload.call_edges
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    assert _universe_gaps(payload) == []
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.allclose": CalleeUniverseSupport.NUMPY_ALLCLOSE}
+        )
+        source = "from numpy import allclose\nassert allclose(1, 1)\n"
+
+        payload = lift_file_payload(source, "allclose_module_fixture.py")
+
+        assert any(
+            edge.get("targetSymbol") == "call:numpy.allclose"
+            for edge in payload.call_edges
+        )
+        assert _universe_gaps(payload) == []
+    finally:
+        clear_imported_callee_protocol()
 
 
 def test_shadowed_numpy_alias_cannot_warrant_allclose_support() -> None:
@@ -1279,17 +1527,32 @@ def test_later_exception_target_revokes_numpy_import_warrant() -> None:
 
 
 def test_comprehension_target_does_not_revoke_numpy_import_warrant() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_values(left, right):\n"
-        "    assert np.allclose(left, right)\n"
-        "    aliases = [np for np in ()]\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        CalleeUniverseSupport,
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
 
-    payload = lift_file_payload(source, "numpy_comprehension_scope_fixture.py")
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.allclose": CalleeUniverseSupport.NUMPY_ALLCLOSE}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_values(left, right):\n"
+            "    assert np.allclose(left, right)\n"
+            "    aliases = [np for np in ()]\n"
+        )
 
-    assert _universe_gaps(payload) == []
+        payload = lift_file_payload(source, "numpy_comprehension_scope_fixture.py")
+
+        assert _universe_gaps(payload) == []
+    finally:
+        clear_imported_callee_protocol()
 
 
 def test_later_match_capture_is_a_lexical_function_binding() -> None:

@@ -18,10 +18,7 @@ from sugar_lift_py_tests.sugar.builtin_callee_universe_sugar import (
 )
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
 from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-from sugar_lift_py_tests.floor import ImportAliasValue, TermValue
-from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 
@@ -79,6 +76,13 @@ def test_next_unclassified_coordinate_batch_is_enrolled() -> None:
     assert "numpy_all_universe_coordinate" not in enrolled
     assert "numpy_dtype_universe_coordinate" not in enrolled
     assert "numpy_issubdtype_universe_coordinate" not in enrolled
+    assert "numpy_can_cast_universe_coordinate" not in enrolled
+    assert "numpy_isnan_universe_coordinate" not in enrolled
+    assert "numpy_dtype_result_universe_coordinate" not in enrolled
+    assert "scipy_linalg_issymmetric_universe_coordinate" not in enrolled
+    assert "scipy_linalg_ishermitian_universe_coordinate" not in enrolled
+    assert "scipy_fft_get_workers_universe_coordinate" not in enrolled
+    assert "numpy_sfloat_dtype_universe_coordinate" not in enrolled
 
 
 def test_all_nine_authenticated_conv_rows_select_the_converter_owner() -> None:
@@ -543,24 +547,39 @@ def _can_cast_call_site(source: str) -> SourceFragment:
 
 
 def test_authenticated_numpy_can_cast_selects_one_factory_owner() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_cast(from_, to):\n"
-        "    assert np.can_cast(from_, to)\n"
-    )
-    context = FactoryBuildContext(
-        filename="can_cast.py",
-        catalog=default_catalog(),
-    )
-    built = build_node(
-        _can_cast_call_site(source),
-        filename="can_cast.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
+        CalleeUniverseSupport,
     )
 
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.can_cast": CalleeUniverseSupport.NUMPY_CAN_CAST}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_cast(from_, to):\n"
+            "    assert np.can_cast(from_, to)\n"
+        )
+        context = FactoryBuildContext(
+            filename="can_cast.py",
+            catalog=default_catalog(),
+        )
+        built = build_node(
+            _can_cast_call_site(source),
+            filename="can_cast.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -595,22 +614,39 @@ def test_authenticated_numpy_can_cast_selects_one_factory_owner() -> None:
     ],
 )
 def test_unwarranted_can_cast_receiver_is_not_factory_owned(source: str) -> None:
-    context = FactoryBuildContext(
-        filename="can_cast.py",
-        catalog=default_catalog(),
-    )
-    built = build_node(
-        _can_cast_call_site(source),
-        filename="can_cast.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """Lying twins stay unowned even with the real kit coordinate loaded."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
+        CalleeUniverseSupport,
     )
 
-    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.can_cast": CalleeUniverseSupport.NUMPY_CAN_CAST}
+        )
+        context = FactoryBuildContext(
+            filename="can_cast.py",
+            catalog=default_catalog(),
+        )
+        built = build_node(
+            _can_cast_call_site(source),
+            filename="can_cast.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
-def test_numpy_can_cast_witness_pair_is_enrolled() -> None:
-    assert "numpy_can_cast_universe_coordinate" in {
+def test_numpy_can_cast_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5906)."""
+
+    assert "numpy_can_cast_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
@@ -816,24 +852,39 @@ def _isnan_call_site(source: str) -> SourceFragment:
 
 
 def test_authenticated_numpy_isnan_selects_one_factory_owner() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_nan(value):\n"
-        "    assert np.isnan(value)\n"
-    )
-    context = FactoryBuildContext(
-        filename="isnan.py",
-        catalog=default_catalog(),
-    )
-    built = build_node(
-        _isnan_call_site(source),
-        filename="isnan.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """#5404 / #5905: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
+        CalleeUniverseSupport,
     )
 
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.isnan": CalleeUniverseSupport.NUMPY_ISNAN}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_nan(value):\n"
+            "    assert np.isnan(value)\n"
+        )
+        context = FactoryBuildContext(
+            filename="isnan.py",
+            catalog=default_catalog(),
+        )
+        built = build_node(
+            _isnan_call_site(source),
+            filename="isnan.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -868,22 +919,39 @@ def test_authenticated_numpy_isnan_selects_one_factory_owner() -> None:
     ],
 )
 def test_unwarranted_isnan_receiver_is_not_factory_owned(source: str) -> None:
-    context = FactoryBuildContext(
-        filename="isnan.py",
-        catalog=default_catalog(),
-    )
-    built = build_node(
-        _isnan_call_site(source),
-        filename="isnan.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """Lying twins stay unowned even with the real kit coordinate loaded."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
+        CalleeUniverseSupport,
     )
 
-    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.isnan": CalleeUniverseSupport.NUMPY_ISNAN}
+        )
+        context = FactoryBuildContext(
+            filename="isnan.py",
+            catalog=default_catalog(),
+        )
+        built = build_node(
+            _isnan_call_site(source),
+            filename="isnan.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
-def test_numpy_isnan_witness_pair_is_enrolled() -> None:
-    assert "numpy_isnan_universe_coordinate" in {
+def test_numpy_isnan_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5404 / #5905)."""
+
+    assert "numpy_isnan_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
@@ -1002,24 +1070,39 @@ def _numpy_dtype_result_call_site(source: str) -> SourceFragment:
 
 
 def test_authenticated_numpy_dtype_result_selects_one_factory_owner() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_dtype(value):\n"
-        "    assert np.asarray(value).dtype == np.asarray(value).dtype\n"
-    )
-    context = FactoryBuildContext(
-        filename="numpy_dtype_result.py",
-        catalog=default_catalog(),
-    )
-    built = build_node(
-        _numpy_dtype_result_call_site(source),
-        filename="numpy_dtype_result.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """#5906: kit protocol overlay for dtype-result coordinates (empty by construction)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_dtype_result_protocol,
+        load_dtype_result_protocol,
+        CalleeUniverseSupport,
     )
 
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    clear_dtype_result_protocol()
+    try:
+        load_dtype_result_protocol(
+            {"numpy.asarray": CalleeUniverseSupport.NUMPY_DTYPE_RESULT}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(value):\n"
+            "    assert np.asarray(value).dtype == np.asarray(value).dtype\n"
+        )
+        context = FactoryBuildContext(
+            filename="numpy_dtype_result.py",
+            catalog=default_catalog(),
+        )
+        built = build_node(
+            _numpy_dtype_result_call_site(source),
+            filename="numpy_dtype_result.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_dtype_result_protocol()
 
 
 @pytest.mark.parametrize(
@@ -1050,55 +1133,87 @@ def test_authenticated_numpy_dtype_result_selects_one_factory_owner() -> None:
     ],
 )
 def test_unwarranted_numpy_dtype_result_is_not_factory_owned(source: str) -> None:
-    context = FactoryBuildContext(
-        filename="numpy_dtype_result.py",
-        catalog=default_catalog(),
-    )
-    built = build_node(
-        _numpy_dtype_result_call_site(source),
-        filename="numpy_dtype_result.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """Lying twins stay unowned even with the real kit coordinate loaded."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_dtype_result_protocol,
+        load_dtype_result_protocol,
+        CalleeUniverseSupport,
     )
 
-    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    clear_dtype_result_protocol()
+    try:
+        load_dtype_result_protocol(
+            {"numpy.asarray": CalleeUniverseSupport.NUMPY_DTYPE_RESULT}
+        )
+        context = FactoryBuildContext(
+            filename="numpy_dtype_result.py",
+            catalog=default_catalog(),
+        )
+        built = build_node(
+            _numpy_dtype_result_call_site(source),
+            filename="numpy_dtype_result.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_dtype_result_protocol()
 
 
 def test_numpy_dtype_result_follows_authenticated_receiver_assignment() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_dtype(value):\n"
-        "    arr = np.array(value)\n"
-        "    assert arr.astype(float).dtype == arr.astype(float).dtype\n"
-    )
-    call = next(
-        node
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "astype"
-    )
-    context = FactoryBuildContext(
-        filename="numpy_dtype_assignment.py",
-        catalog=default_catalog(),
-    )
-    built = build_node(
-        SourceFragment.from_node(
-            call,
-            "numpy_dtype_assignment.py",
-            source=source,
-        ),
-        filename="numpy_dtype_assignment.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """Kit-loaded coordinate follows an authenticated receiver Assign chain."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_dtype_result_protocol,
+        load_dtype_result_protocol,
+        CalleeUniverseSupport,
     )
 
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    clear_dtype_result_protocol()
+    try:
+        load_dtype_result_protocol(
+            {"numpy.array.astype": CalleeUniverseSupport.NUMPY_DTYPE_RESULT}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_dtype(value):\n"
+            "    arr = np.array(value)\n"
+            "    assert arr.astype(float).dtype == arr.astype(float).dtype\n"
+        )
+        call = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "astype"
+        )
+        context = FactoryBuildContext(
+            filename="numpy_dtype_assignment.py",
+            catalog=default_catalog(),
+        )
+        built = build_node(
+            SourceFragment.from_node(
+                call,
+                "numpy_dtype_assignment.py",
+                source=source,
+            ),
+            filename="numpy_dtype_assignment.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_dtype_result_protocol()
 
 
-def test_numpy_dtype_result_witness_pair_is_enrolled() -> None:
-    assert "numpy_dtype_result_universe_coordinate" in {
+def test_numpy_dtype_result_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5906)."""
+
+    assert "numpy_dtype_result_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
@@ -1311,37 +1426,24 @@ def test_builtin_callee_universe_witness_refutes_bad_twin(pair, tmp_path: Path) 
 
 
 def test_numpy_can_cast_requires_authenticated_receiver() -> None:
+    """#5906: a temporal-only binding with no source text is never enough.
+
+    Before the vendor-logo deletion, ``can_cast`` was unconditionally a bare
+    authenticated leaf, so ``owns()`` accepted this sourceless site on attr
+    spelling alone and the ``TemporalContext``/``ImportAliasValue`` bind was
+    only exercised at ``new()``. That bare-leaf membership is gone (#5603);
+    ownership now requires either the kit-loaded protocol *and* real import
+    provenance in source text (see ``test_authenticated_numpy_can_cast_selects_one_factory_owner``),
+    or nothing. A sourceless site with only a temporal value bound — no AST
+    import declaration — stays unowned by construction: stronger and more
+    honest than silently trusting a temporal binding with no textual warrant.
+    """
+
     site = SourceFragment.from_node(
         __import__("ast").parse("np.can_cast(x, y)").body[0].value,
         "numpy_can_cast.py",
     )
-    assert BuiltinCalleeUniverseSugar.owns(site)
-    ctx = FactoryBuildContext(
-        filename="numpy_can_cast.py",
-        catalog=default_catalog(),
-        temporal=TemporalContext.empty().bind_value(
-            "np",
-            ImportAliasValue(
-                "numpy",
-                "np",
-                import_target="numpy",
-                install_source_checked=True,
-                resolved_value=TermValue("numpy"),
-            ),
-        ),
-    )
-    sugar = BuiltinCalleeUniverseSugar.new(site, ctx)
-    assert isinstance(sugar, BuiltinCalleeUniverseSugar)
-
-    lying = FactoryBuildContext(
-        filename="numpy_can_cast.py",
-        catalog=default_catalog(),
-        temporal=TemporalContext.empty().bind_value(
-            "np", ImportAliasValue("other", "np", import_target="other")
-        ),
-    )
-    with pytest.raises(FactoryPanic):
-        BuiltinCalleeUniverseSugar.new(site, lying)
+    assert not BuiltinCalleeUniverseSugar.owns(site)
 
 
 def _stdlib_attr_call_site(source: str, member: str, filename: str) -> SourceFragment:
@@ -1780,20 +1882,36 @@ def test_math_isclose_witness_pair_is_enrolled() -> None:
 
 
 def test_authenticated_numpy_result_type_selects_one_factory_owner() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_rt(a, b):\n"
-        "    assert np.result_type(a, b) == np.result_type(a, b)\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    context = FactoryBuildContext(filename="result_type.py", catalog=default_catalog())
-    built = build_node(
-        _import_leaf_call_site(source, "result_type", "result_type.py"),
-        filename="result_type.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.result_type": CalleeUniverseSupport.NUMPY_RESULT_TYPE}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_rt(a, b):\n"
+            "    assert np.result_type(a, b) == np.result_type(a, b)\n"
+        )
+        context = FactoryBuildContext(
+            filename="result_type.py", catalog=default_catalog()
+        )
+        built = build_node(
+            _import_leaf_call_site(source, "result_type", "result_type.py"),
+            filename="result_type.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -1816,37 +1934,69 @@ def test_authenticated_numpy_result_type_selects_one_factory_owner() -> None:
     ],
 )
 def test_unwarranted_numpy_result_type_is_not_factory_owned(source: str) -> None:
-    context = FactoryBuildContext(filename="result_type.py", catalog=default_catalog())
-    built = build_node(
-        _import_leaf_call_site(source, "result_type", "result_type.py"),
-        filename="result_type.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """Lying twins stay unowned even with the real kit coordinate loaded."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.result_type": CalleeUniverseSupport.NUMPY_RESULT_TYPE}
+        )
+        context = FactoryBuildContext(
+            filename="result_type.py", catalog=default_catalog()
+        )
+        built = build_node(
+            _import_leaf_call_site(source, "result_type", "result_type.py"),
+            filename="result_type.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
-def test_numpy_result_type_witness_pair_is_enrolled() -> None:
-    assert "numpy_result_type_universe_coordinate" in {
+def test_numpy_result_type_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5906)."""
+
+    assert "numpy_result_type_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
 
 def test_authenticated_numpy_isdtype_selects_one_factory_owner() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_id(dt):\n"
-        "    assert np.isdtype(dt, 'real floating')\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    context = FactoryBuildContext(filename="isdtype.py", catalog=default_catalog())
-    built = build_node(
-        _import_leaf_call_site(source, "isdtype", "isdtype.py"),
-        filename="isdtype.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.isdtype": CalleeUniverseSupport.NUMPY_ISDTYPE}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_id(dt):\n"
+            "    assert np.isdtype(dt, 'real floating')\n"
+        )
+        context = FactoryBuildContext(filename="isdtype.py", catalog=default_catalog())
+        built = build_node(
+            _import_leaf_call_site(source, "isdtype", "isdtype.py"),
+            filename="isdtype.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -1862,39 +2012,69 @@ def test_authenticated_numpy_isdtype_selects_one_factory_owner() -> None:
     ],
 )
 def test_unwarranted_numpy_isdtype_is_not_factory_owned(source: str) -> None:
-    context = FactoryBuildContext(filename="isdtype.py", catalog=default_catalog())
-    built = build_node(
-        _import_leaf_call_site(source, "isdtype", "isdtype.py"),
-        filename="isdtype.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """Lying twins stay unowned even with the real kit coordinate loaded."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.isdtype": CalleeUniverseSupport.NUMPY_ISDTYPE}
+        )
+        context = FactoryBuildContext(filename="isdtype.py", catalog=default_catalog())
+        built = build_node(
+            _import_leaf_call_site(source, "isdtype", "isdtype.py"),
+            filename="isdtype.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
-def test_numpy_isdtype_witness_pair_is_enrolled() -> None:
-    assert "numpy_isdtype_universe_coordinate" in {
+def test_numpy_isdtype_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5906)."""
+
+    assert "numpy_isdtype_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
 
 def test_authenticated_numpy_datetime_data_selects_one_factory_owner() -> None:
-    source = (
-        "import numpy as np\n"
-        "\n"
-        "def test_dd(dt):\n"
-        "    assert np.datetime_data(dt) == np.datetime_data(dt)\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    context = FactoryBuildContext(
-        filename="datetime_data.py", catalog=default_catalog()
-    )
-    built = build_node(
-        _import_leaf_call_site(source, "datetime_data", "datetime_data.py"),
-        filename="datetime_data.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.datetime_data": CalleeUniverseSupport.NUMPY_DATETIME_DATA}
+        )
+        source = (
+            "import numpy as np\n"
+            "\n"
+            "def test_dd(dt):\n"
+            "    assert np.datetime_data(dt) == np.datetime_data(dt)\n"
+        )
+        context = FactoryBuildContext(
+            filename="datetime_data.py", catalog=default_catalog()
+        )
+        built = build_node(
+            _import_leaf_call_site(source, "datetime_data", "datetime_data.py"),
+            filename="datetime_data.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -1910,40 +2090,71 @@ def test_authenticated_numpy_datetime_data_selects_one_factory_owner() -> None:
     ],
 )
 def test_unwarranted_numpy_datetime_data_is_not_factory_owned(source: str) -> None:
-    context = FactoryBuildContext(
-        filename="datetime_data.py", catalog=default_catalog()
+    """Lying twins stay unowned even with the real kit coordinate loaded."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    built = build_node(
-        _import_leaf_call_site(source, "datetime_data", "datetime_data.py"),
-        filename="datetime_data.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"numpy.datetime_data": CalleeUniverseSupport.NUMPY_DATETIME_DATA}
+        )
+        context = FactoryBuildContext(
+            filename="datetime_data.py", catalog=default_catalog()
+        )
+        built = build_node(
+            _import_leaf_call_site(source, "datetime_data", "datetime_data.py"),
+            filename="datetime_data.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
-def test_numpy_datetime_data_witness_pair_is_enrolled() -> None:
-    assert "numpy_datetime_data_universe_coordinate" in {
+def test_numpy_datetime_data_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5906)."""
+
+    assert "numpy_datetime_data_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
 
 def test_authenticated_scipy_issymmetric_selects_one_factory_owner() -> None:
-    source = (
-        "import numpy as np\n"
-        "from scipy.linalg import issymmetric\n"
-        "\n"
-        "def test_sym(a):\n"
-        "    assert issymmetric(a)\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
+        CalleeUniverseSupport,
     )
-    context = FactoryBuildContext(filename="issym.py", catalog=default_catalog())
-    built = build_node(
-        _import_leaf_call_site(source, "issymmetric", "issym.py"),
-        filename="issym.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"scipy.linalg.issymmetric": CalleeUniverseSupport.SCIPY_LINALG_ISSYMMETRIC}
+        )
+        source = (
+            "import numpy as np\n"
+            "from scipy.linalg import issymmetric\n"
+            "\n"
+            "def test_sym(a):\n"
+            "    assert issymmetric(a)\n"
+        )
+        context = FactoryBuildContext(filename="issym.py", catalog=default_catalog())
+        built = build_node(
+            _import_leaf_call_site(source, "issymmetric", "issym.py"),
+            filename="issym.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -1959,38 +2170,70 @@ def test_authenticated_scipy_issymmetric_selects_one_factory_owner() -> None:
     ],
 )
 def test_unwarranted_scipy_issymmetric_is_not_factory_owned(source: str) -> None:
-    context = FactoryBuildContext(filename="issym.py", catalog=default_catalog())
-    built = build_node(
-        _import_leaf_call_site(source, "issymmetric", "issym.py"),
-        filename="issym.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """Lying twins stay unowned even with the real kit coordinate loaded."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
+        CalleeUniverseSupport,
     )
-    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"scipy.linalg.issymmetric": CalleeUniverseSupport.SCIPY_LINALG_ISSYMMETRIC}
+        )
+        context = FactoryBuildContext(filename="issym.py", catalog=default_catalog())
+        built = build_node(
+            _import_leaf_call_site(source, "issymmetric", "issym.py"),
+            filename="issym.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
-def test_scipy_issymmetric_witness_pair_is_enrolled() -> None:
-    assert "scipy_linalg_issymmetric_universe_coordinate" in {
+def test_scipy_issymmetric_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5906)."""
+
+    assert "scipy_linalg_issymmetric_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
 
 def test_authenticated_scipy_ishermitian_selects_one_factory_owner() -> None:
-    source = (
-        "import numpy as np\n"
-        "from scipy.linalg import ishermitian\n"
-        "\n"
-        "def test_herm(a):\n"
-        "    assert ishermitian(a)\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
+        CalleeUniverseSupport,
     )
-    context = FactoryBuildContext(filename="isherm.py", catalog=default_catalog())
-    built = build_node(
-        _import_leaf_call_site(source, "ishermitian", "isherm.py"),
-        filename="isherm.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"scipy.linalg.ishermitian": CalleeUniverseSupport.SCIPY_LINALG_ISHERMITIAN}
+        )
+        source = (
+            "import numpy as np\n"
+            "from scipy.linalg import ishermitian\n"
+            "\n"
+            "def test_herm(a):\n"
+            "    assert ishermitian(a)\n"
+        )
+        context = FactoryBuildContext(filename="isherm.py", catalog=default_catalog())
+        built = build_node(
+            _import_leaf_call_site(source, "ishermitian", "isherm.py"),
+            filename="isherm.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -2006,37 +2249,71 @@ def test_authenticated_scipy_ishermitian_selects_one_factory_owner() -> None:
     ],
 )
 def test_unwarranted_scipy_ishermitian_is_not_factory_owned(source: str) -> None:
-    context = FactoryBuildContext(filename="isherm.py", catalog=default_catalog())
-    built = build_node(
-        _import_leaf_call_site(source, "ishermitian", "isherm.py"),
-        filename="isherm.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """Lying twins stay unowned even with the real kit coordinate loaded."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
+        CalleeUniverseSupport,
     )
-    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"scipy.linalg.ishermitian": CalleeUniverseSupport.SCIPY_LINALG_ISHERMITIAN}
+        )
+        context = FactoryBuildContext(filename="isherm.py", catalog=default_catalog())
+        built = build_node(
+            _import_leaf_call_site(source, "ishermitian", "isherm.py"),
+            filename="isherm.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
-def test_scipy_ishermitian_witness_pair_is_enrolled() -> None:
-    assert "scipy_linalg_ishermitian_universe_coordinate" in {
+def test_scipy_ishermitian_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5906)."""
+
+    assert "scipy_linalg_ishermitian_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
 
 def test_authenticated_scipy_fft_get_workers_selects_one_factory_owner() -> None:
-    source = (
-        "import scipy.fft as fft\n"
-        "\n"
-        "def test_workers():\n"
-        "    assert fft.get_workers() == fft.get_workers()\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
+        CalleeUniverseSupport,
     )
-    context = FactoryBuildContext(filename="get_workers.py", catalog=default_catalog())
-    built = build_node(
-        _import_leaf_call_site(source, "get_workers", "get_workers.py"),
-        filename="get_workers.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"scipy.fft.get_workers": CalleeUniverseSupport.SCIPY_FFT_GET_WORKERS}
+        )
+        source = (
+            "import scipy.fft as fft\n"
+            "\n"
+            "def test_workers():\n"
+            "    assert fft.get_workers() == fft.get_workers()\n"
+        )
+        context = FactoryBuildContext(
+            filename="get_workers.py", catalog=default_catalog()
+        )
+        built = build_node(
+            _import_leaf_call_site(source, "get_workers", "get_workers.py"),
+            filename="get_workers.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -2059,18 +2336,37 @@ def test_authenticated_scipy_fft_get_workers_selects_one_factory_owner() -> None
     ],
 )
 def test_unwarranted_scipy_fft_get_workers_is_not_factory_owned(source: str) -> None:
-    context = FactoryBuildContext(filename="get_workers.py", catalog=default_catalog())
-    built = build_node(
-        _import_leaf_call_site(source, "get_workers", "get_workers.py"),
-        filename="get_workers.py",
-        role=SugarRole.TERM,
-        ctx=context,
+    """Lying twins stay unowned even with the real kit coordinate loaded."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
+        CalleeUniverseSupport,
     )
-    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {"scipy.fft.get_workers": CalleeUniverseSupport.SCIPY_FFT_GET_WORKERS}
+        )
+        context = FactoryBuildContext(
+            filename="get_workers.py", catalog=default_catalog()
+        )
+        built = build_node(
+            _import_leaf_call_site(source, "get_workers", "get_workers.py"),
+            filename="get_workers.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
-def test_scipy_fft_get_workers_witness_pair_is_enrolled() -> None:
-    assert "scipy_fft_get_workers_universe_coordinate" in {
+def test_scipy_fft_get_workers_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5906)."""
+
+    assert "scipy_fft_get_workers_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
@@ -2222,32 +2518,56 @@ def test_eval_scalar_authenticates_parameter_lookalike_stays_loud() -> None:
 
 
 def test_numpy_batch_four_witness_pairs_are_enrolled() -> None:
+    """3 of 4 re-earned structurally (#5906); standard_gamma remains a genuine
+    gap (native-surface Generator.standard_gamma registration was deleted
+    with the vendor logo tables and needs its own kit-gated re-earn — not
+    fixed here, see test_standard_gamma_authenticates_helper_and_direct_unresolved_stays_loud).
+    """
+
     names = {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
     assert {
         "pathlib_path_universe_coordinate",
-        "numpy_standard_gamma_universe_coordinate",
         "numpy_subrout_default_universe_coordinate",
         "numpy_eval_scalar_universe_coordinate",
     } <= names
+    assert "numpy_standard_gamma_universe_coordinate" not in names
 
 
 def test_authenticated_numpy_markinnerspaces_selects_one_factory_owner() -> None:
-    source = (
-        "from numpy.f2py.crackfortran import markinnerspaces\n"
-        "\n"
-        "def test_mark(s):\n"
-        "    assert markinnerspaces(s) == markinnerspaces(s)\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    context = FactoryBuildContext(
-        filename="markinnerspaces.py", catalog=default_catalog()
-    )
-    built = build_node(
-        _import_leaf_call_site(source, "markinnerspaces", "markinnerspaces.py"),
-        filename="markinnerspaces.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {
+                "numpy.f2py.crackfortran.markinnerspaces": (
+                    CalleeUniverseSupport.NUMPY_MARKINNERSPACES
+                )
+            }
+        )
+        source = (
+            "from numpy.f2py.crackfortran import markinnerspaces\n"
+            "\n"
+            "def test_mark(s):\n"
+            "    assert markinnerspaces(s) == markinnerspaces(s)\n"
+        )
+        context = FactoryBuildContext(
+            filename="markinnerspaces.py", catalog=default_catalog()
+        )
+        built = build_node(
+            _import_leaf_call_site(source, "markinnerspaces", "markinnerspaces.py"),
+            filename="markinnerspaces.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -2266,43 +2586,81 @@ def test_authenticated_numpy_markinnerspaces_selects_one_factory_owner() -> None
     ],
 )
 def test_unwarranted_numpy_markinnerspaces_is_not_factory_owned(source: str) -> None:
-    context = FactoryBuildContext(
-        filename="markinnerspaces.py", catalog=default_catalog()
+    """Lying twins stay unowned even with the real kit coordinate loaded."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    built = build_node(
-        _import_leaf_call_site(source, "markinnerspaces", "markinnerspaces.py"),
-        filename="markinnerspaces.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {
+                "numpy.f2py.crackfortran.markinnerspaces": (
+                    CalleeUniverseSupport.NUMPY_MARKINNERSPACES
+                )
+            }
+        )
+        context = FactoryBuildContext(
+            filename="markinnerspaces.py", catalog=default_catalog()
+        )
+        built = build_node(
+            _import_leaf_call_site(source, "markinnerspaces", "markinnerspaces.py"),
+            filename="markinnerspaces.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
-def test_numpy_markinnerspaces_witness_pair_is_enrolled() -> None:
-    assert "numpy_markinnerspaces_universe_coordinate" in {
+def test_numpy_markinnerspaces_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5906)."""
+
+    assert "numpy_markinnerspaces_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
 
 def test_authenticated_identity_hash_set_item_default_selects_one_factory_owner() -> None:
-    source = (
-        "from numpy._core._multiarray_tests import identity_hash_set_item_default\n"
-        "\n"
-        "def test_hash(ht, key, value):\n"
-        "    assert identity_hash_set_item_default(ht, key, value) is value\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    context = FactoryBuildContext(
-        filename="identity_hash.py", catalog=default_catalog()
-    )
-    built = build_node(
-        _import_leaf_call_site(
-            source, "identity_hash_set_item_default", "identity_hash.py"
-        ),
-        filename="identity_hash.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {
+                "numpy._core._multiarray_tests.identity_hash_set_item_default": (
+                    CalleeUniverseSupport.NUMPY_IDENTITY_HASH_SET_ITEM_DEFAULT
+                )
+            }
+        )
+        source = (
+            "from numpy._core._multiarray_tests import identity_hash_set_item_default\n"
+            "\n"
+            "def test_hash(ht, key, value):\n"
+            "    assert identity_hash_set_item_default(ht, key, value) is value\n"
+        )
+        context = FactoryBuildContext(
+            filename="identity_hash.py", catalog=default_catalog()
+        )
+        built = build_node(
+            _import_leaf_call_site(
+                source, "identity_hash_set_item_default", "identity_hash.py"
+            ),
+            filename="identity_hash.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 @pytest.mark.parametrize(
@@ -2323,57 +2681,92 @@ def test_authenticated_identity_hash_set_item_default_selects_one_factory_owner(
 def test_unwarranted_identity_hash_set_item_default_is_not_factory_owned(
     source: str,
 ) -> None:
-    context = FactoryBuildContext(
-        filename="identity_hash.py", catalog=default_catalog()
+    """Lying twins stay unowned even with the real kit coordinate loaded."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    built = build_node(
-        _import_leaf_call_site(
-            source, "identity_hash_set_item_default", "identity_hash.py"
-        ),
-        filename="identity_hash.py",
-        role=SugarRole.TERM,
-        ctx=context,
-    )
-    assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {
+                "numpy._core._multiarray_tests.identity_hash_set_item_default": (
+                    CalleeUniverseSupport.NUMPY_IDENTITY_HASH_SET_ITEM_DEFAULT
+                )
+            }
+        )
+        context = FactoryBuildContext(
+            filename="identity_hash.py", catalog=default_catalog()
+        )
+        built = build_node(
+            _import_leaf_call_site(
+                source, "identity_hash_set_item_default", "identity_hash.py"
+            ),
+            filename="identity_hash.py",
+            role=SugarRole.TERM,
+            ctx=context,
+        )
+        assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
-def test_identity_hash_set_item_default_witness_pair_is_enrolled() -> None:
-    assert "numpy_identity_hash_set_item_default_universe_coordinate" in {
+def test_identity_hash_set_item_default_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5906)."""
+
+    assert "numpy_identity_hash_set_item_default_universe_coordinate" not in {
         pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()
     }
 
 
 def test_sfloat_factory_result_authenticates_parameter_lookalike_stays_loud() -> None:
-    good = (
-        "from numpy._core._multiarray_umath import _get_sfloat_dtype\n"
-        "\n"
-        "SF = _get_sfloat_dtype()\n"
-        "\n"
-        "def test_a():\n"
-        "    assert SF(1.0) is not None\n"
+    """#5906: kit protocol + import provenance (see protocol test module)."""
+
+    from sugar_lift_py_tests.recognition.callee_universe import (
+        clear_imported_callee_protocol,
+        load_imported_callee_protocol,
     )
-    bad = (
-        "def test_a(SF):\n"
-        "    assert SF(1.0) is not None\n"
-    )
-    good_site = _bare_call_site(good, "SF")
-    bad_site = _bare_call_site(bad, "SF")
-    assert recognize_callee_universe("call:SF", site=good_site) is not None
-    assert recognize_callee_universe("call:SF", site=bad_site) is None
-    good_built = build_node(
-        good_site,
-        filename="sfloat.py",
-        role=SugarRole.TERM,
-        ctx=FactoryBuildContext(filename="sfloat.py", catalog=default_catalog()),
-    )
-    bad_built = build_node(
-        bad_site,
-        filename="sfloat.py",
-        role=SugarRole.TERM,
-        ctx=FactoryBuildContext(filename="sfloat.py", catalog=default_catalog()),
-    )
-    assert good_built.audit_row.selected == "BuiltinCalleeUniverseSugar"
-    assert bad_built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+
+    clear_imported_callee_protocol()
+    try:
+        load_imported_callee_protocol(
+            {
+                "numpy._core._multiarray_umath._get_sfloat_dtype": (
+                    CalleeUniverseSupport.NUMPY_SFLOAT_DTYPE
+                )
+            }
+        )
+        good = (
+            "from numpy._core._multiarray_umath import _get_sfloat_dtype\n"
+            "\n"
+            "SF = _get_sfloat_dtype()\n"
+            "\n"
+            "def test_a():\n"
+            "    assert SF(1.0) is not None\n"
+        )
+        bad = "def test_a(SF):\n" "    assert SF(1.0) is not None\n"
+        good_site = _bare_call_site(good, "SF")
+        bad_site = _bare_call_site(bad, "SF")
+        assert recognize_callee_universe("call:SF", site=good_site) is not None
+        assert recognize_callee_universe("call:SF", site=bad_site) is None
+        good_built = build_node(
+            good_site,
+            filename="sfloat.py",
+            role=SugarRole.TERM,
+            ctx=FactoryBuildContext(filename="sfloat.py", catalog=default_catalog()),
+        )
+        bad_built = build_node(
+            bad_site,
+            filename="sfloat.py",
+            role=SugarRole.TERM,
+            ctx=FactoryBuildContext(filename="sfloat.py", catalog=default_catalog()),
+        )
+        assert good_built.audit_row.selected == "BuiltinCalleeUniverseSugar"
+        assert bad_built.audit_row.selected != "BuiltinCalleeUniverseSugar"
+    finally:
+        clear_imported_callee_protocol()
 
 
 def test_call_comp_parametrize_stays_loud_without_protocol() -> None:
@@ -2407,9 +2800,11 @@ def test_call_comp_parametrize_stays_loud_without_protocol() -> None:
     assert built.audit_row.selected != "BuiltinCalleeUniverseSugar"
 
 
-def test_sfloat_witness_pair_is_enrolled() -> None:
+def test_sfloat_has_no_production_logo_witness() -> None:
+    """Vendor mint witnesses retired; kit protocol path only (#5906)."""
+
     names = {pair.name for pair in BuiltinCalleeUniverseSugar.witnesses()}
-    assert "numpy_sfloat_dtype_universe_coordinate" in names
+    assert "numpy_sfloat_dtype_universe_coordinate" not in names
     assert "operator_comp_parametrize_universe_coordinate" not in names
 
 
