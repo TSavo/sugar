@@ -47,7 +47,6 @@ class CalleeUniverseSupport(Enum):
     NUMPY_FUNC = auto()
     NUMPY_ITER_GOTO = auto()
     NUMPY_MAY_SHARE_MEMORY = auto()
-    NUMPY_MAY_SHARE_MEMORY = auto()
     NUMPY_HANDLER_NAME = auto()
     NUMPY_CONVERTER = auto()
     REGEX_SEARCH = auto()

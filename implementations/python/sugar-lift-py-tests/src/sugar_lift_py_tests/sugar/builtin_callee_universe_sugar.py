@@ -352,19 +352,19 @@ def _numpy_may_share_memory_witness():
         "    return np.may_share_memory(np.array([1]), np.array([1]))\n"
         "\n"
     )
+    return _call_pair(
+        name="numpy_may_share_memory_universe_coordinate",
+        owner_sugar="BuiltinCalleeUniverseSugar",
+        truthful=prefix + "def test_a():\n    assert A() == A()\n",
+        lying=prefix + "def test_a():\n    assert A() != A()\n",
+        family="builtin-universe-coordinate",
+    )
 
 
 def _numpy_batch_witness(name: str):
     prefix = f"import numpy as np\n\ndef A():\n    return np.{name}(0)\n\n"
     return _call_pair(
         name=f"numpy_{name.replace('_', '-')}_universe_coordinate",
-        owner_sugar="BuiltinCalleeUniverseSugar",
-        truthful=prefix + "def test_a():\n    assert A() == A()\n",
-        lying=prefix + "def test_a():\n    assert A() != A()\n",
-        family="builtin-universe-coordinate",
-    )
-    return _call_pair(
-        name="numpy_may_share_memory_universe_coordinate",
         owner_sugar="BuiltinCalleeUniverseSugar",
         truthful=prefix + "def test_a():\n    assert A() == A()\n",
         lying=prefix + "def test_a():\n    assert A() != A()\n",
