@@ -108,7 +108,7 @@ def assign_attribute_value(*, receiver, field_name, value, key, site, ctx, owner
         ObjectValue,
         StringValue,
     )
-    from sugar_lift_py_tests.factory.native_shape import (
+    from sugar_lift_py_tests.recognition.native_shape import (
         NativeShape,
         recognize_native_call,
     )

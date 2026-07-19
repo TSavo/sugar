@@ -741,7 +741,7 @@ def _source_bytesio_strategy(
         or len(initial.call_args()) != 1
     ):
         return None
-    from sugar_lift_py_tests.factory.native_shape import (
+    from sugar_lift_py_tests.recognition.native_shape import (
         NativeShape,
         recognize_native_call,
     )

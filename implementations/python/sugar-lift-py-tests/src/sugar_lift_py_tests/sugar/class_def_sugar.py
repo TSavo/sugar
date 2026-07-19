@@ -44,7 +44,7 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
         if site.class_decorators() and not cls.decorators_preserve_identity(site):
             return False
         if site.class_keywords():
-            from sugar_lift_py_tests.factory.class_definition import (
+            from sugar_lift_py_tests.recognition.class_definition import (
                 recognize_typed_dict_total_class,
             )
 
@@ -54,7 +54,7 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
     @staticmethod
     def decorators_preserve_identity(statement) -> bool:
         """Recognize source contracts whose decorator returns the same class."""
-        from sugar_lift_py_tests.factory.native_shape import (
+        from sugar_lift_py_tests.recognition.native_shape import (
             recognizes_identity_decorator,
         )
         from sugar_lift_py_tests.factory.source_fragment import SourceFragment
@@ -107,7 +107,7 @@ class ClassDefSugar(Sugar, role=SugarRole.STATEMENT):
 
     @classmethod
     def new(cls, site, ctx) -> "ClassDefSugar":
-        from sugar_lift_py_tests.factory.class_definition import (
+        from sugar_lift_py_tests.recognition.class_definition import (
             recognize_typed_dict_total_class,
         )
 

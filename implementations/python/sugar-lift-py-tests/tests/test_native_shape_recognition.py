@@ -1,4 +1,4 @@
-from sugar_lift_py_tests.factory.native_shape import (
+from sugar_lift_py_tests.recognition.native_shape import (
     NativeShape,
     has_native_shape,
     recognize_native_call,

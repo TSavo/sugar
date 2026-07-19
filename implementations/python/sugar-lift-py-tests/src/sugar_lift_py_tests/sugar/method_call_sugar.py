@@ -122,7 +122,7 @@ class MethodCallSugar(Sugar, role=SugarRole.TERM):
             source_values = accumulated[1:] if self.import_target else accumulated
             source_name = self.import_target or self.method_name
             receiver_floor = accumulated[0] if accumulated else None
-            from sugar_lift_py_tests.factory.native_shape import (
+            from sugar_lift_py_tests.recognition.native_shape import (
                 NativeShape,
                 has_native_shape,
             )
@@ -233,7 +233,7 @@ _NUMPY_INT64_MAX = 2**63 - 1
 
 
 def _numpy_literal_call(callee: str, values: tuple):
-    from sugar_lift_py_tests.factory.native_shape import (
+    from sugar_lift_py_tests.recognition.native_shape import (
         NativeShape,
         recognize_native_call,
     )
@@ -275,7 +275,7 @@ def _numpy_literal_call(callee: str, values: tuple):
 
 
 def _numpy_literal_result(shape, left, right):
-    from sugar_lift_py_tests.factory.native_shape import NativeShape
+    from sugar_lift_py_tests.recognition.native_shape import NativeShape
 
     if shape is NativeShape.REAL_DIVIDE:
         if right == 0:
@@ -327,7 +327,7 @@ def _fits_numpy_int64(value: int) -> bool:
 def _static_exit_suppression_contract(source_name: str, values: tuple):
     """Construct known manager evidence only from exact static operands."""
     from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
-    from sugar_lift_py_tests.factory.native_shape import NativeShape, has_native_shape
+    from sugar_lift_py_tests.recognition.native_shape import NativeShape, has_native_shape
 
     if has_native_shape(source_name, NativeShape.NEVER_SUPPRESSING_MANAGER):
         return ExitSuppressionContract.never_suppresses()

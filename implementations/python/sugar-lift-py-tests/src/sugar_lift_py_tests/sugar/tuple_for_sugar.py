@@ -241,7 +241,7 @@ def _proves_nonempty_nditer(iterable) -> bool:
 
     from sugar_lift_py_tests.floor import CallSiteValue, ImportAliasValue, ListValue
 
-    from sugar_lift_py_tests.factory.native_shape import NativeShape
+    from sugar_lift_py_tests.recognition.native_shape import NativeShape
 
     if type(iterable) is not CallSiteValue or not _is_native_call(
         iterable, NativeShape.ITERATOR
@@ -263,7 +263,7 @@ def _proves_nonempty_numpy_array(value) -> bool:
     if value.target_name == "astype":
         args = _without_import_receiver(value.arg_values)
         return bool(args) and _proves_nonempty_numpy_array(args[0])
-    from sugar_lift_py_tests.factory.native_shape import NativeShape
+    from sugar_lift_py_tests.recognition.native_shape import NativeShape
 
     if _is_native_call(value, NativeShape.RANGE_ARRAY):
         args = _without_import_receiver(value.arg_values)
@@ -293,7 +293,7 @@ def _without_import_receiver(args):
 
 
 def _is_native_call(callsite, shape) -> bool:
-    from sugar_lift_py_tests.factory.native_shape import has_native_shape
+    from sugar_lift_py_tests.recognition.native_shape import has_native_shape
 
     if has_native_shape(callsite.target_name, shape):
         return True

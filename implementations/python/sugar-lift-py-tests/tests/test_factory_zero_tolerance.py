@@ -149,6 +149,34 @@ def _structural_target(node):
     ] == ["semantic-ast-classification"]
 
 
+def test_semantic_factory_recognize_helper_is_loud() -> None:
+    definition = """
+def recognize_typed_shape(site: SourceFragment):
+    return site.class_keywords()
+"""
+    call = """
+def select_claim(site):
+    return recognize_typed_shape(site)
+"""
+
+    assert [
+        (row.line, row.kind)
+        for row in scan_source(
+            definition,
+            "factory/class_definition.py",
+            scope="factory",
+        )
+    ] == [(2, "semantic-recognition-side-door")]
+    assert [
+        (row.line, row.kind)
+        for row in scan_source(
+            call,
+            "factory/catalog.py",
+            scope="factory",
+        )
+    ] == [(3, "semantic-recognition-side-door")]
+
+
 def test_node_kind_semantic_literal_classifier_is_loud() -> None:
     source = """
 import ast

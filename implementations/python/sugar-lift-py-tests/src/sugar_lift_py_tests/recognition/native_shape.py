@@ -1,4 +1,4 @@
-"""Factory-owned recognition of imported native source shapes.
+"""Recognition of imported native source shapes.
 
 Sugars consume these semantic shape claims.  They never reinterpret qualified
 vendor spellings themselves.

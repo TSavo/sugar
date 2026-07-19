@@ -94,12 +94,17 @@ class _FactoryConstructionScanner(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         has_ast_classification = _has_ast_classification(node)
-        if (
-            has_ast_classification
-            and self._semantic_ast_is_forbidden()
-            and (
-                self.scope == "sugar"
-                or _factory_function_drives_semantics(node, self.path)
+        if self.scope == "factory" and node.name.startswith(
+            ("recognize_", "recognizes_")
+        ):
+            self.add(node, "semantic-recognition-side-door")
+        if self._semantic_ast_is_forbidden() and (
+            (
+                has_ast_classification
+                and (
+                    self.scope == "sugar"
+                    or _factory_function_drives_semantics(node, self.path)
+                )
             )
         ):
             self.add(node, "semantic-ast-classification")
@@ -131,6 +136,12 @@ class _FactoryConstructionScanner(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         name = _call_name(node)
+        if (
+            self.scope == "factory"
+            and name is not None
+            and name.startswith(("recognize_", "recognizes_"))
+        ):
+            self.add(node, "semantic-recognition-side-door")
         if self.scope == "factory" and name in self.ir_builders:
             self.add(node, "ir-construction")
         if self.scope == "factory" and name is not None and name.endswith("Value"):
@@ -386,6 +397,11 @@ _REPLACEMENT: dict[str, str] = {
         "are lawful. Behavior-driving raw-AST classification promotes to the "
         "owning Sugar; delete classify_loop_control_scope and leaf-sugar "
         "Match/Subscript walkers."
+    ),
+    "semantic-recognition-side-door": (
+        "Semantic recognize_* helpers belong under recognition/ or in the owning "
+        "Sugar. Factory may only select a registered Sugar or raise FactoryPanic; "
+        "delete every recognize_*/recognizes_* definition and call from factory/."
     ),
     "auditor-root-error": (
         "Restore the configured scan root; an absent surface is never R=0."
