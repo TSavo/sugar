@@ -5,7 +5,10 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.recognition.callee_universe import (
+    CalleeUniverseSupport,
     CalleeUniverseRecognition,
+    recognize_authenticated_callee_identity,
+    recognize_callee_universe,
 )
 from sugar_lift_py_tests.sugar.call_sugar import CallSugar
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
@@ -36,11 +39,21 @@ _AUTHENTICATED_COORDINATES = frozenset(
         *_CONVERTER_COORDINATES,
     }
 )
+_BUILTIN_COORDINATES = frozenset({"type", "dtype", "all"})
 # Leaf spellings that can still resolve into an authenticated coordinate.
 # Plain-call owns refuses full import-identity work when the callee leaf cannot
 # match; method receivers keep the Name-only path (class attribute aliases).
 _AUTHENTICATED_PLAIN_LEAVES = frozenset(
     coordinate.rsplit(".", 1)[-1] for coordinate in _AUTHENTICATED_COORDINATES
+)
+_OWNED_IMPORTED_SUPPORT = frozenset(
+    {
+        CalleeUniverseSupport.NUMPY_CAN_CAST,
+        CalleeUniverseSupport.NUMPY_ISNAN,
+        CalleeUniverseSupport.NUMPY_ALL,
+        CalleeUniverseSupport.NUMPY_HANDLER_NAME,
+        CalleeUniverseSupport.NUMPY_CONVERTER,
+    }
 )
 
 
@@ -80,7 +93,16 @@ class BuiltinCalleeUniverseSugar(
         elif receiver.observed != "Name":
             # Only instance-parameter method form can authenticate converters.
             return False
-        return CalleeUniverseRecognition.coordinate(site) in _AUTHENTICATED_COORDINATES
+        support = recognize_callee_universe(site=site)
+        if support in _OWNED_IMPORTED_SUPPORT:
+            return True
+        coordinate = CalleeUniverseRecognition.coordinate(site)
+        if coordinate in _BUILTIN_COORDINATES:
+            return True
+        return (
+            recognize_authenticated_callee_identity(coordinate)
+            in _OWNED_IMPORTED_SUPPORT
+        )
 
     @classmethod
     def new(cls, site, ctx) -> "BuiltinCalleeUniverseSugar":

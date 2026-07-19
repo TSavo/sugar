@@ -21,6 +21,8 @@ class CalleeUniverseSupport(Enum):
     NUMPY_CAN_CAST = auto()
     NUMPY_ISNAN = auto()
     NUMPY_ALL = auto()
+    NUMPY_HANDLER_NAME = auto()
+    NUMPY_CONVERTER = auto()
 
 
 _IMPORTED_SUPPORT = {
@@ -29,6 +31,33 @@ _IMPORTED_SUPPORT = {
     "numpy.can_cast": CalleeUniverseSupport.NUMPY_CAN_CAST,
     "numpy.isnan": CalleeUniverseSupport.NUMPY_ISNAN,
     "numpy.all": CalleeUniverseSupport.NUMPY_ALL,
+    "numpy._core.multiarray.get_handler_name": (
+        CalleeUniverseSupport.NUMPY_HANDLER_NAME
+    ),
+    "numpy._core._multiarray_tests.run_byteorder_converter": (
+        CalleeUniverseSupport.NUMPY_CONVERTER
+    ),
+    "numpy._core._multiarray_tests.run_sortkind_converter": (
+        CalleeUniverseSupport.NUMPY_CONVERTER
+    ),
+    "numpy._core._multiarray_tests.run_selectkind_converter": (
+        CalleeUniverseSupport.NUMPY_CONVERTER
+    ),
+    "numpy._core._multiarray_tests.run_searchside_converter": (
+        CalleeUniverseSupport.NUMPY_CONVERTER
+    ),
+    "numpy._core._multiarray_tests.run_order_converter": (
+        CalleeUniverseSupport.NUMPY_CONVERTER
+    ),
+    "numpy._core._multiarray_tests.run_clipmode_converter": (
+        CalleeUniverseSupport.NUMPY_CONVERTER
+    ),
+    "numpy._core._multiarray_tests.run_casting_converter": (
+        CalleeUniverseSupport.NUMPY_CONVERTER
+    ),
+    "numpy._core._multiarray_tests.run_intp_converter": (
+        CalleeUniverseSupport.NUMPY_CONVERTER
+    ),
 }
 
 _BUILTIN_COORDINATES = frozenset({"type", "dtype", "all"})
@@ -51,12 +80,20 @@ def recognize_callee_universe(
     identity = imported_call_identity(site)
     if identity is None:
         return None
-    support = _IMPORTED_SUPPORT.get(identity)
+    support = recognize_authenticated_callee_identity(identity)
     if support is None:
         return None
     if target is not None and target != f"call:{identity}":
         return None
     return support
+
+
+def recognize_authenticated_callee_identity(
+    identity: str | None,
+) -> CalleeUniverseSupport | None:
+    """Type an identity only after lexical/source provenance authenticated it."""
+
+    return _IMPORTED_SUPPORT.get(identity)
 
 
 class CalleeUniverseRecognition:
@@ -72,7 +109,7 @@ class CalleeUniverseRecognition:
             if not site.source:
                 return None
             imported = imported_call_identity(site)
-            if imported in _IMPORTED_SUPPORT:
+            if recognize_authenticated_callee_identity(imported) is not None:
                 return imported
             return cls._method_coordinate(site, receiver)
 
@@ -357,5 +394,6 @@ __all__ = [
     "CalleeUniverseRecognition",
     "CalleeUniverseSupport",
     "imported_call_identity",
+    "recognize_authenticated_callee_identity",
     "recognize_callee_universe",
 ]
