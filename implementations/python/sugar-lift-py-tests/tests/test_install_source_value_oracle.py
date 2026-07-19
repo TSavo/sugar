@@ -8,6 +8,7 @@ constructor exists for cited ``module.attr`` floors.
 from __future__ import annotations
 
 import importlib
+from dataclasses import replace
 
 from sugar_lift_py_tests.context import FactoryBuildContext
 from sugar_lift_py_tests.factory.build import default_catalog
@@ -174,3 +175,26 @@ def test_value_oracle_wrong_context_rebuilds_and_matches_fresh_second(
     assert second != first
     assert constructs == 2
     assert second == fresh_second
+
+
+def test_class_bases_negative_is_not_published_and_context_is_partitioned(
+    monkeypatch,
+):
+    """Failed context cannot poison a later successful class-bases construction."""
+    import sugar_lift_py_tests.sugar.install_source_dig as module
+
+    module._CLASS_BASES_CACHE.clear()
+    calls = []
+
+    def resolve(_qualified, _resolving, ctx=None):
+        calls.append(ctx)
+        return None if ctx.name_resolver == "fail" else ("builtins.object",)
+
+    monkeypatch.setattr(module, "_resolve_install_source_class_bases", resolve)
+    failed = replace(_ctx(), name_resolver="fail")
+    succeeded = _ctx()
+    assert module.resolve_install_source_class_bases("example.C", failed) is None
+    assert module.resolve_install_source_class_bases("example.C", succeeded) == (
+        "builtins.object",
+    )
+    assert len(calls) == 2

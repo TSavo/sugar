@@ -25,6 +25,7 @@ import functools
 import inspect
 import sys
 import textwrap
+from collections import OrderedDict
 from dataclasses import dataclass, field as dataclass_field, fields, replace
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ INSTALLED_SOURCE_INDEX_CAPACITY = 64
 # Capacity is resident ownership only (eviction recomputes; not invalidation).
 INSTALL_SOURCE_VALUE_CAPACITY = 256
 _MISSING = object()
+_CLASS_BASES_CACHE: OrderedDict[tuple[Any, ...], tuple[str, ...]] = OrderedDict()
 
 
 @dataclass(frozen=True)
@@ -2032,21 +2034,35 @@ def _facade_class_source(module_name: str, class_name: str) -> tuple[str, str] |
         return None
 
 
-@functools.lru_cache(maxsize=INSTALL_SOURCE_VALUE_CAPACITY)
 def resolve_install_source_class_bases(
     qualified_class: str,
+    ctx: Any | None = None,
 ) -> tuple[str, ...] | None:
     """Resolve one installed class's direct source bases.
 
     ``None`` is deliberately loud at the constructor consumer: it means source
     did not prove every base coordinate. This door never guesses from an
     instance and never turns an unbuilt source shape into runtime dependence.
+
+    Successful results partition by factory-recognition context. Negative
+    results are never published — a failed context must not poison a later
+    successful construction of the same class spelling.
     """
-    return _resolve_install_source_class_bases(qualified_class, frozenset())
+    key = (qualified_class, _factory_context_identity(ctx))
+    cached = _CLASS_BASES_CACHE.get(key, _MISSING)
+    if cached is not _MISSING:
+        _CLASS_BASES_CACHE.move_to_end(key)
+        return cached
+    result = _resolve_install_source_class_bases(qualified_class, frozenset(), ctx)
+    if result is not None:
+        _CLASS_BASES_CACHE[key] = result
+        while len(_CLASS_BASES_CACHE) > INSTALL_SOURCE_VALUE_CAPACITY:
+            _CLASS_BASES_CACHE.popitem(last=False)
+    return result
 
 
 def _resolve_install_source_class_bases(
-    qualified_class: str, resolving: frozenset[str]
+    qualified_class: str, resolving: frozenset[str], ctx: Any | None = None
 ) -> tuple[str, ...] | None:
     if (
         not qualified_class
@@ -2084,7 +2100,7 @@ def _resolve_install_source_class_bases(
             or _definite_setup_reexport_target(module_name, class_name, parsed)
         )
         if reexport is not None:
-            return _resolve_install_source_class_bases(reexport, resolving)
+            return _resolve_install_source_class_bases(reexport, resolving, ctx)
         # Resolve public source facades without consulting runtime ``__mro__``.
         # Python 3.11's ``collections.abc`` is literally a star re-export of
         # ``_collections_abc``; later releases point inspection at the defining
@@ -2100,7 +2116,7 @@ def _resolve_install_source_class_bases(
             if target_module is None:
                 continue
             bases = _resolve_install_source_class_bases(
-                f"{target_module}.{class_name}", resolving
+                f"{target_module}.{class_name}", resolving, ctx
             )
             if bases is None:
                 continue
