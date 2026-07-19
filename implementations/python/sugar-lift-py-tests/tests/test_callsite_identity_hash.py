@@ -26,3 +26,14 @@ def test_callsite_hash_distinguishes_structural_term_twin() -> None:
     right = _recursive_call("right")
 
     assert hash(left) != hash(right)
+
+
+def test_callsite_equality_is_total_for_distinct_equal_cyclic_callsites() -> None:
+    left = _recursive_call("same")
+    right = _recursive_call("same")
+    unequal = _recursive_call("different")
+
+    assert left == right
+    assert right == left
+    assert left != unequal
+    assert unequal != left

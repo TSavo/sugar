@@ -111,6 +111,28 @@ class CallSiteValue(FloorValue):
             )
         )
 
+    def __eq__(self, other: object) -> bool:
+        """Compare the same finite authenticated coordinate used by ``__hash__``.
+
+        The dataclass-generated equality walks ``body`` recursively; deferred
+        callsites can retain themselves, so that path is not total.  Body is
+        intentionally excluded from identity: the finite term coordinate is
+        the authenticated callsite identity and already distinguishes twins.
+        """
+        if not isinstance(other, CallSiteValue):
+            return NotImplemented
+        return (
+            type(self),
+            self.target_name,
+            self.parameters,
+            _term_cycle_key(self.term),
+        ) == (
+            type(other),
+            other.target_name,
+            other.parameters,
+            _term_cycle_key(other.term),
+        )
+
     def to_term(self, *, owner: str):
         del owner
         return self.term
