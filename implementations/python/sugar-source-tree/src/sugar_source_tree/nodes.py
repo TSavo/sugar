@@ -501,6 +501,16 @@ class Assert(Statement):
     msg: Optional[Expression]
     _child_fields = ("test", "msg")
 
+    def sugar(self):
+        """`assert <test>[, <msg>]` constructs AssertSugar WITH the test's
+        sugar. The test recognizes itself (self.test.sugar()) — the recursion.
+        The message is provenance only (#4593/#4594): AssertSugar never builds
+        or reduces it, so it is not passed as a child sugar.
+        """
+        from sugar_lift_py_tests.sugar.assert_sugar import AssertSugar
+
+        return AssertSugar(test=self.test.sugar(), site=self.fragment)
+
 
 class Import(Statement):
     names: Tuple[ImportAlias, ...]
