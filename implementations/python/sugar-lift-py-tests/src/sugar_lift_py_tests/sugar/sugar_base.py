@@ -5,7 +5,6 @@ from dataclasses import fields, is_dataclass
 import inspect
 from typing import Any, Callable, ClassVar, List, cast
 
-from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnesses
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -29,44 +28,23 @@ class Sugar(ABC):
     that stops a lift is nothing recognizing the source: that is the ``None`` arm,
     and it is a panic, never a soft third state.
 
-    Declaring ``class XSugar(Sugar, role=SugarRole.TERM)`` SELF-REGISTERS the claim
-    into the catalog. A base with no ``role=`` is an intermediate (not registrable).
+    A concrete sugar defines ``desugar`` and ``witnesses`` (enforced by ABC).
+    It is constructed WITH its body sugars by the AST node's ``.sugar()``; it
+    never recognizes and never registers — recognition is the node's job.
     """
 
-    role: SugarRole
     effect_consumer_reason: ClassVar[str | None] = None
     universe_coordinates: ClassVar[frozenset[str]] = frozenset()
 
-    def __init_subclass__(
-        cls,
-        role: SugarRole | None = None,
-        comes_before: tuple = (),  # DEAD: catalog scan-order, no scan exists; ignored,
-                                   # removed per-sugar as recognition leaves each file
-        **kwargs,
-    ) -> None:
-        super().__init_subclass__(**kwargs)
-        if role is None:
-            return  # an intermediate base (e.g. a shared mixin), not a leaf sugar
-        # A sugar is MEANING: it desugars and it proves itself. Recognition and
-        # construction moved onto the AST node (node.sugar()), so a sugar no
-        # longer defines owns/new and no longer registers into a factory catalog.
-        for required in ("desugar", "witnesses"):
-            if required not in cls.__dict__:
-                raise TypeError(
-                    f"{cls.__name__} is a sugar but does not define {required}(); "
-                    "a sugar reduces itself (desugar) and proves itself (witnesses)."
-                )
-        cls.role = role
-
     @classmethod
+    @abstractmethod
     def witnesses(cls) -> SugarWitnesses:
-        raise NotImplementedError(f"{cls.__name__} must define witnesses()")
+        """The truthful/lying twin pair that proves this sugar discriminates."""
 
+    @abstractmethod
     def desugar(self, ctx: object = None) -> Outcome:
-        raise NotImplementedError(
-            f"{type(self).__name__} must define desugar(ctx); a registered sugar "
-            "reduces itself to an Outcome (Complete floor value or Incomplete effect)"
-        )
+        """Reduce this sugar to an Outcome, recursively desugaring its body
+        sugars. The one semantic verb; a sugar constructed with sugar."""
 
     def walk_children(self) -> tuple[SugarBody, ...]:
         # Default: a leaf. Sugars that hold SugarBody children override to

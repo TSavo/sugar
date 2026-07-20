@@ -646,6 +646,26 @@ class Compare(Expression):
     comparators: Tuple[Expression, ...]
     _child_fields = ("left", "comparators")
 
+    def sugar(self):
+        """A comparison constructs its operator's sugar, built WITH its
+        children's sugar. Each comparison operator is its own sugar type
+        (no operator field to switch on downstream) — dispatch here on the
+        operator class and on arity. A single `==` is EqualityOpSugar; every
+        other operator and chained comparisons inherit the loud throw until
+        written.
+        """
+        from .operators import Eq
+
+        if len(self.ops) == 1 and isinstance(self.ops[0], Eq):
+            from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
+
+            return EqualityOpSugar(
+                left=self.left.sugar(),
+                right=self.comparators[0].sugar(),
+                site=self.fragment,
+            )
+        return super().sugar()
+
 
 class Call(Expression):
     func: Expression
@@ -677,6 +697,21 @@ class JoinedStr(Expression):
 class Constant(Expression):
     value: object
     literal_kind: Optional[str]
+
+    def sugar(self):
+        """A literal constructs its literal sugar directly — a leaf: no child
+        sugar, the value stands. Dispatch on the value's exact type (bool is a
+        subclass of int, so it is checked first and is its own sugar). Every
+        literal kind not yet converted inherits the loud SugarNotWritten throw.
+        """
+        v = self.value
+        if isinstance(v, bool):
+            return super().sugar()  # bool is its own sugar, not yet written
+        if isinstance(v, int):
+            from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
+
+            return IntLiteralSugar(value=v, site=self.fragment)
+        return super().sugar()  # float / str / bytes / None / ... not yet written
 
 
 class Attribute(Expression):
