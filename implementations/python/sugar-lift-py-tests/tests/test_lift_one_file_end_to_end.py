@@ -66,5 +66,12 @@ def test_lift_a_single_assertion_all_the_way_to_sugar():
         from sugar_lift_py_tests.outcome import Complete as _C
         outcome = sugar.desugar(None)
         assert isinstance(outcome, _C)
-        # the stated inv is the fact the record emits (a SupportValue)
-        assert type(outcome.value).__name__ == "SupportValue"
+        # the assertion EMITS a fact: the vendor asserted 1 == 1, so the record
+        # carries the inv `1 = 1` — a real invariant, trivially valid, with NO
+        # call site and no contract. Not SupportValue: the assertion owns the
+        # emission; the value does not get to opt out because it is ground-true.
+        inv = outcome.value
+        assert type(inv).__name__ == "InvValue"
+        assert inv.operand_callsites == ()          # no call site
+        assert inv.formula.name == "="              # the fact is an equality
+        assert [a.value for a in inv.formula.args] == [1, 1]   # 1 = 1
