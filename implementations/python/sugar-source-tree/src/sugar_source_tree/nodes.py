@@ -1,6 +1,6 @@
-"""The node membrane: the class hierarchy IS the grammar.
+"""The source tree: the class hierarchy IS the grammar.
 
-``SourceFragment`` is the abstract base; ``Call``, ``FunctionDef``,
+``Node`` is the abstract base; ``Call``, ``FunctionDef``,
 ``Assert``, ``Name``, ... subclass it. Which fields exist is answered by
 which class you hold — you cannot ask a non-Call for its args because you do
 not have one. Arity lives in the field types (``Expression`` vs
@@ -11,7 +11,7 @@ not have one. Arity lives in the field types (``Expression`` vs
 ``Typed`` is the abstract class: "I have a resolved type, here it is."
 The transition between them IS the construction event: a backend handle is
 ``Typeable`` (it can be asked to resolve, and panics as a MISSING if it
-cannot); every constructed membrane node is ``Typed`` by virtue of being an
+cannot); every constructed node is ``Typed`` by virtue of being an
 instance of its concrete class. A ``Typeable`` that cannot resolve NEVER
 becomes a quiet ``False`` or a bare ``None``.
 
@@ -19,11 +19,12 @@ Asking "which node is this" is ``isinstance`` on THESE classes — blessed
 and encouraged (design review, #5940 section 6). What is banned is tag
 dispatch on strings.
 
-Equality is identity: nodes are interned one-per-site by the pool
-(construct.py), so ``a is b`` is the sameness question. Structural equality
-across sources is a CID question, answered by mementos, not by ``__eq__``.
+Equality is identity: each build constructs one node per site, so
+``a is b`` is the sameness question within a ``SourceFile``. There is no
+pool and no interning across files — structural equality across sources
+is a CID question, answered by mementos, not by ``__eq__``.
 
-Membrane nodes carry their own fields; nothing is ever written onto a
+Nodes carry their own fields; nothing is ever written onto a
 backend node (no stamping). Synthetic nodes (a future ``assert_with_test``)
 are ordinary instances of these classes with no backend handle at all —
 the backend contract stays read-only.
@@ -32,7 +33,7 @@ the backend contract stays read-only.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field, fields as dataclass_fields
+from dataclasses import dataclass, field
 from typing import ClassVar, Iterator, Optional, Tuple
 
 from .operators import (
@@ -41,7 +42,7 @@ from .operators import (
     ComparisonOperator,
     UnaryOperator,
 )
-from .panic import MembranePanic, membrane_missing
+from .panic import SourceTreePanic, vocabulary_missing
 from .spans import LineColSpan, LineTable, Span
 
 
@@ -67,45 +68,45 @@ class SourceUnit:
 
 
 class Typeable:
-    """The interface: you may ask me for my membrane type.
+    """The interface: you may ask me for my node type.
 
-    ``resolve_type`` has two arms: a concrete ``SourceFragment`` subclass,
-    or ``MembranePanic``. There is no third arm.
+    ``resolve_type`` has two arms: a concrete ``Node`` subclass,
+    or ``SourceTreePanic``. There is no third arm.
     """
 
-    def resolve_type(self) -> type["SourceFragment"]:
+    def resolve_type(self) -> type["Node"]:
         raise NotImplementedError
 
 
 class Typed(Typeable):
     """The abstract class: I HAVE a resolved type; resolution already happened.
 
-    For membrane nodes the resolved type is the concrete class itself; the
+    For nodes the resolved type is the concrete class itself; the
     construction event was the resolution.
     """
 
-    def resolve_type(self) -> type["SourceFragment"]:
+    def resolve_type(self) -> type["Node"]:
         tp = type(self)
-        if tp in _ABSTRACT or not issubclass(tp, SourceFragment):
-            # Neither of the two panics fits: this is not a provider-facing
-            # question at all (no ProviderHandle, no adapter, no vocabulary
-            # gap) and not a structural-defect-in-provider-output question
+        if tp in _ABSTRACT or not issubclass(tp, Node):
+            # Neither of the two panics fits: this is not a backend-facing
+            # question at all (no BackendHandle, no adapter, no vocabulary
+            # gap) and not a structural-defect-in-backend-output question
             # either. It is an internal invariant on OUR OWN construction
             # code: only concrete classes are ever instantiated (construct.py
             # resolves through resolve_kind, which already excludes
-            # _ABSTRACT). Reaching here means our own code, not a provider,
+            # _ABSTRACT). Reaching here means our own code, not a backend,
             # built an abstract instance. Raised as the common base directly
             # — deliberately, not a guess at which subclass fits.
-            raise MembranePanic(
+            raise SourceTreePanic(
                 owner="nodes.Typed.resolve_type",
-                observed=f"instance of abstract membrane class {tp.__name__}",
+                observed=f"instance of abstract node class {tp.__name__}",
                 requested="a concrete grammar class",
-                fix="abstract membrane classes are never instantiated",
+                fix="abstract node classes are never instantiated",
             )
         return tp
 
 
-KIND_REGISTRY: dict[str, type["SourceFragment"]] = {}
+KIND_REGISTRY: dict[str, type["Node"]] = {}
 _ABSTRACT: set[type] = set()
 
 
@@ -117,14 +118,24 @@ def _abstract(cls: type) -> type:
 
 @_abstract
 @dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class SourceFragment(Typed):
-    """Abstract base of every membrane node. The hierarchy is the grammar."""
+class Node(Typed):
+    """Abstract base of every node. The hierarchy is the grammar.
+
+    A node holds only its ``unit`` and its backend reference ``ref``.
+    Every declared accessor — ``Call.args``, ``FunctionDef.body``, a
+    leaf like ``Name.id`` — is a QUERY: resolved through ``ref`` at the
+    moment of access, never precomputed and never held between calls.
+    The class annotations below each concrete class are the contract the
+    backend must satisfy; an accessor the backend cannot answer panics
+    loudly at that accessor, naming it — never silence, never a bare
+    ``None``.
+    """
 
     unit: SourceUnit
-    span: Span
+    ref: object  # the BackendNode reference; duck-typed to avoid a cycle
 
-    # Ordered names of fields holding child nodes (SourceFragment, optional
-    # SourceFragment, or tuple of SourceFragment). Leaf values (str/int/...)
+    # Ordered names of fields holding child nodes (Node, optional
+    # Node, or tuple of Node). Leaf values (str/int/...)
     # and operators are NOT children. Declared per class, in grammar order.
     # ClassVar on purpose: never a dataclass field, never instance state.
     _child_fields: ClassVar[Tuple[str, ...]] = ()
@@ -132,6 +143,50 @@ class SourceFragment(Typed):
     def __init_subclass__(cls, **kw: object) -> None:
         super().__init_subclass__(**kw)
         KIND_REGISTRY[cls.__name__] = cls
+
+    def __getattr__(self, name: str):
+        # Every annotated field is a query into the backend, answered per
+        # access. Unknown names — including an accessor the backend's
+        # answer does not cover — panic loudly, naming the accessor.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        for slot_name, slot in self.ref.describe().slots:
+            if slot_name == name:
+                return slot.resolve(self.unit)
+        if name in _declared_fields(type(self)):
+            vocabulary_missing(
+                owner="nodes.Node.__getattr__",
+                observed=(
+                    f"backend answer for {type(self).__name__} has no slot "
+                    f"for declared accessor {name!r}"
+                ),
+                requested="the backend satisfies every accessor the class declares",
+                fix="teach the adapter to answer this accessor; never guess",
+            )
+        raise AttributeError(name)
+
+    @property
+    def span(self) -> Span:
+        desc = self.ref.describe()
+        if desc.raw_span is not None:
+            return desc.raw_span
+        spans = list(desc.anchors) + [child.span for _, _, child in self.children()]
+        if not spans:
+            # Our own adapter's anchor-rule vocabulary is incomplete for a
+            # kind it has not seen positioned before: a MISSING, not a defect.
+            vocabulary_missing(
+                owner="nodes.Node.span",
+                observed=(
+                    f"{self.kind} with neither a backend position nor any "
+                    "spanned child"
+                ),
+                requested="every node has a source extent",
+                fix="give the adapter an anchor rule for this kind; never invent a span",
+            )
+        span = spans[0]
+        for s in spans[1:]:
+            span = span.envelope(s)
+        return span
 
     @property
     def kind(self) -> str:
@@ -145,22 +200,22 @@ class SourceFragment(Typed):
     def line_col_span(self) -> LineColSpan:
         return self.unit.line_table.project(self.span)
 
-    def children(self) -> Iterator[tuple[str, Optional[int], "SourceFragment"]]:
+    def children(self) -> Iterator[tuple[str, Optional[int], "Node"]]:
         """Yield (field_name, index-or-None, child) in declared grammar order."""
         for name in type(self)._child_fields:
             value = getattr(self, name)
             if value is None:
                 continue
-            if isinstance(value, SourceFragment):
+            if isinstance(value, Node):
                 yield name, None, value
             else:
                 for i, item in enumerate(value):
                     if item is not None:
                         yield name, i, item
 
-    def walk(self) -> Iterator["SourceFragment"]:
+    def walk(self) -> Iterator["Node"]:
         """Pre-order walk over the constructed graph. Iterative — never recursive."""
-        stack: list[SourceFragment] = [self]
+        stack: list[Node] = [self]
         while stack:
             node = stack.pop()
             yield node
@@ -173,26 +228,22 @@ class SourceFragment(Typed):
 
 
 @_abstract
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class Statement(SourceFragment):
+class Statement(Node):
     pass
 
 
 @_abstract
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class Expression(SourceFragment):
+class Expression(Node):
     pass
 
 
 @_abstract
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class Pattern(SourceFragment):
+class Pattern(Node):
     """A structural pattern inside ``match``."""
 
 
 @_abstract
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class TypeParam(SourceFragment):
+class TypeParam(Node):
     """A PEP 695 type parameter."""
 
 
@@ -201,75 +252,67 @@ class TypeParam(SourceFragment):
 # --------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class Param(SourceFragment):
+class Param(Node):
     """One formal parameter. ``param_kind`` is one of: positional_only,
     positional_or_keyword, vararg, keyword_only, kwarg."""
 
-    name: str = ""
-    annotation: Optional[Expression] = None
-    default: Optional[Expression] = None
-    param_kind: str = "positional_or_keyword"
+    name: str
+    annotation: Optional[Expression]
+    default: Optional[Expression]
+    param_kind: str
     _child_fields = ("annotation", "default")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class Keyword(SourceFragment):
+class Keyword(Node):
     """A keyword argument at a call site. ``arg is None`` means ``**expr``
     (double-star spread) — a structural absence, not a refusal."""
 
-    arg: Optional[str] = None
+    arg: Optional[str]
     value: Expression
     _child_fields = ("value",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class DictItem(SourceFragment):
+class DictItem(Node):
     """One ``key: value`` entry of a Dict display. ``key is None`` means
     ``**expr`` (double-star spread) — a structural absence, not a refusal."""
 
-    key: Optional[Expression] = None
+    key: Optional[Expression]
     value: Expression
     _child_fields = ("key", "value")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class Comprehension(SourceFragment):
+class Comprehension(Node):
     """One ``for target in iter [if ...]*`` clause."""
 
     target: Expression
     iter: Expression
-    ifs: Tuple[Expression, ...] = ()
-    is_async: bool = False
+    ifs: Tuple[Expression, ...]
+    is_async: bool
     _child_fields = ("target", "iter", "ifs")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class ExceptHandler(SourceFragment):
-    type_: Optional[Expression] = None
-    name: Optional[str] = None
-    body: Tuple[Statement, ...] = ()
+class ExceptHandler(Node):
+    type_: Optional[Expression]
+    name: Optional[str]
+    body: Tuple[Statement, ...]
     _child_fields = ("type_", "body")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class WithItem(SourceFragment):
+class WithItem(Node):
     context_expr: Expression
-    optional_vars: Optional[Expression] = None
+    optional_vars: Optional[Expression]
     _child_fields = ("context_expr", "optional_vars")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class ImportAlias(SourceFragment):
-    name: str = ""
-    asname: Optional[str] = None
+class ImportAlias(Node):
+    name: str
+    asname: Optional[str]
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class MatchCase(SourceFragment):
+class MatchCase(Node):
     pattern: Pattern
-    guard: Optional[Expression] = None
-    body: Tuple[Statement, ...] = ()
+    guard: Optional[Expression]
+    body: Tuple[Statement, ...]
     _child_fields = ("pattern", "guard", "body")
 
 
@@ -278,65 +321,57 @@ class MatchCase(SourceFragment):
 # --------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
-class Module(SourceFragment):
-    body: Tuple[Statement, ...] = ()
+class Module(Node):
+    body: Tuple[Statement, ...]
     _child_fields = ("body",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class FunctionDef(Statement):
-    name: str = ""
-    params: Tuple[Param, ...] = ()
-    body: Tuple[Statement, ...] = ()
-    decorators: Tuple[Expression, ...] = ()
-    returns: Optional[Expression] = None
-    type_params: Tuple[TypeParam, ...] = ()
+    name: str
+    params: Tuple[Param, ...]
+    body: Tuple[Statement, ...]
+    decorators: Tuple[Expression, ...]
+    returns: Optional[Expression]
+    type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "params", "returns", "body")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class AsyncFunctionDef(Statement):
-    name: str = ""
-    params: Tuple[Param, ...] = ()
-    body: Tuple[Statement, ...] = ()
-    decorators: Tuple[Expression, ...] = ()
-    returns: Optional[Expression] = None
-    type_params: Tuple[TypeParam, ...] = ()
+    name: str
+    params: Tuple[Param, ...]
+    body: Tuple[Statement, ...]
+    decorators: Tuple[Expression, ...]
+    returns: Optional[Expression]
+    type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "params", "returns", "body")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class ClassDef(Statement):
-    name: str = ""
-    bases: Tuple[Expression, ...] = ()
-    keywords: Tuple[Keyword, ...] = ()
-    body: Tuple[Statement, ...] = ()
-    decorators: Tuple[Expression, ...] = ()
-    type_params: Tuple[TypeParam, ...] = ()
+    name: str
+    bases: Tuple[Expression, ...]
+    keywords: Tuple[Keyword, ...]
+    body: Tuple[Statement, ...]
+    decorators: Tuple[Expression, ...]
+    type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "bases", "keywords", "body")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Return(Statement):
-    value: Optional[Expression] = None
+    value: Optional[Expression]
     _child_fields = ("value",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Delete(Statement):
-    targets: Tuple[Expression, ...] = ()
+    targets: Tuple[Expression, ...]
     _child_fields = ("targets",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Assign(Statement):
-    targets: Tuple[Expression, ...] = ()
+    targets: Tuple[Expression, ...]
     value: Expression
     _child_fields = ("targets", "value")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class AugAssign(Statement):
     target: Expression
     op: BinaryOperator
@@ -344,128 +379,111 @@ class AugAssign(Statement):
     _child_fields = ("target", "value")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class AnnAssign(Statement):
     target: Expression
     annotation: Expression
-    value: Optional[Expression] = None
-    simple: bool = True
+    value: Optional[Expression]
+    simple: bool
     _child_fields = ("target", "annotation", "value")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class TypeAlias(Statement):
     name: Expression
-    type_params: Tuple[TypeParam, ...] = ()
+    type_params: Tuple[TypeParam, ...]
     value: Expression
     _child_fields = ("name", "type_params", "value")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class For(Statement):
     target: Expression
     iter: Expression
-    body: Tuple[Statement, ...] = ()
-    orelse: Tuple[Statement, ...] = ()
+    body: Tuple[Statement, ...]
+    orelse: Tuple[Statement, ...]
     _child_fields = ("target", "iter", "body", "orelse")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class AsyncFor(Statement):
     target: Expression
     iter: Expression
-    body: Tuple[Statement, ...] = ()
-    orelse: Tuple[Statement, ...] = ()
+    body: Tuple[Statement, ...]
+    orelse: Tuple[Statement, ...]
     _child_fields = ("target", "iter", "body", "orelse")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class While(Statement):
     test: Expression
-    body: Tuple[Statement, ...] = ()
-    orelse: Tuple[Statement, ...] = ()
+    body: Tuple[Statement, ...]
+    orelse: Tuple[Statement, ...]
     _child_fields = ("test", "body", "orelse")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class If(Statement):
     test: Expression
-    body: Tuple[Statement, ...] = ()
-    orelse: Tuple[Statement, ...] = ()
+    body: Tuple[Statement, ...]
+    orelse: Tuple[Statement, ...]
     _child_fields = ("test", "body", "orelse")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class With(Statement):
-    items: Tuple[WithItem, ...] = ()
-    body: Tuple[Statement, ...] = ()
+    items: Tuple[WithItem, ...]
+    body: Tuple[Statement, ...]
     _child_fields = ("items", "body")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class AsyncWith(Statement):
-    items: Tuple[WithItem, ...] = ()
-    body: Tuple[Statement, ...] = ()
+    items: Tuple[WithItem, ...]
+    body: Tuple[Statement, ...]
     _child_fields = ("items", "body")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Raise(Statement):
-    exc: Optional[Expression] = None
-    cause: Optional[Expression] = None
+    exc: Optional[Expression]
+    cause: Optional[Expression]
     _child_fields = ("exc", "cause")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Try(Statement):
-    body: Tuple[Statement, ...] = ()
-    handlers: Tuple[ExceptHandler, ...] = ()
-    orelse: Tuple[Statement, ...] = ()
-    finalbody: Tuple[Statement, ...] = ()
+    body: Tuple[Statement, ...]
+    handlers: Tuple[ExceptHandler, ...]
+    orelse: Tuple[Statement, ...]
+    finalbody: Tuple[Statement, ...]
     _child_fields = ("body", "handlers", "orelse", "finalbody")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class TryStar(Statement):
-    body: Tuple[Statement, ...] = ()
-    handlers: Tuple[ExceptHandler, ...] = ()
-    orelse: Tuple[Statement, ...] = ()
-    finalbody: Tuple[Statement, ...] = ()
+    body: Tuple[Statement, ...]
+    handlers: Tuple[ExceptHandler, ...]
+    orelse: Tuple[Statement, ...]
+    finalbody: Tuple[Statement, ...]
     _child_fields = ("body", "handlers", "orelse", "finalbody")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Assert(Statement):
     test: Expression
-    msg: Optional[Expression] = None
+    msg: Optional[Expression]
     _child_fields = ("test", "msg")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Import(Statement):
-    names: Tuple[ImportAlias, ...] = ()
+    names: Tuple[ImportAlias, ...]
     _child_fields = ("names",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class ImportFrom(Statement):
-    module: Optional[str] = None
-    names: Tuple[ImportAlias, ...] = ()
-    level: int = 0
+    module: Optional[str]
+    names: Tuple[ImportAlias, ...]
+    level: int
     _child_fields = ("names",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Global(Statement):
-    names: Tuple[str, ...] = ()
+    names: Tuple[str, ...]
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Nonlocal(Statement):
-    names: Tuple[str, ...] = ()
+    names: Tuple[str, ...]
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Expr(Statement):
     """An expression in statement position."""
 
@@ -473,25 +491,21 @@ class Expr(Statement):
     _child_fields = ("value",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Pass(Statement):
     pass
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Break(Statement):
     pass
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Continue(Statement):
     pass
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Match(Statement):
     subject: Expression
-    cases: Tuple[MatchCase, ...] = ()
+    cases: Tuple[MatchCase, ...]
     _child_fields = ("subject", "cases")
 
 
@@ -500,21 +514,18 @@ class Match(Statement):
 # --------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class BoolOp(Expression):
     op: BooleanOperator
-    values: Tuple[Expression, ...] = ()
+    values: Tuple[Expression, ...]
     _child_fields = ("values",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class NamedExpr(Expression):
     target: Expression
     value: Expression
     _child_fields = ("target", "value")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class BinOp(Expression):
     left: Expression
     op: BinaryOperator
@@ -522,21 +533,18 @@ class BinOp(Expression):
     _child_fields = ("left", "right")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class UnaryOp(Expression):
     op: UnaryOperator
     operand: Expression
     _child_fields = ("operand",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Lambda(Expression):
-    params: Tuple[Param, ...] = ()
+    params: Tuple[Param, ...]
     body: Expression
     _child_fields = ("params", "body")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class IfExp(Expression):
     test: Expression
     body: Expression
@@ -544,78 +552,67 @@ class IfExp(Expression):
     _child_fields = ("body", "test", "orelse")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Dict(Expression):
-    items: Tuple[DictItem, ...] = ()
+    items: Tuple[DictItem, ...]
     _child_fields = ("items",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Set(Expression):
-    elts: Tuple[Expression, ...] = ()
+    elts: Tuple[Expression, ...]
     _child_fields = ("elts",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class ListComp(Expression):
     elt: Expression
-    generators: Tuple[Comprehension, ...] = ()
+    generators: Tuple[Comprehension, ...]
     _child_fields = ("elt", "generators")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class SetComp(Expression):
     elt: Expression
-    generators: Tuple[Comprehension, ...] = ()
+    generators: Tuple[Comprehension, ...]
     _child_fields = ("elt", "generators")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class DictComp(Expression):
     key: Expression
     value: Expression
-    generators: Tuple[Comprehension, ...] = ()
+    generators: Tuple[Comprehension, ...]
     _child_fields = ("key", "value", "generators")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class GeneratorExp(Expression):
     elt: Expression
-    generators: Tuple[Comprehension, ...] = ()
+    generators: Tuple[Comprehension, ...]
     _child_fields = ("elt", "generators")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Await(Expression):
     value: Expression
     _child_fields = ("value",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Yield(Expression):
-    value: Optional[Expression] = None
+    value: Optional[Expression]
     _child_fields = ("value",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class YieldFrom(Expression):
     value: Expression
     _child_fields = ("value",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Compare(Expression):
     left: Expression
-    ops: Tuple[ComparisonOperator, ...] = ()
-    comparators: Tuple[Expression, ...] = ()
+    ops: Tuple[ComparisonOperator, ...]
+    comparators: Tuple[Expression, ...]
     _child_fields = ("left", "comparators")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Call(Expression):
     func: Expression
-    args: Tuple[Expression, ...] = ()
-    keywords: Tuple[Keyword, ...] = ()
+    args: Tuple[Expression, ...]
+    keywords: Tuple[Keyword, ...]
     _child_fields = ("func", "args", "keywords")
 
     def receiver(self) -> Optional[Expression]:
@@ -627,60 +624,51 @@ class Call(Expression):
         return None
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class FormattedValue(Expression):
     value: Expression
-    conversion: int = -1
-    format_spec: Optional["JoinedStr"] = None
+    conversion: int
+    format_spec: Optional["JoinedStr"]
     _child_fields = ("value", "format_spec")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class JoinedStr(Expression):
-    values: Tuple[Expression, ...] = ()
+    values: Tuple[Expression, ...]
     _child_fields = ("values",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Constant(Expression):
-    value: object = None
-    literal_kind: Optional[str] = None
+    value: object
+    literal_kind: Optional[str]
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Attribute(Expression):
     value: Expression
-    attr: str = ""
+    attr: str
     _child_fields = ("value",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Subscript(Expression):
     value: Expression
     slice_: Expression
     _child_fields = ("value", "slice_")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Starred(Expression):
     value: Expression
     _child_fields = ("value",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Name(Expression):
-    id: str = ""
+    id: str
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class List(Expression):
-    elts: Tuple[Expression, ...] = ()
+    elts: Tuple[Expression, ...]
     _child_fields = ("elts",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Tuple_(Expression):
-    elts: Tuple[Expression, ...] = ()
+    elts: Tuple[Expression, ...]
     _child_fields = ("elts",)
 
 
@@ -690,11 +678,10 @@ Tuple_._kind = "Tuple"
 KIND_REGISTRY["Tuple"] = KIND_REGISTRY.pop("Tuple_")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Slice(Expression):
-    lower: Optional[Expression] = None
-    upper: Optional[Expression] = None
-    step: Optional[Expression] = None
+    lower: Optional[Expression]
+    upper: Optional[Expression]
+    step: Optional[Expression]
     _child_fields = ("lower", "upper", "step")
 
 
@@ -703,55 +690,47 @@ class Slice(Expression):
 # --------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class MatchValue(Pattern):
     value: Expression
     _child_fields = ("value",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class MatchSingleton(Pattern):
-    value: object = None
+    value: object
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class MatchSequence(Pattern):
-    patterns: Tuple[Pattern, ...] = ()
+    patterns: Tuple[Pattern, ...]
     _child_fields = ("patterns",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class MatchMapping(Pattern):
-    keys: Tuple[Expression, ...] = ()
-    patterns: Tuple[Pattern, ...] = ()
-    rest: Optional[str] = None
+    keys: Tuple[Expression, ...]
+    patterns: Tuple[Pattern, ...]
+    rest: Optional[str]
     _child_fields = ("keys", "patterns")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class MatchClass(Pattern):
     cls_: Expression
-    patterns: Tuple[Pattern, ...] = ()
-    kwd_attrs: Tuple[str, ...] = ()
-    kwd_patterns: Tuple[Pattern, ...] = ()
+    patterns: Tuple[Pattern, ...]
+    kwd_attrs: Tuple[str, ...]
+    kwd_patterns: Tuple[Pattern, ...]
     _child_fields = ("cls_", "patterns", "kwd_patterns")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class MatchStar(Pattern):
-    name: Optional[str] = None
+    name: Optional[str]
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class MatchAs(Pattern):
-    pattern: Optional[Pattern] = None
-    name: Optional[str] = None
+    pattern: Optional[Pattern]
+    name: Optional[str]
     _child_fields = ("pattern",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class MatchOr(Pattern):
-    patterns: Tuple[Pattern, ...] = ()
+    patterns: Tuple[Pattern, ...]
     _child_fields = ("patterns",)
 
 
@@ -760,43 +739,50 @@ class MatchOr(Pattern):
 # --------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class TypeVar(TypeParam):
-    name: str = ""
-    bound: Optional[Expression] = None
-    _child_fields = ("bound",)
+    name: str
+    bound: Optional[Expression]
+    default_value: Optional[Expression] = None  # PEP 696 (3.13+)
+    _child_fields = ("bound", "default_value")
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class ParamSpec(TypeParam):
-    name: str = ""
+    name: str
+    default_value: Optional[Expression] = None  # PEP 696 (3.13+)
+    _child_fields = ("default_value",)
 
 
-@dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class TypeVarTuple(TypeParam):
-    name: str = ""
+    name: str
+    default_value: Optional[Expression] = None  # PEP 696 (3.13+)
+    _child_fields = ("default_value",)
 
 
-def resolve_kind(kind: str, observed_at: str) -> type[SourceFragment]:
-    """Two arms: a registered concrete membrane class, or panic.
+def resolve_kind(kind: str, observed_at: str) -> type[Node]:
+    """Two arms: a registered concrete node class, or panic.
 
-    A backend kind with no membrane class is a MISSING grammar class — the
+    A backend kind with no node class is a MISSING grammar class — the
     conformance finding itself — never a permissive fallback.
     """
     cls = KIND_REGISTRY.get(kind)
     if cls is None or cls in _ABSTRACT:
-        membrane_missing(
+        vocabulary_missing(
             owner="nodes.resolve_kind",
-            observed=f"backend kind {kind!r} at {observed_at} has no membrane class",
-            requested="a concrete SourceFragment subclass for every constructible shape",
+            observed=f"backend kind {kind!r} at {observed_at} has no node class",
+            requested="a concrete Node subclass for every constructible shape",
             fix="add the missing grammar class to nodes.py — never map to a fallback",
         )
         raise AssertionError("unreachable")
     return cls
 
 
-def field_names(cls: type[SourceFragment]) -> Tuple[str, ...]:
-    """Constructor field names beyond the base (unit, span), in order."""
-    return tuple(
-        f.name for f in dataclass_fields(cls) if f.name not in ("unit", "span")
-    )
+def _declared_fields(cls: type[Node]) -> Tuple[str, ...]:
+    """Annotated accessor names across the class's MRO, base fields excluded."""
+    names: list[str] = []
+    for klass in reversed(cls.__mro__):
+        for name in getattr(klass, "__annotations__", {}):
+            if name.startswith("_") or name in ("unit", "ref"):
+                continue
+            if name not in names:
+                names.append(name)
+    return tuple(names)

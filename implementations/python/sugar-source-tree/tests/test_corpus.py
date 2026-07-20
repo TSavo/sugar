@@ -4,23 +4,23 @@
 It is a pinned record of what WE produce. Regenerating it here and
 comparing proves the emission is a pure function of the source — no object
 identity, no iteration-order dependence — and that today's build still
-produces the pinned spans and CIDs. It is NOT a cross-provider check:
+produces the pinned spans and CIDs. It is NOT a cross-backend check:
 different parsers build different trees, and the memento is a location
-hash, so addresses differ by provider by construction.
+hash, so addresses differ by backend by construction.
 """
 
 import json
 from pathlib import Path
 
-from sugar_node_membrane import Membrane
-from sugar_node_membrane.corpus import records_for_source
+from sugar_source_tree import SourceFile
+from sugar_source_tree.corpus import records_for_file
 
 GOLDENS = Path(__file__).resolve().parents[1] / "goldens"
 
 
 def _generate() -> list[str]:
     source = (GOLDENS / "quirks.py").read_text(encoding="utf-8")
-    records = records_for_source(Membrane(), source, "quirks.py")
+    records = records_for_file(SourceFile(filename="quirks.py", source=source))
     return [json.dumps(r, sort_keys=True, ensure_ascii=True) for r in records]
 
 

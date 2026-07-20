@@ -6,8 +6,8 @@ on raw numbers, so the tests read as the spec's worked examples.
 
 import pytest
 
-from sugar_node_membrane import Membrane
-from sugar_node_membrane.nodes import (
+from sugar_source_tree import SourceFile
+from sugar_source_tree.nodes import (
     Assign,
     BinOp,
     Call,
@@ -31,7 +31,7 @@ from sugar_node_membrane.nodes import (
 
 
 def parse(source: str) -> Module:
-    return Membrane().parse(source)
+    return SourceFile(filename="<test>", source=source).root
 
 
 def only(root, cls):

@@ -1,6 +1,6 @@
 """parso adapter smoke tests (#5940, #5932).
 
-No cross-provider CID comparison here (out of scope — see differential.py
+No cross-backend CID comparison here (out of scope — see differential.py
 and the #5940/#5932 ruling that different parsers are not expected to
 agree on addresses). These tests only establish: the adapter constructs a
 representative sample without crashing, and the one hard, load-bearing
@@ -14,15 +14,16 @@ parso = pytest.importorskip("parso")
 
 from pathlib import Path
 
-from sugar_node_membrane import Membrane
-from sugar_node_membrane.panic import MembranePanic
-from sugar_node_membrane.parso_adapter import ParsoProvider
+from sugar_source_tree import SourceFile
+from sugar_source_tree.backend import BackendRefused
+from sugar_source_tree.panic import SourceTreePanic
+from sugar_source_tree.parso_adapter import ParsoBackend
 
 GOLDENS = Path(__file__).resolve().parents[1] / "goldens"
 
 
-def _membrane() -> Membrane:
-    return Membrane(ParsoProvider())
+def _root(source: str, filename: str):
+    return SourceFile(filename=filename, source=source, backend=ParsoBackend()).root
 
 
 def test_constructs_a_representative_sample():
@@ -69,7 +70,7 @@ def gen():
 
 result = f"{gen()!r}"
 '''
-    root = _membrane().parse(source, filename="sample.py")
+    root = _root(source, filename="sample.py")
     assert len(list(root.walk())) > 20
 
 
@@ -79,14 +80,14 @@ def test_match_statement_is_not_supported_by_parso_080_grammar():
     grammar text files directly). This is not an adapter gap — there is no
     tree to translate. A source using `match` refuses to parse."""
     source = "match x:\n    case 0:\n        pass\n"
-    with pytest.raises(SyntaxError):
-        _membrane().parse(source, filename="match.py")
+    with pytest.raises(BackendRefused):
+        _root(source, filename="match.py")
 
 
 def test_quirks_golden_fails_on_the_known_match_gap():
     source = (GOLDENS / "quirks.py").read_text(encoding="utf-8")
-    with pytest.raises(SyntaxError):
-        _membrane().parse(source, filename="quirks.py")
+    with pytest.raises(BackendRefused):
+        _root(source, filename="quirks.py")
 
 
 def test_fstring_format_spec_is_a_known_adapter_gap():
@@ -96,5 +97,7 @@ def test_fstring_format_spec_is_a_known_adapter_gap():
     the containing fstring_expr's own children in a shape this adapter's
     ``_fstring_values``/``_describe_fstring_expr`` do not yet parse
     correctly — real coverage gap, tracked here rather than guessed at."""
-    with pytest.raises(MembranePanic):
-        _membrane().parse('x = f"{y!r:>10}"\n', filename="fspec.py")
+    with pytest.raises(SourceTreePanic):
+        # Enumeration is the query: the panic fires when the accessor is
+        # asked, not at SourceFile construction.
+        list(_root('x = f"{y!r:>10}"\n', filename="fspec.py").walk())

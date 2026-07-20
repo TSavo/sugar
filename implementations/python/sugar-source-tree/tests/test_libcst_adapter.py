@@ -9,30 +9,30 @@ Two things are under test:
    panics as a MISSING. There is no permissive fallback, so the negative
    arm is tested alongside the positive one.
 
-There is deliberately NO cross-provider comparison here. Different parsers
+There is deliberately NO cross-backend comparison here. Different parsers
 build different trees -- one yields a node where another yields two -- and
 the memento is a LOCATION hash of (file, line_start, line_end, col_start,
 col_end, content_bytes). Four of those five inputs are positions, which
-every parser computes its own way. Addresses therefore differ by provider
+every parser computes its own way. Addresses therefore differ by backend
 BY CONSTRUCTION, and that is re-addressing, not a divergence to drive to
 zero. The factory asks for the next node and asks who owns it; whatever
-the provider yields gets sugared on its own terms.
+the backend yields gets sugared on its own terms.
 """
 
 import pytest
 
-libcst = pytest.importorskip("libcst", reason="LibCST provider not installed")
+libcst = pytest.importorskip("libcst", reason="LibCST backend not installed")
 
-from sugar_node_membrane.backend import ProviderRefused  # noqa: E402
-from sugar_node_membrane.construct import Membrane  # noqa: E402
-from sugar_node_membrane.cpython_adapter import CPythonAstProvider  # noqa: E402
-from sugar_node_membrane.libcst_adapter import LibCSTProvider, _describe, _Ctx  # noqa: E402
-from sugar_node_membrane import nodes  # noqa: E402
-from sugar_node_membrane.panic import MembranePanic  # noqa: E402
+from sugar_source_tree.backend import BackendRefused  # noqa: E402
+from sugar_source_tree.tree import SourceFile  # noqa: E402
+from sugar_source_tree.cpython_adapter import CPythonAstBackend  # noqa: E402
+from sugar_source_tree.libcst_adapter import LibCSTBackend, _describe, _Ctx  # noqa: E402
+from sugar_source_tree import nodes  # noqa: E402
+from sugar_source_tree.panic import SourceTreePanic  # noqa: E402
 
 
 def build(source: str):
-    return Membrane(LibCSTProvider()).parse(source, filename="<test>")
+    return SourceFile(filename="<test>", source=source, backend=LibCSTBackend()).root
 
 
 def only(root, cls):
@@ -46,7 +46,7 @@ def segment_of(source: str, cls) -> str:
 
 
 # --------------------------------------------------------------------------
-# The rulings LibCST satisfies natively — pinned so a provider upgrade that
+# The rulings LibCST satisfies natively — pinned so a backend upgrade that
 # changes them is caught here rather than in a corpus diff.
 # --------------------------------------------------------------------------
 
@@ -243,7 +243,7 @@ def test_unmapped_cst_shape_panics_as_a_missing():
     """The negative arm. A CST node with no rule must NOT get a fallback."""
     unit = nodes.SourceUnit(filename="<test>", source="x = 1\n")
     ctx = _Ctx(unit, {})
-    with pytest.raises(MembranePanic) as excinfo:
+    with pytest.raises(SourceTreePanic) as excinfo:
         _describe(ctx, libcst.Semicolon())
     assert "no adapter rule" in excinfo.value.observed
 
@@ -255,32 +255,32 @@ def test_mapped_cst_shape_resolves():
 
 
 def test_unknown_operator_panics_rather_than_defaulting():
-    from sugar_node_membrane.libcst_adapter import _op, _BINARY_OPS
+    from sugar_source_tree.libcst_adapter import _op, _BINARY_OPS
 
-    with pytest.raises(MembranePanic):
+    with pytest.raises(SourceTreePanic):
         _op(_BINARY_OPS, libcst.And(), "binop")
 
 
-def test_provider_refusal_is_a_membrane_ProviderRefused_never_a_SyntaxError():
+def test_provider_refusal_is_a_membrane_BackendRefused_never_a_SyntaxError():
     """FIX FOR #5946 (the contract finding recorded against #5940): the
-    backend contract now declares how a provider signals refusal
-    (``backend.ProviderRefused``), and this adapter maps its native
+    backend contract now declares how a backend signals refusal
+    (``backend.BackendRefused``), and this adapter maps its native
     ``libcst.ParserSyntaxError`` — which does NOT subclass ``SyntaxError``
     — onto it. Before the fix, ``corpus.py`` caught only ``SyntaxError``,
     so with LibCST installed a corpus containing one unparseable file let
     the exception escape and killed the whole run instead of recording a
     row. This test pins the fix: LibCST's native exception never escapes
-    this adapter, and the membrane's own refusal type does.
+    this adapter, and the tree's own refusal type does.
     """
     assert not issubclass(libcst.ParserSyntaxError, SyntaxError), (
         "if this starts failing, LibCST changed its exception base; the "
         "underlying #5946 defect may no longer apply, but the mapping "
         "below must still hold regardless"
     )
-    with pytest.raises(ProviderRefused) as excinfo:
+    with pytest.raises(BackendRefused) as excinfo:
         build("def (:\n")
-    assert not isinstance(excinfo.value, MembranePanic)
+    assert not isinstance(excinfo.value, SourceTreePanic)
     assert not isinstance(excinfo.value, SyntaxError)
     assert not isinstance(excinfo.value, libcst.ParserSyntaxError)
-    assert excinfo.value.provider == LibCSTProvider().name
+    assert excinfo.value.backend == LibCSTBackend().name
     assert excinfo.value.file == "<test>"
