@@ -79,9 +79,33 @@ from .tree import SourceFile
 class IfCompletion(Completion):
     """``if``/``elif``/``else``. Sole: an If can only complete as if-shaped
     sugar. The old ``owns`` body (``site.observed == "If"``) is the
-    declaration below; nothing else survived because nothing else existed."""
+    declaration below; nothing else survived because nothing else existed.
+
+    OUTCOME 1 RECEIPT: this class carries NO state — no fields, no
+    ``new()`` construction work, nothing ``__init__``-shaped. The meaning
+    side (IfSugar.desugar: reduce the test, then binary_conditional over
+    the two bodies) is expressible entirely over node fields, shown by
+    ``reduction`` below. A stateless all-classmethod class keyed to one
+    node class is definitionally a method suite OF that node class:
+    the collapse is ``If`` gaining these methods and this class ceasing
+    to exist. IfSugar's fields (condition/then/else_body as SugarBody)
+    are the node's test/body/orelse wrapped with a role — and the role
+    is a function of grammar position the node class already states."""
 
     completes: ClassVar[type] = If
+
+    @classmethod
+    def reduction(cls, node: If) -> tuple:
+        """The desugar plan, from node fields ALONE — the emptied-class
+        demonstration. Roles are grammar positions: test is a TERM ask,
+        the bodies are STATEMENT asks. Nothing here reads sugar-held
+        state, because there is none to read."""
+        return (
+            "binary_conditional",
+            ("term", node.test),
+            ("statements", node.body),
+            ("statements", node.orelse) if node.orelse else None,
+        )
 
 
 # -- While: a closed 2-family over one typed field --------------------------

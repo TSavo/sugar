@@ -107,6 +107,29 @@ def test_unregistered_class_gaps_loudly(tmp_path):
     assert "nothing completes me" in str(err.value)
 
 
+# -- outcome 1 receipts: the emptied class, demonstrated --------------------
+
+
+def test_if_completion_is_stateless_and_reduces_from_node_fields(tmp_path):
+    # No fields, no construction: nothing __init__-shaped beyond object's.
+    assert IfCompletion.__init__ is Completion.__init__ is object.__init__
+    assert not [
+        k
+        for k, v in vars(IfCompletion).items()
+        if not k.startswith("__")
+        and not isinstance(v, (classmethod, staticmethod))
+        and k not in ("completes", "sole")
+    ]
+    (plain,) = _nodes_of("if x:\n    a()\n", If, tmp_path)
+    (with_else,) = _nodes_of("if x:\n    a()\nelse:\n    b()\n", If, tmp_path)
+    kind, test, then, orelse = IfCompletion.reduction(plain)
+    assert kind == "binary_conditional"
+    # Accessors are queries (a fresh node per access), so sameness is the
+    # span, not object identity.
+    assert test[1].span == plain.test.span and orelse is None
+    assert IfCompletion.reduction(with_else)[3] is not None
+
+
 # -- the ambiguity arm ------------------------------------------------------
 
 
