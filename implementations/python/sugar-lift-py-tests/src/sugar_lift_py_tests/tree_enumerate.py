@@ -99,3 +99,112 @@ def fact_of(node) -> Optional[Any]:
     # Same shape the factory's facts payload carried (ir.py `item["inv"]`):
     # the formula's JCS Value tree, flattened to a plain JSON dict.
     return json.loads(encode_jcs(formula_to_value(formula)))
+
+
+# --- The recovered-construction frontier, re-homed onto the tree ------------
+#
+# The factory's corpus-wide R census is gone. Its replacement is here: walk the
+# file with a CollectingReporter and ask every node for its sugar. A node whose
+# OWN sugar() reaches the abstract base throw (SugarNotWritten) reports itself
+# through the reporter before the throw fires; that report IS a frontier row.
+# Coverage is the class hierarchy, so R = the count of nodes that self-reported.
+#
+# The frontier is served at MODULE granularity: one demanded body per file
+# (function_name "<module>", whole-file span), whose audit leaf walks the entire
+# file. One body per file means the census consistency (bodies == files) holds
+# trivially and no gap is counted twice across a function/module split.
+
+
+def audit_file_gaps(full_path: Path):
+    """Every node in the file whose own sugar() reaches the base throw.
+
+    Returns ``(sf, [(node, panic), ...])`` deduped by node identity. Each node
+    is asked directly, so it self-reports even when no ancestor's sugar() call
+    reached it first; a gap reported while an ANCESTOR was under construction is
+    the same node object, collapsed by identity here. Only ``SugarNotWritten``
+    is caught: a VocabularyMissing/BackendDefect during the walk is a different,
+    louder failure and is left to propagate, never swallowed into the census.
+    """
+    from sugar_source_tree.panic import SugarNotWritten
+    from sugar_source_tree.reporter import CollectingReporter
+
+    reporter = CollectingReporter()
+    sf = SourceFile.from_path(str(full_path), reporter=reporter)
+    for node in sf.root.walk():
+        try:
+            node.sugar()
+        except SugarNotWritten:
+            pass  # reported through the channel already; keep counting
+    seen: dict[int, Any] = {}
+    for node, panic in reporter.gaps:
+        seen[id(node)] = (node, panic)
+    return sf, list(seen.values())
+
+
+def module_definition_memento(sf: SourceFile, file_rel: str, file_cid: str) -> dict:
+    """The whole-file body the audit frontier demands one leaf for."""
+    lc = sf.root.line_col_span()
+    sealed = sf.fragment.seal()
+    return {
+        "kind": "source-memento",
+        "file": file_rel,
+        "function_name": "<module>",
+        "source_function_name": "<module>",
+        "span": {
+            "start_line": lc.start_line,
+            "start_col": lc.start_col,
+            "end_line": lc.end_line,
+            "end_col": lc.end_col,
+        },
+        "source_cid": sealed.cid,
+        "file_cid": file_cid,
+        "template_cid": None,
+        "param_names": [],
+    }
+
+
+def _gap_locus(node, file_rel: str) -> tuple[str, str]:
+    """(position locus, terminal gap locus) for a gap node.
+
+    The terminal locus carries the full span AND the node kind so two distinct
+    nodes never collide — the fold rejects duplicate owner identities loudly,
+    and (demandedBody, demandedSource, terminalGapLocus) must be unique.
+    """
+    lc = node.line_col_span()
+    pos = f"{file_rel}:{lc.start_line}:{lc.start_col}"
+    terminal = (
+        f"{file_rel}:{lc.start_line}:{lc.start_col}-"
+        f"{lc.end_line}:{lc.end_col}[{node.kind}]"
+    )
+    return pos, terminal
+
+
+def frontier_leaf_rpc(full_path: Path, file_rel: str) -> dict:
+    """The recovered-construction audit leaf for one file, tree-walked.
+
+    Emits the closed ``RecoveredAuditDto`` wire shape (status ``failed`` when
+    the file has any unwritten-sugar gap, ``clean`` when it is fully sugared).
+    ``demandedSource`` is the file's own content CID: stable per file, so gap
+    uniqueness rides on each gap's terminal locus.
+    """
+    from sugar_lift_py_tests.kit_rpc.recovered_audit_dto import (
+        RecoveredAuditDto,
+        RecoveredFactoryPanicDto,
+    )
+
+    sf, gaps = audit_file_gaps(full_path)
+    demanded_source = f"module:{sf.unit.source_cid}"
+    panics = []
+    for node, panic in gaps:
+        pos, terminal = _gap_locus(node, file_rel)
+        reason = panic.observed or str(panic)
+        panics.append(
+            RecoveredFactoryPanicDto(
+                locus=pos,
+                demanded_source=demanded_source,
+                terminal_gap_locus=terminal,
+                reason=reason,
+                gap={"blame": terminal, "kind": node.kind, "reason": reason},
+            )
+        )
+    return RecoveredAuditDto(panics=panics).to_rpc()

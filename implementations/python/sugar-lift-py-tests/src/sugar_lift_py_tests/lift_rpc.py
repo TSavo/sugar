@@ -3029,21 +3029,56 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 return
 
             if audit_walk:
-                # The audit frontier's FACTORY census is gone: the factory is
-                # being deleted, and its corpus-wide R census re-homes onto the
-                # source tree's reporter channel (SourceFile(..., reporter=
-                # CollectingReporter()) -> node.sugar() reports each gap through
-                # it). That re-home is not yet wired to the wire, so for now the
-                # frontier returns empty at every audit level: the Rust driver
-                # (fold_recovered_audit) demands one body per file, gets zero
-                # definitions, and assembles a zero-leaf census.
-                #
-                # TEMPORARY and LOUD: a zero-leaf census reports NO panics, so a
-                # corpus that still has unwritten sugars reads "complete" (clean)
-                # until the reporter census lands. This is a known false-green we
-                # are carrying deliberately while the factory comes out, NOT a
-                # claim the frontier is drained. The redo is: walk the tree with
-                # a CollectingReporter and seal each gap's .fragment to a memento.
+                # The recovered-construction frontier, re-homed onto the tree
+                # (the factory census is gone). The Rust driver walks
+                # source_files -> functions -> facts; we serve it at MODULE
+                # granularity: one demanded body per file whose audit leaf
+                # walks the whole file with a CollectingReporter. Every node
+                # whose own sugar() reaches the base throw self-reports; that
+                # count IS R. status is `failed` when the file has any unwritten
+                # sugar, `clean` when fully sugared -- no false green.
+                from sugar_lift_py_tests import tree_enumerate as _tree
+                from sugar_lift_python_source.source_oracle import (
+                    SourceOracleRefusal,
+                    path_source,
+                )
+
+                if level == "functions":
+                    try:
+                        identity = path_source(str(full_path))
+                    except SourceOracleRefusal as refusal:
+                        _send_enumerate_result(
+                            msg_id, [], [{"memento": at, "reason": str(refusal)}]
+                        )
+                        return
+                    _src, _fname, file_cid = identity
+                    sf = _tree.source_file(full_path)
+                    memento = _tree.module_definition_memento(
+                        sf, file_rel, file_cid
+                    )
+                    _send_enumerate_result(
+                        msg_id,
+                        [{"memento": memento, "audit": None, "payload": None}],
+                        [],
+                    )
+                    _log_enumeration_demand(
+                        str(level), at, cache="miss", started=demand_started
+                    )
+                    return
+
+                if level == "facts":
+                    leaf = _tree.frontier_leaf_rpc(full_path, file_rel)
+                    _send_enumerate_result(
+                        msg_id,
+                        [{"memento": at, "audit": leaf, "payload": None}],
+                        [],
+                    )
+                    _log_enumeration_demand(
+                        str(level), at, cache="miss", started=demand_started
+                    )
+                    return
+
+                # No other level participates in the frontier walk.
                 _send_enumerate_result(msg_id, [], [])
                 _log_enumeration_demand(
                     str(level), at, cache="miss", started=demand_started
