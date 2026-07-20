@@ -45,6 +45,36 @@ _MISSING = object()
 _CLASS_BASES_CACHE: OrderedDict[tuple[Any, ...], tuple[str, ...]] = OrderedDict()
 
 
+class _NotDefinedHereType:
+    """A decidable negative: this exact coordinate was resolved, and it does
+    not define the requested member.
+
+    RULING (#5930, T, 2026-07-19): a bare ``None`` is ambiguous between two
+    opposite meanings -- "I cannot answer this" (a gap, must be loud) and
+    "no, this candidate does not define it, try the next" (a resolved,
+    correct negative). Conflating them either turns a real gap into silence,
+    or turns a routine "no" into a false-alarm panic. ``NOT_DEFINED_HERE``
+    is the second meaning ONLY: a candidate search may consume it and
+    continue exactly as it would a normal negative result. It is never
+    returned when the answer is actually unknown -- that case panics with a
+    typed ``FactoryGapInfo`` instead. No caller may treat this value and an
+    unresolved gap as the same thing; there is no third bare-``None`` case
+    left to check for.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "NOT_DEFINED_HERE"
+
+    def __bool__(self) -> bool:
+        # Never let this be mistaken for a truthy "found" value.
+        return False
+
+
+NOT_DEFINED_HERE = _NotDefinedHereType()
+
+
 @dataclass(frozen=True)
 class _ContextIdentity:
     """Strong, O(1) identity token for one factory-recognition input."""
@@ -965,7 +995,13 @@ def resolve_local_source_exit_contract(filename: str | None, local_name: str):
 def resolve_class_exit_contract(qualified_class: str):
     """Prove exit disposition from an installed class's exact ``__exit__`` body."""
     exit_fn = resolve_install_source_class_method(qualified_class, "__exit__")
-    if exit_fn is None or not isinstance(exit_fn.node, ast.FunctionDef):
+    # NOT_DEFINED_HERE is a decidable negative: this class's own module does
+    # not define __exit__, i.e. it is not a context manager. That is the
+    # correct answer for most classes asked this question -- consume it and
+    # answer "no exit contract" exactly as before, never a gap (#5930).
+    if exit_fn is NOT_DEFINED_HERE:
+        return None
+    if not isinstance(exit_fn.node, ast.FunctionDef):
         return None
     return _exit_method_suppression_contract(exit_fn.node)
 
@@ -2311,9 +2347,41 @@ def _resolve_install_source_class_bases(
 
 
 def resolve_install_source_class_method(qualified_class: str, method_name: str):
-    """Resolve ``module.Class.method`` to a FunctionDef SourceFragment, or None."""
+    """Resolve ``module.Class.method`` to a FunctionDef SourceFragment.
+
+    Returns exactly one of two kinds of answer, never a bare ``None``:
+
+    - a ``SourceFragment`` when ``qualified_class``'s own module statically
+      defines ``method_name`` directly on that class.
+    - ``NOT_DEFINED_HERE`` -- a decidable negative -- when that module was
+      read and does NOT define the method there. This function never walks
+      the base chain (see ``resolve_install_source_class_bases`` for that),
+      so "not defined here" is a complete, resolved answer, not a gap: most
+      classes in an MRO walk correctly don't define most methods, and a
+      context-manager discriminator asking "does this implement __exit__"
+      correctly says no far more often than yes. A candidate search may
+      consume ``NOT_DEFINED_HERE`` and try the next candidate exactly as it
+      would any other negative result.
+
+    A malformed ``qualified_class``/``method_name`` coordinate -- one this
+    function cannot even attempt to resolve -- is a different kind of
+    failure: a genuine construction gap. It panics loudly with a typed
+    ``FactoryGapInfo`` instead of returning anything, so it can never be
+    silently mistaken for either of the two answers above.
+    """
+    from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+    from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
     if not qualified_class or not method_name or "." not in qualified_class:
-        return None
+        factory_panic_gap(
+            owner="resolve_install_source_class_method",
+            blame=qualified_class or "<empty>",
+            observed=f"qualified_class={qualified_class!r} method_name={method_name!r}",
+            requested="a dotted module.Class coordinate and a method name",
+            fix="construct a well-formed qualified_class before calling this resolver",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
     from sugar_lift_py_tests.factory.source_fragment import SourceFragment
 
     module_name, class_name = qualified_class.rsplit(".", 1)
@@ -2333,40 +2401,10 @@ def resolve_install_source_class_method(qualified_class: str, method_name: str):
     # inherited method, then read its source via `inspect.getsource`. That
     # both executed third-party code and depended on the live MRO rather
     # than on this module's own static source. `_module_sibling_function_node`
-    # above already answers the static question (a method defined directly
-    # in this module's source); a method inherited from a base defined in a
-    # *different* module has no static route here without walking the base
-    # chain through `resolve_install_source_class_bases`, which this
-    # function does not do.
-    #
-    # A bare `None` here is indistinguishable from "this class genuinely has
-    # no such method anywhere in its MRO" -- a MISSING masquerading as a
-    # fact (T, 2026-07-19: "Bare None are cancer"). This is a construction
-    # gap: panic loudly instead of refusing silently. CALLERS THAT TREAT
-    # `None` FROM THIS FUNCTION AS "TRY THE NEXT CANDIDATE" NOW HIT THIS
-    # PANIC ON THE FIRST CANDIDATE THAT DOESN'T DIRECTLY DEFINE THE METHOD
-    # -- that candidate-search pattern is a caller-side defect this panic
-    # deliberately surfaces; it must not be papered over by softening this
-    # panic back to `None`.
-    from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
-    from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
-
-    factory_panic_gap(
-        owner="resolve_install_source_class_method",
-        blame=f"{qualified_class}.{method_name}",
-        observed=f"{module_name}.{class_name}.{method_name}",
-        requested=(
-            "the exact FunctionDef for this method, defined either directly "
-            "in this class's own module or resolvable by walking "
-            "resolve_install_source_class_bases without importing"
-        ),
-        fix=(
-            "walk resolve_install_source_class_bases to find the base whose "
-            "own module statically defines this method, or cite it directly"
-        ),
-        gap_kind=GapKind.FLOOR,
-        gap_locus=GapLocus.CONSTRUCTION,
-    )
+    # above already answers the static question completely -- this class's
+    # own module was read in full and does not define the method there.
+    # That is a decidable negative, not a gap: return it as such.
+    return NOT_DEFINED_HERE
 
 
 def resolve_call_funcdef(target_name: str, ctx: Any):
@@ -2465,7 +2503,12 @@ def resolve_method_funcdef(method_name: str, receiver_floor: Any, ctx: Any):
         if class_name in from_imports:
             mod, attr = from_imports[class_name]
             qualified = f"{mod}.{attr}" if mod else attr
-            return resolve_install_source_class_method(qualified, method_name)
+            provider = resolve_install_source_class_method(qualified, method_name)
+            # This function's own contract is "SourceFragment or None"; there
+            # is no further candidate to try here, so a decidable negative
+            # (this class doesn't define the method) collapses to this
+            # function's own "not found" answer, same as before (#5930).
+            return None if provider is NOT_DEFINED_HERE else provider
 
     return None
 
