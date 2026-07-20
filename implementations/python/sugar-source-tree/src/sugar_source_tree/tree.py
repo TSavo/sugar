@@ -163,6 +163,33 @@ class SourceTree:
                 continue
             yield path
 
+    def fragment_of(self, path: Path) -> "SourceFragment":
+        """One file's WHOLE-FILE fragment: the oracle's identity, full span,
+        no parse. The per-file unit ``fragments()`` iterates. Loud oracle
+        refusal on unreadable/undecodable input."""
+        from .fragment import SourceFragment
+        from .nodes import SourceUnit
+        from .spans import Span
+
+        source, filename, cid = path_source(str(path))
+        unit = SourceUnit(filename=filename, source=source, source_cid=cid)
+        return SourceFragment(unit, Span(0, len(source)), node=None)
+
+    def fragments(self) -> Iterator["SourceFragment"]:
+        """Enumerate WHOLE-FILE fragments: identity without parsing.
+
+        A file-level fragment is literally the entire file — the oracle's
+        (source, filename, CID) with the full span. No backend runs, no
+        tree is built; this is the ``source_files`` enumeration level, and
+        a memento sealed from one of these fragments is the file's locator.
+        An unreadable/undecodable file raises ``SourceOracleRefusal`` loudly
+        here — a caller that wants record-and-continue catches per file and
+        records a gap; nothing is swallowed and nothing masquerades as a
+        source file.
+        """
+        for path in self.paths():
+            yield self.fragment_of(path)
+
     def files(self) -> Iterator[SourceFile]:
         """Enumerate ``SourceFile``s, each through the oracle's identity.
         Parse failures propagate loudly — a caller that wants

@@ -2940,20 +2940,38 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
 
     try:
         if level == "source_files":
-            from sugar_lift_py_tests.canonicalizer import blake3_512_of
+            # The source_files level IS SourceTree.fragments(): whole-file
+            # fragments minted through the SourceOracle — identity without
+            # parsing, no file read or hashed outside the oracle. The handler
+            # only formats. An unreadable/undecodable file is a loud oracle
+            # refusal recorded as a protocol gap, never served as a node
+            # (previously it was hashed raw and masqueraded as enumerable).
+            from sugar_lift_python_source.source_oracle import SourceOracleRefusal
+            from sugar_source_tree.tree import SourceTree
 
             nodes = []
-            for full_path in _iter_python_files(workspace_root, ["."]):
+            gaps = []
+            tree = SourceTree(root)
+            for path in tree.paths():
                 try:
-                    rel_path = Path(full_path).resolve().relative_to(root).as_posix()
+                    rel_path = path.resolve().relative_to(root).as_posix()
                 except ValueError:
-                    rel_path = Path(full_path).name
-                file_bytes = Path(full_path).read_bytes()
-                memento = _degenerate_file_memento(rel_path, blake3_512_of(file_bytes))
+                    rel_path = path.name
+                try:
+                    fragment = tree.fragment_of(path)
+                except SourceOracleRefusal as refusal:
+                    gaps.append(
+                        {
+                            "memento": _degenerate_file_memento(rel_path),
+                            "reason": str(refusal),
+                        }
+                    )
+                    continue
+                memento = _degenerate_file_memento(rel_path, fragment.source_cid)
                 if seek and at is not None and not _memento_matches(memento, at):
                     continue
                 nodes.append({"memento": memento, "audit": None, "payload": None})
-            _send_enumerate_result(msg_id, nodes, [])
+            _send_enumerate_result(msg_id, nodes, gaps)
             _log_enumeration_demand(
                 str(level), at, cache="miss", started=demand_started
             )
