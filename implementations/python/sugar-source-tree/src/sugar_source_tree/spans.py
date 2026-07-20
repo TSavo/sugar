@@ -2,22 +2,22 @@
 
 T's ruling on #5940: "We're not freezing anything. There's nothing to freeze
 against. There's segfaults, and that's about it." The span is specified here,
-by us, and every provider adapter normalizes into it. CPython's conventions
-are one provider's implementation detail, not the spec.
+by us, and every backend adapter normalizes into it. CPython's conventions
+are one backend's implementation detail, not the spec.
 
 THE SPEC
 ========
 
 A ``Span`` is a half-open interval ``[start, end)`` of **codepoint offsets**
 into the module source string (``str`` indices). Not UTF-8 byte offsets:
-byte columns are a CPython implementation artifact no other provider has a
+byte columns are a CPython implementation artifact no other backend has a
 reason to reproduce, and they diverge from character positions on any line
 containing a non-ASCII character before the node.
 
 Derived line/column projections (for mementos and humans) are:
 1-based lines, 0-based codepoint columns, end-exclusive.
 
-Rulings for the shapes where providers actually differ:
+Rulings for the shapes where backends actually differ:
 
 - **Parenthesized expressions**: grouping parentheses are NEVER part of an
   expression's span. ``(x + y)`` -> the ``BinOp`` spans ``x + y``. Grouping
@@ -46,14 +46,14 @@ Rulings for the shapes where providers actually differ:
   thing — a bare genexp argument has no parens of its own and spans the
   ``x for x in xs`` text). Each ``Comprehension`` clause node spans from
   its ``for`` keyword (``async`` when the clause is async) to the end of
-  its last ``if`` (or of its iterable when it has no ifs). Providers do
+  its last ``if`` (or of its iterable when it has no ifs). Backends do
   not position the clause; the ``for`` anchor is recovered by a pure
   backscan from the target — between the keyword and its target only
   whitespace can occur.
 - **Lambdas**: ``Lambda`` spans from the ``lambda`` keyword to the end of
   its body expression.
 - **match**: ``Match`` spans from the ``match`` keyword to the end of the
-  last case's body. ``MatchCase`` has no position in some providers; its
+  last case's body. ``MatchCase`` has no position in some backends; its
   span is the envelope of pattern, guard, and body. Patterns span their own
   text.
 - **Tuples**: an enclosed tuple display ``(1, 2)`` includes its
@@ -66,17 +66,17 @@ Rulings for the shapes where providers actually differ:
 - **Star-args**: ``Starred`` spans ``*expr`` including the star. A
   double-star keyword (``**kwargs`` at a call site) is a ``Keyword`` node
   with ``arg is None`` spanning ``**expr`` including both stars.
-- **Envelope rule (general)**: any node kind for which a provider supplies
+- **Envelope rule (general)**: any node kind for which a backend supplies
   no anchor position (``Comprehension``, ``MatchCase``, ``WithItem``,
   ``DictItem``, ``Param`` defaults) takes the envelope of its children's
   spans, optionally widened by adapter-supplied anchor spans (e.g. a
-  ``Param``'s name token). A node with neither a provider position nor any
+  ``Param``'s name token). A node with neither a backend position nor any
   spanned child is a MISSING and panics: there is no such thing as a node
   with no source extent.
 - **Module**: spans the entire source, ``[0, len(source))``.
 
 Everything in this module is a pure function of the source string. No
-parser, no provider, no ``ast``.
+parser, no backend, no ``ast``.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ from __future__ import annotations
 import bisect
 from dataclasses import dataclass
 
-from .panic import membrane_provider_defect
+from .panic import backend_defect
 
 
 @dataclass(frozen=True, order=True)
@@ -96,11 +96,11 @@ class Span:
 
     def __post_init__(self) -> None:
         if self.start < 0 or self.end < self.start:
-            membrane_provider_defect(
+            backend_defect(
                 owner="spans.Span",
                 observed=f"degenerate span [{self.start}, {self.end})",
                 requested="0 <= start <= end",
-                fix="adapters must normalize provider positions before minting a Span",
+                fix="adapters must normalize backend positions before minting a Span",
             )
 
     def slice(self, source: str) -> str:
@@ -124,7 +124,7 @@ class LineTable:
     """Pure function of source text: line/column <-> codepoint offset.
 
     Lines are split on '\\n' only (source is expected in universal-newlines
-    form, which is what every provider consumes). Columns are codepoint
+    form, which is what every backend consumes). Columns are codepoint
     counts, never bytes.
     """
 
@@ -142,7 +142,7 @@ class LineTable:
     def offset(self, line: int, col: int) -> int:
         """1-based line + 0-based codepoint column -> absolute offset."""
         if line < 1 or line > len(self._line_starts):
-            membrane_provider_defect(
+            backend_defect(
                 owner="spans.LineTable.offset",
                 observed=f"line {line} outside 1..{len(self._line_starts)}",
                 requested="a position inside the source",
@@ -153,7 +153,7 @@ class LineTable:
     def line_col(self, offset: int) -> tuple[int, int]:
         """Absolute codepoint offset -> (1-based line, 0-based codepoint col)."""
         if offset < 0 or offset > len(self.source):
-            membrane_provider_defect(
+            backend_defect(
                 owner="spans.LineTable.line_col",
                 observed=f"offset {offset} outside 0..{len(self.source)}",
                 requested="an offset inside the source",
@@ -170,11 +170,11 @@ class LineTable:
         """
         cp_col = self._byte_map(line).get(byte_col)
         if cp_col is None:
-            membrane_provider_defect(
+            backend_defect(
                 owner="spans.LineTable.offset_from_byte_col",
                 observed=f"byte col {byte_col} is not a codepoint boundary on line {line}",
                 requested="a byte column landing on a codepoint boundary",
-                fix="provider produced a mid-codepoint column; uninstall the provider",
+                fix="backend produced a mid-codepoint column; uninstall the backend",
             )
         return self.offset(line, cp_col)
 

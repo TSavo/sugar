@@ -1,7 +1,7 @@
-"""CPython ``ast`` provider adapter.
+"""CPython ``ast`` backend adapter.
 
 THE ONLY MODULE IN THIS PACKAGE THAT MAY NAME ``ast``. Everything it hands
-up is a read-only ``ProviderHandle`` describing itself in membrane terms:
+up is a read-only ``BackendNode`` describing itself in tree terms:
 our kinds, our field names, our codepoint spans. CPython's 1-based-line /
 UTF-8-byte-column convention is normalized here, once, via
 ``LineTable.offset_from_byte_col``, and never travels further.
@@ -23,10 +23,10 @@ boundary — never a permissive fallback.
 Source ``ast.parse`` cannot parse at all (a syntax error, or a null byte —
 ``ValueError`` on some CPython versions, ``SyntaxError`` on others; both
 mean the same thing: this text is not valid Python) is never let through as
-CPython's own exception type. It is re-raised as ``ProviderRefused``
-(backend.py) — the membrane's own name for "the provider declined this
+CPython's own exception type. It is re-raised as ``BackendRefused``
+(backend.py) — the tree's own name for "the backend declined this
 input" — so no caller above this module ever needs to know CPython is
-behind the membrane today.
+behind the tree today.
 """
 
 from __future__ import annotations
@@ -42,14 +42,14 @@ from .backend import (
     MaybeChild,
     OpLeaf,
     OpsLeaf,
-    Provider,
-    ProviderHandle,
-    ProviderRefused,
+    Backend,
+    BackendNode,
+    BackendRefused,
     Slot,
 )
 from .nodes import SourceUnit
 from .operators import Operator, operator_for
-from .panic import membrane_missing
+from .panic import vocabulary_missing
 from .spans import Span
 
 
@@ -57,7 +57,7 @@ def _op(node: ast.AST) -> Operator:
     return operator_for(type(node).__name__)
 
 
-class _Handle(ProviderHandle):
+class _Handle(BackendNode):
     """Read-only view of one ast node (or synthetic constituent)."""
 
     __slots__ = ("_unit", "_node", "_desc")
@@ -76,7 +76,7 @@ class _Handle(ProviderHandle):
         return f"<ast-handle {type(self._node).__name__} in {self._unit.filename}>"
 
 
-class _ParamHandle(ProviderHandle):
+class _ParamHandle(BackendNode):
     """Synthetic constituent: one formal parameter with its default."""
 
     __slots__ = ("_unit", "_arg", "_default", "_kind", "_desc")
@@ -150,7 +150,7 @@ class _FormatSpecHandle(_Handle):
         return self._desc
 
 
-class _DictItemHandle(ProviderHandle):
+class _DictItemHandle(BackendNode):
     """Synthetic constituent: one key/value entry of a Dict display."""
 
     __slots__ = ("_unit", "_key", "_value", "_desc")
@@ -191,7 +191,7 @@ def _node_span(unit: SourceUnit, node: ast.AST) -> Span:
     lineno = getattr(node, "lineno", None)
     end_lineno = getattr(node, "end_lineno", None)
     if lineno is None or end_lineno is None:
-        membrane_missing(
+        vocabulary_missing(
             owner="cpython_adapter._node_span",
             observed=f"ast.{type(node).__name__} without a position",
             requested="a positioned node, or a describe() rule marking it envelope-spanned",
@@ -205,9 +205,9 @@ def _node_span(unit: SourceUnit, node: ast.AST) -> Span:
 
 def _flatten_params(
     unit: SourceUnit, arguments: ast.arguments
-) -> Tuple[ProviderHandle, ...]:
+) -> Tuple[BackendNode, ...]:
     """ast.arguments -> ordered Param handles with defaults re-associated."""
-    params: list[ProviderHandle] = []
+    params: list[BackendNode] = []
     positional = list(arguments.posonlyargs) + list(arguments.args)
     defaults = list(arguments.defaults)
     # defaults right-align against the positional parameters
@@ -267,7 +267,7 @@ def _comprehension_for_anchor(unit: SourceUnit, comp: ast.comprehension) -> Span
     while j > 0 and src[j - 1].isspace():
         j -= 1
     if src[max(0, j - 3) : j] != "for":
-        membrane_missing(
+        vocabulary_missing(
             owner="cpython_adapter._comprehension_for_anchor",
             observed=f"no 'for' keyword immediately before comprehension target at {target_start}",
             requested="'for' (optionally 'async for') preceding the target",
@@ -281,7 +281,7 @@ def _comprehension_for_anchor(unit: SourceUnit, comp: ast.comprehension) -> Span
         for_start = k - 5
     return Span(for_start, for_start)
 
-# kinds the provider does not position: envelope-spanned per the spec
+# kinds the backend does not position: envelope-spanned per the spec
 _ENVELOPE_KINDS = frozenset({"comprehension", "withitem", "match_case"})
 
 
@@ -362,7 +362,7 @@ def _describe(unit: SourceUnit, node: ast.AST) -> Description:
                     )
                 )
                 continue
-            membrane_missing(
+            vocabulary_missing(
                 owner="cpython_adapter._describe",
                 observed=(
                     f"ast.{ast_kind}.{field_name} list with unhandled item "
@@ -389,12 +389,12 @@ def _describe(unit: SourceUnit, node: ast.AST) -> Description:
     return Description(kind=kind, raw_span=raw_span, anchors=anchors, slots=tuple(slots))
 
 
-class CPythonAstProvider(Provider):
-    """The reference provider: CPython's own parser, behind the membrane."""
+class CPythonAstBackend(Backend):
+    """The reference backend: CPython's own parser, behind the tree."""
 
     name = "cpython-ast"
 
-    def parse(self, unit: SourceUnit) -> ProviderHandle:
+    def root(self, unit: SourceUnit) -> BackendNode:
         try:
             tree = ast.parse(unit.source, filename=unit.filename)
         except (SyntaxError, ValueError) as err:
@@ -402,7 +402,7 @@ class CPythonAstProvider(Provider):
             # IndentationError). ValueError: some CPython versions raise it
             # instead of SyntaxError for a null byte in the source. Both are
             # CPython declining this text — never let either escape as-is.
-            raise ProviderRefused(
-                provider=self.name, file=unit.filename, reason=str(err)
+            raise BackendRefused(
+                backend=self.name, file=unit.filename, reason=str(err)
             ) from err
         return _Handle(unit, tree)

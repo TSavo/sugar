@@ -3,16 +3,16 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sugar-node-membrane"
+name = "sugar-source-tree"
 version = "0.1.0"
-description = "The node membrane (#5940): source text in, constructed graph out. Standalone; stdlib-only."
+description = "A parser and a source tree (#5940): SourceTree enumerates SourceFile enumerates nodes, over a swappable backend. Standalone; stdlib-only core."
 requires-python = ">=3.12"
 dependencies = []
 
 # The core membrane stays stdlib-only. A PROVIDER is an optional extra:
 # installing one must never be a condition of the membrane working, and the
 # membrane must never depend on any single parser. Install with
-# ``pip install -e '.[libcst]'`` to use the LibCST provider.
+# ``pip install -e '.[libcst]'`` to use the LibCST backend.
 [project.optional-dependencies]
 libcst = ["libcst>=1.8"]
 

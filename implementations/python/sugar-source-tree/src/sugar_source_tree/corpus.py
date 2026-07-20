@@ -13,32 +13,29 @@ Record fields:
 
 ``cid`` is ``sha256:`` over the UTF-8 encoding of the source segment
 selected by OUR span — a pure function of (source, span), never of the
-provider. (sha256, not production's blake3_512, so the corpus runs
+backend. (sha256, not production's blake3_512, so the corpus runs
 stdlib-only; the span components ride alongside so a change names
-which coordinate moved, not just that a hash changed. Precedent: the
-#5940.)
+which coordinate moved, not just that a hash changed. Precedent: #5940.)
 
-This artifact is the instrument that admits or rejects a future provider:
-parse the same sources through another adapter, emit, diff. A provider
+This artifact is the instrument that admits or rejects a future backend:
+enumerate the same tree through another adapter, emit, diff. A backend
 that diverges is not debugged — it is uninstalled.
 
-Failures are LOUD: a MembraneMissing (our vocabulary is incomplete for a
-shape the provider legitimately produced), a MembraneProviderDefect (the
-provider or its adapter produced something structurally invalid), or a
-provider refusal (ProviderRefused, backend.py — the provider's own
-two-arm outcome, never its native exception type) on any file is
-recorded, reported, and fails the run. None of the three ever becomes
-silence.
+Failures are LOUD: a VocabularyMissing (our vocabulary is incomplete for
+a shape the backend legitimately produced), a BackendDefect (the backend
+or its adapter produced something structurally invalid), or a backend
+refusal (BackendRefused, backend.py — the backend's own "not valid input
+for me", never its native exception type) on any file is recorded,
+reported, and fails the run. None of the three ever becomes silence.
 
-The provider is a parameter, not a source edit: default is today's
-behaviour (CPythonAstProvider), but any Provider — including LibCST's
-— can be threaded through from the CLI (--provider) or from code,
-so a benchmark can run the same corpus through more than one adapter
-without monkeypatching this module.
+The backend is a parameter, not a source edit: default is CPython's
+``ast`` (CPythonAstBackend), but any Backend can be threaded through from
+the CLI (--backend) or from code, so a benchmark can run the same corpus
+through more than one adapter without monkeypatching this module.
 
 CLI:
-    python -m sugar_node_membrane.corpus --out corpus.jsonl PATH [PATH ...]
-    python -m sugar_node_membrane.corpus --provider libcst PATH [PATH ...]
+    python -m sugar_source_tree.corpus --out corpus.jsonl PATH [PATH ...]
+    python -m sugar_source_tree.corpus --backend libcst PATH [PATH ...]
 """
 
 from __future__ import annotations
@@ -51,15 +48,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
 
-from .backend import Provider, ProviderRefused
-from .construct import Membrane
-from .nodes import SourceFragment
-from .panic import MembraneMissing, MembraneProviderDefect
+from .backend import Backend, BackendRefused
+from .nodes import Node
+from .panic import BackendDefect, VocabularyMissing
+from .tree import SourceFile
 
 
-def node_paths(root: SourceFragment) -> Iterator[tuple[str, SourceFragment]]:
+def node_paths(root: Node) -> Iterator[tuple[str, Node]]:
     """Deterministic (path, node) pairs, DFS pre-order, iterative."""
-    stack: list[tuple[str, SourceFragment]] = [("$", root)]
+    stack: list[tuple[str, Node]] = [("$", root)]
     while stack:
         path, node = stack.pop()
         yield path, node
@@ -70,18 +67,15 @@ def node_paths(root: SourceFragment) -> Iterator[tuple[str, SourceFragment]]:
         stack.extend(reversed(entries))
 
 
-def records_for_source(
-    membrane: Membrane, source: str, rel_file: str
-) -> list[dict[str, object]]:
-    root = membrane.parse(source, filename=rel_file)
-    table = root.unit.line_table
+def records_for_file(file: SourceFile) -> list[dict[str, object]]:
+    table = file.unit.line_table
     out: list[dict[str, object]] = []
-    for path, node in node_paths(root):
+    for path, node in node_paths(file.root):
         lc = table.project(node.span)
         segment_cid = hashlib.sha256(node.segment().encode("utf-8")).hexdigest()
         out.append(
             {
-                "file": rel_file,
+                "file": file.filename,
                 "path": path,
                 "kind": node.kind,
                 "start": node.span.start,
@@ -109,13 +103,13 @@ def emit_corpus(
     paths: list[Path],
     out_path: Optional[Path],
     base: Optional[Path] = None,
-    provider: Optional[Provider] = None,
+    backend: Optional[Backend] = None,
 ) -> CorpusResult:
-    """provider defaults to Membrane()'s own default
-    (CPythonAstProvider) — today's behaviour, unchanged. Pass any other
-    Provider (e.g. LibCSTProvider() from libcst_adapter.py) to
-    run the same corpus through it; this is the ONLY thing that should ever
-    change which provider a corpus run measures — never a monkeypatch."""
+    """Enumerate every file, one SourceFile at a time — built, recorded,
+    dropped. Nothing retains parsed files across iterations, so peak RSS is
+    bounded by the largest file, not the corpus. The backend is the ONLY
+    thing that should ever change which parser a corpus run measures —
+    never a monkeypatch."""
     files: list[Path] = []
     for p in paths:
         if p.is_dir():
@@ -124,7 +118,6 @@ def emit_corpus(
             files.append(p)
     files.sort()
 
-    membrane = Membrane(provider)
     manifest = hashlib.sha256()
     kind_counts: dict[str, int] = {}
     failures: list[tuple[str, str, str]] = []
@@ -141,26 +134,27 @@ def emit_corpus(
                 failures.append((rel, "undecodable", str(err)))
                 continue
             try:
-                recs = records_for_source(membrane, source, rel)
-            except ProviderRefused as err:
-                # The PROVIDER refused the file (not valid input for it).
-                # Recorded loudly; distinct from a membrane MISSING. Never
-                # the provider's native exception type (#5946) — the
-                # membrane's own contract type, so this catch works
-                # identically no matter which provider is installed.
-                failures.append((rel, "provider_refused", str(err)))
+                file = SourceFile(filename=rel, source=source, backend=backend)
+                recs = records_for_file(file)
+            except BackendRefused as err:
+                # The BACKEND refused the file (not valid input for it).
+                # Recorded loudly; distinct from a vocabulary MISSING. Never
+                # the backend's native exception type (#5946) — the tree's
+                # own contract type, so this catch works identically no
+                # matter which backend is installed.
+                failures.append((rel, "backend_refused", str(err)))
                 continue
-            except MembraneMissing as err:
-                # OUR vocabulary is incomplete for a shape the provider
+            except VocabularyMissing as err:
+                # OUR vocabulary is incomplete for a shape the backend
                 # legitimately produced. THE finding this instrument exists
                 # to surface.
-                failures.append((rel, "membrane_missing", str(err)))
+                failures.append((rel, "vocabulary_missing", str(err)))
                 continue
-            except MembraneProviderDefect as err:
-                # The provider (or its adapter) produced something
-                # structurally invalid. Distinct from membrane_missing:
+            except BackendDefect as err:
+                # The backend (or its adapter) produced something
+                # structurally invalid. Distinct from vocabulary_missing:
                 # this is never fixed by adding vocabulary.
-                failures.append((rel, "membrane_provider_defect", str(err)))
+                failures.append((rel, "backend_defect", str(err)))
                 continue
             parsed += 1
             for rec in recs:
@@ -185,26 +179,29 @@ def emit_corpus(
     )
 
 
-_PROVIDERS: dict[str, str] = {
-    "cpython": "CPythonAstProvider",
-    "libcst": "LibCSTProvider",
-}
+_BACKENDS = ("cpython-ast", "libcst", "parso", "tree-sitter-python")
 
 
-def _make_provider(name: Optional[str]) -> Optional[Provider]:
-    """None -> Membrane()'s own default (today's behaviour,
-    unchanged). Otherwise construct the named provider by importing its
-    adapter module lazily, so installing libcst is never a condition of
-    running the corpus with the default provider."""
-    if name is None or name == "cpython":
+def make_backend(name: Optional[str]) -> Optional[Backend]:
+    """None / "cpython-ast" -> the default (CPython's ast). Otherwise
+    construct the named backend by importing its adapter module lazily, so
+    installing libcst is never a condition of running the corpus with the
+    default backend."""
+    if name is None or name == "cpython-ast":
         return None
     if name == "libcst":
-        from .libcst_adapter import LibCSTProvider
+        from .libcst_adapter import LibCSTBackend
 
-        return LibCSTProvider()
-    raise SystemExit(
-        f"unknown --provider {name!r}; choices: {sorted(_PROVIDERS)}"
-    )
+        return LibCSTBackend()
+    if name == "parso":
+        from .parso_adapter import ParsoBackend
+
+        return ParsoBackend()
+    if name == "tree-sitter-python":
+        from .tree_sitter_python_adapter import TreeSitterPythonBackend
+
+        return TreeSitterPythonBackend()
+    raise SystemExit(f"unknown --backend {name!r}; choices: {list(_BACKENDS)}")
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -213,37 +210,33 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--base", type=Path, default=None)
     parser.add_argument(
-        "--provider",
-        choices=sorted(_PROVIDERS),
-        default="cpython",
-        help="which Provider to run the corpus through (default: cpython, "
-        "today's unchanged behaviour). 'libcst' requires the libcst "
-        "extra installed.",
+        "--backend",
+        choices=list(_BACKENDS),
+        default="cpython-ast",
+        help="which Backend to run the corpus through (default: cpython-ast).",
     )
     args = parser.parse_args(argv)
 
     result = emit_corpus(
-        args.paths, args.out, args.base, provider=_make_provider(args.provider)
+        args.paths, args.out, args.base, backend=make_backend(args.backend)
     )
-    print(f"provider: {args.provider}")
+    print(f"backend:  {args.backend}")
     print(f"files:    {result.files}")
     print(f"nodes:    {result.nodes}")
     print(f"kinds:    {len(result.kind_counts)}")
     print(f"manifest: {result.manifest_cid}")
-    membrane_missing = [f for f in result.failures if f[1] == "membrane_missing"]
-    provider_defects = [
-        f for f in result.failures if f[1] == "membrane_provider_defect"
-    ]
+    missing = [f for f in result.failures if f[1] == "vocabulary_missing"]
+    defects = [f for f in result.failures if f[1] == "backend_defect"]
     other = [
         f
         for f in result.failures
-        if f[1] not in ("membrane_missing", "membrane_provider_defect")
+        if f[1] not in ("vocabulary_missing", "backend_defect")
     ]
     for rel, failure_class, message in result.failures:
         print(f"FAIL[{failure_class}] {rel}: {message.splitlines()[0]}")
-    print(f"membrane missing (vocabulary gaps): {len(membrane_missing)}")
-    print(f"membrane provider defects: {len(provider_defects)}")
-    print(f"provider refusals / undecodable: {len(other)}")
+    print(f"vocabulary missing (our gaps): {len(missing)}")
+    print(f"backend defects: {len(defects)}")
+    print(f"backend refusals / undecodable: {len(other)}")
     return 1 if result.failures else 0
 
 

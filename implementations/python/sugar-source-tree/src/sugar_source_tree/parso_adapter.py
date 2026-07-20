@@ -1,4 +1,4 @@
-"""parso provider adapter (#5940, #5932) — candidate #3.
+"""parso backend adapter (#5940, #5932) — candidate #3.
 
 THE ONLY MODULE IN THIS PACKAGE THAT MAY NAME ``parso``. Same read-only
 contract as ``cpython_adapter`` / ``libcst_adapter``: ``parse(unit) ->
@@ -14,7 +14,7 @@ with no byte->codepoint seam to build (see spans.py; same property as
 LibCST, the opposite of CPython's UTF-8 byte columns).
 
 MAPPING NOTES — parso is a raw CST (blib2to3/lib2to3 family grammar), NOT
-AST-shaped. Concretely, versus ``ast``/our membrane:
+AST-shaped. Concretely, versus ``ast``/our tree:
 
 - parso collapses any grammar node with exactly one child down to that
   child (no wrapper). This does a lot of our unwrapping for free: a bare
@@ -72,13 +72,14 @@ from .backend import (
     MaybeChild,
     OpLeaf,
     OpsLeaf,
-    Provider,
-    ProviderHandle,
+    Backend,
+    BackendNode,
+    BackendRefused,
     Slot,
 )
 from .nodes import SourceUnit
 from .operators import Operator, operator_for
-from .panic import membrane_missing
+from .panic import vocabulary_missing
 from .spans import Span
 
 ParsoNode = object  # parso.tree.NodeOrLeaf, kept untyped at the boundary
@@ -99,7 +100,7 @@ def _kids(node: ParsoNode) -> List[ParsoNode]:
     return list(getattr(node, "children", ()))
 
 
-class _Handle(ProviderHandle):
+class _Handle(BackendNode):
     """Read-only view of one real parso node."""
 
     __slots__ = ("_unit", "_node", "_desc")
@@ -119,7 +120,7 @@ class _Handle(ProviderHandle):
         return f"<parso-handle {t} in {self._unit.filename}>"
 
 
-class _Fixed(ProviderHandle):
+class _Fixed(BackendNode):
     """A synthetic constituent: precomputed Description, no single backing
     node (a fold step, a flattened tuple, a folded trailer chain, ...)."""
 
@@ -140,7 +141,7 @@ def _fixed(kind: str, raw_span: Optional[Span], slots: Tuple[Tuple[str, Slot], .
     return _Fixed(Description(kind=kind, raw_span=raw_span, anchors=anchors, slots=slots))
 
 
-def _h(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
+def _h(unit: SourceUnit, node: ParsoNode) -> BackendNode:
     return _Handle(unit, node)
 
 
@@ -172,7 +173,7 @@ def _cmp_op(node: ParsoNode) -> Operator:
             return operator_for("NotIn")
         if text == "is not":
             return operator_for("IsNot")
-        membrane_missing(
+        vocabulary_missing(
             owner="parso_adapter._cmp_op",
             observed=f"comp_op token {text!r} not recognized",
             requested="one of: not in, is not",
@@ -185,7 +186,7 @@ def _cmp_op(node: ParsoNode) -> Operator:
         return operator_for("Is")
     kind = _CMP_TOKEN.get(text)
     if kind is None:
-        membrane_missing(
+        vocabulary_missing(
             owner="parso_adapter._cmp_op",
             observed=f"comparison token {text!r} not recognized",
             requested="a known comparison operator token",
@@ -199,7 +200,7 @@ def _cmp_op(node: ParsoNode) -> Operator:
 # --------------------------------------------------------------------------
 
 
-def _fold_binop(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
+def _fold_binop(unit: SourceUnit, node: ParsoNode) -> BackendNode:
     """Flat n-ary chain (arith_expr/term/expr/xor_expr/and_expr/shift_expr)
     -> nested left-associative BinOp handles."""
     kids = _kids(node)
@@ -211,7 +212,7 @@ def _fold_binop(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
         right_node = kids[i + 1]
         kind = _BIN_TOKEN.get(op_tok.value)
         if kind is None:
-            membrane_missing(
+            vocabulary_missing(
                 owner="parso_adapter._fold_binop",
                 observed=f"binary operator token {op_tok.value!r} not recognized",
                 requested="a known binary operator token",
@@ -249,7 +250,7 @@ def _compare(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     left = _h(unit, kids[0])
     ops: List[Operator] = []
-    comparators: List[ProviderHandle] = []
+    comparators: List[BackendNode] = []
     i = 1
     while i < len(kids):
         ops.append(_cmp_op(kids[i]))
@@ -267,7 +268,7 @@ def _compare(unit: SourceUnit, node: ParsoNode) -> Description:
     )
 
 
-def _bare_tuple(unit: SourceUnit, elts: Sequence[ParsoNode], unit_span: Optional[Span] = None) -> ProviderHandle:
+def _bare_tuple(unit: SourceUnit, elts: Sequence[ParsoNode], unit_span: Optional[Span] = None) -> BackendNode:
     handles = tuple(_h(unit, e) for e in elts)
     return _fixed("Tuple", unit_span, (("elts", Children(handles)),))
 
@@ -302,7 +303,7 @@ def _constant_prefix_kind(text: str) -> Optional[str]:
     return lowered[:i] if i else ""
 
 
-def _join_string_pieces(unit: SourceUnit, pieces: Sequence[ParsoNode]) -> ProviderHandle:
+def _join_string_pieces(unit: SourceUnit, pieces: Sequence[ParsoNode]) -> BackendNode:
     """Implicit string concatenation: one Constant, or JoinedStr if any
     piece is an f-string. Spans the first piece's start to the last's end
     (spec: including inter-piece whitespace/newlines)."""
@@ -310,7 +311,7 @@ def _join_string_pieces(unit: SourceUnit, pieces: Sequence[ParsoNode]) -> Provid
     end = _span(unit, pieces[-1]).end
     span = Span(start, end)
     if any(_string_piece_kind(p) == "fstring" for p in pieces):
-        values: List[ProviderHandle] = []
+        values: List[BackendNode] = []
         for p in pieces:
             if _string_piece_kind(p) == "fstring":
                 values.extend(_fstring_values(unit, p))
@@ -329,7 +330,7 @@ def _join_string_pieces(unit: SourceUnit, pieces: Sequence[ParsoNode]) -> Provid
 
 
 # _Fixed has no _replace_value; build Constant directly instead.
-def _fixed_constant(span: Span, value: object, literal_kind: Optional[str] = None) -> ProviderHandle:
+def _fixed_constant(span: Span, value: object, literal_kind: Optional[str] = None) -> BackendNode:
     return _fixed(
         "Constant",
         span,
@@ -337,7 +338,7 @@ def _fixed_constant(span: Span, value: object, literal_kind: Optional[str] = Non
     )
 
 
-def _constant_leaf(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
+def _constant_leaf(unit: SourceUnit, node: ParsoNode) -> BackendNode:
     span = _span(unit, node)
     text = unit.source[span.start:span.end]
     if node.type == "number":
@@ -356,7 +357,7 @@ def _constant_leaf(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
         return _fixed_constant(span, value)
     if node.type == "operator" and node.value == "...":
         return _fixed_constant(span, Ellipsis)
-    membrane_missing(
+    vocabulary_missing(
         owner="parso_adapter._constant_leaf",
         observed=f"leaf {node.type}:{node.value!r} is not a recognized literal",
         requested="number, string, None/True/False, or Ellipsis",
@@ -365,8 +366,8 @@ def _constant_leaf(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
     raise AssertionError("unreachable")
 
 
-def _fstring_values(unit: SourceUnit, node: ParsoNode) -> List[ProviderHandle]:
-    out: List[ProviderHandle] = []
+def _fstring_values(unit: SourceUnit, node: ParsoNode) -> List[BackendNode]:
+    out: List[BackendNode] = []
     for c in _kids(node):
         if c.type == "fstring_string":
             span = _span(unit, c)
@@ -376,7 +377,7 @@ def _fstring_values(unit: SourceUnit, node: ParsoNode) -> List[ProviderHandle]:
         elif c.type in ("fstring_start", "fstring_end"):
             continue
         else:
-            membrane_missing(
+            vocabulary_missing(
                 owner="parso_adapter._fstring_values",
                 observed=f"fstring child {c.type!r} not recognized",
                 requested="fstring_string or fstring_expr",
@@ -411,7 +412,7 @@ def _describe_fstring_expr(unit: SourceUnit, node: ParsoNode) -> Description:
             format_spec = c
             i += 1
             continue
-        membrane_missing(
+        vocabulary_missing(
             owner="parso_adapter._describe_fstring_expr",
             observed=f"fstring_expr trailing token {c!r} not recognized",
             requested="'!' conversion or format spec",
@@ -439,9 +440,9 @@ def _describe_fstring_expr(unit: SourceUnit, node: ParsoNode) -> Description:
 
 
 def _fold_trailers(unit: SourceUnit, atom: ParsoNode, trailers: Sequence[ParsoNode],
-                    has_await: bool, await_start: Optional[int]) -> ProviderHandle:
+                    has_await: bool, await_start: Optional[int]) -> BackendNode:
     base_start = _span(unit, atom).start
-    acc: ProviderHandle = _h(unit, atom)
+    acc: BackendNode = _h(unit, atom)
     for tr in trailers:
         tk = _kids(tr)
         first = tk[0]
@@ -472,7 +473,7 @@ def _fold_trailers(unit: SourceUnit, atom: ParsoNode, trailers: Sequence[ParsoNo
                 (("value", Child(acc)), ("slice_", Child(slice_handle))),
             )
         else:
-            membrane_missing(
+            vocabulary_missing(
                 owner="parso_adapter._fold_trailers",
                 observed=f"trailer starting with {first.value!r} not recognized",
                 requested="'.', '(' or '['",
@@ -484,7 +485,7 @@ def _fold_trailers(unit: SourceUnit, atom: ParsoNode, trailers: Sequence[ParsoNo
     return acc
 
 
-def _call_args(unit: SourceUnit, inner: Sequence[ParsoNode]) -> Tuple[List[ProviderHandle], List[ProviderHandle]]:
+def _call_args(unit: SourceUnit, inner: Sequence[ParsoNode]) -> Tuple[List[BackendNode], List[BackendNode]]:
     if len(inner) == 1 and inner[0].type == "arglist":
         inner = _kids(inner[0])
     inner = _strip_commas(inner)
@@ -495,8 +496,8 @@ def _call_args(unit: SourceUnit, inner: Sequence[ParsoNode]) -> Tuple[List[Provi
         ik = _kids(inner[0])
         genexp = _genexp(unit, ik[0], ik[1:])
         return [genexp], []
-    args: List[ProviderHandle] = []
-    keywords: List[ProviderHandle] = []
+    args: List[BackendNode] = []
+    keywords: List[BackendNode] = []
     for item in inner:
         if item.type == "argument":
             ik = _kids(item)
@@ -513,7 +514,7 @@ def _call_args(unit: SourceUnit, inner: Sequence[ParsoNode]) -> Tuple[List[Provi
                     (("arg", SlotLeaf(ik[0].value)), ("value", Child(_h(unit, ik[2])))),
                 ))
             else:
-                membrane_missing(
+                vocabulary_missing(
                     owner="parso_adapter._call_args",
                     observed=f"argument shape {[c.type for c in ik]!r} not recognized",
                     requested="*expr, **expr, name=expr, or a comprehension argument",
@@ -529,7 +530,7 @@ def _call_args(unit: SourceUnit, inner: Sequence[ParsoNode]) -> Tuple[List[Provi
     return args, keywords
 
 
-def _subscript_slice(unit: SourceUnit, inner: Sequence[ParsoNode]) -> ProviderHandle:
+def _subscript_slice(unit: SourceUnit, inner: Sequence[ParsoNode]) -> BackendNode:
     if len(inner) == 1 and inner[0].type == "subscriptlist":
         inner = _kids(inner[0])
     items = _strip_commas(inner)
@@ -539,7 +540,7 @@ def _subscript_slice(unit: SourceUnit, inner: Sequence[ParsoNode]) -> ProviderHa
     return _fixed("Tuple", None, (("elts", Children(handles)),))
 
 
-def _one_subscript_item(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
+def _one_subscript_item(unit: SourceUnit, node: ParsoNode) -> BackendNode:
     if node.type != "subscript":
         return _h(unit, node)
     # a slice: split on ':' leaves, flattening one level of 'sliceop'
@@ -560,7 +561,7 @@ def _one_subscript_item(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
     lower, upper, step = segments[0], segments[1], segments[2]
     for seg in (lower, upper, step):
         if len(seg) > 1:
-            membrane_missing(
+            vocabulary_missing(
                 owner="parso_adapter._one_subscript_item",
                 observed=f"slice segment with {len(seg)} nodes",
                 requested="zero or one expression per slice segment",
@@ -582,7 +583,7 @@ def _one_subscript_item(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
 # --------------------------------------------------------------------------
 
 
-def _flatten_params(unit: SourceUnit, node: Optional[ParsoNode]) -> Tuple[ProviderHandle, ...]:
+def _flatten_params(unit: SourceUnit, node: Optional[ParsoNode]) -> Tuple[BackendNode, ...]:
     if node is None:
         return ()
     if node.type == "param":
@@ -603,7 +604,7 @@ def _flatten_params(unit: SourceUnit, node: Optional[ParsoNode]) -> Tuple[Provid
     kids = _kids(node)
     if node.type == "parameters":
         kids = kids[1:-1]  # drop '(' ')'
-    params: List[ProviderHandle] = []
+    params: List[BackendNode] = []
     mode = "positional_or_keyword"
     for c in kids:
         if _is_leaf(c) and c.value == ",":
@@ -633,7 +634,7 @@ def _flatten_params(unit: SourceUnit, node: Optional[ParsoNode]) -> Tuple[Provid
     return tuple(params)
 
 
-def _retag(handle: ProviderHandle, kind: str) -> ProviderHandle:
+def _retag(handle: BackendNode, kind: str) -> BackendNode:
     desc = handle.describe()
     new_slots = tuple(
         (name, SlotLeaf(kind)) if name == "param_kind" else (name, slot)
@@ -642,7 +643,7 @@ def _retag(handle: ProviderHandle, kind: str) -> ProviderHandle:
     return _fixed(desc.kind, desc.raw_span, new_slots, desc.anchors)
 
 
-def _one_param(unit: SourceUnit, node: ParsoNode, kind: str) -> ProviderHandle:
+def _one_param(unit: SourceUnit, node: ParsoNode, kind: str) -> BackendNode:
     kids = _kids(node)
     if kind in ("vararg", "kwarg"):
         kids = kids[1:]  # drop '*'/'**'
@@ -685,11 +686,11 @@ def _one_param(unit: SourceUnit, node: ParsoNode, kind: str) -> ProviderHandle:
 # --------------------------------------------------------------------------
 
 
-def _stmts(unit: SourceUnit, node: ParsoNode) -> Tuple[ProviderHandle, ...]:
+def _stmts(unit: SourceUnit, node: ParsoNode) -> Tuple[BackendNode, ...]:
     """Flatten a 'suite' (or, for one-liners, the bare simple_stmt/compound
     stmt already sitting where a suite would be) into a tuple of statement
     handles, dropping NEWLINE/INDENT/DEDENT and unwrapping simple_stmt."""
-    out: List[ProviderHandle] = []
+    out: List[BackendNode] = []
     if node.type == "suite":
         for c in _kids(node):
             if c.type in ("newline", "indent", "dedent"):
@@ -700,7 +701,7 @@ def _stmts(unit: SourceUnit, node: ParsoNode) -> Tuple[ProviderHandle, ...]:
     return tuple(out)
 
 
-def _stmt_handles(unit: SourceUnit, node: ParsoNode) -> List[ProviderHandle]:
+def _stmt_handles(unit: SourceUnit, node: ParsoNode) -> List[BackendNode]:
     if node.type == "simple_stmt":
         out = []
         for c in _kids(node):
@@ -711,7 +712,7 @@ def _stmt_handles(unit: SourceUnit, node: ParsoNode) -> List[ProviderHandle]:
     return [_h(unit, node)]
 
 
-def _body_of(unit: SourceUnit, node: ParsoNode) -> Tuple[ProviderHandle, ...]:
+def _body_of(unit: SourceUnit, node: ParsoNode) -> Tuple[BackendNode, ...]:
     """The ':' suite/simple_stmt trailing a compound statement header."""
     kids = _kids(node)
     return _stmts(unit, kids[-1])
@@ -729,7 +730,7 @@ def _describe(unit: SourceUnit, node: ParsoNode) -> Description:
     fn = _DISPATCH.get(t)
     if fn is not None:
         return fn(unit, node)
-    membrane_missing(
+    vocabulary_missing(
         owner="parso_adapter._describe",
         observed=f"parso node type {t!r} has no translation rule",
         requested="a mapped statement/expression shape",
@@ -771,7 +772,7 @@ def _describe_leaf(unit: SourceUnit, node: ParsoNode) -> Description:
         # bare `a[:]`: subscript's slice collapses to just the ':' leaf.
         return Description(kind="Slice", raw_span=_span(unit, node), anchors=(),
                             slots=(("lower", MaybeChild(None)), ("upper", MaybeChild(None)), ("step", MaybeChild(None))))
-    membrane_missing(
+    vocabulary_missing(
         owner="parso_adapter._describe_leaf",
         observed=f"leaf {node.type}:{node.value!r} has no translation rule",
         requested="a mapped leaf shape",
@@ -781,7 +782,7 @@ def _describe_leaf(unit: SourceUnit, node: ParsoNode) -> Description:
 
 
 def _module(unit: SourceUnit, node: ParsoNode) -> Description:
-    body: List[ProviderHandle] = []
+    body: List[BackendNode] = []
     for c in _kids(node):
         if c.type in ("endmarker", "newline"):
             continue
@@ -835,7 +836,7 @@ def _atom(unit: SourceUnit, node: ParsoNode) -> Description:
         return _dictorset(unit, node, kids[1])
     if first.type == "fstring":
         return _describe(unit, first)
-    membrane_missing(
+    vocabulary_missing(
         owner="parso_adapter._atom",
         observed=f"atom starting with {getattr(first, 'value', first.type)!r} not recognized",
         requested="'(', '[', '{' grouping, or an fstring",
@@ -859,7 +860,7 @@ def _dictorset(unit: SourceUnit, atom_node: ParsoNode, inner: ParsoNode) -> Desc
                                 slots=(("key", Child(key)), ("value", Child(value)),
                                        ("generators", Children(gens))))
         if has_colon:
-            items: List[ProviderHandle] = []
+            items: List[BackendNode] = []
             i = 0
             while i < len(ik):
                 c = ik[i]
@@ -891,8 +892,8 @@ def _dictorset(unit: SourceUnit, atom_node: ParsoNode, inner: ParsoNode) -> Desc
                         slots=(("elts", Children((_h(unit, inner),))),))
 
 
-def _comp_clauses(unit: SourceUnit, nodes: Sequence[ParsoNode]) -> Tuple[ProviderHandle, ...]:
-    out: List[ProviderHandle] = []
+def _comp_clauses(unit: SourceUnit, nodes: Sequence[ParsoNode]) -> Tuple[BackendNode, ...]:
+    out: List[BackendNode] = []
     for n in nodes:
         if n.type in ("comp_for", "sync_comp_for"):
             out.append(_h(unit, n))
@@ -900,7 +901,7 @@ def _comp_clauses(unit: SourceUnit, nodes: Sequence[ParsoNode]) -> Tuple[Provide
             # folded into the preceding Comprehension's ifs by _comprehension
             continue
         else:
-            membrane_missing(
+            vocabulary_missing(
                 owner="parso_adapter._comp_clauses",
                 observed=f"comprehension clause child {n.type!r} not recognized",
                 requested="comp_for/sync_comp_for or comp_if",
@@ -917,7 +918,7 @@ def _comprehension(unit: SourceUnit, node: ParsoNode) -> Description:
     # kids: 'for' exprlist 'in' or_test [comp_iter]
     target_n = kids[1]
     iter_n = kids[3]
-    ifs: List[ProviderHandle] = []
+    ifs: List[BackendNode] = []
     rest = kids[4:]
     for r in rest:
         r2 = r
@@ -928,14 +929,14 @@ def _comprehension(unit: SourceUnit, node: ParsoNode) -> Description:
             ifs.append(_h(unit, ik[1]))
             # a comp_if may itself carry a further comp_iter (chained ifs/for)
             if len(ik) > 2:
-                membrane_missing(
+                vocabulary_missing(
                     owner="parso_adapter._comprehension",
                     observed="comp_if with a nested comp_iter tail not yet folded",
                     requested="a flattened ifs/for chain",
                     fix="extend _comprehension to fold chained comp_iter tails",
                 )
         elif r2.type in ("comp_for", "sync_comp_for"):
-            membrane_missing(
+            vocabulary_missing(
                 owner="parso_adapter._comprehension",
                 observed="chained 'for ... for ...' clause not yet folded into a flat generators list",
                 requested="each comp_for as its own top-level Comprehension",
@@ -944,7 +945,7 @@ def _comprehension(unit: SourceUnit, node: ParsoNode) -> Description:
     target = target_n if target_n.type != "exprlist" else None
     if target is None:
         elts = _strip_commas(_kids(target_n))
-        target_handle: ProviderHandle = _bare_tuple(unit, elts)
+        target_handle: BackendNode = _bare_tuple(unit, elts)
     else:
         target_handle = _h(unit, target_n)
     return Description(
@@ -960,7 +961,7 @@ def _comprehension(unit: SourceUnit, node: ParsoNode) -> Description:
     )
 
 
-def _genexp(unit: SourceUnit, elt_node: ParsoNode, clause_nodes: Sequence[ParsoNode]) -> ProviderHandle:
+def _genexp(unit: SourceUnit, elt_node: ParsoNode, clause_nodes: Sequence[ParsoNode]) -> BackendNode:
     elt = _h(unit, elt_node)
     gens = _comp_clauses(unit, clause_nodes)
     return _fixed("GeneratorExp", None, (("elt", Child(elt)), ("generators", Children(gens))))
@@ -986,6 +987,21 @@ def _expr_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     if len(kids) == 1:
         return _describe(unit, kids[0])
     op = kids[1]
+    if not _is_leaf(op) and op.type == "annassign":
+        # parso wraps `: annotation [= value]` in one annassign node.
+        ann_kids = _kids(op)  # [':', annotation] or [':', annotation, '=', value]
+        value = _h(unit, ann_kids[3]) if len(ann_kids) > 3 else None
+        return Description(kind="AnnAssign", raw_span=span, anchors=(),
+                            slots=(("target", Child(_h(unit, kids[0]))),
+                                   ("annotation", Child(_h(unit, ann_kids[1]))),
+                                   ("value", MaybeChild(value)), ("simple", SlotLeaf(True))))
+    if not _is_leaf(op):
+        vocabulary_missing(
+            owner="parso_adapter._expr_stmt",
+            observed=f"expr_stmt second child is a {op.type!r} node, not an operator leaf",
+            requested="'=', an augmented-assignment operator, or annassign",
+            fix="extend _expr_stmt deliberately",
+        )
     if op.value == "=":
         targets = [kids[0]] + [kids[i] for i in range(2, len(kids) - 1, 2)]
         value = kids[-1]
@@ -994,7 +1010,7 @@ def _expr_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
                                    ("value", Child(_h(unit, value)))))
     aug_kind = _AUG_TOKEN.get(op.value)
     if aug_kind is None:
-        membrane_missing(
+        vocabulary_missing(
             owner="parso_adapter._expr_stmt",
             observed=f"expr_stmt operator {op.value!r} not recognized",
             requested="'=' (chained) or an augmented-assignment token",
@@ -1067,7 +1083,7 @@ def _dotted_name_str(node: ParsoNode) -> str:
     return node.value
 
 
-def _dotted_as_names(unit: SourceUnit, node: ParsoNode) -> Tuple[ProviderHandle, ...]:
+def _dotted_as_names(unit: SourceUnit, node: ParsoNode) -> Tuple[BackendNode, ...]:
     if node.type == "dotted_as_names":
         items = _strip_commas(_kids(node))
     else:
@@ -1078,7 +1094,7 @@ def _dotted_as_names(unit: SourceUnit, node: ParsoNode) -> Tuple[ProviderHandle,
     return tuple(out)
 
 
-def _dotted_as_name(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
+def _dotted_as_name(unit: SourceUnit, node: ParsoNode) -> BackendNode:
     if node.type == "dotted_as_name":
         k = _kids(node)
         name = _dotted_name_str(k[0])
@@ -1114,7 +1130,7 @@ def _import_from(unit: SourceUnit, node: ParsoNode) -> Description:
                                ("level", SlotLeaf(level))))
 
 
-def _import_as_names(unit: SourceUnit, node: ParsoNode) -> Tuple[ProviderHandle, ...]:
+def _import_as_names(unit: SourceUnit, node: ParsoNode) -> Tuple[BackendNode, ...]:
     if node.type == "import_as_names":
         items = _strip_commas(_kids(node))
     else:
@@ -1163,7 +1179,7 @@ def _if_chain(unit: SourceUnit, kids: List[ParsoNode], i: int, outer_span: Span)
     body = _stmts(unit, kids[i + 3])
     j = i + 4
     if j < len(kids) and kids[j].type == "keyword" and kids[j].value == "elif":
-        orelse: Tuple[ProviderHandle, ...] = (_fixed_if_chain(unit, kids, j, outer_span),)
+        orelse: Tuple[BackendNode, ...] = (_fixed_if_chain(unit, kids, j, outer_span),)
     elif j < len(kids) and kids[j].type == "keyword" and kids[j].value == "else":
         orelse = _stmts(unit, kids[j + 2])
     else:
@@ -1173,7 +1189,7 @@ def _if_chain(unit: SourceUnit, kids: List[ParsoNode], i: int, outer_span: Span)
                         slots=(("test", Child(test)), ("body", Children(body)), ("orelse", Children(orelse))))
 
 
-def _fixed_if_chain(unit: SourceUnit, kids: List[ParsoNode], i: int, outer_span: Span) -> ProviderHandle:
+def _fixed_if_chain(unit: SourceUnit, kids: List[ParsoNode], i: int, outer_span: Span) -> BackendNode:
     d = _if_chain(unit, kids, i, outer_span)
     return _fixed(d.kind, d.raw_span, d.slots, d.anchors)
 
@@ -1182,7 +1198,7 @@ def _while_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     test = _h(unit, kids[1])
     body = _stmts(unit, kids[3])
-    orelse: Tuple[ProviderHandle, ...] = ()
+    orelse: Tuple[BackendNode, ...] = ()
     if len(kids) > 4:
         orelse = _stmts(unit, kids[6])
     return Description(kind="While", raw_span=_span(unit, node), anchors=(),
@@ -1200,11 +1216,11 @@ def _for_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     iter_n = kids[3]
     if iter_n.type == "testlist":
         elts = _strip_commas(_kids(iter_n))
-        iter_handle: ProviderHandle = _bare_tuple(unit, elts)
+        iter_handle: BackendNode = _bare_tuple(unit, elts)
     else:
         iter_handle = _h(unit, iter_n)
     body = _stmts(unit, kids[5])
-    orelse: Tuple[ProviderHandle, ...] = ()
+    orelse: Tuple[BackendNode, ...] = ()
     if len(kids) > 6:
         orelse = _stmts(unit, kids[8])
     return Description(kind="For", raw_span=_span(unit, node), anchors=(),
@@ -1215,9 +1231,9 @@ def _for_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
 def _try_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     body = _stmts(unit, kids[2])
-    handlers: List[ProviderHandle] = []
-    orelse: Tuple[ProviderHandle, ...] = ()
-    finalbody: Tuple[ProviderHandle, ...] = ()
+    handlers: List[BackendNode] = []
+    orelse: Tuple[BackendNode, ...] = ()
+    finalbody: Tuple[BackendNode, ...] = ()
     is_star = False
     i = 3
     while i < len(kids):
@@ -1260,7 +1276,7 @@ def _try_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
 def _with_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     items_nodes = [c for c in kids[1:-2] if not (_is_leaf(c) and c.value == ",")]
-    items: List[ProviderHandle] = []
+    items: List[BackendNode] = []
     for it in items_nodes:
         if it.type == "with_item":
             ik = _kids(it)
@@ -1299,8 +1315,8 @@ def _funcdef(unit: SourceUnit, node: ParsoNode) -> Description:
 def _classdef(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     name = kids[1].value
-    bases: Tuple[ProviderHandle, ...] = ()
-    keywords: Tuple[ProviderHandle, ...] = ()
+    bases: Tuple[BackendNode, ...] = ()
+    keywords: Tuple[BackendNode, ...] = ()
     idx = 2
     if idx < len(kids) and _is_leaf(kids[idx]) and kids[idx].value == "(":
         if not (_is_leaf(kids[idx + 1]) and kids[idx + 1].value == ")"):
@@ -1347,7 +1363,7 @@ def _async_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     if inner.type == "with_stmt":
         base = _with_stmt(unit, inner)
         return Description(kind="AsyncWith", raw_span=span, anchors=(), slots=base.slots)
-    membrane_missing(
+    vocabulary_missing(
         owner="parso_adapter._async_stmt",
         observed=f"async_stmt wrapping {inner.type!r} not recognized",
         requested="funcdef, for_stmt, or with_stmt",
@@ -1392,7 +1408,7 @@ def _factor(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     kind = _UNARY_TOKEN.get(kids[0].value)
     if kind is None:
-        membrane_missing(
+        vocabulary_missing(
             owner="parso_adapter._factor",
             observed=f"unary token {kids[0].value!r} not recognized",
             requested="'+', '-', or '~'",
@@ -1484,23 +1500,22 @@ _DISPATCH = {
 }
 
 
-class ParsoProvider(Provider):
-    """parso: pure-Python, error-recovering — the third candidate provider."""
+class ParsoBackend(Backend):
+    """parso: pure-Python, error-recovering — the third candidate backend."""
 
     name = "parso"
 
     def __init__(self, version: str = "3.12") -> None:
         self._grammar = parso.load_grammar(version=version)
 
-    def parse(self, unit: SourceUnit) -> ProviderHandle:
-        # error_recovery=False + catching parso's own ParserSyntaxError (which
-        # is NOT a SyntaxError subclass) and re-raising as SyntaxError is the
-        # one place this adapter widens the contract's exception type: the
-        # membrane's corpus/differential harnesses both catch SyntaxError to
-        # mean "the PROVIDER refused this source," and parso's own error type
-        # does not satisfy that without translation.
+    def root(self, unit: SourceUnit) -> BackendNode:
+        # parso's own refusal exception (ParserSyntaxError, NOT a
+        # SyntaxError subclass) never escapes as-is: it is translated to
+        # BackendRefused, the contract's own type, like every adapter.
         try:
             module = self._grammar.parse(unit.source, error_recovery=False)
         except parso.parser.ParserSyntaxError as err:
-            raise SyntaxError(str(err)) from err
+            raise BackendRefused(
+                backend=self.name, file=unit.filename, reason=str(err)
+            ) from err
         return _Handle(unit, module)

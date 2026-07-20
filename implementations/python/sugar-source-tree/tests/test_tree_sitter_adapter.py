@@ -1,6 +1,6 @@
 """tree-sitter-python adapter smoke tests (#5940, #5932).
 
-No cross-provider CID comparison here (out of scope — see differential.py).
+No cross-backend CID comparison here (out of scope — see differential.py).
 This adapter reproduces the FULL goldens/quirks.py corpus (including match/
 case, which parso's grammar cannot express at all — see
 test_parso_adapter.py), so the golden file doubles as this adapter's
@@ -14,19 +14,19 @@ pytest.importorskip("tree_sitter_python")
 
 from pathlib import Path
 
-from sugar_node_membrane import Membrane
-from sugar_node_membrane.tree_sitter_python_adapter import TreeSitterPythonProvider
+from sugar_source_tree import SourceFile
+from sugar_source_tree.tree_sitter_python_adapter import TreeSitterPythonBackend
 
 GOLDENS = Path(__file__).resolve().parents[1] / "goldens"
 
 
-def _membrane() -> Membrane:
-    return Membrane(TreeSitterPythonProvider())
+def _root(source: str, filename: str):
+    return SourceFile(filename=filename, source=source, backend=TreeSitterPythonBackend()).root
 
 
 def test_constructs_the_full_quirks_golden():
     source = (GOLDENS / "quirks.py").read_text(encoding="utf-8")
-    root = _membrane().parse(source, filename="quirks.py")
+    root = _root(source, filename="quirks.py")
     assert len(list(root.walk())) > 20
 
 
@@ -45,7 +45,7 @@ def test_match_case_constructs():
         "        case _:\n"
         "            return None\n"
     )
-    root = _membrane().parse(source, filename="match.py")
+    root = _root(source, filename="match.py")
     assert len(list(root.walk())) > 10
 
 
@@ -53,7 +53,7 @@ def test_byte_vs_codepoint_columns_are_normalized():
     """tree-sitter reports UTF-8 BYTE columns (like CPython, unlike parso/
     LibCST) — verify a non-ASCII prefix does not corrupt a later span."""
     source = 'x = "éü" + f(y)\n'
-    root = _membrane().parse(source, filename="unicode.py")
+    root = _root(source, filename="unicode.py")
     call_positions = [
         n.segment() for n in root.walk() if type(n).__name__ == "Call"
     ]

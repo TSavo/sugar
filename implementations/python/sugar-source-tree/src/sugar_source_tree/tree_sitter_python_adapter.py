@@ -1,4 +1,4 @@
-"""tree-sitter-python provider adapter (#5940, #5932) — candidate #4.
+"""tree-sitter-python backend adapter (#5940, #5932) — candidate #4.
 
 THE ONLY MODULE IN THIS PACKAGE THAT MAY NAME ``tree_sitter`` /
 ``tree_sitter_python``. Same read-only contract as the other adapters:
@@ -9,7 +9,7 @@ Why tree-sitter is a credible fourth candidate: it is a C library with an
 error-tolerant, incremental GLR-style parser (built for editors to re-parse
 on every keystroke) and does not call CPython's ``compile()`` — the same
 property that makes LibCST and parso immune to #5932. Its grammar is also
-the closest structural match to our AST-shaped membrane of any candidate
+the closest structural match to our AST-shaped tree of any candidate
 examined: binary/boolean/comparison operator chains are ALREADY nested
 left-associatively by the grammar (unlike parso's flat n-ary chains that
 this package's ``parso_adapter`` must fold by hand), and most productions
@@ -37,7 +37,7 @@ MAPPING NOTES
   ``async for``).
 - **Decorators**: ``decorated_definition`` wraps ``decorator*`` plus the
   ``funcdef``/``classdef`` in a ``definition`` field; the def's span in our
-  membrane starts at ``def``/``class``, excluding decorators — matches
+  tree starts at ``def``/``class``, excluding decorators — matches
   ``FunctionDef``/``ClassDef`` spanning from their own keyword, computed
   here by re-describing the inner definition and only widening the
   ``decorators`` slot, mirroring the LibCST/parso adapters.
@@ -67,13 +67,13 @@ from .backend import (
     MaybeChild,
     OpLeaf,
     OpsLeaf,
-    Provider,
-    ProviderHandle,
+    Backend,
+    BackendNode,
     Slot,
 )
 from .nodes import SourceUnit
 from .operators import Operator, operator_for
-from .panic import membrane_missing
+from .panic import vocabulary_missing
 from .spans import Span
 
 TSNode = object  # tree_sitter.Node, kept untyped at the boundary
@@ -111,7 +111,7 @@ def _text(unit: SourceUnit, node: TSNode) -> str:
     return unit.source[span.start:span.end]
 
 
-class _Handle(ProviderHandle):
+class _Handle(BackendNode):
     __slots__ = ("_unit", "_node", "_desc")
 
     def __init__(self, unit: SourceUnit, node: TSNode) -> None:
@@ -128,7 +128,7 @@ class _Handle(ProviderHandle):
         return f"<ts-handle {self._node.type} in {self._unit.filename}>"
 
 
-class _Fixed(ProviderHandle):
+class _Fixed(BackendNode):
     __slots__ = ("_desc",)
 
     def __init__(self, desc: Description) -> None:
@@ -143,7 +143,7 @@ def _fixed(kind: str, raw_span: Optional[Span], slots: Tuple[Tuple[str, Slot], .
     return _Fixed(Description(kind=kind, raw_span=raw_span, anchors=anchors, slots=slots))
 
 
-def _h(unit: SourceUnit, node: Optional[TSNode]) -> Optional[ProviderHandle]:
+def _h(unit: SourceUnit, node: Optional[TSNode]) -> Optional[BackendNode]:
     return _Handle(unit, node) if node is not None else None
 
 
@@ -164,17 +164,19 @@ def _bool_kind(node_type: str) -> str:
     return {"and": "And", "or": "Or"}[node_type]
 
 
-def _bare_tuple(unit: SourceUnit, elts: Sequence[TSNode], raw_span: Optional[Span]) -> ProviderHandle:
+def _bare_tuple(unit: SourceUnit, elts: Sequence[TSNode], raw_span: Optional[Span]) -> BackendNode:
     return _fixed("Tuple", raw_span, (("elts", Children(tuple(_h(unit, e) for e in elts))),))
 
 
-def _pattern_list_targets(unit: SourceUnit, node: TSNode) -> ProviderHandle:
+def _pattern_list_targets(unit: SourceUnit, node: TSNode) -> BackendNode:
     """pattern_list / expression_list / tuple(without parens context) -> a
-    bare-tuple target, or the single element when there is exactly one."""
+    bare-tuple target, or the single element when there is exactly one.
+    Elements route through ``_target_handle`` so nested target shapes
+    (tuple_pattern, list_pattern, list_splat_pattern) translate."""
     elts = _named(node)
     if len(elts) == 1:
-        return _h(unit, elts[0])
-    return _bare_tuple(unit, elts, None)
+        return _target_handle(unit, elts[0])
+    return _fixed("Tuple", None, (("elts", Children(tuple(_target_handle(unit, e) for e in elts))),))
 
 
 # --------------------------------------------------------------------------
@@ -182,7 +184,7 @@ def _pattern_list_targets(unit: SourceUnit, node: TSNode) -> ProviderHandle:
 # --------------------------------------------------------------------------
 
 
-def _block_stmts(unit: SourceUnit, node: Optional[TSNode]) -> Tuple[ProviderHandle, ...]:
+def _block_stmts(unit: SourceUnit, node: Optional[TSNode]) -> Tuple[BackendNode, ...]:
     if node is None:
         return ()
     out = []
@@ -206,10 +208,12 @@ def _expression_statement(unit: SourceUnit, node: TSNode) -> Description:
     kids = _named(node)
     if len(kids) == 1:
         return _describe(unit, kids[0])
-    # bare `a; b` on one physical statement line — each named child is its
-    # own small statement; the membrane has no multi-statement-line node,
-    # so this shape is not constructible as a single Expr and is a MISSING.
-    membrane_missing(
+    if len(kids) > 1:
+        # `f(x), "msg"` in statement position: a bare tuple — the same
+        # shape CPython's ast gives (Expr(Tuple)).
+        return Description(kind="Tuple", raw_span=_span(unit, node), anchors=(),
+                            slots=(("elts", Children(tuple(_h(unit, c) for c in kids))),))
+    vocabulary_missing(
         owner="tree_sitter_python_adapter._expression_statement",
         observed=f"expression_statement with {len(kids)} named children",
         requested="exactly one expression",
@@ -248,7 +252,7 @@ def _string_like(unit: SourceUnit, node: TSNode) -> Description:
         except Exception:
             value = text
         return _fixed_constant(span, value)
-    values: List[ProviderHandle] = []
+    values: List[BackendNode] = []
     for c in node.children:
         if c.type in ("string_start", "string_end"):
             continue
@@ -257,7 +261,7 @@ def _string_like(unit: SourceUnit, node: TSNode) -> Description:
         elif c.type == "interpolation":
             values.append(_interpolation(unit, c))
         else:
-            membrane_missing(
+            vocabulary_missing(
                 owner="tree_sitter_python_adapter._string_like",
                 observed=f"f-string child {c.type!r} not recognized",
                 requested="string_content or interpolation",
@@ -282,7 +286,7 @@ def _concatenated_string(unit: SourceUnit, node: TSNode) -> Description:
         except Exception:
             value = unit.source[span.start:span.end]
         return _fixed_constant(span, value)
-    values: List[ProviderHandle] = []
+    values: List[BackendNode] = []
     for p in pieces:
         for c in p.children:
             if c.type in ("string_start", "string_end"):
@@ -299,15 +303,15 @@ def _string_content(unit: SourceUnit, node: TSNode) -> Description:
     return _fixed_constant(span, unit.source[span.start:span.end])
 
 
-def _interpolation(unit: SourceUnit, node: TSNode) -> ProviderHandle:
+def _interpolation(unit: SourceUnit, node: TSNode) -> BackendNode:
     value = _field(node, "expression")
     conv_node = _field(node, "type_conversion")
     conversion = ord(_text(unit, conv_node)[1]) if conv_node is not None else -1
     spec_node = _field(node, "format_specifier")
-    format_spec: Optional[ProviderHandle] = None
+    format_spec: Optional[BackendNode] = None
     if spec_node is not None:
         spec_span = _span(unit, spec_node)
-        spec_values: List[ProviderHandle] = []
+        spec_values: List[BackendNode] = []
         for c in spec_node.children:
             if not c.is_named:
                 continue
@@ -325,7 +329,7 @@ def _interpolation(unit: SourceUnit, node: TSNode) -> ProviderHandle:
     )
 
 
-def _interpolation_like(unit: SourceUnit, node: TSNode, inner: TSNode) -> ProviderHandle:
+def _interpolation_like(unit: SourceUnit, node: TSNode, inner: TSNode) -> BackendNode:
     return _fixed("FormattedValue", _span(unit, node),
                   (("value", Child(_h(unit, inner))), ("conversion", SlotLeaf(-1)),
                    ("format_spec", MaybeChild(None))))
@@ -350,7 +354,7 @@ def _binary_operator(unit: SourceUnit, node: TSNode) -> Description:
     op_node = _field(node, "operator")
     kind = _BIN_TOKEN.get(op_node.type)
     if kind is None:
-        membrane_missing(
+        vocabulary_missing(
             owner="tree_sitter_python_adapter._binary_operator",
             observed=f"binary operator token {op_node.type!r} not recognized",
             requested="a known binary operator token",
@@ -381,7 +385,7 @@ def _unary_operator(unit: SourceUnit, node: TSNode) -> Description:
     arg = _field(node, "argument")
     kind = _UNARY_TOKEN.get(op_node.type)
     if kind is None:
-        membrane_missing(
+        vocabulary_missing(
             owner="tree_sitter_python_adapter._unary_operator",
             observed=f"unary operator token {op_node.type!r} not recognized",
             requested="'+', '-', or '~'",
@@ -393,7 +397,7 @@ def _unary_operator(unit: SourceUnit, node: TSNode) -> Description:
 
 def _comparison_operator(unit: SourceUnit, node: TSNode) -> Description:
     kids = list(node.children)
-    named = [c for c in kids if c.is_named]
+    named = [c for c in kids if c.is_named and c.type not in _SKIP_TYPES]
     left = named[0]
     comparators = named[1:]
     op_tokens = [c for c in kids if not c.is_named]
@@ -402,7 +406,7 @@ def _comparison_operator(unit: SourceUnit, node: TSNode) -> Description:
         text = t.type if t.type not in ("is not", "not in") else t.type
         kind = _CMP_TOKEN.get(t.type)
         if kind is None:
-            membrane_missing(
+            vocabulary_missing(
                 owner="tree_sitter_python_adapter._comparison_operator",
                 observed=f"comparison token {t.type!r} not recognized",
                 requested="a known comparison operator token",
@@ -422,8 +426,8 @@ def _comparison_operator(unit: SourceUnit, node: TSNode) -> Description:
 def _call(unit: SourceUnit, node: TSNode) -> Description:
     func = _field(node, "function")
     arglist = _field(node, "arguments")
-    args: List[ProviderHandle] = []
-    keywords: List[ProviderHandle] = []
+    args: List[BackendNode] = []
+    keywords: List[BackendNode] = []
     if arglist is not None:
         if arglist.type == "generator_expression":
             args.append(_h(unit, arglist))
@@ -468,7 +472,7 @@ def _subscript(unit: SourceUnit, node: TSNode) -> Description:
                         slots=(("value", Child(_h(unit, value))), ("slice_", Child(slice_handle))))
 
 
-def _one_subscript_item(unit: SourceUnit, node: TSNode) -> ProviderHandle:
+def _one_subscript_item(unit: SourceUnit, node: TSNode) -> BackendNode:
     if node.type != "slice":
         return _h(unit, node)
     parts = [c for c in node.children]
@@ -492,7 +496,7 @@ def _one_subscript_item(unit: SourceUnit, node: TSNode) -> ProviderHandle:
 def _parenthesized_expression(unit: SourceUnit, node: TSNode) -> Description:
     inner = _named(node)
     if len(inner) != 1:
-        membrane_missing(
+        vocabulary_missing(
             owner="tree_sitter_python_adapter._parenthesized_expression",
             observed=f"parenthesized_expression with {len(inner)} named children",
             requested="exactly one inner expression",
@@ -508,7 +512,7 @@ def _tuple_expr(unit: SourceUnit, node: TSNode) -> Description:
 
 
 def _list_expr(unit: SourceUnit, node: TSNode) -> Description:
-    elts: List[ProviderHandle] = []
+    elts: List[BackendNode] = []
     for c in _named(node):
         if c.type == "list_splat":
             inner = c.children[1]
@@ -525,7 +529,7 @@ def _set_expr(unit: SourceUnit, node: TSNode) -> Description:
 
 
 def _dictionary(unit: SourceUnit, node: TSNode) -> Description:
-    items: List[ProviderHandle] = []
+    items: List[BackendNode] = []
     for c in _named(node):
         if c.type == "pair":
             key = _field(c, "key")
@@ -537,7 +541,7 @@ def _dictionary(unit: SourceUnit, node: TSNode) -> Description:
             items.append(_fixed("DictItem", _span(unit, c),
                                  (("key", MaybeChild(None)), ("value", Child(_h(unit, inner))))))
         else:
-            membrane_missing(
+            vocabulary_missing(
                 owner="tree_sitter_python_adapter._dictionary",
                 observed=f"dictionary child {c.type!r} not recognized",
                 requested="pair or dictionary_splat",
@@ -558,11 +562,11 @@ def _comprehension_clause(unit: SourceUnit, node: TSNode) -> Description:
                                ("ifs", Children(())), ("is_async", SlotLeaf(is_async))))
 
 
-def _comprehension_body(unit: SourceUnit, node: TSNode, elt_field: str) -> Tuple[ProviderHandle, Tuple[ProviderHandle, ...]]:
+def _comprehension_body(unit: SourceUnit, node: TSNode, elt_field: str) -> Tuple[BackendNode, Tuple[BackendNode, ...]]:
     elt = _field(node, elt_field)
-    generators: List[ProviderHandle] = []
+    generators: List[BackendNode] = []
     current_desc: Optional[Description] = None
-    current_ifs: List[ProviderHandle] = []
+    current_ifs: List[BackendNode] = []
     for c in node.children:
         if c.type == "for_in_clause":
             if current_desc is not None:
@@ -577,7 +581,7 @@ def _comprehension_body(unit: SourceUnit, node: TSNode, elt_field: str) -> Tuple
     return _h(unit, elt), tuple(generators)
 
 
-def _finish_clause(desc: Description, ifs: List[ProviderHandle]) -> ProviderHandle:
+def _finish_clause(desc: Description, ifs: List[BackendNode]) -> BackendNode:
     new_slots = tuple((n, Children(tuple(ifs))) if n == "ifs" else (n, s) for n, s in desc.slots)
     return _fixed(desc.kind, desc.raw_span, new_slots, desc.anchors)
 
@@ -604,9 +608,9 @@ def _dictionary_comprehension(unit: SourceUnit, node: TSNode) -> Description:
     body = _field(node, "body")
     key = _field(body, "key")
     value = _field(body, "value")
-    generators: List[ProviderHandle] = []
+    generators: List[BackendNode] = []
     current_desc: Optional[Description] = None
-    current_ifs: List[ProviderHandle] = []
+    current_ifs: List[BackendNode] = []
     for c in node.children:
         if c.type == "for_in_clause":
             if current_desc is not None:
@@ -665,10 +669,10 @@ def _lambda(unit: SourceUnit, node: TSNode) -> Description:
 # --------------------------------------------------------------------------
 
 
-def _flatten_params(unit: SourceUnit, node: Optional[TSNode]) -> Tuple[ProviderHandle, ...]:
+def _flatten_params(unit: SourceUnit, node: Optional[TSNode]) -> Tuple[BackendNode, ...]:
     if node is None:
         return ()
-    params: List[ProviderHandle] = []
+    params: List[BackendNode] = []
     seen_star = False
     seen_slash_at: Optional[int] = None
     for c in node.children:
@@ -687,13 +691,13 @@ def _flatten_params(unit: SourceUnit, node: Optional[TSNode]) -> Tuple[ProviderH
     return tuple(params)
 
 
-def _retag(handle: ProviderHandle, kind: str) -> ProviderHandle:
+def _retag(handle: BackendNode, kind: str) -> BackendNode:
     desc = handle.describe()
     new_slots = tuple((n, SlotLeaf(kind)) if n == "param_kind" else (n, s) for n, s in desc.slots)
     return _fixed(desc.kind, desc.raw_span, new_slots, desc.anchors)
 
 
-def _one_param(unit: SourceUnit, node: TSNode, after_star: bool) -> ProviderHandle:
+def _one_param(unit: SourceUnit, node: TSNode, after_star: bool) -> BackendNode:
     span = _span(unit, node)
     if node.type == "identifier":
         return _fixed("Param", None,
@@ -749,7 +753,7 @@ def _one_param(unit: SourceUnit, node: TSNode, after_star: bool) -> ProviderHand
                         ("default", MaybeChild(_h(unit, value_node))),
                         ("param_kind", SlotLeaf("keyword_only" if after_star else "positional_or_keyword"))),
                        anchors=(_span(unit, name_node),))
-    membrane_missing(
+    vocabulary_missing(
         owner="tree_sitter_python_adapter._one_param",
         observed=f"parameter shape {node.type!r} not recognized",
         requested="a mapped parameter shape",
@@ -782,7 +786,7 @@ def _assignment(unit: SourceUnit, node: TSNode) -> Description:
                         slots=(("targets", Children(target_handles)), ("value", Child(_h(unit, value_node)))))
 
 
-def _target_handle(unit: SourceUnit, node: TSNode) -> ProviderHandle:
+def _target_handle(unit: SourceUnit, node: TSNode) -> BackendNode:
     if node.type in ("pattern_list", "expression_list"):
         elts = _named(node)
         if len(elts) == 1:
@@ -806,7 +810,7 @@ def _augmented_assignment(unit: SourceUnit, node: TSNode) -> Description:
     op_node = _field(node, "operator")
     kind = _AUG_TOKEN.get(op_node.type)
     if kind is None:
-        membrane_missing(
+        vocabulary_missing(
             owner="tree_sitter_python_adapter._augmented_assignment",
             observed=f"augmented assignment token {op_node.type!r} not recognized",
             requested="a known augmented assignment token",
@@ -819,7 +823,7 @@ def _augmented_assignment(unit: SourceUnit, node: TSNode) -> Description:
 
 def _return_statement(unit: SourceUnit, node: TSNode) -> Description:
     named = _named(node)
-    value: Optional[ProviderHandle] = None
+    value: Optional[BackendNode] = None
     if named:
         if len(named) > 1:
             value = _bare_tuple(unit, named, None)
@@ -871,7 +875,7 @@ def _if_statement(unit: SourceUnit, node: TSNode) -> Description:
     test = _field(node, "condition")
     body = _block_stmts(unit, _field(node, "consequence"))
     alt = _field(node, "alternative")
-    orelse: Tuple[ProviderHandle, ...]
+    orelse: Tuple[BackendNode, ...]
     if alt is None:
         orelse = ()
     elif alt.type == "elif_clause":
@@ -882,12 +886,12 @@ def _if_statement(unit: SourceUnit, node: TSNode) -> Description:
                         slots=(("test", Child(_h(unit, test))), ("body", Children(body)), ("orelse", Children(orelse))))
 
 
-def _elif_handle(unit: SourceUnit, node: TSNode) -> ProviderHandle:
+def _elif_handle(unit: SourceUnit, node: TSNode) -> BackendNode:
     test = _field(node, "condition")
     body = _block_stmts(unit, _field(node, "consequence"))
     alt = _field(node, "alternative")
     if alt is None:
-        orelse: Tuple[ProviderHandle, ...] = ()
+        orelse: Tuple[BackendNode, ...] = ()
     elif alt.type == "elif_clause":
         orelse = (_elif_handle(unit, alt),)
     else:
@@ -923,11 +927,28 @@ def _for_statement(unit: SourceUnit, node: TSNode) -> Description:
 def _with_statement(unit: SourceUnit, node: TSNode) -> Description:
     clause = _field(node, None) if False else None
     with_clause = next(c for c in node.children if c.type == "with_clause")
-    items: List[ProviderHandle] = []
+    items: List[BackendNode] = []
     for it in _named(with_clause):
         if it.type != "with_item":
             continue
         value = _field(it, "value")
+        if value.type == "parenthesized_expression" and any(
+            c.type == "as_pattern" for c in _named(value)
+        ):
+            # `with (A as a, B as b):` — the parens wrap the item list.
+            for c in _named(value):
+                if c.type == "as_pattern":
+                    ctx = _named(c)[0]
+                    alias = _field(c, "alias")
+                    alias_inner = _named(alias)[0] if alias is not None else None
+                    items.append(_fixed("WithItem", _span(unit, c),
+                                         (("context_expr", Child(_h(unit, ctx))),
+                                          ("optional_vars", MaybeChild(_h(unit, alias_inner))))))
+                else:
+                    items.append(_fixed("WithItem", _span(unit, c),
+                                         (("context_expr", Child(_h(unit, c))),
+                                          ("optional_vars", MaybeChild(None)))))
+            continue
         if value.type == "as_pattern":
             ctx = _named(value)[0]
             alias = _field(value, "alias")
@@ -946,9 +967,9 @@ def _with_statement(unit: SourceUnit, node: TSNode) -> Description:
 
 def _try_statement(unit: SourceUnit, node: TSNode) -> Description:
     body = _block_stmts(unit, _field(node, "body"))
-    handlers: List[ProviderHandle] = []
-    orelse: Tuple[ProviderHandle, ...] = ()
-    finalbody: Tuple[ProviderHandle, ...] = ()
+    handlers: List[BackendNode] = []
+    orelse: Tuple[BackendNode, ...] = ()
+    finalbody: Tuple[BackendNode, ...] = ()
     is_star = False
     for c in node.children:
         if c.type == "except_clause":
@@ -995,8 +1016,8 @@ def _function_definition(unit: SourceUnit, node: TSNode) -> Description:
 def _class_definition(unit: SourceUnit, node: TSNode) -> Description:
     name = _text(unit, _field(node, "name"))
     supers = _field(node, "superclasses")
-    bases: List[ProviderHandle] = []
-    keywords: List[ProviderHandle] = []
+    bases: List[BackendNode] = []
+    keywords: List[BackendNode] = []
     if supers is not None:
         for c in _named(supers):
             if c.type == "keyword_argument":
@@ -1038,7 +1059,7 @@ def _import_statement(unit: SourceUnit, node: TSNode) -> Description:
     return Description(kind="Import", raw_span=_span(unit, node), anchors=(), slots=(("names", Children(tuple(names))),))
 
 
-def _import_alias(unit: SourceUnit, node: TSNode) -> ProviderHandle:
+def _import_alias(unit: SourceUnit, node: TSNode) -> BackendNode:
     if node.type == "aliased_import":
         name_node = _field(node, "name")
         alias_node = _field(node, "alias")
@@ -1077,13 +1098,13 @@ def _import_from_statement(unit: SourceUnit, node: TSNode) -> Description:
                         slots=(("module", SlotLeaf(module)), ("names", Children(names)), ("level", SlotLeaf(level))))
 
 
-def _dotted_name_expr(unit: SourceUnit, node: TSNode) -> ProviderHandle:
+def _dotted_name_expr(unit: SourceUnit, node: TSNode) -> BackendNode:
     """`a.b.c` used as an expression (e.g. a match-pattern class name), built
     as nested Attribute over its identifier parts — only reachable here for
     a bare dotted_name that never went through the normal atom_expr/trailer
     fold (match patterns hold it directly, not inside an atom_expr)."""
     parts = [c for c in node.children if c.type == "identifier"]
-    acc: ProviderHandle = _h(unit, parts[0])
+    acc: BackendNode = _h(unit, parts[0])
     start = _span(unit, parts[0]).start
     for p in parts[1:]:
         end = _span(unit, p).end
@@ -1107,15 +1128,39 @@ def _generic_type(unit: SourceUnit, node: TSNode) -> Description:
                         slots=(("value", Child(_h(unit, base))), ("slice_", Child(slice_handle))))
 
 
+def _type_var(unit: SourceUnit, item: TSNode) -> BackendNode:
+    """One `[T]` / `[T: bound]` type parameter -> a TypeVar handle."""
+    inner = _named(item)[0] if item.type == "type" else item
+    if inner.type == "constrained_type":
+        name_node, bound_node = _named(inner)[0], _named(inner)[1]
+        name_inner = _named(name_node)[0] if name_node.type == "type" else name_node
+        bound_inner = _named(bound_node)[0] if bound_node.type == "type" else bound_node
+        return _fixed("TypeVar", _span(unit, inner),
+                       (("name", SlotLeaf(_text(unit, name_inner))),
+                        ("bound", MaybeChild(_h(unit, bound_inner))),
+                        ("default_value", MaybeChild(None))))
+    return _fixed("TypeVar", _span(unit, inner),
+                   (("name", SlotLeaf(_text(unit, inner))),
+                    ("bound", MaybeChild(None)),
+                    ("default_value", MaybeChild(None))))
+
+
 def _type_alias_statement(unit: SourceUnit, node: TSNode) -> Description:
-    # PEP 695 `type X = int` / `type X[T] = list[T]`. Generic `[T]` type
-    # parameters are not further destructured here (rare in this corpus);
-    # an alias with them still constructs, just with an empty type_params.
+    # PEP 695 `type X = int` / `type X[T: bound] = list[T]`.
     left = _field(node, "left")
     right = _field(node, "right")
     name_expr = _named(left)[0] if left.type not in ("identifier",) else left
+    type_params: tuple = ()
+    if name_expr.type == "generic_type":
+        base, param_list = _named(name_expr)[0], _named(name_expr)[1]
+        type_params = tuple(
+            _type_var(unit, i)
+            for i in param_list.children
+            if i.is_named and i.type not in _SKIP_TYPES
+        )
+        name_expr = base
     return Description(kind="TypeAlias", raw_span=_span(unit, node), anchors=(),
-                        slots=(("name", Child(_h(unit, name_expr))), ("type_params", Children(())),
+                        slots=(("name", Child(_h(unit, name_expr))), ("type_params", Children(type_params)),
                                ("value", Child(_h(unit, _named(right)[0] if right.type == "type" else right)))))
 
 
@@ -1137,7 +1182,7 @@ def _match_statement(unit: SourceUnit, node: TSNode) -> Description:
                         slots=(("subject", Child(_h(unit, subject))), ("cases", Children(tuple(cases)))))
 
 
-def _case_clause(unit: SourceUnit, node: TSNode) -> ProviderHandle:
+def _case_clause(unit: SourceUnit, node: TSNode) -> BackendNode:
     # tree-sitter-python does not expose a 'pattern' field on case_clause;
     # the pattern(s) are the case_pattern named children preceding 'if'/':'.
     pattern_nodes = [c for c in node.children if c.type == "case_pattern"]
@@ -1156,7 +1201,7 @@ def _case_clause(unit: SourceUnit, node: TSNode) -> ProviderHandle:
                    ("body", Children(body))))
 
 
-def _pattern(unit: SourceUnit, node: TSNode) -> ProviderHandle:
+def _pattern(unit: SourceUnit, node: TSNode) -> BackendNode:
     if node.type == "case_pattern":
         inner = _named(node)
         if len(inner) == 1:
@@ -1196,9 +1241,9 @@ def _pattern(unit: SourceUnit, node: TSNode) -> ProviderHandle:
         return _fixed("MatchOr", span, (("patterns", Children(tuple(items))),))
     if node.type == "class_pattern":
         cls_node = _named(node)[0]
-        positional: List[ProviderHandle] = []
+        positional: List[BackendNode] = []
         kwd_attrs: List[str] = []
-        kwd_patterns: List[ProviderHandle] = []
+        kwd_patterns: List[BackendNode] = []
         for raw in _named(node)[1:]:
             # each argument is wrapped in its own case_pattern
             c = _named(raw)[0] if raw.type == "case_pattern" else raw
@@ -1213,8 +1258,8 @@ def _pattern(unit: SourceUnit, node: TSNode) -> ProviderHandle:
                       (("cls_", Child(_h(unit, cls_node))), ("patterns", Children(tuple(positional))),
                        ("kwd_attrs", SlotLeaf(tuple(kwd_attrs))), ("kwd_patterns", Children(tuple(kwd_patterns)))))
     if node.type == "dict_pattern":
-        keys: List[ProviderHandle] = []
-        patterns: List[ProviderHandle] = []
+        keys: List[BackendNode] = []
+        patterns: List[BackendNode] = []
         rest: Optional[str] = None
         kids = list(node.children)
         i = 0
@@ -1239,7 +1284,7 @@ def _pattern(unit: SourceUnit, node: TSNode) -> ProviderHandle:
             i = j + 1
         return _fixed("MatchMapping", span,
                       (("keys", Children(tuple(keys))), ("patterns", Children(tuple(patterns))), ("rest", SlotLeaf(rest))))
-    membrane_missing(
+    vocabulary_missing(
         owner="tree_sitter_python_adapter._pattern",
         observed=f"case pattern shape {node.type!r} not recognized",
         requested="a mapped match-pattern shape",
@@ -1248,7 +1293,7 @@ def _pattern(unit: SourceUnit, node: TSNode) -> ProviderHandle:
     raise AssertionError("unreachable")
 
 
-def _pattern_item(unit: SourceUnit, node: TSNode) -> ProviderHandle:
+def _pattern_item(unit: SourceUnit, node: TSNode) -> BackendNode:
     if node.type == "case_pattern":
         return _pattern(unit, node)
     return _pattern(unit, node)
@@ -1272,7 +1317,7 @@ _LEAF_DISPATCH = {
 def _describe(unit: SourceUnit, node: TSNode) -> Description:
     t = node.type
     if not node.is_named:
-        membrane_missing(
+        vocabulary_missing(
             owner="tree_sitter_python_adapter._describe",
             observed=f"unnamed/punctuation node {t!r} reached the dispatcher",
             requested="a named grammar node",
@@ -1286,7 +1331,7 @@ def _describe(unit: SourceUnit, node: TSNode) -> Description:
     fn = _DISPATCH.get(t)
     if fn is not None:
         return fn(unit, node)
-    membrane_missing(
+    vocabulary_missing(
         owner="tree_sitter_python_adapter._describe",
         observed=f"tree-sitter node type {t!r} has no translation rule",
         requested="a mapped statement/expression shape",
@@ -1368,15 +1413,15 @@ _DISPATCH = {
 }
 
 
-class TreeSitterPythonProvider(Provider):
-    """tree-sitter-python: C, incremental — the fourth candidate provider."""
+class TreeSitterPythonBackend(Backend):
+    """tree-sitter-python: C, incremental — the fourth candidate backend."""
 
     name = "tree-sitter-python"
 
     def __init__(self) -> None:
         self._parser = tree_sitter.Parser(_LANGUAGE)
 
-    def parse(self, unit: SourceUnit) -> ProviderHandle:
+    def root(self, unit: SourceUnit) -> BackendNode:
         tree = self._parser.parse(unit.source.encode("utf-8"))
         root = tree.root_node
         if root.has_error:

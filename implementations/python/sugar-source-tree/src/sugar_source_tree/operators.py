@@ -1,6 +1,6 @@
 """Operators are classes, not an enum.
 
-An enum would reintroduce exactly the tag dispatch the membrane exists to
+An enum would reintroduce exactly the tag dispatch the tree exists to
 kill: every consumer would ``match`` on the tag. As classes, behavior that
 varies by operator lives ON the operator, and asking "which operator" is
 ``isinstance`` on OUR classes — the blessed form.
@@ -12,7 +12,7 @@ Operators carry no children and no span; each concrete class is a singleton
 
 from __future__ import annotations
 
-from .panic import MembranePanic, membrane_missing
+from .panic import SourceTreePanic, vocabulary_missing
 
 
 class Operator:
@@ -29,12 +29,12 @@ class Operator:
     @classmethod
     def instance(cls) -> "Operator":
         if cls is Operator or not cls.kind:
-            # Internal invariant, not a provider question: operator_for
+            # Internal invariant, not a backend question: operator_for
             # (below) only ever resolves to a concrete registered class, so
             # reaching here means OUR OWN code called .instance() on an
-            # abstract class directly. Not a vocabulary gap, not a provider
+            # abstract class directly. Not a vocabulary gap, not a backend
             # defect — raised as the common base deliberately.
-            raise MembranePanic(
+            raise SourceTreePanic(
                 owner="operators.Operator.instance",
                 observed=f"instance() on abstract {cls.__name__}",
                 requested="a concrete operator class",
@@ -169,7 +169,7 @@ def operator_for(kind: str) -> Operator:
     """Frozen-vocabulary lookup: two arms — resolved, or panic."""
     cls = _OPERATORS.get(kind)
     if cls is None:
-        membrane_missing(
+        vocabulary_missing(
             owner="operators.operator_for",
             observed=f"operator kind {kind!r} not in the frozen vocabulary",
             requested="one of the declared Operator classes",

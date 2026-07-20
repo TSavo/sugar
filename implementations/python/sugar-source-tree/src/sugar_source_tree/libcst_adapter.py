@@ -1,17 +1,17 @@
-"""LibCST provider adapter — the second provider (#5940, #5932).
+"""LibCST backend adapter — the second backend (#5940, #5932).
 
 THE ONLY MODULE IN THIS PACKAGE THAT MAY NAME ``libcst``. Same read-only
 contract as ``cpython_adapter``: ``parse(unit) -> handle``, and per handle a
 single ``describe()`` giving our kind, our codepoint span, and our fields as
 slots. Nothing is ever written onto a LibCST node (they are immutable
-anyway), no provider node is ever constructed, and no handle travels above
+anyway), no backend node is ever constructed, and no handle travels above
 the builder.
 
-Why a second provider exists at all: #5932 isolated an intermittent SIGSEGV
+Why a second backend exists at all: #5932 isolated an intermittent SIGSEGV
 to CPython's own ``ast.parse`` -> ``compile()``. LibCST is Rust-backed and
-does not call ``compile()``. T's rule — a provider that segfaults, or
+does not call ``compile()``. T's rule — a backend that segfaults, or
 diverges on the golden corpus, is not debugged, it is uninstalled — only has
-teeth when a second provider exists to switch to.
+teeth when a second backend exists to switch to.
 
 MAPPING NOTES (LibCST is a CONCRETE syntax tree; ours is AST-shaped)
 ====================================================================
@@ -52,7 +52,7 @@ What this adapter must translate, because the CST vocabulary differs:
   ``Name``. All become our ``Constant``.
 - **n-ary flattening.** ``a and b and c`` is left-nested in LibCST and
   n-ary in our ``BoolOp.values``; same for ``del a, b`` against our
-  ``Delete.targets``. The membrane class declares the arity, so the adapter
+  ``Delete.targets``. The node class declares the arity, so the adapter
   flattens into it.
 - **Format specs.** LibCST carries a format spec as a bare sequence of
   content nodes with no wrapper; our ``FormattedValue.format_spec`` is a
@@ -65,8 +65,8 @@ the conformance finding itself.
 
 Source LibCST cannot parse at all raises ``libcst.ParserSyntaxError`` —
 which does NOT subclass ``SyntaxError`` (#5946). This adapter catches it
-and re-raises ``ProviderRefused`` (backend.py), never letting the
-library-native type escape, so a caller written against one provider
+and re-raises ``BackendRefused`` (backend.py), never letting the
+library-native type escape, so a caller written against one backend
 never silently stops working when the other is swapped in.
 """
 
@@ -85,14 +85,14 @@ from .backend import (
     MaybeChild,
     OpLeaf,
     OpsLeaf,
-    Provider,
-    ProviderHandle,
-    ProviderRefused,
+    Backend,
+    BackendNode,
+    BackendRefused,
     Slot,
 )
 from .nodes import SourceUnit
 from .operators import Operator, operator_for
-from .panic import membrane_missing, membrane_provider_defect
+from .panic import vocabulary_missing, backend_defect
 from .spans import Span
 
 
@@ -112,11 +112,11 @@ class _Ctx:
 
     def span(self, node: cst.CSTNode) -> Span:
         """LibCST CodeRange -> our codepoint Span. Columns are ALREADY
-        codepoints; there is no byte seam on this provider."""
+        codepoints; there is no byte seam on this backend."""
         try:
             rng = self.positions[node]  # type: ignore[index]
         except KeyError:
-            membrane_missing(
+            vocabulary_missing(
                 owner="libcst_adapter._Ctx.span",
                 observed=f"libcst {type(node).__name__} carries no position",
                 requested="a positioned node, or a rule marking it envelope-spanned",
@@ -134,7 +134,7 @@ class _Ctx:
 # --------------------------------------------------------------------------
 
 
-class _Handle(ProviderHandle):
+class _Handle(BackendNode):
     """Read-only view of one LibCST node, described by its rule."""
 
     __slots__ = ("_ctx", "_node", "_desc")
@@ -153,13 +153,13 @@ class _Handle(ProviderHandle):
         return f"<libcst-handle {type(self._node).__name__} in {self._ctx.unit.filename}>"
 
 
-class _Synth(ProviderHandle):
-    """A membrane constituent LibCST does not materialize as one node.
+class _Synth(BackendNode):
+    """A tree constituent LibCST does not materialize as one node.
 
     Used where the CST vocabulary is coarser or finer than ours: a
     ``DictItem`` pair, a ``Param``, a format-spec ``JoinedStr``, a
-    multi-element subscript ``Tuple``. It describes membrane fields over
-    LibCST children — it never constructs a provider node.
+    multi-element subscript ``Tuple``. It describes node fields over
+    LibCST children — it never constructs a backend node.
     """
 
     __slots__ = ("_kind", "_raw_span", "_anchors", "_slots", "_label")
@@ -217,7 +217,7 @@ def _asname_str(node: Optional[cst.AsName]) -> Optional[str]:
     target = node.name
     if isinstance(target, cst.Name):
         return target.value
-    membrane_missing(
+    vocabulary_missing(
         owner="libcst_adapter._asname_str",
         observed=f"AsName over {type(target).__name__}, not a Name",
         requested="a simple name binding",
@@ -234,7 +234,7 @@ def _dotted(node: cst.BaseExpression) -> str:
         parts.append(cur.attr.value)
         cur = cur.value
     if not isinstance(cur, cst.Name):
-        membrane_missing(
+        vocabulary_missing(
             owner="libcst_adapter._dotted",
             observed=f"import target head is {type(cur).__name__}, not a Name",
             requested="a Name or a chain of Attribute over a Name",
@@ -249,9 +249,9 @@ def _dotted(node: cst.BaseExpression) -> str:
 # --------------------------------------------------------------------------
 
 
-def _statements(ctx: _Ctx, body: object) -> Tuple[ProviderHandle, ...]:
+def _statements(ctx: _Ctx, body: object) -> Tuple[BackendNode, ...]:
     """A CST suite/block/line -> our flat tuple of statement handles."""
-    out: list[ProviderHandle] = []
+    out: list[BackendNode] = []
     pending: list[object] = [body]
     while pending:
         item = pending.pop(0)
@@ -273,7 +273,7 @@ def _statements(ctx: _Ctx, body: object) -> Tuple[ProviderHandle, ...]:
         if isinstance(item, cst.CSTNode):
             out.append(_Handle(ctx, item))
             continue
-        membrane_missing(
+        vocabulary_missing(
             owner="libcst_adapter._statements",
             observed=f"{type(item).__name__} in statement position",
             requested="a CST statement, suite, or block",
@@ -282,7 +282,7 @@ def _statements(ctx: _Ctx, body: object) -> Tuple[ProviderHandle, ...]:
     return tuple(out)
 
 
-def _orelse(ctx: _Ctx, node: object) -> Tuple[ProviderHandle, ...]:
+def _orelse(ctx: _Ctx, node: object) -> Tuple[BackendNode, ...]:
     """``If.orelse``: an ``Else`` (flattened) or a nested ``If`` (an elif)."""
     if node is None:
         return ()
@@ -290,7 +290,7 @@ def _orelse(ctx: _Ctx, node: object) -> Tuple[ProviderHandle, ...]:
         return _statements(ctx, node.body)
     if isinstance(node, cst.If):
         return (_Handle(ctx, node),)
-    membrane_missing(
+    vocabulary_missing(
         owner="libcst_adapter._orelse",
         observed=f"{type(node).__name__} in orelse position",
         requested="an Else or a nested If",
@@ -356,9 +356,9 @@ _COMPARE_OPS = {
 def _op(table: dict[str, str], node: cst.CSTNode, where: str) -> Operator:
     kind = table.get(type(node).__name__)
     if kind is None:
-        membrane_missing(
+        vocabulary_missing(
             owner=f"libcst_adapter._op[{where}]",
-            observed=f"libcst operator {type(node).__name__} has no membrane operator",
+            observed=f"libcst operator {type(node).__name__} has no tree operator",
             requested="a mapping into the frozen operator vocabulary",
             fix="add the operator deliberately in operators.py and here; never guess",
         )
@@ -406,7 +406,7 @@ def _comp_for_anchor(ctx: _Ctx, node: cst.CompFor) -> Span:
             continue
         break
     if not (src.startswith("for", j) or src.startswith("async", j)):
-        membrane_missing(
+        vocabulary_missing(
             owner="libcst_adapter._comp_for_anchor",
             observed=f"no 'for'/'async' keyword at comprehension clause start {j}",
             requested="'for' (optionally 'async for') opening the clause",
@@ -415,10 +415,10 @@ def _comp_for_anchor(ctx: _Ctx, node: cst.CompFor) -> Span:
     return Span(j, j)
 
 
-def _comp_clauses(ctx: _Ctx, first: cst.CompFor) -> Tuple[ProviderHandle, ...]:
+def _comp_clauses(ctx: _Ctx, first: cst.CompFor) -> Tuple[BackendNode, ...]:
     """LibCST nests comprehension clauses via ``inner_for_in``; our
     ``generators`` is a flat tuple. Iterative, never recursive."""
-    out: list[ProviderHandle] = []
+    out: list[BackendNode] = []
     cur: Optional[cst.CompFor] = first
     while cur is not None:
         out.append(_Handle(ctx, cur))
@@ -465,7 +465,7 @@ def _concat_parts(node: cst.BaseExpression) -> list[cst.BaseExpression]:
 # --------------------------------------------------------------------------
 
 
-def _param_handle(ctx: _Ctx, param: cst.Param, param_kind: str) -> ProviderHandle:
+def _param_handle(ctx: _Ctx, param: cst.Param, param_kind: str) -> BackendNode:
     """One formal parameter, anchored on its NAME token.
 
     Our spec excludes the ``*``/``**`` sigil from a ``Param`` span (it is an
@@ -490,7 +490,7 @@ def _param_handle(ctx: _Ctx, param: cst.Param, param_kind: str) -> ProviderHandl
 
 
 def _params(ctx: _Ctx, params: cst.Parameters) -> Children:
-    out: list[ProviderHandle] = []
+    out: list[BackendNode] = []
     for p in params.posonly_params:
         out.append(_param_handle(ctx, p, "positional_only"))
     for p in params.params:
@@ -501,7 +501,7 @@ def _params(ctx: _Ctx, params: cst.Parameters) -> Children:
     elif isinstance(star_arg, cst.ParamStar):
         pass  # bare ``*`` separator: a marker, not a parameter
     elif star_arg is not None and not isinstance(star_arg, cst.MaybeSentinel):
-        membrane_missing(
+        vocabulary_missing(
             owner="libcst_adapter._params",
             observed=f"star_arg is {type(star_arg).__name__}",
             requested="a Param, a ParamStar, or absent",
@@ -521,12 +521,12 @@ def _params(ctx: _Ctx, params: cst.Parameters) -> Children:
 
 def _split_args(
     ctx: _Ctx, args: Sequence[cst.Arg]
-) -> tuple[Tuple[ProviderHandle, ...], Tuple[ProviderHandle, ...]]:
+) -> tuple[Tuple[BackendNode, ...], Tuple[BackendNode, ...]]:
     """CST ``Arg`` is one node for four shapes. Ours splits positional
     (including ``*spread``, which becomes ``Starred``) from keywords
     (including ``**spread``, a ``Keyword`` with ``arg is None``)."""
-    positional: list[ProviderHandle] = []
-    keywords: list[ProviderHandle] = []
+    positional: list[BackendNode] = []
+    keywords: list[BackendNode] = []
     for arg in args:
         if arg.star == "*":
             positional.append(
@@ -570,7 +570,7 @@ def _split_args(
 
 def _elements(ctx: _Ctx, elements: Sequence[cst.BaseElement]) -> Children:
     """``Element``/``StarredElement`` wrappers -> our expressions."""
-    out: list[ProviderHandle] = []
+    out: list[BackendNode] = []
     for el in elements:
         if isinstance(el, cst.StarredElement):
             out.append(
@@ -584,7 +584,7 @@ def _elements(ctx: _Ctx, elements: Sequence[cst.BaseElement]) -> Children:
         elif isinstance(el, cst.Element):
             out.append(_Handle(ctx, el.value))
         else:
-            membrane_missing(
+            vocabulary_missing(
                 owner="libcst_adapter._elements",
                 observed=f"{type(el).__name__} in element position",
                 requested="an Element or a StarredElement",
@@ -594,7 +594,7 @@ def _elements(ctx: _Ctx, elements: Sequence[cst.BaseElement]) -> Children:
 
 
 def _dict_items(ctx: _Ctx, elements: Sequence[cst.BaseDictElement]) -> Children:
-    out: list[ProviderHandle] = []
+    out: list[BackendNode] = []
     for el in elements:
         if isinstance(el, cst.DictElement):
             out.append(
@@ -621,7 +621,7 @@ def _dict_items(ctx: _Ctx, elements: Sequence[cst.BaseDictElement]) -> Children:
                 )
             )
         else:
-            membrane_missing(
+            vocabulary_missing(
                 owner="libcst_adapter._dict_items",
                 observed=f"{type(el).__name__} in dict element position",
                 requested="a DictElement or a StarredDictElement",
@@ -664,13 +664,13 @@ def _subscript_slice(ctx: _Ctx, node: cst.Subscript) -> Child:
     )
 
 
-def _slice_element(ctx: _Ctx, element: cst.SubscriptElement) -> ProviderHandle:
+def _slice_element(ctx: _Ctx, element: cst.SubscriptElement) -> BackendNode:
     inner = element.slice
     if isinstance(inner, cst.Index):
         return _Handle(ctx, inner.value)
     if isinstance(inner, cst.Slice):
         return _Handle(ctx, inner)
-    membrane_missing(
+    vocabulary_missing(
         owner="libcst_adapter._slice_element",
         observed=f"{type(inner).__name__} in subscript position",
         requested="an Index or a Slice",
@@ -694,7 +694,7 @@ def _format_spec(
         return MaybeChild(None)
     parts = list(spec)
     if not parts:
-        membrane_missing(
+        vocabulary_missing(
             owner="libcst_adapter._format_spec",
             observed="an empty format spec with no content to span",
             requested="a spec with at least one content node, or no spec at all",
@@ -719,7 +719,7 @@ _CONVERSIONS = {None: -1, "s": 115, "r": 114, "a": 97}
 def _conversion(value: Optional[str]) -> int:
     code = _CONVERSIONS.get(value)
     if code is None:
-        membrane_missing(
+        vocabulary_missing(
             owner="libcst_adapter._conversion",
             observed=f"f-string conversion {value!r}",
             requested="one of !s, !r, !a, or none",
@@ -995,7 +995,7 @@ def _r_importfrom(ctx: _Ctx, n: cst.ImportFrom) -> Description:
     module = None if n.module is None else _dotted(n.module)
     names = n.names
     if isinstance(names, cst.ImportStar):
-        aliases: Tuple[ProviderHandle, ...] = (
+        aliases: Tuple[BackendNode, ...] = (
             _Synth(
                 kind="ImportAlias",
                 raw_span=ctx.span(names),
@@ -1097,7 +1097,7 @@ def _r_matchsingleton(ctx: _Ctx, n: cst.MatchSingleton) -> Description:
 def _singleton(text: str) -> object:
     table: dict[str, object] = {"True": True, "False": False, "None": None}
     if text not in table:
-        membrane_missing(
+        vocabulary_missing(
             owner="libcst_adapter._singleton",
             observed=f"match singleton {text!r}",
             requested="True, False, or None",
@@ -1116,14 +1116,14 @@ def _r_matchsequence(ctx: _Ctx, n: cst.CSTNode) -> Description:
 
 
 def _match_patterns(ctx: _Ctx, elements: Sequence[cst.CSTNode]) -> Children:
-    out: list[ProviderHandle] = []
+    out: list[BackendNode] = []
     for el in elements:
         if isinstance(el, cst.MatchSequenceElement):
             out.append(_Handle(ctx, el.value))
         elif isinstance(el, cst.MatchStar):
             out.append(_Handle(ctx, el))
         else:
-            membrane_missing(
+            vocabulary_missing(
                 owner="libcst_adapter._match_patterns",
                 observed=f"{type(el).__name__} in match sequence position",
                 requested="a MatchSequenceElement or a MatchStar",
@@ -1236,7 +1236,7 @@ def _r_concatstring(ctx: _Ctx, n: cst.ConcatenatedString) -> Description:
     if any(isinstance(p, cst.FormattedString) for p in parts):
         # Any f-string piece makes the whole literal a JoinedStr, whose
         # values are the pieces' contents in order.
-        values: list[ProviderHandle] = []
+        values: list[BackendNode] = []
         for p in parts:
             if isinstance(p, cst.FormattedString):
                 values.extend(_Handle(ctx, c) for c in p.parts)
@@ -1250,13 +1250,13 @@ def _r_concatstring(ctx: _Ctx, n: cst.ConcatenatedString) -> Description:
         joined = "".join(values)
     else:
         # LibCST parsed source CPython itself would reject at compile time
-        # (mixed str/bytes implicit concatenation): the provider's own
+        # (mixed str/bytes implicit concatenation): the backend's own
         # output is structurally invalid, not a vocabulary gap.
-        membrane_provider_defect(
+        backend_defect(
             owner="libcst_adapter._r_concatstring",
             observed="implicit concatenation mixing str and bytes pieces",
             requested="pieces of one literal type",
-            fix="this is not valid Python; the provider accepted something CPython would refuse",
+            fix="this is not valid Python; the backend accepted something CPython would refuse",
         )
     return _desc(
         "Constant", span, ("value", Leaf(joined)), ("literal_kind", Leaf(None))
@@ -1513,18 +1513,18 @@ def _r_compfor(ctx: _Ctx, n: cst.CompFor) -> Description:
 def _describe(ctx: _Ctx, node: cst.CSTNode) -> Description:
     rule = _RULES.get(type(node).__name__)
     if rule is None:
-        membrane_missing(
+        vocabulary_missing(
             owner="libcst_adapter._describe",
             observed=f"libcst {type(node).__name__} has no adapter rule",
-            requested="an explicit rule mapping this CST shape into membrane terms",
+            requested="an explicit rule mapping this CST shape into tree terms",
             fix="add the rule in libcst_adapter.py — never a permissive fallback",
         )
         raise AssertionError("unreachable")
     return rule(ctx, node)
 
 
-class LibCSTProvider(Provider):
-    """The second provider: Instagram's Rust-backed parser, behind the membrane.
+class LibCSTBackend(Backend):
+    """The second backend: Instagram's Rust-backed parser, behind the tree.
 
     Does not call CPython's ``compile()`` — which is the frame #5932's
     SIGSEGV lives in.
@@ -1532,7 +1532,7 @@ class LibCSTProvider(Provider):
 
     name = "libcst"
 
-    def parse(self, unit: SourceUnit) -> ProviderHandle:
+    def root(self, unit: SourceUnit) -> BackendNode:
         try:
             module = cst.parse_module(unit.source)
         except cst.ParserSyntaxError as err:
@@ -1540,8 +1540,8 @@ class LibCSTProvider(Provider):
             # param shapes) is always upconverted to ParserSyntaxError before
             # it reaches parse_module (libcst._parser.base_parser) — this is
             # the one exception type that escapes LibCST's own parser.
-            raise ProviderRefused(
-                provider=self.name, file=unit.filename, reason=str(err)
+            raise BackendRefused(
+                backend=self.name, file=unit.filename, reason=str(err)
             ) from err
         wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
         positions = wrapper.resolve(PositionProvider)
