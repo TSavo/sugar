@@ -69,6 +69,23 @@ class VocabularyMissing(SourceTreePanic):
     _LABEL = "VOCABULARY MISSING"
 
 
+class SugarNotWritten(SourceTreePanic):
+    """The node knows exactly what it is — and nobody has written its sugar
+    yet. Raised by the abstract ``Node.sugar()``; every concrete class either
+    OVERRIDES ``sugar()`` and constructs, or inherits this throw. Two arms
+    enforced by inheritance itself: no registry to consult, no lookup that
+    can miss quietly, no third state. Writing the override IS writing the
+    sugar, so coverage is visible in the hierarchy, not in a census table.
+
+    Distinct from ``VocabularyMissing`` (there the NODE class is absent;
+    here the node class exists and speaks) and from ``BackendDefect``
+    (the backend did nothing wrong). The fix is always: write the sugar,
+    deliberately.
+    """
+
+    _LABEL = "SUGAR NOT WRITTEN"
+
+
 class BackendDefect(SourceTreePanic):
     """The backend, or its adapter's translation of it, produced something
     structurally invalid: an out-of-range position, a degenerate span, a

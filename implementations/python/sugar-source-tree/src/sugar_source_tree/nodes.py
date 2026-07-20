@@ -44,7 +44,7 @@ from .operators import (
     ComparisonOperator,
     UnaryOperator,
 )
-from .panic import SourceTreePanic, vocabulary_missing
+from .panic import SourceTreePanic, SugarNotWritten, vocabulary_missing
 from .spans import LineColSpan, LineTable, Span
 
 
@@ -195,6 +195,33 @@ class Node(Typed):
         """Frozen wire word for serialization. Never a dispatch mechanism."""
         override = getattr(type(self), "_kind", None)
         return override if isinstance(override, str) else type(self).__name__
+
+    def sugar(self) -> object:
+        """This node's sugar, constructed by the node itself.
+
+        The tree recognizes and CONSTRUCTS; sugar carries the meaning
+        (desugar, witnesses, universe coordinates). Every concrete class
+        either overrides this and constructs its sugar, or inherits this
+        throw. Two arms enforced by inheritance: no factory, no catalog,
+        no registry — the absence of an override IS the loud MISSING.
+
+        Overrides narrow the return type to their sugar class.
+        """
+        where = f"{self.unit.filename}"
+        try:
+            lc = self.line_col_span()
+            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
+        except SourceTreePanic:
+            pass  # an unpositioned kind still panics usefully, by file
+        raise SugarNotWritten(
+            owner=f"{type(self).__name__}.sugar",
+            observed=f"{self.kind} at {where} has no sugar written",
+            requested="a constructed sugar object",
+            fix=(
+                f"override sugar() on {type(self).__name__} and construct "
+                "its sugar deliberately; never a fallback, never None"
+            ),
+        )
 
     def segment(self) -> str:
         return self.span.slice(self.unit.source)
