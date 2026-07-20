@@ -125,6 +125,24 @@ class SourceFile:
             unit=self.unit, span=Span(0, len(self.unit.source)), node=self.root
         )
 
+    def functions(self) -> Iterator[Node]:
+        """Every function definition in this file, at any depth — the
+        `functions` enumeration level.
+
+        Assertions live in functions; that is the nature of the game, so
+        this is where the wire's questions begin. Transitive through class
+        bodies deliberately: vendor suites keep most of their testimony in
+        ``class TestX: def test_y()``, and a class is just where Python
+        keeps functions. Yields ``FunctionDef`` and ``AsyncFunctionDef``
+        nodes — typed, in source order. Laziness stays honest one level
+        down: a function yields nothing further until asked.
+        """
+        from .nodes import AsyncFunctionDef, FunctionDef
+
+        for node in self.root.walk():
+            if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+                yield node
+
     def nodes(self) -> Iterator[Node]:
         """Every node of this file, pre-order, iterative."""
         return self.root.walk()

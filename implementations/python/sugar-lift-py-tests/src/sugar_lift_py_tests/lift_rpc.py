@@ -3029,6 +3029,79 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     [{"memento": at, "reason": f"no such file: {file_rel}"}],
                 )
                 return
+
+            if level == "functions" and not audit_walk:
+                # The functions level IS SourceFile.functions(): every function
+                # definition in the file, enumerated from the typed tree over
+                # oracle-pinned text. No lift runs, no IR rows are consulted,
+                # and nothing is reconstructed: the ~100 lines of dedup keys,
+                # contract-name sets, and enclosing-only fallback mementos this
+                # replaces existed only because the factory threw the tree away
+                # and the wire had to rebuild syntax from lift output.
+                #
+                # Classes are namespaces: enumeration is transitive through
+                # class bodies, so test methods are functions here, in source
+                # order. Every function is visible — one with no testimony
+                # simply answers empty at the deeper levels. The `audit`
+                # annotation (contract name, formals) is meaning and arrives
+                # when FunctionDef.sugar() is written; syntax does not wait
+                # for it.
+                from sugar_lift_python_source.source_oracle import (
+                    SourceOracleRefusal,
+                    path_source,
+                )
+                from sugar_source_tree.tree import SourceFile as _TreeSourceFile
+
+                try:
+                    identity = path_source(str(full_path))
+                except SourceOracleRefusal as refusal:
+                    _send_enumerate_result(
+                        msg_id, [], [{"memento": at, "reason": str(refusal)}]
+                    )
+                    return
+                _source, _fname, file_cid = identity
+                requested_cid = at.get("source_cid") if at else None
+                if requested_cid and requested_cid != file_cid:
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [
+                            {
+                                "memento": at,
+                                "reason": "source memento CID no longer matches file",
+                            }
+                        ],
+                    )
+                    return
+                tree_file = _TreeSourceFile(identity)
+                nodes = []
+                for fn in tree_file.functions():
+                    lc = fn.line_col_span()
+                    sealed = fn.fragment.seal()
+                    memento = {
+                        "kind": "source-memento",
+                        "file": file_rel,
+                        "function_name": fn.name,
+                        "source_function_name": fn.name,
+                        "span": {
+                            "start_line": lc.start_line,
+                            "start_col": lc.start_col,
+                            "end_line": lc.end_line,
+                            "end_col": lc.end_col,
+                        },
+                        "source_cid": sealed.cid,
+                        "file_cid": file_cid,
+                        "template_cid": None,
+                        "param_names": [],
+                    }
+                    if seek and at is not None and not _memento_matches(memento, at):
+                        continue
+                    nodes.append({"memento": memento, "audit": None, "payload": None})
+                _send_enumerate_result(msg_id, nodes, [])
+                _log_enumeration_demand(
+                    str(level), at, cache="miss", started=demand_started
+                )
+                return
             if audit_walk and level == "functions":
                 source_bytes = full_path.read_bytes()
                 source = source_bytes.decode("utf-8")
@@ -3136,110 +3209,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 workspace_root, root, file_rel
             )
 
-            if level == "functions":
-                # A function gets a node either because it OWNS a
-                # function-contract (kind="function-contract") or because it
-                # merely ENCLOSES a call-site assertion (kind="contract",
-                # whose memento's own source_function_name names its caller
-                # -- e.g. a test function with no contract of its own but
-                # real assertions inside it). Both are real functions in the
-                # source; a driver walking source_files -> functions must be
-                # able to reach either kind of call site underneath.
-                # Dedup key is (name, span) so same-named nested functions with
-                # distinct spans each get a node (self-locating SourceMemento).
-                seen_keys: set = set()
-                contract_names: set = set()
-                for item in ir_items:
-                    if item.get("kind") == "function-contract":
-                        contract_names.add(item.get("name"))
-                nodes = []
-
-                def _fn_key(memento):
-                    fn_name = (
-                        memento.get("source_function_name")
-                        or memento.get("sourceFunctionName")
-                        or memento.get("function_name")
-                    )
-                    span = (
-                        memento.get("span")
-                        if isinstance(memento.get("span"), dict)
-                        else {}
-                    )
-                    if _span_is_degenerate(span):
-                        return (fn_name, None)
-                    return (
-                        fn_name,
-                        (
-                            span.get("start_line"),
-                            span.get("start_col"),
-                            span.get("end_line"),
-                            span.get("end_col"),
-                        ),
-                    )
-
-                def _emit(memento, audit):
-                    key = _fn_key(memento)
-                    if key[0] is None:
-                        return
-                    if key in seen_keys:
-                        return
-                    if seek and at is not None and not _memento_matches(memento, at):
-                        return
-                    seen_keys.add(key)
-                    nodes.append({"memento": memento, "audit": audit, "payload": None})
-
-                for item in ir_items:
-                    if item.get("kind") != "function-contract":
-                        continue
-                    memento = _item_memento(item)
-                    if memento is None:
-                        continue
-                    _emit(
-                        memento,
-                        {
-                            "kind": item.get("kind"),
-                            "name": item.get("name"),
-                            "formals": item.get("formals"),
-                            "bridgeSourceSymbol": item.get("bridgeSourceSymbol"),
-                        },
-                    )
-                for item in ir_items:
-                    if item.get("kind") != "contract":
-                        continue
-                    memento = _item_memento(item)
-                    if memento is None:
-                        continue
-                    fn_name = memento.get("source_function_name") or memento.get(
-                        "sourceFunctionName"
-                    )
-                    if not fn_name:
-                        continue
-                    if fn_name in contract_names:
-                        # The function already owns a contract row; the
-                        # enclosing-only fallback must not mint a duplicate.
-                        continue
-                    # Degenerate span: enclosing-only functions have no body
-                    # contract locus; call_sites falls back to name scoping.
-                    _emit(
-                        {
-                            "kind": "source-memento",
-                            "file": file_rel,
-                            "function_name": fn_name,
-                            "source_function_name": fn_name,
-                            "span": None,
-                            "param_names": [],
-                            "source_cid": None,
-                            "template_cid": None,
-                        },
-                        {
-                            "kind": "function",
-                            "name": fn_name,
-                            "note": "no function-contract of its own; reachable "
-                            "because it encloses a call-site assertion",
-                        },
-                    )
-                _send_enumerate_result(msg_id, nodes, [])
-                return
 
             if level == "call_sites":
                 # Scope under parent function (`at`): prefer SPAN containment when
