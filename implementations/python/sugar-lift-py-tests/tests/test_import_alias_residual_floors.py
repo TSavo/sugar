@@ -61,30 +61,24 @@ def test_qualified_class_attribute_does_not_leak_module_getattr_import_error(
     assert alias.qualified_class_attribute("RemovedClass") is None
 
 
-def test_qualified_class_attribute_still_constructs_a_real_class_coordinate(
-    monkeypatch,
-) -> None:
-    class AvailableClass:
-        pass
-
-    class AvailableModule:
-        Available = AvailableClass
-
-    monkeypatch.setattr(
-        importlib,
-        "import_module",
-        lambda _module_name: AvailableModule(),
-    )
+def test_qualified_class_attribute_still_constructs_a_real_class_coordinate() -> None:
+    # #5930: qualified_class_attribute resolves through the static
+    # SourceOracle walk now, never a live import -- so this proves it
+    # against a REAL installed module and a REAL directly-defined class
+    # (stdlib argparse.ArgumentParser is a plain top-level ``class`` in
+    # argparse.py, no re-export chain, no native extension), instead of a
+    # monkeypatched ``importlib.import_module`` the recognizer no longer
+    # calls at all.
     alias = ImportAliasValue(
-        "vendor",
-        "vendor",
-        import_target="vendor",
+        "argparse",
+        "argparse",
+        import_target="argparse",
     )
 
-    qualified = alias.qualified_class_attribute("Available")
+    qualified = alias.qualified_class_attribute("ArgumentParser")
 
     assert qualified is not None
-    assert qualified.import_target == "vendor.Available"
+    assert qualified.import_target == "argparse.ArgumentParser"
 
 
 def _assert_import_effect(outcome, operator: str) -> None:

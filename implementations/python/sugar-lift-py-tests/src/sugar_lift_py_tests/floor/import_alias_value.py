@@ -60,16 +60,16 @@ class ImportAliasValue(FloorValue):
         )
 
     def qualified_class_attribute(self, attribute: str) -> ImportAliasValue | None:
-        """Construct an exact imported class coordinate when Python proves it.
+        """Construct an exact imported class coordinate when the source proves it.
 
-        A module import plus ``inspect.isclass(module.attribute)`` is concrete
-        lift-time evidence for the type object's qualified identity.  A
-        function, constant, missing attribute, or unavailable module does not
-        claim this recognizer and remains on AttributeSugar's existing path.
+        A static resolve of ``module.attribute`` to a ``kind="class"``
+        receiver is source-level evidence for the type object's qualified
+        identity.  A function, constant, missing attribute, or unavailable
+        module does not claim this recognizer and remains on AttributeSugar's
+        existing path.  Resolution enters through
+        :func:`_resolve_qualified_import_object` — the sole static
+        import-alias resolver — never through a live import.
         """
-        import importlib
-        import inspect
-
         module_name = self.import_target or self.name
         head, separator, _tail = module_name.partition(".")
         if self.import_target is None and separator and self.bound_name == head:
@@ -79,12 +79,8 @@ class ImportAliasValue(FloorValue):
         if module_name.startswith("."):
             # Relative import spellings are not free-standing module coordinates.
             return None
-        try:
-            module = importlib.import_module(module_name)
-            candidate = getattr(module, attribute, None)
-        except (ImportError, ModuleNotFoundError, TypeError, ValueError):
-            return None
-        if not inspect.isclass(candidate):
+        receiver = _resolve_qualified_import_object(f"{module_name}.{attribute}")
+        if receiver is None or receiver.kind != "class":
             return None
         qualified = f"{module_name}.{attribute}"
         return ImportAliasValue(
@@ -353,17 +349,9 @@ class ImportAliasValue(FloorValue):
         """Construct a coordinate only after the source door checked this target."""
         if not self.install_source_checked:
             return None
-        import inspect
-        from types import ModuleType
-
         target = self.import_target or self.name
-        value = _resolve_qualified_import_object(target)
-        if (
-            value is None
-            or isinstance(value, ModuleType)
-            or inspect.isclass(value)
-            or callable(value)
-        ):
+        receiver = _resolve_qualified_import_object(target)
+        if receiver is None or receiver.kind != "constant":
             return None
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor, str_const
@@ -376,6 +364,52 @@ class ImportAliasValue(FloorValue):
         )
 
 
+def _static_module_exists(module_name: str) -> bool:
+    """True when ``module_name`` names an importable module, without importing.
+
+    Parent-safe: uses ``importlib.machinery.PathFinder.find_spec`` walked one
+    package segment at a time (the same form ``_installed_native_extension``
+    uses in ``install_source_dig``), which never imports the parents it walks
+    through. A bare top-level name has no parents to protect, so
+    ``PathFinder.find_spec(name, None)`` is used there directly; a name
+    compiled into the interpreter (``sys.builtin_module_names`` — a static
+    data lookup, not an import) covers what PathFinder does not own.
+    """
+    if not module_name or module_name.startswith("."):
+        return False
+    if "." not in module_name:
+        import importlib.machinery
+        import sys
+
+        if module_name in sys.builtin_module_names:
+            return True
+        try:
+            return (
+                importlib.machinery.PathFinder.find_spec(module_name, None)
+                is not None
+            )
+        except (ImportError, ModuleNotFoundError, ValueError, AttributeError):
+            return False
+    import importlib.machinery
+
+    parts = module_name.split(".")
+    search_path = None
+    try:
+        for index in range(1, len(parts) + 1):
+            qualified = ".".join(parts[:index])
+            lookup_name = qualified if search_path is None else parts[index - 1]
+            spec = importlib.machinery.PathFinder.find_spec(lookup_name, search_path)
+            if spec is None:
+                return False
+            if index < len(parts):
+                search_path = spec.submodule_search_locations
+                if search_path is None:
+                    return False
+    except (ImportError, KeyError, ModuleNotFoundError, OSError, TypeError, ValueError):
+        return False
+    return True
+
+
 def _import_alias_binds_module(value: ImportAliasValue) -> bool:
     """True when the import coordinate names an importable module object.
 
@@ -383,36 +417,197 @@ def _import_alias_binds_module(value: ImportAliasValue) -> bool:
     bind module objects, which are always truthy in Python. Attribute
     from-imports (``from pkg import HAS_FLAG``) are not modules.
     """
-    import importlib.util
-
     target = value.import_target or value.name
-    try:
-        return importlib.util.find_spec(target) is not None
-    except (ImportError, ModuleNotFoundError, ValueError, AttributeError):
-        return False
+    return _static_module_exists(target)
 
 
-def _resolve_qualified_import_object(target: str) -> object | None:
-    """Resolve one qualified import target without guessing split ownership."""
-    import importlib
+class _StaticImportReceiver:
+    """A coordinate-only kind marker for a statically resolved import target.
 
+    Never a live object. ``kind`` is one of ``"module"``, ``"class"``,
+    ``"function"``, or ``"constant"`` — exactly the discrimination the two
+    callers (:meth:`ImportAliasValue.qualified_attribute`,
+    :meth:`ImportAliasValue._checked_constant_coordinate`,
+    :meth:`ImportAliasValue.qualified_class_attribute`) need. It carries no
+    Python value because obtaining one would require import execution.
+    """
+
+    __slots__ = ("kind",)
+
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+
+
+def _resolve_qualified_import_object(target: str) -> _StaticImportReceiver | None:
+    """Resolve one qualified import target statically — never by importing.
+
+    Walks candidate module/attribute splits exactly as the prior dynamic
+    version did, but every module lookup goes through the parent-safe
+    ``_static_module_exists`` and every attribute lookup goes through the
+    SourceOracle's parsed AST (``installed_module_source`` ->
+    ``parsed_tree``), matching the invariant in ``InstallSourceValueOracle``:
+    import-alias resolution enters through source, not through ``import``.
+    Absence stays ``None`` — a MISSING must never become a success by
+    executing.
+    """
     if not target or target.startswith("."):
         # Relative spellings need a package context; bare coordinates do not.
         return None
     parts = target.split(".")
     for module_length in range(len(parts), 0, -1):
         module_name = ".".join(parts[:module_length])
-        try:
-            value: object = importlib.import_module(module_name)
-        except (ImportError, ModuleNotFoundError, TypeError, ValueError):
+        if not _static_module_exists(module_name):
             continue
-        for attribute in parts[module_length:]:
-            sentinel = object()
-            value = getattr(value, attribute, sentinel)
-            if value is sentinel:
-                return None
-        return value
+        remaining = parts[module_length:]
+        if not remaining:
+            return _StaticImportReceiver("module")
+        return _resolve_static_module_attribute_chain(module_name, remaining)
     return None
+
+
+def _resolve_static_module_attribute_chain(
+    module_name: str,
+    remaining: list[str],
+    *,
+    resolving: frozenset[str] = frozenset(),
+) -> _StaticImportReceiver | None:
+    """Resolve a dotted attribute chain against one module's static source.
+
+    ``pandas.Timestamp`` is not a direct ``class Timestamp:`` in
+    ``pandas/__init__.py`` — it arrives via ``from pandas.core.api import
+    (..., Timestamp, ...)``, itself re-exported further down to a compiled
+    extension type. This follows exactly the same re-export forms
+    ``install_source_dig`` already proves closed (unconditional top-level
+    ``from``, a literal ``__all__`` star re-export, or a setup-sentinel's
+    provably-selected false branch) — never a guess, never an import. A
+    chain that bottoms out on a native extension can't be proven a class,
+    function, or constant without importing it (the same undecidable
+    question T ruled loud for the exception-class check, #5930): it resolves
+    to kind ``"native"`` — existence only, no further discrimination.
+    """
+    import ast
+
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        _definite_setup_reexport_target,
+        _definite_star_reexport_target,
+        _definite_unconditional_reexport_target,
+        _installed_native_extension,
+        installed_module_source,
+        parsed_tree,
+    )
+
+    name = remaining[0]
+    rest = remaining[1:]
+    cycle_key = f"{module_name}.{name}"
+    if cycle_key in resolving:
+        return None
+    resolving = resolving | {cycle_key}
+
+    installed = installed_module_source(module_name)
+    if installed is None:
+        if not rest and _installed_native_extension(module_name) is not None:
+            return _StaticImportReceiver("native")
+        return None
+    source, sourcefile, _source_cid = installed
+    try:
+        parsed = parsed_tree(source, sourcefile)
+    except SyntaxError:
+        return None
+
+    node = next(
+        (
+            statement
+            for statement in parsed.body
+            if isinstance(
+                statement,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+            )
+            and statement.name == name
+        ),
+        None,
+    )
+    if node is not None:
+        if rest:
+            if not isinstance(node, ast.ClassDef):
+                return None
+            return _resolve_class_body_attribute_chain(node, rest)
+        return _StaticImportReceiver(
+            "class" if isinstance(node, ast.ClassDef) else "function"
+        )
+
+    if not rest and _has_module_level_binding(parsed.body, name):
+        return _StaticImportReceiver("constant")
+
+    reexport = (
+        _definite_unconditional_reexport_target(module_name, name, parsed)
+        or _definite_star_reexport_target(module_name, name, parsed)
+        or _definite_setup_reexport_target(module_name, name, parsed)
+    )
+    if reexport is None:
+        return None
+    target_module, _separator, target_attr = reexport.rpartition(".")
+    if not target_module:
+        return None
+    return _resolve_static_module_attribute_chain(
+        target_module, [target_attr, *rest], resolving=resolving
+    )
+
+
+def _resolve_class_body_attribute_chain(
+    class_node, remaining: list[str]
+) -> _StaticImportReceiver | None:
+    """Resolve a trailing attribute chain nested inside a known class body."""
+    import ast
+
+    body = class_node.body
+    node: ast.AST | None = None
+    for index, name in enumerate(remaining):
+        node = next(
+            (
+                statement
+                for statement in body
+                if isinstance(
+                    statement,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                )
+                and statement.name == name
+            ),
+            None,
+        )
+        if node is None:
+            if index == len(remaining) - 1 and _has_module_level_binding(body, name):
+                return _StaticImportReceiver("constant")
+            return None
+        if index < len(remaining) - 1:
+            if not isinstance(node, ast.ClassDef):
+                return None
+            body = node.body
+    if isinstance(node, ast.ClassDef):
+        return _StaticImportReceiver("class")
+    return _StaticImportReceiver("function")
+
+
+def _has_module_level_binding(body: list, name: str) -> bool:
+    """True when ``name`` is bound by a plain assignment in this scope's body.
+
+    This proves existence and non-callable/class/module kind, never a
+    specific value — extracting the literal is not required by either
+    caller, and evaluating an arbitrary RHS expression would reintroduce
+    execution.
+    """
+    import ast
+
+    for statement in body:
+        if isinstance(statement, ast.Assign):
+            targets = statement.targets
+        elif isinstance(statement, ast.AnnAssign):
+            targets = [statement.target]
+        else:
+            continue
+        for assign_target in targets:
+            if isinstance(assign_target, ast.Name) and assign_target.id == name:
+                return True
+    return False
 
 
 def _runtime_alias_effect(
@@ -435,15 +630,16 @@ def _runtime_alias_effect(
 def _runtime_alias_effect_at_site(
     value: ImportAliasValue, *, shape: str, site, replacement: str
 ):
-    import importlib.util
+    from sugar_lift_py_tests.sugar.install_source_dig import installed_module_source
 
     target = value.import_target or value.name
     module_name = target.rsplit(".", 1)[0] if "." in target else target
-    try:
-        spec = importlib.util.find_spec(module_name)
-    except (ImportError, ModuleNotFoundError, ValueError):
-        spec = None
-    origin = getattr(spec, "origin", None)
+    # SourceOracle only: presence of Python source is exactly the question
+    # this site asks ("origin ends with .py/.pyi"), and it answers it without
+    # importing — find_spec(dotted) would import every parent package as a
+    # documented side effect.
+    installed = installed_module_source(module_name)
+    origin = installed[1] if installed is not None else None
     if origin and origin.endswith((".py", ".pyi")):
         from sugar_lift_py_tests.factory import factory_panic_gap
         from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus

@@ -25,7 +25,6 @@ import copy
 import functools
 import inspect
 import sys
-import textwrap
 from collections import OrderedDict
 from dataclasses import dataclass, field as dataclass_field, fields, replace
 from pathlib import Path
@@ -412,9 +411,13 @@ def _installed_source_index(
     """
     from sugar_lift_python_source.canonical import blake3_512_of
 
+    # SourceOracle only. The prior `_imported_module_source` fallback
+    # imported the module to read `__file__`, which is exactly the answer
+    # `_installed_source` (SourceOracle, find_spec-based, no import) already
+    # gives — it was a redundant, execution-based duplicate. Removing it is
+    # not a narrowing: SourceOracle covers the same "has a passive file spec"
+    # question without running third-party code (#5930).
     installed = _installed_source(module_name)
-    if installed is None:
-        installed = _imported_module_source(module_name)
     if installed is None:
         return None
     source, sourcefile = installed
@@ -526,19 +529,15 @@ def _installed_native_extension(module_name: str) -> str | None:
     except (ImportError, KeyError, ModuleNotFoundError, OSError, TypeError, ValueError):
         pass
     # Top-level built-in (no package walk). Never for dotted package names.
+    # `sys.builtin_module_names` is a static data lookup against the
+    # already-running interpreter's compiled-in module table -- not an
+    # import, and not `importlib.util.find_spec` (#5930: even the
+    # non-dotted form of that call is a scanned executing site).
     if "." in module_name:
         return None
-    try:
-        builtin_spec = importlib.util.find_spec(module_name)
-    except (ImportError, ModuleNotFoundError, ValueError):
-        return None
-    if (
-        builtin_spec is None
-        or builtin_spec.loader is not importlib.machinery.BuiltinImporter
-        or builtin_spec.origin != "built-in"
-    ):
-        return None
-    return "built-in"
+    if module_name in sys.builtin_module_names:
+        return "built-in"
+    return None
 
 
 def _relative_import_package_parts(defining_module: str) -> list[str]:
@@ -601,27 +600,16 @@ def _resolve_qualified_native_callable(
     module_name, attr = import_target.rsplit(".", 1)
     origin = _installed_native_extension(module_name)
     if origin is not None:
-        from sugar_lift_py_tests.floor import (
-            ExceptionClassValue,
-            NativeCallableValue,
-        )
+        from sugar_lift_py_tests.floor import NativeCallableValue
 
-        module = sys.modules.get(module_name)
-        if module is None and "." not in module_name:
-            # Top-level extension only (e.g. ``_csv``). Nested package
-            # extensions stay coordinate-only — never pull sklearn/numpy trees.
-            try:
-                module = importlib.import_module(module_name)
-            except (ImportError, ModuleNotFoundError, OSError):
-                module = None
-        if module is not None:
-            try:
-                exported = getattr(module, attr)
-            except AttributeError:
-                return None
-            if isinstance(exported, type) and issubclass(exported, BaseException):
-                return ExceptionClassValue(import_target)
-
+        # RULING (#5930, T, 2026-07-19): a native `.so` export has no Python
+        # source to walk, so "is it an exception class?" has no static
+        # answer. Reading `sys.modules` or cold-importing to answer it was
+        # both an execution defect (arbitrary C-extension code inside the
+        # lifting process) AND order-dependent (`sys.modules.get` reflects
+        # whatever an *earlier* file in the corpus happened to import, not
+        # this source). The export stays a coordinate; the classification
+        # stays loud. Do not resurrect the import/getattr/issubclass path.
         return NativeCallableValue(
             qualified_name=import_target,
             module_origin=origin,
@@ -657,64 +645,6 @@ def _resolve_qualified_native_callable(
     if len(reexports) != 1:
         return None
     return _resolve_qualified_native_callable(reexports[0], resolving=resolving)
-
-
-def _imported_module_source(module_name: str) -> tuple[str, str] | None:
-    """Compatibility source fallback for modules without a passive file spec.
-
-    Open-domain absence (missing module, no Python file, unreadable path) is
-    ``None`` by pre-check — never a soft TypeError/getsource swallow (#4203).
-    """
-    try:
-        from _pytest.outcomes import Skipped
-    except ImportError:
-
-        class Skipped(BaseException):  # type: ignore[no-redef]
-            pass
-
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError:
-        return None
-    except Skipped as skipped:
-        from sugar_lift_py_tests.factory import (
-            FactoryAuditRow,
-            FactoryGapInfo,
-            GapKind,
-            GapLocus,
-            factory_panic,
-        )
-
-        info = FactoryGapInfo(
-            owner="install_source_dig.module_sibling_function_nodes",
-            blame=module_name,
-            observed=type(skipped).__name__,
-            requested="installed Python source for optional-dependency module",
-            fix="install the module's Python source before install-source body dig",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="install-source import",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=type(skipped).__name__,
-                blame=module_name,
-                selected=None,
-                candidates=[],
-                message=f"install-source import raised pytest Skipped: {skipped}; {info.message}",
-            ),
-        )
-
-    # Built-ins and extension modules have no diggable Python source file.
-    sourcefile = getattr(module, "__file__", None)
-    if not isinstance(sourcefile, str) or not sourcefile.endswith((".py", ".pyi")):
-        return None
-    try:
-        return Path(sourcefile).read_text(encoding="utf-8"), sourcefile
-    except (OSError, UnicodeError):
-        return None
 
 
 def _materialize_index_definitions(index: _InstalledSourceIndex) -> dict[str, ast.AST]:
@@ -834,35 +764,19 @@ def resolved_star_import_names(module_name: str) -> tuple[str, ...] | None:
     Source modules qualify only when a literal ``__all__`` is present. A
     computed manifest or an implicit source-module namespace depends on
     executing arbitrary module code, so it remains a construction panic.
-    Native extensions and builtins have an exact resolved module namespace;
-    Python's star-import rule selects ``__all__`` or its public names.
+
+    RULING (#5930, T, 2026-07-19): native extensions and builtins have no
+    Python source to read ``__all__`` or enumerate ``vars()`` from without
+    importing. That import was arbitrary third-party C-extension code
+    running inside the lifting process, and its answer depended on whatever
+    was already resident in ``sys.modules`` — order-dependent, not source-
+    dependent. There is no static equivalent, so this stays a refusal
+    (``None``) for native/builtin modules rather than a live-object read.
     """
     exports = _static_module_exports(module_name)
     if exports is not None:
         return tuple(sorted(exports))
-
-    native_origin = _installed_native_extension(module_name)
-    if native_origin is None:
-        try:
-            spec = importlib.util.find_spec(module_name)
-        except (ImportError, ModuleNotFoundError, ValueError):
-            spec = None
-        if spec is None or spec.loader is not importlib.machinery.BuiltinImporter:
-            return None
-    try:
-        module = importlib.import_module(module_name)
-    except (ImportError, ModuleNotFoundError):
-        return None
-    manifest = getattr(module, "__all__", None)
-    if manifest is not None:
-        if not isinstance(manifest, (list, tuple)) or not all(
-            isinstance(name, str) for name in manifest
-        ):
-            return None
-        names = tuple(manifest)
-    else:
-        names = tuple(name for name in vars(module) if not name.startswith("_"))
-    return tuple(sorted(set(names)))
+    return None
 
 
 def resolve_install_source_funcdef(import_target: str):
@@ -2194,22 +2108,20 @@ def _class_base_ast_name(node: ast.expr) -> str | None:
 
 
 def _facade_class_source(module_name: str, class_name: str) -> tuple[str, str] | None:
-    """Resolve the defining source behind a public re-exporting module."""
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError:
-        return None
-    cls = getattr(module, class_name, None)
-    try:
-        sourcefile = inspect.getsourcefile(cls) if inspect.isclass(cls) else None
-    except (TypeError, OSError):
-        return None
-    if not isinstance(sourcefile, str):
-        return None
-    try:
-        return Path(sourcefile).read_text(encoding="utf-8"), sourcefile
-    except (OSError, UnicodeError):
-        return None
+    """Refuse: no static route exists behind a public re-exporting module.
+
+    RULING (#5930, T, 2026-07-19): the prior body imported ``module_name``
+    and consulted the live class's ``__module__``/``inspect.getsourcefile``
+    to find its true defining file (e.g. ``collections.abc`` ->
+    ``_collections_abc.py``). That answer depends on running the facade
+    module's import machinery and on whatever the runtime MRO happens to
+    be — not on static source. The star-reexport walk in
+    ``_resolve_install_source_class_bases`` already recovers this
+    statically for facades that spell it as ``from x import *``; releases
+    that do not have no static equivalent and stay a refusal.
+    """
+    del module_name, class_name
+    return None
 
 
 def resolve_install_source_class_bases(
@@ -2375,46 +2287,16 @@ def resolve_install_source_class_method(qualified_class: str, method_name: str):
             node, getattr(node, "_sugar_file", f"<{module_name}>")
         )
 
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError:
-        return None
-    cls = getattr(module, class_name, None)
-    if cls is None or not inspect.isclass(cls):
-        return None
-    obj = cls.__dict__.get(method_name)
-    if obj is None:
-        obj = getattr(cls, method_name, None)
-    if obj is None or not callable(obj):
-        return None
-    # Open domain: builtins / descriptors / extension methods have no source.
-    # Pre-check so TypeError from getsource is not soft-swallowed (#4203).
-    if inspect.isbuiltin(obj) or inspect.ismethoddescriptor(obj):
-        return None
-    target = inspect.unwrap(obj) if callable(obj) else obj
-    code = getattr(target, "__code__", None)
-    if code is None:
-        code = getattr(getattr(target, "__func__", None), "__code__", None)
-    if code is None:
-        return None
-    defining_module = getattr(obj, "__module__", None) or module_name
-    try:
-        source = textwrap.dedent(inspect.getsource(obj))
-        sourcefile = inspect.getsourcefile(obj) or f"<{module_name}>"
-    except (OSError, TypeError):
-        return None
-    try:
-        parsed = SourceFragment.from_source_private(source, sourcefile)
-    except SyntaxError:
-        return None
-    for child in parsed.walk():
-        if child.observed == "FunctionDef" and child.function_name() == method_name:
-            child.node.decorator_list = []  # type: ignore[attr-defined]
-            child.node._sugar_source = source  # type: ignore[attr-defined]
-            child.node._sugar_file = sourcefile  # type: ignore[attr-defined]
-            child.node._sugar_bridge_name = f"{qualified_class}.{method_name}"  # type: ignore[attr-defined]
-            child.node._sugar_defining_module = defining_module  # type: ignore[attr-defined]
-            return child
+    # RULING (#5930, T, 2026-07-19): the prior fallback imported
+    # `module_name`, walked the LIVE class's `__dict__`/MRO to find an
+    # inherited method, then read its source via `inspect.getsource`. That
+    # both executed third-party code and depended on the live MRO rather
+    # than on this module's own static source. `_module_sibling_function_node`
+    # above already answers the static question (a method defined directly
+    # in this module's source); a method inherited from a base defined in a
+    # *different* module has no static route here without walking the base
+    # chain through `resolve_install_source_class_bases`, which this
+    # function does not do. Refuse rather than import: MISSING stays loud.
     return None
 
 
