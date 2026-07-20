@@ -14,9 +14,9 @@ Record fields:
 ``cid`` is ``sha256:`` over the UTF-8 encoding of the source segment
 selected by OUR span — a pure function of (source, span), never of the
 provider. (sha256, not production's blake3_512, so the corpus runs
-stdlib-only; the span components ride alongside so a divergence names
+stdlib-only; the span components ride alongside so a change names
 which coordinate moved, not just that a hash changed. Precedent: the
-#5940 differential harness, PR #5942.)
+#5940.)
 
 This artifact is the instrument that admits or rejects a future provider:
 parse the same sources through another adapter, emit, diff. A provider

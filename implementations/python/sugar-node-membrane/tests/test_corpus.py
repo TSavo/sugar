@@ -1,11 +1,12 @@
 """Golden corpus: deterministic addressing, pinned quirk-shape artifact.
 
 ``goldens/quirks.jsonl`` is the pinned corpus for ``goldens/quirks.py``.
-It is the instrument that admits or rejects a future provider: a second
-adapter must reproduce it byte-identically. Regenerating it here and
+It is a pinned record of what WE produce. Regenerating it here and
 comparing proves the emission is a pure function of the source — no object
 identity, no iteration-order dependence — and that today's build still
-produces the pinned spans and CIDs.
+produces the pinned spans and CIDs. It is NOT a cross-provider check:
+different parsers build different trees, and the memento is a location
+hash, so addresses differ by provider by construction.
 """
 
 import json

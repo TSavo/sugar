@@ -12,7 +12,7 @@ dependencies = []
 # The core membrane stays stdlib-only. A PROVIDER is an optional extra:
 # installing one must never be a condition of the membrane working, and the
 # membrane must never depend on any single parser. Install with
-# ``pip install -e '.[libcst]'`` to run the provider differential.
+# ``pip install -e '.[libcst]'`` to use the LibCST provider.
 [project.optional-dependencies]
 libcst = ["libcst>=1.8"]
 
