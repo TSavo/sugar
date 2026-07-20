@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sugar-typed-recognition"
+version = "0.1.0"
+description = "The typed recognition layer (#5940): accepts narrows the shape, owns interrogates the operand types. Standalone; depends only on sugar-node-membrane."
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
