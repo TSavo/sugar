@@ -396,6 +396,26 @@ class FunctionDef(Statement):
     type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "params", "returns", "body")
 
+    def sugar(self):
+        """`def <name>(<formals>): <body>` constructs FunctionUniverseSugar WITH
+        each body statement's own sugar — the recursion, child-before-parent.
+
+        A body statement whose sugar is not written yet raises SugarNotWritten
+        from its own `.sugar()`, which propagates out here: the whole function
+        is a frontier gap until every statement it holds can be constructed.
+        That is the honest 99% — no fallback, no partial universe.
+        """
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            FunctionUniverseSugar,
+        )
+
+        return FunctionUniverseSugar(
+            name=self.name,
+            formals=tuple(p.name for p in self.params),
+            statements=tuple(stmt.sugar() for stmt in self.body),
+            site=self.fragment,
+        )
+
 
 class AsyncFunctionDef(Statement):
     name: str

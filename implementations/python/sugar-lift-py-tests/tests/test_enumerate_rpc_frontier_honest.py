@@ -108,14 +108,15 @@ def test_unwritten_sugar_makes_the_frontier_fail_loudly():
 
 
 def test_census_fingers_exactly_the_unwritten_kinds():
-    # `assert 1 == 1` -- Assert/Compare/Constant have sugar WRITTEN, so they
-    # are NOT gaps; FunctionDef/Module do not yet, so they ARE. The census is
-    # precise: it clears the sugared nodes and fingers only the unwritten ones.
+    # `assert 1 == 1` -- Assert/Compare/Constant AND now FunctionDef (its body
+    # reduces to a universe) have sugar WRITTEN, so they are NOT gaps; only
+    # Module remains unwritten. The census is precise: it clears every sugared
+    # kind and fingers only the one that is still missing.
     audit = _drive_frontier("def test_one():\n    assert 1 == 1\n")
     assert audit.status == "failed"
     gap_kinds = {p.gap["kind"] for p in audit.panics}
-    assert "FunctionDef" in gap_kinds and "Module" in gap_kinds, gap_kinds
-    for written in ("Assert", "Compare", "Constant"):
+    assert "Module" in gap_kinds, gap_kinds
+    for written in ("Assert", "Compare", "Constant", "FunctionDef"):
         assert written not in gap_kinds, f"{written} sugar is written; not a gap"
 
 

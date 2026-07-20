@@ -135,9 +135,16 @@ def audit_file_gaps(full_path: Path):
             node.sugar()
         except SugarNotWritten:
             pass  # reported through the channel already; keep counting
-    seen: dict[int, Any] = {}
+    # Dedup by SOURCE identity, never object id: the tree materializes a node
+    # fresh on every access, so the same source node reached by the walk and
+    # again by a parent's sugar() (e.g. FunctionDef resolving its body) are two
+    # distinct objects. Their identity is the memento (kind + span), so a gap is
+    # one gap however many times it was materialized.
+    seen: dict[tuple, Any] = {}
     for node, panic in reporter.gaps:
-        seen[id(node)] = (node, panic)
+        lc = node.line_col_span()
+        key = (node.kind, lc.start_line, lc.start_col, lc.end_line, lc.end_col)
+        seen[key] = (node, panic)
     return sf, list(seen.values())
 
 
