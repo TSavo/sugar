@@ -20,6 +20,7 @@ AXIS_COMMANDS = {
     "R_context_incomplete_construction_caches = 0": (
         "construction_cache_context_law.py"
     ),
+    "R_source_via_execution = 0": "source_via_execution_law.py",
 }
 
 
