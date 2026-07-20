@@ -134,3 +134,14 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/construction_cache_context_law.py
+      - name: R_source_via_execution discrimination
+        if: always()
+        run: >-
+          python -m pytest --noconftest
+          implementations/python/sugar-lift-py-tests/tests/test_source_via_execution_law.py
+          -q
+      - name: R_source_via_execution = 0
+        if: always()
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/source_via_execution_law.py
