@@ -2165,6 +2165,91 @@ def _class_base_ast_name(node: ast.expr) -> str | None:
     return _dotted_ast_name(node)
 
 
+def native_extension_class_origin(
+    qualified_class: str, _resolving: frozenset[str] = frozenset()
+) -> str | None:
+    """The true native-extension module a class terminally resolves to, or None.
+
+    RULING (#5930, T, 2026-07-20): `io` is categorically a `RuntimeEffect` --
+    a positive, terminal classification, not an absence. A class like
+    `io.BytesIO` has no Python source anywhere (`io.py` is a thin re-export
+    of `_io`, a compiled extension), so a caller needs to know THAT before
+    attempting static MRO/method resolution, not after: by the time
+    `_facade_class_source` would panic, the panic has already unwound past
+    any caller trying to classify the result.
+
+    Walks the exact same reexport resolution order
+    `_resolve_install_source_class_bases` uses (unconditional reexport, star
+    reexport, setup reexport, star-import facade loop) WITHOUT ever calling
+    `_facade_class_source` and WITHOUT panicking:
+
+    - real Python source found anywhere along the walk -> ``None`` (not
+      native; the ordinary static path should run and can construct it).
+    - the walk terminates at a module with no Python source that
+      `_installed_native_extension` confirms is a compiled extension or a
+      built-in -> that module's dotted name (native; the caller should
+      classify this as a RuntimeEffect, never construct it).
+    - the walk cannot determine either way -> ``None``. This is the case
+      that must still panic downstream: a "cannot tell" answer here is
+      NEVER treated as "not native," it is left to fall through to the
+      existing gap machinery exactly as before this function existed.
+
+    Unlike `_native_imported_base_targets`, a built-in origin counts as
+    native here: `_io` (which backs `io.BytesIO`) is compiled into the
+    interpreter rather than loaded from a `.so`, but it is still I/O with
+    no Python source -- the CPython build detail is not what makes
+    something an effect.
+    """
+    if not qualified_class or "." not in qualified_class:
+        return None
+    if qualified_class in _resolving:
+        return None
+    _resolving = _resolving | {qualified_class}
+    module_name, class_name = qualified_class.rsplit(".", 1)
+    installed = _installed_source(module_name)
+    if installed is None:
+        origin = _installed_native_extension(module_name)
+        return module_name if origin is not None else None
+    source, sourcefile = installed
+    try:
+        parsed = parsed_tree(source, sourcefile)
+    except SyntaxError:
+        return None
+    class_node = next(
+        (
+            statement
+            for statement in parsed.body
+            if isinstance(statement, ast.ClassDef) and statement.name == class_name
+        ),
+        None,
+    )
+    if class_node is not None:
+        return None
+    reexport = (
+        _definite_unconditional_reexport_target(module_name, class_name, parsed)
+        or _definite_star_reexport_target(module_name, class_name, parsed)
+        or _definite_setup_reexport_target(module_name, class_name, parsed)
+    )
+    if reexport is not None:
+        return native_extension_class_origin(reexport, _resolving)
+    for statement in parsed.body:
+        if not isinstance(statement, ast.ImportFrom) or not any(
+            alias.name == "*" for alias in statement.names
+        ):
+            continue
+        target_module = _absolute_import_from_module(
+            module_name, statement.module, statement.level
+        )
+        if target_module is None:
+            continue
+        origin = native_extension_class_origin(
+            f"{target_module}.{class_name}", _resolving
+        )
+        if origin is not None:
+            return origin
+    return None
+
+
 def _facade_class_source(module_name: str, class_name: str) -> NoReturn:
     """No static route exists behind a public re-exporting module: panic loudly.
 
