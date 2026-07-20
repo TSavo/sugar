@@ -78,7 +78,7 @@ from .backend import (
 )
 from .nodes import SourceUnit
 from .operators import Operator, operator_for
-from .panic import membrane_panic
+from .panic import membrane_missing
 from .spans import Span
 
 ParsoNode = object  # parso.tree.NodeOrLeaf, kept untyped at the boundary
@@ -172,7 +172,7 @@ def _cmp_op(node: ParsoNode) -> Operator:
             return operator_for("NotIn")
         if text == "is not":
             return operator_for("IsNot")
-        membrane_panic(
+        membrane_missing(
             owner="parso_adapter._cmp_op",
             observed=f"comp_op token {text!r} not recognized",
             requested="one of: not in, is not",
@@ -185,7 +185,7 @@ def _cmp_op(node: ParsoNode) -> Operator:
         return operator_for("Is")
     kind = _CMP_TOKEN.get(text)
     if kind is None:
-        membrane_panic(
+        membrane_missing(
             owner="parso_adapter._cmp_op",
             observed=f"comparison token {text!r} not recognized",
             requested="a known comparison operator token",
@@ -211,7 +211,7 @@ def _fold_binop(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
         right_node = kids[i + 1]
         kind = _BIN_TOKEN.get(op_tok.value)
         if kind is None:
-            membrane_panic(
+            membrane_missing(
                 owner="parso_adapter._fold_binop",
                 observed=f"binary operator token {op_tok.value!r} not recognized",
                 requested="a known binary operator token",
@@ -356,7 +356,7 @@ def _constant_leaf(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
         return _fixed_constant(span, value)
     if node.type == "operator" and node.value == "...":
         return _fixed_constant(span, Ellipsis)
-    membrane_panic(
+    membrane_missing(
         owner="parso_adapter._constant_leaf",
         observed=f"leaf {node.type}:{node.value!r} is not a recognized literal",
         requested="number, string, None/True/False, or Ellipsis",
@@ -376,7 +376,7 @@ def _fstring_values(unit: SourceUnit, node: ParsoNode) -> List[ProviderHandle]:
         elif c.type in ("fstring_start", "fstring_end"):
             continue
         else:
-            membrane_panic(
+            membrane_missing(
                 owner="parso_adapter._fstring_values",
                 observed=f"fstring child {c.type!r} not recognized",
                 requested="fstring_string or fstring_expr",
@@ -411,7 +411,7 @@ def _describe_fstring_expr(unit: SourceUnit, node: ParsoNode) -> Description:
             format_spec = c
             i += 1
             continue
-        membrane_panic(
+        membrane_missing(
             owner="parso_adapter._describe_fstring_expr",
             observed=f"fstring_expr trailing token {c!r} not recognized",
             requested="'!' conversion or format spec",
@@ -472,7 +472,7 @@ def _fold_trailers(unit: SourceUnit, atom: ParsoNode, trailers: Sequence[ParsoNo
                 (("value", Child(acc)), ("slice_", Child(slice_handle))),
             )
         else:
-            membrane_panic(
+            membrane_missing(
                 owner="parso_adapter._fold_trailers",
                 observed=f"trailer starting with {first.value!r} not recognized",
                 requested="'.', '(' or '['",
@@ -513,7 +513,7 @@ def _call_args(unit: SourceUnit, inner: Sequence[ParsoNode]) -> Tuple[List[Provi
                     (("arg", SlotLeaf(ik[0].value)), ("value", Child(_h(unit, ik[2])))),
                 ))
             else:
-                membrane_panic(
+                membrane_missing(
                     owner="parso_adapter._call_args",
                     observed=f"argument shape {[c.type for c in ik]!r} not recognized",
                     requested="*expr, **expr, name=expr, or a comprehension argument",
@@ -560,7 +560,7 @@ def _one_subscript_item(unit: SourceUnit, node: ParsoNode) -> ProviderHandle:
     lower, upper, step = segments[0], segments[1], segments[2]
     for seg in (lower, upper, step):
         if len(seg) > 1:
-            membrane_panic(
+            membrane_missing(
                 owner="parso_adapter._one_subscript_item",
                 observed=f"slice segment with {len(seg)} nodes",
                 requested="zero or one expression per slice segment",
@@ -729,7 +729,7 @@ def _describe(unit: SourceUnit, node: ParsoNode) -> Description:
     fn = _DISPATCH.get(t)
     if fn is not None:
         return fn(unit, node)
-    membrane_panic(
+    membrane_missing(
         owner="parso_adapter._describe",
         observed=f"parso node type {t!r} has no translation rule",
         requested="a mapped statement/expression shape",
@@ -771,7 +771,7 @@ def _describe_leaf(unit: SourceUnit, node: ParsoNode) -> Description:
         # bare `a[:]`: subscript's slice collapses to just the ':' leaf.
         return Description(kind="Slice", raw_span=_span(unit, node), anchors=(),
                             slots=(("lower", MaybeChild(None)), ("upper", MaybeChild(None)), ("step", MaybeChild(None))))
-    membrane_panic(
+    membrane_missing(
         owner="parso_adapter._describe_leaf",
         observed=f"leaf {node.type}:{node.value!r} has no translation rule",
         requested="a mapped leaf shape",
@@ -835,7 +835,7 @@ def _atom(unit: SourceUnit, node: ParsoNode) -> Description:
         return _dictorset(unit, node, kids[1])
     if first.type == "fstring":
         return _describe(unit, first)
-    membrane_panic(
+    membrane_missing(
         owner="parso_adapter._atom",
         observed=f"atom starting with {getattr(first, 'value', first.type)!r} not recognized",
         requested="'(', '[', '{' grouping, or an fstring",
@@ -900,7 +900,7 @@ def _comp_clauses(unit: SourceUnit, nodes: Sequence[ParsoNode]) -> Tuple[Provide
             # folded into the preceding Comprehension's ifs by _comprehension
             continue
         else:
-            membrane_panic(
+            membrane_missing(
                 owner="parso_adapter._comp_clauses",
                 observed=f"comprehension clause child {n.type!r} not recognized",
                 requested="comp_for/sync_comp_for or comp_if",
@@ -928,14 +928,14 @@ def _comprehension(unit: SourceUnit, node: ParsoNode) -> Description:
             ifs.append(_h(unit, ik[1]))
             # a comp_if may itself carry a further comp_iter (chained ifs/for)
             if len(ik) > 2:
-                membrane_panic(
+                membrane_missing(
                     owner="parso_adapter._comprehension",
                     observed="comp_if with a nested comp_iter tail not yet folded",
                     requested="a flattened ifs/for chain",
                     fix="extend _comprehension to fold chained comp_iter tails",
                 )
         elif r2.type in ("comp_for", "sync_comp_for"):
-            membrane_panic(
+            membrane_missing(
                 owner="parso_adapter._comprehension",
                 observed="chained 'for ... for ...' clause not yet folded into a flat generators list",
                 requested="each comp_for as its own top-level Comprehension",
@@ -994,7 +994,7 @@ def _expr_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
                                    ("value", Child(_h(unit, value)))))
     aug_kind = _AUG_TOKEN.get(op.value)
     if aug_kind is None:
-        membrane_panic(
+        membrane_missing(
             owner="parso_adapter._expr_stmt",
             observed=f"expr_stmt operator {op.value!r} not recognized",
             requested="'=' (chained) or an augmented-assignment token",
@@ -1347,7 +1347,7 @@ def _async_stmt(unit: SourceUnit, node: ParsoNode) -> Description:
     if inner.type == "with_stmt":
         base = _with_stmt(unit, inner)
         return Description(kind="AsyncWith", raw_span=span, anchors=(), slots=base.slots)
-    membrane_panic(
+    membrane_missing(
         owner="parso_adapter._async_stmt",
         observed=f"async_stmt wrapping {inner.type!r} not recognized",
         requested="funcdef, for_stmt, or with_stmt",
@@ -1392,7 +1392,7 @@ def _factor(unit: SourceUnit, node: ParsoNode) -> Description:
     kids = _kids(node)
     kind = _UNARY_TOKEN.get(kids[0].value)
     if kind is None:
-        membrane_panic(
+        membrane_missing(
             owner="parso_adapter._factor",
             observed=f"unary token {kids[0].value!r} not recognized",
             requested="'+', '-', or '~'",
