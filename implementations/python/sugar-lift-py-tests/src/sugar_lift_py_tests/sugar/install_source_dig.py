@@ -2348,13 +2348,55 @@ def _resolve_install_source_class_bases(
         None,
     )
     if class_node is None:
+        unconditional_reexport = _definite_unconditional_reexport_target(
+            module_name, class_name, parsed
+        )
+        star_reexport = (
+            None
+            if unconditional_reexport is not None
+            else _definite_star_reexport_target(module_name, class_name, parsed)
+        )
         reexport = (
-            _definite_unconditional_reexport_target(module_name, class_name, parsed)
-            or _definite_star_reexport_target(module_name, class_name, parsed)
+            unconditional_reexport
+            or star_reexport
             or _definite_setup_reexport_target(module_name, class_name, parsed)
         )
         if reexport is not None:
-            return _resolve_install_source_class_bases(reexport, resolving, ctx)
+            reexported_bases = _resolve_install_source_class_bases(
+                reexport, resolving, ctx
+            )
+            if reexported_bases is None:
+                return None
+            # RULING (#5930, T, 2026-07-20): ordinary Python with real
+            # source gets walked, not refused. Rewrite only applies to a
+            # STAR reexport (``from _collections_abc import *``): that
+            # aliases the reexported module's ENTIRE namespace through the
+            # facade, so a transitively-resolved base genuinely IS reachable
+            # under the facade's own name too (e.g. ``_collections_abc.Mapping``
+            # is also ``collections.abc.Mapping``) -- without rewriting it,
+            # the private defining module's name leaks into a coordinate the
+            # caller asked about via its public alias.
+            #
+            # An UNCONDITIONAL (named) or setup reexport only aliases the ONE
+            # requested name, not the reexported module's namespace as a
+            # whole: rewriting there would fabricate coordinates that were
+            # never actually reexported (verified: ``base_facade.py`` doing
+            # ``from base_impl import Base`` does NOT also expose
+            # ``base_facade.Root`` just because ``Base``'s own base happens
+            # to be ``base_impl.Root`` -- that would be a MISSING pretending
+            # to be a real coordinate).
+            if star_reexport is None:
+                return reexported_bases
+            reexport_module = reexport.rsplit(".", 1)[0]
+            reexport_prefix = f"{reexport_module}."
+            return tuple(
+                (
+                    f"{module_name}.{base.removeprefix(reexport_prefix)}"
+                    if base.startswith(reexport_prefix)
+                    else base
+                )
+                for base in reexported_bases
+            )
         # Resolve public source facades without consulting runtime ``__mro__``.
         # Python 3.11's ``collections.abc`` is literally a star re-export of
         # ``_collections_abc``; later releases point inspection at the defining
