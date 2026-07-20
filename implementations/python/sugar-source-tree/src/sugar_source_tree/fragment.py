@@ -95,6 +95,33 @@ class SourceFragment:
     def line_col_span(self) -> LineColSpan:
         return self.unit.line_table.project(self.span)
 
+    @property
+    def line(self) -> int:
+        """The 1-based start line: this fragment's construction-site row."""
+        return self.line_col_span.start_line
+
+    @property
+    def col(self) -> int:
+        """The 0-based start column: this fragment's construction-site column."""
+        return self.line_col_span.start_col
+
+    def memento(self):
+        """The sealed WIRE warrant for this fragment: a SourceMementoDto (file,
+        span, segment CID). Distinct from ``seal()`` (the tree's own inert
+        SourceMemento currency): this is the kit's wire DTO the floor values
+        mint into contract rows as source warrants. Lazy import, like ``sugar``
+        — the meaning package owns the wire shape; the fragment just answers it.
+        """
+        from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
+        from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
+
+        lc = self.line_col_span
+        return SourceMementoDto(
+            file=self.filename,
+            span=SourceSpanDto(lc.start_line, lc.start_col, lc.end_line, lc.end_col),
+            source_cid=self.seal().cid,
+        )
+
     def seal(self) -> SourceMemento:
         """Fragment -> memento. The segment CID is minted by the oracle's
         hash over the oracle-pinned text — this layer computes a slice of

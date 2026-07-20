@@ -148,6 +148,41 @@ def audit_file_gaps(full_path: Path):
     return sf, list(seen.values())
 
 
+def function_def_memento(fn, file_rel: str):
+    """The function's own SourceMemento (the def warrant payload_rows needs)."""
+    from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
+    from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
+
+    lc = fn.line_col_span()
+    return SourceMementoDto(
+        file=file_rel,
+        span=SourceSpanDto(lc.start_line, lc.start_col, lc.end_line, lc.end_col),
+        source_cid=fn.fragment.seal().cid,
+        source_function_name=fn.name,
+        param_names=[p.name for p in fn.params],
+    )
+
+
+def function_contract_rows(fn, file_rel: str):
+    """A function's contract DTO rows, produced from its TREE universe.
+
+    `fn.sugar()` constructs the FunctionUniverseSugar; desugar reduces the body.
+    Complete -> the UniverseValue projects its own DTO rows (one function-
+    contract carrying the post, one contract per stated inv) via payload_rows --
+    the exact rows the factory used to emit. Incomplete -> the def is an effect
+    (a halt), returned as (def_memento, None) so the caller emits an effect, not
+    a contract. A SugarNotWritten from an unported body statement propagates
+    (the whole function is a frontier gap).
+    """
+    from sugar_lift_py_tests.outcome import Complete
+
+    def_memento = function_def_memento(fn, file_rel)
+    outcome = fn.sugar().desugar(None)
+    if not isinstance(outcome, Complete):
+        return def_memento, None  # an effect; not a contract
+    return def_memento, outcome.value.payload_rows(def_memento)
+
+
 def module_definition_memento(sf: SourceFile, file_rel: str, file_cid: str) -> dict:
     """The whole-file body the audit frontier demands one leaf for."""
     lc = sf.root.line_col_span()
