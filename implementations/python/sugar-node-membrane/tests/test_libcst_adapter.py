@@ -257,10 +257,30 @@ def test_unknown_operator_panics_rather_than_defaulting():
         _op(_BINARY_OPS, libcst.And(), "binop")
 
 
-def test_provider_refusal_is_a_syntax_error_not_a_silent_empty_tree():
+def test_provider_refusal_is_loud_but_NOT_a_SyntaxError():
+    """CONTRACT FINDING (#5940): the backend contract never declares how a
+    provider signals refusal, and the membrane's failure vocabulary is
+    written in ONE provider's exception type.
+
+    ``corpus.py`` records a provider refusal by catching ``SyntaxError``.
+    LibCST raises ``libcst.ParserSyntaxError``, which does NOT subclass
+    ``SyntaxError``. So with LibCST installed as the provider, a corpus
+    containing a single unparseable file does not produce a recorded
+    ``provider_syntax_error`` row — the exception escapes and kills the
+    whole run. The instrument stops instead of reporting.
+
+    This test pins the fact. The fix belongs in ``backend.py`` (declare a
+    refusal type every adapter normalizes into), which is outside this
+    adapter's blast radius.
+    """
     with pytest.raises(Exception) as excinfo:
         build("def (:\n")
     assert not isinstance(excinfo.value, MembranePanic)
+    assert not isinstance(excinfo.value, SyntaxError), (
+        "if this starts passing, LibCST changed its exception base and "
+        "the contract gap below may have closed by accident, not by ruling"
+    )
+    assert type(excinfo.value).__name__ == "ParserSyntaxError"
 
 
 # --------------------------------------------------------------------------
@@ -320,6 +340,110 @@ def test_cid_agreement_on_the_golden_corpus_is_pinned_with_its_open_findings():
         ("$.body[45].body[0].cases[4]", "span"),
         ("$.body[45].body[0].cases[4].pattern", "span"),
     }
+
+
+def _diff(source: str) -> DiffResult:
+    result = DiffResult()
+    compare_source(
+        Membrane(CPythonAstProvider()),
+        Membrane(LibCSTProvider()),
+        source,
+        "<repro>",
+        result,
+    )
+    return result
+
+
+def test_open_finding_parenthesized_genexp_parens(capsys=None):
+    """SPEC/CPYTHON-ADAPTER FINDING, 849 divergences over numpy+pandas.
+
+    spans.py rules: "grouping parentheses are NEVER part of an expression's
+    span", with the enclosed TUPLE display as the one exception. A generator
+    expression is not a tuple, so by the written spec its own parens are
+    excluded. The CPython adapter includes them.
+
+    Minimal reproducer, pinned so the day someone rules on it the pin moves
+    deliberately rather than silently. The same root cause produces the
+    ``Param`` residue below: a parenthesized ANNOTATION (``a: (X | Y)``)
+    puts CPython's ``arg`` end after the ``)`` while the annotation
+    expression itself, per the grouping rule, ends at ``Y``.
+    """
+    result = _diff("g = (x for x in xs)\n")
+    assert len(result.divergences) == 1
+    d = result.divergences[0]
+    assert d.category == "span"
+    assert d.left_kind == d.right_kind == "GeneratorExp"
+    assert d.left_span == (4, 19)  # cpython: '(x for x in xs)'
+    assert d.right_span == (5, 18)  # libcst: 'x for x in xs' — the written spec
+
+
+def test_open_finding_parenthesized_annotation_param_span():
+    """Same grouping-paren root cause, seen through a Param."""
+    result = _diff("def f(a: (int | str)): pass\n")
+    kinds = {d.left_kind for d in result.divergences}
+    assert kinds == {"Param"}
+
+
+def test_open_finding_implicit_concatenated_fstring_segmentation():
+    """SPEC FINDING, 4,869 divergences over numpy+pandas (85% of all of them).
+
+    ``f"a " "b"`` is one literal. spans.py rules what the WHOLE literal
+    spans, but says nothing about the inventory or spans of the literal
+    runs INSIDE the resulting ``JoinedStr``.
+
+    CPython merges the runs across the piece boundary into one ``Constant``
+    whose span crosses the closing quote of one piece and the opening
+    prefix of the next — so its segment contains inter-piece SYNTAX and is
+    not the literal's text. LibCST keeps one content node per piece. Every
+    subsequent index in ``values[]`` then shifts, which is what produces
+    the paired ``missing_left``/``missing_right`` and the
+    ``FormattedValue``<->``Constant`` "kind" swaps in the corpus report:
+    index misalignment, not genuinely different nodes.
+
+    Nothing is normalized here. The spec has to rule on the segmentation.
+    """
+    result = _diff('s = f"a{x} " "b"\n')
+    assert result.divergences, "the concatenation divergence must not vanish silently"
+    cpython_segments = [
+        d.left_span for d in result.divergences if d.left_kind == "Constant"
+    ]
+    assert cpython_segments, "expected a merged CPython Constant run"
+
+
+def test_a_plain_fstring_without_concatenation_agrees():
+    """The discriminator's other arm: without the concatenation boundary the
+    same f-string machinery — literal runs, replacement fields, conversions,
+    nesting — agrees exactly. This is what makes the finding above specific
+    to concatenation rather than to f-strings at large."""
+    result = _diff('s = f"a{x}b{y!r}c"\n')
+    assert result.divergences == []
+
+
+def test_open_finding_zero_width_constant_inside_a_format_spec():
+    """SPEC FINDING, independent of the two above.
+
+    CPython materializes a ZERO-WIDTH empty ``Constant`` at the end of an
+    f-string format spec. Its span is ``[n, n)`` and its CID is the sha256
+    of the empty string — an address that identifies no source text.
+
+    spans.py's own envelope rule already states the principle it violates:
+    "there is no such thing as a node with no source extent". So the node
+    INVENTORY contradicts the span spec, and LibCST — which materializes no
+    such node — is the side consistent with the written rule.
+
+    The contract has no way to express node inventory, so this is only ever
+    visible through a differential. Needs a ruling.
+    """
+    result = _diff('s = f"{x:>{w}}"\n')
+    empty_cid = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    zero_width = [
+        d
+        for d in result.divergences
+        if d.category == "missing_right" and d.left_cid == empty_cid
+    ]
+    assert len(zero_width) == 1
+    d = zero_width[0]
+    assert d.left_span is not None and d.left_span[0] == d.left_span[1]
 
 
 def test_the_vast_majority_of_the_corpus_already_agrees():

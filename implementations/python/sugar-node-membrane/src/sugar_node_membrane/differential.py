@@ -38,6 +38,13 @@ from .construct import Membrane
 from .corpus import records_for_source
 from .panic import MembranePanic
 
+try:  # the refusal type the contract should have declared but does not
+    from libcst import ParserSyntaxError as _LibCSTRefusal
+
+    _PROVIDER_REFUSALS: tuple[type[BaseException], ...] = (_LibCSTRefusal,)
+except ImportError:  # LibCST not installed: only the CPython provider exists
+    _PROVIDER_REFUSALS = ()
+
 
 @dataclass(frozen=True)
 class Divergence:
@@ -100,6 +107,14 @@ def _emit(
         result.failures.append((rel, side, "membrane_panic", str(err)))
         return None
     except SyntaxError as err:
+        result.failures.append((rel, side, "provider_syntax_error", str(err)))
+        return None
+    except _PROVIDER_REFUSALS as err:
+        # CONTRACT GAP (#5940): backend.py never declares a refusal type, so
+        # the membrane's failure vocabulary is written in CPython's
+        # SyntaxError. LibCST's ParserSyntaxError does not subclass it, so
+        # this differential has to name it explicitly. corpus.py, which only
+        # catches SyntaxError, would let it escape and kill the run.
         result.failures.append((rel, side, "provider_syntax_error", str(err)))
         return None
     except RecursionError as err:

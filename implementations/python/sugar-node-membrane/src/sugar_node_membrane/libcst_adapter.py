@@ -377,15 +377,27 @@ def _tuple_span(ctx: _Ctx, node: cst.Tuple) -> Span:
 def _comp_for_anchor(ctx: _Ctx, node: cst.CompFor) -> Span:
     """The clause's ``for`` (or ``async``) keyword start.
 
-    LibCST's ``CompFor`` span begins at the whitespace preceding the
-    keyword; our spec begins at the keyword. Pure forward scan over
-    whitespace — the mirror of the CPython adapter's backscan.
+    LibCST's ``CompFor`` span begins at the trivia preceding the keyword;
+    our spec begins at the keyword. Pure forward scan — the mirror of the
+    CPython adapter's backscan.
+
+    Between the element expression and the ``for`` keyword only whitespace
+    and COMMENTS can occur. Comments are common here in real code (a
+    ``# type: ignore`` on the element line), which a whitespace-only scan
+    walks straight into.
     """
     start = ctx.span(node).start
     src = ctx.unit.source
     j = start
-    while j < len(src) and src[j].isspace():
-        j += 1
+    while j < len(src):
+        if src[j].isspace():
+            j += 1
+            continue
+        if src[j] == "#":
+            newline = src.find("\n", j)
+            j = len(src) if newline == -1 else newline + 1
+            continue
+        break
     if not (src.startswith("for", j) or src.startswith("async", j)):
         membrane_panic(
             owner="libcst_adapter._comp_for_anchor",
@@ -616,15 +628,25 @@ def _dict_items(ctx: _Ctx, elements: Sequence[cst.BaseDictElement]) -> Children:
 # --------------------------------------------------------------------------
 
 
+def _has_comma(element: cst.SubscriptElement) -> bool:
+    return isinstance(element.comma, cst.Comma)
+
+
 def _subscript_slice(ctx: _Ctx, node: cst.Subscript) -> Child:
+    """``a[x]`` is an expression subscript; ``a[x, y]`` AND ``a[x,]`` are
+    tuple subscripts. The trailing comma is what makes a single-element
+    subscript a tuple, so it is the discriminator, and it is inside the
+    tuple's span — without it there is no tuple."""
     parts = list(node.slice)
-    if len(parts) == 1:
+    if len(parts) == 1 and not _has_comma(parts[0]):
         return Child(_slice_element(ctx, parts[0]))
-    # ``a[1, 2]`` -> one Tuple over the elements, spanning them.
     handles = tuple(_slice_element(ctx, p) for p in parts)
     span = ctx.span(parts[0].slice)
     for p in parts[1:]:
         span = span.envelope(ctx.span(p.slice))
+    last = parts[-1]
+    if _has_comma(last):
+        span = span.envelope(ctx.span(last.comma))
     return Child(
         _Synth(
             kind="Tuple",

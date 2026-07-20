@@ -9,6 +9,13 @@ description = "The node membrane (#5940): source text in, constructed graph out.
 requires-python = ">=3.12"
 dependencies = []
 
+# The core membrane stays stdlib-only. A PROVIDER is an optional extra:
+# installing one must never be a condition of the membrane working, and the
+# membrane must never depend on any single parser. Install with
+# ``pip install -e '.[libcst]'`` to run the provider differential.
+[project.optional-dependencies]
+libcst = ["libcst>=1.8"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
