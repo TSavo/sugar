@@ -23,6 +23,7 @@ import pytest
 
 libcst = pytest.importorskip("libcst", reason="LibCST provider not installed")
 
+from sugar_node_membrane.backend import ProviderRefused  # noqa: E402
 from sugar_node_membrane.construct import Membrane  # noqa: E402
 from sugar_node_membrane.cpython_adapter import CPythonAstProvider  # noqa: E402
 from sugar_node_membrane.libcst_adapter import LibCSTProvider, _describe, _Ctx  # noqa: E402
@@ -260,27 +261,26 @@ def test_unknown_operator_panics_rather_than_defaulting():
         _op(_BINARY_OPS, libcst.And(), "binop")
 
 
-def test_provider_refusal_is_loud_but_NOT_a_SyntaxError():
-    """CONTRACT FINDING (#5940): the backend contract never declares how a
-    provider signals refusal, and the membrane's failure vocabulary is
-    written in ONE provider's exception type.
-
-    ``corpus.py`` records a provider refusal by catching ``SyntaxError``.
-    LibCST raises ``libcst.ParserSyntaxError``, which does NOT subclass
-    ``SyntaxError``. So with LibCST installed as the provider, a corpus
-    containing a single unparseable file does not produce a recorded
-    ``provider_syntax_error`` row — the exception escapes and kills the
-    whole run. The instrument stops instead of reporting.
-
-    This test pins the fact. The fix belongs in ``backend.py`` (declare a
-    refusal type every adapter normalizes into), which is outside this
-    adapter's blast radius.
+def test_provider_refusal_is_a_membrane_ProviderRefused_never_a_SyntaxError():
+    """FIX FOR #5946 (the contract finding recorded against #5940): the
+    backend contract now declares how a provider signals refusal
+    (``backend.ProviderRefused``), and this adapter maps its native
+    ``libcst.ParserSyntaxError`` — which does NOT subclass ``SyntaxError``
+    — onto it. Before the fix, ``corpus.py`` caught only ``SyntaxError``,
+    so with LibCST installed a corpus containing one unparseable file let
+    the exception escape and killed the whole run instead of recording a
+    row. This test pins the fix: LibCST's native exception never escapes
+    this adapter, and the membrane's own refusal type does.
     """
-    with pytest.raises(Exception) as excinfo:
+    assert not issubclass(libcst.ParserSyntaxError, SyntaxError), (
+        "if this starts failing, LibCST changed its exception base; the "
+        "underlying #5946 defect may no longer apply, but the mapping "
+        "below must still hold regardless"
+    )
+    with pytest.raises(ProviderRefused) as excinfo:
         build("def (:\n")
     assert not isinstance(excinfo.value, MembranePanic)
-    assert not isinstance(excinfo.value, SyntaxError), (
-        "if this starts passing, LibCST changed its exception base and "
-        "the contract gap below may have closed by accident, not by ruling"
-    )
-    assert type(excinfo.value).__name__ == "ParserSyntaxError"
+    assert not isinstance(excinfo.value, SyntaxError)
+    assert not isinstance(excinfo.value, libcst.ParserSyntaxError)
+    assert excinfo.value.provider == LibCSTProvider().name
+    assert excinfo.value.file == "<test>"

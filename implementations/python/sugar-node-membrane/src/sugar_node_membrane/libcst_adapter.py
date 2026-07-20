@@ -62,6 +62,12 @@ What this adapter must translate, because the CST vocabulary differs:
 A LibCST shape with no rule here panics as a MISSING at the boundary. There
 is no generic fallback and no ``getattr`` sniffing: an unmapped CST node is
 the conformance finding itself.
+
+Source LibCST cannot parse at all raises ``libcst.ParserSyntaxError`` —
+which does NOT subclass ``SyntaxError`` (#5946). This adapter catches it
+and re-raises ``ProviderRefused`` (backend.py), never letting the
+library-native type escape, so a caller written against one provider
+never silently stops working when the other is swapped in.
 """
 
 from __future__ import annotations
@@ -81,6 +87,7 @@ from .backend import (
     OpsLeaf,
     Provider,
     ProviderHandle,
+    ProviderRefused,
     Slot,
 )
 from .nodes import SourceUnit
@@ -1523,7 +1530,16 @@ class LibCSTProvider(Provider):
     name = "libcst"
 
     def parse(self, unit: SourceUnit) -> ProviderHandle:
-        module = cst.parse_module(unit.source)
+        try:
+            module = cst.parse_module(unit.source)
+        except cst.ParserSyntaxError as err:
+            # PartialParserSyntaxError (raised internally on some statement/
+            # param shapes) is always upconverted to ParserSyntaxError before
+            # it reaches parse_module (libcst._parser.base_parser) — this is
+            # the one exception type that escapes LibCST's own parser.
+            raise ProviderRefused(
+                provider=self.name, file=unit.filename, reason=str(err)
+            ) from err
         wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
         positions = wrapper.resolve(PositionProvider)
         return _Handle(_Ctx(unit, positions), module)
