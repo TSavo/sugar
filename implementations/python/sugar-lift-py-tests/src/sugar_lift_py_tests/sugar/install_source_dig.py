@@ -2203,7 +2203,19 @@ def native_extension_class_origin(
     if not qualified_class or "." not in qualified_class:
         return None
     if qualified_class in _resolving:
-        return None
+        # Same cycle `_resolve_install_source_class_bases` already panics
+        # on downstream (line ~2322): this earlier check exists so the
+        # decision is loud at first detection, not just when some caller
+        # happens to keep walking into the class-bases resolver. The other
+        # `None` returns in this function are documented decidable
+        # negatives ("not provably native, existing gap machinery decides
+        # downstream") -- this one is not, so it does not get to share
+        # their bare-`None` shape (#5930 ruling).
+        _install_source_cycle_panic(
+            guard="native-extension-class-origin",
+            target=qualified_class,
+            active=_resolving,
+        )
     _resolving = _resolving | {qualified_class}
     module_name, class_name = qualified_class.rsplit(".", 1)
     installed = _installed_source(module_name)

@@ -491,6 +491,7 @@ def _resolve_static_module_attribute_chain(
         _definite_setup_reexport_target,
         _definite_star_reexport_target,
         _definite_unconditional_reexport_target,
+        _install_source_cycle_panic,
         _installed_native_extension,
         installed_module_source,
         parsed_tree,
@@ -500,7 +501,17 @@ def _resolve_static_module_attribute_chain(
     rest = remaining[1:]
     cycle_key = f"{module_name}.{name}"
     if cycle_key in resolving:
-        return None
+        # A cycle here is a genuine construction gap, not a decidable
+        # "try the next candidate" negative: nothing further in this walk
+        # can resolve it, unlike the many other `None` returns below (no
+        # module, syntax error, no reexport found) that ARE decidable
+        # negatives callers already fall through on (#5930 ruling: bare
+        # `None` must never be ambiguous between "no" and "cannot tell").
+        _install_source_cycle_panic(
+            guard="import-alias-attribute-chain",
+            target=cycle_key,
+            active=resolving,
+        )
     resolving = resolving | {cycle_key}
 
     installed = installed_module_source(module_name)
