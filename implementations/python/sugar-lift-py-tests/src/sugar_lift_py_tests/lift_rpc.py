@@ -3205,6 +3205,79 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     started=demand_started,
                 )
                 return
+            # Levels below `functions` served by the AST tree, not the factory.
+            # Invoking the RPC is invoking the source tree enumeration: walk the
+            # function's Assert nodes and ask each for its sugar and its fact.
+            # For a bare `assert`, call_site and assertion are the same locus
+            # (1:1, protocol Section 4); the fact is the desugared InvValue.
+            if not audit_walk and level in ("call_sites", "assertions", "facts"):
+                from sugar_lift_py_tests import tree_enumerate as _tree
+
+                sf = _tree.source_file(full_path)
+
+                if level in ("call_sites", "assertions"):
+                    # at is the parent function (scan) — enumerate its assertions.
+                    fn = _tree.find_function(
+                        sf,
+                        (at or {}).get("function_name")
+                        or (at or {}).get("source_function_name"),
+                        (at or {}).get("span") if isinstance(at, dict) else None,
+                    )
+                    built = []
+                    if fn is not None:
+                        for a in _tree.asserts_of(fn):
+                            memento = _tree.assert_memento(a, file_rel)
+                            if seek and at is not None and not _memento_matches(
+                                memento, at
+                            ):
+                                continue
+                            built.append(
+                                {"memento": memento, "audit": None, "payload": None}
+                            )
+                    _send_enumerate_result(msg_id, built, [])
+                    _log_enumeration_demand(
+                        str(level), at, cache="miss", started=demand_started
+                    )
+                    return
+
+                # facts: at is an assertion memento — desugar THAT assert.
+                node = _tree.find_assert(
+                    sf, at.get("span") if isinstance(at, dict) else None
+                )
+                if node is None:
+                    _send_enumerate_result(
+                        msg_id, [], [{"memento": at, "reason": "no assertion here"}]
+                    )
+                    return
+                formula = _tree.fact_of(node)
+                if formula is None:
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [
+                            {
+                                "memento": _tree.assert_memento(node, file_rel),
+                                "reason": "assertion emits no fact",
+                            }
+                        ],
+                    )
+                    return
+                _send_enumerate_result(
+                    msg_id,
+                    [
+                        {
+                            "memento": _tree.assert_memento(node, file_rel),
+                            "audit": None,
+                            "payload": formula,
+                        }
+                    ],
+                    [],
+                )
+                _log_enumeration_demand(
+                    str(level), at, cache="miss", started=demand_started
+                )
+                return
+
             ir_items, call_edges, term_table = _lift_file_for_enumeration(
                 workspace_root, root, file_rel
             )
