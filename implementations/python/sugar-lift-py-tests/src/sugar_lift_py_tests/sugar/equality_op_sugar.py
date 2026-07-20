@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
-from dataclasses import replace
 
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -23,34 +22,13 @@ class EqualityOpSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
-        start = len(ctx.module_rewrite_log)
-        outcome = self.left.desugar(ctx).and_then(
+        # Reduce both sides; the left, standing on the equals floor, answers
+        # whether it equals the right. That is all `==` desugars to.
+        return self.left.desugar(ctx).and_then(
             lambda left: self.right.desugar(ctx).and_then(
                 lambda right: _equals_and_refine(left, right, self.site, ctx)
             )
         )
-        rewrites = ctx.module_rewrite_log[start:]
-        ground_rewrites = [rewrite for rewrite in rewrites if rewrite[4] is not None]
-        if len(ground_rewrites) >= 2 and not ctx.prefer_ground_module_bindings:
-            rerun_start = len(ctx.module_rewrite_log)
-            ground_ctx = replace(ctx, prefer_ground_module_bindings=True)
-            outcome = self.left.desugar(ground_ctx).and_then(
-                lambda left: self.right.desugar(ground_ctx).and_then(
-                    lambda right: _equals_and_refine(left, right, self.site, ground_ctx)
-                )
-            )
-            del ctx.module_rewrite_log[rerun_start:]
-
-        from sugar_lift_py_tests.floor import PredicateValue
-        from sugar_lift_py_tests.outcome import Complete
-
-        if isinstance(outcome, Complete) and isinstance(outcome.value, PredicateValue):
-            chains = tuple(
-                (f"{name} = {replacement}", path, line)
-                for name, replacement, path, line, _ground in rewrites
-            )
-            outcome = Complete(replace(outcome.value, rewrite_chains=chains))
-        return outcome
 
 def _finite_equality_face(value, peer, *, matches: bool):
     """Filter an exact construction-time finite join by a ground equality."""

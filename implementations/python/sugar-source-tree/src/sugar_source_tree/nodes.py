@@ -196,6 +196,18 @@ class Node(Typed):
         override = getattr(type(self), "_kind", None)
         return override if isinstance(override, str) else type(self).__name__
 
+    def substitute(self, scope: "dict[str, Node]") -> "Node":
+        """Rewrite this node against a scope (name -> bound node), yielding a
+        NEW node. Reduction IS substitution into the tree — there is no
+        environment threaded alongside; the rewritten tree is the state, and
+        single assignment is its natural form (each rewrite is a fresh tree).
+
+        Default: a node that binds nothing rewrites to itself. A Name resolves
+        against the scope; a compound node rewrites its children; a scope-
+        owning node masks its bound names before rewriting its body.
+        """
+        return self
+
     def sugar(self) -> object:
         """This node's sugar, constructed by the node itself.
 
@@ -750,6 +762,13 @@ class Starred(Expression):
 
 class Name(Expression):
     id: str
+
+    def substitute(self, scope: "dict[str, Node]") -> "Node":
+        # A name resolves to its bound node, or stands unbound. This is the
+        # whole substitution base case — it returns an EXISTING node, so it
+        # needs no synthetic construction.
+        bound = scope.get(self.id)
+        return bound if bound is not None else self
 
 
 class List(Expression):

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from typing import TYPE_CHECKING
 
-from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -15,7 +14,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
+class FalseBoolLiteralSugar(Sugar, FloorValue):
     """The literal `False`. It holds no value -- the boolean IS the type. It is its own
     floor value and it dispatches the emit to the else-face; with no else it emits
     nothing (an empty block adds no constraint). No fork.
@@ -25,15 +24,6 @@ class FalseBoolLiteralSugar(Sugar, FloorValue, role=SugarRole.TERM):
     """
 
     site: object = dataclass_field(compare=False)
-
-    @classmethod
-    def owns(cls, site) -> bool:
-        return site.observed == "Constant" and site.literal_value() is False
-
-    @classmethod
-    def new(cls, site, ctx) -> "FalseBoolLiteralSugar":
-        del ctx  # a literal is a leaf: no children
-        return cls(site=site)
 
     @classmethod
     def witnesses(cls):
