@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
+import importlib.machinery
 import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -160,9 +160,12 @@ def _imported_top_level_packages(root_fragment: SourceFragment) -> tuple[str, ..
 
 
 def _package_root(package: str) -> Path | None:
+    # PathFinder.find_spec(name, None) locates a top-level directory package
+    # by walking sys.path, without importing it (#5930) -- the same
+    # non-executing form _installed_native_extension uses.
     try:
-        spec = importlib.util.find_spec(package)
-    except (ImportError, AttributeError, ValueError):
+        spec = importlib.machinery.PathFinder.find_spec(package, None)
+    except (ImportError, AttributeError, ValueError, TypeError):
         return None
     if spec is None or spec.submodule_search_locations is None:
         return None

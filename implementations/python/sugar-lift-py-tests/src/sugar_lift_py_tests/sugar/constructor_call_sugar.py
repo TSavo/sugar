@@ -1870,10 +1870,10 @@ def _constructor_initializer_factory_context(
 
 def _native_imported_base_targets(class_site, ctx):
     """Resolve direct dotted bases whose module artifact is a native extension."""
-    import importlib.machinery
-    import importlib.util
-
     from sugar_lift_py_tests.floor import ImportAliasValue
+    from sugar_lift_py_tests.sugar.install_source_dig import (
+        _installed_native_extension,
+    )
 
     targets = []
     for base in class_site.class_bases():
@@ -1884,14 +1884,13 @@ def _native_imported_base_targets(class_site, ctx):
         bound = ctx.temporal.value_if_bound(module_name)
         if not isinstance(bound, ImportAliasValue) or bound.import_target is None:
             return None
-        try:
-            spec = importlib.util.find_spec(bound.import_target)
-        except (ImportError, ModuleNotFoundError, ValueError):
-            return None
-        origin = None if spec is None else spec.origin
-        if origin is None or not any(
-            origin.endswith(suffix) for suffix in importlib.machinery.EXTENSION_SUFFIXES
-        ):
+        # Parent-safe: PathFinder.find_spec walked one segment at a time,
+        # never importlib.util.find_spec(dotted) (imports parent packages).
+        origin = _installed_native_extension(bound.import_target)
+        # `_installed_native_extension` also admits top-level built-ins
+        # (origin == "built-in"); the prior EXTENSION_SUFFIXES check did not,
+        # so preserve that narrower bound here.
+        if origin is None or origin == "built-in":
             return None
         targets.append(f"{bound.import_target}.{class_name}")
     return tuple(targets) if targets else None
