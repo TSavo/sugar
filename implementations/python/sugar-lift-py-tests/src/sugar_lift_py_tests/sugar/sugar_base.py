@@ -5,107 +5,10 @@ from dataclasses import fields, is_dataclass
 import inspect
 from typing import Any, Callable, ClassVar, List, cast
 
-from sugar_lift_py_tests.claim import SugarClaim, SugarRole
+from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnesses
 from sugar_lift_py_tests.sugar_body import SugarBody
-
-# Every Sugar subclass that declares a role self-registers its claim here at import
-# time, so the catalog is just this list -- no hand-wired CLAIM constants, impossible
-# to forget to register a new sugar.
-_REGISTRY: List[SugarClaim] = []
-_REGISTRATION_SITES: dict[str, str] = {}
-
-
-def registered_claims() -> List[SugarClaim]:
-    return list(_REGISTRY)
-
-
-def validate_registry() -> None:
-    """Reject invalid registry topology before factory dispatch can see it."""
-
-    _reject_duplicate_claims()
-    _reject_dangling_comes_before()
-    _reject_comes_before_cycles()
-
-
-def _claimant(cls: type) -> str:
-    return f"{cls.__module__}.{cls.__qualname__}"
-
-
-def _reject_duplicate_claim(cls: type) -> None:
-    existing = _REGISTRATION_SITES.get(cls.__name__)
-    if existing is None:
-        return
-    claimant = _claimant(cls)
-    raise RuntimeError(
-        f"duplicate Sugar claim name `{cls.__name__}`: "
-        f"first claimant `{existing}`, second claimant `{claimant}`. "
-        "Fix: rename one Sugar class or merge the implementations behind one "
-        "registered claim name."
-    )
-
-
-def _reject_duplicate_claims() -> None:
-    seen: dict[str, str] = {}
-    for claim in _REGISTRY:
-        site = _REGISTRATION_SITES.get(claim.name, claim.name)
-        existing = seen.get(claim.name)
-        if existing is not None:
-            raise RuntimeError(
-                f"duplicate Sugar claim name `{claim.name}`: "
-                f"first claimant `{existing}`, second claimant `{site}`. "
-                "Fix: rename one Sugar class or merge the implementations behind one "
-                "registered claim name."
-            )
-        seen[claim.name] = site
-
-
-def _reject_dangling_comes_before() -> None:
-    names = {claim.name for claim in _REGISTRY}
-    for claim in _REGISTRY:
-        for target in claim.comes_before:
-            if target not in names:
-                raise RuntimeError(
-                    "dangling Sugar comes_before reference: "
-                    f"`{claim.name}` declares target `{target}`, but no registered "
-                    "claim has that name. Fix: rename the comes_before target to an "
-                    f"existing Sugar claim or import/register `{target}` before the "
-                    "catalog is built."
-                )
-
-
-def _reject_comes_before_cycles() -> None:
-    names = {claim.name for claim in _REGISTRY}
-    graph = {
-        claim.name: tuple(target for target in claim.comes_before if target in names)
-        for claim in _REGISTRY
-    }
-    visited: set[str] = set()
-    visiting: list[str] = []
-
-    def visit(name: str) -> list[str] | None:
-        if name in visiting:
-            return visiting[visiting.index(name) :] + [name]
-        if name in visited:
-            return None
-        visiting.append(name)
-        for target in graph.get(name, ()):
-            cycle = visit(target)
-            if cycle is not None:
-                return cycle
-        visiting.pop()
-        visited.add(name)
-        return None
-
-    for claim in _REGISTRY:
-        cycle = visit(claim.name)
-        if cycle is not None:
-            path = " -> ".join(cycle)
-            raise RuntimeError(
-                f"Sugar comes_before cycle: {path}. Fix: remove one comes_before "
-                "edge or split the sugar role so registry precedence is acyclic."
-            )
 
 
 class Sugar(ABC):
@@ -137,47 +40,23 @@ class Sugar(ABC):
     def __init_subclass__(
         cls,
         role: SugarRole | None = None,
-        comes_before: tuple = (),
+        comes_before: tuple = (),  # DEAD: catalog scan-order, no scan exists; ignored,
+                                   # removed per-sugar as recognition leaves each file
         **kwargs,
     ) -> None:
         super().__init_subclass__(**kwargs)
         if role is None:
-            return  # an intermediate base (e.g. a shared mixin), not a registrable leaf
-        for required in ("owns", "new", "desugar", "witnesses"):
+            return  # an intermediate base (e.g. a shared mixin), not a leaf sugar
+        # A sugar is MEANING: it desugars and it proves itself. Recognition and
+        # construction moved onto the AST node (node.sugar()), so a sugar no
+        # longer defines owns/new and no longer registers into a factory catalog.
+        for required in ("desugar", "witnesses"):
             if required not in cls.__dict__:
                 raise TypeError(
-                    f"{cls.__name__} is a registrable sugar but does not define "
-                    f"{required}(); a sugar owns exactly what it can lift, so to enroll "
-                    "it must recognize (owns), construct (new), reduce (desugar), and "
-                    "prove itself (witnesses). A sugar that cannot lift cannot own -- "
-                    "enrollment is existence, and a half-sugar is a recognize-and-panic "
-                    "side door."
+                    f"{cls.__name__} is a sugar but does not define {required}(); "
+                    "a sugar reduces itself (desugar) and proves itself (witnesses)."
                 )
-        _reject_duplicate_claim(cls)
         cls.role = role
-        claim = SugarClaim(
-            name=cls.__name__,
-            role=role,
-            owns=cls.owns,
-            comes_before=tuple(comes_before),
-            witnesses=cls.witnesses,
-            universe_coordinates=frozenset(cls.universe_coordinates),
-            new=cls.new,
-        )
-        _REGISTRY.append(claim)
-        _REGISTRATION_SITES[claim.name] = _claimant(cls)
-        _reject_comes_before_cycles()
-
-    @classmethod
-    def owns(cls, fragment) -> bool:
-        raise NotImplementedError(f"{cls.__name__} must define owns(fragment)")
-
-    @classmethod
-    def new(cls, site, ctx) -> "Sugar":
-        raise NotImplementedError(
-            f"{cls.__name__} must define new(site, ctx); construction builds its "
-            "child bodies through the factory (ctx.build_body) and news the sugar"
-        )
 
     @classmethod
     def witnesses(cls) -> SugarWitnesses:
