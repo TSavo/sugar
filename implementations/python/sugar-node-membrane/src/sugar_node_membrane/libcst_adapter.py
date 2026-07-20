@@ -92,7 +92,7 @@ from .backend import (
 )
 from .nodes import SourceUnit
 from .operators import Operator, operator_for
-from .panic import membrane_panic
+from .panic import membrane_missing, membrane_provider_defect
 from .spans import Span
 
 
@@ -116,7 +116,7 @@ class _Ctx:
         try:
             rng = self.positions[node]  # type: ignore[index]
         except KeyError:
-            membrane_panic(
+            membrane_missing(
                 owner="libcst_adapter._Ctx.span",
                 observed=f"libcst {type(node).__name__} carries no position",
                 requested="a positioned node, or a rule marking it envelope-spanned",
@@ -217,7 +217,7 @@ def _asname_str(node: Optional[cst.AsName]) -> Optional[str]:
     target = node.name
     if isinstance(target, cst.Name):
         return target.value
-    membrane_panic(
+    membrane_missing(
         owner="libcst_adapter._asname_str",
         observed=f"AsName over {type(target).__name__}, not a Name",
         requested="a simple name binding",
@@ -234,7 +234,7 @@ def _dotted(node: cst.BaseExpression) -> str:
         parts.append(cur.attr.value)
         cur = cur.value
     if not isinstance(cur, cst.Name):
-        membrane_panic(
+        membrane_missing(
             owner="libcst_adapter._dotted",
             observed=f"import target head is {type(cur).__name__}, not a Name",
             requested="a Name or a chain of Attribute over a Name",
@@ -273,7 +273,7 @@ def _statements(ctx: _Ctx, body: object) -> Tuple[ProviderHandle, ...]:
         if isinstance(item, cst.CSTNode):
             out.append(_Handle(ctx, item))
             continue
-        membrane_panic(
+        membrane_missing(
             owner="libcst_adapter._statements",
             observed=f"{type(item).__name__} in statement position",
             requested="a CST statement, suite, or block",
@@ -290,7 +290,7 @@ def _orelse(ctx: _Ctx, node: object) -> Tuple[ProviderHandle, ...]:
         return _statements(ctx, node.body)
     if isinstance(node, cst.If):
         return (_Handle(ctx, node),)
-    membrane_panic(
+    membrane_missing(
         owner="libcst_adapter._orelse",
         observed=f"{type(node).__name__} in orelse position",
         requested="an Else or a nested If",
@@ -356,7 +356,7 @@ _COMPARE_OPS = {
 def _op(table: dict[str, str], node: cst.CSTNode, where: str) -> Operator:
     kind = table.get(type(node).__name__)
     if kind is None:
-        membrane_panic(
+        membrane_missing(
             owner=f"libcst_adapter._op[{where}]",
             observed=f"libcst operator {type(node).__name__} has no membrane operator",
             requested="a mapping into the frozen operator vocabulary",
@@ -406,7 +406,7 @@ def _comp_for_anchor(ctx: _Ctx, node: cst.CompFor) -> Span:
             continue
         break
     if not (src.startswith("for", j) or src.startswith("async", j)):
-        membrane_panic(
+        membrane_missing(
             owner="libcst_adapter._comp_for_anchor",
             observed=f"no 'for'/'async' keyword at comprehension clause start {j}",
             requested="'for' (optionally 'async for') opening the clause",
@@ -501,7 +501,7 @@ def _params(ctx: _Ctx, params: cst.Parameters) -> Children:
     elif isinstance(star_arg, cst.ParamStar):
         pass  # bare ``*`` separator: a marker, not a parameter
     elif star_arg is not None and not isinstance(star_arg, cst.MaybeSentinel):
-        membrane_panic(
+        membrane_missing(
             owner="libcst_adapter._params",
             observed=f"star_arg is {type(star_arg).__name__}",
             requested="a Param, a ParamStar, or absent",
@@ -584,7 +584,7 @@ def _elements(ctx: _Ctx, elements: Sequence[cst.BaseElement]) -> Children:
         elif isinstance(el, cst.Element):
             out.append(_Handle(ctx, el.value))
         else:
-            membrane_panic(
+            membrane_missing(
                 owner="libcst_adapter._elements",
                 observed=f"{type(el).__name__} in element position",
                 requested="an Element or a StarredElement",
@@ -621,7 +621,7 @@ def _dict_items(ctx: _Ctx, elements: Sequence[cst.BaseDictElement]) -> Children:
                 )
             )
         else:
-            membrane_panic(
+            membrane_missing(
                 owner="libcst_adapter._dict_items",
                 observed=f"{type(el).__name__} in dict element position",
                 requested="a DictElement or a StarredDictElement",
@@ -670,7 +670,7 @@ def _slice_element(ctx: _Ctx, element: cst.SubscriptElement) -> ProviderHandle:
         return _Handle(ctx, inner.value)
     if isinstance(inner, cst.Slice):
         return _Handle(ctx, inner)
-    membrane_panic(
+    membrane_missing(
         owner="libcst_adapter._slice_element",
         observed=f"{type(inner).__name__} in subscript position",
         requested="an Index or a Slice",
@@ -694,7 +694,7 @@ def _format_spec(
         return MaybeChild(None)
     parts = list(spec)
     if not parts:
-        membrane_panic(
+        membrane_missing(
             owner="libcst_adapter._format_spec",
             observed="an empty format spec with no content to span",
             requested="a spec with at least one content node, or no spec at all",
@@ -719,7 +719,7 @@ _CONVERSIONS = {None: -1, "s": 115, "r": 114, "a": 97}
 def _conversion(value: Optional[str]) -> int:
     code = _CONVERSIONS.get(value)
     if code is None:
-        membrane_panic(
+        membrane_missing(
             owner="libcst_adapter._conversion",
             observed=f"f-string conversion {value!r}",
             requested="one of !s, !r, !a, or none",
@@ -1097,7 +1097,7 @@ def _r_matchsingleton(ctx: _Ctx, n: cst.MatchSingleton) -> Description:
 def _singleton(text: str) -> object:
     table: dict[str, object] = {"True": True, "False": False, "None": None}
     if text not in table:
-        membrane_panic(
+        membrane_missing(
             owner="libcst_adapter._singleton",
             observed=f"match singleton {text!r}",
             requested="True, False, or None",
@@ -1123,7 +1123,7 @@ def _match_patterns(ctx: _Ctx, elements: Sequence[cst.CSTNode]) -> Children:
         elif isinstance(el, cst.MatchStar):
             out.append(_Handle(ctx, el))
         else:
-            membrane_panic(
+            membrane_missing(
                 owner="libcst_adapter._match_patterns",
                 observed=f"{type(el).__name__} in match sequence position",
                 requested="a MatchSequenceElement or a MatchStar",
@@ -1249,7 +1249,10 @@ def _r_concatstring(ctx: _Ctx, n: cst.ConcatenatedString) -> Description:
     elif all(isinstance(v, str) for v in values):
         joined = "".join(values)
     else:
-        membrane_panic(
+        # LibCST parsed source CPython itself would reject at compile time
+        # (mixed str/bytes implicit concatenation): the provider's own
+        # output is structurally invalid, not a vocabulary gap.
+        membrane_provider_defect(
             owner="libcst_adapter._r_concatstring",
             observed="implicit concatenation mixing str and bytes pieces",
             requested="pieces of one literal type",
@@ -1510,7 +1513,7 @@ def _r_compfor(ctx: _Ctx, n: cst.CompFor) -> Description:
 def _describe(ctx: _Ctx, node: cst.CSTNode) -> Description:
     rule = _RULES.get(type(node).__name__)
     if rule is None:
-        membrane_panic(
+        membrane_missing(
             owner="libcst_adapter._describe",
             observed=f"libcst {type(node).__name__} has no adapter rule",
             requested="an explicit rule mapping this CST shape into membrane terms",

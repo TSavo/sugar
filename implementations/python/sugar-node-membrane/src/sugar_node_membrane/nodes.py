@@ -41,7 +41,7 @@ from .operators import (
     ComparisonOperator,
     UnaryOperator,
 )
-from .panic import membrane_panic
+from .panic import MembranePanic, membrane_missing
 from .spans import LineColSpan, LineTable, Span
 
 
@@ -87,7 +87,16 @@ class Typed(Typeable):
     def resolve_type(self) -> type["SourceFragment"]:
         tp = type(self)
         if tp in _ABSTRACT or not issubclass(tp, SourceFragment):
-            membrane_panic(
+            # Neither of the two panics fits: this is not a provider-facing
+            # question at all (no ProviderHandle, no adapter, no vocabulary
+            # gap) and not a structural-defect-in-provider-output question
+            # either. It is an internal invariant on OUR OWN construction
+            # code: only concrete classes are ever instantiated (construct.py
+            # resolves through resolve_kind, which already excludes
+            # _ABSTRACT). Reaching here means our own code, not a provider,
+            # built an abstract instance. Raised as the common base directly
+            # — deliberately, not a guess at which subclass fits.
+            raise MembranePanic(
                 owner="nodes.Typed.resolve_type",
                 observed=f"instance of abstract membrane class {tp.__name__}",
                 requested="a concrete grammar class",
@@ -776,7 +785,7 @@ def resolve_kind(kind: str, observed_at: str) -> type[SourceFragment]:
     """
     cls = KIND_REGISTRY.get(kind)
     if cls is None or cls in _ABSTRACT:
-        membrane_panic(
+        membrane_missing(
             owner="nodes.resolve_kind",
             observed=f"backend kind {kind!r} at {observed_at} has no membrane class",
             requested="a concrete SourceFragment subclass for every constructible shape",

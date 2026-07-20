@@ -22,13 +22,23 @@ This artifact is the instrument that admits or rejects a future provider:
 parse the same sources through another adapter, emit, diff. A provider
 that diverges is not debugged — it is uninstalled.
 
-Failures are LOUD: a MembranePanic or a provider refusal (ProviderRefused,
-backend.py — the provider's own two-arm outcome, never its native
-exception type) on any file is recorded, reported, and fails the run. A
-MISSING never becomes silence, and neither does a refusal.
+Failures are LOUD: a MembraneMissing (our vocabulary is incomplete for a
+shape the provider legitimately produced), a MembraneProviderDefect (the
+provider or its adapter produced something structurally invalid), or a
+provider refusal (ProviderRefused, backend.py — the provider's own
+two-arm outcome, never its native exception type) on any file is
+recorded, reported, and fails the run. None of the three ever becomes
+silence.
+
+The provider is a parameter, not a source edit: default is today's
+behaviour (CPythonAstProvider), but any Provider — including LibCST's
+— can be threaded through from the CLI (--provider) or from code,
+so a benchmark can run the same corpus through more than one adapter
+without monkeypatching this module.
 
 CLI:
     python -m sugar_node_membrane.corpus --out corpus.jsonl PATH [PATH ...]
+    python -m sugar_node_membrane.corpus --provider libcst PATH [PATH ...]
 """
 
 from __future__ import annotations
@@ -41,10 +51,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
 
-from .backend import ProviderRefused
+from .backend import Provider, ProviderRefused
 from .construct import Membrane
 from .nodes import SourceFragment
-from .panic import MembranePanic
+from .panic import MembraneMissing, MembraneProviderDefect
 
 
 def node_paths(root: SourceFragment) -> Iterator[tuple[str, SourceFragment]]:
@@ -96,8 +106,16 @@ class CorpusResult:
 
 
 def emit_corpus(
-    paths: list[Path], out_path: Optional[Path], base: Optional[Path] = None
+    paths: list[Path],
+    out_path: Optional[Path],
+    base: Optional[Path] = None,
+    provider: Optional[Provider] = None,
 ) -> CorpusResult:
+    """provider defaults to Membrane()'s own default
+    (CPythonAstProvider) — today's behaviour, unchanged. Pass any other
+    Provider (e.g. LibCSTProvider() from libcst_adapter.py) to
+    run the same corpus through it; this is the ONLY thing that should ever
+    change which provider a corpus run measures — never a monkeypatch."""
     files: list[Path] = []
     for p in paths:
         if p.is_dir():
@@ -106,7 +124,7 @@ def emit_corpus(
             files.append(p)
     files.sort()
 
-    membrane = Membrane()
+    membrane = Membrane(provider)
     manifest = hashlib.sha256()
     kind_counts: dict[str, int] = {}
     failures: list[tuple[str, str, str]] = []
@@ -132,9 +150,17 @@ def emit_corpus(
                 # identically no matter which provider is installed.
                 failures.append((rel, "provider_refused", str(err)))
                 continue
-            except MembranePanic as err:
-                # A membrane MISSING: a shape with no class. THE finding.
-                failures.append((rel, "membrane_panic", str(err)))
+            except MembraneMissing as err:
+                # OUR vocabulary is incomplete for a shape the provider
+                # legitimately produced. THE finding this instrument exists
+                # to surface.
+                failures.append((rel, "membrane_missing", str(err)))
+                continue
+            except MembraneProviderDefect as err:
+                # The provider (or its adapter) produced something
+                # structurally invalid. Distinct from membrane_missing:
+                # this is never fixed by adding vocabulary.
+                failures.append((rel, "membrane_provider_defect", str(err)))
                 continue
             parsed += 1
             for rec in recs:
@@ -159,23 +185,64 @@ def emit_corpus(
     )
 
 
+_PROVIDERS: dict[str, str] = {
+    "cpython": "CPythonAstProvider",
+    "libcst": "LibCSTProvider",
+}
+
+
+def _make_provider(name: Optional[str]) -> Optional[Provider]:
+    """None -> Membrane()'s own default (today's behaviour,
+    unchanged). Otherwise construct the named provider by importing its
+    adapter module lazily, so installing libcst is never a condition of
+    running the corpus with the default provider."""
+    if name is None or name == "cpython":
+        return None
+    if name == "libcst":
+        from .libcst_adapter import LibCSTProvider
+
+        return LibCSTProvider()
+    raise SystemExit(
+        f"unknown --provider {name!r}; choices: {sorted(_PROVIDERS)}"
+    )
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="+", type=Path)
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--base", type=Path, default=None)
+    parser.add_argument(
+        "--provider",
+        choices=sorted(_PROVIDERS),
+        default="cpython",
+        help="which Provider to run the corpus through (default: cpython, "
+        "today's unchanged behaviour). 'libcst' requires the libcst "
+        "extra installed.",
+    )
     args = parser.parse_args(argv)
 
-    result = emit_corpus(args.paths, args.out, args.base)
+    result = emit_corpus(
+        args.paths, args.out, args.base, provider=_make_provider(args.provider)
+    )
+    print(f"provider: {args.provider}")
     print(f"files:    {result.files}")
     print(f"nodes:    {result.nodes}")
     print(f"kinds:    {len(result.kind_counts)}")
     print(f"manifest: {result.manifest_cid}")
-    membrane_missing = [f for f in result.failures if f[1] == "membrane_panic"]
-    other = [f for f in result.failures if f[1] != "membrane_panic"]
+    membrane_missing = [f for f in result.failures if f[1] == "membrane_missing"]
+    provider_defects = [
+        f for f in result.failures if f[1] == "membrane_provider_defect"
+    ]
+    other = [
+        f
+        for f in result.failures
+        if f[1] not in ("membrane_missing", "membrane_provider_defect")
+    ]
     for rel, failure_class, message in result.failures:
         print(f"FAIL[{failure_class}] {rel}: {message.splitlines()[0]}")
-    print(f"membrane panics: {len(membrane_missing)}")
+    print(f"membrane missing (vocabulary gaps): {len(membrane_missing)}")
+    print(f"membrane provider defects: {len(provider_defects)}")
     print(f"provider refusals / undecodable: {len(other)}")
     return 1 if result.failures else 0
 
