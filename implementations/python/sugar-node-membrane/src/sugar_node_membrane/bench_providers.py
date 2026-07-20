@@ -28,6 +28,7 @@ CLI::
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 import traceback
@@ -125,10 +126,29 @@ def _require_quiet(threshold: float) -> None:
     print(f"host 1-min load at start: {load} {tag}")
 
 
-def run_throughput(provider_name: str, files: list[Path], limit: Optional[int]) -> None:
+def _trace(handle, phase: str, path: Path) -> None:
+    """Write one line per file and FLUSH.
+
+    A long timed run that dies mid-way (a provider segfault, an OOM kill)
+    otherwise loses everything it had measured: buffered stdout never
+    reaches the disk, and the log is zero bytes. The last line here names
+    the file the process was on when it died.
+    """
+    if handle is None:
+        return
+    handle.write(f"{phase}\t{path}\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+
+
+def run_throughput(
+    provider_name: str, files: list[Path], limit: Optional[int],
+    trace_path: Optional[Path] = None,
+) -> None:
     if limit is not None:
         files = files[:limit]
     provider = _provider(provider_name)
+    trace = open(trace_path, "w", buffering=1) if trace_path else None
 
     sources: list[tuple[Path, str]] = []
     for path in files:
@@ -145,7 +165,8 @@ def run_throughput(provider_name: str, files: list[Path], limit: Optional[int]) 
             provider.parse.__self__  # no-op; keeps provider warm
         except Exception:
             pass
-    for _, source in sources:
+    for path, source in sources:
+        _trace(trace, "parse", path)
         try:
             from .nodes import SourceUnit
             unit = SourceUnit(filename="<bench>", source=source)
@@ -159,6 +180,7 @@ def run_throughput(provider_name: str, files: list[Path], limit: Optional[int]) 
     t1 = time.perf_counter()
     constructed = 0
     for path, source in sources:
+        _trace(trace, "construct", path)
         try:
             membrane.parse(source, filename=str(path))
             constructed += 1
@@ -173,6 +195,8 @@ def run_throughput(provider_name: str, files: list[Path], limit: Optional[int]) 
     print(f"host load (1min) start: {load_start}")
     print(f"host load (1min) end:   {load_end}")
     print(f"pure parse:            {t_parse:.3f}s  ({n / t_parse if t_parse else float('inf'):.1f} files/s)  [{parsed_handles} ok]")
+    if trace is not None:
+        trace.close()
     print(f"parse+construct:       {t_construct_total:.3f}s  ({n / t_construct_total if t_construct_total else float('inf'):.1f} files/s)  [{constructed} ok]")
 
 
@@ -184,6 +208,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--mode", choices=["correctness", "throughput"], default="correctness")
     ap.add_argument("--require-quiet", type=float, default=None)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--trace", type=Path, default=None,
+                    help="write a flushed per-file trace here; survives a crash")
     args = ap.parse_args(argv)
 
     files = collect_files(args.paths)
@@ -191,7 +217,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return run_correctness(args.provider, files, args.base)
     if args.require_quiet is not None:
         _require_quiet(args.require_quiet)
-    run_throughput(args.provider, files, args.limit)
+    run_throughput(args.provider, files, args.limit, args.trace)
     return 0
 
 
