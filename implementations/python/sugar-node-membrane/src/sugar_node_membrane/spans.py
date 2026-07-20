@@ -84,7 +84,7 @@ from __future__ import annotations
 import bisect
 from dataclasses import dataclass
 
-from .panic import membrane_panic
+from .panic import membrane_provider_defect
 
 
 @dataclass(frozen=True, order=True)
@@ -96,7 +96,7 @@ class Span:
 
     def __post_init__(self) -> None:
         if self.start < 0 or self.end < self.start:
-            membrane_panic(
+            membrane_provider_defect(
                 owner="spans.Span",
                 observed=f"degenerate span [{self.start}, {self.end})",
                 requested="0 <= start <= end",
@@ -142,7 +142,7 @@ class LineTable:
     def offset(self, line: int, col: int) -> int:
         """1-based line + 0-based codepoint column -> absolute offset."""
         if line < 1 or line > len(self._line_starts):
-            membrane_panic(
+            membrane_provider_defect(
                 owner="spans.LineTable.offset",
                 observed=f"line {line} outside 1..{len(self._line_starts)}",
                 requested="a position inside the source",
@@ -153,7 +153,7 @@ class LineTable:
     def line_col(self, offset: int) -> tuple[int, int]:
         """Absolute codepoint offset -> (1-based line, 0-based codepoint col)."""
         if offset < 0 or offset > len(self.source):
-            membrane_panic(
+            membrane_provider_defect(
                 owner="spans.LineTable.line_col",
                 observed=f"offset {offset} outside 0..{len(self.source)}",
                 requested="an offset inside the source",
@@ -170,7 +170,7 @@ class LineTable:
         """
         cp_col = self._byte_map(line).get(byte_col)
         if cp_col is None:
-            membrane_panic(
+            membrane_provider_defect(
                 owner="spans.LineTable.offset_from_byte_col",
                 observed=f"byte col {byte_col} is not a codepoint boundary on line {line}",
                 requested="a byte column landing on a codepoint boundary",

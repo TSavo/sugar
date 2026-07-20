@@ -49,7 +49,7 @@ from .backend import (
 )
 from .nodes import SourceUnit
 from .operators import Operator, operator_for
-from .panic import membrane_panic
+from .panic import membrane_missing
 from .spans import Span
 
 
@@ -191,7 +191,7 @@ def _node_span(unit: SourceUnit, node: ast.AST) -> Span:
     lineno = getattr(node, "lineno", None)
     end_lineno = getattr(node, "end_lineno", None)
     if lineno is None or end_lineno is None:
-        membrane_panic(
+        membrane_missing(
             owner="cpython_adapter._node_span",
             observed=f"ast.{type(node).__name__} without a position",
             requested="a positioned node, or a describe() rule marking it envelope-spanned",
@@ -267,7 +267,7 @@ def _comprehension_for_anchor(unit: SourceUnit, comp: ast.comprehension) -> Span
     while j > 0 and src[j - 1].isspace():
         j -= 1
     if src[max(0, j - 3) : j] != "for":
-        membrane_panic(
+        membrane_missing(
             owner="cpython_adapter._comprehension_for_anchor",
             observed=f"no 'for' keyword immediately before comprehension target at {target_start}",
             requested="'for' (optionally 'async for') preceding the target",
@@ -362,7 +362,7 @@ def _describe(unit: SourceUnit, node: ast.AST) -> Description:
                     )
                 )
                 continue
-            membrane_panic(
+            membrane_missing(
                 owner="cpython_adapter._describe",
                 observed=(
                     f"ast.{ast_kind}.{field_name} list with unhandled item "

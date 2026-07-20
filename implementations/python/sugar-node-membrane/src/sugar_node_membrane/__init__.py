@@ -10,7 +10,7 @@ tree — greenfield by design.
 from .backend import ProviderRefused
 from .construct import Membrane, NodePool
 from .nodes import KIND_REGISTRY, SourceFragment, SourceUnit, Typeable, Typed
-from .panic import MembranePanic
+from .panic import MembraneMissing, MembranePanic, MembraneProviderDefect
 from .spans import LineColSpan, LineTable, Span
 
 __all__ = [
@@ -18,7 +18,9 @@ __all__ = [
     "LineColSpan",
     "LineTable",
     "Membrane",
+    "MembraneMissing",
     "MembranePanic",
+    "MembraneProviderDefect",
     "NodePool",
     "ProviderRefused",
     "SourceFragment",

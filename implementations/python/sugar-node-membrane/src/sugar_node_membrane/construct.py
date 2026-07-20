@@ -34,7 +34,7 @@ from .backend import (
     ProviderHandle,
 )
 from .nodes import Module, SourceFragment, SourceUnit
-from .panic import membrane_panic
+from .panic import membrane_missing, membrane_provider_defect
 from .spans import Span
 
 
@@ -67,7 +67,7 @@ class NodePool:
         if type(existing) is not type(node) or any(
             getattr(existing, name) != value for name, value in kwargs.items()
         ):
-            membrane_panic(
+            membrane_provider_defect(
                 owner="construct.NodePool.intern",
                 observed=(
                     f"two distinct {node.kind} constructions at "
@@ -98,7 +98,7 @@ class Membrane:
         root_handle = self.provider.parse(unit)
         root = _build(unit, root_handle, self.pool)
         if not isinstance(root, Module):
-            membrane_panic(
+            membrane_provider_defect(
                 owner="construct.Membrane.parse",
                 observed=f"provider root constructed as {type(root).__name__}",
                 requested="a Module at the root",
@@ -155,7 +155,7 @@ def _build(unit: SourceUnit, root: ProviderHandle, pool: NodePool) -> SourceFrag
             elif isinstance(slot, OpsLeaf):
                 kwargs[name] = slot.ops
             else:  # pragma: no cover - Slot union is closed
-                membrane_panic(
+                membrane_provider_defect(
                     owner="construct._build",
                     observed=f"unknown slot type {type(slot).__name__}",
                     requested="a Slot from backend.py",
@@ -201,7 +201,11 @@ def _span_of(desc: Description, child_spans: list[Span]) -> Span:
         return desc.raw_span
     spans = list(desc.anchors) + child_spans
     if not spans:
-        membrane_panic(
+        # Not a structurally-invalid production — this is our own adapter's
+        # anchor-rule vocabulary being incomplete for a kind it has not seen
+        # positioned before (same shape as cpython_adapter._node_span and
+        # spans.py's envelope rule commentary): a MISSING, not a defect.
+        membrane_missing(
             owner="construct._span_of",
             observed=f"{desc.kind} with neither a provider position nor any spanned child",
             requested="every node has a source extent",

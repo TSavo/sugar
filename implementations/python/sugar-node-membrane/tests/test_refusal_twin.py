@@ -64,14 +64,12 @@ def test_a_refused_file_produces_a_recorded_row_never_an_escaped_exception(
     good = tmp_path / "fine.py"
     good.write_text("x = 1\n", encoding="utf-8")
 
-    import sugar_node_membrane.corpus as corpus_mod
-
-    original_membrane = corpus_mod.Membrane
-    try:
-        corpus_mod.Membrane = lambda: Membrane(provider_cls())
-        result = emit_corpus([tmp_path], out_path=None, base=tmp_path)
-    finally:
-        corpus_mod.Membrane = original_membrane
+    # The provider is a parameter of emit_corpus, not a source edit or a
+    # monkeypatch of the Membrane class (#5946/#5948's own workaround) —
+    # this is the fix the corpus.emit_corpus provider parameter exists for.
+    result = emit_corpus(
+        [tmp_path], out_path=None, base=tmp_path, provider=provider_cls()
+    )
 
     assert result.files == 1  # only fine.py parsed
     refused = [f for f in result.failures if f[1] == "provider_refused"]
