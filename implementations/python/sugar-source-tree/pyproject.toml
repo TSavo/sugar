@@ -5,9 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sugar-source-tree"
 version = "0.1.0"
-description = "A parser and a source tree (#5940): SourceTree enumerates SourceFile enumerates nodes, over a swappable backend. Standalone; stdlib-only core."
+description = "A parser and a source tree (#5940): SourceTree enumerates SourceFile enumerates nodes, over a swappable backend. Built on top of the SourceOracle: text enters only as the oracle's (source, filename, CID) identity."
 requires-python = ">=3.12"
-dependencies = []
+# The oracle (sugar-lift-python-source) is the ONE text/address authority;
+# this parser is built on top of it. It is a sibling package in this repo:
+#   pip install -e ../sugar-lift-python-source -e .
+dependencies = ["sugar-lift-python-source"]
 
 # The core membrane stays stdlib-only. A PROVIDER is an optional extra:
 # installing one must never be a condition of the membrane working, and the

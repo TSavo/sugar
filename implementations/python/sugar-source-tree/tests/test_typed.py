@@ -2,6 +2,7 @@
 
 import pytest
 
+from conftest import oracle_source_file
 from sugar_source_tree import SourceFile, SourceTreePanic, Typed
 from sugar_source_tree.backend import Description, Backend, BackendNode
 from sugar_source_tree.nodes import Node, resolve_kind
@@ -10,7 +11,7 @@ from sugar_source_tree.spans import Span
 
 
 def test_every_constructed_node_is_typed():
-    root = SourceFile(filename="<test>", source=(
+    root = oracle_source_file((
         "import os\n"
         "class C:\n"
         "    def m(self, *a, **k):\n"
@@ -40,7 +41,7 @@ class _BogusBackend(Backend):
 
 def test_unresolvable_typeable_panics_never_false_never_none():
     with pytest.raises(SourceTreePanic) as exc:
-        SourceFile(filename="<test>", source="x = 1\n", backend=_BogusBackend())
+        oracle_source_file("x = 1\n", backend=_BogusBackend())
     assert "Bogus" in exc.value.observed
 
 

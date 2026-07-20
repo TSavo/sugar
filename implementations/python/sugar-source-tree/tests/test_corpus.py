@@ -19,8 +19,9 @@ GOLDENS = Path(__file__).resolve().parents[1] / "goldens"
 
 
 def _generate() -> list[str]:
-    source = (GOLDENS / "quirks.py").read_text(encoding="utf-8")
-    records = records_for_file(SourceFile(filename="quirks.py", source=source))
+    records = records_for_file(
+        SourceFile.from_path(GOLDENS / "quirks.py"), display="quirks.py"
+    )
     return [json.dumps(r, sort_keys=True, ensure_ascii=True) for r in records]
 
 

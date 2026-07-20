@@ -32,6 +32,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from sugar_lift_python_source.source_oracle import SourceOracleRefusal, path_source
+
 from .backend import BackendRefused
 from .corpus import make_backend
 from .panic import SourceTreePanic
@@ -65,12 +67,12 @@ def run_correctness(backend_name: str, root: Path, rss: bool = False) -> int:
         total += 1
         rel = str(path)
         try:
-            source = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError as err:
-            refused.append((rel, f"undecodable: {err}"))
+            identity = path_source(rel)
+        except SourceOracleRefusal as err:
+            refused.append((rel, f"oracle refused: {err}"))
             continue
         try:
-            file = SourceFile(filename=rel, source=source, backend=tree.backend)
+            file = SourceFile(identity, backend=tree.backend)
             for _node in file.nodes():
                 node_count += 1
             parsed += 1
@@ -120,20 +122,20 @@ def run_throughput(backend_name: str, root: Path, limit: Optional[int]) -> None:
     paths = list(tree.paths())
     if limit is not None:
         paths = paths[:limit]
-    sources: list[tuple[str, str]] = []
+    identities: list[tuple[str, str, str]] = []
     for path in paths:
         try:
-            sources.append((str(path), path.read_text(encoding="utf-8")))
-        except UnicodeDecodeError:
+            identities.append(path_source(str(path)))
+        except SourceOracleRefusal:
             continue
 
     load_start = _load1()
     t0 = time.perf_counter()
     constructed = 0
     nodes = 0
-    for rel, source in sources:
+    for identity in identities:
         try:
-            file = SourceFile(filename=rel, source=source, backend=tree.backend)
+            file = SourceFile(identity, backend=tree.backend)
             for _n in file.nodes():
                 nodes += 1
             constructed += 1
@@ -142,7 +144,7 @@ def run_throughput(backend_name: str, root: Path, limit: Optional[int]) -> None:
     dt = time.perf_counter() - t0
     load_end = _load1()
 
-    n = len(sources)
+    n = len(identities)
     print(f"backend:                {backend_name}")
     print(f"files timed:            {n}")
     print(f"host load (1min) start: {load_start}")

@@ -18,6 +18,7 @@ import pytest
 
 libcst = pytest.importorskip("libcst", reason="LibCST backend not installed")
 
+from conftest import oracle_source_file
 from sugar_source_tree.backend import BackendRefused  # noqa: E402
 from sugar_source_tree.tree import SourceFile  # noqa: E402
 from sugar_source_tree.corpus import emit_corpus  # noqa: E402
@@ -40,10 +41,10 @@ def test_both_adapters_raise_the_membrane_refusal_not_their_native_exception(
     provider_cls,
 ):
     with pytest.raises(BackendRefused) as excinfo:
-        SourceFile(filename="<unparseable>", source=UNPARSEABLE, backend=provider_cls())
+        oracle_source_file(UNPARSEABLE, backend=provider_cls())
     refusal = excinfo.value
     assert refusal.backend == provider_cls().name
-    assert refusal.file == "<unparseable>"
+    assert refusal.file.endswith(".py")
     assert refusal.reason
 
 
