@@ -913,6 +913,46 @@ def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
     if inherited_bytesio is not None:
         return inherited_bytesio
     base_name = base_coordinate
+    # RULING (#5930, T, 2026-07-20): `io` is categorically a RuntimeEffect.
+    # A base whose module artifact is a native extension (e.g. `io.BytesIO`,
+    # backed by `_io`) has no Python source to walk for its MRO -- that is
+    # not a gap in our knowledge, it is I/O, a genuine construction whose
+    # initialization must execute at runtime. Classifying it as unresolved
+    # and panicking would mislabel a KNOWN thing as unknown.
+    #
+    # This check MUST run before `_static_constructor_mro`, not after: MRO
+    # resolution for a native base reaches `_facade_class_source`, which
+    # panics (#5934) rather than returning None, so a check placed after
+    # `mro is None` is unreachable dead code -- the panic already unwound
+    # the stack past it.
+    #
+    # Gated on `site.call_arg_count() == 1`, the same arity
+    # `_inherited_bytesio_strategy` above already required to construct the
+    # exact happy path: that is the only native constructor signature this
+    # file has any concrete knowledge of. An arity outside that is not
+    # evidence the base is unconstructible AS an effect -- it is evidence of
+    # a genuine arity mismatch, which must stay a loud, arity-specific
+    # panic (unaffected by this change), not be smuggled into a coarse
+    # "must execute" classification.
+    if site.call_arg_count() == 1 and base.observed == "Name":
+        native_target = _import_target_for_name(ctx, base.name_id())
+        if native_target is not None:
+            from sugar_lift_py_tests.sugar.install_source_dig import (
+                native_extension_class_origin,
+            )
+
+            native_origin = native_extension_class_origin(native_target)
+            if native_origin is not None:
+                return _runtime_strategy(
+                    site,
+                    ctx,
+                    target,
+                    "native inherited constructor runtime boundary: "
+                    f"{target} extends {native_target}, whose terminal "
+                    f"defining module {native_origin!r} is a native "
+                    "extension; the constructor result depends on runtime "
+                    "execution of that extension's initializer",
+                )
     mro = _static_constructor_mro(target, class_site, ctx)
     if mro is not None:
         return _strategy_from_static_mro(site, ctx, target, class_site, methods, mro)
@@ -1922,20 +1962,28 @@ def _multi_base_inherited_strategy(site, ctx, target: str, class_site, methods=(
 
     Undecidable bases (runtime-selected, unresolved, symbolic) stay a loud
     construction panic — never a RuntimeEffect weakening of the gap.
+
+    RULING (#5930, T, 2026-07-20): `io` is categorically a RuntimeEffect, a
+    positive terminal classification, not an absence -- so the native-base
+    check below MUST run before `_static_constructor_mro`, not after: MRO
+    resolution for a native base reaches `_facade_class_source`, which
+    panics (#5934) rather than returning None, so a check placed after
+    `mro is None` is unreachable dead code -- the panic already unwound the
+    stack past it.
     """
+    native_bases = _native_imported_base_targets(class_site, ctx)
+    if native_bases is not None:
+        return _runtime_strategy(
+            site,
+            ctx,
+            target,
+            "native inherited constructor runtime boundary: "
+            f"{target} has statically resolved extension bases "
+            f"{native_bases}; the constructor result depends on its "
+            "runtime arguments",
+        )
     mro = _static_constructor_mro(target, class_site, ctx)
     if mro is None:
-        native_bases = _native_imported_base_targets(class_site, ctx)
-        if native_bases is not None:
-            return _runtime_strategy(
-                site,
-                ctx,
-                target,
-                "native inherited constructor runtime boundary: "
-                f"{target} has statically resolved extension bases "
-                f"{native_bases}; the constructor result depends on its "
-                "runtime arguments",
-            )
         _panic(
             site,
             f"{target} bases={class_site.class_base_names()}",
