@@ -235,6 +235,13 @@ class RuntimeConstructorStrategy:
     reason: str
     arity_error: bool = False
     runtime_operand: SugarBody | None = None
+    # Set only when the arity mismatch is against a class's own, statically
+    # authenticated __init__ signature (see _strategy_from_init) -- the
+    # exact expected arity is fully known, so the TypeError is certain
+    # regardless of argument values. Inherited/MRO-derived/generated arity
+    # gaps (base class resolution, dataclass fields, ...) leave this False
+    # and keep panicking loudly until that construction is built out.
+    exact_signature: bool = False
 
     def __post_init__(self) -> None:
         if not all(isinstance(argument, SugarBody) for argument in self.arguments):
@@ -270,6 +277,7 @@ class RuntimeConstructorStrategy:
             TypeErrorRuntimeEffect,
             runtime_effect_evidence,
         )
+        from sugar_lift_py_tests.effect.runtime_effect import genuine_runtime_operand
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.sugar.floor_terms import floor_to_term
 
@@ -283,12 +291,28 @@ class RuntimeConstructorStrategy:
         effect_type = (
             TypeErrorRuntimeEffect if self.arity_error else ConstructorRuntimeEffect
         )
+        chosen_operand = runtime_operand if runtime_operand is not None else call_term
+        if self.arity_error and runtime_operand is None and self.exact_signature:
+            # An arity TypeError is certain at every call regardless of the
+            # (possibly ground) argument values -- Python decides it before
+            # touching any value. The mismatch itself is only known once the
+            # call executes against the constructor's real signature, so cite
+            # it as a call: coordinate (runtime-by-nature per
+            # is_lift_time_decidable) rather than a bare ground constructor
+            # term, mirroring NoneValue.subtract's ground-operand door.
+            try:
+                genuine_runtime_operand("py.constructor", call_term)
+            except TypeError:
+                chosen_operand = ctor(
+                    f"call:{self.class_name}.__init__",
+                    [call_term],
+                )
         return Incomplete(
             effect_type(
                 self.reason,
                 **runtime_effect_evidence(
                     "py.constructor",
-                    runtime_operand if runtime_operand is not None else call_term,
+                    chosen_operand,
                     self.site,
                 ),
             )
