@@ -19,6 +19,14 @@ not part of our inventory and are not materialized.
 
 An ``ast`` shape this adapter does not recognize panics as a MISSING at the
 boundary — never a permissive fallback.
+
+Source ``ast.parse`` cannot parse at all (a syntax error, or a null byte —
+``ValueError`` on some CPython versions, ``SyntaxError`` on others; both
+mean the same thing: this text is not valid Python) is never let through as
+CPython's own exception type. It is re-raised as ``ProviderRefused``
+(backend.py) — the membrane's own name for "the provider declined this
+input" — so no caller above this module ever needs to know CPython is
+behind the membrane today.
 """
 
 from __future__ import annotations
@@ -36,6 +44,7 @@ from .backend import (
     OpsLeaf,
     Provider,
     ProviderHandle,
+    ProviderRefused,
     Slot,
 )
 from .nodes import SourceUnit
@@ -386,5 +395,14 @@ class CPythonAstProvider(Provider):
     name = "cpython-ast"
 
     def parse(self, unit: SourceUnit) -> ProviderHandle:
-        tree = ast.parse(unit.source, filename=unit.filename)
+        try:
+            tree = ast.parse(unit.source, filename=unit.filename)
+        except (SyntaxError, ValueError) as err:
+            # SyntaxError: the ordinary parse failure (including TabError,
+            # IndentationError). ValueError: some CPython versions raise it
+            # instead of SyntaxError for a null byte in the source. Both are
+            # CPython declining this text — never let either escape as-is.
+            raise ProviderRefused(
+                provider=self.name, file=unit.filename, reason=str(err)
+            ) from err
         return _Handle(unit, tree)

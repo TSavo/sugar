@@ -7,6 +7,7 @@ interned once. Nothing here imports from, or is imported by, the existing
 tree — greenfield by design.
 """
 
+from .backend import ProviderRefused
 from .construct import Membrane, NodePool
 from .nodes import KIND_REGISTRY, SourceFragment, SourceUnit, Typeable, Typed
 from .panic import MembranePanic
@@ -19,6 +20,7 @@ __all__ = [
     "Membrane",
     "MembranePanic",
     "NodePool",
+    "ProviderRefused",
     "SourceFragment",
     "SourceUnit",
     "Span",

@@ -22,8 +22,10 @@ This artifact is the instrument that admits or rejects a future provider:
 parse the same sources through another adapter, emit, diff. A provider
 that diverges is not debugged — it is uninstalled.
 
-Failures are LOUD: a MembranePanic or provider SyntaxError on any file is
-recorded, reported, and fails the run. A MISSING never becomes silence.
+Failures are LOUD: a MembranePanic or a provider refusal (ProviderRefused,
+backend.py — the provider's own two-arm outcome, never its native
+exception type) on any file is recorded, reported, and fails the run. A
+MISSING never becomes silence, and neither does a refusal.
 
 CLI:
     python -m sugar_node_membrane.corpus --out corpus.jsonl PATH [PATH ...]
@@ -39,6 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
 
+from .backend import ProviderRefused
 from .construct import Membrane
 from .nodes import SourceFragment
 from .panic import MembranePanic
@@ -121,10 +124,13 @@ def emit_corpus(
                 continue
             try:
                 recs = records_for_source(membrane, source, rel)
-            except SyntaxError as err:
+            except ProviderRefused as err:
                 # The PROVIDER refused the file (not valid input for it).
-                # Recorded loudly; distinct from a membrane MISSING.
-                failures.append((rel, "provider_syntax_error", str(err)))
+                # Recorded loudly; distinct from a membrane MISSING. Never
+                # the provider's native exception type (#5946) — the
+                # membrane's own contract type, so this catch works
+                # identically no matter which provider is installed.
+                failures.append((rel, "provider_refused", str(err)))
                 continue
             except MembranePanic as err:
                 # A membrane MISSING: a shape with no class. THE finding.
