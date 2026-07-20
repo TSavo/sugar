@@ -211,6 +211,19 @@ class Node(Typed):
     def line_col_span(self) -> LineColSpan:
         return self.unit.line_table.project(self.span)
 
+    def sugar(self) -> type:
+        """PROBE (#5940): the node answers for its own completion.
+
+        Two arms: the one Completion class registered for this node's
+        grammar class (refined within a closed family by this node's own
+        typed fields), or a loud CompletionGap / CompletionAmbiguous.
+        Never a scan over a catalog of strangers — possibility is a
+        property of the grammar class, and the class is what you are
+        holding. See completion.py."""
+        from .completion import resolve_completion
+
+        return resolve_completion(self)
+
     def children(self) -> Iterator[tuple[str, Optional[int], "Node"]]:
         """Yield (field_name, index-or-None, child) in declared grammar order."""
         for name in type(self)._child_fields:
