@@ -770,13 +770,35 @@ def resolved_star_import_names(module_name: str) -> tuple[str, ...] | None:
     importing. That import was arbitrary third-party C-extension code
     running inside the lifting process, and its answer depended on whatever
     was already resident in ``sys.modules`` — order-dependent, not source-
-    dependent. There is no static equivalent, so this stays a refusal
-    (``None``) for native/builtin modules rather than a live-object read.
+    dependent. There is no static equivalent.
+
+    A bare ``None`` here is indistinguishable from "this module exports
+    nothing" -- a MISSING masquerading as a fact. This is a construction
+    gap, not a negative result, so it panics loudly instead (T, 2026-07-19:
+    "Bare None are cancer.").
     """
+    from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+    from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
     exports = _static_module_exports(module_name)
     if exports is not None:
         return tuple(sorted(exports))
-    return None
+    factory_panic_gap(
+        owner="resolved_star_import_names",
+        blame=module_name,
+        observed=f"from {module_name} import *",
+        requested=(
+            "a literal source __all__, or an exact static namespace for a "
+            "native extension / builtin module"
+        ),
+        fix=(
+            "cite a literal __all__ in the module's own source, or construct "
+            "a non-executing static reader of the native/builtin module's "
+            "exact export namespace; never import the module to answer this"
+        ),
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
+    )
 
 
 def resolve_install_source_funcdef(import_target: str):
@@ -2107,8 +2129,8 @@ def _class_base_ast_name(node: ast.expr) -> str | None:
     return _dotted_ast_name(node)
 
 
-def _facade_class_source(module_name: str, class_name: str) -> tuple[str, str] | None:
-    """Refuse: no static route exists behind a public re-exporting module.
+def _facade_class_source(module_name: str, class_name: str) -> NoReturn:
+    """No static route exists behind a public re-exporting module: panic loudly.
 
     RULING (#5930, T, 2026-07-19): the prior body imported ``module_name``
     and consulted the live class's ``__module__``/``inspect.getsourcefile``
@@ -2118,10 +2140,29 @@ def _facade_class_source(module_name: str, class_name: str) -> tuple[str, str] |
     be — not on static source. The star-reexport walk in
     ``_resolve_install_source_class_bases`` already recovers this
     statically for facades that spell it as ``from x import *``; releases
-    that do not have no static equivalent and stay a refusal.
+    that do not have no static equivalent.
+
+    A bare ``None`` here reads as "this class has no bases" or "this class
+    doesn't exist" -- a MISSING masquerading as a fact. This is a genuine
+    construction gap (T, 2026-07-19: "Bare None are cancer"), so callers
+    never see it return; they see it panic.
     """
-    del module_name, class_name
-    return None
+    from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+    from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
+    factory_panic_gap(
+        owner="_facade_class_source",
+        blame=f"{module_name}.{class_name}",
+        observed=f"class {class_name!r} behind facade module {module_name!r}",
+        requested="the exact source file that defines this class, without importing",
+        fix=(
+            "extend the static star/unconditional/setup re-export walk in "
+            "_resolve_install_source_class_bases to cover this facade shape, "
+            "or cite the class's true defining module directly"
+        ),
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
+    )
 
 
 def resolve_install_source_class_bases(
@@ -2296,8 +2337,36 @@ def resolve_install_source_class_method(qualified_class: str, method_name: str):
     # in this module's source); a method inherited from a base defined in a
     # *different* module has no static route here without walking the base
     # chain through `resolve_install_source_class_bases`, which this
-    # function does not do. Refuse rather than import: MISSING stays loud.
-    return None
+    # function does not do.
+    #
+    # A bare `None` here is indistinguishable from "this class genuinely has
+    # no such method anywhere in its MRO" -- a MISSING masquerading as a
+    # fact (T, 2026-07-19: "Bare None are cancer"). This is a construction
+    # gap: panic loudly instead of refusing silently. CALLERS THAT TREAT
+    # `None` FROM THIS FUNCTION AS "TRY THE NEXT CANDIDATE" NOW HIT THIS
+    # PANIC ON THE FIRST CANDIDATE THAT DOESN'T DIRECTLY DEFINE THE METHOD
+    # -- that candidate-search pattern is a caller-side defect this panic
+    # deliberately surfaces; it must not be papered over by softening this
+    # panic back to `None`.
+    from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+    from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+
+    factory_panic_gap(
+        owner="resolve_install_source_class_method",
+        blame=f"{qualified_class}.{method_name}",
+        observed=f"{module_name}.{class_name}.{method_name}",
+        requested=(
+            "the exact FunctionDef for this method, defined either directly "
+            "in this class's own module or resolvable by walking "
+            "resolve_install_source_class_bases without importing"
+        ),
+        fix=(
+            "walk resolve_install_source_class_bases to find the base whose "
+            "own module statically defines this method, or cite it directly"
+        ),
+        gap_kind=GapKind.FLOOR,
+        gap_locus=GapLocus.CONSTRUCTION,
+    )
 
 
 def resolve_call_funcdef(target_name: str, ctx: Any):
