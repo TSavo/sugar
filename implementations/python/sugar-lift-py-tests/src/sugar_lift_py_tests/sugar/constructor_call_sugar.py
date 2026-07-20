@@ -934,11 +934,16 @@ def _inherited_strategy(site, ctx, target: str, class_site, methods=()):
             )
         if isinstance(bound, ImportAliasValue) and bound.import_target is not None:
             from sugar_lift_py_tests.sugar.install_source_dig import (
+                NOT_DEFINED_HERE,
                 resolve_install_source_class_method,
             )
 
             init = resolve_install_source_class_method(bound.import_target, "__init__")
-            if init is not None:
+            # NOT_DEFINED_HERE is a decidable negative (`base_name`'s own
+            # module doesn't define __init__ directly); there is no further
+            # candidate here, so fall through to the loud panic below same
+            # as a genuine miss did before (#5930).
+            if init is not None and init is not NOT_DEFINED_HERE:
                 return _strategy_from_init(
                     site,
                     ctx,
@@ -1189,12 +1194,17 @@ def _constructor_from_mro_entry(site, ctx, target: str, class_site, methods, ent
         )
     if entry[0] == "import":
         from sugar_lift_py_tests.sugar.install_source_dig import (
+            NOT_DEFINED_HERE,
             resolve_install_source_class_method,
         )
 
         _kind, import_target = entry
         init = resolve_install_source_class_method(import_target, "__init__")
-        if init is None:
+        # NOT_DEFINED_HERE: this MRO entry doesn't define __init__ directly
+        # -- a decidable negative, not a gap. `None` (the caller's own "no
+        # strategy for this entry" signal) is the correct way to say
+        # "continue to the next MRO entry" here, same as before (#5930).
+        if init is None or init is NOT_DEFINED_HERE:
             return None
         class_fields = _class_fields(class_site, ctx)
         strategy = _strategy_from_init(
@@ -1662,13 +1672,20 @@ def _resolve_super_init_for_class(class_site, target: str, ctx):
             bound = ctx.temporal.value_if_bound(base.name_id())
             if isinstance(bound, ImportAliasValue) and bound.import_target is not None:
                 from sugar_lift_py_tests.sugar.install_source_dig import (
+                    NOT_DEFINED_HERE,
                     resolve_install_source_class_method,
                 )
 
                 init = resolve_install_source_class_method(
                     bound.import_target, "__init__"
                 )
-                return init if init is not None else None
+                # NOT_DEFINED_HERE: the sole base doesn't define __init__
+                # directly -- a decidable negative, collapses to this
+                # function's own "cannot resolve super statically" None,
+                # same as before (#5930).
+                if init is None or init is NOT_DEFINED_HERE:
+                    return None
+                return init
             return None
         resolved_site = SourceFragment.from_node(resolved, ctx.filename)
         if resolved_site.observed != "ClassDef":
@@ -1704,11 +1721,15 @@ def _resolve_super_init_for_class(class_site, target: str, ctx):
             if import_target in {"builtins.object", "object"}:
                 return "object"
             from sugar_lift_py_tests.sugar.install_source_dig import (
+                NOT_DEFINED_HERE,
                 resolve_install_source_class_method,
             )
 
             init = resolve_install_source_class_method(import_target, "__init__")
-            if init is not None:
+            # NOT_DEFINED_HERE: this MRO entry doesn't define __init__
+            # directly -- a decidable negative, continue walking up the MRO
+            # exactly as a normal miss did before (#5930).
+            if init is not None and init is not NOT_DEFINED_HERE:
                 return init
             continue
     return "object"

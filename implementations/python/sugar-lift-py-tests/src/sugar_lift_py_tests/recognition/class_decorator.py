@@ -142,6 +142,7 @@ def _fixture_parameter_native_shape(statement, parameter: str) -> NativeShape | 
         node.name: node for node in tree.body if isinstance(node, ast.ClassDef)
     }
     from sugar_lift_py_tests.sugar.install_source_dig import (
+        NOT_DEFINED_HERE,
         resolve_install_source_class_method,
     )
 
@@ -149,7 +150,10 @@ def _fixture_parameter_native_shape(statement, parameter: str) -> NativeShape | 
         owner, imports, local_classes, frozenset()
     ):
         provider = resolve_install_source_class_method(qualified_base, parameter)
-        if provider is None:
+        # NOT_DEFINED_HERE: this base doesn't provide the fixture parameter
+        # directly -- a decidable negative, try the next candidate base
+        # exactly as before (#5930).
+        if provider is None or provider is NOT_DEFINED_HERE:
             continue
         shape = _fixture_provider_native_shape(provider)
         if shape is not None:
