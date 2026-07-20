@@ -509,6 +509,13 @@ class Assert(Statement):
         """
         from sugar_lift_py_tests.sugar.assert_sugar import AssertSugar
 
+        if self.msg is not None:
+            # The message is provenance (assertMessage on the memento, #4593/
+            # #4594) — never a child sugar, but NOT nothing. Carrying it onto
+            # the memento is not written yet, so an assert that has one FAILS
+            # LOUDLY rather than silently dropping it. Silent loss is the exact
+            # MISSING-becomes-success this design forbids.
+            return super().sugar()
         return AssertSugar(test=self.test.sugar(), site=self.fragment)
 
 

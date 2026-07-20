@@ -53,12 +53,16 @@ def test_a_bare_assert_holds_its_terms_sugar():
     assert isinstance(sugar.test, IntLiteralSugar) and sugar.test.value == 1
 
 
-def test_the_message_is_provenance_not_a_child_sugar():
-    # `assert cond, "msg"` — the message must NOT become a child sugar; the
-    # sugar holds only the test. Its presence must not change construction.
+def test_an_assert_with_a_message_fails_loudly_until_provenance_is_carried():
+    # `assert cond, "msg"` — the message is provenance (assertMessage on the
+    # memento), never a child sugar. Carrying it is not written yet, so an
+    # assert that HAS a message must throw loudly, not silently drop it.
+    # Silent loss is a MISSING becoming success — forbidden.
+    from sugar_source_tree.panic import SugarNotWritten
+
     node = _assert_node("assert 1 == 1, 'boom'\n")
-    sugar = node.sugar()
-    assert isinstance(sugar, AssertSugar)
-    assert isinstance(sugar.test, EqualityOpSugar)
-    # no `message`/`msg` child sugar slot is populated with a sugar
-    assert not hasattr(sugar, "message") or sugar.message is None
+    try:
+        node.sugar()
+        assert False, "an assert with a message must fail loudly, not drop it"
+    except SugarNotWritten:
+        pass
