@@ -40,6 +40,7 @@ from .backend import Backend, materialize
 from .fragment import SourceFragment
 from .nodes import Module, Node, SourceUnit
 from .panic import backend_defect
+from .reporter import NULL_REPORTER, AuditReporter
 from .spans import Span
 
 
@@ -73,13 +74,18 @@ class SourceFile:
         self,
         identity: Tuple[str, str, str],
         backend: Optional[Backend] = None,
+        reporter: AuditReporter = NULL_REPORTER,
     ) -> None:
         source, filename, source_cid = identity
         self.unit = SourceUnit(
             filename=filename, source=source, source_cid=source_cid
         )
         self.backend = backend if backend is not None else _default_backend()
-        root = materialize(self.unit, self.backend.root(self.unit))
+        # The reporter enters the whole tree here: the root carries it and
+        # hands it to every child it resolves. An audit walk passes a
+        # CollectingReporter; everyone else takes the do-nothing default.
+        self.reporter = reporter
+        root = materialize(self.unit, self.backend.root(self.unit), reporter)
         if not isinstance(root, Module):
             backend_defect(
                 owner="tree.SourceFile",
@@ -92,15 +98,21 @@ class SourceFile:
 
     @classmethod
     def from_path(
-        cls, path: Path | str, backend: Optional[Backend] = None
+        cls,
+        path: Path | str,
+        backend: Optional[Backend] = None,
+        reporter: AuditReporter = NULL_REPORTER,
     ) -> "SourceFile":
         """Through the oracle's path-addressed door. Unreadable/undecodable
         is the oracle's loud ``SourceOracleRefusal``, never a swallow."""
-        return cls(path_source(str(path)), backend=backend)
+        return cls(path_source(str(path)), backend=backend, reporter=reporter)
 
     @classmethod
     def from_module(
-        cls, module_name: str, backend: Optional[Backend] = None
+        cls,
+        module_name: str,
+        backend: Optional[Backend] = None,
+        reporter: AuditReporter = NULL_REPORTER,
     ) -> "SourceFile":
         """Through the oracle's installed-module door."""
         identity = installed_module_source(module_name)
@@ -108,7 +120,7 @@ class SourceFile:
             raise SourceOracleRefusal(
                 f"oracle has no installed source for module `{module_name}`"
             )
-        return cls(identity, backend=backend)
+        return cls(identity, backend=backend, reporter=reporter)
 
     @property
     def filename(self) -> str:

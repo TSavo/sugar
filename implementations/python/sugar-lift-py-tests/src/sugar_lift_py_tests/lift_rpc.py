@@ -2920,13 +2920,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     at = params.get("at") if isinstance(params.get("at"), dict) else None
     seek = bool(params.get("seek", False))
     options = params.get("options") if isinstance(params.get("options"), dict) else {}
+    # The audit frontier's factory census is deleted; auditFrontier now short-
+    # circuits to an empty frontier (its R census re-homes onto the source
+    # tree's reporter channel, not yet wired). allowedBrokenComponents was the
+    # factory's panic-recovery gate; with no factory audit walk it is inert.
     audit_walk = options.get("auditFrontier") is True
-    allowed_broken_components = options.get("allowedBrokenComponents", [])
-    recovery_allowed = (
-        audit_walk
-        and isinstance(allowed_broken_components, list)
-        and KIT_ID in allowed_broken_components
-    )
     root = Path(workspace_root).resolve()
     _TRANSPORT_LOG.info(
         "enumeration_request",
@@ -3030,7 +3028,29 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 return
 
-            if level == "functions" and not audit_walk:
+            if audit_walk:
+                # The audit frontier's FACTORY census is gone: the factory is
+                # being deleted, and its corpus-wide R census re-homes onto the
+                # source tree's reporter channel (SourceFile(..., reporter=
+                # CollectingReporter()) -> node.sugar() reports each gap through
+                # it). That re-home is not yet wired to the wire, so for now the
+                # frontier returns empty at every audit level: the Rust driver
+                # (fold_recovered_audit) demands one body per file, gets zero
+                # definitions, and assembles a zero-leaf census.
+                #
+                # TEMPORARY and LOUD: a zero-leaf census reports NO panics, so a
+                # corpus that still has unwritten sugars reads "complete" (clean)
+                # until the reporter census lands. This is a known false-green we
+                # are carrying deliberately while the factory comes out, NOT a
+                # claim the frontier is drained. The redo is: walk the tree with
+                # a CollectingReporter and seal each gap's .fragment to a memento.
+                _send_enumerate_result(msg_id, [], [])
+                _log_enumeration_demand(
+                    str(level), at, cache="miss", started=demand_started
+                )
+                return
+
+            if level == "functions":
                 # The functions level IS SourceFile.functions(): every function
                 # definition in the file, enumerated from the typed tree over
                 # oracle-pinned text. No lift runs, no IR rows are consulted,
@@ -3102,115 +3122,13 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     str(level), at, cache="miss", started=demand_started
                 )
                 return
-            if audit_walk and level == "functions":
-                source_bytes = full_path.read_bytes()
-                source = source_bytes.decode("utf-8")
-                from sugar_lift_py_tests.canonicalizer import blake3_512_of
-
-                file_cid = blake3_512_of(source_bytes)
-                requested_cid = at.get("source_cid") if at else None
-                if requested_cid and requested_cid != file_cid:
-                    _send_enumerate_result(
-                        msg_id,
-                        [],
-                        [
-                            {
-                                "memento": at,
-                                "reason": "source memento CID no longer matches file",
-                            }
-                        ],
-                    )
-                    return
-                context_hit = (file_rel, file_cid) in _AUDIT_FILE_CONTEXTS
-                context = _audit_file_context(
-                    source,
-                    file_rel,
-                    file_cid,
-                    hold_seed_panics=recovery_allowed,
-                )
-                nodes = []
-                # The module owner exists only when the source has a statement
-                # to own. Empty package markers are leaf files, so their
-                # function-child answer is the empty set.
-                if context.module.statements():
-                    module_key = _degenerate_file_memento(file_rel, file_cid)
-                    module_key["function_name"] = "<module>"
-                    module_key["source_function_name"] = "<module>"
-                    module_key["file_cid"] = file_cid
-                    nodes.append(
-                        {"memento": module_key, "audit": None, "payload": None}
-                    )
-                for definition in context.definitions:
-                    key = to_rpc_value(definition.memento())
-                    key["function_name"] = definition.function_name()
-                    key["source_function_name"] = definition.function_name()
-                    key["file_cid"] = file_cid
-                    nodes.append({"memento": key, "audit": None, "payload": None})
-                _send_enumerate_result(msg_id, nodes, [])
-                _log_enumeration_demand(
-                    str(level),
-                    at,
-                    cache="hit" if context_hit else "miss",
-                    started=demand_started,
-                )
-                return
-            if audit_walk and level == "facts":
-                source_bytes = full_path.read_bytes()
-                source = source_bytes.decode("utf-8")
-                from sugar_lift_py_tests.canonicalizer import blake3_512_of
-
-                actual_file_cid = blake3_512_of(source_bytes)
-                requested_file_cid = at.get("file_cid")
-                if requested_file_cid and requested_file_cid != actual_file_cid:
-                    _send_enumerate_result(
-                        msg_id,
-                        [],
-                        [
-                            {
-                                "memento": at,
-                                "reason": "ancestor file CID no longer matches file",
-                            }
-                        ],
-                    )
-                    return
-                file_cid = actual_file_cid
-                context_hit = (file_rel, file_cid) in _AUDIT_FILE_CONTEXTS
-                context = _audit_file_context(
-                    source,
-                    file_rel,
-                    file_cid,
-                    hold_seed_panics=recovery_allowed,
-                )
-                from sugar_lift_py_tests.ir import term_intern_scope
-
-                with term_intern_scope():
-                    recovered = audit_lift_file(
-                        source,
-                        file_rel,
-                        recover_panics=recovery_allowed,
-                        target_memento=at,
-                        audit_context=context,
-                    )
-                if not isinstance(recovered, RecoveredAuditDto):
-                    raise TypeError("audit leaf returned a lift artifact")
-                _send_enumerate_result(
-                    msg_id,
-                    [{"memento": at, "audit": recovered.to_rpc(), "payload": None}],
-                    [],
-                )
-                _log_enumeration_demand(
-                    str(level),
-                    at,
-                    cache="hit" if context_hit else "miss",
-                    started=demand_started,
-                )
-                return
             # Levels below `functions` served by the AST tree, not the factory.
             # Invoking the RPC is invoking the source tree enumeration: walk the
             # function's Assert nodes and ask each for its sugar and its fact.
             # For a bare `assert`, call_site and assertion are the same locus
             # (1:1, protocol Section 4); the fact is the desugared InvValue.
-            if not audit_walk and level in ("call_sites", "assertions", "facts"):
+            # (audit_walk already returned empty above; this is the live path.)
+            if level in ("call_sites", "assertions", "facts"):
                 from sugar_lift_py_tests import tree_enumerate as _tree
 
                 sf = _tree.source_file(full_path)

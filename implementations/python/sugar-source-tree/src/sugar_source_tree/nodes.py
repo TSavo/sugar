@@ -45,6 +45,7 @@ from .operators import (
     UnaryOperator,
 )
 from .panic import SourceTreePanic, SugarNotWritten, vocabulary_missing
+from .reporter import NULL_REPORTER, AuditReporter
 from .spans import LineColSpan, LineTable, Span
 
 
@@ -135,6 +136,10 @@ class Node(Typed):
 
     unit: SourceUnit
     ref: object  # the BackendNode reference; duck-typed to avoid a cycle
+    # The audit channel, threaded at construction (backend.materialize) and
+    # handed on to every child this node resolves. Off the audit path this is
+    # the shared do-nothing NULL_REPORTER; nothing allocates, nothing changes.
+    reporter: AuditReporter = NULL_REPORTER
 
     # Ordered names of fields holding child nodes (Node, optional
     # Node, or tuple of Node). Leaf values (str/int/...)
@@ -154,7 +159,7 @@ class Node(Typed):
             raise AttributeError(name)
         for slot_name, slot in self.ref.describe().slots:
             if slot_name == name:
-                return slot.resolve(self.unit)
+                return slot.resolve(self.unit, self.reporter)
         if name in _declared_fields(type(self)):
             vocabulary_missing(
                 owner="nodes.Node.__getattr__",
@@ -225,7 +230,7 @@ class Node(Typed):
             where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
         except SourceTreePanic:
             pass  # an unpositioned kind still panics usefully, by file
-        raise SugarNotWritten(
+        panic = SugarNotWritten(
             owner=f"{type(self).__name__}.sugar",
             observed=f"{self.kind} at {where} has no sugar written",
             requested="a constructed sugar object",
@@ -234,6 +239,12 @@ class Node(Typed):
                 "its sugar deliberately; never a fallback, never None"
             ),
         )
+        # Testify the gap through the audit channel BEFORE throwing. An audit
+        # walk's CollectingReporter records it (the frontier row); the report
+        # never suppresses the throw. Every gap carries its own .fragment, so
+        # the census -> wire memento is one hop: node.fragment.seal().
+        self.reporter.report_gap(self, panic)
+        raise panic
 
     def segment(self) -> str:
         return self.span.slice(self.unit.source)
