@@ -12,9 +12,16 @@ behind a read-only adapter; every node is Typed at construction. Nothing
 above an adapter names a backend library or receives a backend-native
 object. No caching anywhere: a ``SourceFile`` holding its parsed tree IS
 the file.
+
+Built on top of the SourceOracle: text enters only as the oracle's
+``(source, filename, content CID)`` identity, and the two currencies —
+live ``SourceFragment``, sealed ``SourceMemento`` — exchange only through
+it (``fragment.seal()`` / ``resolve_memento``). Every enumerated object
+answers ``.fragment``.
 """
 
 from .backend import Backend, BackendRefused
+from .fragment import SourceFragment, SourceMemento, resolve_memento
 from .nodes import KIND_REGISTRY, Node, SourceUnit, Typeable, Typed
 from .panic import BackendDefect, SourceTreePanic, VocabularyMissing
 from .spans import LineColSpan, LineTable, Span
@@ -29,6 +36,8 @@ __all__ = [
     "LineTable",
     "Node",
     "SourceFile",
+    "SourceFragment",
+    "SourceMemento",
     "SourceTree",
     "SourceTreePanic",
     "SourceUnit",
@@ -36,4 +45,5 @@ __all__ = [
     "Typeable",
     "Typed",
     "VocabularyMissing",
+    "resolve_memento",
 ]

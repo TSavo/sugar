@@ -14,6 +14,7 @@ parso = pytest.importorskip("parso")
 
 from pathlib import Path
 
+from conftest import oracle_source_file
 from sugar_source_tree import SourceFile
 from sugar_source_tree.backend import BackendRefused
 from sugar_source_tree.panic import SourceTreePanic
@@ -23,7 +24,7 @@ GOLDENS = Path(__file__).resolve().parents[1] / "goldens"
 
 
 def _root(source: str, filename: str):
-    return SourceFile(filename=filename, source=source, backend=ParsoBackend()).root
+    return oracle_source_file(source, backend=ParsoBackend()).root
 
 
 def test_constructs_a_representative_sample():

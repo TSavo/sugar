@@ -32,9 +32,11 @@ the backend contract stays read-only.
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
-from typing import ClassVar, Iterator, Optional, Tuple
+from typing import TYPE_CHECKING, ClassVar, Iterator, Optional, Tuple
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .fragment import SourceFragment
 
 from .operators import (
     BinaryOperator,
@@ -48,22 +50,22 @@ from .spans import LineColSpan, LineTable, Span
 
 @dataclass(frozen=True)
 class SourceUnit:
-    """One parsed source: text, its content address, and its line table.
+    """One parsed source: oracle-pinned text, its content address, its line table.
 
-    ``source_cid`` is sha256 over the UTF-8 encoding of the source string —
-    a pure function of the text, never of the parser.
+    The identity ``(source, filename, source_cid)`` is the SourceOracle's
+    triple, carried verbatim. This type never opens a file and never hashes
+    text — minting an address is the oracle's job, and a unit that minted
+    its own would be a second, unpinned identity for the same bytes.
     """
 
     filename: str
     source: str
+    source_cid: str
 
     # populated in __post_init__, never by callers
-    source_cid: str = field(init=False, default="")
     line_table: LineTable = field(init=False, default=None)  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
-        digest = hashlib.sha256(self.source.encode("utf-8")).hexdigest()
-        object.__setattr__(self, "source_cid", f"sha256:{digest}")
         object.__setattr__(self, "line_table", LineTable(self.source))
 
 
@@ -196,6 +198,15 @@ class Node(Typed):
 
     def segment(self) -> str:
         return self.span.slice(self.unit.source)
+
+    @property
+    def fragment(self) -> "SourceFragment":
+        """This node as a SourceFragment: its slice of the same oracle-pinned
+        text the whole file answers. One accessor, one typed answer — never
+        assembled by the caller from span + segment + cid."""
+        from .fragment import SourceFragment
+
+        return SourceFragment(unit=self.unit, span=self.span, node=self)
 
     def line_col_span(self) -> LineColSpan:
         return self.unit.line_table.project(self.span)

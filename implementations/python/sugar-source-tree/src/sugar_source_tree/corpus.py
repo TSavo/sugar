@@ -48,6 +48,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
 
+from sugar_lift_python_source.source_oracle import SourceOracleRefusal, path_source
+
 from .backend import Backend, BackendRefused
 from .nodes import Node
 from .panic import BackendDefect, VocabularyMissing
@@ -67,7 +69,13 @@ def node_paths(root: Node) -> Iterator[tuple[str, Node]]:
         stack.extend(reversed(entries))
 
 
-def records_for_file(file: SourceFile) -> list[dict[str, object]]:
+def records_for_file(
+    file: SourceFile, display: Optional[str] = None
+) -> list[dict[str, object]]:
+    """``display`` is the record's ``file`` label (root-relative in a corpus
+    run); the unit's own filename is the oracle's address and stays on the
+    unit."""
+    file_label = display if display is not None else file.filename
     table = file.unit.line_table
     out: list[dict[str, object]] = []
     for path, node in node_paths(file.root):
@@ -75,7 +83,7 @@ def records_for_file(file: SourceFile) -> list[dict[str, object]]:
         segment_cid = hashlib.sha256(node.segment().encode("utf-8")).hexdigest()
         out.append(
             {
-                "file": file.filename,
+                "file": file_label,
                 "path": path,
                 "kind": node.kind,
                 "start": node.span.start,
@@ -129,13 +137,17 @@ def emit_corpus(
         for path in files:
             rel = str(path.relative_to(base)) if base is not None else str(path)
             try:
-                source = path.read_text(encoding="utf-8")
-            except UnicodeDecodeError as err:
-                failures.append((rel, "undecodable", str(err)))
+                identity = path_source(str(path))
+            except SourceOracleRefusal as err:
+                # The ORACLE refused to mint an identity (unreadable or
+                # undecodable). Text enters only through the oracle, so
+                # this is where a bad file surfaces — recorded, never
+                # swallowed.
+                failures.append((rel, "oracle_refused", str(err)))
                 continue
             try:
-                file = SourceFile(filename=rel, source=source, backend=backend)
-                recs = records_for_file(file)
+                file = SourceFile(identity, backend=backend)
+                recs = records_for_file(file, display=rel)
             except BackendRefused as err:
                 # The BACKEND refused the file (not valid input for it).
                 # Recorded loudly; distinct from a vocabulary MISSING. Never

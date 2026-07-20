@@ -217,3 +217,54 @@ def test_lean_lift_omits_inline_source_but_keeps_cids(tmp_path: Path) -> None:
     bs = entry["body_source"]
     assert "body_text" not in bs and "ast_template" not in bs  # signs the real code
     assert bs["source_cid"] and bs["template_cid"] and bs["span"]  # by CID + locus
+
+
+# ---------------------------------------------------------------------------
+# Path-addressed doors (#5940 tree): path_source / resolve_span_memento
+# ---------------------------------------------------------------------------
+
+
+def test_path_source_mints_the_identity_triple(tmp_path: Path) -> None:
+    from sugar_lift_python_source.source_oracle import path_source
+
+    p = tmp_path / "m.py"
+    p.write_text("x = 1\n", encoding="utf-8")
+    source, filename, cid = path_source(str(p))
+    assert source == "x = 1\n"
+    assert filename == str(p)
+    assert cid == blake3_512_of(b"x = 1\n")
+
+
+def test_path_source_refuses_loudly_never_none(tmp_path: Path) -> None:
+    from sugar_lift_python_source.source_oracle import path_source
+
+    with pytest.raises(SourceOracleRefusal):
+        path_source(str(tmp_path / "absent.py"))
+    bad = tmp_path / "bad.py"
+    bad.write_bytes(b"\xff\xfe\x00x")
+    with pytest.raises(SourceOracleRefusal):
+        path_source(str(bad))
+
+
+def test_resolve_span_memento_recomputes_or_refuses(tmp_path: Path) -> None:
+    from sugar_lift_python_source.source_oracle import (
+        path_source,
+        resolve_span_memento,
+    )
+
+    p = tmp_path / "m.py"
+    p.write_text("a = 1\nb = 2\n", encoding="utf-8")
+    source, filename, cid = path_source(str(p))
+    memento = {
+        "file": filename,
+        "span": {"start": 6, "end": 11},
+        "source_cid": cid,
+        "cid": blake3_512_of(b"b = 2"),
+    }
+    resolved = resolve_span_memento(memento)
+    assert resolved["segment"] == "b = 2"
+    assert resolved["source_cid"] == cid
+
+    p.write_text("a = 1\nc = 3\n", encoding="utf-8")
+    with pytest.raises(SourceOracleRefusal):
+        resolve_span_memento(memento)

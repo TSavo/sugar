@@ -128,6 +128,79 @@ installed_module_source.cache_clear = (  # type: ignore[attr-defined]
 )
 
 
+def path_source(path: str) -> tuple[str, str, str]:
+    """Path-addressed minting door — ORACLE-CONTRACT EXTENSION (#5940 tree).
+
+    Second address form beside `installed_module_source`: the module door
+    serves *installed-module* source; a `SourceTree` enumerates *paths*.
+    Identity is the same `(source, filename, content CID)` triple, minted
+    HERE so no parser ever reads or hashes a file itself.
+
+    Minting only: read + decode + CID. No parse gate — which parses is the
+    backend's question, and refusing here would decide it for every backend.
+    Unreadable/undecodable is a LOUD `SourceOracleRefusal`, never `None`:
+    callers record it as a refusal, not an absence.
+    """
+    try:
+        source = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise SourceOracleRefusal(f"cannot read source `{path}`: {exc}") from exc
+    return (source, str(path), blake3_512_of(source.encode("utf-8")))
+
+
+def resolve_span_memento(
+    memento: dict[str, Any], project_root: str | None = None
+) -> dict[str, Any]:
+    """Resolve a span-addressed SourceMemento by RECOMPUTE — exact or refuse.
+
+    ORACLE-CONTRACT EXTENSION (#5940 tree), the resolution half of
+    `path_source`. Memento shape: `{file, span: {start, end}, source_cid,
+    cid}` — file plus a half-open codepoint span into it, pinned twice:
+    the whole file (`source_cid`) and the sliced segment (`cid`). Reads the
+    on-disk file through `path_source`, re-slices, and returns the identity
+    plus segment IFF both CIDs recompute; else raises `SourceOracleRefusal`.
+    """
+    file = memento.get("file")
+    if not isinstance(file, str) or not file:
+        raise SourceOracleRefusal("span memento missing `file`")
+    span = memento.get("span")
+    if not isinstance(span, dict):
+        raise SourceOracleRefusal("span memento missing `span`")
+    start, end = span.get("start"), span.get("end")
+    if not isinstance(start, int) or not isinstance(end, int) or not (0 <= start <= end):
+        raise SourceOracleRefusal(f"span memento has degenerate span {span!r}")
+
+    path = str(Path(project_root) / file) if project_root else file
+    source, filename, source_cid = path_source(path)
+
+    pinned_source_cid = memento.get("source_cid")
+    if pinned_source_cid is not None and source_cid != pinned_source_cid:
+        raise SourceOracleRefusal(
+            f"source CID misaligned for `{file}`: pinned {pinned_source_cid}, "
+            f"on-disk {source_cid} -- the source drifted from the memento"
+        )
+    if end > len(source):
+        raise SourceOracleRefusal(
+            f"span [{start}, {end}) exceeds `{file}` length {len(source)}"
+        )
+    segment = source[start:end]
+    segment_cid = blake3_512_of(segment.encode("utf-8"))
+    pinned_cid = memento.get("cid")
+    if pinned_cid is not None and segment_cid != pinned_cid:
+        raise SourceOracleRefusal(
+            f"segment CID misaligned for `{file}` [{start}, {end}): pinned "
+            f"{pinned_cid}, on-disk {segment_cid} -- the segment drifted"
+        )
+    return {
+        "source": source,
+        "filename": filename,
+        "source_cid": source_cid,
+        "segment": segment,
+        "cid": segment_cid,
+        "span": {"start": start, "end": end},
+    }
+
+
 def resolve_source_memento(
     project_root: str, memento: dict[str, Any]
 ) -> dict[str, Any]:

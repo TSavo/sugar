@@ -14,6 +14,7 @@ pytest.importorskip("tree_sitter_python")
 
 from pathlib import Path
 
+from conftest import oracle_source_file
 from sugar_source_tree import SourceFile
 from sugar_source_tree.tree_sitter_python_adapter import TreeSitterPythonBackend
 
@@ -21,7 +22,7 @@ GOLDENS = Path(__file__).resolve().parents[1] / "goldens"
 
 
 def _root(source: str, filename: str):
-    return SourceFile(filename=filename, source=source, backend=TreeSitterPythonBackend()).root
+    return oracle_source_file(source, backend=TreeSitterPythonBackend()).root
 
 
 def test_constructs_the_full_quirks_golden():

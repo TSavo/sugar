@@ -23,6 +23,7 @@ import pytest
 
 libcst = pytest.importorskip("libcst", reason="LibCST backend not installed")
 
+from conftest import oracle_source_file
 from sugar_source_tree.backend import BackendRefused  # noqa: E402
 from sugar_source_tree.tree import SourceFile  # noqa: E402
 from sugar_source_tree.cpython_adapter import CPythonAstBackend  # noqa: E402
@@ -32,7 +33,7 @@ from sugar_source_tree.panic import SourceTreePanic  # noqa: E402
 
 
 def build(source: str):
-    return SourceFile(filename="<test>", source=source, backend=LibCSTBackend()).root
+    return oracle_source_file(source, backend=LibCSTBackend()).root
 
 
 def only(root, cls):
@@ -241,7 +242,7 @@ def test_async_shapes_resolve_to_their_own_classes():
 
 def test_unmapped_cst_shape_panics_as_a_missing():
     """The negative arm. A CST node with no rule must NOT get a fallback."""
-    unit = nodes.SourceUnit(filename="<test>", source="x = 1\n")
+    unit = oracle_source_file("x = 1\n").unit
     ctx = _Ctx(unit, {})
     with pytest.raises(SourceTreePanic) as excinfo:
         _describe(ctx, libcst.Semicolon())
@@ -283,4 +284,4 @@ def test_provider_refusal_is_a_membrane_BackendRefused_never_a_SyntaxError():
     assert not isinstance(excinfo.value, SyntaxError)
     assert not isinstance(excinfo.value, libcst.ParserSyntaxError)
     assert excinfo.value.backend == LibCSTBackend().name
-    assert excinfo.value.file == "<test>"
+    assert excinfo.value.file.endswith(".py")

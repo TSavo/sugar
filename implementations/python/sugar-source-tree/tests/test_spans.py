@@ -6,6 +6,7 @@ on raw numbers, so the tests read as the spec's worked examples.
 
 import pytest
 
+from conftest import oracle_source_file
 from sugar_source_tree import SourceFile
 from sugar_source_tree.nodes import (
     Assign,
@@ -31,7 +32,7 @@ from sugar_source_tree.nodes import (
 
 
 def parse(source: str) -> Module:
-    return SourceFile(filename="<test>", source=source).root
+    return oracle_source_file(source).root
 
 
 def only(root, cls):
