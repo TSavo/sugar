@@ -80,6 +80,35 @@ def reduce_statements(statements: tuple, ctx: object):
     )
 
 
+def reduce_body(statements: tuple, ctx: object):
+    """Reduce a function body to ONE Outcome, preserving Complete/Incomplete.
+
+    A body that reduces to a value is `Complete(BlockValue(record))` -- the
+    record carries every entry, including any halting effect absorbed as red
+    testimony (Incomplete.contribution is the effect itself). A body that
+    reduces to a bare, non-absorbed effect stays `Incomplete` and propagates:
+    the caller wraps via `.and_then`, so an effect never becomes a false
+    universe. Today no written statement sugar throws an effect, so this is
+    always Complete -- the distinction is carried structurally for the sugars
+    (calls, unsupported statements) that will.
+    """
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    entries, _final_ctx, can_fall_through, fall_through = reduce_statements(
+        statements, ctx
+    )
+    # A body that is nothing but a single propagating effect IS that effect --
+    # there is no value, no fact, no exit to make a contract from. Propagate it
+    # so the def surfaces as an effect (a halt), never a None-returning contract.
+    if len(entries) == 1 and isinstance(entries[0], Incomplete):
+        return entries[0]
+    return Complete(
+        BlockValue(
+            entries, fall_through=fall_through, can_fall_through=can_fall_through
+        )
+    )
+
+
 @dataclass(frozen=True)
 class FunctionUniverseSugar(Sugar):
     """`def <name>(<formals>): <body>` -> the body's universe.
@@ -111,16 +140,29 @@ class FunctionUniverseSugar(Sugar):
         # A function body is the root of a reduction: if no context is threaded
         # in, establish a fresh one (empty temporal scope) so statements can bind
         # names and thread refinements down the body.
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.ir import make_var
+
         if ctx is None:
             from sugar_lift_py_tests.context.reduce_context import ReduceContext
 
             ctx = ReduceContext.root(owner="FunctionUniverseSugar")
-        entries, _final_ctx, can_fall_through, fall_through = reduce_statements(
-            self.statements, ctx
-        )
-        record = BlockValue(
-            entries, fall_through=fall_through, can_fall_through=can_fall_through
-        )
-        return Complete(
-            UniverseValue(name=self.name, formals=self.formals, record=record)
+
+        # Bind each formal to its universe variable, so a body that reads a
+        # parameter reduces against a symbolic value, not an unbound name.
+        temporal = ctx.temporal
+        for formal in self.formals:
+            temporal = temporal.bind_value(formal, SymbolicValue(make_var(formal)))
+        scoped = replace(ctx, temporal=temporal)
+
+        # `.and_then` is the Complete/Incomplete distinction: a Complete body
+        # (a BlockValue record) becomes the universe; an Incomplete body (an
+        # effect) propagates untouched -- an effect is never wrapped into a
+        # false contract.
+        return reduce_body(self.statements, scoped).and_then(
+            lambda record: Complete(
+                UniverseValue(name=self.name, formals=self.formals, record=record)
+            )
         )
