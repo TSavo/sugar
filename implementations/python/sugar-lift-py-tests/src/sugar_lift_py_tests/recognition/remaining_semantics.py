@@ -40,7 +40,7 @@ class RemainingSemanticRecognition:
             and zero_arg_super
             and not call.call_has_keywords()
             and len(arguments) == 2
-            and arguments[0].observed == "PrimitiveLiteral"
+            and arguments[0].observed == "Constant"
             and isinstance(arguments[0].literal_value(), str)
         ):
             return InitializerCallSite(

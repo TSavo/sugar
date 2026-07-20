@@ -525,7 +525,9 @@ def _strategy_from_init(
     max_args -= 1
     supplied = site.call_arg_count()
     if not min_args <= supplied <= max_args:
-        return _arity_strategy(site, ctx, target, min_args, max_args)
+        return _arity_strategy(
+            site, ctx, target, min_args, max_args, exact_signature=True
+        )
     bytesio = _source_bytesio_strategy(
         site,
         ctx,
@@ -2025,7 +2027,13 @@ def _strategy_from_static_mro(site, ctx, target, class_site, methods, mro):
 
 
 def _arity_strategy(
-    site, ctx, target: str, minimum: int, maximum: int
+    site,
+    ctx,
+    target: str,
+    minimum: int,
+    maximum: int,
+    *,
+    exact_signature: bool = False,
 ) -> RuntimeConstructorStrategy:
     return RuntimeConstructorStrategy(
         class_name=target,
@@ -2038,6 +2046,7 @@ def _arity_strategy(
             f"{minimum}..{maximum} positional arguments, got {site.call_arg_count()}"
         ),
         arity_error=True,
+        exact_signature=exact_signature,
     )
 
 
