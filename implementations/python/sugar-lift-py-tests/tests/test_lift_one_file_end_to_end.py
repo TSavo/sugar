@@ -60,3 +60,11 @@ def test_lift_a_single_assertion_all_the_way_to_sugar():
         # and the operands desugar to the number as floor terms
         assert sugar.test.left.desugar() == Complete(TermValue(1))
         assert sugar.test.right.desugar() == Complete(TermValue(1))
+
+        # the whole assertion desugars — no context, no temporal, no factory:
+        #   1 == 1 reduces to True; True states its inv; the assert is testimony
+        from sugar_lift_py_tests.outcome import Complete as _C
+        outcome = sugar.desugar(None)
+        assert isinstance(outcome, _C)
+        # the stated inv is the fact the record emits (a SupportValue)
+        assert type(outcome.value).__name__ == "SupportValue"
