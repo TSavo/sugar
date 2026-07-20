@@ -73,7 +73,7 @@ from .backend import (
 )
 from .nodes import SourceUnit
 from .operators import Operator, operator_for
-from .panic import membrane_panic
+from .panic import membrane_missing
 from .spans import Span
 
 TSNode = object  # tree_sitter.Node, kept untyped at the boundary
@@ -209,7 +209,7 @@ def _expression_statement(unit: SourceUnit, node: TSNode) -> Description:
     # bare `a; b` on one physical statement line — each named child is its
     # own small statement; the membrane has no multi-statement-line node,
     # so this shape is not constructible as a single Expr and is a MISSING.
-    membrane_panic(
+    membrane_missing(
         owner="tree_sitter_python_adapter._expression_statement",
         observed=f"expression_statement with {len(kids)} named children",
         requested="exactly one expression",
@@ -257,7 +257,7 @@ def _string_like(unit: SourceUnit, node: TSNode) -> Description:
         elif c.type == "interpolation":
             values.append(_interpolation(unit, c))
         else:
-            membrane_panic(
+            membrane_missing(
                 owner="tree_sitter_python_adapter._string_like",
                 observed=f"f-string child {c.type!r} not recognized",
                 requested="string_content or interpolation",
@@ -350,7 +350,7 @@ def _binary_operator(unit: SourceUnit, node: TSNode) -> Description:
     op_node = _field(node, "operator")
     kind = _BIN_TOKEN.get(op_node.type)
     if kind is None:
-        membrane_panic(
+        membrane_missing(
             owner="tree_sitter_python_adapter._binary_operator",
             observed=f"binary operator token {op_node.type!r} not recognized",
             requested="a known binary operator token",
@@ -381,7 +381,7 @@ def _unary_operator(unit: SourceUnit, node: TSNode) -> Description:
     arg = _field(node, "argument")
     kind = _UNARY_TOKEN.get(op_node.type)
     if kind is None:
-        membrane_panic(
+        membrane_missing(
             owner="tree_sitter_python_adapter._unary_operator",
             observed=f"unary operator token {op_node.type!r} not recognized",
             requested="'+', '-', or '~'",
@@ -402,7 +402,7 @@ def _comparison_operator(unit: SourceUnit, node: TSNode) -> Description:
         text = t.type if t.type not in ("is not", "not in") else t.type
         kind = _CMP_TOKEN.get(t.type)
         if kind is None:
-            membrane_panic(
+            membrane_missing(
                 owner="tree_sitter_python_adapter._comparison_operator",
                 observed=f"comparison token {t.type!r} not recognized",
                 requested="a known comparison operator token",
@@ -492,7 +492,7 @@ def _one_subscript_item(unit: SourceUnit, node: TSNode) -> ProviderHandle:
 def _parenthesized_expression(unit: SourceUnit, node: TSNode) -> Description:
     inner = _named(node)
     if len(inner) != 1:
-        membrane_panic(
+        membrane_missing(
             owner="tree_sitter_python_adapter._parenthesized_expression",
             observed=f"parenthesized_expression with {len(inner)} named children",
             requested="exactly one inner expression",
@@ -537,7 +537,7 @@ def _dictionary(unit: SourceUnit, node: TSNode) -> Description:
             items.append(_fixed("DictItem", _span(unit, c),
                                  (("key", MaybeChild(None)), ("value", Child(_h(unit, inner))))))
         else:
-            membrane_panic(
+            membrane_missing(
                 owner="tree_sitter_python_adapter._dictionary",
                 observed=f"dictionary child {c.type!r} not recognized",
                 requested="pair or dictionary_splat",
@@ -749,7 +749,7 @@ def _one_param(unit: SourceUnit, node: TSNode, after_star: bool) -> ProviderHand
                         ("default", MaybeChild(_h(unit, value_node))),
                         ("param_kind", SlotLeaf("keyword_only" if after_star else "positional_or_keyword"))),
                        anchors=(_span(unit, name_node),))
-    membrane_panic(
+    membrane_missing(
         owner="tree_sitter_python_adapter._one_param",
         observed=f"parameter shape {node.type!r} not recognized",
         requested="a mapped parameter shape",
@@ -806,7 +806,7 @@ def _augmented_assignment(unit: SourceUnit, node: TSNode) -> Description:
     op_node = _field(node, "operator")
     kind = _AUG_TOKEN.get(op_node.type)
     if kind is None:
-        membrane_panic(
+        membrane_missing(
             owner="tree_sitter_python_adapter._augmented_assignment",
             observed=f"augmented assignment token {op_node.type!r} not recognized",
             requested="a known augmented assignment token",
@@ -1239,7 +1239,7 @@ def _pattern(unit: SourceUnit, node: TSNode) -> ProviderHandle:
             i = j + 1
         return _fixed("MatchMapping", span,
                       (("keys", Children(tuple(keys))), ("patterns", Children(tuple(patterns))), ("rest", SlotLeaf(rest))))
-    membrane_panic(
+    membrane_missing(
         owner="tree_sitter_python_adapter._pattern",
         observed=f"case pattern shape {node.type!r} not recognized",
         requested="a mapped match-pattern shape",
@@ -1272,7 +1272,7 @@ _LEAF_DISPATCH = {
 def _describe(unit: SourceUnit, node: TSNode) -> Description:
     t = node.type
     if not node.is_named:
-        membrane_panic(
+        membrane_missing(
             owner="tree_sitter_python_adapter._describe",
             observed=f"unnamed/punctuation node {t!r} reached the dispatcher",
             requested="a named grammar node",
@@ -1286,7 +1286,7 @@ def _describe(unit: SourceUnit, node: TSNode) -> Description:
     fn = _DISPATCH.get(t)
     if fn is not None:
         return fn(unit, node)
-    membrane_panic(
+    membrane_missing(
         owner="tree_sitter_python_adapter._describe",
         observed=f"tree-sitter node type {t!r} has no translation rule",
         requested="a mapped statement/expression shape",
