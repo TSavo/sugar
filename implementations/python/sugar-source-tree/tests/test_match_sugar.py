@@ -61,9 +61,16 @@ def test_wildcard_guarded_by_all_negations():
     assert all(op.kind == "not" for op in ante.operands)
 
 
-def test_capture_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(z):\n    match z:\n        case x:\n            return x\n").sugar()
+def test_capture_binds_the_subject():
+    # case x: binds x = subject (the temporal half, via substitute). So a
+    # `case 1: return 10; case x: return x` capture arm is `not(z==1) -> out==z`.
+    post = _fn(
+        "def A(z):\n    match z:\n        case 1:\n            return 10\n"
+        "        case x:\n            return x\n"
+    ).sugar().desugar().value.post()
+    capture_arm = post.operands[1]  # the `case x:` implication
+    assert capture_arm.operands[0].operands[0].kind == "not"  # guarded by not(z==1)
+    assert capture_arm.operands[1].args[1].name == "z"  # out == z (x = subject)
 
 
 def test_structural_pattern_stays_loud():
@@ -80,7 +87,7 @@ if __name__ == "__main__":
     test_first_case_guarded_by_its_match()
     test_later_case_excludes_earlier()
     test_wildcard_guarded_by_all_negations()
-    test_capture_stays_loud()
+    test_capture_binds_the_subject()
     test_structural_pattern_stays_loud()
     test_pattern_guard_stays_loud()
     print("ok: match value patterns -- sequential guarded split; the rest loud")
