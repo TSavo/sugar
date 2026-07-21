@@ -26,6 +26,11 @@ COMPARE_METHODS: dict[str, str] = {
     "GtE": "greater_equal",
 }
 
+# Every comparison kind this sugar owns (Eq is EqualityOpSugar's, not here).
+# `NotEq`/`IsNot` are their positive form negated; `Is` stands on the identity
+# floor; `In`/`NotIn` (membership) are not owned yet -- they stay loud.
+COMPARISON_KINDS = frozenset(COMPARE_METHODS) | {"NotEq", "Is", "IsNot"}
+
 
 @dataclass(frozen=True)
 class ComparisonOpSugar(Sugar):
@@ -54,6 +59,14 @@ class ComparisonOpSugar(Sugar):
         if self.op_kind == "NotEq":
             # a != b is not (a == b): stand on the equals floor, negate.
             return left.equals(right, self.site).and_then(
+                lambda predicate: predicate.negate()
+            )
+        if self.op_kind == "Is":
+            # a is b: object identity, stands on the is_identical floor.
+            return left.is_identical(right, self.site)
+        if self.op_kind == "IsNot":
+            # a is not b is not (a is b): identity floor, negated.
+            return left.is_identical(right, self.site).and_then(
                 lambda predicate: predicate.negate()
             )
         method = COMPARE_METHODS[self.op_kind]

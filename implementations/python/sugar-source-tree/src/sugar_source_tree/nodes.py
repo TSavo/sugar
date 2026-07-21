@@ -1565,13 +1565,13 @@ class Compare(Expression):
         """
         from .operators import Eq
         from sugar_lift_py_tests.sugar.comparison_op_sugar import (
-            COMPARE_METHODS,
+            COMPARISON_KINDS,
             ComparisonOpSugar,
         )
         from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 
         def supported(op):
-            return isinstance(op, Eq) or op.kind == "NotEq" or op.kind in COMPARE_METHODS
+            return isinstance(op, Eq) or op.kind in COMPARISON_KINDS
 
         if not all(supported(op) for op in self.ops):
             return super().sugar()
@@ -1669,19 +1669,27 @@ class Constant(Expression):
         literal kind not yet converted inherits the loud SugarNotWritten throw.
         """
         v = self.value
+        if v is None:
+            from sugar_lift_py_tests.sugar.none_literal_sugar import NoneLiteralSugar
+
+            return NoneLiteralSugar(site=self.fragment)
         if isinstance(v, bool):
             return super().sugar()  # bool is its own sugar, not yet written
         if isinstance(v, int):
             from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 
             return IntLiteralSugar(value=v, site=self.fragment)
+        if type(v) is float:
+            from sugar_lift_py_tests.sugar.real_literal_sugar import RealLiteralSugar
+
+            return RealLiteralSugar(value=v, site=self.fragment)
         if type(v) is str:
             from sugar_lift_py_tests.sugar.string_literal_sugar import (
                 StringLiteralSugar,
             )
 
             return StringLiteralSugar(value=v, site=self.fragment)
-        return super().sugar()  # float / bytes / None / ... not yet written
+        return super().sugar()  # bool / bytes / ... not yet written
 
 
 class Attribute(Expression):
