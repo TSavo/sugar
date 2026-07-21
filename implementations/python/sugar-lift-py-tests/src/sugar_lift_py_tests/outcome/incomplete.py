@@ -8,13 +8,18 @@ from sugar_lift_py_tests.effect import Effect, effect_reason, require_effect
 @dataclass(frozen=True)
 class Incomplete:
     effect: Effect
+    branch_conditions: tuple = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "effect", require_effect(self.effect))
 
     @property
     def reason(self) -> str:
-        return effect_reason(self.effect)
+        base = effect_reason(self.effect)
+        if not self.branch_conditions:
+            return base
+        conds = " and ".join(repr(f) for f in self.branch_conditions)
+        return f"{base}; effect occurs under branch condition {conds}"
 
     def binary_conditional(
         self, then, else_body, ctx: object = None, site=None
@@ -43,18 +48,14 @@ class Incomplete:
         return (self,)
 
     def guarded(self, formula):
-        """Keep a typed effect red while recording its branch condition."""
-        from dataclasses import replace
+        """Keep a typed effect red while recording its branch condition.
 
-        return Incomplete(
-            replace(
-                self.effect,
-                reason=(
-                    f"{self.reason}; effect occurs under branch condition "
-                    f"{formula!r}"
-                ),
-            )
-        )
+        The condition is wrapper-level metadata, recorded on the Incomplete --
+        NOT smashed into the effect's reason. The effect stays pristine (some
+        effects, e.g. RaiseEffect, compute ``reason`` as a property with no field
+        to replace), and a raise guarded by several nested ifs accumulates its
+        conditions in order."""
+        return Incomplete(self.effect, (*self.branch_conditions, formula))
 
     def extend_scope(self, ctx):
         # An effect does not rebind: the rest never runs under a new scope.
