@@ -45,3 +45,40 @@ class AssignSugar(Sugar):
         from sugar_lift_py_tests.floor.block_value import BlockValue
 
         return Complete(BlockValue((), can_fall_through=True))
+
+
+@dataclass(frozen=True)
+class MultiAssignSugar(Sugar):
+    """More than one name bound by a single Assign statement -- either a
+    destructured display (`a, b = <tuple/list display>`) or a chained
+    assignment (`x = y = e`). Just like AssignSugar, substitute has already
+    threaded every binding into the rest of the block by the time this sugar
+    reduces: an assignment states no fact of its own, so this too is inert
+    meaning. `bindings` holds each bound name with its own rhs sugar --
+    provenance only, never re-stated.
+
+    Meaning-only, node-constructed: no owns/new/role. Only shapes the tree
+    node has already proven destructure (or chain) reach here; anything else
+    stays a loud gap on the node.
+    """
+
+    bindings: tuple  # tuple of (name, value_sugar) pairs, in target order
+    site: object = dataclass_field(compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        # A destructuring bind that discriminates ON THE PAIRING: swap the
+        # two names' rhs and the sum through both flips.
+        prefix = "def A(p, q):\n    a, b = p, q\n    return a + b\n\n"
+        return _call_pair(
+            name="multi_assign_destructure",
+            owner_sugar="MultiAssignSugar",
+            truthful=prefix + "def test_a():\n    assert A(2, 3) == 5\n",
+            lying=prefix + "def test_a():\n    assert A(2, 3) == 6\n",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        # Inert: every binding was consumed by substitute. Contribute nothing.
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+
+        return Complete(BlockValue((), can_fall_through=True))

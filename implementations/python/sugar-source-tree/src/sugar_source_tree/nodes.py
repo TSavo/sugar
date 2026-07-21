@@ -859,28 +859,72 @@ class Assign(Statement):
             return self
         return rewrite(self, value=new_value)
 
+    def _destructured_binding(self):
+        # `a, b = <display>` -- a single Tuple/List target of plain Names,
+        # destructured against the already-substituted rhs when it is a
+        # Tuple/List display of the same arity. Starred/nested targets, an
+        # arity mismatch, or a non-display rhs return None here (mirrors
+        # For._target_bindings_for -- the shared destructuring reader, called
+        # class-explicitly so it never depends on `self` being a For).
+        target = self.targets[0]
+        if not isinstance(target, (Tuple_, List)):
+            return None
+        return For._target_bindings_for(self, target, self.value)
+
     def substitution_binding(self, scope):
         # A single Name target binds its name to the already-substituted rhs.
-        # Tuple / attribute / subscript targets thread nothing yet -- their
-        # references stay honest gaps rather than a wrong binding.
-        if len(self.targets) == 1 and isinstance(self.targets[0], Name):
-            return {self.targets[0].id: self.value}
+        # A single Tuple/List target of plain Names destructures against a
+        # matching display rhs (see _destructured_binding). A chain of plain
+        # Name targets (`x = y = e`) binds each name to the same rhs.
+        # Attribute / subscript targets, starred/nested tuples, and arity
+        # mismatches thread nothing -- their references stay honest gaps
+        # rather than a wrong binding.
+        if len(self.targets) == 1:
+            target = self.targets[0]
+            if isinstance(target, Name):
+                return {target.id: self.value}
+            return self._destructured_binding()
+        if all(isinstance(t, Name) for t in self.targets):
+            return {t.id: self.value for t in self.targets}
         return None
 
     def sugar(self):
         """`<name> = <rhs>` constructs AssignSugar WITH the rhs's sugar (held as
-        the deferred source). Single Name target only: tuple/attribute/subscript
-        targets and chained `a = b = c` stay loud gaps until their own sugars
-        are written -- never a partial binding."""
-        if len(self.targets) != 1 or not isinstance(self.targets[0], Name):
-            return super().sugar()
-        from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
+        the deferred source). A destructured tuple/list target or a chained
+        `x = y = e` whose binding threaded constructs MultiAssignSugar -- both
+        are inert once substitute has done its work, exactly like the single
+        Name case. Any shape whose binding did NOT thread (attribute/subscript
+        targets, starred/nested tuples, arity mismatches) stays a loud gap --
+        never a partial binding rendered inert."""
+        if len(self.targets) == 1 and isinstance(self.targets[0], Name):
+            from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 
-        return AssignSugar(
-            name=self.targets[0].id,
-            value=self.value.sugar(),
-            site=self.fragment,
-        )
+            return AssignSugar(
+                name=self.targets[0].id,
+                value=self.value.sugar(),
+                site=self.fragment,
+            )
+
+        if len(self.targets) == 1 and isinstance(self.targets[0], (Tuple_, List)):
+            bindings = self._destructured_binding()
+            if bindings is None:
+                return super().sugar()
+            from sugar_lift_py_tests.sugar.assign_sugar import MultiAssignSugar
+
+            return MultiAssignSugar(
+                bindings=tuple((name, val.sugar()) for name, val in bindings.items()),
+                site=self.fragment,
+            )
+
+        if len(self.targets) > 1 and all(isinstance(t, Name) for t in self.targets):
+            from sugar_lift_py_tests.sugar.assign_sugar import MultiAssignSugar
+
+            return MultiAssignSugar(
+                bindings=tuple((t.id, self.value.sugar()) for t in self.targets),
+                site=self.fragment,
+            )
+
+        return super().sugar()
 
 
 class AugAssign(Statement):
@@ -907,6 +951,22 @@ class AugAssign(Statement):
         old = scope.get(name, self.target)
         return {name: self._make_binop(old, self.op, self.value)}
 
+    def sugar(self):
+        """`<target> OP= <value>` -- a plain Name target is INERT at the
+        meaning layer: substitution_binding ALWAYS threads for a Name target
+        (it falls back to the target itself as the old value when nothing was
+        bound yet, so there is no shape where a Name target both fails to
+        thread and stays loud). The rebind rode into the tail as the fold
+        binding; the statement itself states nothing more. Attribute/subscript
+        targets are the shapes substitution_binding refuses (returns None --
+        they are never threaded), so they stay loud gaps here too, mirrored
+        exactly against that same isinstance check."""
+        if not isinstance(self.target, Name):
+            return super().sugar()
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
+
 
 class AnnAssign(Statement):
     target: Expression
@@ -932,6 +992,25 @@ class AnnAssign(Statement):
         if self.value is not None and isinstance(self.target, Name):
             return {self.target.id: self.value}
         return None
+
+    def sugar(self):
+        """`<target>: <annotation> [= <value>]` -- a plain Name target is
+        INERT at the meaning layer. If there is a value, its binding already
+        threaded via substitution_binding, exactly as a plain Assign's does;
+        the rebind rode into the tail and this node contributes nothing more.
+        If there is no value, it is a bare declaration: no bytecode runs, no
+        binding is introduced, nothing happens at runtime at all.
+
+        The annotation itself is NEVER a fact the meaning layer states either
+        way: Python does not check it at runtime (no TypeError on mismatch),
+        so an annotation asserts nothing -- it is documentation the tree
+        passes through, never a stated post. Non-Name targets (attribute,
+        subscript) stay loud gaps -- no partial binding, no partial sugar."""
+        if not isinstance(self.target, Name):
+            return super().sugar()
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
 
 
 class TypeAlias(Statement):
@@ -1615,6 +1694,16 @@ class Import(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
+    def sugar(self):
+        """`import <module>` binds a module name that stays a FREE SYMBOLIC
+        in the meaning layer: nothing about the import itself is stated as
+        a fact. A later `pd.concat(...)` reduces as a method coordinate on
+        the free name `pd` -- correct without the import ever having stated
+        anything. So the import contributes an honestly empty record."""
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
+
 
 class ImportFrom(Statement):
     module: Optional[str]
@@ -1626,6 +1715,15 @@ class ImportFrom(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
+    def sugar(self):
+        """`from <module> import <names>` binds free symbolics the same way
+        plain `import` does: the bound names stay FREE SYMBOLIC in the
+        meaning layer, reduced only where a later expression uses them as a
+        coordinate. The import statement itself states nothing."""
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
+
 
 class Global(Statement):
     names: Tuple[str, ...]
@@ -1634,6 +1732,16 @@ class Global(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
+    def sugar(self):
+        """`global <names>` is a scope DECLARATION, not a fact: it tells
+        substitute which enclosing binding a name resolves against. That
+        binding semantics lives entirely in substitute (see above) -- by
+        the time sugar/meaning runs, the declaration itself has nothing
+        left to state."""
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
+
 
 class Nonlocal(Statement):
     names: Tuple[str, ...]
@@ -1641,6 +1749,15 @@ class Nonlocal(Statement):
     def substitute(self, scope):
         """Binds nothing, no hole: substitutes to itself."""
         return self
+
+    def sugar(self):
+        """`nonlocal <names>` is a scope DECLARATION like `global`: it
+        routes a name to an enclosing function scope during substitute.
+        Once substitute has resolved the binding, the declaration carries
+        no further meaning-layer content of its own."""
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
 
 
 class Expr(Statement):
@@ -1669,6 +1786,14 @@ class Pass(Statement):
     def substitute(self, scope):
         """Binds nothing, no hole: substitutes to itself."""
         return self
+
+    def sugar(self):
+        """`pass` states nothing by definition: it is the syntax for an
+        intentionally empty statement body. Its sugar is the honestly
+        empty record, not a placeholder awaiting content."""
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
 
 
 class Break(Statement):
@@ -2222,10 +2347,15 @@ class Call(Expression):
         `<name>(<args>)` -> CallSiteSugar, the call-site coordinate (THE DIG
         CUE). `<receiver>.<name>(<args>)` -> MethodCallSugar, the method
         coordinate `call:<name>(receiver, args)` with the receiver riding as
-        runtime_dispatch_receiver. Computed callees (`fs[i](x)`, lambdas called
-        inline) and keyword arguments stay loud gaps until written."""
-        if self.keywords:
-            return super().sugar()
+        runtime_dispatch_receiver. Any other callee expression (`fs[i](x)`,
+        `d["k"](x)`) -> ComputedCallSugar, the `py.call(callee, args)`
+        coordinate -- the callee reduces through whatever sugar its own node
+        built, so a callee with no sugar (a Lambda called inline) still stays
+        loud through the ordinary recursion. Keyword arguments stay loud gaps
+        until written."""
+        if any(kw.arg is None for kw in self.keywords):
+            return super().sugar()  # **spread -- not one keyword, never guess
+        keyword_sugars = tuple((kw.arg, kw.value.sugar()) for kw in self.keywords)
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
@@ -2233,6 +2363,7 @@ class Call(Expression):
                 target_name=self.func.id,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
+                keywords=keyword_sugars,
             )
         if isinstance(self.func, Attribute):
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
@@ -2242,8 +2373,17 @@ class Call(Expression):
                 name=self.func.attr,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
+                keywords=keyword_sugars,
             )
-        return super().sugar()  # computed callee -- not written
+        if keyword_sugars:
+            return super().sugar()  # kwargs on a computed callee -- not written
+        from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
+
+        return ComputedCallSugar(
+            callee=self.func.sugar(),
+            args=tuple(a.sugar() for a in self.args),
+            site=self.fragment,
+        )
 
 
 class FormattedValue(Expression):
@@ -2330,7 +2470,25 @@ class Constant(Expression):
             )
 
             return StringLiteralSugar(value=v, site=self.fragment)
-        return super().sugar()  # bool / bytes / ... not yet written
+        if type(v) is bytes:
+            from sugar_lift_py_tests.sugar.bytes_literal_sugar import (
+                BytesLiteralSugar,
+            )
+
+            return BytesLiteralSugar(value=v, site=self.fragment)
+        if v is Ellipsis:
+            from sugar_lift_py_tests.sugar.ellipsis_literal_sugar import (
+                EllipsisLiteralSugar,
+            )
+
+            return EllipsisLiteralSugar(site=self.fragment)
+        if type(v) is complex:
+            from sugar_lift_py_tests.sugar.complex_literal_sugar import (
+                ComplexLiteralSugar,
+            )
+
+            return ComplexLiteralSugar(real=v.real, imag=v.imag, site=self.fragment)
+        return super().sugar()  # every literal kind is now converted
 
 
 class Attribute(Expression):

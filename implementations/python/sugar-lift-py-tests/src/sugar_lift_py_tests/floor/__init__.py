@@ -45,6 +45,9 @@ from .list_value import ListValue
 from .loop_control_value import LoopControlValue
 from .loop_else_value import LoopElseValue
 from .inv_value import InvValue
+from .bytes_value import BytesValue
+from .complex_value import ComplexValue
+from .ellipsis_value import EllipsisValue
 from .none_value import NoneValue
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
@@ -174,6 +177,9 @@ __all__ = [
     "LoopControlValue",
     "LoopElseValue",
     "InvValue",
+    "BytesValue",
+    "ComplexValue",
+    "EllipsisValue",
     "NoneValue",
     "ObjectField",
     "ObjectMethodValue",
