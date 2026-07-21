@@ -72,34 +72,17 @@ class StringValue(FloorValue):
             return Complete(FalseBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
-    def equals(self, other, site):
-        # Exact strings are fully decidable at lift time.  Folding here lets a
-        # literal pytest parameter row select the corresponding branch instead
-        # of fabricating a symbolic unmatched path.
-        if type(other) is StringValue:
-            from sugar_lift_py_tests.outcome import Complete
-            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-                FalseBoolLiteralSugar,
-            )
-            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-                TrueBoolLiteralSugar,
-            )
-
-            return Complete(
-                TrueBoolLiteralSugar(site=site)
-                if self.value == other.value
-                else FalseBoolLiteralSugar(site=site)
-            )
-        from sugar_lift_py_tests.floor.term_value import TermValue
-
-        if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
-            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-                FalseBoolLiteralSugar,
-            )
-
-            return Complete(FalseBoolLiteralSugar(site=site))
-        return super().equals(other, site)
+    # NO equals override: a string equality is a FACT, not a lift-time fold.
+    # Deleting this override is the same ruling that killed TermValue.equals for
+    # `1==1` -- folding two ground strings to True/False stole the fact (the
+    # assert stated nothing). The base FloorValue.equals resolves the atom once
+    # (resolve_equality_atom) and states a PredicateValue: two same-sort strings
+    # resolve to a DECIDABLE `=(a, b)`, so z3 still decides it as a guard (the
+    # old "pytest param branch selection" the fold claimed to need -- unneeded,
+    # `=` is decidable, never a symbolic unmatched path). `str == int` resolves
+    # cross-sort to `py.eq(str, int)` instead of a folded False -- the solver
+    # decides it, matching the 1==1 doctrine that equality is stated, not
+    # pre-decided.
 
     def less_than(self, other, site):
         # A string stands on the ordering floor: two strings order by Python's

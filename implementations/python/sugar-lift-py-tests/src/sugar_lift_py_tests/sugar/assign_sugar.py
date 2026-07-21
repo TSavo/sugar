@@ -2,51 +2,34 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import BoundVar, ModuleBoundVar
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
-from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class AssignSugar(Sugar, role=SugarRole.STATEMENT):
-    """A `name = <rhs>` statement. The rhs is built as a SugarBody (the SOURCE),
-    never reduced in new. Desugar yields a BoundVar that aliases the name to that
-    source under the DEFINITION scope -- the block threads it as a let; a
-    reference recomposes it."""
+class AssignSugar(Sugar):
+    """A `name = <rhs>` statement. The rhs is held as SUGAR (the SOURCE), never
+    reduced here -- desugar yields a BoundVar aliasing the name to that source
+    under the DEFINITION scope. The block threads the BoundVar as a let (a scope
+    effect that contributes nothing to the record); a later reference to the
+    name recomposes the source against the captured scope.
+
+    Meaning-only, node-constructed: no owns/new/role, no SugarBody wrapper --
+    the rhs is a tree sugar and the BoundVar reduces it through the Sugar.reduce
+    alias. Single Name target only; the tree node keeps other target shapes as
+    gaps.
+    """
 
     name: str
-    value: SugarBody
+    value: object  # the rhs sugar (the source), reduced only on reference
     site: object = dataclass_field(compare=False)
-
-    @staticmethod
-    def recognize_target_name(site) -> str | None:
-        from sugar_lift_py_tests.recognition.binding_shapes import (
-            BindingShapeRecognition,
-        )
-
-        return BindingShapeRecognition.assign_target_name(site)
-
-    @classmethod
-    def owns(cls, site) -> bool:
-        # Single Name target only; tuple/attr/subscript targets stay loud gaps.
-        return site.observed == "Assign" and site.assign_target_name() is not None
-
-    @classmethod
-    def new(cls, site, ctx) -> "AssignSugar":
-        # The rhs is factory-built (audited), never reduced here -- it IS the source.
-        return cls(
-            name=site.assign_target_name(),
-            value=ctx.build_body(site.assign_value(), SugarRole.TERM),
-            site=site,
-        )
 
     @classmethod
     def witnesses(cls):
-        # `x = z; return x` aliases through the source: the truthful twin rides the
-        # identity, the lying twin asserts another -- the pair discriminates.
+        # `x = z; return x` aliases through the source: the truthful twin rides
+        # the identity, the lying twin asserts another -- the pair discriminates.
         prefix = "def A(z):\n    x = z\n    return x\n\n"
         return _call_pair(
             name="assign_return",
@@ -56,11 +39,9 @@ class AssignSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # Capture the DEFINITION scope: ctx still holds the OLD binding for the name
-        # (the block threads the new one AFTER this), so a self-referential rebind
-        # reads the old value. The rhs stays as source -- not reduced here.
+        # Capture the DEFINITION scope: ctx still holds the OLD binding for the
+        # name (the block threads the new one AFTER this), so a self-referential
+        # rebind (`x = x + 1`) reads the old value and terminates. The rhs stays
+        # as source -- not reduced here.
         binding = ModuleBoundVar if self.name in ctx.global_names else BoundVar
         return Complete(binding(self.name, self.value, scope=ctx))
-
-    def walk_children(self):
-        return (self.value,)

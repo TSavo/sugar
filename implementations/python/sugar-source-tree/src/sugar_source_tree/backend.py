@@ -45,17 +45,22 @@ from typing import Optional, Tuple
 
 from .nodes import Node, SourceUnit, Typeable, resolve_kind
 from .operators import Operator
+from .reporter import NULL_REPORTER, AuditReporter
 from .spans import Span
 
 
-def materialize(unit: SourceUnit, ref: "BackendNode") -> Node:
+def materialize(
+    unit: SourceUnit, ref: "BackendNode", reporter: AuditReporter = NULL_REPORTER
+) -> Node:
     """Typeable -> Typed: THE construction event. Panics on MISSING kind.
 
-    The returned node holds only ``unit`` and ``ref``; every field access
-    on it is a fresh query through ``ref.describe()``.
+    The returned node holds only ``unit``, ``ref``, and its ``reporter``;
+    every field access on it is a fresh query through ``ref.describe()``.
+    The reporter is threaded here so EVERY constructed node carries one and
+    hands it on to the children it later resolves.
     """
     cls = ref.resolve_type()
-    return cls(unit=unit, ref=ref)
+    return cls(unit=unit, ref=ref, reporter=reporter)
 
 
 @dataclass(frozen=True)
@@ -64,8 +69,8 @@ class Child:
 
     handle: "BackendNode"
 
-    def resolve(self, unit: SourceUnit) -> Node:
-        return materialize(unit, self.handle)
+    def resolve(self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER) -> Node:
+        return materialize(unit, self.handle, reporter)
 
 
 @dataclass(frozen=True)
@@ -74,8 +79,12 @@ class MaybeChild:
 
     handle: Optional["BackendNode"]
 
-    def resolve(self, unit: SourceUnit) -> Optional[Node]:
-        return None if self.handle is None else materialize(unit, self.handle)
+    def resolve(
+        self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
+    ) -> Optional[Node]:
+        return (
+            None if self.handle is None else materialize(unit, self.handle, reporter)
+        )
 
 
 @dataclass(frozen=True)
@@ -84,8 +93,10 @@ class Children:
 
     handles: Tuple["BackendNode", ...]
 
-    def resolve(self, unit: SourceUnit) -> Tuple[Node, ...]:
-        return tuple(materialize(unit, h) for h in self.handles)
+    def resolve(
+        self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
+    ) -> Tuple[Node, ...]:
+        return tuple(materialize(unit, h, reporter) for h in self.handles)
 
 
 @dataclass(frozen=True)
@@ -94,7 +105,9 @@ class Leaf:
 
     value: object
 
-    def resolve(self, unit: SourceUnit) -> object:
+    def resolve(
+        self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
+    ) -> object:
         return self.value
 
 
@@ -104,7 +117,9 @@ class OpLeaf:
 
     op: Operator
 
-    def resolve(self, unit: SourceUnit) -> Operator:
+    def resolve(
+        self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
+    ) -> Operator:
         return self.op
 
 
@@ -114,7 +129,9 @@ class OpsLeaf:
 
     ops: Tuple[Operator, ...]
 
-    def resolve(self, unit: SourceUnit) -> Tuple[Operator, ...]:
+    def resolve(
+        self, unit: SourceUnit, reporter: AuditReporter = NULL_REPORTER
+    ) -> Tuple[Operator, ...]:
         return self.ops
 
 

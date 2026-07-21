@@ -40,6 +40,7 @@ from .backend import Backend, materialize
 from .fragment import SourceFragment
 from .nodes import Module, Node, SourceUnit
 from .panic import backend_defect
+from .reporter import NULL_REPORTER, AuditReporter
 from .spans import Span
 
 
@@ -73,13 +74,18 @@ class SourceFile:
         self,
         identity: Tuple[str, str, str],
         backend: Optional[Backend] = None,
+        reporter: AuditReporter = NULL_REPORTER,
     ) -> None:
         source, filename, source_cid = identity
         self.unit = SourceUnit(
             filename=filename, source=source, source_cid=source_cid
         )
         self.backend = backend if backend is not None else _default_backend()
-        root = materialize(self.unit, self.backend.root(self.unit))
+        # The reporter enters the whole tree here: the root carries it and
+        # hands it to every child it resolves. An audit walk passes a
+        # CollectingReporter; everyone else takes the do-nothing default.
+        self.reporter = reporter
+        root = materialize(self.unit, self.backend.root(self.unit), reporter)
         if not isinstance(root, Module):
             backend_defect(
                 owner="tree.SourceFile",
@@ -92,15 +98,21 @@ class SourceFile:
 
     @classmethod
     def from_path(
-        cls, path: Path | str, backend: Optional[Backend] = None
+        cls,
+        path: Path | str,
+        backend: Optional[Backend] = None,
+        reporter: AuditReporter = NULL_REPORTER,
     ) -> "SourceFile":
         """Through the oracle's path-addressed door. Unreadable/undecodable
         is the oracle's loud ``SourceOracleRefusal``, never a swallow."""
-        return cls(path_source(str(path)), backend=backend)
+        return cls(path_source(str(path)), backend=backend, reporter=reporter)
 
     @classmethod
     def from_module(
-        cls, module_name: str, backend: Optional[Backend] = None
+        cls,
+        module_name: str,
+        backend: Optional[Backend] = None,
+        reporter: AuditReporter = NULL_REPORTER,
     ) -> "SourceFile":
         """Through the oracle's installed-module door."""
         identity = installed_module_source(module_name)
@@ -108,7 +120,7 @@ class SourceFile:
             raise SourceOracleRefusal(
                 f"oracle has no installed source for module `{module_name}`"
             )
-        return cls(identity, backend=backend)
+        return cls(identity, backend=backend, reporter=reporter)
 
     @property
     def filename(self) -> str:
@@ -124,6 +136,24 @@ class SourceFile:
         return SourceFragment(
             unit=self.unit, span=Span(0, len(self.unit.source)), node=self.root
         )
+
+    def functions(self) -> Iterator[Node]:
+        """Every function definition in this file, at any depth — the
+        `functions` enumeration level.
+
+        Assertions live in functions; that is the nature of the game, so
+        this is where the wire's questions begin. Transitive through class
+        bodies deliberately: vendor suites keep most of their testimony in
+        ``class TestX: def test_y()``, and a class is just where Python
+        keeps functions. Yields ``FunctionDef`` and ``AsyncFunctionDef``
+        nodes — typed, in source order. Laziness stays honest one level
+        down: a function yields nothing further until asked.
+        """
+        from .nodes import AsyncFunctionDef, FunctionDef
+
+        for node in self.root.walk():
+            if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+                yield node
 
     def nodes(self) -> Iterator[Node]:
         """Every node of this file, pre-order, iterative."""
@@ -162,6 +192,33 @@ class SourceTree:
             if "__pycache__" in path.parts:
                 continue
             yield path
+
+    def fragment_of(self, path: Path) -> "SourceFragment":
+        """One file's WHOLE-FILE fragment: the oracle's identity, full span,
+        no parse. The per-file unit ``fragments()`` iterates. Loud oracle
+        refusal on unreadable/undecodable input."""
+        from .fragment import SourceFragment
+        from .nodes import SourceUnit
+        from .spans import Span
+
+        source, filename, cid = path_source(str(path))
+        unit = SourceUnit(filename=filename, source=source, source_cid=cid)
+        return SourceFragment(unit, Span(0, len(source)), node=None)
+
+    def fragments(self) -> Iterator["SourceFragment"]:
+        """Enumerate WHOLE-FILE fragments: identity without parsing.
+
+        A file-level fragment is literally the entire file — the oracle's
+        (source, filename, CID) with the full span. No backend runs, no
+        tree is built; this is the ``source_files`` enumeration level, and
+        a memento sealed from one of these fragments is the file's locator.
+        An unreadable/undecodable file raises ``SourceOracleRefusal`` loudly
+        here — a caller that wants record-and-continue catches per file and
+        records a gap; nothing is swallowed and nothing masquerades as a
+        source file.
+        """
+        for path in self.paths():
+            yield self.fragment_of(path)
 
     def files(self) -> Iterator[SourceFile]:
         """Enumerate ``SourceFile``s, each through the oracle's identity.

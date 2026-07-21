@@ -549,25 +549,6 @@ def _kit_declaration_result() -> Dict[str, Any]:
     }
 
 
-def _iter_python_files(workspace_root: str, source_paths: List[Any]) -> List[str]:
-    root = os.path.abspath(workspace_root)
-    out: List[str] = []
-    for raw_path in source_paths or ["."]:
-        path = str(raw_path)
-        full_path = os.path.abspath(
-            path if os.path.isabs(path) else os.path.join(root, path)
-        )
-        if os.path.isfile(full_path):
-            if full_path.endswith(".py"):
-                out.append(full_path)
-            continue
-        for dirpath, _, filenames in os.walk(full_path):
-            for filename in filenames:
-                if filename.endswith(".py"):
-                    out.append(os.path.abspath(os.path.join(dirpath, filename)))
-    return sorted(set(out))
-
-
 def _items_from_params(params: Dict[str, Any]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for evidence_key in (
@@ -717,167 +698,6 @@ def _source_oracle_api():
     return SourceOracleRefusal, resolve_source_memento
 
 
-def _python_source_verify_api():
-    try:
-        from sugar_lift_python_source.verify_rpc import lift_workspace
-    except ModuleNotFoundError:
-        sibling_src = (
-            Path(__file__).resolve().parents[3] / "sugar-lift-python-source" / "src"
-        )
-        if str(sibling_src) not in sys.path:
-            sys.path.insert(0, str(sibling_src))
-        from sugar_lift_python_source.verify_rpc import lift_workspace
-    return lift_workspace
-
-
-def _python_source_lifter_api():
-    try:
-        from sugar_lift_python_source.lifter import lift_source as source_lift_source
-    except ModuleNotFoundError:
-        sibling_src = (
-            Path(__file__).resolve().parents[3] / "sugar-lift-python-source" / "src"
-        )
-        if str(sibling_src) not in sys.path:
-            sys.path.insert(0, str(sibling_src))
-        from sugar_lift_python_source.lifter import lift_source as source_lift_source
-    return source_lift_source
-
-
-def _python_source_public_reexport_map(root: Path) -> dict[str, tuple[str, str]]:
-    try:
-        from sugar_lift_python_source.bind_lifter import _public_reexport_map
-    except ModuleNotFoundError:
-        sibling_src = (
-            Path(__file__).resolve().parents[3] / "sugar-lift-python-source" / "src"
-        )
-        if str(sibling_src) not in sys.path:
-            sys.path.insert(0, str(sibling_src))
-        from sugar_lift_python_source.bind_lifter import _public_reexport_map
-    return _public_reexport_map(root) or {}
-
-
-def _is_python_test_file(path: Path) -> bool:
-    name = path.name
-    return (name.startswith("test_") and name.endswith(".py")) or name.endswith(
-        "_test.py"
-    )
-
-
-def _is_true_formula(value: Any) -> bool:
-    return (
-        isinstance(value, dict)
-        and value.get("kind") == "atomic"
-        and value.get("name") == "true"
-        and value.get("args") in (None, [])
-    )
-
-
-def _source_precondition_only_contracts(
-    workspace_root: str, existing_contracts: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
-    source_lift_source = _python_source_lifter_api()
-    root = Path(workspace_root or ".").resolve()
-    public_reexports = _python_source_public_reexport_map(root)
-    existing_names = {
-        str(item.get("fnName") or item.get("name"))
-        for item in existing_contracts
-        if isinstance(item, dict) and (item.get("fnName") or item.get("name"))
-    }
-    out: List[Dict[str, Any]] = []
-    for filename in _iter_python_files(str(root), ["."]):
-        path = Path(filename)
-        if _is_python_test_file(path):
-            continue
-        try:
-            source = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        try:
-            rel = path.relative_to(root).as_posix()
-        except ValueError:
-            rel = path.name
-        lifted = source_lift_source(source, rel)
-        for item in lifted.ir:
-            if not isinstance(item, dict) or item.get("kind") != "function-contract":
-                continue
-            fn_name = item.get("fnName")
-            if not isinstance(fn_name, str) or fn_name.startswith("<source-unit"):
-                continue
-            if fn_name in existing_names:
-                continue
-            precondition = item.get("pre")
-            if _is_true_formula(precondition):
-                continue
-            contract = {
-                "schemaVersion": item.get("schemaVersion", "1"),
-                "kind": "function-contract",
-                "fnName": fn_name,
-                "formals": list(item.get("formals") or []),
-                "formalSorts": list(item.get("formalSorts") or []),
-                "returnSort": item.get(
-                    "returnSort", {"kind": "primitive", "name": "Value"}
-                ),
-                "pre": precondition,
-                "bodyDischargeEligible": False,
-                "bodyDischargeRefusalReason": (
-                    "precondition-only source guard contract; report path imports "
-                    "the source-lifter-owned precondition without importing the raw "
-                    "Python body as a dischargeable post"
-                ),
-                "locus": item.get("locus"),
-            }
-            contract["bridgeSourceSymbol"] = _source_contract_bridge_symbol(
-                fn_name, public_reexports
-            )
-            out.append(contract)
-            existing_names.add(fn_name)
-    return out
-
-
-def _source_contract_bridge_symbol(
-    fn_name: str, public_reexports: dict[str, tuple[str, str]]
-) -> str:
-    public = public_reexports.get(fn_name)
-    if public is not None:
-        return public[1]
-    for constructor_suffix in (".__new__", ".__init__"):
-        if not fn_name.endswith(constructor_suffix):
-            continue
-        class_symbol = fn_name[: -len(constructor_suffix)]
-        public_class = public_reexports.get(class_symbol)
-        if public_class is not None:
-            return public_class[1]
-    parts = fn_name.split(".")
-    for index in range(len(parts) - 1, 0, -1):
-        owner_symbol = ".".join(parts[:index])
-        public_owner = public_reexports.get(owner_symbol)
-        if public_owner is None:
-            continue
-        member_suffix = ".".join(parts[index:])
-        return f"{public_owner[1]}.{member_suffix}"
-    return fn_name
-
-
-def _source_lifter_function_contracts(
-    workspace_root: str,
-) -> tuple[List["SourceFunctionContractDto"], List[Dict[str, Any]]]:
-    from sugar_lift_py_tests.kit_rpc.source_function_contract_dto import (
-        SourceFunctionContractDto,
-    )
-
-    lift_workspace = _python_source_verify_api()
-    ir_items, diagnostics = lift_workspace(workspace_root, "bare")
-    contracts = [
-        item
-        for item in ir_items
-        if isinstance(item, dict) and item.get("kind") == "function-contract"
-    ]
-    contracts.extend(_source_precondition_only_contracts(workspace_root, contracts))
-    return [
-        SourceFunctionContractDto(dict(contract)) for contract in contracts
-    ], diagnostics
-
-
 def _source_memento_from_params(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     raw = (
         params.get("memento")
@@ -1025,56 +845,6 @@ def _enumerate_file_of(at: Optional[Dict[str, Any]]) -> Optional[str]:
     return file_name if isinstance(file_name, str) and file_name else None
 
 
-def _span_is_degenerate(span: Any) -> bool:
-    """All-zero / missing span is a degenerate (file/name-only) locator."""
-    if not isinstance(span, dict):
-        return True
-    return all(
-        span.get(key) in (0, None)
-        for key in ("start_line", "start_col", "end_line", "end_col")
-    )
-
-
-def _span_contains(outer: Any, inner: Any) -> bool:
-    """True when inner span lies within outer (line/col order). Degenerate → False."""
-    if _span_is_degenerate(outer) or _span_is_degenerate(inner):
-        return False
-    outer_start = (int(outer.get("start_line") or 0), int(outer.get("start_col") or 0))
-    outer_end = (int(outer.get("end_line") or 0), int(outer.get("end_col") or 0))
-    inner_start = (int(inner.get("start_line") or 0), int(inner.get("start_col") or 0))
-    inner_end = (int(inner.get("end_line") or 0), int(inner.get("end_col") or 0))
-    return inner_start >= outer_start and inner_end <= outer_end
-
-
-def _call_site_under_function(
-    site_memento: Dict[str, Any],
-    target_fn: Any,
-    target_span: Any,
-) -> bool:
-    """Whether a contract memento is under the parent function for call_sites.
-
-    Prefer span containment when the parent memento has a non-degenerate span
-    (self-locating SourceMemento locus). Fall back to function-name match when span
-    is absent so degenerate locators still work.
-    """
-    if not _span_is_degenerate(target_span):
-        site_span = site_memento.get("span")
-        if _span_contains(target_span, site_span):
-            return True
-        # Parent has a real span but site is outside it — not under this fn.
-        # Still allow name match only when site span is also degenerate (no locus).
-        if not _span_is_degenerate(site_span):
-            return False
-    if target_fn:
-        item_fn = (
-            site_memento.get("source_function_name")
-            or site_memento.get("sourceFunctionName")
-            or site_memento.get("function_name")
-        )
-        return item_fn == target_fn
-    return True
-
-
 def _memento_matches(candidate: Dict[str, Any], target: Dict[str, Any]) -> bool:
     """Primary-key equality for the tree's locator (the plan's "memento is
     the primary key"): same file + same span + same source_cid. Only span
@@ -1114,152 +884,6 @@ def _memento_matches(candidate: Dict[str, Any], target: Dict[str, Any]) -> bool:
         if candidate_fn != target_fn:
             return False
     return True
-
-
-def _call_site_seek_matches(candidate: Dict[str, Any], target: Dict[str, Any]) -> bool:
-    """Match a typed call-site cursor by its durable source locus.
-
-    Rust ``SourceMemento`` stores one function spelling. Decoding a call-site
-    wire memento selects its source owner, so the assertion-only
-    ``function_name`` alias is not available when that cursor is emitted again.
-    File + span + source CID remain the complete call-site address.
-    """
-    locus = dict(target)
-    locus.pop("function_name", None)
-    locus.pop("sourceFunctionName", None)
-    locus.pop("source_function_name", None)
-    return _memento_matches(candidate, locus)
-
-
-def _universe_bridge_matches(candidate: Any, call_site_bridge: str) -> bool:
-    """Whether a callable universe is the target of this call-site bridge."""
-    if not isinstance(candidate, str):
-        return False
-    if candidate == call_site_bridge:
-        return True
-    _, separator, spelling = call_site_bridge.partition(":")
-    return bool(
-        separator
-        and spelling
-        and (candidate == spelling or candidate.endswith(f".{spelling}"))
-    )
-
-
-def _lift_file_for_enumeration(workspace_root: str, root: Path, file_rel: str) -> tuple[
-    List[Dict[str, Any]],
-    List[Dict[str, Any]],
-    Dict[str, Dict[str, Any]],
-]:
-    """Lift ONE file server-side (Part 6 Phase 3: "it is ACCEPTABLE ... for
-    the first cut to lift the WHOLE file ... and slice/serve the requested
-    level from that one parse" -- file-granular laziness, not per-node wire
-    laziness).
-
-    Returns `(ir_items, call_edges, term_table)` from the same payload-owned
-    wire projection. Keeping the table beside the rows is construction law:
-    no enumeration slice may retain a term-ref after dropping its resolver.
-    - `ir`: `kind="function-contract"` = function/universe rows;
-      `kind="contract"` = claim rows that already bundle locus + formula
-      (call-site ≡ assertion is **factory truth**, not a protocol fold —
-      see protocol Section 4 / `_handle_enumerate`)
-    - `callEdges`: batch join keys with first-class `targetSymbol`
-      (`call:len`, `method:count`) — sliced onto call_sites audit as
-      `bridgeSourceSymbol` (do not re-invent prefixes from FOL alone;
-      method calls are `method:` on the edge even when FOL uses `call:`).
-      Edges are join metadata, not a second site-record set.
-    """
-    from sugar_lift_py_tests.canonicalizer import blake3_512_of
-
-    full_path = (root / file_rel).resolve()
-    source = full_path.read_text(encoding="utf-8")
-    file_cid = blake3_512_of(source.encode())
-    seats = _ENUMERATION_FILE_CONTEXTS.get(file_cid)
-    if seats is not None and file_rel in seats:
-        _ENUMERATION_FILE_CONTEXTS.move_to_end(file_cid)
-        _TRANSPORT_LOG.info(
-            "enumeration_file_context_hit",
-            extra={
-                "stage": "enumerate.file_context",
-                "cid": file_cid,
-                "file": file_rel,
-                "cache": "hit",
-            },
-        )
-        return seats[file_rel]
-    lift_started = time.monotonic()
-    file_payload = lift_file_payload(source, file_rel)
-    _observe_enumeration_phase(
-        "file_context.lift", (time.monotonic() - lift_started) * 1000
-    )
-    projection_started = time.monotonic()
-    file_rpc = file_payload.to_rpc()
-    ir_items = file_rpc["ir"]
-    call_edges = file_rpc["callEdges"]
-    term_table = file_rpc["termTable"]
-    _observe_enumeration_phase(
-        "file_context.project", (time.monotonic() - projection_started) * 1000
-    )
-    result = (ir_items, call_edges, term_table)
-    seats = _ENUMERATION_FILE_CONTEXTS.setdefault(file_cid, {})
-    seats[file_rel] = result
-    _remember_file_context(_ENUMERATION_FILE_CONTEXTS, file_cid, seats)
-    _TRANSPORT_LOG.info(
-        "enumeration_file_context_miss",
-        extra={
-            "stage": "enumerate.file_context",
-            "cid": file_cid,
-            "file": file_rel,
-            "cache": "miss",
-        },
-    )
-    return result
-
-
-def lift_file_payload(source: str, filename: str) -> LiftReportPayloadDto:
-    """The RPC door over the collapse. Build each def through the factory,
-    slam it, and serve the value's payload_rows: a universe mints a
-    function-contract plus inv rows; testimony mints only ::assertion fact
-    rows (no post, no contract). Enumeration is functions by design: module
-    statements no FunctionDefSugar owns are not lifted here.
-
-    FactoryPanic is process-terminal here (#5238): no soft continue into a
-    partial report payload. Only the per-file corpus audit membrane may hold
-    panic to emit a loud red row. The diagnostic ``RecoveredAuditDto`` lane
-    remains disjoint and is never returned from this door.
-    """
-    from sugar_lift_py_tests.ir import constructor_symbol_kinds, term_intern_scope
-
-    with term_intern_scope():
-        started = time.monotonic()
-        _TRANSPORT_LOG.info(
-            "lift_file_enter", extra={"stage": "lift_file.audit", "file": filename}
-        )
-        payload, _gaps = audit_lift_file(
-            source,
-            filename,
-            _recover_report_panics=True,
-        )
-        symbol_kinds = constructor_symbol_kinds()
-        _TRANSPORT_LOG.info(
-            "lift_file_exit",
-            extra={
-                "stage": "lift_file.audit",
-                "file": filename,
-                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-                "contracts": len(payload.ir),
-                "rows": len(symbol_kinds),
-            },
-        )
-        return replace(payload, symbol_kinds=symbol_kinds)
-
-
-@dataclasses.dataclass(frozen=True)
-class _SeedPanicEvidence:
-    """Immutable audit data copied out of a transient FactoryPanic."""
-
-    locus: str
-    demanded_source: str
-    info: FactoryGapInfo
 
 
 def _module_import_temporal(
@@ -1658,628 +1282,6 @@ _AUDIT_FILE_CONTEXTS: collections.OrderedDict[tuple[str, str], _AuditFileContext
 )
 
 
-def _audit_file_context(
-    source: str,
-    filename: str,
-    file_cid: str,
-    *,
-    hold_seed_panics: bool = True,
-) -> _AuditFileContext:
-    started = time.monotonic()
-    # Contexts that intentionally hold seed failures are safe to memoize: the
-    # caller consumes those failures as audit data. Normal lifting must
-    # reconstruct the context without a recovery sink so the first seed
-    # FactoryPanic propagates and no completed payload can be emitted.
-    cache_key = (filename, file_cid)
-    cached = _AUDIT_FILE_CONTEXTS.get(cache_key) if hold_seed_panics else None
-    if cached is not None:
-        _AUDIT_FILE_CONTEXTS.move_to_end(cache_key)
-        _TRANSPORT_LOG.info(
-            "enumeration_file_context",
-            extra={
-                "cid": file_cid,
-                "cache": "hit",
-                "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-                "file": filename,
-                "stage": "enumerate.context",
-            },
-        )
-        _observe_enumeration_phase(
-            "audit_context.hit", (time.monotonic() - started) * 1000
-        )
-        return cached
-
-    from sugar_lift_py_tests.factory.build import default_catalog
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-
-    catalog = default_catalog()
-    source_root = SourceFragment.from_source(source, filename)
-    roots = source_root.statements()
-    # A zero-statement Module is still the lawful source node for this file.
-    # Keep it as the context root so enumeration can answer with its honest
-    # empty child set instead of throwing outside the recovered-audit door.
-    module = roots[0] if roots else source_root
-    seed_panics: list[_SeedPanicEvidence] = []
-    module_assertions: list[Any] = []
-    definition_temporals: dict[int, Any] = {}
-    module_temporal = _module_import_temporal(
-        module,
-        catalog,
-        filename=filename,
-        recovered_panics=seed_panics if hold_seed_panics else None,
-        assertion_sink=module_assertions,
-        definition_temporal_sink=definition_temporals,
-    )
-    import_aliases, from_imports = _module_import_maps(module, filename)
-    definitions = tuple(_iter_liftable_function_defs(module))
-    definitions_by_cid = {
-        to_rpc_value(definition.memento())["source_cid"]: definition
-        for definition in definitions
-    }
-    name_resolver: dict[str, Any] = {
-        stmt.function_name(): stmt.node
-        for stmt in definitions
-        if stmt.observed == "FunctionDef"
-    }
-    # Bare ClassDef enrollment is load-bearing for ConstructorCallSugar: without
-    # the class node, uppercase calls fall back to opaque CallSiteValue and any
-    # later floor verb (format_data_model, field read, dunder bridge) dies as a
-    # transport FactoryPanic instead of a constructed ObjectValue. Nested
-    # methods stay Class.method for dig; nested class names enroll bare too so
-    # same-module constructors resolve the same door.
-    for stmt in module.statements():
-        if stmt.observed != "ClassDef":
-            continue
-        cname = stmt.class_name()
-        name_resolver[cname] = stmt.node
-        for body_stmt in stmt.class_body():
-            if body_stmt.observed == "FunctionDef":
-                name_resolver[f"{cname}.{body_stmt.function_name()}"] = body_stmt.node
-            elif body_stmt.observed == "ClassDef":
-                nested = body_stmt.class_name()
-                name_resolver[nested] = body_stmt.node
-                for nested_stmt in body_stmt.class_body():
-                    if nested_stmt.observed == "FunctionDef":
-                        name_resolver[f"{nested}.{nested_stmt.function_name()}"] = (
-                            nested_stmt.node
-                        )
-    context = _AuditFileContext(
-        source=source,
-        filename=filename,
-        file_cid=file_cid,
-        catalog=catalog,
-        module=module,
-        module_temporal=module_temporal,
-        definition_temporals=definition_temporals,
-        seed_panics=tuple(seed_panics),
-        module_assertions=tuple(module_assertions),
-        import_aliases=import_aliases,
-        from_imports=from_imports,
-        name_resolver=name_resolver,
-        definitions=definitions,
-        definitions_by_cid=definitions_by_cid,
-    )
-    if hold_seed_panics:
-        _remember_file_context(_AUDIT_FILE_CONTEXTS, cache_key, context)
-    _observe_enumeration_phase(
-        "audit_context.build", (time.monotonic() - started) * 1000
-    )
-    _TRANSPORT_LOG.info(
-        "enumeration_file_context",
-        extra={
-            "cid": file_cid,
-            "cache": "miss",
-            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-            "file": filename,
-            "stage": "enumerate.context",
-        },
-    )
-    return context
-
-
-def audit_lift_file(
-    source: str,
-    filename: str,
-    *,
-    hold_panic: Literal[False] = False,
-    recover_panics: bool = False,
-    _recover_report_panics: bool = False,
-    target_memento: Optional[Dict[str, Any]] = None,
-    audit_context: Optional[_AuditFileContext] = None,
-) -> tuple[LiftReportPayloadDto, list[AuditOnlyGap]] | RecoveredAuditDto:
-    """Lift normally. FactoryPanic is process-terminal (#5238).
-
-    The public audit door is fail-fast: production, report, and diagnostic
-    paths re-raise ``FactoryPanic`` rather than soft-continuing into opacity
-    or a partial payload. Per-file corpus audit membranes
-    (``audit_only/``, ``idd/live_factory_panic_isolation``) are the only
-    lawful holders for loud red rows. ``recover_panics=True`` may still
-    return a ProofIR-free ``RecoveredAuditDto`` for non-panic residuals
-    (typed effects, conservation), but never by catching FactoryPanic.
-    """
-    from sugar_lift_py_tests.claim import SugarRole
-    from sugar_lift_py_tests.context.factory_build_context import FactoryBuildContext
-    from sugar_lift_py_tests.factory.build import build_node
-    from sugar_lift_py_tests.outcome import complete_value
-    from sugar_lift_py_tests.sugar_body import SugarBody
-
-    if hold_panic:
-        raise TypeError(
-            "hold_panic partial lift artifacts are retired; use "
-            "recover_panics=True for a diagnostic-only RecoveredAuditDto"
-        )
-    if recover_panics and _recover_report_panics:
-        raise TypeError("diagnostic and report panic recovery are disjoint")
-
-    payload = LiftReportPayloadDto(source_ledger={})
-    gaps: list[AuditOnlyGap] = []
-    recovered_panics: list[RecoveredFactoryPanicDto] = []
-    recovered_effects: list[RecoveredEffectDto] = []
-    suppressed_descendants: list[SuppressedAuditLocusDto] = []
-    if audit_context is None:
-        from sugar_lift_py_tests.canonicalizer import blake3_512_of
-
-        try:
-            audit_context = _audit_file_context(
-                source,
-                filename,
-                blake3_512_of(source.encode()),
-                hold_seed_panics=recover_panics,
-            )
-        except ValueError:
-            audit_context = None
-    if audit_context is None:
-        # Empty/comment-only modules have no source site to construct. Their
-        # honest audit result is the empty set, not an indexing crash and not a
-        # fabricated support row.
-        from sugar_lift_py_tests.idd.lift_coverage_census import (
-            reconcile_body_owner_loci,
-        )
-
-        object.__setattr__(
-            payload,
-            "source_factory_conservation",
-            reconcile_body_owner_loci(source, file=filename, factory_rows=[]),
-        )
-        if recover_panics:
-            return RecoveredAuditDto()
-        return payload, gaps
-    catalog = audit_context.catalog
-    module = audit_context.module
-    seed_panics = audit_context.seed_panics
-    module_assertions = audit_context.module_assertions
-    module_temporal = audit_context.module_temporal
-    target_owner = (
-        target_memento.get("function_name")
-        or target_memento.get("sourceFunctionName")
-        or target_memento.get("source_function_name")
-        if target_memento
-        else None
-    )
-    target_is_module = target_owner == "<module>"
-    for evidence in (
-        (seed_panics or ()) if target_memento is None or target_is_module else ()
-    ):
-        recovered_panics.append(
-            RecoveredFactoryPanicDto(
-                locus=evidence.locus,
-                demanded_source=evidence.demanded_source,
-                terminal_gap_locus=evidence.info.blame,
-                reason=evidence.info.message,
-                gap=evidence.info.to_json(),
-            )
-        )
-    import_aliases = audit_context.import_aliases
-    from_imports = audit_context.from_imports
-    if target_is_module:
-        return RecoveredAuditDto(panics=recovered_panics)
-    if module_assertions:
-        from sugar_lift_py_tests.floor import BlockValue, TestimonyValue
-
-        module_testimony = TestimonyValue(
-            name="<module>",
-            formals=(),
-            record=BlockValue(tuple(module_assertions)),
-        )
-        payload.ir.extend(module_testimony.payload_rows(None))
-        payload.call_edges.extend(module_testimony.call_edges())
-    # Same-module name_resolver: bare f(), bare Class, and Class.method dig bodies.
-    name_resolver = audit_context.name_resolver
-    definitions = audit_context.definitions
-    if target_memento is not None:
-        target_cid = target_memento.get("source_cid") or target_memento.get("sourceCid")
-        target_definition = audit_context.definitions_by_cid.get(str(target_cid))
-        definitions = (target_definition,) if target_definition is not None else ()
-    definition_total = len(definitions)
-    for definition_index, stmt in enumerate(definitions):
-        # Every discovered def reaches construction. An owned FunctionDef or
-        # test_* testimony takes its Some arm; an unowned shape must reach the
-        # None arm so this audit door can hold and paint the gap red.
-        label = f"{filename}:{stmt.line}:{stmt.col}"
-        definition_started = time.monotonic()
-        _TRANSPORT_LOG.info(
-            "definition_enter",
-            extra={
-                "stage": "lift_file.definition",
-                "file": filename,
-                "index": definition_index,
-                "total": definition_total,
-            },
-        )
-        try:
-            lexical_temporal = audit_context.definition_temporals.get(
-                id(stmt.node), module_temporal
-            )
-            # Definition roots are audited independently, but Python evaluates
-            # method decorators/defaults while executing the enclosing class
-            # body. Reconstruct only earlier class-local definitions that the
-            # root actually loads; later definitions and unrelated loud
-            # declarations must not leak into this lexical frame.
-            class_local_uses = {
-                name.id
-                for fragment in (
-                    *stmt.function_decorators(),
-                    *stmt.function_defaults(),
-                    *(
-                        default
-                        for default in stmt.function_keyword_only_defaults()
-                        if default is not None
-                    ),
-                )
-                for name in ast.walk(fragment.node)
-                if isinstance(name, ast.Name) and isinstance(name.ctx, ast.Load)
-            }
-            for class_stmt in module.statements():
-                if class_stmt.observed != "ClassDef":
-                    continue
-                body = class_stmt.class_body()
-                if not any(item.node is stmt.node for item in body):
-                    continue
-                for item in body:
-                    if item.node is stmt.node:
-                        break
-                    if item.observed == "Assign":
-                        # Single-name and multi-target / tuple-unpack class
-                        # assigns both replay in class execution order. The
-                        # multi-target door used to skip because
-                        # assign_target_name() is None; owned unpack sugars
-                        # now bind every leaf through ordinary reduction.
-                        pass
-                    elif item.observed == "FunctionDef":
-                        if item.function_name() not in class_local_uses:
-                            continue
-                    elif item.observed == "ClassDef":
-                        if item.class_name() not in class_local_uses:
-                            continue
-                    else:
-                        continue
-                    seed_ctx = FactoryBuildContext(
-                        filename=filename,
-                        catalog=catalog,
-                        temporal=lexical_temporal,
-                        module_temporal=module_temporal,
-                        import_aliases=import_aliases,
-                        from_imports=from_imports,
-                        name_resolver=name_resolver,
-                    )
-                    seed = build_node(
-                        item, filename=filename, role=SugarRole.STATEMENT, ctx=seed_ctx
-                    ).sugar.desugar(seed_ctx)
-                    lexical_temporal = seed.extend_scope(seed_ctx).temporal
-                break
-            ctx = FactoryBuildContext(
-                filename=filename,
-                catalog=catalog,
-                temporal=lexical_temporal,
-                module_temporal=module_temporal,
-                import_aliases=import_aliases,
-                from_imports=from_imports,
-                name_resolver=name_resolver,
-            )
-            # Every def enumerated by this audit door with a real
-            # universe/testimony claimant is a definition root, including class
-            # methods. Executable defs encountered while reducing a body still
-            # use STATEMENT and bind a FunctionCallable.
-            definition_candidates = catalog.candidates_for(SugarRole.DEFINITION, stmt)
-            root_role = (
-                SugarRole.DEFINITION if definition_candidates else SugarRole.STATEMENT
-            )
-            result = build_node(stmt, filename=filename, role=root_role, ctx=ctx)
-            root = SugarBody(
-                sugar=result.sugar,
-                role=root_role,
-                audit_row=result.audit_row,
-            )
-            walk_start = len(payload.factory_walk)
-            payload.factory_walk.extend(root.factory_walk_rows())
-            payload.factory_audits.extend(root.factory_audit_rows())
-            outcome = result.sugar.desugar(ctx)
-            _TRANSPORT_LOG.info(
-                "definition_desugar_exit",
-                extra={
-                    "stage": "lift_file.definition.desugar",
-                    "file": filename,
-                    "index": definition_index,
-                    "total": definition_total,
-                    "elapsed_ms": round(
-                        (time.monotonic() - definition_started) * 1000, 3
-                    ),
-                },
-            )
-            from sugar_lift_py_tests.outcome import Incomplete
-
-            if isinstance(outcome, Incomplete):
-                if recover_panics:
-                    # The recovered audit enumerates construction gaps. A typed
-                    # runtime effect is already an honest Some => effect arm,
-                    # so it contributes no FactoryPanic and cannot be projected
-                    # to a completed value. Keep walking independent roots.
-                    from sugar_lift_py_tests.effect import (
-                        effect_kind,
-                        effect_reason,
-                        effect_status,
-                    )
-
-                    recovered_effects.append(
-                        RecoveredEffectDto(
-                            locus=label,
-                            effect=type(outcome.effect).__name__,
-                            category=effect_kind(outcome.effect),
-                            status=effect_status(outcome.effect),
-                            reason=effect_reason(outcome.effect),
-                        )
-                    )
-                    continue
-                owner = _definition_class_owner(module, stmt)
-                relative = stmt.function_name()
-                if owner is not None:
-                    relative = f"{owner}.{relative}"
-                qualified_name = _qualified_callable_spelling(
-                    filename, relative, relative_to_module=True
-                )
-                effect_memento = dataclasses.replace(
-                    stmt.memento(),
-                    source_function_name=qualified_name,
-                    role="runtime-effect",
-                )
-                payload.effects.append(
-                    EffectDto(
-                        name=f"{qualified_name}::runtime-effect",
-                        effect=outcome.effect,
-                        source_memento=effect_memento,
-                    )
-                )
-                payload.source_mementos.append(effect_memento)
-                _qualify_factory_walk_owner(
-                    payload.factory_walk, walk_start, qualified_name
-                )
-                continue
-            value = complete_value(outcome, owner="lift_file_payload")
-            from sugar_lift_py_tests.floor import (
-                FunctionCallable,
-                TestimonyValue,
-                UniverseValue,
-            )
-
-            if isinstance(value, FunctionCallable):
-                # A def statement constructs and binds a callable. It is not a
-                # body universe and therefore mints no function-contract row.
-                continue
-            if isinstance(value, UniverseValue):
-                owner = _definition_class_owner(module, stmt)
-                bare_name = value.name
-                if owner is not None:
-                    # Class-relative path stays relative to the module. Module
-                    # root is forced below so class stem == module stem cannot
-                    # be mistaken for an already-rooted spelling (#4325).
-                    relative = f"{owner}.{bare_name}"
-                    qualified_name = _qualified_callable_spelling(
-                        filename, relative, relative_to_module=True
-                    )
-                else:
-                    relative = bare_name
-                    qualified_name = _qualified_callable_spelling(filename, relative)
-                bridge_source_symbol = value.bridge_source_symbol or bare_name
-                value = dataclasses.replace(
-                    value,
-                    name=qualified_name,
-                    bridge_source_symbol=bridge_source_symbol,
-                )
-                _qualify_factory_walk_owner(
-                    payload.factory_walk, walk_start, qualified_name
-                )
-            elif isinstance(value, TestimonyValue):
-                owner = _definition_class_owner(module, stmt)
-                relative = value.name
-                if owner is not None:
-                    relative = f"{owner}.{relative}"
-                qualified_name = _qualified_callable_spelling(
-                    filename, relative, relative_to_module=True
-                )
-                for effect in value.runtime_effects():
-                    effect_memento = dataclasses.replace(
-                        effect.witness.site.memento(),
-                        source_function_name=qualified_name,
-                        role="runtime-effect",
-                    )
-                    payload.effects.append(
-                        EffectDto(
-                            name=f"{qualified_name}::runtime-effect",
-                            effect=effect,
-                            source_memento=effect_memento,
-                        )
-                    )
-                    payload.source_mementos.append(effect_memento)
-            def_memento = dataclasses.replace(
-                stmt.memento(),
-                source_function_name=value.name,
-                role="function-contract",
-            )
-            rows_started = time.monotonic()
-            rows = value.payload_rows(def_memento)
-            payload.ir.extend(rows)
-            payload.call_edges.extend(value.call_edges())
-            payload.source_mementos.append(def_memento)
-            _TRANSPORT_LOG.info(
-                "definition_exit",
-                extra={
-                    "stage": "lift_file.definition.payload_rows",
-                    "file": filename,
-                    "index": definition_index,
-                    "total": definition_total,
-                    "rows_added": len(rows),
-                    "rows": len(payload.ir),
-                    "elapsed_ms": round((time.monotonic() - rows_started) * 1000, 3),
-                },
-            )
-        except FactoryPanic as panic:
-            # #5238: production + report doors hard-fail on FactoryPanic.
-            # Soft continue into a partial payload is forbidden dig/report
-            # opacity. Only the per-file corpus audit membrane may hold panic
-            # to emit a loud red row (see audit_only/, idd/ isolation).
-            _TRANSPORT_LOG.info(
-                "definition_gap",
-                extra={
-                    "stage": "lift_file.definition.gap",
-                    "file": filename,
-                    "index": definition_index,
-                    "total": definition_total,
-                    "elapsed_ms": round(
-                        (time.monotonic() - definition_started) * 1000, 3
-                    ),
-                    "blame": getattr(panic.info, "blame", None),
-                },
-            )
-            raise
-    # Conservation is a file-level accounting pass. A keyed leaf contributes
-    # only its recovered audit vector; rerunning whole-file conservation for
-    # every leaf is both semantically duplicate and quadratic.
-    if recover_panics and target_memento is not None:
-        return RecoveredAuditDto(
-            panics=recovered_panics,
-            effects=recovered_effects,
-            suppressed_descendants=suppressed_descendants,
-        )
-
-    if not recover_panics:
-        from sugar_lift_py_tests.audit_only.universe_coverage import (
-            universe_absence_reason,
-            universe_coverage_gaps,
-        )
-        from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
-
-        for info in universe_coverage_gaps(
-            payload,
-            module=module,
-            catalog=catalog,
-            filename=filename,
-        ):
-            audit_row = FactoryAuditRow(
-                role=info.requested,
-                status=FactoryAuditStatus.SUGAR_GAP,
-                observed=info.observed,
-                blame=info.blame,
-                selected=None,
-                candidates=[],
-                message=universe_absence_reason(info),
-            )
-            gap = AuditOnlyGap(
-                label=info.blame,
-                info=info.to_json(),
-                audit_row=audit_row,
-                message=audit_row.message,
-            )
-            gaps.append(gap)
-            payload.factory_walk.append(_factory_walk_red_from_gap(gap))
-
-    from sugar_lift_py_tests.idd.lift_coverage_census import reconcile_body_owner_loci
-
-    conservation_started = time.monotonic()
-    _TRANSPORT_LOG.info(
-        "conservation_enter",
-        extra={"stage": "lift_file.conservation", "file": filename},
-    )
-    conservation = reconcile_body_owner_loci(
-        source, file=filename, factory_rows=payload.factory_walk
-    )
-    _TRANSPORT_LOG.info(
-        "conservation_exit",
-        extra={
-            "stage": "lift_file.conservation",
-            "file": filename,
-            "elapsed_ms": round((time.monotonic() - conservation_started) * 1000, 3),
-        },
-    )
-    object.__setattr__(payload, "source_factory_conservation", conservation)
-    if conservation.violations:
-        from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditRow
-
-        for violation in conservation.violations:
-            locus = violation.locus
-            message = (
-                "source→factory conservation violation: body-owning source locus "
-                f"{locus.identity} disappeared before factory classification"
-            )
-            audit = FactoryAuditRow(
-                role="statement",
-                status=FactoryAuditStatus.SUGAR_GAP,
-                observed=locus.kind,
-                blame=f"{locus.file}:{locus.line}:{locus.col}",
-                selected=None,
-                candidates=[],
-                message=message,
-            )
-            gap = AuditOnlyGap(
-                label=locus.identity,
-                info={
-                    "gap_kind": "Conservation",
-                    "gap_locus": locus.identity,
-                    "observed": locus.kind,
-                    "requested": "source→factory classification",
-                    "fix": "remove the pre-factory skip or classify an explicit boundary",
-                },
-                audit_row=audit,
-                message=message,
-            )
-            gaps.append(gap)
-            payload.factory_walk.append(_factory_walk_red_from_gap(gap))
-            if recover_panics:
-                # Conservation is an independent producer. Its typed gap must
-                # cross the recovered-audit boundary just like a FactoryPanic;
-                # otherwise the final DTO discards ``gaps`` and can claim a
-                # false-clean frontier for source that disappeared pre-factory.
-                # A root already present in another terminal bucket is not a
-                # producer gap: keep the buckets disjoint and do not count it
-                # twice merely because the factory red row names the inner
-                # observed shape rather than its poisoned definition owner.
-                locus_label = f"{locus.file}:{locus.line}:{locus.col}"
-                terminal_loci = {
-                    item.locus
-                    for item in (
-                        *recovered_panics,
-                        *recovered_effects,
-                        *suppressed_descendants,
-                    )
-                }
-                if locus_label not in terminal_loci:
-                    recovered_panics.append(
-                        RecoveredFactoryPanicDto(
-                            locus=locus.identity,
-                            demanded_source=f"conservation:{locus.identity}",
-                            terminal_gap_locus=locus.identity,
-                            reason=message,
-                            gap=gap.info,
-                        )
-                    )
-    if recover_panics:
-        return RecoveredAuditDto(
-            panics=recovered_panics,
-            effects=recovered_effects,
-            suppressed_descendants=suppressed_descendants,
-        )
-    return payload, gaps
-
-
 def _definition_class_owner(module, definition) -> str | None:
     """Qualified lexical class owner for a discovered definition, if any."""
 
@@ -2410,29 +1412,6 @@ def _parse_blame_locus(site: str) -> tuple[str, int, int]:
     return site, 0, 0
 
 
-def _item_memento(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    warrants = item.get("sourceWarrants")
-    if isinstance(warrants, list) and warrants and isinstance(warrants[0], dict):
-        return warrants[0]
-    return None
-
-
-def _item_fact_formula(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    return item.get("inv") if item.get("inv") is not None else item.get("post")
-
-
-def _find_item_by_memento(
-    items: List[Dict[str, Any]], target: Optional[Dict[str, Any]]
-) -> Optional[Dict[str, Any]]:
-    if not isinstance(target, dict):
-        return None
-    for item in items:
-        memento = _item_memento(item)
-        if memento is not None and _memento_matches(memento, target):
-            return item
-    return None
-
-
 def _first_bridge_ctor_name(
     node: Any,
     term_table: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -2466,301 +1445,6 @@ def _first_bridge_ctor_name(
                 if found is not None:
                     return found
     return None
-
-
-def _contract_bridge_identity(
-    item: Dict[str, Any],
-    term_table: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Optional[str]:
-    """Callee identity for a `kind=contract` assertion: FOL ctor head, else name.
-
-    Used to join a call-site record to a `function-contract` universe via
-    `bridgeSourceSymbol` (e.g. `call:add` → `mathy::add::callable`).
-    Returns the `call:` / `method:` form with prefix preserved — never a bare
-    name when a first-class bridge identity is available.
-    """
-    formula = _item_fact_formula(item)
-    if isinstance(formula, dict):
-        # Prefer the left-hand side of an equality assertion (the call).
-        if formula.get("kind") == "atomic" and formula.get("name") == "=":
-            args = formula.get("args")
-            if isinstance(args, list) and args:
-                found = _first_bridge_ctor_name(args[0], term_table)
-                if found is not None:
-                    return found
-        found = _first_bridge_ctor_name(formula, term_table)
-        if found is not None:
-            return found
-    raw_name = item.get("name")
-    if isinstance(raw_name, str):
-        for prefix in ("call:", "method:"):
-            idx = raw_name.find(prefix)
-            if idx < 0:
-                continue
-            rest = raw_name[idx:]
-            end = 0
-            while end < len(rest) and (rest[end].isalnum() or rest[end] in (":", "_")):
-                end += 1
-            if end > len(prefix):
-                return rest[:end]
-    return None
-
-
-def _edge_target_symbol_for_contract(
-    item: Dict[str, Any],
-    call_edges: Optional[List[Dict[str, Any]]],
-    term_table: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Optional[str]:
-    """Batch call-edge target for this exact contract-row locus, if any.
-
-    ``sourceContract`` is only the owner bucket: one caller can own many edges.
-    Exact call-site coordinates select inside that bucket. Older built-in edges
-    without a locus may still join by an exact carried/FOL bridge identity.
-    Ambiguous or absent evidence refuses substitution instead of choosing the
-    first edge owned by the caller.
-    """
-    if not call_edges:
-        return None
-    name = item.get("name")
-    if not isinstance(name, str) or not name:
-        return None
-
-    owner_edges: List[Dict[str, Any]] = []
-    for edge in call_edges:
-        if not isinstance(edge, dict):
-            continue
-        source = edge.get("sourceContract") or edge.get("source_contract")
-        if source == name or name.startswith(f"{source}::"):
-            owner_edges.append(edge)
-
-    memento = _item_memento(item) or {}
-    span = memento.get("span") if isinstance(memento.get("span"), dict) else {}
-
-    def at_item_locus(edge: Dict[str, Any]) -> bool:
-        locus = edge.get("callSiteLocus") or edge.get("call_site_locus")
-        if not isinstance(locus, dict) or _span_is_degenerate(span):
-            return False
-        locus_file = locus.get("file")
-        if locus_file and locus_file != memento.get("file"):
-            return False
-        line = locus.get("line")
-        col = locus.get("col")
-        if col is None:
-            col = locus.get("column")
-        if not isinstance(line, int):
-            return False
-        start_line = int(span.get("start_line") or 0)
-        end_line = int(span.get("end_line") or 0)
-        if not start_line <= line <= end_line:
-            return False
-        if isinstance(col, int) and start_line == end_line == line:
-            return (
-                int(span.get("start_col") or 0) <= col <= int(span.get("end_col") or 0)
-            )
-        return True
-
-    locus_edges = [edge for edge in owner_edges if at_item_locus(edge)]
-    if len(locus_edges) == 1:
-        target = locus_edges[0].get("targetSymbol") or locus_edges[0].get(
-            "target_symbol"
-        )
-        if isinstance(target, str) and target.startswith(("call:", "method:")):
-            return target
-
-    bridge = _contract_bridge_identity(item, term_table)
-    identity_edges = [
-        edge
-        for edge in (locus_edges or owner_edges)
-        if (edge.get("targetSymbol") or edge.get("target_symbol")) == bridge
-    ]
-    if len(identity_edges) == 1:
-        return bridge
-    return None
-
-
-def _call_site_node_audit(
-    item: Dict[str, Any],
-    call_edges: Optional[List[Dict[str, Any]]] = None,
-    term_table: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    """Enumerate audit for `call_sites` / `assertions` nodes.
-
-    Stamps first-class `bridgeSourceSymbol` (`call:len`, `method:count`, …)
-    onto the wire audit so the tree client can decode
-    `CallSite.bridge_source_symbol` without re-mining FOL. Precedence:
-    1. batch `callEdges.targetSymbol` for this contract (authoritative
-       method:/call: split — do not invent prefixes)
-    2. IR-stamped `bridgeSourceSymbol` already in call:/method: form
-    3. FOL / name via `_contract_bridge_identity`
-    The prefix is never normalized away. `name` rides along from the IR item.
-    """
-    audit = dict(item)
-    edge_sym = _edge_target_symbol_for_contract(item, call_edges, term_table)
-    if edge_sym is not None:
-        audit["bridgeSourceSymbol"] = edge_sym
-        return audit
-    existing = audit.get("bridgeSourceSymbol")
-    if isinstance(existing, str) and (
-        existing.startswith("call:") or existing.startswith("method:")
-    ):
-        return audit
-    bridge = _contract_bridge_identity(item, term_table)
-    if bridge is not None:
-        audit["bridgeSourceSymbol"] = bridge
-    return audit
-
-
-def _universe_node_from_item(
-    item: Dict[str, Any],
-    file_rel: str,
-    *,
-    resolved_bridge: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Build a `level=universe` wire node from a function-contract IR row.
-
-    Stamps the batch `name` (e.g. `len::builtin-universe`) onto the memento's
-    function_name fields so client-side collectors that only see
-    `SourceMemento::to_json()` still recover the universe member key.
-    """
-    name = item.get("name") if isinstance(item.get("name"), str) else ""
-    base = _item_memento(item)
-    if base is None:
-        memento: Dict[str, Any] = {
-            "kind": "source-memento",
-            "file": file_rel,
-            "function_name": name,
-            "source_function_name": name,
-            "sourceFunctionName": name,
-            "span": None,
-            "param_names": [],
-            "source_cid": None,
-            "template_cid": None,
-        }
-    else:
-        memento = dict(base)
-    if name:
-        # Batch universe member key — must survive decode_memento → to_json.
-        memento["function_name"] = name
-        memento["source_function_name"] = name
-        memento["sourceFunctionName"] = name
-        memento["name"] = name
-    audit = dict(item)
-    if resolved_bridge is not None:
-        prefix, separator, spelling = resolved_bridge.partition(":")
-        audit["bridgeSourceSymbol"] = (
-            spelling if separator and prefix in {"call", "method"} else resolved_bridge
-        )
-    return {
-        "memento": memento,
-        "audit": audit,
-        "payload": _item_fact_formula(item),
-    }
-
-
-def _implication_node_for_callsite(
-    at: Dict[str, Any],
-    ir_items: List[Dict[str, Any]],
-    call_edges: List[Dict[str, Any]],
-    term_table: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    """Describe one per-callsite linker question, never answer it in the kit."""
-    call_item = _find_item_by_memento(ir_items, at)
-    if call_item is None or call_item.get("kind") != "contract":
-        return {
-            "memento": at,
-            "audit": {
-                "kind": "implication-question",
-                "sourceContract": "<unknown caller>",
-                "targetSymbol": "unknown",
-                "candidateCount": 0,
-            },
-            "payload": None,
-        }
-
-    bridge_candidates: List[str] = []
-    edge_symbol = _edge_target_symbol_for_contract(call_item, call_edges, term_table)
-    if edge_symbol is not None:
-        bridge_candidates.append(edge_symbol)
-    fol_symbol = _contract_bridge_identity(call_item, term_table)
-    if fol_symbol is not None and fol_symbol not in bridge_candidates:
-        bridge_candidates.append(fol_symbol)
-    target_symbol = bridge_candidates[0] if bridge_candidates else "unknown"
-
-    matches: Dict[tuple[Any, Any], tuple[Dict[str, Any], str]] = {}
-    for bridge in bridge_candidates:
-        for item in ir_items:
-            if item.get("kind") != "function-contract":
-                continue
-            if not _universe_bridge_matches(item.get("bridgeSourceSymbol"), bridge):
-                continue
-            memento = _item_memento(item) or {}
-            identity = (
-                memento.get("source_cid") or memento.get("sourceCid"),
-                item.get("name") or item.get("bridgeSourceSymbol"),
-            )
-            matches.setdefault(identity, (item, bridge))
-
-    source_memento = _item_memento(call_item) or at
-    source_cid = str(
-        source_memento.get("source_cid")
-        or source_memento.get("sourceCid")
-        or "blake3-512:missing-source"
-    )
-    caller_context = _item_fact_formula(call_item)
-    target_candidates: List[Dict[str, Any]] = []
-    for target, bridge in matches.values():
-        target_memento = _item_memento(target) or {}
-        target_cid = str(
-            target_memento.get("source_cid")
-            or target_memento.get("sourceCid")
-            or "blake3-512:missing-target"
-        )
-        callee_pre = target.get("pre")
-        target_candidates.append(
-            {
-                "bridgeSourceSymbol": bridge,
-                "contract": {
-                    "name": str(target.get("name") or target_symbol.split(":", 1)[-1]),
-                    "kit": "python-source",
-                    "contract_cid": target_cid,
-                    "pre_json": callee_pre,
-                    "post_json": target.get("post"),
-                },
-            }
-        )
-    span = source_memento.get("span")
-    span = span if isinstance(span, dict) else {}
-    demand = {
-        "sourceContract": {
-            "name": str(call_item.get("name") or "<unknown caller>"),
-            "kit": "python-source",
-            "contract_cid": source_cid,
-            "pre_json": None,
-            "post_json": caller_context,
-        },
-        "targetCandidates": target_candidates,
-        "callEdge": {
-            "source_contract_cid": source_cid,
-            "target_contract_cid": None,
-            "target_symbol": target_symbol,
-            "call_site_locus": {
-                "file": str(source_memento.get("file") or ""),
-                "line": span.get("start_line"),
-                "column": span.get("start_col"),
-            },
-        },
-    }
-    return {
-        "memento": at,
-        "audit": {
-            "kind": "implication-question",
-            "sourceContract": call_item.get("name", "<unknown caller>"),
-            "targetSymbol": target_symbol,
-            "candidateCount": len(target_candidates),
-            "callSiteMemento": at,
-        },
-        "payload": demand,
-    }
 
 
 def _term_ref_cids(value: Any):
@@ -2920,13 +1604,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     at = params.get("at") if isinstance(params.get("at"), dict) else None
     seek = bool(params.get("seek", False))
     options = params.get("options") if isinstance(params.get("options"), dict) else {}
+    # The audit frontier's factory census is deleted; auditFrontier now short-
+    # circuits to an empty frontier (its R census re-homes onto the source
+    # tree's reporter channel, not yet wired). allowedBrokenComponents was the
+    # factory's panic-recovery gate; with no factory audit walk it is inert.
     audit_walk = options.get("auditFrontier") is True
-    allowed_broken_components = options.get("allowedBrokenComponents", [])
-    recovery_allowed = (
-        audit_walk
-        and isinstance(allowed_broken_components, list)
-        and KIT_ID in allowed_broken_components
-    )
     root = Path(workspace_root).resolve()
     _TRANSPORT_LOG.info(
         "enumeration_request",
@@ -2940,20 +1622,38 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
 
     try:
         if level == "source_files":
-            from sugar_lift_py_tests.canonicalizer import blake3_512_of
+            # The source_files level IS SourceTree.fragments(): whole-file
+            # fragments minted through the SourceOracle — identity without
+            # parsing, no file read or hashed outside the oracle. The handler
+            # only formats. An unreadable/undecodable file is a loud oracle
+            # refusal recorded as a protocol gap, never served as a node
+            # (previously it was hashed raw and masqueraded as enumerable).
+            from sugar_lift_python_source.source_oracle import SourceOracleRefusal
+            from sugar_source_tree.tree import SourceTree
 
             nodes = []
-            for full_path in _iter_python_files(workspace_root, ["."]):
+            gaps = []
+            tree = SourceTree(root)
+            for path in tree.paths():
                 try:
-                    rel_path = Path(full_path).resolve().relative_to(root).as_posix()
+                    rel_path = path.resolve().relative_to(root).as_posix()
                 except ValueError:
-                    rel_path = Path(full_path).name
-                file_bytes = Path(full_path).read_bytes()
-                memento = _degenerate_file_memento(rel_path, blake3_512_of(file_bytes))
+                    rel_path = path.name
+                try:
+                    fragment = tree.fragment_of(path)
+                except SourceOracleRefusal as refusal:
+                    gaps.append(
+                        {
+                            "memento": _degenerate_file_memento(rel_path),
+                            "reason": str(refusal),
+                        }
+                    )
+                    continue
+                memento = _degenerate_file_memento(rel_path, fragment.source_cid)
                 if seek and at is not None and not _memento_matches(memento, at):
                     continue
                 nodes.append({"memento": memento, "audit": None, "payload": None})
-            _send_enumerate_result(msg_id, nodes, [])
+            _send_enumerate_result(msg_id, nodes, gaps)
             _log_enumeration_demand(
                 str(level), at, cache="miss", started=demand_started
             )
@@ -3011,12 +1711,94 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     [{"memento": at, "reason": f"no such file: {file_rel}"}],
                 )
                 return
-            if audit_walk and level == "functions":
-                source_bytes = full_path.read_bytes()
-                source = source_bytes.decode("utf-8")
-                from sugar_lift_py_tests.canonicalizer import blake3_512_of
 
-                file_cid = blake3_512_of(source_bytes)
+            if audit_walk:
+                # The recovered-construction frontier, re-homed onto the tree
+                # (the factory census is gone). The Rust driver walks
+                # source_files -> functions -> facts; we serve it at MODULE
+                # granularity: one demanded body per file whose audit leaf
+                # walks the whole file with a CollectingReporter. Every node
+                # whose own sugar() reaches the base throw self-reports; that
+                # count IS R. status is `failed` when the file has any unwritten
+                # sugar, `clean` when fully sugared -- no false green.
+                from sugar_lift_py_tests import tree_enumerate as _tree
+                from sugar_lift_python_source.source_oracle import (
+                    SourceOracleRefusal,
+                    path_source,
+                )
+
+                if level == "functions":
+                    try:
+                        identity = path_source(str(full_path))
+                    except SourceOracleRefusal as refusal:
+                        _send_enumerate_result(
+                            msg_id, [], [{"memento": at, "reason": str(refusal)}]
+                        )
+                        return
+                    _src, _fname, file_cid = identity
+                    sf = _tree.source_file(full_path)
+                    memento = _tree.module_definition_memento(
+                        sf, file_rel, file_cid
+                    )
+                    _send_enumerate_result(
+                        msg_id,
+                        [{"memento": memento, "audit": None, "payload": None}],
+                        [],
+                    )
+                    _log_enumeration_demand(
+                        str(level), at, cache="miss", started=demand_started
+                    )
+                    return
+
+                if level == "facts":
+                    leaf = _tree.frontier_leaf_rpc(full_path, file_rel)
+                    _send_enumerate_result(
+                        msg_id,
+                        [{"memento": at, "audit": leaf, "payload": None}],
+                        [],
+                    )
+                    _log_enumeration_demand(
+                        str(level), at, cache="miss", started=demand_started
+                    )
+                    return
+
+                # No other level participates in the frontier walk.
+                _send_enumerate_result(msg_id, [], [])
+                _log_enumeration_demand(
+                    str(level), at, cache="miss", started=demand_started
+                )
+                return
+
+            if level == "functions":
+                # The functions level IS SourceFile.functions(): every function
+                # definition in the file, enumerated from the typed tree over
+                # oracle-pinned text. No lift runs, no IR rows are consulted,
+                # and nothing is reconstructed: the ~100 lines of dedup keys,
+                # contract-name sets, and enclosing-only fallback mementos this
+                # replaces existed only because the factory threw the tree away
+                # and the wire had to rebuild syntax from lift output.
+                #
+                # Classes are namespaces: enumeration is transitive through
+                # class bodies, so test methods are functions here, in source
+                # order. Every function is visible — one with no testimony
+                # simply answers empty at the deeper levels. The `audit`
+                # annotation (contract name, formals) is meaning and arrives
+                # when FunctionDef.sugar() is written; syntax does not wait
+                # for it.
+                from sugar_lift_python_source.source_oracle import (
+                    SourceOracleRefusal,
+                    path_source,
+                )
+                from sugar_source_tree.tree import SourceFile as _TreeSourceFile
+
+                try:
+                    identity = path_source(str(full_path))
+                except SourceOracleRefusal as refusal:
+                    _send_enumerate_result(
+                        msg_id, [], [{"memento": at, "reason": str(refusal)}]
+                    )
+                    return
+                _source, _fname, file_cid = identity
                 requested_cid = at.get("source_cid") if at else None
                 if requested_cid and requested_cid != file_cid:
                     _send_enumerate_result(
@@ -3030,330 +1812,63 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         ],
                     )
                     return
-                context_hit = (file_rel, file_cid) in _AUDIT_FILE_CONTEXTS
-                context = _audit_file_context(
-                    source,
-                    file_rel,
-                    file_cid,
-                    hold_seed_panics=recovery_allowed,
-                )
+                tree_file = _TreeSourceFile(identity)
                 nodes = []
-                # The module owner exists only when the source has a statement
-                # to own. Empty package markers are leaf files, so their
-                # function-child answer is the empty set.
-                if context.module.statements():
-                    module_key = _degenerate_file_memento(file_rel, file_cid)
-                    module_key["function_name"] = "<module>"
-                    module_key["source_function_name"] = "<module>"
-                    module_key["file_cid"] = file_cid
-                    nodes.append(
-                        {"memento": module_key, "audit": None, "payload": None}
-                    )
-                for definition in context.definitions:
-                    key = to_rpc_value(definition.memento())
-                    key["function_name"] = definition.function_name()
-                    key["source_function_name"] = definition.function_name()
-                    key["file_cid"] = file_cid
-                    nodes.append({"memento": key, "audit": None, "payload": None})
-                _send_enumerate_result(msg_id, nodes, [])
-                _log_enumeration_demand(
-                    str(level),
-                    at,
-                    cache="hit" if context_hit else "miss",
-                    started=demand_started,
-                )
-                return
-            if audit_walk and level == "facts":
-                source_bytes = full_path.read_bytes()
-                source = source_bytes.decode("utf-8")
-                from sugar_lift_py_tests.canonicalizer import blake3_512_of
-
-                actual_file_cid = blake3_512_of(source_bytes)
-                requested_file_cid = at.get("file_cid")
-                if requested_file_cid and requested_file_cid != actual_file_cid:
-                    _send_enumerate_result(
-                        msg_id,
-                        [],
-                        [
-                            {
-                                "memento": at,
-                                "reason": "ancestor file CID no longer matches file",
-                            }
-                        ],
-                    )
-                    return
-                file_cid = actual_file_cid
-                context_hit = (file_rel, file_cid) in _AUDIT_FILE_CONTEXTS
-                context = _audit_file_context(
-                    source,
-                    file_rel,
-                    file_cid,
-                    hold_seed_panics=recovery_allowed,
-                )
-                from sugar_lift_py_tests.ir import term_intern_scope
-
-                with term_intern_scope():
-                    recovered = audit_lift_file(
-                        source,
-                        file_rel,
-                        recover_panics=recovery_allowed,
-                        target_memento=at,
-                        audit_context=context,
-                    )
-                if not isinstance(recovered, RecoveredAuditDto):
-                    raise TypeError("audit leaf returned a lift artifact")
-                _send_enumerate_result(
-                    msg_id,
-                    [{"memento": at, "audit": recovered.to_rpc(), "payload": None}],
-                    [],
-                )
-                _log_enumeration_demand(
-                    str(level),
-                    at,
-                    cache="hit" if context_hit else "miss",
-                    started=demand_started,
-                )
-                return
-            ir_items, call_edges, term_table = _lift_file_for_enumeration(
-                workspace_root, root, file_rel
-            )
-
-            if level == "functions":
-                # A function gets a node either because it OWNS a
-                # function-contract (kind="function-contract") or because it
-                # merely ENCLOSES a call-site assertion (kind="contract",
-                # whose memento's own source_function_name names its caller
-                # -- e.g. a test function with no contract of its own but
-                # real assertions inside it). Both are real functions in the
-                # source; a driver walking source_files -> functions must be
-                # able to reach either kind of call site underneath.
-                # Dedup key is (name, span) so same-named nested functions with
-                # distinct spans each get a node (self-locating SourceMemento).
-                seen_keys: set = set()
-                contract_names: set = set()
-                for item in ir_items:
-                    if item.get("kind") == "function-contract":
-                        contract_names.add(item.get("name"))
-                nodes = []
-
-                def _fn_key(memento):
-                    fn_name = (
-                        memento.get("source_function_name")
-                        or memento.get("sourceFunctionName")
-                        or memento.get("function_name")
-                    )
-                    span = (
-                        memento.get("span")
-                        if isinstance(memento.get("span"), dict)
-                        else {}
-                    )
-                    if _span_is_degenerate(span):
-                        return (fn_name, None)
-                    return (
-                        fn_name,
-                        (
-                            span.get("start_line"),
-                            span.get("start_col"),
-                            span.get("end_line"),
-                            span.get("end_col"),
-                        ),
-                    )
-
-                def _emit(memento, audit):
-                    key = _fn_key(memento)
-                    if key[0] is None:
-                        return
-                    if key in seen_keys:
-                        return
-                    if seek and at is not None and not _memento_matches(memento, at):
-                        return
-                    seen_keys.add(key)
-                    nodes.append({"memento": memento, "audit": audit, "payload": None})
-
-                for item in ir_items:
-                    if item.get("kind") != "function-contract":
-                        continue
-                    memento = _item_memento(item)
-                    if memento is None:
-                        continue
-                    _emit(
-                        memento,
-                        {
-                            "kind": item.get("kind"),
-                            "name": item.get("name"),
-                            "formals": item.get("formals"),
-                            "bridgeSourceSymbol": item.get("bridgeSourceSymbol"),
+                for fn in tree_file.functions():
+                    lc = fn.line_col_span()
+                    sealed = fn.fragment.seal()
+                    memento = {
+                        "kind": "source-memento",
+                        "file": file_rel,
+                        "function_name": fn.name,
+                        "source_function_name": fn.name,
+                        "span": {
+                            "start_line": lc.start_line,
+                            "start_col": lc.start_col,
+                            "end_line": lc.end_line,
+                            "end_col": lc.end_col,
                         },
-                    )
-                for item in ir_items:
-                    if item.get("kind") != "contract":
-                        continue
-                    memento = _item_memento(item)
-                    if memento is None:
-                        continue
-                    fn_name = memento.get("source_function_name") or memento.get(
-                        "sourceFunctionName"
-                    )
-                    if not fn_name:
-                        continue
-                    if fn_name in contract_names:
-                        # The function already owns a contract row; the
-                        # enclosing-only fallback must not mint a duplicate.
-                        continue
-                    # Degenerate span: enclosing-only functions have no body
-                    # contract locus; call_sites falls back to name scoping.
-                    _emit(
-                        {
-                            "kind": "source-memento",
-                            "file": file_rel,
-                            "function_name": fn_name,
-                            "source_function_name": fn_name,
-                            "span": None,
-                            "param_names": [],
-                            "source_cid": None,
-                            "template_cid": None,
-                        },
-                        {
-                            "kind": "function",
-                            "name": fn_name,
-                            "note": "no function-contract of its own; reachable "
-                            "because it encloses a call-site assertion",
-                        },
-                    )
-                _send_enumerate_result(msg_id, nodes, [])
-                return
-
-            if level == "call_sites":
-                # Scope under parent function (`at`): prefer SPAN containment when
-                # `at.span` is non-degenerate (self-locating memento locus).
-                # Fall back to function-name match when span is absent
-                # (degenerate file/fn locators). Same-named nested functions with
-                # distinct spans no longer cross-contaminate.
-                target_fn = (
-                    (
-                        at.get("function_name")
-                        or at.get("sourceFunctionName")
-                        or at.get("source_function_name")
-                    )
-                    if at
-                    else None
-                )
-                target_span = at.get("span") if isinstance(at, dict) else None
-                built = []
-                for item in ir_items:
-                    if item.get("kind") != "contract":
-                        continue
-                    memento = _item_memento(item)
-                    if memento is None:
-                        continue
-                    if not _call_site_under_function(memento, target_fn, target_span):
-                        continue
+                        "source_cid": sealed.cid,
+                        "file_cid": file_cid,
+                        "template_cid": None,
+                        "param_names": [],
+                    }
                     if seek and at is not None and not _memento_matches(memento, at):
                         continue
-                    # First-class bridge identity on the wire audit
-                    # (`call:` / `method:` — prefix preserved from callEdges).
-                    built.append(
-                        {
-                            "memento": memento,
-                            "audit": _call_site_node_audit(
-                                item, call_edges, term_table
-                            ),
-                            "payload": None,
-                        }
-                    )
-                gaps = (
-                    [
-                        {
-                            "memento": at,
-                            "reason": "no call site for exact memento; refusing call-site substitution",
-                        }
-                    ]
-                    if seek and at is not None and not built
-                    else []
-                )
-                _send_enumerate_result(msg_id, built, gaps, term_tables=[term_table])
-                return
-
-            if level == "assertions":
-                # Seek-only: a call site's own kind=contract item IS its
-                # assertion. 1:1 is factory truth (batch IR has no dual
-                # site/claim records) — protocol Section 4, not a collapse.
-                # Same bridgeSourceSymbol stamp as call_sites.
-                item = _find_item_by_memento(ir_items, at)
-                if item is None:
-                    _send_enumerate_result(
-                        msg_id,
-                        [],
-                        [{"memento": at, "reason": "no call site for this memento"}],
-                    )
-                    return
-                _send_enumerate_result(
-                    msg_id,
-                    [
-                        {
-                            "memento": _item_memento(item),
-                            "audit": _call_site_node_audit(
-                                item, call_edges, term_table
-                            ),
-                            "payload": None,
-                        }
-                    ],
-                    [],
-                    term_tables=[term_table],
+                    nodes.append({"memento": memento, "audit": None, "payload": None})
+                _send_enumerate_result(msg_id, nodes, [])
+                _log_enumeration_demand(
+                    str(level), at, cache="miss", started=demand_started
                 )
                 return
-
-            if level == "facts":
-                item = _find_item_by_memento(ir_items, at)
-                if item is None:
-                    _send_enumerate_result(
-                        msg_id,
-                        [],
-                        [{"memento": at, "reason": "no assertion for this memento"}],
-                    )
-                    return
-                formula = _item_fact_formula(item)
-                if formula is None:
-                    _send_enumerate_result(
-                        msg_id,
-                        [],
-                        [
-                            {
-                                "memento": _item_memento(item),
-                                "reason": "assertion carries no post/inv fact",
-                            }
-                        ],
-                    )
-                    return
-                _send_enumerate_result(
-                    msg_id,
-                    [
-                        {
-                            "memento": _item_memento(item),
-                            "audit": item,
-                            "payload": formula,
-                        }
-                    ],
-                    [],
-                    term_tables=[term_table],
-                )
-                return
-
+            # Levels below `functions` served by the AST tree, not the factory.
+            # Invoking the RPC is invoking the source tree enumeration: walk the
+            # function's Assert nodes and ask each for its sugar and its fact.
+            # For a bare `assert`, call_site and assertion are the same locus
+            # (1:1, protocol Section 4); the fact is the desugared InvValue.
+            # (audit_walk already returned empty above; this is the live path.)
             if level == "implications":
+                # The linker question, served from the tree: this caller's INV
+                # against the callee contract(s) its call site CUES, joined by
+                # the callEdge. The kit describes the demand; it never answers it
+                # (the discharge is the linker's, the other side of the RPC).
+                # Digs cue digs: the callee's own universe post carries its own
+                # call coordinates, which become the next implications.
+                from sugar_lift_py_tests import tree_enumerate as _tree
+                from sugar_lift_py_tests.ir import TermTableBuilder
+                from sugar_lift_py_tests.outcome import Complete
+
                 if at is None:
                     _send_enumerate_result(
                         msg_id,
                         [],
-                        [
-                            {
-                                "memento": at,
-                                "reason": "implications requires a call-site memento",
-                            }
-                        ],
+                        [{"memento": at, "reason": "implications requires a call-site memento"}],
                     )
                     return
-                call_item = _find_item_by_memento(ir_items, at)
-                if call_item is None or call_item.get("kind") != "contract":
+                sf = _tree.source_file(full_path)
+                span = at.get("span") if isinstance(at, dict) else None
+                assert_node = _tree.find_assert(sf, span)
+                if assert_node is None:
                     _send_enumerate_result(
                         msg_id,
                         [],
@@ -3365,152 +1880,244 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         ],
                     )
                     return
+
+                term_table = TermTableBuilder()
+                caller_memento = _tree.assert_memento(assert_node, file_rel)
+                caller_cid = caller_memento["source_cid"]
+                caller_post = None
+                caller_outcome = assert_node.sugar().desugar(None)
+                if isinstance(caller_outcome, Complete):
+                    formula = getattr(caller_outcome.value, "formula", None)
+                    if formula is not None:
+                        caller_post = term_table.formula(formula)
+
+                target_candidates = []
+                targets = _tree.call_target_names(sf, span)
+                for name in targets:
+                    fn = _tree.find_function_by_name(sf, name)
+                    if fn is None:
+                        continue
+                    try:
+                        def_memento, rows = _tree.function_contract_rows(fn, file_rel)
+                    except Exception:
+                        continue
+                    if rows is None:
+                        continue
+                    post = rows[0].post
+                    target_candidates.append(
+                        {
+                            "bridgeSourceSymbol": f"call:{name}",
+                            "contract": {
+                                "name": name,
+                                "kit": "python-source",
+                                "contract_cid": def_memento.source_cid,
+                                "pre_json": None,
+                                "post_json": (
+                                    term_table.formula(post.ir_formula)
+                                    if post is not None
+                                    else None
+                                ),
+                            },
+                        }
+                    )
+
+                target_symbol = f"call:{targets[0]}" if targets else "unknown"
+                sp = span if isinstance(span, dict) else {}
+                demand = {
+                    "sourceContract": {
+                        "name": "",
+                        "kit": "python-source",
+                        "contract_cid": caller_cid,
+                        "pre_json": None,
+                        "post_json": caller_post,
+                    },
+                    "targetCandidates": target_candidates,
+                    "callEdge": {
+                        "source_contract_cid": caller_cid,
+                        "target_contract_cid": None,
+                        "target_symbol": target_symbol,
+                        "call_site_locus": {
+                            "file": file_rel,
+                            "line": sp.get("start_line"),
+                            "column": sp.get("start_col"),
+                        },
+                    },
+                }
+                node = {
+                    "memento": at,
+                    "audit": {
+                        "kind": "implication-question",
+                        "sourceContract": "",
+                        "targetSymbol": target_symbol,
+                        "candidateCount": len(target_candidates),
+                        "callSiteMemento": at,
+                    },
+                    "payload": demand,
+                }
                 _send_enumerate_result(
-                    msg_id,
-                    [
-                        _implication_node_for_callsite(
-                            at, ir_items, call_edges, term_table
-                        )
-                    ],
-                    [],
-                    term_tables=[term_table],
+                    msg_id, [node], [], term_tables=[term_table.nodes]
+                )
+                _log_enumeration_demand(
+                    str(level), at, cache="miss", started=demand_started
                 )
                 return
 
             if level == "universe":
-                # Body/operator universes are `kind="function-contract"` rows
-                # (including `len::builtin-universe`). CallSite::universe seeks
-                # the universe linked to a call-site memento via
-                # bridgeSourceSymbol / FOL callee identity. File-level scan
-                # (`seek=false`) lists every universe in the file.
-                universe_items = [
-                    item
-                    for item in ir_items
-                    if isinstance(item, dict)
-                    and item.get("kind") == "function-contract"
-                ]
+                # The callee contract, served from the tree. Each function's
+                # FunctionDef.sugar() reduces to a UniverseValue whose
+                # payload_rows project the function-contract DTO (post + invs) --
+                # the dig RESULT. Callee resolution is by NAME, directly: a
+                # call-site cue (`at` on a call site) resolves to the function
+                # whose name the call names, no bridge-matching. Three modes:
+                # file scan (seek=false), a universe's own memento, or a
+                # call-site cue.
+                from sugar_lift_py_tests import tree_enumerate as _tree
+                from sugar_lift_py_tests.ir import TermTableBuilder
+                from sugar_source_tree.panic import SugarNotWritten
 
-                if seek and at is not None:
-                    # Call-site linkage path first: match a kind=contract
-                    # assertion, then join on bridge identity.
-                    #
-                    # Dual-candidate (Task 9 / Important residual): try
-                    # callEdges BSS first (`method:count`) and FOL
-                    # `_contract_bridge_identity` second (`call:count`). A
-                    # method site whose FOL ctor says `call:count` must still
-                    # join a universe stamped `method:count` (and vice versa).
-                    call_item = None
-                    for item in ir_items:
-                        if item.get("kind") != "contract":
-                            continue
-                        memento = _item_memento(item)
-                        if memento is not None and _call_site_seek_matches(memento, at):
-                            call_item = item
-                            break
-                    if call_item is not None:
-                        candidates: List[str] = []
-                        edge_sym = _edge_target_symbol_for_contract(
-                            call_item, call_edges, term_table
-                        )
-                        if edge_sym is not None:
-                            candidates.append(edge_sym)
-                        fol_sym = _contract_bridge_identity(call_item, term_table)
-                        if fol_sym is not None and fol_sym not in candidates:
-                            candidates.append(fol_sym)
-                        matches: Dict[tuple[Any, Any], tuple[Dict[str, Any], str]] = {}
-                        for bridge in candidates:
-                            for universe_item in universe_items:
-                                if _universe_bridge_matches(
-                                    universe_item.get("bridgeSourceSymbol"), bridge
-                                ):
-                                    memento = _item_memento(universe_item) or {}
-                                    identity = (
-                                        memento.get("source_cid")
-                                        or memento.get("sourceCid"),
-                                        universe_item.get("name")
-                                        or universe_item.get("bridgeSourceSymbol"),
-                                    )
-                                    matches.setdefault(
-                                        identity, (universe_item, bridge)
-                                    )
-                        if len(matches) == 1:
-                            matched, resolved_bridge = next(iter(matches.values()))
-                            _send_enumerate_result(
-                                msg_id,
-                                [
-                                    _universe_node_from_item(
-                                        matched,
-                                        file_rel,
-                                        resolved_bridge=resolved_bridge,
-                                    )
-                                ],
-                                [],
-                                term_tables=[term_table],
-                            )
-                            return
-                        callee = candidates[0] if candidates else "unknown"
-                        if len(matches) > 1:
-                            qualified = sorted(
-                                str(item.get("name") or item.get("bridgeSourceSymbol"))
-                                for item, _ in matches.values()
-                            )
-                            _send_enumerate_result(
-                                msg_id,
-                                [],
-                                [
-                                    {
-                                        "memento": at,
-                                        "reason": (
-                                            "ambiguous universe sugar for callee "
-                                            f"{callee}; candidates=[{', '.join(qualified)}]"
-                                        ),
-                                    }
-                                ],
-                            )
-                            return
-                        _send_enumerate_result(
-                            msg_id,
-                            [],
-                            [
-                                {
-                                    "memento": at,
-                                    "reason": (
-                                        f"no universe sugar for callee {callee}"
-                                    ),
-                                }
-                            ],
-                        )
-                        return
-
-                    # Direct universe seek (scan/seek coherence on a universe
-                    # node's own memento, including the stamped name).
-                    nodes = []
-                    for universe_item in universe_items:
-                        node = _universe_node_from_item(universe_item, file_rel)
-                        if _memento_matches(node["memento"], at):
-                            nodes.append(node)
-                    gaps = (
-                        []
-                        if nodes
-                        else [
+                sf = _tree.source_file(full_path)
+                term_table = TermTableBuilder()
+                universes = []  # (name, memento_dict, contract_dto)
+                gaps = []
+                for fn in sf.functions():
+                    try:
+                        def_memento, rows = _tree.function_contract_rows(fn, file_rel)
+                    except SugarNotWritten as gap:
+                        gaps.append(
                             {
-                                "memento": at,
-                                "reason": "no call site for exact memento; refusing universe substitution",
+                                "memento": _tree.function_def_memento(
+                                    fn, file_rel
+                                ).to_rpc(),
+                                "reason": gap.observed,
                             }
-                        ]
-                    )
+                        )
+                        continue
+                    if rows is None:
+                        continue  # an effect, not a contract
+                    universes.append((fn.name, def_memento.to_rpc(), rows[0]))
+
+                def _node(memento, dto):
+                    return {
+                        "memento": memento,
+                        "audit": dto.to_rpc_with_term_table(term_table),
+                        "payload": None,
+                    }
+
+                if not (seek and at is not None):
+                    nodes = [_node(m, d) for _n, m, d in universes]
                     _send_enumerate_result(
-                        msg_id, nodes, gaps, term_tables=[term_table]
+                        msg_id, nodes, gaps, term_tables=[term_table.nodes]
+                    )
+                    _log_enumeration_demand(
+                        str(level), at, cache="miss", started=demand_started
                     )
                     return
 
-                # Scan: every function-contract universe in the file.
-                nodes = [
-                    _universe_node_from_item(universe_item, file_rel)
-                    for universe_item in universe_items
+                # seek: a universe's own memento, else a call-site cue -> callee.
+                direct = [
+                    _node(m, d) for _n, m, d in universes if _memento_matches(m, at)
                 ]
-                _send_enumerate_result(msg_id, nodes, [], term_tables=[term_table])
+                if direct:
+                    _send_enumerate_result(
+                        msg_id, direct, [], term_tables=[term_table.nodes]
+                    )
+                    return
+                targets = _tree.call_target_names(
+                    sf, at.get("span") if isinstance(at, dict) else None
+                )
+                by_name = {name: (m, d) for name, m, d in universes}
+                cued = [
+                    _node(*by_name[t]) for t in targets if t in by_name
+                ]
+                _send_enumerate_result(
+                    msg_id,
+                    cued,
+                    []
+                    if cued
+                    else [
+                        {
+                            "memento": at,
+                            "reason": (
+                                "no universe for the callee(s) this call site cues: "
+                                f"{targets or 'none'}"
+                            ),
+                        }
+                    ],
+                    term_tables=[term_table.nodes],
+                )
+                _log_enumeration_demand(
+                    str(level), at, cache="miss", started=demand_started
+                )
                 return
+
+            if level in ("call_sites", "assertions", "facts"):
+                from sugar_lift_py_tests import tree_enumerate as _tree
+
+                sf = _tree.source_file(full_path)
+
+                if level in ("call_sites", "assertions"):
+                    # at is the parent function (scan) — enumerate its assertions.
+                    fn = _tree.find_function(
+                        sf,
+                        (at or {}).get("function_name")
+                        or (at or {}).get("source_function_name"),
+                        (at or {}).get("span") if isinstance(at, dict) else None,
+                    )
+                    built = []
+                    if fn is not None:
+                        for a in _tree.asserts_of(fn):
+                            memento = _tree.assert_memento(a, file_rel)
+                            if seek and at is not None and not _memento_matches(
+                                memento, at
+                            ):
+                                continue
+                            built.append(
+                                {"memento": memento, "audit": None, "payload": None}
+                            )
+                    _send_enumerate_result(msg_id, built, [])
+                    _log_enumeration_demand(
+                        str(level), at, cache="miss", started=demand_started
+                    )
+                    return
+
+                # facts: at is an assertion memento — desugar THAT assert.
+                node = _tree.find_assert(
+                    sf, at.get("span") if isinstance(at, dict) else None
+                )
+                if node is None:
+                    _send_enumerate_result(
+                        msg_id, [], [{"memento": at, "reason": "no assertion here"}]
+                    )
+                    return
+                formula = _tree.fact_of(node)
+                if formula is None:
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [
+                            {
+                                "memento": _tree.assert_memento(node, file_rel),
+                                "reason": "assertion emits no fact",
+                            }
+                        ],
+                    )
+                    return
+                _send_enumerate_result(
+                    msg_id,
+                    [
+                        {
+                            "memento": _tree.assert_memento(node, file_rel),
+                            "audit": None,
+                            "payload": formula,
+                        }
+                    ],
+                    [],
+                )
+                _log_enumeration_demand(
+                    str(level), at, cache="miss", started=demand_started
+                )
+                return
+
 
         _send(
             {
@@ -3559,284 +2166,6 @@ def _handle_initialize(msg_id: Any) -> None:
             },
         }
     )
-
-
-def _handle_lift(msg_id: Any, params: Dict[str, Any]) -> None:
-    workspace_root = str(params.get("workspace_root", "."))
-    source_paths = list(params.get("source_paths", ["."]))
-    contract_bindings = params.get("contract_bindings") or []
-    if not isinstance(contract_bindings, list):
-        contract_bindings = []
-    options = params.get("options") if isinstance(params.get("options"), dict) else {}
-    audit_frontier = options.get("auditFrontier") is True
-    try:
-        if audit_frontier:
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "error": {
-                        "code": -32601,
-                        "message": "auditFrontier is served only by recursive sugar.enumerate leaf requests",
-                    },
-                }
-            )
-            return
-        payload = LiftReportPayloadDto(source_ledger={})
-        bindings_backed_pass = bool(contract_bindings)
-        root = Path(workspace_root).resolve()
-        lifted_paths: List[Path] = []
-        if not bindings_backed_pass:
-            contracts, diagnostics = _source_lifter_function_contracts(workspace_root)
-            payload.ir.extend(contracts)
-            payload.diagnostics.extend(diagnostics)
-        for file_index, path in enumerate(
-            _iter_python_files(workspace_root, source_paths)
-        ):
-            full_path = Path(path)
-            lifted_paths.append(full_path)
-            try:
-                rel_path = full_path.resolve().relative_to(root).as_posix()
-            except ValueError:
-                rel_path = full_path.name
-            file_started = time.monotonic()
-            _TRANSPORT_LOG.info(
-                "workspace_file_enter",
-                extra={
-                    "stage": "lift.workspace.file",
-                    "file": rel_path,
-                    "index": file_index,
-                },
-            )
-            with open(path, "r", encoding="utf-8") as handle:
-                file_payload = lift_file_payload(handle.read(), rel_path)
-            if bindings_backed_pass:
-                # Second (implicit-consumer) pass: re-project collapse call
-                # edges and seal them against imported contract_bindings so
-                # mint/report can materialize cross-bundle bridges. Full IR /
-                # audits stay on the producer pass (merge prefers resolved
-                # edges). Implications still a named gap.
-                from sugar_lift_py_tests.factory.call_edge_bindings import (
-                    resolve_call_edges_against_bindings,
-                )
-
-                sealed = resolve_call_edges_against_bindings(
-                    file_payload.call_edges, contract_bindings
-                )
-                payload.call_edges.extend(sealed)
-                _TRANSPORT_LOG.info(
-                    "workspace_file_exit",
-                    extra={
-                        "stage": "lift.workspace.file",
-                        "file": rel_path,
-                        "index": file_index,
-                        "pass": "bindings-backed",
-                        "call_edges": len(sealed),
-                        "elapsed_ms": round(
-                            (time.monotonic() - file_started) * 1000, 3
-                        ),
-                    },
-                )
-                continue
-            payload.ir.extend(file_payload.ir)
-            _merge_symbol_kinds(payload.symbol_kinds, file_payload.symbol_kinds)
-            payload.call_edges.extend(file_payload.call_edges)
-            payload.factory_walk.extend(file_payload.factory_walk)
-            payload.factory_audits.extend(file_payload.factory_audits)
-            payload.source_mementos.extend(file_payload.source_mementos)
-            _TRANSPORT_LOG.info(
-                "workspace_file_exit",
-                extra={
-                    "stage": "lift.workspace.file",
-                    "file": rel_path,
-                    "index": file_index,
-                    "contracts": len(payload.ir),
-                    "elapsed_ms": round((time.monotonic() - file_started) * 1000, 3),
-                },
-            )
-        rpc_started = time.monotonic()
-        _TRANSPORT_LOG.info(
-            "payload_to_rpc_enter",
-            extra={
-                "stage": "lift.workspace.to_rpc",
-                "contracts": len(payload.ir),
-            },
-        )
-        rpc_payload = payload.to_rpc()
-        _TRANSPORT_LOG.info(
-            "payload_to_rpc_exit",
-            extra={
-                "stage": "lift.workspace.to_rpc",
-                "contracts": len(payload.ir),
-                "elapsed_ms": round((time.monotonic() - rpc_started) * 1000, 3),
-            },
-        )
-        # #4013: dual-axis lift coverage as first-class --report line items.
-        # Independent AST census (second computation) vs this payload's accounting.
-        # Serialize once through the payload-owned term-table door, then attach
-        # the coverage computed from that exact wire projection.
-        if not bindings_backed_pass and lifted_paths:
-            coverage_started = time.monotonic()
-            _TRANSPORT_LOG.info(
-                "lift_coverage_enter",
-                extra={
-                    "stage": "lift.workspace.coverage",
-                    "total": len(lifted_paths),
-                },
-            )
-            coverage = _build_lift_coverage(
-                root=root, paths=lifted_paths, payload_rpc=rpc_payload
-            )
-            rpc_payload["liftCoverage"] = coverage
-            _TRANSPORT_LOG.info(
-                "lift_coverage_exit",
-                extra={
-                    "stage": "lift.workspace.coverage",
-                    "total": len(lifted_paths),
-                    "elapsed_ms": round(
-                        (time.monotonic() - coverage_started) * 1000, 3
-                    ),
-                },
-            )
-        _send({"jsonrpc": "2.0", "id": msg_id, "result": rpc_payload})
-    except Exception as exc:
-        _send(
-            {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "error": {
-                    "code": -32603,
-                    "message": str(exc),
-                    "data": traceback.format_exc(),
-                },
-            }
-        )
-
-
-def _merge_source_ledger(
-    current: Dict[str, int],
-    incoming: Dict[str, int] | None,
-) -> None:
-    if incoming is None:
-        return
-    for key, value in incoming.items():
-        current[key] = current.get(key, 0) + int(value)
-
-
-def _merge_symbol_kinds(current: Dict[str, str], incoming: Dict[str, str]) -> None:
-    from sugar_lift_py_tests.ir import merge_constructor_symbol_kind
-
-    for symbol, kind in incoming.items():
-        merge_constructor_symbol_kind(current, symbol, kind)
-
-
-def _build_lift_coverage(
-    *,
-    root: Path,
-    paths: List[Path],
-    payload_rpc: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Independent AST census + partition vs the just-built lift payload.
-
-    Assertions (default report body): silently_unaccounted is the RED gate.
-    Minority (bodies): un_asserted is the VISIBLE scope remainder (not red).
-    """
-    started = time.monotonic()
-    _TRANSPORT_LOG.info(
-        "coverage_census_enter",
-        extra={"stage": "lift.coverage.census_paths", "total": len(paths)},
-    )
-    disk = census_paths(paths, root=root)
-    _TRANSPORT_LOG.info(
-        "coverage_census_exit",
-        extra={
-            "stage": "lift.coverage.census_paths",
-            "total": len(paths),
-            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-        },
-    )
-    # Account against the same RPC shape the report serializes — built without
-    # liftCoverage to avoid self-reference (coverage is the field being filled).
-    started = time.monotonic()
-    _TRANSPORT_LOG.info(
-        "coverage_projection_enter",
-        extra={
-            "stage": "lift.coverage.payload_projection",
-            "contracts": len(payload_rpc.get("ir", [])),
-        },
-    )
-    interim = {
-        "sourceAudits": payload_rpc.get("sourceAudits", []),
-        "sourceMementos": payload_rpc.get("sourceMementos", []),
-        "assertionSurfaceAudits": payload_rpc.get("assertionSurfaceAudits", []),
-        "diagnostics": payload_rpc.get("diagnostics", []),
-        "sourceLedger": payload_rpc.get("sourceLedger", {}),
-        # Minority projection joins function-contract rows to call_edges.
-        "ir": payload_rpc.get("ir", []),
-        "callEdges": payload_rpc.get("callEdges", []),
-        # Doctrine: factory instrument engagement must be visible to coverage
-        # accounting so unimplemented becomes a loud gap, never silent (#4016).
-        "factoryAuditSummary": payload_rpc.get("factoryAuditSummary", {}),
-        "factoryAudits": payload_rpc.get("factoryAudits", []),
-    }
-    _TRANSPORT_LOG.info(
-        "coverage_projection_exit",
-        extra={
-            "stage": "lift.coverage.payload_projection",
-            "contracts": len(payload_rpc.get("ir", [])),
-            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-        },
-    )
-    started = time.monotonic()
-    _TRANSPORT_LOG.info(
-        "coverage_account_enter", extra={"stage": "lift.coverage.account"}
-    )
-    coverage = account_lift_coverage(disk, interim)
-    body = coverage.to_json()
-    _TRANSPORT_LOG.info(
-        "coverage_account_exit",
-        extra={
-            "stage": "lift.coverage.account",
-            "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-        },
-    )
-    # Per-file line paint for --visual consumers.
-    paints: Dict[str, Any] = {}
-    paint_started = time.monotonic()
-    _TRANSPORT_LOG.info(
-        "coverage_paint_enter",
-        extra={"stage": "lift.coverage.paint_lines", "total": len(paths)},
-    )
-    for path_index, path in enumerate(paths):
-        path = path.resolve()
-        try:
-            rel = path.relative_to(root).as_posix()
-        except ValueError:
-            rel = path.name
-        try:
-            source = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        paints[rel] = paint_lines(source, coverage, file=rel)
-        _TRANSPORT_LOG.info(
-            "coverage_paint_file",
-            extra={
-                "stage": "lift.coverage.paint_lines",
-                "file": rel,
-                "index": path_index,
-                "total": len(paths),
-            },
-        )
-    body["line_paint"] = paints
-    _TRANSPORT_LOG.info(
-        "coverage_paint_exit",
-        extra={
-            "stage": "lift.coverage.paint_lines",
-            "total": len(paths),
-            "elapsed_ms": round((time.monotonic() - paint_started) * 1000, 3),
-        },
-    )
-    return body
 
 
 def _handle_resolve_dependency_proofs(msg_id: Any, params: Dict[str, Any]) -> None:
@@ -3900,16 +2229,6 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
                     params if isinstance(params, dict) else {}
                 ),
             }
-        )
-    elif method == "lift":
-        _handle_lift(
-            msg_id,
-            params if isinstance(params, dict) else {},
-        )
-    elif method == "sugar.plugin.lift_implications":
-        _handle_lift(
-            msg_id,
-            params if isinstance(params, dict) else {},
         )
     elif method == "sugar.plugin.resolve_dependency_proofs":
         _handle_resolve_dependency_proofs(

@@ -2,16 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
-from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class AssertSugar(Sugar, role=SugarRole.STATEMENT):
-    """`assert <condition>[, <message>]`. It reduces the condition, and the
+class AssertSugar(Sugar):
+    """`assert <test>[, <message>]`. It desugars the test, and the
     result states itself: a symbolic predicate states an inv (the fact the
     record emits -- first encounter a fact to discharge, a later consumer
     meets it as a warrant, a constraint; that duality is protocol position,
@@ -24,25 +22,12 @@ class AssertSugar(Sugar, role=SugarRole.STATEMENT):
     a runtime expression (`assert x, f(y)`), any effects of that evaluation
     are unobserved by the claim membrane (paper 26: unsworn effects are
     silence). The lift MUST NOT invent a conditional py.* effect gated on
-    ¬condition. Spelling rides `assertMessage` provenance on the source
+    ¬test. Spelling rides `assertMessage` provenance on the source
     memento; AssertSugar never builds or reduces the message operand.
     """
 
-    condition: SugarBody
+    test: Sugar
     site: object = dataclass_field(compare=False)
-
-    @classmethod
-    def owns(cls, site) -> bool:
-        return site.observed == "Assert"
-
-    @classmethod
-    def new(cls, site, ctx) -> "AssertSugar":
-        # The condition is factory-built (audited), never reduced here.
-        # Message is never a tower child (#4594): provenance only.
-        return cls(
-            condition=ctx.build_body(site.assert_test(), SugarRole.TERM),
-            site=site,
-        )
 
     @classmethod
     def witnesses(cls):
@@ -60,10 +45,8 @@ class AssertSugar(Sugar, role=SugarRole.STATEMENT):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # Reduce the condition, and the result states itself.
-        return self.condition.reduce(ctx).and_then(
+        # Desugar the test, and the result states itself.
+        return self.test.desugar(ctx).and_then(
             lambda value: value.stated(self.site)
         )
 
-    def walk_children(self):
-        return (self.condition,)

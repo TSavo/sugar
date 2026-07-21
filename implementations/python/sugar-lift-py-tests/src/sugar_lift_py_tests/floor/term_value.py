@@ -52,24 +52,14 @@ class TermValue(FloorValue):
             else FalseBoolLiteralSugar(site=site)
         )
 
-    def equals(self, other, site):
-        # A number stands on the equals floor: two numbers are equal or not, and it
-        # gives back the True or False literal -- the boolean IS the type.
-        if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
-            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-                FalseBoolLiteralSugar,
-            )
-            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-                TrueBoolLiteralSugar,
-            )
-
-            return Complete(
-                TrueBoolLiteralSugar(site=site)
-                if self.value == other.value
-                else FalseBoolLiteralSugar(site=site)
-            )
-        return super().equals(other, site)
+    # equals is NOT overridden: an assertion EMITS a fact. `assert 1 == 1` is
+    # the vendor asserting the fact `1 = 1` -- a real inv, trivially valid,
+    # with no call site (operand_callsites == ()) and no contract. The base
+    # FloorValue.equals builds exactly that PredicateValue, which states as an
+    # InvValue. Folding two ground numbers to a True/False literal here was the
+    # bug: it let the bool decide there was no fact to emit, dropping the
+    # vendor's assertion out of the FOL. The value does not get to opt out of
+    # an emission the assertion owns.
 
     def is_identical(self, other, site):
         from sugar_lift_py_tests.floor.none_value import NoneValue

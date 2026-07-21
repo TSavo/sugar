@@ -3,56 +3,35 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any
 
-from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
-from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 @dataclass(frozen=True)
-class SubscriptSugar(Sugar, role=SugarRole.TERM):
-    """`x[i]` subscript. Reduce the receiver and the index, and ask the receiver
-    to subscript by the index. Concrete containers fold; decidable out-of-range
-    indexes and missing keys stay loud until their exact exceptional exits are
-    constructed. Symbolic sides stay the py.subscript coordinate. Slice indexes remain behind the narrower
-    ``SliceSubscriptSugar`` gate; ``SliceSugar`` owns the Slice node without
-    widening this parent's receiver evaluation semantics."""
+class SubscriptSugar(Sugar):
+    """`<receiver>[<index>]`. Reduce the receiver and the index, then ask the
+    receiver to subscript by the index -- the value owns what indexing means.
+    Concrete containers fold (a string indexes to its character); a vendor
+    object routes through its ``__getitem__``; decidable out-of-range indexes
+    and missing keys stay loud until their exact exceptional exits are built;
+    symbolic sides stand as the py.subscript coordinate.
 
-    receiver: SugarBody
-    index: SugarBody
+    Meaning-only, node-constructed. Slice indexes are a narrower case (their
+    own sugar): a Slice node here reduces to its own gap through the recursion,
+    never silently handled by this parent.
+    """
+
+    receiver: Sugar
+    index: Sugar
     site: object = dataclass_field(compare=False)
-
-    @classmethod
-    def owns(cls, site) -> bool:
-        if site.observed != "Subscript":
-            return False
-        index = site.subscript_index()
-        if index.observed == "Slice":
-            return False
-        return True
-
-    @classmethod
-    def new(cls, site, ctx) -> "SubscriptSugar":
-        # Receiver and index are factory-built (audited), never reduced here.
-        return cls(
-            receiver=ctx.build_body(site.subscript_receiver(), SugarRole.TERM),
-            index=ctx.build_body(site.subscript_index(), SugarRole.TERM),
-            site=site,
-        )
 
     @classmethod
     def witnesses(cls):
         # The ground failing bounds check contributes exact exceptional-exit
         # testimony on one path; the continuing path gives the solver a
         # verdict-bearing truthful/lying pair.
-        prefix = (
-            "def A(z):\n"
-            "    if z < 0:\n"
-            "        return [][0]\n"
-            "    return z\n"
-            "\n"
-        )
+        prefix = "def A(z):\n    if z < 0:\n        return [][0]\n    return z\n\n"
         return _call_pair(
             name="subscript_return",
             owner_sugar="SubscriptSugar",
@@ -61,9 +40,8 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
         )
 
     def desugar(self, ctx: Any = None) -> Outcome:
-        # Reduce receiver, reduce index, ask the receiver to subscript by the index.
-        return self.receiver.reduce(ctx).and_then(
-            lambda receiver: self.index.reduce(ctx).and_then(
+        return self.receiver.desugar(ctx).and_then(
+            lambda receiver: self.index.desugar(ctx).and_then(
                 lambda index: self._subscript(receiver, index, ctx)
             )
         )
@@ -71,17 +49,6 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
     def _subscript(self, receiver, index, ctx):
         from sugar_lift_py_tests.floor import ObjectValue
 
-        recorder = getattr(ctx, "record_operation", None)
-        if recorder is not None:
-
-            class SubscriptOperation:
-                pass
-
-            recorder(
-                owner="StringSubscriptSugar",
-                method_name="subscript_with",
-                operation=SubscriptOperation(),
-            )
         if isinstance(receiver, ObjectValue):
             return receiver.call_method_value(
                 "__getitem__",
@@ -91,6 +58,3 @@ class SubscriptSugar(Sugar, role=SugarRole.TERM):
                 ctx=ctx,
             )
         return receiver.subscript(index, self.site)
-
-    def walk_children(self):
-        return (self.receiver, self.index)

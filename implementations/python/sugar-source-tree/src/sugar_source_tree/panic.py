@@ -69,6 +69,40 @@ class VocabularyMissing(SourceTreePanic):
     _LABEL = "VOCABULARY MISSING"
 
 
+class SugarNotWritten(SourceTreePanic):
+    """The node knows exactly what it is — and nobody has written its sugar
+    yet. Raised by the abstract ``Node.sugar()``; every concrete class either
+    OVERRIDES ``sugar()`` and constructs, or inherits this throw. Two arms
+    enforced by inheritance itself: no registry to consult, no lookup that
+    can miss quietly, no third state. Writing the override IS writing the
+    sugar, so coverage is visible in the hierarchy, not in a census table.
+
+    Distinct from ``VocabularyMissing`` (there the NODE class is absent;
+    here the node class exists and speaks) and from ``BackendDefect``
+    (the backend did nothing wrong). The fix is always: write the sugar,
+    deliberately.
+    """
+
+    _LABEL = "SUGAR NOT WRITTEN"
+
+
+class SubstituteNotWritten(SourceTreePanic):
+    """Nobody has written this node's substitution yet. Raised by the abstract
+    ``Node.substitute()``; every concrete class either OVERRIDES it (a leaf
+    returns itself, a compound recurses into its children, a scope-owner masks
+    its bound names before recursing, a ``Name`` binds) or inherits this throw.
+
+    There is deliberately NO permissive "recurse by default": a silent default
+    would let a newly-added scope-owning node CAPTURE -- substitute an outer
+    name into a body that rebinds it -- and never say so. So substitution is
+    written per node, coverage visible in the hierarchy, and the one hazard
+    (a binder that has not been taught to mask) cannot slip in quietly: an
+    unwritten node is loud here, not a silent wrong answer.
+    """
+
+    _LABEL = "SUBSTITUTE NOT WRITTEN"
+
+
 class BackendDefect(SourceTreePanic):
     """The backend, or its adapter's translation of it, produced something
     structurally invalid: an out-of-range position, a degenerate span, a
