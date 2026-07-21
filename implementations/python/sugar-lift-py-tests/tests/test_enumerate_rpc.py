@@ -487,6 +487,61 @@ def test_assertions_and_facts_carry_the_fol(project: Path) -> None:
         assert cid == blake3_512_of(canonical)
 
 
+def test_fact_construction_rewrites_enclosing_temporal_scope(tmp_path: Path) -> None:
+    """A fact is constructed from the rewritten function, not its raw Assert.
+
+    This is the bad twin for the old caller-side bypass: direct
+    ``assert_node.sugar()`` left ``x`` symbolic even though the preceding
+    assignment had already fixed it to 2.
+    """
+    (tmp_path / "temporal.py").write_text(
+        "def add(a):\n    return a\n\n"
+        "def test_bound():\n    x = 2\n    assert add(x) == 2\n",
+        encoding="utf-8",
+    )
+    file_key = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    functions = {
+        n["memento"]["function_name"]: n["memento"]
+        for n in _enumerate("functions", tmp_path, at=file_key)["nodes"]
+    }
+    assertion = _enumerate("call_sites", tmp_path, at=functions["test_bound"])["nodes"][
+        0
+    ]["memento"]
+    result = _enumerate("facts", tmp_path, at=assertion, seek=True)
+    formula = result["nodes"][0]["payload"]
+    call = formula["args"][0]
+    argument = call["args"][0]
+    assert call["name"] == "call:add"
+    assert argument["kind"] == "const"
+    assert argument["value"] == 2
+
+
+def test_universe_cue_rewrites_temporal_callee_alias(tmp_path: Path) -> None:
+    """Callee discovery and argument application see the same rewritten tree."""
+    (tmp_path / "temporal_alias.py").write_text(
+        "def target(a):\n    return a\n\n"
+        "def test_alias():\n    callee = target\n    assert callee(1) == 1\n",
+        encoding="utf-8",
+    )
+    file_key = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
+    functions = {
+        n["memento"]["function_name"]: n["memento"]
+        for n in _enumerate("functions", tmp_path, at=file_key)["nodes"]
+    }
+    call_site = _enumerate("call_sites", tmp_path, at=functions["test_alias"])["nodes"][
+        0
+    ]["memento"]
+
+    universe = _enumerate("universe", tmp_path, at=call_site, seek=True)
+    assert universe["gaps"] == []
+    assert len(universe["nodes"]) == 1
+    assert universe["nodes"][0]["memento"]["source_function_name"] == "target"
+
+    implication = _enumerate("implications", tmp_path, at=call_site, seek=True)
+    assert implication["gaps"] == []
+    assert implication["nodes"][0]["audit"]["targetSymbol"] == "call:target"
+
+
 def test_every_formula_bearing_enumerate_level_is_closed(project: Path) -> None:
     def refs(value):
         found = set()

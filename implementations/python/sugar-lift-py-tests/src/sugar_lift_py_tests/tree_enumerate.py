@@ -62,7 +62,7 @@ def call_target_names(sf: SourceFile, span: Optional[dict]) -> list:
     (the tree kept the names the factory had to reconstruct)."""
     from sugar_source_tree.nodes import Call, Name
 
-    node = find_assert(sf, span)
+    _source, node = temporally_rewritten_assert(sf, span)
     if node is None:
         return []
     names = []
@@ -80,11 +80,58 @@ def find_assert(sf: SourceFile, span: Optional[dict]):
     return None
 
 
+def temporally_rewritten_assert(sf: SourceFile, span: Optional[dict]):
+    """Return ``(source_assert, rewritten_assert)`` for an exact locus.
+
+    An assertion is not a construction root.  Its meaning depends on every
+    binding before it in the enclosing function (or module), so constructing
+    its Sugar directly from the parser-backed tree is a temporal side door.
+    Find the narrowest enclosing function, rewrite that scope as a block, and
+    only then return the assertion on which callers may invoke ``sugar()``.
+
+    The source node is returned separately because its fragment/memento is the
+    durable address.  Shadow rewrites deliberately borrow that address, but
+    keeping the two roles explicit prevents a future caller from mistaking
+    source lookup for construction readiness.
+    """
+    source_assert = find_assert(sf, span)
+    if source_assert is None:
+        return None, None
+
+    target = source_assert.line_col_span()
+
+    def contains(node) -> bool:
+        locus = node.line_col_span()
+        return (
+            locus.start_line <= target.start_line and locus.end_line >= target.end_line
+        )
+
+    owners = [fn for fn in sf.functions() if contains(fn)]
+    if owners:
+        # Nested functions are also yielded by SourceFile.functions(); temporal
+        # ownership belongs to the narrowest one, never its enclosing function.
+        owner = min(
+            owners,
+            key=lambda fn: (
+                fn.line_col_span().end_line - fn.line_col_span().start_line,
+                fn.line_col_span().end_col - fn.line_col_span().start_col,
+            ),
+        )
+        rewritten_owner = owner.substitute({})
+    else:
+        # Module assertions are temporally owned by the module block.
+        rewritten_owner = sf.root.substitute({})
+
+    for node in rewritten_owner.walk():
+        if isinstance(node, Assert) and _span_matches(node, span or {}):
+            return source_assert, node
+    return source_assert, None
+
+
 def _span_matches(node, span: dict) -> bool:
     lc = node.line_col_span()
-    return (
-        lc.start_line == span.get("start_line")
-        and lc.start_col == span.get("start_col")
+    return lc.start_line == span.get("start_line") and lc.start_col == span.get(
+        "start_col"
     )
 
 
@@ -110,8 +157,10 @@ def assert_memento(node, file_rel: str) -> dict:
 def fact_of(node) -> Optional[Any]:
     """Desugar the assertion; its InvValue's formula is the fact, on the wire.
 
-    None when the assertion emits no fact (e.g. inert support). No factory,
-    no context: a self-contained assertion desugars context-free.
+    ``node`` must be the result of ``temporally_rewritten_assert``, never the
+    parser-backed lookup node.  None when the assertion emits no fact (e.g.
+    inert support). No factory and no ambient context: the enclosing tree has
+    already expressed the temporal state.
     """
     import json
 
@@ -218,7 +267,7 @@ def call_nodes_in_assert(sf: SourceFile, span: Optional[dict]) -> list:
     nodes -- the pre this call fills."""
     from sugar_source_tree.nodes import Call, Name
 
-    node = find_assert(sf, span)
+    _source, node = temporally_rewritten_assert(sf, span)
     if node is None:
         return []
     return [
