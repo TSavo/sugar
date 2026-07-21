@@ -124,6 +124,20 @@ def _abstract(cls: type) -> type:
     return cls
 
 
+class _Splice:
+    """A substitute result that EXPANDS one statement into several. Returned by
+    ``For.substitute`` when a concrete loop unrolls: the loop dissolves into its
+    body statements, and ``_substitute_body`` splices them into the enclosing
+    block so the loop's carried accumulator is just ordinary block-threading.
+    Not a Node -- only ``_substitute_body`` handles it, and a `for` is always a
+    statement in a block, so it is never substituted anywhere else."""
+
+    __slots__ = ("statements",)
+
+    def __init__(self, statements: tuple) -> None:
+        self.statements = statements
+
+
 @_abstract
 @dataclass(frozen=True, eq=False, repr=False, kw_only=True)
 class Node(Typed):
@@ -307,17 +321,24 @@ class Node(Typed):
             new_stmt = stmt.substitute(scope)
             if new_stmt is not stmt:
                 changed = True
-            new_items.append(new_stmt)
-            binding = new_stmt.substitution_binding(scope)
-            if binding:
-                scope = {**scope, **binding}
-            # walrus bindings nested inside the statement's expressions leak out
-            # to the enclosing block (their scope is the containing function).
-            for node in new_stmt.walk():
-                if node.kind == "NamedExpr":
-                    wb = node.substitution_binding(scope)
-                    if wb:
-                        scope = {**scope, **wb}
+            # A statement may EXPAND into several: a `for` over a concrete
+            # iterable dissolves into its unrolled body statements, spliced right
+            # here so the block threads each one -- the loop's carried accumulator
+            # is just ordinary block-threading over the unrolled sequence. The
+            # expanded statements are already substituted; thread their bindings.
+            produced = new_stmt.statements if isinstance(new_stmt, _Splice) else (new_stmt,)
+            for produced_stmt in produced:
+                new_items.append(produced_stmt)
+                binding = produced_stmt.substitution_binding(scope)
+                if binding:
+                    scope = {**scope, **binding}
+                # walrus bindings nested in the statement's expressions leak out
+                # to the enclosing block (their scope is the containing function).
+                for node in produced_stmt.walk():
+                    if node.kind == "NamedExpr":
+                        wb = node.substitution_binding(scope)
+                        if wb:
+                            scope = {**scope, **wb}
         return (tuple(new_items) if changed else statements), changed
 
     def _bound_names_in(self, target: "Node") -> set:
@@ -906,55 +927,58 @@ class For(Statement):
     _child_fields = ("target", "iter", "body", "orelse")
 
     def substitute(self, scope):
-        """for <target> in <iter>: binds the loop target for body/orelse."""
+        """`for <target> in <iter>: <body>` -- a loop is a FOLD, and over a
+        CONCRETE iterable it DISSOLVES: the fold has known length, so it unrolls.
+        The body is threaded once per element (the target rebound to that
+        element, every loop-carried variable threaded forward exactly as a
+        straight-line block threads its assignments -- `t = t + x` reads the
+        previous iteration's t), and the unrolled statements are SPLICED into the
+        enclosing block via ``_Splice``. The `for` node itself is gone; its
+        carried accumulator is now just block-threading over the unrolled
+        sequence, and there is no loop-sugar left to write.
+
+        A SYMBOLIC iterable is the real fold (carried variables become fold terms,
+        the body a universal `forall x in iter`); it is not lifted yet, so it
+        keeps the `for` node (masking the target) and inherits the loud
+        SugarNotWritten. `else` and a tuple target likewise stay loud."""
         from .shadow import rewrite
+
+        new_iter, iter_changed = self._substitute_field(self.iter, scope)
+        subst_iter = new_iter if iter_changed else self.iter
+
+        concrete = (
+            not self.orelse
+            and self.target.kind == "Name"
+            and subst_iter.kind in ("List", "Tuple_")
+        )
+        if concrete:
+            target_name = self.target.id
+            unrolled: list = []
+            carried = dict(scope)  # carries loop variables across iterations
+            for element in subst_iter.elts:
+                iter_scope = {**carried, target_name: element}
+                new_body, _c = self._substitute_body(self.body, iter_scope)
+                unrolled.extend(new_body)
+                # thread this iteration's bindings forward (the carried fold),
+                # never the loop target itself (rebound next iteration).
+                for stmt in new_body:
+                    b = stmt.substitution_binding(iter_scope)
+                    if b:
+                        iter_scope = {**iter_scope, **b}
+                carried = {k: v for k, v in iter_scope.items() if k != target_name}
+            return _Splice(tuple(unrolled))
+
+        # Symbolic (or unsupported) loop: keep the node, mask the target, recurse.
         bound = self._bound_names_in(self.target)
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         changed = {}
-        new_iter, d = self._substitute_field(self.iter, scope)
-        if d:
+        if iter_changed:
             changed["iter"] = new_iter
         for f in ("body", "orelse"):
             new, d = self._substitute_body(getattr(self, f), bs)
             if d:
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
-
-    def sugar(self):
-        """`for <target> in <iter>: <body>` -- a loop is a FOLD, and it DISSOLVES.
-
-        Over a CONCRETE iterable (a list/tuple display) the fold has a known
-        length: it unrolls. Each element re-substitutes the loop target into the
-        body -- the loop projecting the body once per element, `map` as a count
-        of rewrites -- and the body reduces to its constraints, concatenated. No
-        loop-sugar survives; the body's facts are just stated N times.
-
-        A SYMBOLIC iterable is the real fold (carried variables become fold terms,
-        the body's asserts a universal `forall x in iter`) and is not lifted yet
-        -- it inherits the loud throw. A tuple target, `else`, and a loop-carried
-        variable (a name the body assigns) are likewise held loud in this first
-        cut: unrolling a carried accumulator needs the fold-threading the
-        symbolic case introduces.
-        """
-        from sugar_lift_py_tests.sugar.for_sugar import ForSugar
-
-        if self.orelse or self.target.kind != "Name":
-            return super().sugar()  # for-else / tuple target not written
-        if self.iter.kind not in ("List", "Tuple_"):
-            return super().sugar()  # symbolic iterable -- the real fold, loud
-        # A loop-carried variable (any name the body binds for its tail) needs
-        # fold-threading between iterations -- symbolic-fold territory.
-        if any(stmt.substitution_binding({}) for stmt in self.body):
-            return super().sugar()
-
-        # Unroll: the body reduced once per element, target re-substituted, the
-        # results flattened into one block. `map` as a count of rewrites.
-        target_name = self.target.id
-        unrolled: list = []
-        for element in self.iter.elts:
-            body, _changed = self._substitute_body(self.body, {target_name: element})
-            unrolled.extend(stmt.sugar() for stmt in body)
-        return ForSugar(statements=tuple(unrolled), site=self.fragment)
 
 
 class AsyncFor(Statement):
