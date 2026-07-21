@@ -86,6 +86,23 @@ class SugarNotWritten(SourceTreePanic):
     _LABEL = "SUGAR NOT WRITTEN"
 
 
+class SubstituteNotWritten(SourceTreePanic):
+    """Nobody has written this node's substitution yet. Raised by the abstract
+    ``Node.substitute()``; every concrete class either OVERRIDES it (a leaf
+    returns itself, a compound recurses into its children, a scope-owner masks
+    its bound names before recursing, a ``Name`` binds) or inherits this throw.
+
+    There is deliberately NO permissive "recurse by default": a silent default
+    would let a newly-added scope-owning node CAPTURE -- substitute an outer
+    name into a body that rebinds it -- and never say so. So substitution is
+    written per node, coverage visible in the hierarchy, and the one hazard
+    (a binder that has not been taught to mask) cannot slip in quietly: an
+    unwritten node is loud here, not a silent wrong answer.
+    """
+
+    _LABEL = "SUBSTITUTE NOT WRITTEN"
+
+
 class BackendDefect(SourceTreePanic):
     """The backend, or its adapter's translation of it, produced something
     structurally invalid: an out-of-range position, a degenerate span, a

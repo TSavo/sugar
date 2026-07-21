@@ -11,7 +11,10 @@ recursion through a compound.
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_source_tree.panic import SubstituteNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -66,8 +69,19 @@ def test_compound_just_recurses():
     assert rewritten.right.kind == "Constant" and rewritten.right.value == 5  # 5 inert
 
 
+def test_a_binder_without_a_masking_substitute_panics_loudly():
+    # FunctionDef binds `x` (its parameter). It has no substitute written, so
+    # rather than SILENTLY capturing an outer `x` into its body, the abstract
+    # throws. There is no permissive recurse-by-default -- the capture hazard is
+    # loud, and coverage is visible in the hierarchy.
+    fn = next(_tree("def f(x):\n    return x + 5\n").functions())
+    with pytest.raises(SubstituteNotWritten):
+        fn.substitute({"x": _bind_target()})
+
+
 if __name__ == "__main__":
     test_integer_literal_is_the_inert_terminus()
     test_name_is_the_one_base_case_that_binds()
     test_compound_just_recurses()
-    print("ok: substitute proven at the integer literal (inert), Name (binds), compound (recurses)")
+    test_a_binder_without_a_masking_substitute_panics_loudly()
+    print("ok: substitute -- int literal inert, Name binds, compound recurses, binder panics")

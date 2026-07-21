@@ -44,7 +44,12 @@ from .operators import (
     ComparisonOperator,
     UnaryOperator,
 )
-from .panic import SourceTreePanic, SugarNotWritten, vocabulary_missing
+from .panic import (
+    SourceTreePanic,
+    SubstituteNotWritten,
+    SugarNotWritten,
+    vocabulary_missing,
+)
 from .reporter import NULL_REPORTER, AuditReporter
 from .spans import LineColSpan, LineTable, Span
 
@@ -202,21 +207,39 @@ class Node(Typed):
         return override if isinstance(override, str) else type(self).__name__
 
     def substitute(self, scope: "dict[str, Node]") -> "Node":
-        """Rewrite this node against a scope (name -> bound node).
-
-        The whole verb, and it has no cases: substitute every child; if any
-        child changed, rebuild me around the substituted children (a shadow
-        node borrowing my span); if none changed, I am unchanged and I return
-        myself. That's it — a body block substitutes its statements, a BinOp
-        its left and right, a Call its receiver and args, none of them
-        "knowing about" substitution: they pass it down and reassemble.
-
-        Only ``Name`` overrides this, as the one base case that BINDS — it
-        swaps itself for its bound node. Every other leaf — a literal, an
-        operator — has no children and no hole, so the loop finds nothing to
-        change and this default returns it unchanged. The rewritten tree is
-        the state; there is no environment threaded alongside.
+        """This node's substitution — the temporal rewrite that binds a hole to
+        its shape. Every concrete class writes it deliberately: a leaf returns
+        itself, a compound recurses (``_substitute_children``), a scope-owner
+        masks its bound names before recursing, a ``Name`` binds. There is NO
+        permissive recurse-by-default — a silent default would let a binding
+        node capture (rewrite an outer name into a body that rebinds it) and
+        never say so. So the abstract throws: writing the override IS writing
+        the substitution, coverage visible in the hierarchy, the capture hazard
+        loud rather than silent.
         """
+        where = f"{self.unit.filename}"
+        try:
+            lc = self.line_col_span()
+            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
+        except SourceTreePanic:
+            pass
+        raise SubstituteNotWritten(
+            owner=f"{type(self).__name__}.substitute",
+            observed=f"{self.kind} at {where} has no substitution written",
+            requested="a deliberate substitution (recurse, mask, bind, or inert)",
+            fix=(
+                f"write substitute() on {type(self).__name__}: a leaf returns "
+                "self, a compound returns self._substitute_children(scope), a "
+                "scope-owner masks its bound names first; never a silent default"
+            ),
+        )
+
+    def _substitute_children(self, scope: "dict[str, Node]") -> "Node":
+        """The structural recurse a NON-binding compound opts into: substitute
+        every child; if any changed, rebuild me around them (a shadow node
+        borrowing my span); if none changed, return myself. A node calls this
+        DELIBERATELY — it is never the silent default, because a scope-owner
+        must mask its bound names before it can use it safely."""
         from .shadow import rewrite
 
         changed: dict[str, object] = {}
@@ -691,6 +714,11 @@ class BinOp(Expression):
     right: Expression
     _child_fields = ("left", "right")
 
+    def substitute(self, scope):
+        """A binary operation binds nothing: it just recurses into its two
+        operands and reassembles. The op itself is a leaf, carried through."""
+        return self._substitute_children(scope)
+
     def sugar(self):
         """`<left> <op> <right>` constructs BinOpSugar WITH both sides' sugars.
         The node already knows its operator, so one sugar dispatches to the
@@ -850,6 +878,11 @@ class JoinedStr(Expression):
 class Constant(Expression):
     value: object
     literal_kind: Optional[str]
+
+    def substitute(self, scope):
+        """A literal is inert: no children, no hole, so it substitutes to
+        itself under any scope. The terminus of the rewrite."""
+        return self
 
     def sugar(self):
         """A literal constructs its literal sugar directly — a leaf: no child
