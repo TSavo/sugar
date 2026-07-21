@@ -35,9 +35,23 @@ def test_empty_concrete_for_states_nothing():
     assert invs == ()
 
 
-def test_symbolic_iterable_stays_loud():
+def test_symbolic_assert_only_loop_is_a_universal():
+    # for x in xs: assert P(x)  over a symbolic (formal) xs is the degenerate
+    # fold -- forall x. member(x, xs) -> P(x). The loop no longer sinks the
+    # function; it emits its FOL universal.
+    inv = _invs("def A(z, xs):\n    for x in xs:\n        assert x == z\n    return z\n")[0]
+    assert inv.kind == "forall"
+    body = inv.body  # member(x, xs) -> (x == z)
+    assert body.kind == "implies"
+    assert body.operands[0].name == "py.in"  # member(x, xs)
+    assert body.operands[1].name == "py.eq"  # x == z
+
+
+def test_symbolic_carried_accumulator_stays_loud():
+    # A carried accumulator over a symbolic iterable is the non-degenerate fold,
+    # not written yet -- still loud.
     with pytest.raises(SugarNotWritten):
-        _fn("def A(z, xs):\n    for x in xs:\n        assert x == z\n    return z\n").sugar()
+        _fn("def A(xs):\n    t = 0\n    for x in xs:\n        t = t + x\n    return t\n").sugar()
 
 
 def test_loop_carried_accumulator_folds_over_a_concrete_iterable():
@@ -58,7 +72,8 @@ def test_tuple_target_stays_loud():
 if __name__ == "__main__":
     test_concrete_for_unrolls_the_body_per_element()
     test_empty_concrete_for_states_nothing()
-    test_symbolic_iterable_stays_loud()
+    test_symbolic_assert_only_loop_is_a_universal()
+    test_symbolic_carried_accumulator_stays_loud()
     test_loop_carried_accumulator_folds_over_a_concrete_iterable()
     test_tuple_target_stays_loud()
     print("ok: concrete for unrolls; symbolic/carried/tuple-target loud")
