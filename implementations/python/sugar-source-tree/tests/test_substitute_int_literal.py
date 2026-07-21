@@ -95,14 +95,30 @@ def test_a_block_threads_its_assignments():
     assert retg.value.value == 2
 
 
+def test_binders_mask_their_bound_names():
+    # for x in xs: return x -- the loop target x is masked for the body, so an
+    # outer x cannot capture it; the loop comes back unchanged.
+    forfn = next(_tree("def f(xs):\n    for x in xs:\n        return x\n").functions())
+    assert forfn.substitute({"x": _bind_target()}) is forfn
+    # lambda z: z + 1 -- the parameter z is masked for the body.
+    lam = next(n for n in _tree("g = lambda z: z + z\n").root.walk() if n.kind == "Lambda")
+    assert lam.substitute({"z": _bind_target()}) is lam
+    # [i for i in xs] -- the comprehension loop var i is masked (no capture);
+    # a free var in the element substitutes.
+    c1 = next(n for n in _tree("a = [i for i in xs]\n").root.walk() if n.kind == "ListComp")
+    assert c1.substitute({"i": _bind_target()}) is c1
+    c2 = next(n for n in _tree("a = [y for i in xs]\n").root.walk() if n.kind == "ListComp")
+    assert c2.substitute({"y": _bind_target()}).elt.value == 3
+
+
 def test_an_unwritten_binder_still_panics():
-    # Lambda binds its own parameter and has no masking substitute yet: rather
-    # than silently capturing, it is loud -- coverage visible in the hierarchy.
-    lam = next(
-        n for n in _tree("f = lambda z: z + 1\n").root.walk() if n.kind == "Lambda"
+    # NamedExpr (walrus) binds into the enclosing scope and has no substitute
+    # yet: rather than silently mishandling it, it is loud -- the drain names it.
+    walrus = next(
+        n for n in _tree("a = (x := 5)\n").root.walk() if n.kind == "NamedExpr"
     )
     with pytest.raises(SubstituteNotWritten):
-        lam.substitute({"z": _bind_target()})
+        walrus.substitute({"x": _bind_target()})
 
 
 if __name__ == "__main__":
@@ -110,6 +126,7 @@ if __name__ == "__main__":
     test_name_is_the_one_base_case_that_binds()
     test_compound_just_recurses()
     test_function_masks_its_parameter()
+    test_binders_mask_their_bound_names()
     test_an_unwritten_binder_still_panics()
     print(
         "ok: substitute -- literal inert, Name binds, compound recurses, "
