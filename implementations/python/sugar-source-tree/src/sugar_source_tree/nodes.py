@@ -966,6 +966,8 @@ class For(Statement):
             return _Splice(tuple(unrolled))
 
         # Symbolic (or unsupported) loop: keep the node, mask the target, recurse.
+        # It stays a `for` and reaches `For.sugar` -- a symbolic loop is not a
+        # dead unroll, it is the universal / fold over the hole.
         bound = self._bound_names_in(self.target)
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         changed = {}
@@ -976,6 +978,25 @@ class For(Statement):
             if d:
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
+
+    def sugar(self):
+        """A loop that did NOT dissolve in substitute is symbolic: its iterable
+        is a hole (a formal), so it cannot unroll. Its meaning is the FOL that was
+        always there. An assert-only body is the degenerate fold -- a universal
+        `forall x in xs: P(x)` (ForUniversalSugar). A carried accumulator (the
+        non-degenerate fold) and a tuple target / else stay loud until written."""
+        from sugar_lift_py_tests.sugar.for_universal_sugar import ForUniversalSugar
+
+        if self.orelse or self.target.kind != "Name":
+            return super().sugar()
+        if any(stmt.substitution_binding({}) for stmt in self.body):
+            return super().sugar()  # carried accumulator -- the fold, not yet
+        return ForUniversalSugar(
+            target=self.target.id,
+            iterable=self.iter.sugar(),
+            body=tuple(s.sugar() for s in self.body),
+            site=self.fragment,
+        )
 
     def _concrete_elements(self, iterable: "Expression") -> "Optional[list]":
         """The element nodes to unroll over, or ``None`` if `iterable` is not

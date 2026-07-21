@@ -54,11 +54,13 @@ def test_loop_carried_accumulator_folds_over_a_concrete_range():
     assert post.args[1].value == 6
 
 
-def test_symbolic_range_bound_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(z, n):\n    for i in range(n):\n        assert i == z\n    return z\n"
-        ).sugar()
+def test_symbolic_range_bound_is_a_universal():
+    # range(n) with symbolic n is not concrete, so the assert-only loop emits
+    # its universal forall i. member(i, range(n)) -> P(i) -- not loud.
+    inv = _fn(
+        "def A(z, n):\n    for i in range(n):\n        assert i == z\n    return z\n"
+    ).sugar().desugar().value.invs()[0]
+    assert inv.kind == "forall"
 
 
 if __name__ == "__main__":
@@ -67,5 +69,5 @@ if __name__ == "__main__":
     test_range_start_stop_step_unrolls_the_body_per_element()
     test_empty_range_states_nothing()
     test_loop_carried_accumulator_folds_over_a_concrete_range()
-    test_symbolic_range_bound_stays_loud()
+    test_symbolic_range_bound_is_a_universal()
     print("ok: concrete range unrolls; symbolic range stays loud")
