@@ -46,6 +46,13 @@ class Sugar(ABC):
         """Reduce this sugar to an Outcome, recursively desugaring its body
         sugars. The one semantic verb; a sugar constructed with sugar."""
 
+    def reduce(self, ctx: object = None) -> Outcome:
+        """A sugar reduces by desugaring. Alias so a tree-constructed sugar can
+        stand directly where a reducible is expected -- a BoundVar source, a
+        deferred rhs -- without the factory's SugarBody wrapper (whose only job
+        there was to call desugar). One verb, two names for one caller shape."""
+        return self.desugar(ctx)
+
     def walk_children(self) -> tuple[SugarBody, ...]:
         # Default: a leaf. Sugars that hold SugarBody children override to
         # return them in source order -- the factory walk projects those.

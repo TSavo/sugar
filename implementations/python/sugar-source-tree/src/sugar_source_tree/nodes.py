@@ -452,6 +452,21 @@ class Assign(Statement):
     value: Expression
     _child_fields = ("targets", "value")
 
+    def sugar(self):
+        """`<name> = <rhs>` constructs AssignSugar WITH the rhs's sugar (held as
+        the deferred source). Single Name target only: tuple/attribute/subscript
+        targets and chained `a = b = c` stay loud gaps until their own sugars
+        are written -- never a partial binding."""
+        if len(self.targets) != 1 or not isinstance(self.targets[0], Name):
+            return super().sugar()
+        from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
+
+        return AssignSugar(
+            name=self.targets[0].id,
+            value=self.value.sugar(),
+            site=self.fragment,
+        )
+
 
 class AugAssign(Statement):
     target: Expression

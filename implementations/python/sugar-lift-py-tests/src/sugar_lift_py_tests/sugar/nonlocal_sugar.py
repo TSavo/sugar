@@ -56,43 +56,16 @@ class NonlocalRoute(FloorValue):
 
 
 @dataclass(frozen=True)
-class NonlocalSugar(Sugar, role=SugarRole.STATEMENT):
-    """Route read-only declarations to the captured enclosing lexical frame."""
+class NonlocalSugar(Sugar):
+    """Route read-only declarations to the captured enclosing lexical frame.
+
+    Meaning-only, node-constructed (no owns/new/role). The tree's Nonlocal node
+    is not yet given a `.sugar()`, so this is not constructed from the tree yet
+    -- it lives here as the meaning (and so `reject_unconstructed_nonlocal_store`
+    / NonlocalRoute below stay importable by BoundVar.extend_scope)."""
 
     names: tuple[str, ...]
     site: object = dataclass_field(compare=False)
-
-    @classmethod
-    def owns(cls, fragment) -> bool:
-        return fragment.observed == "Nonlocal"
-
-    @classmethod
-    def new(cls, site, ctx) -> "NonlocalSugar":
-        del ctx
-        names = tuple(site.node.names)
-        source = site.source
-        if not isinstance(source, str):
-            factory_panic_gap(
-                owner=cls.__name__,
-                blame=site,
-                observed=names[0] if len(names) == 1 else names,
-                requested="bound enclosing lexical name",
-                fix="construct NonlocalSugar from its complete lexical source",
-            )
-        try:
-            compile(source, site.filename, "exec")
-        except SyntaxError:
-            factory_panic_gap(
-                owner=cls.__name__,
-                blame=site,
-                observed=names[0] if len(names) == 1 else names,
-                requested="bound enclosing lexical name",
-                fix=(
-                    "bind every declared name in an enclosing function scope; "
-                    "an invalid nonlocal declaration cannot be lifted"
-                ),
-            )
-        return cls(names=names, site=site)
 
     @classmethod
     def witnesses(cls):
