@@ -306,6 +306,10 @@ class Node(Typed):
         return materialize(self.unit, ShadowNode("BinOp", self.span, slots), self.reporter)
 
     def _substitute_body(self, statements: tuple, scope: "dict[str, Node]"):
+        new_items, changed, _net = self._substitute_body_tracked(statements, scope)
+        return new_items, changed
+
+    def _substitute_body_tracked(self, statements: tuple, scope: "dict[str, Node]"):
         """Substitute a statement sequence, THREADING each statement's binding:
         an assignment binds its name to its substituted rhs for the rest of the
         block. This is the temporal that used to live in ``ctx.temporal`` -- now
@@ -316,6 +320,7 @@ class Node(Typed):
         ``(new_statements, changed)``."""
         from sugar_lift_py_tests.engine_log import reduction_span
 
+        initial = dict(scope)
         scope = dict(scope)
         new_items = []
         changed = False
@@ -347,7 +352,8 @@ class Node(Typed):
                         wb = node.substitution_binding(scope)
                         if wb:
                             scope = {**scope, **wb}
-        return (tuple(new_items) if changed else statements), changed
+        net = {k: v for k, v in scope.items() if initial.get(k) is not v}
+        return (tuple(new_items) if changed else statements), changed, net
 
     def _bound_names_in(self, target: "Node") -> set:
         """The names an assignment/for/with/lambda target binds. A Name binds;
@@ -1010,11 +1016,7 @@ class For(Statement):
         # stays, not `total = 0 + x`) so substitution_binding can read the fold;
         # the pre-loop value seeds it from the outer scope. A symbolic loop is not
         # a dead unroll -- it is the universal / fold over the hole.
-        bound = self._bound_names_in(self.target)
-        for stmt in self.body:
-            b = stmt.substitution_binding({})
-            if b:
-                bound = bound | set(b)
+        bound = self._bound_names_in(self.target) | For._stmts_bound_names(self.body)
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         changed = {}
         if iter_changed:
@@ -1025,6 +1027,36 @@ class For(Statement):
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
 
+    @staticmethod
+    def _stmts_bound_names(statements) -> set:
+        """The names any statement (at any depth) binds -- the structural twin
+        of _stmts_bind, for the symbolic-loop carried-name mask."""
+        names: set = set()
+        for stmt in statements:
+            for n in stmt.walk():
+                if n.kind in ("Assign",):
+                    for t in n.targets:
+                        if t.kind == "Name":
+                            names.add(t.id)
+                elif n.kind in ("AugAssign", "AnnAssign", "NamedExpr"):
+                    t = n.target
+                    if t.kind == "Name":
+                        names.add(t.id)
+        return names
+
+    @staticmethod
+    def _stmts_bind(statements) -> bool:
+        """True when any statement (at any depth) binds a name for a tail --
+        Assign/AugAssign/AnnAssign or a walrus. STRUCTURAL, not a binding read:
+        an If no longer reports its branch bindings (phis are spliced at
+        substitute time), so classification walks the source shape instead of
+        asking for bindings that are only materialized during substitution."""
+        return any(
+            n.kind in ("Assign", "AugAssign", "AnnAssign", "NamedExpr")
+            for stmt in statements
+            for n in stmt.walk()
+        )
+
     def _carried_and_facts(self):
         """Split the body into carried assignments (statements that bind a name
         for the tail -- the fold's update) and fact statements (asserts, the rest
@@ -1033,7 +1065,7 @@ class For(Statement):
         (point 3), left loud."""
         carried, facts = [], []
         for stmt in self.body:
-            (carried if stmt.substitution_binding({}) else facts).append(stmt)
+            (carried if For._stmts_bind((stmt,)) else facts).append(stmt)
         return carried, facts
 
     def substitution_binding(self, scope):
@@ -1270,11 +1302,7 @@ class While(Statement):
 
         # Symbolic (or unsupported) while: keep the node; mask the carried
         # names (any name the body rebinds) so the update stays symbolic.
-        bound = set()
-        for stmt in self.body:
-            b = stmt.substitution_binding({})
-            if b:
-                bound |= set(b)
+        bound = For._stmts_bound_names(self.body)
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         changed = {}
         new_test, d = self._substitute_field(self.test, bs)
@@ -1345,69 +1373,53 @@ class If(Statement):
     _child_fields = ("test", "body", "orelse")
 
     def substitute(self, scope):
-        """An if introduces no names into its own scope, but each branch is a
-        sub-block that threads its OWN assignments. So: substitute the test, then
-        thread each branch body (its within-branch bindings inline), and rebuild.
-        What a name binds to AFTER the if is the phi -- that is
-        ``substitution_binding``, not this."""
+        """An if introduces no names into its own scope; each branch is a
+        sub-block that threads its OWN assignments. The branch-carried bindings
+        become the PHI, emitted HERE, ONCE, as explicit spliced SSA assignments
+        after the if: `x = <then> if <test> else <else>`. Resolve at
+        construction -- the reads downstream are O(1) Assign bindings, never a
+        re-walk of the branches (the re-read was 2^nesting on real code)."""
         from .shadow import rewrite
 
         changed = {}
         new_test, d = self._substitute_field(self.test, scope)
         if d:
             changed["test"] = new_test
-        new_body, d = self._substitute_body(self.body, scope)
+        test = new_test if d else self.test
+        new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
         if d:
             changed["body"] = new_body
-        new_orelse, d = self._substitute_body(self.orelse, scope)
+        new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, scope)
         if d:
             changed["orelse"] = new_orelse
-        return self if not changed else rewrite(self, **changed)
+        node = self if not changed else rewrite(self, **changed)
 
-    def _branch_bindings(self, statements, scope):
-        """The net bindings an ALREADY-SUBSTITUTED branch leaves for the rest of
-        its block. The statements were substituted (threaded) by
-        ``If.substitute``; re-substituting them here would redo every subtree
-        once per enclosing if -- 2^nesting, the second computation. So this only
-        READS: each statement's ``substitution_binding`` (whose values are the
-        already-threaded nodes) plus any nested walrus, threading the local map
-        so an AugAssign-style binding sees its predecessor."""
-        local = dict(scope)
-        touched: "dict[str, Node]" = {}
-        for stmt in statements:
-            binding = stmt.substitution_binding(local)
-            if binding:
-                local = {**local, **binding}
-                touched.update(binding)
-            for node in stmt.walk():
-                if node.kind == "NamedExpr":
-                    wb = node.substitution_binding(local)
-                    if wb:
-                        local = {**local, **wb}
-                        touched.update(wb)
-        return touched
-
-    def substitution_binding(self, scope):
-        """The phi. A name bound in either branch rebinds, for the rest of the
-        block, to ``<then value> if <test> else <else value>`` -- an ``IfExp``
-        whose two arms are the branches' values and whose test is the condition.
-        A name bound in only one branch takes its PRIOR binding in the other arm;
-        with no prior binding the other arm would be an invented value, so we
-        leave that name an honest gap (unbound) rather than guess."""
-        then_binds = self._branch_bindings(self.body, scope)
-        else_binds = self._branch_bindings(self.orelse, scope)
-        names = set(then_binds) | set(else_binds)
-        if not names:
-            return None
-        test = self.test.substitute(scope)
-        result: "dict[str, Node]" = {}
-        for name in names:
-            then_val = then_binds.get(name, scope.get(name))
-            else_val = else_binds.get(name, scope.get(name))
+        names = set(then_net) | set(else_net)
+        phis = []
+        for name in sorted(names):
+            then_val = then_net.get(name, scope.get(name))
+            else_val = else_net.get(name, scope.get(name))
             if then_val is None or else_val is None:
                 continue  # bound in one branch, no prior: honest gap, not a guess
-            result[name] = self._make_ifexp(test, then_val, else_val)
-        return result or None
+            phis.append(
+                self._make_assign(name, self._make_ifexp(test, then_val, else_val))
+            )
+        if not phis:
+            return node
+        return _Splice((node, *phis))
+
+    def _make_assign(self, name: str, value: "Node") -> "Node":
+        """Synthesize `name = <value>` -- the phi as an explicit SSA assignment,
+        borrowing this if's span."""
+        from .backend import Child, Children, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        target = For._make_name(self, name)
+        slots = (
+            ("targets", Children((_handle_of(target),))),
+            ("value", Child(_handle_of(value))),
+        )
+        return materialize(self.unit, ShadowNode("Assign", self.span, slots), self.reporter)
 
     def _make_ifexp(self, test: "Node", body: "Node", orelse: "Node") -> "Node":
         """Synthesize ``<body> if <test> else <orelse>`` as a shadow IfExp that
