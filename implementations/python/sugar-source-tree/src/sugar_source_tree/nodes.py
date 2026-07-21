@@ -1692,7 +1692,17 @@ class Constant(Expression):
 
             return NoneLiteralSugar(site=self.fragment)
         if isinstance(v, bool):
-            return super().sugar()  # bool is its own sugar, not yet written
+            if v:
+                from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                    TrueBoolLiteralSugar,
+                )
+
+                return TrueBoolLiteralSugar(site=self.fragment)
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+
+            return FalseBoolLiteralSugar(site=self.fragment)
         if isinstance(v, int):
             from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 
