@@ -1261,6 +1261,17 @@ class BoolOp(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
+    def sugar(self):
+        """`a and b` / `a or b` constructs BoolOpSugar WITH each operand's sugar.
+        The node knows its connective (And/Or); the operands recognize themselves."""
+        from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
+
+        return BoolOpSugar(
+            op_kind=self.op.kind,
+            values=tuple(v.sugar() for v in self.values),
+            site=self.fragment,
+        )
+
 
 class NamedExpr(Expression):
     target: Expression
@@ -1323,6 +1334,21 @@ class UnaryOp(Expression):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def sugar(self):
+        """`<op> <operand>` constructs UnaryOpSugar WITH the operand's sugar. The
+        node already knows its operator; an operator with no floor method inherits
+        the base throw, never a silent default."""
+        from sugar_lift_py_tests.sugar.unary_op_sugar import (
+            UNARYOP_METHODS,
+            UnaryOpSugar,
+        )
+
+        if self.op.kind != "Not" and self.op.kind not in UNARYOP_METHODS:
+            return super().sugar()
+        return UnaryOpSugar(
+            op_kind=self.op.kind, operand=self.operand.sugar(), site=self.fragment
+        )
 
 
 class Lambda(Expression):
@@ -1618,6 +1644,15 @@ class Attribute(Expression):
     value: Expression
     attr: str
     _child_fields = ("value",)
+
+    def sugar(self):
+        """`<value>.<attr>` constructs AttributeSugar WITH the receiver's sugar.
+        The attr name is a static identifier carried onto the coordinate."""
+        from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
+
+        return AttributeSugar(
+            receiver=self.value.sugar(), name=self.attr, site=self.fragment
+        )
 
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
