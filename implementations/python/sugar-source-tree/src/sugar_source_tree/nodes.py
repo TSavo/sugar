@@ -2222,8 +2222,12 @@ class Call(Expression):
         `<name>(<args>)` -> CallSiteSugar, the call-site coordinate (THE DIG
         CUE). `<receiver>.<name>(<args>)` -> MethodCallSugar, the method
         coordinate `call:<name>(receiver, args)` with the receiver riding as
-        runtime_dispatch_receiver. Computed callees (`fs[i](x)`, lambdas called
-        inline) and keyword arguments stay loud gaps until written."""
+        runtime_dispatch_receiver. Any other callee expression (`fs[i](x)`,
+        `d["k"](x)`) -> ComputedCallSugar, the `py.call(callee, args)`
+        coordinate -- the callee reduces through whatever sugar its own node
+        built, so a callee with no sugar (a Lambda called inline) still stays
+        loud through the ordinary recursion. Keyword arguments stay loud gaps
+        until written."""
         if self.keywords:
             return super().sugar()
         if isinstance(self.func, Name):
@@ -2243,7 +2247,13 @@ class Call(Expression):
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
             )
-        return super().sugar()  # computed callee -- not written
+        from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
+
+        return ComputedCallSugar(
+            callee=self.func.sugar(),
+            args=tuple(a.sugar() for a in self.args),
+            site=self.fragment,
+        )
 
 
 class FormattedValue(Expression):

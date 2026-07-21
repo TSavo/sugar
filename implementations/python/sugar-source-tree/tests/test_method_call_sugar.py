@@ -49,15 +49,9 @@ def test_keyword_args_stay_loud():
         _fn("def A(z):\n    return z.get(1, default=2)\n").sugar()
 
 
-def test_computed_callee_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(fs, x):\n    return fs[0](x)\n").sugar()
-
-
 if __name__ == "__main__":
     test_method_call_is_the_method_coordinate()
     test_method_chains_compose()
     test_assert_consumes_the_coordinate()
     test_keyword_args_stay_loud()
-    test_computed_callee_stays_loud()
-    print("ok: method calls -- coordinate, chains, assert; kwargs/computed loud")
+    print("ok: method calls -- coordinate, chains, assert; kwargs loud")
