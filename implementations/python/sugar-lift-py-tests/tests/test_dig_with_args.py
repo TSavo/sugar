@@ -92,4 +92,25 @@ def test_hole_args_serve_the_abstract_contract():
 if __name__ == "__main__":
     test_ground_args_serve_the_applied_contract()
     test_hole_args_serve_the_abstract_contract()
+    test_applied_dig_fires_even_when_the_abstract_universe_is_a_gap()
     print("ok: dig-with-args -- ground fills and collapses, a hole stays curried")
+
+
+WHILE_HELPER = (
+    "def A(n):\n"
+    "    i = 0\n"
+    "    while i < n:\n"
+    "        i = i + 1\n"
+    "    return i\n\n"
+)
+
+
+def test_applied_dig_fires_even_when_the_abstract_universe_is_a_gap():
+    # The symbolic while has NO abstract universe (loud) -- but a ground call
+    # fills n, the condition grounds, and the existing unroll fires: the dig
+    # serves out == 3. A symbolic while needed no coordinate; it was a
+    # substitute all along.
+    uni, gaps, kw = _enumerate(WHILE_HELPER + "def test_a():\n    assert A(3) == 3\n")
+    assert len(uni) == 1
+    post = _resolved_post(uni, kw)
+    assert post["args"][1]["value"] == 3
