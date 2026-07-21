@@ -206,5 +206,16 @@ class Backend:
 
     name: str = ""
 
+    def fingerprint(self) -> str:
+        """The identity of THIS backend at the version that determines its
+        output. The node stream a backend produces is a function of its
+        version-of-record — for the CPython ``ast`` backend that is the
+        interpreter, for a library backend (libcst/parso/tree-sitter) it is the
+        library release. A golden is pinned per fingerprint: a backend at a new
+        version is a new backend, recorded faithfully in its own file, never
+        folded into another's or normalized to match. Defaults to the bare name
+        for a versionless backend; version-sensitive backends append theirs."""
+        return self.name
+
     def root(self, unit: SourceUnit) -> BackendNode:
         raise NotImplementedError
