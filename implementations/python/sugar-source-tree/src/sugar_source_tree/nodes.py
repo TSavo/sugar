@@ -715,19 +715,32 @@ class FunctionDef(Statement):
         it. A body statement whose sugar is not written yet raises
         SugarNotWritten from its own `.sugar()`, which propagates out here.
         """
+        from sugar_lift_py_tests.engine_log import reduction_span
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             FunctionUniverseSugar,
         )
 
-        # Substitute the body against an empty scope: formals are masked (they
-        # stay free -> symbolic), locals thread and inline, phis land as IfExps.
-        substituted = self.substitute({})
-        return FunctionUniverseSugar(
-            name=self.name,
-            formals=tuple(p.name for p in self.params),
-            statements=tuple(stmt.sugar() for stmt in substituted.body),
-            site=self.fragment,
-        )
+        # CONSTRUCTION IS THE INSTRUMENTED BOUNDARY: the span names this
+        # function while it substitutes+constructs, so the engine log's
+        # heartbeat testifies exactly which function a slow lift is inside --
+        # the bisection instrument (macro says nothing; the active frame says
+        # where to cut next). The factory had this on SugarBody.reduce; the
+        # tree construction path re-enters it here.
+        lc = self.line_col_span()
+        with reduction_span(
+            sugar="FunctionUniverse",
+            role="construction",
+            site=f"{self.unit.filename}:{lc.start_line} {self.name}",
+        ):
+            # Substitute the body against an empty scope: formals are masked
+            # (stay free -> symbolic), locals thread and inline, phis -> IfExps.
+            substituted = self.substitute({})
+            return FunctionUniverseSugar(
+                name=self.name,
+                formals=tuple(p.name for p in self.params),
+                statements=tuple(stmt.sugar() for stmt in substituted.body),
+                site=self.fragment,
+            )
 
 
 class AsyncFunctionDef(Statement):
