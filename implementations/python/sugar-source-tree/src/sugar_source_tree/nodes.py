@@ -1405,6 +1405,19 @@ class Dict(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
+    def sugar(self):
+        """`{k: v, ...}` constructs DictSugar WITH each key and value sugar. A
+        `**d` spread (a DictItem with key None) stays loud until its own sugar."""
+        from sugar_lift_py_tests.sugar.collection_sugar import DictSugar
+
+        if any(item.key is None for item in self.items):
+            return super().sugar()
+        return DictSugar(
+            keys=tuple(item.key.sugar() for item in self.items),
+            values=tuple(item.value.sugar() for item in self.items),
+            site=self.fragment,
+        )
+
 
 class Set(Expression):
     elts: Tuple[Expression, ...]
@@ -1413,6 +1426,16 @@ class Set(Expression):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def sugar(self):
+        """`{e, ...}` constructs SetSugar WITH each element's sugar; `*xs` is loud."""
+        from sugar_lift_py_tests.sugar.collection_sugar import SetSugar
+
+        if any(e.kind == "Starred" for e in self.elts):
+            return super().sugar()
+        return SetSugar(
+            elements=tuple(e.sugar() for e in self.elts), site=self.fragment
+        )
 
 
 class ListComp(Expression):
@@ -1738,6 +1761,17 @@ class List(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
+    def sugar(self):
+        """`[e, ...]` constructs ListSugar WITH each element's sugar. A `*xs`
+        spread is not one element -- it stays loud until its own sugar lands."""
+        from sugar_lift_py_tests.sugar.collection_sugar import ListSugar
+
+        if any(e.kind == "Starred" for e in self.elts):
+            return super().sugar()
+        return ListSugar(
+            elements=tuple(e.sugar() for e in self.elts), site=self.fragment
+        )
+
 
 class Tuple_(Expression):
     elts: Tuple[Expression, ...]
@@ -1746,6 +1780,16 @@ class Tuple_(Expression):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def sugar(self):
+        """`(e, ...)` constructs TupleSugar WITH each element's sugar; `*xs` is loud."""
+        from sugar_lift_py_tests.sugar.collection_sugar import TupleSugar
+
+        if any(e.kind == "Starred" for e in self.elts):
+            return super().sugar()
+        return TupleSugar(
+            elements=tuple(e.sugar() for e in self.elts), site=self.fragment
+        )
 
 
 # Wire word for tuples is "Tuple"; the class name carries a trailing
