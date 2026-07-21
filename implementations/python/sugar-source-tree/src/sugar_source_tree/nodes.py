@@ -946,7 +946,11 @@ class For(Statement):
         new_iter, iter_changed = self._substitute_field(self.iter, scope)
         subst_iter = new_iter if iter_changed else self.iter
 
-        concrete = not self.orelse and self.target.kind in ("Name", "Tuple", "List")
+        concrete = (
+            not self.orelse
+            and self.target.kind in ("Name", "Tuple", "List")
+            and not self._body_has_loop_control()
+        )
         elements = self._concrete_elements(subst_iter) if concrete else None
         if elements is not None:
             bindings = [self._target_bindings(e) for e in elements]
@@ -1080,6 +1084,19 @@ class For(Statement):
             iterable=self.iter.sugar(),
             body=tuple(s.sugar() for s in self.body),
             site=self.fragment,
+        )
+
+    def _body_has_loop_control(self) -> bool:
+        """True when any `break`/`continue` appears anywhere in the body. The
+        plain unroll repeats the body verbatim, which would duplicate the jump
+        and silently mis-thread the carried state -- a break is the last hole
+        being filled, and the unroll must not fake past it. Conservative on
+        purpose (a nested loop's own jumps also block): over-blocking falls to
+        the symbolic branch (loud), never to a wrong unroll."""
+        return any(
+            n.kind in ("Break", "Continue")
+            for stmt in self.body
+            for n in stmt.walk()
         )
 
     def _target_bindings(self, element: "Node") -> "Optional[dict]":
@@ -1239,6 +1256,8 @@ class While(Statement):
     def _try_unroll(self, scope):
         """The unrolled statement tuple, or None if the loop is not concrete
         (condition undecidable against the carried state, or fuel exhausted)."""
+        if For._body_has_loop_control(self):
+            return None  # a jump-bearing body is not a plain unroll
         carried = dict(scope)
         unrolled: list = []
         for _ in range(self._FUEL):
