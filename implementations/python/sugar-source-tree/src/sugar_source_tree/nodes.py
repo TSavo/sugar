@@ -951,6 +951,22 @@ class AugAssign(Statement):
         old = scope.get(name, self.target)
         return {name: self._make_binop(old, self.op, self.value)}
 
+    def sugar(self):
+        """`<target> OP= <value>` -- a plain Name target is INERT at the
+        meaning layer: substitution_binding ALWAYS threads for a Name target
+        (it falls back to the target itself as the old value when nothing was
+        bound yet, so there is no shape where a Name target both fails to
+        thread and stays loud). The rebind rode into the tail as the fold
+        binding; the statement itself states nothing more. Attribute/subscript
+        targets are the shapes substitution_binding refuses (returns None --
+        they are never threaded), so they stay loud gaps here too, mirrored
+        exactly against that same isinstance check."""
+        if not isinstance(self.target, Name):
+            return super().sugar()
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
+
 
 class AnnAssign(Statement):
     target: Expression
@@ -976,6 +992,25 @@ class AnnAssign(Statement):
         if self.value is not None and isinstance(self.target, Name):
             return {self.target.id: self.value}
         return None
+
+    def sugar(self):
+        """`<target>: <annotation> [= <value>]` -- a plain Name target is
+        INERT at the meaning layer. If there is a value, its binding already
+        threaded via substitution_binding, exactly as a plain Assign's does;
+        the rebind rode into the tail and this node contributes nothing more.
+        If there is no value, it is a bare declaration: no bytecode runs, no
+        binding is introduced, nothing happens at runtime at all.
+
+        The annotation itself is NEVER a fact the meaning layer states either
+        way: Python does not check it at runtime (no TypeError on mismatch),
+        so an annotation asserts nothing -- it is documentation the tree
+        passes through, never a stated post. Non-Name targets (attribute,
+        subscript) stay loud gaps -- no partial binding, no partial sugar."""
+        if not isinstance(self.target, Name):
+            return super().sugar()
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
 
 
 class TypeAlias(Statement):
