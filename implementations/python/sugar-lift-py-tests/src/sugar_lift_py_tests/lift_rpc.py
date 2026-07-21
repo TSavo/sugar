@@ -3163,6 +3163,121 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             # For a bare `assert`, call_site and assertion are the same locus
             # (1:1, protocol Section 4); the fact is the desugared InvValue.
             # (audit_walk already returned empty above; this is the live path.)
+            if level == "implications":
+                # The linker question, served from the tree: this caller's INV
+                # against the callee contract(s) its call site CUES, joined by
+                # the callEdge. The kit describes the demand; it never answers it
+                # (the discharge is the linker's, the other side of the RPC).
+                # Digs cue digs: the callee's own universe post carries its own
+                # call coordinates, which become the next implications.
+                from sugar_lift_py_tests import tree_enumerate as _tree
+                from sugar_lift_py_tests.ir import TermTableBuilder
+                from sugar_lift_py_tests.outcome import Complete
+
+                if at is None:
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [{"memento": at, "reason": "implications requires a call-site memento"}],
+                    )
+                    return
+                sf = _tree.source_file(full_path)
+                span = at.get("span") if isinstance(at, dict) else None
+                assert_node = _tree.find_assert(sf, span)
+                if assert_node is None:
+                    _send_enumerate_result(
+                        msg_id,
+                        [],
+                        [
+                            {
+                                "memento": at,
+                                "reason": "no call site for exact memento; refusing implication substitution",
+                            }
+                        ],
+                    )
+                    return
+
+                term_table = TermTableBuilder()
+                caller_memento = _tree.assert_memento(assert_node, file_rel)
+                caller_cid = caller_memento["source_cid"]
+                caller_post = None
+                caller_outcome = assert_node.sugar().desugar(None)
+                if isinstance(caller_outcome, Complete):
+                    formula = getattr(caller_outcome.value, "formula", None)
+                    if formula is not None:
+                        caller_post = term_table.formula(formula)
+
+                target_candidates = []
+                targets = _tree.call_target_names(sf, span)
+                for name in targets:
+                    fn = _tree.find_function_by_name(sf, name)
+                    if fn is None:
+                        continue
+                    try:
+                        def_memento, rows = _tree.function_contract_rows(fn, file_rel)
+                    except Exception:
+                        continue
+                    if rows is None:
+                        continue
+                    post = rows[0].post
+                    target_candidates.append(
+                        {
+                            "bridgeSourceSymbol": f"call:{name}",
+                            "contract": {
+                                "name": name,
+                                "kit": "python-source",
+                                "contract_cid": def_memento.source_cid,
+                                "pre_json": None,
+                                "post_json": (
+                                    term_table.formula(post.ir_formula)
+                                    if post is not None
+                                    else None
+                                ),
+                            },
+                        }
+                    )
+
+                target_symbol = f"call:{targets[0]}" if targets else "unknown"
+                sp = span if isinstance(span, dict) else {}
+                demand = {
+                    "sourceContract": {
+                        "name": "",
+                        "kit": "python-source",
+                        "contract_cid": caller_cid,
+                        "pre_json": None,
+                        "post_json": caller_post,
+                    },
+                    "targetCandidates": target_candidates,
+                    "callEdge": {
+                        "source_contract_cid": caller_cid,
+                        "target_contract_cid": None,
+                        "target_symbol": target_symbol,
+                        "call_site_locus": {
+                            "file": file_rel,
+                            "line": sp.get("start_line"),
+                            "column": sp.get("start_col"),
+                        },
+                    },
+                }
+                node = {
+                    "memento": at,
+                    "audit": {
+                        "kind": "implication-question",
+                        "sourceContract": "",
+                        "targetSymbol": target_symbol,
+                        "candidateCount": len(target_candidates),
+                        "callSiteMemento": at,
+                    },
+                    "payload": demand,
+                }
+                _send_enumerate_result(
+                    msg_id, [node], [], term_tables=[term_table.nodes]
+                )
+                _log_enumeration_demand(
+                    str(level), at, cache="miss", started=demand_started
+                )
+                return
+
             if level == "universe":
                 # The callee contract, served from the tree. Each function's
                 # FunctionDef.sugar() reduces to a UniverseValue whose

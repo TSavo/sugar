@@ -46,6 +46,15 @@ def find_function(sf: SourceFile, name: Optional[str], span: Optional[dict]):
     return None
 
 
+def find_function_by_name(sf: SourceFile, name: str):
+    """The function definition with this exact name, or None. Direct name
+    resolution -- the callee a cue names is found by that name."""
+    for fn in sf.functions():
+        if fn.name == name:
+            return fn
+    return None
+
+
 def call_target_names(sf: SourceFile, span: Optional[dict]) -> list:
     """The callee names cued by the assertion at `span`: the func-name of every
     plain Call inside it. This is how a call-site cue resolves to the callee(s)
