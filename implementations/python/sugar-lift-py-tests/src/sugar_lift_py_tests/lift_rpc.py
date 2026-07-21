@@ -2035,14 +2035,17 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         continue
                     seen.add(t)
                     targets.append(t)
-                    if t not in by_name:
-                        continue
                     fn = _tree.find_function_by_name(sf, t)
                     # A call IS substitution: ground args fill the pre, so the
                     # dig serves the contract AS APPLIED at this call (a concrete
                     # iterable unrolls the callee's loop here; the fold
-                    # coordinate collapses). An arg still carrying a hole leaves
-                    # the abstract contract standing -- the callable floor.
+                    # coordinate collapses; a symbolic while's condition grounds
+                    # and unrolls). An arg still carrying a hole leaves the
+                    # abstract contract standing -- the callable floor. The
+                    # applied dig is attempted even when the ABSTRACT universe is
+                    # a gap: the applied substitution can succeed exactly where
+                    # the abstract is still a hole (that is the whole point of
+                    # filling the pre).
                     if (
                         fn is not None
                         and len(call.args) == len(fn.params)
@@ -2057,7 +2060,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         if rows:
                             cued.append(_node(memento.to_rpc(), rows[0]))
                             continue
-                    cued.append(_node(*by_name[t]))
+                    if t in by_name:
+                        cued.append(_node(*by_name[t]))
                 _send_enumerate_result(
                     msg_id,
                     cued,
