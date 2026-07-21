@@ -143,30 +143,32 @@ def fact_of(node) -> Optional[Any]:
 
 
 def audit_file_gaps(full_path: Path):
-    """Every node in the file whose own sugar() reaches the base throw.
+    """The file's frontier: ONE construction per top-level statement; the
+    reporter witnesses every gap underneath it as it is built.
 
-    Returns ``(sf, [(node, panic), ...])`` deduped by node identity. Each node
-    is asked directly, so it self-reports even when no ancestor's sugar() call
-    reached it first; a gap reported while an ANCESTOR was under construction is
-    the same node object, collapsed by identity here. Only ``SugarNotWritten``
-    is caught: a VocabularyMissing/BackendDefect during the walk is a different,
-    louder failure and is left to propagate, never swallowed into the census.
+    Construction is correctness -- there is no other path, so there is nothing
+    to re-ask. Each top-level statement's sugar() is called once; a gap anywhere
+    in its subtree self-reports through the reporter DURING that construction.
+    Linear in the file, never quadratic: asking every node separately would
+    re-construct every subtree once per ancestor -- a second computation, the
+    side door this replaces. Only ``SugarNotWritten`` is caught: a
+    VocabularyMissing/BackendDefect is a different, louder failure and is left
+    to propagate, never swallowed into the census.
+
+    Returns ``(sf, [(node, panic), ...])`` deduped by SOURCE identity (kind +
+    span): the tree materializes nodes fresh per access, so the same source gap
+    reached twice is still one gap.
     """
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
 
     reporter = CollectingReporter()
     sf = SourceFile.from_path(str(full_path), reporter=reporter)
-    for node in sf.root.walk():
+    for stmt in sf.root.body:
         try:
-            node.sugar()
+            stmt.sugar()
         except SugarNotWritten:
             pass  # reported through the channel already; keep counting
-    # Dedup by SOURCE identity, never object id: the tree materializes a node
-    # fresh on every access, so the same source node reached by the walk and
-    # again by a parent's sugar() (e.g. FunctionDef resolving its body) are two
-    # distinct objects. Their identity is the memento (kind + span), so a gap is
-    # one gap however many times it was materialized.
     seen: dict[tuple, Any] = {}
     for node, panic in reporter.gaps:
         lc = node.line_col_span()
