@@ -1615,6 +1615,16 @@ class Import(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
+    def sugar(self):
+        """`import <module>` binds a module name that stays a FREE SYMBOLIC
+        in the meaning layer: nothing about the import itself is stated as
+        a fact. A later `pd.concat(...)` reduces as a method coordinate on
+        the free name `pd` -- correct without the import ever having stated
+        anything. So the import contributes an honestly empty record."""
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
+
 
 class ImportFrom(Statement):
     module: Optional[str]
@@ -1626,6 +1636,15 @@ class ImportFrom(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
+    def sugar(self):
+        """`from <module> import <names>` binds free symbolics the same way
+        plain `import` does: the bound names stay FREE SYMBOLIC in the
+        meaning layer, reduced only where a later expression uses them as a
+        coordinate. The import statement itself states nothing."""
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
+
 
 class Global(Statement):
     names: Tuple[str, ...]
@@ -1634,6 +1653,16 @@ class Global(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
+    def sugar(self):
+        """`global <names>` is a scope DECLARATION, not a fact: it tells
+        substitute which enclosing binding a name resolves against. That
+        binding semantics lives entirely in substitute (see above) -- by
+        the time sugar/meaning runs, the declaration itself has nothing
+        left to state."""
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
+
 
 class Nonlocal(Statement):
     names: Tuple[str, ...]
@@ -1641,6 +1670,15 @@ class Nonlocal(Statement):
     def substitute(self, scope):
         """Binds nothing, no hole: substitutes to itself."""
         return self
+
+    def sugar(self):
+        """`nonlocal <names>` is a scope DECLARATION like `global`: it
+        routes a name to an enclosing function scope during substitute.
+        Once substitute has resolved the binding, the declaration carries
+        no further meaning-layer content of its own."""
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
 
 
 class Expr(Statement):
@@ -1669,6 +1707,14 @@ class Pass(Statement):
     def substitute(self, scope):
         """Binds nothing, no hole: substitutes to itself."""
         return self
+
+    def sugar(self):
+        """`pass` states nothing by definition: it is the syntax for an
+        intentionally empty statement body. Its sugar is the honestly
+        empty record, not a placeholder awaiting content."""
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=self.fragment)
 
 
 class Break(Statement):
