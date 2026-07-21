@@ -95,14 +95,24 @@ def test_a_block_threads_its_assignments():
     assert retg.value.value == 2
 
 
+def test_binders_mask_their_bound_names():
+    # for x in xs: return x -- the loop target x is masked for the body, so an
+    # outer x cannot capture it; the loop comes back unchanged.
+    forfn = next(_tree("def f(xs):\n    for x in xs:\n        return x\n").functions())
+    assert forfn.substitute({"x": _bind_target()}) is forfn
+    # lambda z: z + 1 -- the parameter z is masked for the body.
+    lam = next(n for n in _tree("g = lambda z: z + z\n").root.walk() if n.kind == "Lambda")
+    assert lam.substitute({"z": _bind_target()}) is lam
+
+
 def test_an_unwritten_binder_still_panics():
-    # Lambda binds its own parameter and has no masking substitute yet: rather
-    # than silently capturing, it is loud -- coverage visible in the hierarchy.
-    lam = next(
-        n for n in _tree("f = lambda z: z + 1\n").root.walk() if n.kind == "Lambda"
+    # A comprehension binds its loop variable and has no masking substitute yet:
+    # rather than silently capturing, it is loud -- the drain names it next.
+    comp = next(
+        n for n in _tree("y = [i for i in xs]\n").root.walk() if n.kind == "ListComp"
     )
     with pytest.raises(SubstituteNotWritten):
-        lam.substitute({"z": _bind_target()})
+        comp.substitute({"i": _bind_target()})
 
 
 if __name__ == "__main__":
@@ -110,6 +120,7 @@ if __name__ == "__main__":
     test_name_is_the_one_base_case_that_binds()
     test_compound_just_recurses()
     test_function_masks_its_parameter()
+    test_binders_mask_their_bound_names()
     test_an_unwritten_binder_still_panics()
     print(
         "ok: substitute -- literal inert, Name binds, compound recurses, "

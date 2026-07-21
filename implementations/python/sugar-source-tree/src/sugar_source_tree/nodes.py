@@ -296,6 +296,13 @@ class Node(Typed):
                 scope = {**scope, **binding}
         return (tuple(new_items) if changed else statements), changed
 
+    def _bound_names_in(self, target: "Node") -> set:
+        """The names an assignment/for/with/lambda target binds. A Name binds;
+        a Tuple/List/Starred target nests them. Walking for Names is
+        conservative on attribute/subscript targets (over-masking a load
+        under-substitutes rather than captures -- safe)."""
+        return {n.id for n in target.walk() if n.kind == "Name"}
+
     def sugar(self) -> object:
         """This node's sugar, constructed by the node itself.
 
@@ -432,6 +439,10 @@ class Keyword(Node):
     value: Expression
     _child_fields = ("value",)
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class DictItem(Node):
     """One ``key: value`` entry of a Dict display. ``key is None`` means
@@ -440,6 +451,10 @@ class DictItem(Node):
     key: Optional[Expression]
     value: Expression
     _child_fields = ("key", "value")
+
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
 
 
 class Comprehension(Node):
@@ -458,16 +473,40 @@ class ExceptHandler(Node):
     body: Tuple[Statement, ...]
     _child_fields = ("type_", "body")
 
+    def substitute(self, scope):
+        """except <type> as <name>: binds the exception name for the body."""
+        from .shadow import rewrite
+        bound = {self.name} if self.name else set()
+        bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        changed = {}
+        new_type, d = self._substitute_field(self.type_, scope)
+        if d:
+            changed["type_"] = new_type
+        new_body, d = self._substitute_body(self.body, bs)
+        if d:
+            changed["body"] = new_body
+        return self if not changed else rewrite(self, **changed)
+
 
 class WithItem(Node):
     context_expr: Expression
     optional_vars: Optional[Expression]
     _child_fields = ("context_expr", "optional_vars")
 
+    def substitute(self, scope):
+        """Substitute the context expr; optional_vars is a binding site."""
+        from .shadow import rewrite
+        new_ctx, d = self._substitute_field(self.context_expr, scope)
+        return self if not d else rewrite(self, context_expr=new_ctx)
+
 
 class ImportAlias(Node):
     name: str
     asname: Optional[str]
+
+    def substitute(self, scope):
+        """Binds nothing, no hole: substitutes to itself."""
+        return self
 
 
 class MatchCase(Node):
@@ -607,6 +646,10 @@ class Delete(Statement):
     targets: Tuple[Expression, ...]
     _child_fields = ("targets",)
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class Assign(Statement):
     targets: Tuple[Expression, ...]
@@ -678,6 +721,21 @@ class For(Statement):
     orelse: Tuple[Statement, ...]
     _child_fields = ("target", "iter", "body", "orelse")
 
+    def substitute(self, scope):
+        """for <target> in <iter>: binds the loop target for body/orelse."""
+        from .shadow import rewrite
+        bound = self._bound_names_in(self.target)
+        bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        changed = {}
+        new_iter, d = self._substitute_field(self.iter, scope)
+        if d:
+            changed["iter"] = new_iter
+        for f in ("body", "orelse"):
+            new, d = self._substitute_body(getattr(self, f), bs)
+            if d:
+                changed[f] = new
+        return self if not changed else rewrite(self, **changed)
+
 
 class AsyncFor(Statement):
     target: Expression
@@ -693,6 +751,10 @@ class While(Statement):
     orelse: Tuple[Statement, ...]
     _child_fields = ("test", "body", "orelse")
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class If(Statement):
     test: Expression
@@ -700,11 +762,32 @@ class If(Statement):
     orelse: Tuple[Statement, ...]
     _child_fields = ("test", "body", "orelse")
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class With(Statement):
     items: Tuple[WithItem, ...]
     body: Tuple[Statement, ...]
     _child_fields = ("items", "body")
+
+    def substitute(self, scope):
+        """with ... as <vars>: binds the as-targets for the body."""
+        from .shadow import rewrite
+        bound = set()
+        for item in self.items:
+            if item.optional_vars is not None:
+                bound |= self._bound_names_in(item.optional_vars)
+        bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        changed = {}
+        new_items, d = self._substitute_field(self.items, scope)
+        if d:
+            changed["items"] = new_items
+        new_body, d = self._substitute_body(self.body, bs)
+        if d:
+            changed["body"] = new_body
+        return self if not changed else rewrite(self, **changed)
 
 
 class AsyncWith(Statement):
@@ -717,6 +800,10 @@ class Raise(Statement):
     exc: Optional[Expression]
     cause: Optional[Expression]
     _child_fields = ("exc", "cause")
+
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
 
 
 class Try(Statement):
@@ -766,6 +853,10 @@ class Import(Statement):
     names: Tuple[ImportAlias, ...]
     _child_fields = ("names",)
 
+    def substitute(self, scope):
+        """Binds nothing, no hole: substitutes to itself."""
+        return self
+
 
 class ImportFrom(Statement):
     module: Optional[str]
@@ -773,13 +864,25 @@ class ImportFrom(Statement):
     level: int
     _child_fields = ("names",)
 
+    def substitute(self, scope):
+        """Binds nothing, no hole: substitutes to itself."""
+        return self
+
 
 class Global(Statement):
     names: Tuple[str, ...]
 
+    def substitute(self, scope):
+        """Binds nothing, no hole: substitutes to itself."""
+        return self
+
 
 class Nonlocal(Statement):
     names: Tuple[str, ...]
+
+    def substitute(self, scope):
+        """Binds nothing, no hole: substitutes to itself."""
+        return self
 
 
 class Expr(Statement):
@@ -788,17 +891,33 @@ class Expr(Statement):
     value: Expression
     _child_fields = ("value",)
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class Pass(Statement):
     pass
+
+    def substitute(self, scope):
+        """Binds nothing, no hole: substitutes to itself."""
+        return self
 
 
 class Break(Statement):
     pass
 
+    def substitute(self, scope):
+        """Binds nothing, no hole: substitutes to itself."""
+        return self
+
 
 class Continue(Statement):
     pass
+
+    def substitute(self, scope):
+        """Binds nothing, no hole: substitutes to itself."""
+        return self
 
 
 class Match(Statement):
@@ -816,6 +935,10 @@ class BoolOp(Expression):
     op: BooleanOperator
     values: Tuple[Expression, ...]
     _child_fields = ("values",)
+
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
 
 
 class NamedExpr(Expression):
@@ -857,11 +980,29 @@ class UnaryOp(Expression):
     operand: Expression
     _child_fields = ("operand",)
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class Lambda(Expression):
     params: Tuple[Param, ...]
     body: Expression
     _child_fields = ("params", "body")
+
+    def substitute(self, scope):
+        """lambda <params>: masks its parameters for the body expression."""
+        from .shadow import rewrite
+        bound = {p.name for p in self.params}
+        bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        changed = {}
+        new_params, d = self._substitute_field(self.params, scope)
+        if d:
+            changed["params"] = new_params
+        new_body, d = self._substitute_field(self.body, bs)
+        if d:
+            changed["body"] = new_body
+        return self if not changed else rewrite(self, **changed)
 
 
 class IfExp(Expression):
@@ -870,15 +1011,27 @@ class IfExp(Expression):
     orelse: Expression
     _child_fields = ("body", "test", "orelse")
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class Dict(Expression):
     items: Tuple[DictItem, ...]
     _child_fields = ("items",)
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class Set(Expression):
     elts: Tuple[Expression, ...]
     _child_fields = ("elts",)
+
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
 
 
 class ListComp(Expression):
@@ -910,15 +1063,27 @@ class Await(Expression):
     value: Expression
     _child_fields = ("value",)
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class Yield(Expression):
     value: Optional[Expression]
     _child_fields = ("value",)
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class YieldFrom(Expression):
     value: Expression
     _child_fields = ("value",)
+
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
 
 
 class Compare(Expression):
@@ -996,10 +1161,18 @@ class FormattedValue(Expression):
     format_spec: Optional["JoinedStr"]
     _child_fields = ("value", "format_spec")
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class JoinedStr(Expression):
     values: Tuple[Expression, ...]
     _child_fields = ("values",)
+
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
 
 
 class Constant(Expression):
@@ -1038,6 +1211,10 @@ class Attribute(Expression):
     attr: str
     _child_fields = ("value",)
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class Subscript(Expression):
     value: Expression
@@ -1065,6 +1242,10 @@ class Starred(Expression):
     value: Expression
     _child_fields = ("value",)
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class Name(Expression):
     id: str
@@ -1089,10 +1270,18 @@ class List(Expression):
     elts: Tuple[Expression, ...]
     _child_fields = ("elts",)
 
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
+
 
 class Tuple_(Expression):
     elts: Tuple[Expression, ...]
     _child_fields = ("elts",)
+
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
 
 
 # Wire word for tuples is "Tuple"; the class name carries a trailing
@@ -1106,6 +1295,10 @@ class Slice(Expression):
     upper: Optional[Expression]
     step: Optional[Expression]
     _child_fields = ("lower", "upper", "step")
+
+    def substitute(self, scope):
+        """Binds nothing: recurse into children and reassemble."""
+        return self._substitute_children(scope)
 
 
 # --------------------------------------------------------------------------
