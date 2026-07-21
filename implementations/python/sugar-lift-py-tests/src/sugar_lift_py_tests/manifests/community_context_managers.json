@@ -1,0 +1,23 @@
+{
+  "rows": [
+    {
+      "spelling": "pytest.raises",
+      "arity": "one-exception-arg",
+      "contract": "expects",
+      "effect_kind": "raise"
+    },
+    {
+      "spelling": "contextlib.suppress",
+      "arity": "one-exception-arg",
+      "contract": "suppresses",
+      "effect_kind": "raise"
+    },
+    {
+      "spelling": "tm.assert_produces_warning",
+      "arity": "one-exception-arg",
+      "contract": "expects",
+      "effect_kind": "warning"
+    }
+  ],
+  "cid": "blake3-512:977d6d4341008a65eb71a6a54e072fb676749dde2a50b563e0f0153890754115de1a952b0830a750c7bfadb015ec4a970620807681fd04d96d76fb16b1c250e7"
+}
