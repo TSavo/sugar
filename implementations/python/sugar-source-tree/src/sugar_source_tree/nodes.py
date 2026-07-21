@@ -1276,6 +1276,24 @@ class Match(Statement):
             changed["cases"] = tuple(new_cases)
         return self if not changed else rewrite(self, **changed)
 
+    def _singleton_sugar(self, value):
+        """The literal sugar for a MatchSingleton value (None / True / False)."""
+        if value is None:
+            from sugar_lift_py_tests.sugar.none_literal_sugar import NoneLiteralSugar
+
+            return NoneLiteralSugar(site=self.fragment)
+        if value:
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return TrueBoolLiteralSugar(site=self.fragment)
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+
+        return FalseBoolLiteralSugar(site=self.fragment)
+
     @staticmethod
     def _capture_name(pattern):
         """The name a bare capture pattern (`case x:`) binds, or None. A capture
@@ -1301,6 +1319,10 @@ class Match(Statement):
             pattern = case.pattern
             if pattern.kind == "MatchValue":
                 value_sugar = pattern.value.sugar()
+            elif pattern.kind == "MatchSingleton":
+                # `case None:` / `case True:` / `case False:` -- the singleton as a
+                # value comparison (subject equals the singleton).
+                value_sugar = self._singleton_sugar(pattern.value)
             elif pattern.kind == "MatchAs" and pattern.pattern is None:
                 # `case _:` (wildcard) or `case x:` (capture) -- both always match,
                 # so both are the catch-all guard. A capture's body already has
