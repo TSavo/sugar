@@ -83,6 +83,17 @@ def test_pattern_guard_stays_loud():
         _fn("def A(z):\n    match z:\n        case 1 if z > 0:\n            return z\n").sugar()
 
 
+def test_singleton_pattern_none_and_bool():
+    invs = _invs(
+        "def A(z):\n    match z:\n        case None:\n            assert z == 0\n"
+        "        case True:\n            assert z == 1\n"
+        "        case _:\n            assert z == 2\n    return z\n"
+    )
+    assert invs[0].operands[0].name == "py.eq"  # z == None
+    assert invs[0].operands[0].args[1].name == "None"
+    assert invs[1].operands[0].kind == "and"  # excluded by not(z==None), then z==True
+
+
 if __name__ == "__main__":
     test_first_case_guarded_by_its_match()
     test_later_case_excludes_earlier()
@@ -90,4 +101,5 @@ if __name__ == "__main__":
     test_capture_binds_the_subject()
     test_structural_pattern_stays_loud()
     test_pattern_guard_stays_loud()
+    test_singleton_pattern_none_and_bool()
     print("ok: match value patterns -- sequential guarded split; the rest loud")
