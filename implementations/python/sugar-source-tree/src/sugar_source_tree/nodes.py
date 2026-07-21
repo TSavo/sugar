@@ -314,11 +314,19 @@ class Node(Typed):
         for the tail). A walrus (``NamedExpr``) nested anywhere in the statement
         also leaks its binding to the rest of the block. Returns
         ``(new_statements, changed)``."""
+        from sugar_lift_py_tests.engine_log import reduction_span
+
         scope = dict(scope)
         new_items = []
         changed = False
         for stmt in statements:
-            new_stmt = stmt.substitute(scope)
+            lc = stmt.line_col_span()
+            with reduction_span(
+                sugar="SubstituteStatement",
+                role="temporal",
+                site=f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}",
+            ):
+                new_stmt = stmt.substitute(scope)
             if new_stmt is not stmt:
                 changed = True
             # A statement may EXPAND into several: a `for` over a concrete
@@ -727,20 +735,24 @@ class FunctionDef(Statement):
         # where to cut next). The factory had this on SugarBody.reduce; the
         # tree construction path re-enters it here.
         lc = self.line_col_span()
+        where = f"{self.unit.filename}:{lc.start_line} {self.name}"
         with reduction_span(
-            sugar="FunctionUniverse",
-            role="construction",
-            site=f"{self.unit.filename}:{lc.start_line} {self.name}",
+            sugar="FunctionUniverse", role="construction", site=where
         ):
-            # Substitute the body against an empty scope: formals are masked
-            # (stay free -> symbolic), locals thread and inline, phis -> IfExps.
-            substituted = self.substitute({})
-            return FunctionUniverseSugar(
-                name=self.name,
-                formals=tuple(p.name for p in self.params),
-                statements=tuple(stmt.sugar() for stmt in substituted.body),
-                site=self.fragment,
-            )
+            # Phase spans: the bisection instrument. A slow function names its
+            # slow PHASE here; the per-statement spans inside _substitute_body
+            # then name the statement. We measure; we do not guess.
+            with reduction_span(sugar="Substitute", role="temporal", site=where):
+                # Substitute the body against an empty scope: formals are masked
+                # (stay free -> symbolic), locals thread/inline, phis -> IfExps.
+                substituted = self.substitute({})
+            with reduction_span(sugar="Construct", role="construction", site=where):
+                return FunctionUniverseSugar(
+                    name=self.name,
+                    formals=tuple(p.name for p in self.params),
+                    statements=tuple(stmt.sugar() for stmt in substituted.body),
+                    site=self.fragment,
+                )
 
 
 class AsyncFunctionDef(Statement):
