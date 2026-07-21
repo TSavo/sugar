@@ -7,10 +7,7 @@ Real-sorted TermValue (int -> Int, float -> Real, no Number sort).
 
 import tempfile
 
-import pytest
-
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -41,14 +38,16 @@ def test_float_literal_is_real_sorted():
     assert type(post.args[1]).__name__ == "_ConstReal"
 
 
-def test_membership_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(z):\n    assert z in [1, 2]\n    return z\n").sugar()
+def test_membership_lifts_for_a_symbolic_container():
+    # `x in xs` is `xs.contains(x)`: a symbolic container is the py.in coordinate.
+    inv = _inv("def A(x, xs):\n    assert x in xs\n    return x\n")
+    assert inv.name == "py.in"
+    assert inv.args[0].name == "x" and inv.args[1].name == "xs"
 
 
 if __name__ == "__main__":
     test_is_is_identity()
     test_is_not_is_identity_negated()
     test_float_literal_is_real_sorted()
-    test_membership_stays_loud()
+    test_membership_lifts_for_a_symbolic_container()
     print("ok: is/is not identity, None + float literals, membership loud")

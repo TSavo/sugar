@@ -640,6 +640,42 @@ class FloorValue:
             ),
         )
 
+    def contains(self, item, site):
+        # Default: this value does not stand on the membership floor -- it cannot
+        # answer whether it holds `item`. A symbolic container stays the py.in
+        # coordinate; a concrete container folds; absence here is the honest "no".
+        del item
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="contains",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the membership floor",
+            fix=f"write more Floor: implement {observed}.contains",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="contains",
+                status=FactoryAuditStatus.FLOOR_GAP,
+                observed=observed,
+                blame=str(site),
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def setitem(self, index, value, site):
         del index, value
         from sugar_lift_py_tests.factory import (
