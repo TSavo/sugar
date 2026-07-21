@@ -859,28 +859,72 @@ class Assign(Statement):
             return self
         return rewrite(self, value=new_value)
 
+    def _destructured_binding(self):
+        # `a, b = <display>` -- a single Tuple/List target of plain Names,
+        # destructured against the already-substituted rhs when it is a
+        # Tuple/List display of the same arity. Starred/nested targets, an
+        # arity mismatch, or a non-display rhs return None here (mirrors
+        # For._target_bindings_for -- the shared destructuring reader, called
+        # class-explicitly so it never depends on `self` being a For).
+        target = self.targets[0]
+        if not isinstance(target, (Tuple_, List)):
+            return None
+        return For._target_bindings_for(self, target, self.value)
+
     def substitution_binding(self, scope):
         # A single Name target binds its name to the already-substituted rhs.
-        # Tuple / attribute / subscript targets thread nothing yet -- their
-        # references stay honest gaps rather than a wrong binding.
-        if len(self.targets) == 1 and isinstance(self.targets[0], Name):
-            return {self.targets[0].id: self.value}
+        # A single Tuple/List target of plain Names destructures against a
+        # matching display rhs (see _destructured_binding). A chain of plain
+        # Name targets (`x = y = e`) binds each name to the same rhs.
+        # Attribute / subscript targets, starred/nested tuples, and arity
+        # mismatches thread nothing -- their references stay honest gaps
+        # rather than a wrong binding.
+        if len(self.targets) == 1:
+            target = self.targets[0]
+            if isinstance(target, Name):
+                return {target.id: self.value}
+            return self._destructured_binding()
+        if all(isinstance(t, Name) for t in self.targets):
+            return {t.id: self.value for t in self.targets}
         return None
 
     def sugar(self):
         """`<name> = <rhs>` constructs AssignSugar WITH the rhs's sugar (held as
-        the deferred source). Single Name target only: tuple/attribute/subscript
-        targets and chained `a = b = c` stay loud gaps until their own sugars
-        are written -- never a partial binding."""
-        if len(self.targets) != 1 or not isinstance(self.targets[0], Name):
-            return super().sugar()
-        from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
+        the deferred source). A destructured tuple/list target or a chained
+        `x = y = e` whose binding threaded constructs MultiAssignSugar -- both
+        are inert once substitute has done its work, exactly like the single
+        Name case. Any shape whose binding did NOT thread (attribute/subscript
+        targets, starred/nested tuples, arity mismatches) stays a loud gap --
+        never a partial binding rendered inert."""
+        if len(self.targets) == 1 and isinstance(self.targets[0], Name):
+            from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 
-        return AssignSugar(
-            name=self.targets[0].id,
-            value=self.value.sugar(),
-            site=self.fragment,
-        )
+            return AssignSugar(
+                name=self.targets[0].id,
+                value=self.value.sugar(),
+                site=self.fragment,
+            )
+
+        if len(self.targets) == 1 and isinstance(self.targets[0], (Tuple_, List)):
+            bindings = self._destructured_binding()
+            if bindings is None:
+                return super().sugar()
+            from sugar_lift_py_tests.sugar.assign_sugar import MultiAssignSugar
+
+            return MultiAssignSugar(
+                bindings=tuple((name, val.sugar()) for name, val in bindings.items()),
+                site=self.fragment,
+            )
+
+        if len(self.targets) > 1 and all(isinstance(t, Name) for t in self.targets):
+            from sugar_lift_py_tests.sugar.assign_sugar import MultiAssignSugar
+
+            return MultiAssignSugar(
+                bindings=tuple((t.id, self.value.sugar()) for t in self.targets),
+                site=self.fragment,
+            )
+
+        return super().sugar()
 
 
 class AugAssign(Statement):
