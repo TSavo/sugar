@@ -590,13 +590,17 @@ class MatchCase(Node):
     body: Tuple[Statement, ...]
     _child_fields = ("pattern", "guard", "body")
 
-    def substitute(self, scope):
+    def substitute(self, scope, extra_bindings=None):
         """`case <pattern> [if <guard>]: <body>` -- the pattern captures bind for
         the guard and body. Pattern value-exprs evaluate in the enclosing scope;
-        guard and body are masked by the captures (body threaded)."""
+        guard and body are masked by the captures, then any ``extra_bindings``
+        (a capture bound to the match SUBJECT, threaded by ``Match.substitute``)
+        are re-applied so a `case x:` body sees x = subject, not a free name."""
         from .shadow import rewrite
         bound = self._pattern_bound_names(self.pattern)
         inner = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        if extra_bindings:
+            inner = {**inner, **extra_bindings}
         changed = {}
         new_pat, d = self._substitute_field(self.pattern, scope)
         if d:
@@ -1243,8 +1247,43 @@ class Match(Statement):
     _child_fields = ("subject", "cases")
 
     def substitute(self, scope):
-        """Binds nothing itself: recurse into children and reassemble."""
-        return self._substitute_children(scope)
+        """The subject evaluates in the enclosing scope; each case's captures
+        bind to that SUBJECT for its body. `case x:` is x = subject, so the
+        subject node is threaded into that case's body substitution as the
+        capture binding -- the temporal half of a capture, exactly as an
+        assignment's rhs threads to the rest of a block."""
+        from .shadow import rewrite
+
+        new_subject, subj_changed = self._substitute_field(self.subject, scope)
+        subject = new_subject if subj_changed else self.subject
+
+        new_cases = []
+        cases_changed = False
+        for case in self.cases:
+            capture = self._capture_name(case.pattern)
+            if capture is not None:
+                new_case = case.substitute(scope, extra_bindings={capture: subject})
+            else:
+                new_case = case.substitute(scope)
+            if new_case is not case:
+                cases_changed = True
+            new_cases.append(new_case)
+
+        changed = {}
+        if subj_changed:
+            changed["subject"] = new_subject
+        if cases_changed:
+            changed["cases"] = tuple(new_cases)
+        return self if not changed else rewrite(self, **changed)
+
+    @staticmethod
+    def _capture_name(pattern):
+        """The name a bare capture pattern (`case x:`) binds, or None. A capture
+        is a MatchAs with no sub-pattern and a name; `case _:` (name None) is the
+        wildcard and binds nothing."""
+        if pattern.kind == "MatchAs" and pattern.pattern is None and pattern.name is not None:
+            return pattern.name
+        return None
 
     def sugar(self):
         """`match <subject>: case P: body ...` constructs MatchSugar -- an n-way
@@ -1262,10 +1301,14 @@ class Match(Statement):
             pattern = case.pattern
             if pattern.kind == "MatchValue":
                 value_sugar = pattern.value.sugar()
-            elif pattern.kind == "MatchAs" and pattern.pattern is None and pattern.name is None:
-                value_sugar = None  # the wildcard `case _:`
+            elif pattern.kind == "MatchAs" and pattern.pattern is None:
+                # `case _:` (wildcard) or `case x:` (capture) -- both always match,
+                # so both are the catch-all guard. A capture's body already has
+                # x = subject substituted in (Match.substitute), so it needs no
+                # special handling here: the binding was the temporal half.
+                value_sugar = None
             else:
-                return super().sugar()  # capture / singleton / or / structural
+                return super().sugar()  # singleton / or / structural pattern
             specs.append(
                 MatchCaseSpec(
                     value=value_sugar,
