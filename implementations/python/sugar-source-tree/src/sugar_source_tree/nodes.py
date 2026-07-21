@@ -1246,6 +1246,36 @@ class Match(Statement):
         """Binds nothing itself: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
+    def sugar(self):
+        """`match <subject>: case P: body ...` constructs MatchSugar -- an n-way
+        guarded split. This first cut owns VALUE patterns (`case <literal>:`) and
+        the wildcard (`case _:`), with no pattern guard and no capture. Any other
+        pattern, a `case P if g:` guard, or a capture inherits the loud throw --
+        each is real matching semantics, never guessed.
+        """
+        from sugar_lift_py_tests.sugar.match_sugar import MatchCaseSpec, MatchSugar
+
+        specs = []
+        for case in self.cases:
+            if case.guard is not None:
+                return super().sugar()  # `case P if g:` not written
+            pattern = case.pattern
+            if pattern.kind == "MatchValue":
+                value_sugar = pattern.value.sugar()
+            elif pattern.kind == "MatchAs" and pattern.pattern is None and pattern.name is None:
+                value_sugar = None  # the wildcard `case _:`
+            else:
+                return super().sugar()  # capture / singleton / or / structural
+            specs.append(
+                MatchCaseSpec(
+                    value=value_sugar,
+                    body=tuple(s.sugar() for s in case.body),
+                )
+            )
+        return MatchSugar(
+            subject=self.subject.sugar(), cases=tuple(specs), site=self.fragment
+        )
+
 
 # --------------------------------------------------------------------------
 # Expressions
