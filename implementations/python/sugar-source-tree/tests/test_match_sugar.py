@@ -94,6 +94,16 @@ def test_singleton_pattern_none_and_bool():
     assert invs[1].operands[0].kind == "and"  # excluded by not(z==None), then z==True
 
 
+def test_or_pattern_disjoins_alternatives():
+    invs = _invs(
+        "def A(z):\n    match z:\n        case 1 | 2 | 3:\n            assert z == 100\n"
+        "        case _:\n            assert z == 200\n    return z\n"
+    )
+    ante = invs[0].operands[0]
+    assert ante.kind == "or" and len(ante.operands) == 3
+    assert all(op.name == "py.eq" for op in ante.operands)
+
+
 if __name__ == "__main__":
     test_first_case_guarded_by_its_match()
     test_later_case_excludes_earlier()
@@ -102,4 +112,5 @@ if __name__ == "__main__":
     test_structural_pattern_stays_loud()
     test_pattern_guard_stays_loud()
     test_singleton_pattern_none_and_bool()
+    test_or_pattern_disjoins_alternatives()
     print("ok: match value patterns -- sequential guarded split; the rest loud")
