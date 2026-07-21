@@ -1276,6 +1276,30 @@ class Match(Statement):
             changed["cases"] = tuple(new_cases)
         return self if not changed else rewrite(self, **changed)
 
+    def _pattern_alternatives(self, pattern):
+        """The value-pattern alternatives a case matches, as literal sugars:
+        ``()`` for a catch-all (`case _:` / capture `case x:`), ``(sugar,)`` for a
+        value or singleton, the concatenation for an OR-pattern `a | b`. Returns
+        None for a pattern this cut does not own (structural: sequence / mapping /
+        class / star, or a nested capture inside an OR)."""
+        if pattern.kind == "MatchValue":
+            return (pattern.value.sugar(),)
+        if pattern.kind == "MatchSingleton":
+            return (self._singleton_sugar(pattern.value),)
+        if pattern.kind == "MatchAs" and pattern.pattern is None:
+            return ()  # wildcard or capture -- always matches
+        if pattern.kind == "MatchOr":
+            alts: list = []
+            for sub in pattern.patterns:
+                sub_alts = self._pattern_alternatives(sub)
+                # An OR of value/singleton patterns only; a catch-all or
+                # structural arm inside an OR is not a value alternative.
+                if not sub_alts:
+                    return None
+                alts.extend(sub_alts)
+            return tuple(alts)
+        return None
+
     def _singleton_sugar(self, value):
         """The literal sugar for a MatchSingleton value (None / True / False)."""
         if value is None:
@@ -1316,24 +1340,12 @@ class Match(Statement):
         for case in self.cases:
             if case.guard is not None:
                 return super().sugar()  # `case P if g:` not written
-            pattern = case.pattern
-            if pattern.kind == "MatchValue":
-                value_sugar = pattern.value.sugar()
-            elif pattern.kind == "MatchSingleton":
-                # `case None:` / `case True:` / `case False:` -- the singleton as a
-                # value comparison (subject equals the singleton).
-                value_sugar = self._singleton_sugar(pattern.value)
-            elif pattern.kind == "MatchAs" and pattern.pattern is None:
-                # `case _:` (wildcard) or `case x:` (capture) -- both always match,
-                # so both are the catch-all guard. A capture's body already has
-                # x = subject substituted in (Match.substitute), so it needs no
-                # special handling here: the binding was the temporal half.
-                value_sugar = None
-            else:
-                return super().sugar()  # singleton / or / structural pattern
+            alternatives = self._pattern_alternatives(case.pattern)
+            if alternatives is None:
+                return super().sugar()  # structural pattern (sequence/class/...)
             specs.append(
                 MatchCaseSpec(
-                    value=value_sugar,
+                    alternatives=alternatives,
                     body=tuple(s.sugar() for s in case.body),
                 )
             )
