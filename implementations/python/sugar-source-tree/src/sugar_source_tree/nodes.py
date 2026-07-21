@@ -234,31 +234,37 @@ class Node(Typed):
             ),
         )
 
+    def _substitute_field(self, value, scope):
+        """Substitute ONE field value (a child Node, None, or a tuple of
+        them) against a scope. Returns ``(new_value, changed)``. A scope-owner
+        uses this per field so it can hand different fields different scopes
+        (its signature the outer scope, its body the masked one)."""
+        if value is None:
+            return value, False
+        if isinstance(value, Node):
+            new = value.substitute(scope)
+            return new, new is not value
+        items = tuple(value)
+        new_items = tuple(
+            item.substitute(scope) if isinstance(item, Node) else item
+            for item in items
+        )
+        changed = any(new is not old for new, old in zip(new_items, items))
+        return (new_items if changed else value), changed
+
     def _substitute_children(self, scope: "dict[str, Node]") -> "Node":
         """The structural recurse a NON-binding compound opts into: substitute
-        every child; if any changed, rebuild me around them (a shadow node
-        borrowing my span); if none changed, return myself. A node calls this
-        DELIBERATELY — it is never the silent default, because a scope-owner
-        must mask its bound names before it can use it safely."""
+        every child against the SAME scope; if any changed, rebuild me around
+        them (a shadow node borrowing my span); if none changed, return myself.
+        A node calls this DELIBERATELY — it is never the silent default, because
+        a scope-owner must mask its bound names before it can use it safely."""
         from .shadow import rewrite
 
         changed: dict[str, object] = {}
         for name in type(self)._child_fields:
-            value = getattr(self, name)
-            if value is None:
-                continue
-            if isinstance(value, Node):
-                new_child = value.substitute(scope)
-                if new_child is not value:
-                    changed[name] = new_child
-            else:  # a tuple of child nodes (some slots optional -> None)
-                items = tuple(value)
-                new_items = tuple(
-                    item.substitute(scope) if isinstance(item, Node) else item
-                    for item in items
-                )
-                if any(new is not old for new, old in zip(new_items, items)):
-                    changed[name] = new_items
+            new, diff = self._substitute_field(getattr(self, name), scope)
+            if diff:
+                changed[name] = new
         if not changed:
             return self
         return rewrite(self, **changed)
@@ -373,6 +379,13 @@ class Param(Node):
     param_kind: str
     _child_fields = ("annotation", "default")
 
+    def substitute(self, scope):
+        """A parameter's NAME is a binding site (a str, not a reference), so it
+        is never captured; its annotation and default are ordinary expressions
+        in the enclosing scope. So this just recurses into them -- the masking
+        of the name itself is the enclosing FunctionDef's job, for the body."""
+        return self._substitute_children(scope)
+
     def sugar(self):
         """A formal stands as its symbolic universe variable. Plain parameters
         only; a default or annotation is not yet folded in, so a parameter that
@@ -456,6 +469,42 @@ class FunctionDef(Statement):
     type_params: Tuple[TypeParam, ...]
     _child_fields = ("decorators", "type_params", "params", "returns", "body")
 
+    def substitute(self, scope):
+        """The first MASKING node: a function opens a scope. Its parameters
+        (and any PEP 695 type parameters) bind their names, and ONLY THE BODY
+        sees them -- so only the body's scope has those names held out. The
+        signature (decorators, type params, parameter annotations/defaults, the
+        return annotation) is evaluated in the ENCLOSING scope, unmasked. This
+        is why the abstract panics rather than recursing blindly: a blind
+        recurse would substitute an outer `x` into a body whose parameter is
+        `x`, capturing it. Masking is that capture, refused.
+        """
+        from .shadow import rewrite
+
+        bound = {p.name for p in self.params}
+        for tp in self.type_params:
+            name = getattr(tp, "name", None)
+            if isinstance(name, str):
+                bound.add(name)
+        body_scope = (
+            {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        )
+
+        changed: dict[str, object] = {}
+        # signature: the enclosing scope, unmasked (evaluated before the body).
+        for field in ("decorators", "type_params", "params", "returns"):
+            new, diff = self._substitute_field(getattr(self, field), scope)
+            if diff:
+                changed[field] = new
+        # body: the enclosing scope with the bound names held out.
+        new_body, body_diff = self._substitute_field(self.body, body_scope)
+        if body_diff:
+            changed["body"] = new_body
+
+        if not changed:
+            return self
+        return rewrite(self, **changed)
+
     def sugar(self):
         """`def <name>(<formals>): <body>` constructs FunctionUniverseSugar WITH
         each body statement's own sugar — the recursion, child-before-parent.
@@ -500,6 +549,10 @@ class ClassDef(Statement):
 class Return(Statement):
     value: Optional[Expression]
     _child_fields = ("value",)
+
+    def substitute(self, scope):
+        """`return <expr>` binds nothing: recurse into the returned expression."""
+        return self._substitute_children(scope)
 
     def sugar(self):
         """`return <expr>` constructs ReturnSugar WITH the value's sugar. A bare

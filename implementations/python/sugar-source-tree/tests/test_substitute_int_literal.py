@@ -69,19 +69,35 @@ def test_compound_just_recurses():
     assert rewritten.right.kind == "Constant" and rewritten.right.value == 5  # 5 inert
 
 
-def test_a_binder_without_a_masking_substitute_panics_loudly():
-    # FunctionDef binds `x` (its parameter). It has no substitute written, so
-    # rather than SILENTLY capturing an outer `x` into its body, the abstract
-    # throws. There is no permissive recurse-by-default -- the capture hazard is
-    # loud, and coverage is visible in the hierarchy.
-    fn = next(_tree("def f(x):\n    return x + 5\n").functions())
+def test_function_masks_its_parameter():
+    # def f(x): return x -- the parameter x is HELD OUT of the body's scope, so
+    # an outer x cannot capture it. The function comes back unchanged.
+    fx = next(_tree("def f(x):\n    return x\n").functions())
+    assert fx.substitute({"x": _bind_target()}) is fx
+    # def g(): return x -- no parameter shadows it, so the FREE x DOES substitute.
+    g = next(_tree("def g():\n    return x\n").functions())
+    gsub = g.substitute({"x": _bind_target()})
+    ret = next(n for n in gsub.walk() if n.kind == "Return")
+    assert ret.value.kind == "Constant" and ret.value.value == 3
+
+
+def test_an_unwritten_binder_still_panics():
+    # Lambda binds its own parameter and has no masking substitute yet: rather
+    # than silently capturing, it is loud -- coverage visible in the hierarchy.
+    lam = next(
+        n for n in _tree("f = lambda z: z + 1\n").root.walk() if n.kind == "Lambda"
+    )
     with pytest.raises(SubstituteNotWritten):
-        fn.substitute({"x": _bind_target()})
+        lam.substitute({"z": _bind_target()})
 
 
 if __name__ == "__main__":
     test_integer_literal_is_the_inert_terminus()
     test_name_is_the_one_base_case_that_binds()
     test_compound_just_recurses()
-    test_a_binder_without_a_masking_substitute_panics_loudly()
-    print("ok: substitute -- int literal inert, Name binds, compound recurses, binder panics")
+    test_function_masks_its_parameter()
+    test_an_unwritten_binder_still_panics()
+    print(
+        "ok: substitute -- literal inert, Name binds, compound recurses, "
+        "FunctionDef masks its parameter, unwritten binder panics"
+    )
