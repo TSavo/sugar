@@ -946,9 +946,11 @@ class For(Statement):
         new_iter, iter_changed = self._substitute_field(self.iter, scope)
         subst_iter = new_iter if iter_changed else self.iter
 
+        # `else` is unrollable too: the jump-guard means no `break` exists, and
+        # with no break the else ALWAYS runs -- it is just more block, spliced
+        # after the unrolled iterations.
         concrete = (
-            not self.orelse
-            and self.target.kind in ("Name", "Tuple", "List")
+            self.target.kind in ("Name", "Tuple", "List")
             and not self._body_has_loop_control()
         )
         elements = self._concrete_elements(subst_iter) if concrete else None
@@ -972,6 +974,9 @@ class For(Statement):
                     carried = {
                         k: v for k, v in iter_scope.items() if k not in target_names
                     }
+                if self.orelse:
+                    else_body, _c = self._substitute_body(self.orelse, carried)
+                    unrolled.extend(else_body)
                 return _Splice(tuple(unrolled))
 
         # Symbolic (or unsupported) loop: keep the node, mask the target AND every
@@ -1230,10 +1235,9 @@ class While(Statement):
         concrete loop is a non-termination the unroll must not fake."""
         from .shadow import rewrite
 
-        if not self.orelse:
-            unrolled = self._try_unroll(scope)
-            if unrolled is not None:
-                return _Splice(unrolled)
+        unrolled = self._try_unroll(scope)
+        if unrolled is not None:
+            return _Splice(unrolled)
 
         # Symbolic (or unsupported) while: keep the node; mask the carried
         # names (any name the body rebinds) so the update stays symbolic.
@@ -1266,6 +1270,11 @@ class While(Statement):
             if verdict is None:
                 return None  # not decidable -- not a concrete loop
             if verdict is False:
+                # Exit via the condition: with no break (jump-guard), the
+                # `else` always runs -- spliced after the iterations.
+                if self.orelse:
+                    else_body, _c = self._substitute_body(self.orelse, carried)
+                    unrolled.extend(else_body)
                 return tuple(unrolled)
             new_body, _c = self._substitute_body(self.body, carried)
             unrolled.extend(new_body)

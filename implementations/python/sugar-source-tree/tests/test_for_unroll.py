@@ -113,6 +113,7 @@ if __name__ == "__main__":
     test_starred_target_stays_loud()
     test_arity_mismatch_stays_loud()
     test_jump_bearing_body_never_unrolls()
+    test_for_else_splices_after_the_unroll()
     print("ok: concrete for unrolls; symbolic/carried/tuple-target loud")
 
 
@@ -126,3 +127,13 @@ def test_jump_bearing_body_never_unrolls():
     with pytest.raises(SugarNotWritten) as e:
         _fn(src).sugar()
     assert "For.sugar" in str(e.value)
+
+
+def test_for_else_splices_after_the_unroll():
+    # With no break possible (the jump-guard blocks jump-bearing bodies from
+    # unrolling), the else ALWAYS runs: just more block, after the iterations.
+    post = _fn(
+        "def A():\n    t = 0\n    for x in [1, 2]:\n        t = t + x\n"
+        "    else:\n        t = t + 100\n    return t\n"
+    ).sugar().desugar().value.post()
+    assert post.args[1].value == 103
