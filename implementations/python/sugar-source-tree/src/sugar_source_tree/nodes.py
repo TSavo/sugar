@@ -1844,6 +1844,18 @@ class Slice(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
+    def sugar(self):
+        """`lower:upper:step` constructs SliceSugar; an omitted bound stays None
+        (its NoneValue), as Python fills it."""
+        from sugar_lift_py_tests.sugar.slice_sugar import SliceSugar
+
+        return SliceSugar(
+            lower=None if self.lower is None else self.lower.sugar(),
+            upper=None if self.upper is None else self.upper.sugar(),
+            step=None if self.step is None else self.step.sugar(),
+            site=self.fragment,
+        )
+
 
 # --------------------------------------------------------------------------
 # match patterns
