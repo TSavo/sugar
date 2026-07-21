@@ -46,6 +46,24 @@ def find_function(sf: SourceFile, name: Optional[str], span: Optional[dict]):
     return None
 
 
+def call_target_names(sf: SourceFile, span: Optional[dict]) -> list:
+    """The callee names cued by the assertion at `span`: the func-name of every
+    plain Call inside it. This is how a call-site cue resolves to the callee(s)
+    whose universe it digs -- by NAME, directly, no bridge-matching heuristics
+    (the tree kept the names the factory had to reconstruct)."""
+    from sugar_source_tree.nodes import Call, Name
+
+    node = find_assert(sf, span)
+    if node is None:
+        return []
+    names = []
+    for call in node.walk():
+        if isinstance(call, Call) and isinstance(call.func, Name):
+            if call.func.id not in names:
+                names.append(call.func.id)
+    return names
+
+
 def find_assert(sf: SourceFile, span: Optional[dict]):
     for node in sf:
         if isinstance(node, Assert) and (span is None or _span_matches(node, span)):

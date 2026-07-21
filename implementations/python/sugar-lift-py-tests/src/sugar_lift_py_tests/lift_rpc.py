@@ -3163,6 +3163,94 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             # For a bare `assert`, call_site and assertion are the same locus
             # (1:1, protocol Section 4); the fact is the desugared InvValue.
             # (audit_walk already returned empty above; this is the live path.)
+            if level == "universe":
+                # The callee contract, served from the tree. Each function's
+                # FunctionDef.sugar() reduces to a UniverseValue whose
+                # payload_rows project the function-contract DTO (post + invs) --
+                # the dig RESULT. Callee resolution is by NAME, directly: a
+                # call-site cue (`at` on a call site) resolves to the function
+                # whose name the call names, no bridge-matching. Three modes:
+                # file scan (seek=false), a universe's own memento, or a
+                # call-site cue.
+                from sugar_lift_py_tests import tree_enumerate as _tree
+                from sugar_lift_py_tests.ir import TermTableBuilder
+                from sugar_source_tree.panic import SugarNotWritten
+
+                sf = _tree.source_file(full_path)
+                term_table = TermTableBuilder()
+                universes = []  # (name, memento_dict, contract_dto)
+                gaps = []
+                for fn in sf.functions():
+                    try:
+                        def_memento, rows = _tree.function_contract_rows(fn, file_rel)
+                    except SugarNotWritten as gap:
+                        gaps.append(
+                            {
+                                "memento": _tree.function_def_memento(
+                                    fn, file_rel
+                                ).to_rpc(),
+                                "reason": gap.observed,
+                            }
+                        )
+                        continue
+                    if rows is None:
+                        continue  # an effect, not a contract
+                    universes.append((fn.name, def_memento.to_rpc(), rows[0]))
+
+                def _node(memento, dto):
+                    return {
+                        "memento": memento,
+                        "audit": dto.to_rpc_with_term_table(term_table),
+                        "payload": None,
+                    }
+
+                if not (seek and at is not None):
+                    nodes = [_node(m, d) for _n, m, d in universes]
+                    _send_enumerate_result(
+                        msg_id, nodes, gaps, term_tables=[term_table.nodes]
+                    )
+                    _log_enumeration_demand(
+                        str(level), at, cache="miss", started=demand_started
+                    )
+                    return
+
+                # seek: a universe's own memento, else a call-site cue -> callee.
+                direct = [
+                    _node(m, d) for _n, m, d in universes if _memento_matches(m, at)
+                ]
+                if direct:
+                    _send_enumerate_result(
+                        msg_id, direct, [], term_tables=[term_table.nodes]
+                    )
+                    return
+                targets = _tree.call_target_names(
+                    sf, at.get("span") if isinstance(at, dict) else None
+                )
+                by_name = {name: (m, d) for name, m, d in universes}
+                cued = [
+                    _node(*by_name[t]) for t in targets if t in by_name
+                ]
+                _send_enumerate_result(
+                    msg_id,
+                    cued,
+                    []
+                    if cued
+                    else [
+                        {
+                            "memento": at,
+                            "reason": (
+                                "no universe for the callee(s) this call site cues: "
+                                f"{targets or 'none'}"
+                            ),
+                        }
+                    ],
+                    term_tables=[term_table.nodes],
+                )
+                _log_enumeration_demand(
+                    str(level), at, cache="miss", started=demand_started
+                )
+                return
+
             if level in ("call_sites", "assertions", "facts"):
                 from sugar_lift_py_tests import tree_enumerate as _tree
 
