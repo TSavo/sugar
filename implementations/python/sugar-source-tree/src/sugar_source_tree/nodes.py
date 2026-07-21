@@ -787,7 +787,13 @@ class Constant(Expression):
             from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 
             return IntLiteralSugar(value=v, site=self.fragment)
-        return super().sugar()  # float / str / bytes / None / ... not yet written
+        if type(v) is str:
+            from sugar_lift_py_tests.sugar.string_literal_sugar import (
+                StringLiteralSugar,
+            )
+
+            return StringLiteralSugar(value=v, site=self.fragment)
+        return super().sugar()  # float / bytes / None / ... not yet written
 
 
 class Attribute(Expression):

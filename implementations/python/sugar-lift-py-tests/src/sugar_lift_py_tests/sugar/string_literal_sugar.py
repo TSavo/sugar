@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -10,21 +9,16 @@ from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
 @dataclass(frozen=True)
-class StringLiteralSugar(Sugar, role=SugarRole.TERM):
-    """A string literal. Infinitely many values, so the value is a field. It reduces
-    to a StringValue: the string as a term. (`type(...) is str` recognizes a str.)"""
+class StringLiteralSugar(Sugar):
+    """A string literal. Infinitely many values, so the value is a field. It
+    reduces to a StringValue: the string as a term. A leaf -- no child sugars.
+
+    Meaning-only, node-constructed: the Constant node distinguishes `str` (by
+    `type(value) is str`) and constructs this WITH the value; no owns/new/role.
+    """
 
     value: str
     site: object = dataclass_field(compare=False)
-
-    @classmethod
-    def owns(cls, site) -> bool:
-        return site.observed == "Constant" and type(site.literal_value()) is str
-
-    @classmethod
-    def new(cls, site, ctx) -> "StringLiteralSugar":
-        del ctx  # a literal is a leaf: no children
-        return cls(value=site.literal_value(), site=site)
 
     @classmethod
     def witnesses(cls):
