@@ -40,9 +40,14 @@ def test_symbolic_iterable_stays_loud():
         _fn("def A(z, xs):\n    for x in xs:\n        assert x == z\n    return z\n").sugar()
 
 
-def test_loop_carried_accumulator_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(z):\n    t = 0\n    for x in [1, 2]:\n        t = t + x\n    return t\n").sugar()
+def test_loop_carried_accumulator_folds_over_a_concrete_iterable():
+    # t = 0; for x in [1,2,3]: t = t + x; return t  -- the carried accumulator is
+    # threaded through the unroll (t reads the previous iteration's value), so it
+    # folds to 6. The `for` dissolved into block-threading; no loop-sugar.
+    post = _fn(
+        "def A():\n    t = 0\n    for x in [1, 2, 3]:\n        t = t + x\n    return t\n"
+    ).sugar().desugar().value.post()
+    assert post.args[1].value == 6  # out == 0+1+2+3
 
 
 def test_tuple_target_stays_loud():
@@ -54,6 +59,6 @@ if __name__ == "__main__":
     test_concrete_for_unrolls_the_body_per_element()
     test_empty_concrete_for_states_nothing()
     test_symbolic_iterable_stays_loud()
-    test_loop_carried_accumulator_stays_loud()
+    test_loop_carried_accumulator_folds_over_a_concrete_iterable()
     test_tuple_target_stays_loud()
     print("ok: concrete for unrolls; symbolic/carried/tuple-target loud")
