@@ -1867,8 +1867,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     return
                 sf = _tree.source_file(full_path)
                 span = at.get("span") if isinstance(at, dict) else None
-                assert_node = _tree.find_assert(sf, span)
-                if assert_node is None:
+                source_assert, assert_node = _tree.temporally_rewritten_assert(
+                    sf, span
+                )
+                if source_assert is None or assert_node is None:
                     _send_enumerate_result(
                         msg_id,
                         [],
@@ -1882,7 +1884,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     return
 
                 term_table = TermTableBuilder()
-                caller_memento = _tree.assert_memento(assert_node, file_rel)
+                caller_memento = _tree.assert_memento(source_assert, file_rel)
                 caller_cid = caller_memento["source_cid"]
                 caller_post = None
                 caller_outcome = assert_node.sugar().desugar(None)
@@ -2114,10 +2116,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     return
 
                 # facts: at is an assertion memento — desugar THAT assert.
-                node = _tree.find_assert(
+                source_node, node = _tree.temporally_rewritten_assert(
                     sf, at.get("span") if isinstance(at, dict) else None
                 )
-                if node is None:
+                if source_node is None or node is None:
                     _send_enumerate_result(
                         msg_id, [], [{"memento": at, "reason": "no assertion here"}]
                     )
@@ -2129,7 +2131,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         [],
                         [
                             {
-                                "memento": _tree.assert_memento(node, file_rel),
+                                "memento": _tree.assert_memento(source_node, file_rel),
                                 "reason": "assertion emits no fact",
                             }
                         ],
@@ -2139,7 +2141,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     msg_id,
                     [
                         {
-                            "memento": _tree.assert_memento(node, file_rel),
+                            "memento": _tree.assert_memento(source_node, file_rel),
                             "audit": None,
                             "payload": formula,
                         }
