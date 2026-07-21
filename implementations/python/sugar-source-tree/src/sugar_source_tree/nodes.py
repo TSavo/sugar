@@ -1110,8 +1110,29 @@ class For(Statement):
         ):
             return arg.value
         if arg.kind == "UnaryOp" and arg.op.kind == "USub":
-            inner = self._concrete_int(arg.operand)
+            inner = For._concrete_int(self, arg.operand)
             return -inner if inner is not None else None
+        if arg.kind == "BinOp":
+            # A ground arithmetic composition denotes its int as surely as a
+            # negative literal does: `0 + 1` reads 1. Structural reading of what
+            # the literals compose to (int-closed operators only), never an
+            # evaluation of anything symbolic -- a non-ground side reads None.
+            left = For._concrete_int(self, arg.left)
+            right = For._concrete_int(self, arg.right)
+            if left is None or right is None:
+                return None
+            op = arg.op.kind
+            if op == "FloorDiv" and right == 0:
+                return None  # a ground ZeroDivisionError is an effect, not an int
+            if op == "Mod" and right == 0:
+                return None
+            return {
+                "Add": lambda: left + right,
+                "Sub": lambda: left - right,
+                "Mult": lambda: left * right,
+                "FloorDiv": lambda: left // right,
+                "Mod": lambda: left % right,
+            }.get(op, lambda: None)()
         return None
 
     def _int_constant(self, value: int) -> "Node":
@@ -1146,9 +1167,95 @@ class While(Statement):
     orelse: Tuple[Statement, ...]
     _child_fields = ("test", "body", "orelse")
 
+    # The unroll bound. A CONCRETE while whose state never satisfies exit within
+    # this many iterations is treated as not-concrete (falls to the symbolic
+    # branch, which is loud) -- `while True:` lands there honestly rather than
+    # spinning substitute forever. Not a semantic limit: a real concrete loop
+    # that long is beyond what an unroll should dissolve anyway.
+    _FUEL = 1000
+
     def substitute(self, scope):
-        """Binds nothing: recurse into children and reassemble."""
-        return self._substitute_children(scope)
+        """`while <test>: <body>` -- the unbounded loop, and over CONCRETE state
+        it DISSOLVES exactly like a concrete `for`: each iteration is one more
+        substitution. The condition, substituted against the carried state, is
+        ground-decidable (constants only); while it decides True the body is
+        threaded once more (its bindings carried forward), and the unrolled
+        statements are SPLICED into the enclosing block. `i = 0; while i < 3:
+        i = i + 1` unrolls to three rebinds of i; `return i` reads 3.
+
+        A condition that is NOT ground-decidable against the carried state (a
+        formal in the state, an effect) keeps the node -- the symbolic while is
+        the recurrence-with-exit-condition, an unwritten segment that stays
+        loud. `while True:` exhausts the fuel and lands there too: an infinite
+        concrete loop is a non-termination the unroll must not fake."""
+        from .shadow import rewrite
+
+        if not self.orelse:
+            unrolled = self._try_unroll(scope)
+            if unrolled is not None:
+                return _Splice(unrolled)
+
+        # Symbolic (or unsupported) while: keep the node; mask the carried
+        # names (any name the body rebinds) so the update stays symbolic.
+        bound = set()
+        for stmt in self.body:
+            b = stmt.substitution_binding({})
+            if b:
+                bound |= set(b)
+        bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        changed = {}
+        new_test, d = self._substitute_field(self.test, bs)
+        if d:
+            changed["test"] = new_test
+        for f in ("body", "orelse"):
+            new, d = self._substitute_body(getattr(self, f), bs)
+            if d:
+                changed[f] = new
+        return self if not changed else rewrite(self, **changed)
+
+    def _try_unroll(self, scope):
+        """The unrolled statement tuple, or None if the loop is not concrete
+        (condition undecidable against the carried state, or fuel exhausted)."""
+        carried = dict(scope)
+        unrolled: list = []
+        for _ in range(self._FUEL):
+            test, _d = self._substitute_field(self.test, carried)
+            verdict = self._ground_truth(test)
+            if verdict is None:
+                return None  # not decidable -- not a concrete loop
+            if verdict is False:
+                return tuple(unrolled)
+            new_body, _c = self._substitute_body(self.body, carried)
+            unrolled.extend(new_body)
+            for stmt in new_body:
+                b = stmt.substitution_binding(carried)
+                if b:
+                    carried = {**carried, **b}
+        return None  # fuel exhausted: an infinite/huge loop is not an unroll
+
+    def _ground_truth(self, test):
+        """Decide a GROUND condition structurally, or None. Constants only --
+        this is the same structural reading as For._concrete_int (recognizing
+        literals), never an evaluation of symbolic meaning: a bool Constant
+        stands as itself; a single-op Compare over int literals decides by the
+        operator. Anything else (a free name, a call) is not ground."""
+        if test.kind == "Constant" and isinstance(test.value, bool):
+            return test.value
+        if test.kind == "Compare" and len(test.ops) == 1:
+            left = For._concrete_int(self, test.left)
+            right = For._concrete_int(self, test.comparators[0])
+            if left is None or right is None:
+                return None
+            op = test.ops[0].kind
+            return {
+                "Lt": left < right,
+                "LtE": left <= right,
+                "Gt": left > right,
+                "GtE": left >= right,
+                "Eq": left == right,
+                "NotEq": left != right,
+            }.get(op)
+        return None
 
 
 class If(Statement):
