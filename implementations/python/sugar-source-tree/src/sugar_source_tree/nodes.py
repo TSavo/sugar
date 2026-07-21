@@ -801,6 +801,14 @@ class Name(Expression):
         bound = scope.get(self.id)
         return bound if bound is not None else self
 
+    def sugar(self):
+        """A name constructs NameSugar with its identifier. A name is a leaf:
+        nothing to build from children, only to look up against the temporal
+        scope when the body reduces (an unbound name panics there, loudly)."""
+        from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+
+        return NameSugar(name=self.id, site=self.fragment)
+
 
 class List(Expression):
     elts: Tuple[Expression, ...]
