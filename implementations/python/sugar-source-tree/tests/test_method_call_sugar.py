@@ -44,9 +44,17 @@ def test_assert_consumes_the_coordinate():
     assert inv.args[0].name == "call:upper"
 
 
-def test_keyword_args_stay_loud():
+def test_keyword_args_lift():
+    t = _out("def A(z):\n    return z.get(1, default=2)\n")
+    assert t.name == "call:get"
+    kwarg = t.args[-1]
+    assert kwarg.name == "py.kwarg"
+    assert kwarg.args[0].value == "default"
+
+
+def test_spread_keyword_args_stay_loud():
     with pytest.raises(SugarNotWritten):
-        _fn("def A(z):\n    return z.get(1, default=2)\n").sugar()
+        _fn("def A(z, d):\n    return z.get(1, **d)\n").sugar()
 
 
 if __name__ == "__main__":
@@ -54,4 +62,4 @@ if __name__ == "__main__":
     test_method_chains_compose()
     test_assert_consumes_the_coordinate()
     test_keyword_args_stay_loud()
-    print("ok: method calls -- coordinate, chains, assert; kwargs loud")
+    print("ok: method calls -- coordinate, chains, assert; kwargs/computed loud")

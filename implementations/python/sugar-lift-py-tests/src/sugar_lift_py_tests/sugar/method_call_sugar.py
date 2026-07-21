@@ -28,6 +28,7 @@ class MethodCallSugar(Sugar):
     name: str
     args: tuple  # the argument sugars, in source order
     site: object = dataclass_field(compare=False)
+    keywords: tuple = ()  # (name, sugar) pairs, in source order
 
     @classmethod
     def witnesses(cls):
@@ -54,20 +55,37 @@ class MethodCallSugar(Sugar):
                     receiver, tuple(rest), accumulated + (value,), ctx
                 )
             )
+        return self._collect_kwargs(receiver, self.keywords, (), accumulated, ctx)
+
+    def _collect_kwargs(
+        self, receiver, remaining: tuple, kw_values: tuple, positional: tuple, ctx
+    ) -> Outcome:
+        if remaining:
+            (name, sugar), *rest = remaining
+            return sugar.desugar(ctx).and_then(
+                lambda value: self._collect_kwargs(
+                    receiver, tuple(rest), kw_values + ((name, value),), positional, ctx
+                )
+            )
         from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.ir import ctor, str_const
 
         owner = str(self.site)
+        kwarg_terms = [
+            ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
+            for name, value in kw_values
+        ]
         term = ctor(
             f"call:{self.name}",
             [receiver.to_term(owner=owner)]
-            + [value.to_term(owner=owner) for value in accumulated],
+            + [value.to_term(owner=owner) for value in positional]
+            + kwarg_terms,
             symbol_kind="method-coordinate",
         )
         return Complete(
             CallSiteValue(
                 target_name=self.name,
-                arg_values=(receiver, *accumulated),
+                arg_values=(receiver, *positional, *(v for _, v in kw_values)),
                 parameters=(),
                 term=term,
                 body=None,  # the dig is CUED, not inlined here

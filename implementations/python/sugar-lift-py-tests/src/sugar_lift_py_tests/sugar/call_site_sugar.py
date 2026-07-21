@@ -30,6 +30,7 @@ class CallSiteSugar(Sugar):
     target_name: str
     args: tuple  # the argument sugars, in source order
     site: object = dataclass_field(compare=False)
+    keywords: tuple = ()  # (name, sugar) pairs, in source order
 
     @classmethod
     def witnesses(cls):
@@ -55,12 +56,29 @@ class CallSiteSugar(Sugar):
                     tuple(rest), accumulated + (value,), ctx
                 )
             )
-        from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
+        return self._collect_kwargs(self.keywords, (), accumulated, ctx)
 
+    def _collect_kwargs(
+        self, remaining: tuple, kw_values: tuple, positional: tuple, ctx: object
+    ) -> Outcome:
+        if remaining:
+            (name, sugar), *rest = remaining
+            return sugar.desugar(ctx).and_then(
+                lambda value: self._collect_kwargs(
+                    tuple(rest), kw_values + ((name, value),), positional, ctx
+                )
+            )
+        from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        owner = str(self.site)
+        kwarg_terms = [
+            ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
+            for name, value in kw_values
+        ]
         term = ctor(
             f"call:{self.target_name}",
-            [value.to_term(owner=str(self.site)) for value in accumulated],
+            [value.to_term(owner=owner) for value in positional] + kwarg_terms,
             symbol_kind=(
                 "builtin"
                 if hasattr(builtins, self.target_name)
@@ -70,7 +88,7 @@ class CallSiteSugar(Sugar):
         return Complete(
             CallSiteValue(
                 target_name=self.target_name,
-                arg_values=accumulated,
+                arg_values=positional + tuple(value for _, value in kw_values),
                 parameters=(),
                 term=term,
                 body=None,  # the dig is CUED, not inlined here

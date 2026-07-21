@@ -2228,8 +2228,9 @@ class Call(Expression):
         built, so a callee with no sugar (a Lambda called inline) still stays
         loud through the ordinary recursion. Keyword arguments stay loud gaps
         until written."""
-        if self.keywords:
-            return super().sugar()
+        if any(kw.arg is None for kw in self.keywords):
+            return super().sugar()  # **spread -- not one keyword, never guess
+        keyword_sugars = tuple((kw.arg, kw.value.sugar()) for kw in self.keywords)
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
@@ -2237,6 +2238,7 @@ class Call(Expression):
                 target_name=self.func.id,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
+                keywords=keyword_sugars,
             )
         if isinstance(self.func, Attribute):
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
@@ -2246,7 +2248,10 @@ class Call(Expression):
                 name=self.func.attr,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
+                keywords=keyword_sugars,
             )
+        if keyword_sugars:
+            return super().sugar()  # kwargs on a computed callee -- not written
         from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 
         return ComputedCallSugar(
