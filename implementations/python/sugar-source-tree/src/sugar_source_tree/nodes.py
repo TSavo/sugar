@@ -1643,6 +1643,15 @@ class FormattedValue(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
+    def sugar(self):
+        """`{value}` in an f-string. A conversion (!r/!s/!a) or a format spec is
+        not lifted yet -- LOUD rather than a silently dropped modifier."""
+        from sugar_lift_py_tests.sugar.fstring_sugar import FormattedValueSugar
+
+        if self.conversion != -1 or self.format_spec is not None:
+            return super().sugar()
+        return FormattedValueSugar(value=self.value.sugar(), site=self.fragment)
+
 
 class JoinedStr(Expression):
     values: Tuple[Expression, ...]
@@ -1651,6 +1660,15 @@ class JoinedStr(Expression):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def sugar(self):
+        """The f-string: JoinedStrSugar over each part's sugar (literal chunks
+        and {value} interpolations), concatenated."""
+        from sugar_lift_py_tests.sugar.fstring_sugar import JoinedStrSugar
+
+        return JoinedStrSugar(
+            parts=tuple(v.sugar() for v in self.values), site=self.fragment
+        )
 
 
 class Constant(Expression):
