@@ -210,6 +210,65 @@ def function_contract_rows(fn, file_rel: str):
     return def_memento, outcome.value.payload_rows(def_memento)
 
 
+def call_nodes_in_assert(sf: SourceFile, span: Optional[dict]) -> list:
+    """The plain named Call nodes inside the assertion at `span`, in walk order.
+    The cue's own AST: each carries the callee name AND the actual argument
+    nodes -- the pre this call fills."""
+    from sugar_source_tree.nodes import Call, Name
+
+    node = find_assert(sf, span)
+    if node is None:
+        return []
+    return [
+        call
+        for call in node.walk()
+        if isinstance(call, Call) and isinstance(call.func, Name)
+    ]
+
+
+def _args_are_ground(call) -> bool:
+    """True when every argument fills its pre with no remaining hole: no free
+    Name inside any arg. A hole-bearing arg leaves the callee's contract
+    curried (the abstract contract IS the callable floor); a ground arg set is
+    a fill, and the dig applies it."""
+    for arg in call.args:
+        for n in arg.walk():
+            if n.kind == "Name":
+                return False
+    return True
+
+
+def applied_contract_rows(fn, arg_nodes: tuple, file_rel: str):
+    """The callee's contract AS APPLIED at a call: a call IS substitution.
+
+    Substitute the actual argument nodes for the formals into the body -- the
+    same `_substitute_body` that threads a block; a concrete iterable arg makes
+    a symbolic loop unroll here (`_Splice`), a filled name inlines. Then lift
+    the applied body. `A(xs): total=0; for x in xs: total=total+x` dug at
+    `A([1,2,3])` yields post `out == 6` -- the fold coordinate collapsed by the
+    dig, exactly as `c[post]=5` collapses `b[post]`. The DTO keeps the callee's
+    memento and formals (same wire shape; the post simply no longer mentions
+    them). Incomplete -> (memento, None), an effect, as the abstract path."""
+    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        FunctionUniverseSugar,
+    )
+
+    def_memento = function_def_memento(fn, file_rel)
+    scope = {p.name: a for p, a in zip(fn.params, arg_nodes)}
+    applied_body, _changed = fn._substitute_body(fn.body, scope)
+    sugar = FunctionUniverseSugar(
+        name=fn.name,
+        formals=tuple(p.name for p in fn.params),
+        statements=tuple(stmt.sugar() for stmt in applied_body),
+        site=fn.fragment,
+    )
+    outcome = sugar.desugar(None)
+    if not isinstance(outcome, Complete):
+        return def_memento, None
+    return def_memento, outcome.value.payload_rows(def_memento)
+
+
 def module_definition_memento(sf: SourceFile, file_rel: str, file_cid: str) -> dict:
     """The whole-file body the audit frontier demands one leaf for."""
     lc = sf.root.line_col_span()

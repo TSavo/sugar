@@ -2022,13 +2022,42 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         msg_id, direct, [], term_tables=[term_table.nodes]
                     )
                     return
-                targets = _tree.call_target_names(
+                calls = _tree.call_nodes_in_assert(
                     sf, at.get("span") if isinstance(at, dict) else None
                 )
+                targets = []
                 by_name = {name: (m, d) for name, m, d in universes}
-                cued = [
-                    _node(*by_name[t]) for t in targets if t in by_name
-                ]
+                cued = []
+                seen = set()
+                for call in calls:
+                    t = call.func.id
+                    if t in seen:
+                        continue
+                    seen.add(t)
+                    targets.append(t)
+                    if t not in by_name:
+                        continue
+                    fn = _tree.find_function_by_name(sf, t)
+                    # A call IS substitution: ground args fill the pre, so the
+                    # dig serves the contract AS APPLIED at this call (a concrete
+                    # iterable unrolls the callee's loop here; the fold
+                    # coordinate collapses). An arg still carrying a hole leaves
+                    # the abstract contract standing -- the callable floor.
+                    if (
+                        fn is not None
+                        and len(call.args) == len(fn.params)
+                        and _tree._args_are_ground(call)
+                    ):
+                        try:
+                            memento, rows = _tree.applied_contract_rows(
+                                fn, tuple(call.args), file_rel
+                            )
+                        except SugarNotWritten:
+                            rows = None
+                        if rows:
+                            cued.append(_node(memento.to_rpc(), rows[0]))
+                            continue
+                    cued.append(_node(*by_name[t]))
                 _send_enumerate_result(
                     msg_id,
                     cued,
