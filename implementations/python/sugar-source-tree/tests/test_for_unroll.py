@@ -47,11 +47,27 @@ def test_symbolic_assert_only_loop_is_a_universal():
     assert body.operands[1].name == "py.eq"  # x == z
 
 
-def test_symbolic_carried_accumulator_stays_loud():
-    # A carried accumulator over a symbolic iterable is the non-degenerate fold,
-    # not written yet -- still loud.
+def test_symbolic_carried_accumulator_is_a_fold_coordinate():
+    # t = 0; for x in xs: t = t + x; return t  over a symbolic xs is the fold:
+    # the carried t rebinds to the coordinate py.fold.Add(0, xs) -- a reference
+    # the dig resolves (the recurrence), the same shape as a recursion's call:f.
+    post = _fn(
+        "def A(xs):\n    total = 0\n    for x in xs:\n        total = total + x\n    return total\n"
+    ).sugar().desugar().value.post()
+    fold = post.args[1]
+    assert fold.name == "call:py.fold.Add"
+    assert fold.args[0].value == 0  # init
+    assert fold.args[1].name == "xs"  # iterable
+
+
+def test_accumulator_referencing_assert_stays_loud():
+    # for x in xs: assert total > 0; total = total + x  -- the assert references
+    # the RUNNING accumulator (point 3, a real loop invariant), still loud.
     with pytest.raises(SugarNotWritten):
-        _fn("def A(xs):\n    t = 0\n    for x in xs:\n        t = t + x\n    return t\n").sugar()
+        _fn(
+            "def A(xs):\n    total = 0\n    for x in xs:\n        assert total == 0\n"
+            "        total = total + x\n    return total\n"
+        ).sugar()
 
 
 def test_loop_carried_accumulator_folds_over_a_concrete_iterable():
@@ -73,7 +89,8 @@ if __name__ == "__main__":
     test_concrete_for_unrolls_the_body_per_element()
     test_empty_concrete_for_states_nothing()
     test_symbolic_assert_only_loop_is_a_universal()
-    test_symbolic_carried_accumulator_stays_loud()
+    test_symbolic_carried_accumulator_is_a_fold_coordinate()
+    test_accumulator_referencing_assert_stays_loud()
     test_loop_carried_accumulator_folds_over_a_concrete_iterable()
     test_tuple_target_stays_loud()
     print("ok: concrete for unrolls; symbolic/carried/tuple-target loud")
