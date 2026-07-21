@@ -1653,6 +1653,15 @@ class Expr(Statement):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
+    def sugar(self):
+        """`<expr>` as a statement constructs ExprStatementSugar WITH the
+        value's sugar. States nothing; an effect in the value rides."""
+        from sugar_lift_py_tests.sugar.expr_statement_sugar import (
+            ExprStatementSugar,
+        )
+
+        return ExprStatementSugar(value=self.value.sugar(), site=self.fragment)
+
 
 class Pass(Statement):
     pass
