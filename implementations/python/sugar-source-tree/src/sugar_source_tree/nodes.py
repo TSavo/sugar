@@ -2470,7 +2470,25 @@ class Constant(Expression):
             )
 
             return StringLiteralSugar(value=v, site=self.fragment)
-        return super().sugar()  # bool / bytes / ... not yet written
+        if type(v) is bytes:
+            from sugar_lift_py_tests.sugar.bytes_literal_sugar import (
+                BytesLiteralSugar,
+            )
+
+            return BytesLiteralSugar(value=v, site=self.fragment)
+        if v is Ellipsis:
+            from sugar_lift_py_tests.sugar.ellipsis_literal_sugar import (
+                EllipsisLiteralSugar,
+            )
+
+            return EllipsisLiteralSugar(site=self.fragment)
+        if type(v) is complex:
+            from sugar_lift_py_tests.sugar.complex_literal_sugar import (
+                ComplexLiteralSugar,
+            )
+
+            return ComplexLiteralSugar(real=v.real, imag=v.imag, site=self.fragment)
+        return super().sugar()  # every literal kind is now converted
 
 
 class Attribute(Expression):
