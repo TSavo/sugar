@@ -26,24 +26,22 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
-def reduce_statements(statements: tuple, ctx: object):
-    """Reduce a block's statement sugars in order, threading scope.
+def reduce_statements(statements: tuple):
+    """Reduce a block's statement sugars in order.
 
-    The factory's `_collect_iterative`, verbatim in behavior, but calling
-    `stmt.desugar(ctx)` directly (the tree's sugars answer `desugar`, not the
-    SugarBody `reduce` wrapper). Each outcome owns its own contribution, its
-    scope extension, and whether the run continues -- the loop never branches on
-    a value's kind.
+    Each substituted statement's sugar answers `desugar()` with an Outcome that
+    owns its own contribution and whether the run continues -- the loop never
+    branches on a value's kind, and it threads NO scope: substitute already did
+    the binding, so a statement's meaning is a pure function of the (already
+    resolved) tree, not of any accumulated context.
     """
     entries: list[object] = []
     transforms: list = []
     fall_through: list = []
-    final_ctx = ctx
     can_fall_through = True
 
     for index, head in enumerate(statements):
-        outcome = head.desugar(final_ctx)
-        final_ctx = outcome.extend_scope(final_ctx)
+        outcome = head.desugar()
 
         contribution = outcome.contribution()
         for transform in reversed(transforms):
@@ -74,13 +72,12 @@ def reduce_statements(statements: tuple, ctx: object):
 
     return (
         tuple(entries),
-        final_ctx,
         can_fall_through,
         tuple(fall_through) if can_fall_through else (),
     )
 
 
-def reduce_body(statements: tuple, ctx: object):
+def reduce_body(statements: tuple):
     """Reduce a function body to ONE Outcome, preserving Complete/Incomplete.
 
     A body that reduces to a value is `Complete(BlockValue(record))` -- the
@@ -94,9 +91,7 @@ def reduce_body(statements: tuple, ctx: object):
     """
     from sugar_lift_py_tests.outcome import Incomplete
 
-    entries, _final_ctx, can_fall_through, fall_through = reduce_statements(
-        statements, ctx
-    )
+    entries, can_fall_through, fall_through = reduce_statements(statements)
     # A body that is nothing but a single propagating effect IS that effect --
     # there is no value, no fact, no exit to make a contract from. Propagate it
     # so the def surfaces as an effect (a halt), never a None-returning contract.
@@ -137,24 +132,20 @@ class FunctionUniverseSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # The body was already SUBSTITUTED (FunctionDef.sugar), so there are no
-        # temporal bindings left to thread: a formal reaches its NameSugar as a
-        # free name and becomes its own symbolic Var, a local assignment is inert
-        # (spent by substitute), a conditional binding is an IfExp phi. There is
-        # nothing to bind_value here. A root context is still established because
-        # a few not-yet-converted floor values (GuardedFaces, BlockValue with a
-        # `with` as-binding) call extend_scope during block reduction -- that is
-        # the next slice of the temporal cut, not this one.
-        if ctx is None:
-            from sugar_lift_py_tests.context.reduce_context import ReduceContext
-
-            ctx = ReduceContext.root(owner="FunctionUniverseSugar")
+        # No context. The body was already SUBSTITUTED (FunctionDef.sugar), so
+        # there is nothing temporal to thread: a formal reaches its NameSugar as
+        # a free name and becomes its own symbolic Var, a local assignment is
+        # inert (spent by substitute), a conditional binding is an IfExp phi. The
+        # block reduction consults no scope -- ctx.temporal is gone, and the
+        # `with`/nonlocal as-binding paths that once needed extend_scope are not
+        # lifted on the tree (they panic SugarNotWritten), so nothing calls it.
+        del ctx
 
         # `.and_then` is the Complete/Incomplete distinction: a Complete body
         # (a BlockValue record) becomes the universe; an Incomplete body (an
         # effect) propagates untouched -- an effect is never wrapped into a
         # false contract.
-        return reduce_body(self.statements, ctx).and_then(
+        return reduce_body(self.statements).and_then(
             lambda record: Complete(
                 UniverseValue(name=self.name, formals=self.formals, record=record)
             )
