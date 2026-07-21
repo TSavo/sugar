@@ -946,24 +946,29 @@ class For(Statement):
         new_iter, iter_changed = self._substitute_field(self.iter, scope)
         subst_iter = new_iter if iter_changed else self.iter
 
-        concrete = not self.orelse and self.target.kind == "Name"
+        concrete = not self.orelse and self.target.kind in ("Name", "Tuple", "List")
         elements = self._concrete_elements(subst_iter) if concrete else None
         if elements is not None:
-            target_name = self.target.id
-            unrolled: list = []
-            carried = dict(scope)  # carries loop variables across iterations
-            for element in elements:
-                iter_scope = {**carried, target_name: element}
-                new_body, _c = self._substitute_body(self.body, iter_scope)
-                unrolled.extend(new_body)
-                # thread this iteration's bindings forward (the carried fold),
-                # never the loop target itself (rebound next iteration).
-                for stmt in new_body:
-                    b = stmt.substitution_binding(iter_scope)
-                    if b:
-                        iter_scope = {**iter_scope, **b}
-                carried = {k: v for k, v in iter_scope.items() if k != target_name}
-            return _Splice(tuple(unrolled))
+            bindings = [self._target_bindings(e) for e in elements]
+            if all(b is not None for b in bindings):
+                target_names = self._bound_names_in(self.target)
+                unrolled: list = []
+                carried = dict(scope)  # carries loop variables across iterations
+                for element_bindings in bindings:
+                    iter_scope = {**carried, **element_bindings}
+                    new_body, _c = self._substitute_body(self.body, iter_scope)
+                    unrolled.extend(new_body)
+                    # thread this iteration's bindings forward (the carried
+                    # fold), never the loop target's own names (rebound next
+                    # iteration).
+                    for stmt in new_body:
+                        b = stmt.substitution_binding(iter_scope)
+                        if b:
+                            iter_scope = {**iter_scope, **b}
+                    carried = {
+                        k: v for k, v in iter_scope.items() if k not in target_names
+                    }
+                return _Splice(tuple(unrolled))
 
         # Symbolic (or unsupported) loop: keep the node, mask the target AND every
         # loop-carried variable (a name the body rebinds), recurse. Masking the
@@ -1077,13 +1082,31 @@ class For(Statement):
             site=self.fragment,
         )
 
+    def _target_bindings(self, element: "Node") -> "Optional[dict]":
+        """What this loop's target binds when the element is `element`, or None
+        when the shapes do not destructure. A Name target binds it whole; a
+        tuple/list target of plain Names destructures a tuple/list DISPLAY
+        element of the same arity (`for a, b in [(1, 2)]` binds a=1, b=2). A
+        nested or starred target, or an element that is not a matching display,
+        is not destructured here -- the loop falls to the symbolic branch."""
+        if self.target.kind == "Name":
+            return {self.target.id: element}
+        names = []
+        for t in self.target.elts:
+            if t.kind != "Name":
+                return None  # nested/starred target -- not written
+            names.append(t.id)
+        if element.kind not in ("Tuple", "List") or len(element.elts) != len(names):
+            return None
+        return dict(zip(names, element.elts))
+
     def _concrete_elements(self, iterable: "Expression") -> "Optional[list]":
         """The element nodes to unroll over, or ``None`` if `iterable` is not
         concrete. A `List`/`Tuple_` literal is concrete by construction; a
         `range(...)` call is concrete only when every argument (after
         substitution) is a literal `int` -- a symbolic bound leaves the fold
         real, so it is not recognized here."""
-        if iterable.kind in ("List", "Tuple_"):
+        if iterable.kind in ("List", "Tuple"):
             return list(iterable.elts)
         if (
             iterable.kind == "Call"

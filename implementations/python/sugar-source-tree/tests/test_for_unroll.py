@@ -80,9 +80,26 @@ def test_loop_carried_accumulator_folds_over_a_concrete_iterable():
     assert post.args[1].value == 6  # out == 0+1+2+3
 
 
-def test_tuple_target_stays_loud():
+def test_tuple_target_destructures_the_concrete_element():
+    # for a, b in [(1, 2), (3, 4)]: assert a == b  -- each display element
+    # destructures into the tuple target's names; two invs, 1==2 and 3==4.
+    invs = _invs(
+        "def A(z):\n    for a, b in [(1, 2), (3, 4)]:\n        assert a == b\n    return z\n"
+    )
+    assert [(i.args[0].value, i.args[1].value) for i in invs] == [(1, 2), (3, 4)]
+
+
+def test_starred_target_stays_loud():
+    # for a, *b -- a starred target does not destructure here; still loud.
     with pytest.raises(SugarNotWritten):
-        _fn("def A(z):\n    for a, b in [(1, 2)]:\n        assert a == b\n    return z\n").sugar()
+        _fn("def A(z):\n    for a, *b in [(1, 2)]:\n        assert a == a\n    return z\n").sugar()
+
+
+def test_arity_mismatch_stays_loud():
+    # the target has two names, the element three -- not destructured, loud
+    # (running it would be a ValueError; never bind a wrong shape).
+    with pytest.raises(SugarNotWritten):
+        _fn("def A(z):\n    for a, b in [(1, 2, 3)]:\n        assert a == b\n    return z\n").sugar()
 
 
 if __name__ == "__main__":
@@ -92,5 +109,7 @@ if __name__ == "__main__":
     test_symbolic_carried_accumulator_is_a_fold_coordinate()
     test_accumulator_referencing_assert_stays_loud()
     test_loop_carried_accumulator_folds_over_a_concrete_iterable()
-    test_tuple_target_stays_loud()
+    test_tuple_target_destructures_the_concrete_element()
+    test_starred_target_stays_loud()
+    test_arity_mismatch_stays_loud()
     print("ok: concrete for unrolls; symbolic/carried/tuple-target loud")
