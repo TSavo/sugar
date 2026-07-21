@@ -1104,6 +1104,19 @@ class For(Statement):
             for n in stmt.walk()
         )
 
+    def _target_bindings_for(self, target: "Node", element: "Node") -> "Optional[dict]":
+        """`_target_bindings` for an explicit target (shared with comprehensions)."""
+        if target.kind == "Name":
+            return {target.id: element}
+        names = []
+        for t in target.elts:
+            if t.kind != "Name":
+                return None
+            names.append(t.id)
+        if element.kind not in ("Tuple", "List") or len(element.elts) != len(names):
+            return None
+        return dict(zip(names, element.elts))
+
     def _target_bindings(self, element: "Node") -> "Optional[dict]":
         """What this loop's target binds when the element is `element`, or None
         when the shapes do not destructure. A Name target binds it whole; a
@@ -1111,16 +1124,7 @@ class For(Statement):
         element of the same arity (`for a, b in [(1, 2)]` binds a=1, b=2). A
         nested or starred target, or an element that is not a matching display,
         is not destructured here -- the loop falls to the symbolic branch."""
-        if self.target.kind == "Name":
-            return {self.target.id: element}
-        names = []
-        for t in self.target.elts:
-            if t.kind != "Name":
-                return None  # nested/starred target -- not written
-            names.append(t.id)
-        if element.kind not in ("Tuple", "List") or len(element.elts) != len(names):
-            return None
-        return dict(zip(names, element.elts))
+        return For._target_bindings_for(self, self.target, element)
 
     def _concrete_elements(self, iterable: "Expression") -> "Optional[list]":
         """The element nodes to unroll over, or ``None`` if `iterable` is not
@@ -1917,7 +1921,15 @@ class ListComp(Expression):
 
     def substitute(self, scope):
         """A comprehension: thread each generator's target, then substitute the
-        element against the scope with every target masked."""
+        element against the scope with every target masked.
+
+        Over a CONCRETE iterable it DISSOLVES -- `map` disappearing for real:
+        `[e for x in [1, 2, 3]]` is three substitutions of x into e, and the
+        comprehension rewrites to the List DISPLAY of those elements. The
+        comprehension was never a meaning; it was a count of rewrites."""
+        unrolled = self._try_unroll_to_display(scope)
+        if unrolled is not None:
+            return unrolled
         from .shadow import rewrite
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
         new_elt, de = self._substitute_field(self.elt, inner)
@@ -1927,6 +1939,46 @@ class ListComp(Expression):
         if de:
             changed["elt"] = new_elt
         return self if not changed else rewrite(self, **changed)
+
+    def _try_unroll_to_display(self, scope):
+        """The List display this comprehension dissolves to, or None. One
+        synchronous generator, no ifs (the filtered form is a later segment),
+        over a CONCRETE iterable whose elements destructure into the target:
+        each element substitutes into `elt`, and the results are the display's
+        elements. Reuses For's readers (same structural recognition)."""
+        if len(self.generators) != 1:
+            return None
+        gen = self.generators[0]
+        if gen.is_async or gen.ifs:
+            return None
+        new_iter, ic = self._substitute_field(gen.iter, scope)
+        it = new_iter if ic else gen.iter
+        elements = For._concrete_elements(self, it)
+        if elements is None:
+            return None
+        target = gen.target
+        results = []
+        for element in elements:
+            if target.kind == "Name":
+                bindings = {target.id: element}
+            else:
+                bindings = For._target_bindings_for(self, target, element)
+                if bindings is None:
+                    return None
+            inner = {**scope, **bindings}
+            new_elt, _d = self._substitute_field(self.elt, inner)
+            results.append(new_elt if _d else self.elt)
+        return self._make_list(tuple(results))
+
+    def _make_list(self, elements: tuple) -> "Node":
+        """Synthesize a List display of these element nodes, borrowing this
+        comprehension's span -- the dissolved `map`, a display like any other."""
+        from .backend import Children, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        slots = (("elts", Children(tuple(_handle_of(e) for e in elements))),)
+        return materialize(self.unit, ShadowNode("List", self.span, slots), self.reporter)
+
 
 
 class SetComp(Expression):
