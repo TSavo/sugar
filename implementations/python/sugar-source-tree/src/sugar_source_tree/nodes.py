@@ -801,6 +801,18 @@ class Subscript(Expression):
     slice_: Expression
     _child_fields = ("value", "slice_")
 
+    def sugar(self):
+        """`<value>[<slice_>]` constructs SubscriptSugar WITH the receiver's and
+        index's sugars. A Slice index reduces to its own gap through the
+        recursion (slice_.sugar()), never silently handled here."""
+        from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
+
+        return SubscriptSugar(
+            receiver=self.value.sugar(),
+            index=self.slice_.sugar(),
+            site=self.fragment,
+        )
+
 
 class Starred(Expression):
     value: Expression
