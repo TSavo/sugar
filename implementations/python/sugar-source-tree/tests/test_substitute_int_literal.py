@@ -103,16 +103,22 @@ def test_binders_mask_their_bound_names():
     # lambda z: z + 1 -- the parameter z is masked for the body.
     lam = next(n for n in _tree("g = lambda z: z + z\n").root.walk() if n.kind == "Lambda")
     assert lam.substitute({"z": _bind_target()}) is lam
+    # [i for i in xs] -- the comprehension loop var i is masked (no capture);
+    # a free var in the element substitutes.
+    c1 = next(n for n in _tree("a = [i for i in xs]\n").root.walk() if n.kind == "ListComp")
+    assert c1.substitute({"i": _bind_target()}) is c1
+    c2 = next(n for n in _tree("a = [y for i in xs]\n").root.walk() if n.kind == "ListComp")
+    assert c2.substitute({"y": _bind_target()}).elt.value == 3
 
 
 def test_an_unwritten_binder_still_panics():
-    # A comprehension binds its loop variable and has no masking substitute yet:
-    # rather than silently capturing, it is loud -- the drain names it next.
-    comp = next(
-        n for n in _tree("y = [i for i in xs]\n").root.walk() if n.kind == "ListComp"
+    # NamedExpr (walrus) binds into the enclosing scope and has no substitute
+    # yet: rather than silently mishandling it, it is loud -- the drain names it.
+    walrus = next(
+        n for n in _tree("a = (x := 5)\n").root.walk() if n.kind == "NamedExpr"
     )
     with pytest.raises(SubstituteNotWritten):
-        comp.substitute({"i": _bind_target()})
+        walrus.substitute({"x": _bind_target()})
 
 
 if __name__ == "__main__":

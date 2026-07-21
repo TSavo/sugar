@@ -303,6 +303,24 @@ class Node(Typed):
         under-substitutes rather than captures -- safe)."""
         return {n.id for n in target.walk() if n.kind == "Name"}
 
+    def _substitute_generators(self, generators, scope):
+        """Substitute comprehension generators, threading each target as a
+        binding for the FOLLOWING generators and the result expression. Returns
+        (new_generators, result_scope, changed) -- result_scope has every
+        generator target masked."""
+        bound = set()
+        inner = scope
+        new_gens = []
+        changed = False
+        for gen in generators:
+            new_gen = gen.substitute(inner)
+            if new_gen is not gen:
+                changed = True
+            new_gens.append(new_gen)
+            bound |= self._bound_names_in(gen.target)
+            inner = {k: v for k, v in scope.items() if k not in bound}
+        return (tuple(new_gens) if changed else generators), inner, changed
+
     def sugar(self) -> object:
         """This node's sugar, constructed by the node itself.
 
@@ -465,6 +483,22 @@ class Comprehension(Node):
     ifs: Tuple[Expression, ...]
     is_async: bool
     _child_fields = ("target", "iter", "ifs")
+
+    def substitute(self, scope):
+        """One `for <target> in <iter> [if ...]` clause: iter in the given
+        scope; the target binds for its own ifs. Threading across clauses is the
+        enclosing comprehension's job (_substitute_generators)."""
+        from .shadow import rewrite
+        new_iter, di = self._substitute_field(self.iter, scope)
+        bound = self._bound_names_in(self.target)
+        ifs_scope = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        new_ifs, df = self._substitute_field(self.ifs, ifs_scope)
+        changed = {}
+        if di:
+            changed["iter"] = new_iter
+        if df:
+            changed["ifs"] = new_ifs
+        return self if not changed else rewrite(self, **changed)
 
 
 class ExceptHandler(Node):
@@ -813,6 +847,10 @@ class Try(Statement):
     finalbody: Tuple[Statement, ...]
     _child_fields = ("body", "handlers", "orelse", "finalbody")
 
+    def substitute(self, scope):
+        """Binds nothing itself (its handlers mask): recurse."""
+        return self._substitute_children(scope)
+
 
 class TryStar(Statement):
     body: Tuple[Statement, ...]
@@ -820,6 +858,10 @@ class TryStar(Statement):
     orelse: Tuple[Statement, ...]
     finalbody: Tuple[Statement, ...]
     _child_fields = ("body", "handlers", "orelse", "finalbody")
+
+    def substitute(self, scope):
+        """Binds nothing itself (its handlers mask): recurse."""
+        return self._substitute_children(scope)
 
 
 class Assert(Statement):
@@ -1039,11 +1081,37 @@ class ListComp(Expression):
     generators: Tuple[Comprehension, ...]
     _child_fields = ("elt", "generators")
 
+    def substitute(self, scope):
+        """A comprehension: thread each generator's target, then substitute the
+        element against the scope with every target masked."""
+        from .shadow import rewrite
+        new_gens, inner, gc = self._substitute_generators(self.generators, scope)
+        new_elt, de = self._substitute_field(self.elt, inner)
+        changed = {}
+        if gc:
+            changed["generators"] = new_gens
+        if de:
+            changed["elt"] = new_elt
+        return self if not changed else rewrite(self, **changed)
+
 
 class SetComp(Expression):
     elt: Expression
     generators: Tuple[Comprehension, ...]
     _child_fields = ("elt", "generators")
+
+    def substitute(self, scope):
+        """A comprehension: thread each generator's target, then substitute the
+        element against the scope with every target masked."""
+        from .shadow import rewrite
+        new_gens, inner, gc = self._substitute_generators(self.generators, scope)
+        new_elt, de = self._substitute_field(self.elt, inner)
+        changed = {}
+        if gc:
+            changed["generators"] = new_gens
+        if de:
+            changed["elt"] = new_elt
+        return self if not changed else rewrite(self, **changed)
 
 
 class DictComp(Expression):
@@ -1052,11 +1120,38 @@ class DictComp(Expression):
     generators: Tuple[Comprehension, ...]
     _child_fields = ("key", "value", "generators")
 
+    def substitute(self, scope):
+        """A dict comprehension: thread the generators, then key and value
+        against the scope with every target masked."""
+        from .shadow import rewrite
+        new_gens, inner, gc = self._substitute_generators(self.generators, scope)
+        changed = {}
+        if gc:
+            changed["generators"] = new_gens
+        for fld in ("key", "value"):
+            new, d = self._substitute_field(getattr(self, fld), inner)
+            if d:
+                changed[fld] = new
+        return self if not changed else rewrite(self, **changed)
+
 
 class GeneratorExp(Expression):
     elt: Expression
     generators: Tuple[Comprehension, ...]
     _child_fields = ("elt", "generators")
+
+    def substitute(self, scope):
+        """A comprehension: thread each generator's target, then substitute the
+        element against the scope with every target masked."""
+        from .shadow import rewrite
+        new_gens, inner, gc = self._substitute_generators(self.generators, scope)
+        new_elt, de = self._substitute_field(self.elt, inner)
+        changed = {}
+        if gc:
+            changed["generators"] = new_gens
+        if de:
+            changed["elt"] = new_elt
+        return self if not changed else rewrite(self, **changed)
 
 
 class Await(Expression):
