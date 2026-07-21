@@ -940,8 +940,94 @@ class If(Statement):
     _child_fields = ("test", "body", "orelse")
 
     def substitute(self, scope):
-        """Binds nothing: recurse into children and reassemble."""
-        return self._substitute_children(scope)
+        """An if introduces no names into its own scope, but each branch is a
+        sub-block that threads its OWN assignments. So: substitute the test, then
+        thread each branch body (its within-branch bindings inline), and rebuild.
+        What a name binds to AFTER the if is the phi -- that is
+        ``substitution_binding``, not this."""
+        from .shadow import rewrite
+
+        changed = {}
+        new_test, d = self._substitute_field(self.test, scope)
+        if d:
+            changed["test"] = new_test
+        new_body, d = self._substitute_body(self.body, scope)
+        if d:
+            changed["body"] = new_body
+        new_orelse, d = self._substitute_body(self.orelse, scope)
+        if d:
+            changed["orelse"] = new_orelse
+        return self if not changed else rewrite(self, **changed)
+
+    def _branch_bindings(self, statements, scope):
+        """The net bindings a branch leaves for the rest of ITS block, threaded
+        exactly as ``_substitute_body`` threads a block: each statement's
+        ``substitution_binding`` plus any nested walrus. Returns the map of names
+        this branch bound to their final substituted values."""
+        local = dict(scope)
+        touched: "dict[str, Node]" = {}
+        for stmt in statements:
+            new_stmt = stmt.substitute(local)
+            binding = new_stmt.substitution_binding(local)
+            if binding:
+                local = {**local, **binding}
+                touched.update(binding)
+            for node in new_stmt.walk():
+                if node.kind == "NamedExpr":
+                    wb = node.substitution_binding(local)
+                    if wb:
+                        local = {**local, **wb}
+                        touched.update(wb)
+        return touched
+
+    def substitution_binding(self, scope):
+        """The phi. A name bound in either branch rebinds, for the rest of the
+        block, to ``<then value> if <test> else <else value>`` -- an ``IfExp``
+        whose two arms are the branches' values and whose test is the condition.
+        A name bound in only one branch takes its PRIOR binding in the other arm;
+        with no prior binding the other arm would be an invented value, so we
+        leave that name an honest gap (unbound) rather than guess."""
+        then_binds = self._branch_bindings(self.body, scope)
+        else_binds = self._branch_bindings(self.orelse, scope)
+        names = set(then_binds) | set(else_binds)
+        if not names:
+            return None
+        test = self.test.substitute(scope)
+        result: "dict[str, Node]" = {}
+        for name in names:
+            then_val = then_binds.get(name, scope.get(name))
+            else_val = else_binds.get(name, scope.get(name))
+            if then_val is None or else_val is None:
+                continue  # bound in one branch, no prior: honest gap, not a guess
+            result[name] = self._make_ifexp(test, then_val, else_val)
+        return result or None
+
+    def _make_ifexp(self, test: "Node", body: "Node", orelse: "Node") -> "Node":
+        """Synthesize ``<body> if <test> else <orelse>`` as a shadow IfExp that
+        borrows this if's span (so the phi still addresses this source site)."""
+        from .backend import Child, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        slots = (
+            ("body", Child(_handle_of(body))),
+            ("test", Child(_handle_of(test))),
+            ("orelse", Child(_handle_of(orelse))),
+        )
+        return materialize(self.unit, ShadowNode("IfExp", self.span, slots), self.reporter)
+
+    def sugar(self):
+        """`if <test>: <body> [else: <orelse>]` constructs IfSugar -- the guard.
+        The test recognizes itself; each branch's statements recognize themselves.
+        The guard turns each branch's stated facts into implications; the binding
+        phi is substitute's job, never this."""
+        from sugar_lift_py_tests.sugar.if_sugar import IfSugar
+
+        return IfSugar(
+            test=self.test.sugar(),
+            then_body=tuple(s.sugar() for s in self.body),
+            else_body=tuple(s.sugar() for s in self.orelse),
+            site=self.fragment,
+        )
 
 
 class With(Statement):
@@ -985,6 +1071,41 @@ class Raise(Statement):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def _exception_name(self):
+        """The raised exception's name, read structurally off ``exc`` (never
+        desugared): ``raise E`` -> ``"E"``, ``raise E(...)`` -> ``"E"``,
+        ``raise mod.E`` / ``raise mod.E(...)`` -> ``"mod.E"``. A bare ``raise``
+        (re-raise, ``exc is None``) or an exotic raised expression we cannot read
+        is ``None`` -- the halt is no less real, the name is only its label."""
+        node = self.exc
+        if node is None:
+            return None
+        if node.kind == "Call":  # raise E(...) -- the constructor
+            node = node.func
+        parts = []
+        while node is not None and node.kind == "Attribute":  # mod.sub.E
+            parts.append(node.attr)
+            node = node.value
+        if node is not None and node.kind == "Name":
+            parts.append(node.id)
+        if not parts:
+            return None
+        return ".".join(reversed(parts))
+
+    def sugar(self):
+        """`raise <exc>[ from <cause>]` constructs RaiseSugar -- the halt arm.
+        The exception name is provenance, read structurally; the expression is
+        never desugared as a child (we do not construct the exception)."""
+        if self.cause is not None:
+            # `raise X from Y` -- the cause is exception-chaining provenance, not
+            # part of the halt. Carrying it is not written yet, so rather than
+            # silently drop it we FAIL LOUDLY (the MISSING-becomes-success this
+            # design forbids), exactly as AssertSugar does with its message.
+            return super().sugar()
+        from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
+
+        return RaiseSugar(exception_name=self._exception_name(), site=self.fragment)
 
 
 class Try(Statement):
