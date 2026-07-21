@@ -920,6 +920,42 @@ class For(Statement):
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
 
+    def sugar(self):
+        """`for <target> in <iter>: <body>` -- a loop is a FOLD, and it DISSOLVES.
+
+        Over a CONCRETE iterable (a list/tuple display) the fold has a known
+        length: it unrolls. Each element re-substitutes the loop target into the
+        body -- the loop projecting the body once per element, `map` as a count
+        of rewrites -- and the body reduces to its constraints, concatenated. No
+        loop-sugar survives; the body's facts are just stated N times.
+
+        A SYMBOLIC iterable is the real fold (carried variables become fold terms,
+        the body's asserts a universal `forall x in iter`) and is not lifted yet
+        -- it inherits the loud throw. A tuple target, `else`, and a loop-carried
+        variable (a name the body assigns) are likewise held loud in this first
+        cut: unrolling a carried accumulator needs the fold-threading the
+        symbolic case introduces.
+        """
+        from sugar_lift_py_tests.sugar.for_sugar import ForSugar
+
+        if self.orelse or self.target.kind != "Name":
+            return super().sugar()  # for-else / tuple target not written
+        if self.iter.kind not in ("List", "Tuple_"):
+            return super().sugar()  # symbolic iterable -- the real fold, loud
+        # A loop-carried variable (any name the body binds for its tail) needs
+        # fold-threading between iterations -- symbolic-fold territory.
+        if any(stmt.substitution_binding({}) for stmt in self.body):
+            return super().sugar()
+
+        # Unroll: the body reduced once per element, target re-substituted, the
+        # results flattened into one block. `map` as a count of rewrites.
+        target_name = self.target.id
+        unrolled: list = []
+        for element in self.iter.elts:
+            body, _changed = self._substitute_body(self.body, {target_name: element})
+            unrolled.extend(stmt.sugar() for stmt in body)
+        return ForSugar(statements=tuple(unrolled), site=self.fragment)
+
 
 class AsyncFor(Statement):
     target: Expression
