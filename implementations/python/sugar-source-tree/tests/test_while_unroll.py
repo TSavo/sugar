@@ -57,4 +57,14 @@ if __name__ == "__main__":
     test_false_condition_skips_the_body()
     test_while_true_stays_loud()
     test_symbolic_condition_stays_loud()
+    test_while_else_splices_after_the_exit()
     print("ok: concrete while unrolls; True/symbolic loud")
+
+
+def test_while_else_splices_after_the_exit():
+    # The unroll exits only via condition-false; with no break, else always runs.
+    src = (
+        "def A():\n    i = 0\n    while i < 2:\n        i = i + 1\n"
+        "    else:\n        i = i + 100\n    return i\n"
+    )
+    assert _out(src).value == 102
