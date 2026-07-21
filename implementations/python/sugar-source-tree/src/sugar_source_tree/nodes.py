@@ -630,6 +630,22 @@ class BinOp(Expression):
     right: Expression
     _child_fields = ("left", "right")
 
+    def sugar(self):
+        """`<left> <op> <right>` constructs BinOpSugar WITH both sides' sugars.
+        The node already knows its operator, so one sugar dispatches to the
+        floor method that operator names. An operator with no floor method is a
+        genuine gap -- it inherits the base throw, never a silent default."""
+        from sugar_lift_py_tests.sugar.binop_sugar import BINOP_METHODS, BinOpSugar
+
+        if self.op.kind not in BINOP_METHODS:
+            return super().sugar()
+        return BinOpSugar(
+            op_kind=self.op.kind,
+            left=self.left.sugar(),
+            right=self.right.sugar(),
+            site=self.fragment,
+        )
+
 
 class UnaryOp(Expression):
     op: UnaryOperator
