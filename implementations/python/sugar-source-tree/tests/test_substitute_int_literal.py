@@ -111,14 +111,36 @@ def test_binders_mask_their_bound_names():
     assert c2.substitute({"y": _bind_target()}).elt.value == 3
 
 
-def test_an_unwritten_binder_still_panics():
-    # NamedExpr (walrus) binds into the enclosing scope and has no substitute
-    # yet: rather than silently mishandling it, it is loud -- the drain names it.
-    walrus = next(
-        n for n in _tree("a = (x := 5)\n").root.walk() if n.kind == "NamedExpr"
-    )
+def test_the_base_is_loud_for_an_unwritten_node():
+    # Every concrete node now writes substitute (the grammar drain is complete),
+    # so the guarantee is proven by construction. The enforcement mechanism
+    # itself still stands: the abstract base PANICS rather than silently
+    # recursing -- a newly-added node that forgets to override cannot capture
+    # quietly. Reach past the concrete override to the base to witness it.
+    from sugar_source_tree.nodes import Node
+
+    node = next(_tree("def f(x):\n    return x + 5\n").root.walk())
     with pytest.raises(SubstituteNotWritten):
-        walrus.substitute({"x": _bind_target()})
+        Node.substitute(node, {})
+
+
+def test_aug_assign_rebinds_to_the_operation():
+    # x = 1; x += 2; return x -- the augmented assignment rebinds x to `x + 2`,
+    # reading the OLD x (1) from the threaded scope, so `return x` inlines to
+    # `return 1 + 2`. Temporal, pure tree rewriting.
+    f = next(_tree("def f():\n    x = 1\n    x += 2\n    return x\n").functions())
+    ret = next(n for n in f.substitute({}).walk() if n.kind == "Return")
+    assert ret.value.kind == "BinOp"
+    assert ret.value.left.value == 1 and ret.value.right.value == 2
+
+
+def test_walrus_binding_leaks_to_the_block():
+    # y = (x := 5); return x -- the walrus binds x for the rest of the block,
+    # so `return x` inlines to `return 5` even though x is only named inside
+    # the assignment's rhs expression.
+    f = next(_tree("def f():\n    y = (x := 5)\n    return x\n").functions())
+    ret = next(n for n in f.substitute({}).walk() if n.kind == "Return")
+    assert ret.value.kind == "Constant" and ret.value.value == 5
 
 
 if __name__ == "__main__":
@@ -127,7 +149,9 @@ if __name__ == "__main__":
     test_compound_just_recurses()
     test_function_masks_its_parameter()
     test_binders_mask_their_bound_names()
-    test_an_unwritten_binder_still_panics()
+    test_the_base_is_loud_for_an_unwritten_node()
+    test_aug_assign_rebinds_to_the_operation()
+    test_walrus_binding_leaks_to_the_block()
     print(
         "ok: substitute -- literal inert, Name binds, compound recurses, "
         "FunctionDef masks its parameter, unwritten binder panics"
