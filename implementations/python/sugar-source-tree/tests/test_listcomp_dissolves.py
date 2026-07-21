@@ -61,4 +61,14 @@ if __name__ == "__main__":
     test_composes_with_len()
     test_filtered_comprehension_stays_loud()
     test_symbolic_comprehension_stays_loud()
+    test_comprehension_over_range_dissolves()
     print("ok: the concrete comprehension dissolves to its display")
+
+
+def test_comprehension_over_range_dissolves():
+    # [x + 1 for x in range(3)] -> array(1, 2, 3). Also the regression for the
+    # borrowed-helper crash: ListComp borrows For's readers, and every internal
+    # call must be class-explicit (an unbound self._helper AttributeError'd on
+    # real pandas code, arrow/accessors.py).
+    t = _out("def A():\n    return [x + 1 for x in range(3)]\n")
+    assert t.name == "array" and [a.value for a in t.args] == [1, 2, 3]

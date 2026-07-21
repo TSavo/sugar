@@ -1142,11 +1142,11 @@ class For(Statement):
         ):
             ints = []
             for arg in iterable.args:
-                v = self._concrete_int(arg)
+                v = For._concrete_int(self, arg)
                 if v is None:
                     return None
                 ints.append(v)
-            return [self._int_constant(i) for i in range(*ints)]
+            return [For._int_constant(self, i) for i in range(*ints)]
         return None
 
     def _concrete_int(self, arg: "Expression") -> "Optional[int]":
