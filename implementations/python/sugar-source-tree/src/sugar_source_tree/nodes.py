@@ -1533,23 +1533,44 @@ class Compare(Expression):
 
     def sugar(self):
         """A comparison constructs its operator's sugar, built WITH its
-        children's sugar. Each comparison operator is its own sugar type
-        (no operator field to switch on downstream) — dispatch here on the
-        operator class and on arity. A single `==` is EqualityOpSugar; every
-        other operator and chained comparisons inherit the loud throw until
-        written.
+        children's sugar. `==` is EqualityOpSugar (it also refines); the ordering
+        family and `!=` are ComparisonOpSugar. A CHAINED comparison `a < b < c`
+        is `(a < b) and (b < c)` -- each adjacent pair becomes its own comparison
+        sugar and they conjoin (b is the same reduced term in both, as Python
+        evaluates it once). Identity/membership operators (is/in/...) inherit the
+        loud throw until written.
         """
         from .operators import Eq
+        from sugar_lift_py_tests.sugar.comparison_op_sugar import (
+            COMPARE_METHODS,
+            ComparisonOpSugar,
+        )
+        from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 
-        if len(self.ops) == 1 and isinstance(self.ops[0], Eq):
-            from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
+        def supported(op):
+            return isinstance(op, Eq) or op.kind == "NotEq" or op.kind in COMPARE_METHODS
 
-            return EqualityOpSugar(
-                left=self.left.sugar(),
-                right=self.comparators[0].sugar(),
-                site=self.fragment,
+        if not all(supported(op) for op in self.ops):
+            return super().sugar()
+
+        operands = (self.left, *self.comparators)
+
+        def pair(index):
+            op = self.ops[index]
+            left_s = operands[index].sugar()
+            right_s = operands[index + 1].sugar()
+            if isinstance(op, Eq):
+                return EqualityOpSugar(left=left_s, right=right_s, site=self.fragment)
+            return ComparisonOpSugar(
+                op_kind=op.kind, left=left_s, right=right_s, site=self.fragment
             )
-        return super().sugar()
+
+        pairs = tuple(pair(i) for i in range(len(self.ops)))
+        if len(pairs) == 1:
+            return pairs[0]
+        from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
+
+        return BoolOpSugar(op_kind="And", values=pairs, site=self.fragment)
 
 
 class Call(Expression):
