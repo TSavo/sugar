@@ -965,10 +965,17 @@ class For(Statement):
                 carried = {k: v for k, v in iter_scope.items() if k != target_name}
             return _Splice(tuple(unrolled))
 
-        # Symbolic (or unsupported) loop: keep the node, mask the target, recurse.
-        # It stays a `for` and reaches `For.sugar` -- a symbolic loop is not a
-        # dead unroll, it is the universal / fold over the hole.
+        # Symbolic (or unsupported) loop: keep the node, mask the target AND every
+        # loop-carried variable (a name the body rebinds), recurse. Masking the
+        # carried names keeps the update SYMBOLIC in the body (`total = total + x`
+        # stays, not `total = 0 + x`) so substitution_binding can read the fold;
+        # the pre-loop value seeds it from the outer scope. A symbolic loop is not
+        # a dead unroll -- it is the universal / fold over the hole.
         bound = self._bound_names_in(self.target)
+        for stmt in self.body:
+            b = stmt.substitution_binding({})
+            if b:
+                bound = bound | set(b)
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         changed = {}
         if iter_changed:
@@ -979,18 +986,90 @@ class For(Statement):
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
 
+    def _carried_and_facts(self):
+        """Split the body into carried assignments (statements that bind a name
+        for the tail -- the fold's update) and fact statements (asserts, the rest
+        -- the universal's body). A pure-fold loop is all carried; an assert-only
+        loop is all facts; a loop with BOTH is the accumulator-referencing case
+        (point 3), left loud."""
+        carried, facts = [], []
+        for stmt in self.body:
+            (carried if stmt.substitution_binding({}) else facts).append(stmt)
+        return carried, facts
+
+    def substitution_binding(self, scope):
+        """The carried fold's binding for the rest of the block. A symbolic loop
+        `total = total OP x` over `xs` rebinds `total`, for the tail, to the fold
+        coordinate `py.fold.<op>(init, xs)` -- a REFERENCE the dig resolves, the
+        same shape as a recursion's `call:f(...)`, not an opaque dead-end. So
+        `return total` after the loop becomes `return py.fold.add(0, xs)`. A
+        concrete iterable never reaches here (it unrolled via _Splice); only the
+        symbolic single-accumulator `var = var OP x` shape is a fold today."""
+        if self._concrete_elements(self.iter) is not None:
+            return None  # concrete unrolled in substitute
+        if self.orelse or self.target.kind != "Name":
+            return None
+        carried, facts = self._carried_and_facts()
+        if facts or len(carried) != 1:
+            return None  # accumulator+assert, or multi/zero carried -- not a fold
+        assign = carried[0]
+        if assign.kind != "Assign" or len(assign.targets) != 1:
+            return None
+        name = assign.targets[0]
+        if name.kind != "Name":
+            return None
+        value = assign.value
+        # value must be `<name> OP <expr involving the loop target>`.
+        if value.kind != "BinOp" or value.left.kind != "Name" or value.left.id != name.id:
+            return None
+        init = scope.get(name.id)
+        if init is None:
+            return None  # no pre-loop value to seed the fold
+        op = value.op.kind
+        fold = self._make_call(self._make_name(f"py.fold.{op}"), (init, self.iter))
+        return {name.id: fold}
+
+    def _make_name(self, identifier: str) -> "Node":
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        return materialize(
+            self.unit, ShadowNode("Name", self.span, (("id", Leaf(identifier)),)), self.reporter
+        )
+
+    def _make_call(self, func: "Node", args: tuple) -> "Node":
+        from .backend import Child, Children, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        slots = (
+            ("func", Child(_handle_of(func))),
+            ("args", Children(tuple(_handle_of(a) for a in args))),
+            ("keywords", Children(())),
+        )
+        return materialize(self.unit, ShadowNode("Call", self.span, slots), self.reporter)
+
     def sugar(self):
-        """A loop that did NOT dissolve in substitute is symbolic: its iterable
-        is a hole (a formal), so it cannot unroll. Its meaning is the FOL that was
-        always there. An assert-only body is the degenerate fold -- a universal
-        `forall x in xs: P(x)` (ForUniversalSugar). A carried accumulator (the
-        non-degenerate fold) and a tuple target / else stay loud until written."""
+        """A loop that did NOT dissolve in substitute is symbolic: its iterable is
+        a hole (a formal), so it cannot unroll. Its meaning is the FOL that was
+        always there. An assert-only body is the degenerate fold -- the universal
+        `forall x in xs: P(x)` (ForUniversalSugar). A PURE-fold body (only carried
+        assignments) states no fact of its own: the fold rides its
+        substitution_binding into the tail, so the loop itself is inert here. A
+        body with BOTH a carried accumulator and asserts (the accumulator-
+        referencing case) and a tuple target / else stay loud until written."""
         from sugar_lift_py_tests.sugar.for_universal_sugar import ForUniversalSugar
 
         if self.orelse or self.target.kind != "Name":
             return super().sugar()
-        if any(stmt.substitution_binding({}) for stmt in self.body):
-            return super().sugar()  # carried accumulator -- the fold, not yet
+        carried, facts = self._carried_and_facts()
+        if carried and facts:
+            return super().sugar()  # accumulator-referencing assert -- point 3
+        if carried:
+            # Pure fold: the loop states nothing; its meaning is the fold binding
+            # (substitution_binding), consumed where the carried name is read.
+            from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+            return InertSugar(site=self.fragment)
         return ForUniversalSugar(
             target=self.target.id,
             iterable=self.iter.sugar(),
