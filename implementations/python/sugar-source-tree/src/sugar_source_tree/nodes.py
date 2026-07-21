@@ -946,16 +946,13 @@ class For(Statement):
         new_iter, iter_changed = self._substitute_field(self.iter, scope)
         subst_iter = new_iter if iter_changed else self.iter
 
-        concrete = (
-            not self.orelse
-            and self.target.kind == "Name"
-            and subst_iter.kind in ("List", "Tuple_")
-        )
-        if concrete:
+        concrete = not self.orelse and self.target.kind == "Name"
+        elements = self._concrete_elements(subst_iter) if concrete else None
+        if elements is not None:
             target_name = self.target.id
             unrolled: list = []
             carried = dict(scope)  # carries loop variables across iterations
-            for element in subst_iter.elts:
+            for element in elements:
                 iter_scope = {**carried, target_name: element}
                 new_body, _c = self._substitute_body(self.body, iter_scope)
                 unrolled.extend(new_body)
@@ -979,6 +976,56 @@ class For(Statement):
             if d:
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
+
+    def _concrete_elements(self, iterable: "Expression") -> "Optional[list]":
+        """The element nodes to unroll over, or ``None`` if `iterable` is not
+        concrete. A `List`/`Tuple_` literal is concrete by construction; a
+        `range(...)` call is concrete only when every argument (after
+        substitution) is a literal `int` -- a symbolic bound leaves the fold
+        real, so it is not recognized here."""
+        if iterable.kind in ("List", "Tuple_"):
+            return list(iterable.elts)
+        if (
+            iterable.kind == "Call"
+            and iterable.func.kind == "Name"
+            and iterable.func.id == "range"
+            and not iterable.keywords
+        ):
+            ints = []
+            for arg in iterable.args:
+                v = self._concrete_int(arg)
+                if v is None:
+                    return None
+                ints.append(v)
+            return [self._int_constant(i) for i in range(*ints)]
+        return None
+
+    def _concrete_int(self, arg: "Expression") -> "Optional[int]":
+        """The literal int an arg denotes, or ``None`` if it is not one. A
+        negative bound parses as `UnaryOp(USub, Constant(n))` (cpython does
+        not fold the literal), so both shapes are recognized; `bool` is
+        rejected even though it subclasses `int`."""
+        if arg.kind == "Constant" and isinstance(arg.value, int) and not isinstance(
+            arg.value, bool
+        ):
+            return arg.value
+        if arg.kind == "UnaryOp" and arg.op.kind == "USub":
+            inner = self._concrete_int(arg.operand)
+            return -inner if inner is not None else None
+        return None
+
+    def _int_constant(self, value: int) -> "Node":
+        """Synthesize an int `Constant` node bound to `value`, borrowing this
+        `for`'s span -- the unroll rebinds the loop target to a real node, and
+        `range`'s elements have no source site of their own to borrow."""
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        slots = (
+            ("value", Leaf(value)),
+            ("literal_kind", Leaf(None)),
+        )
+        return materialize(self.unit, ShadowNode("Constant", self.span, slots), self.reporter)
 
 
 class AsyncFor(Statement):
