@@ -681,19 +681,26 @@ class FunctionDef(Statement):
         """`def <name>(<formals>): <body>` constructs FunctionUniverseSugar WITH
         each body statement's own sugar — the recursion, child-before-parent.
 
-        A body statement whose sugar is not written yet raises SugarNotWritten
-        from its own `.sugar()`, which propagates out here: the whole function
-        is a frontier gap until every statement it holds can be constructed.
-        That is the honest 99% — no fallback, no partial universe.
+        The body is SUBSTITUTED first: every temporal binding (a local
+        assignment, a conditional phi) is rewritten into the tree before any
+        sugar runs, so by the time a statement is sugared its names are already
+        resolved — a `Name` that survives is only ever a free formal (the
+        parameters are masked by ``substitute``, so they stand as symbolic
+        Vars). This is why the meaning layer holds NO temporal: substitute did
+        it. A body statement whose sugar is not written yet raises
+        SugarNotWritten from its own `.sugar()`, which propagates out here.
         """
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             FunctionUniverseSugar,
         )
 
+        # Substitute the body against an empty scope: formals are masked (they
+        # stay free -> symbolic), locals thread and inline, phis land as IfExps.
+        substituted = self.substitute({})
         return FunctionUniverseSugar(
             name=self.name,
             formals=tuple(p.name for p in self.params),
-            statements=tuple(stmt.sugar() for stmt in self.body),
+            statements=tuple(stmt.sugar() for stmt in substituted.body),
             site=self.fragment,
         )
 
@@ -1347,6 +1354,21 @@ class IfExp(Expression):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def sugar(self):
+        """`<body> if <test> else <orelse>` constructs IfExpSugar -- the
+        conditional VALUE the phi produces. It desugars to a GuardedValue that
+        DISTRIBUTES (a return/equality splits into per-arm implications, each arm
+        resolved per-atom), so the conditional never becomes a single mixed-sort
+        term; the compiler stays Python-ignorant and only ever sees ir.eq."""
+        from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
+
+        return IfExpSugar(
+            test=self.test.sugar(),
+            body=self.body.sugar(),
+            orelse=self.orelse.sugar(),
+            site=self.fragment,
+        )
 
 
 class Dict(Expression):

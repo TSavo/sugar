@@ -9,15 +9,17 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class NameSugar(Sugar):
-    """A name is nothing on its own: it asks the temporal context what stands
-    at this name, and the binding answers. A concrete binding folds like any
-    value; a symbolic binding (a parameter's SymbolicValue) stands as the term
-    it projects. An unbound name panics loudly at reduce time -- exactly where
-    Python would raise NameError.
+    """A name that survives to the meaning layer is a free FORMAL.
 
-    Meaning-only, node-constructed: no owns/new/role. The tree's Name node
-    constructs this WITH its identifier; there is nothing to build eagerly (a
-    name is a leaf), only to look up when the body reduces.
+    substitute runs before sugar (FunctionDef.sugar), so every temporal binding
+    -- a local assignment, a conditional phi -- is already rewritten into the
+    tree: a bound name has been replaced by its value node and never reaches
+    here. The only Name left standing is a function parameter, which is masked
+    by substitute and therefore free. So a name IS its symbolic universe
+    variable -- the term a parameter projects. There is no context to consult
+    (ctx.temporal is gone): the name resolves to its own Var, always.
+
+    Meaning-only, node-constructed: no owns/new/role. A name is a leaf.
     """
 
     name: str
@@ -37,9 +39,9 @@ class NameSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # Ask the context what stands at this name; the binding answers.
-        binding = ctx.temporal.value_for(
-            self.name,
-            blame=f"{self.site.filename}:{self.site.line}:{self.site.col}",
-        )
-        return binding.answer(ctx)
+        # A surviving name is a free formal: it IS its symbolic universe variable.
+        from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.ir import make_var
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(SymbolicValue(make_var(self.name)))

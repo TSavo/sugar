@@ -53,24 +53,35 @@ class IfSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_statements
 
-        # The condition states a predicate; its formula is the guard. A condition
-        # whose value carries no formula (a ground bool, a bare truthiness) is not
-        # handled yet -- be LOUD rather than silently guard by nothing.
-        cond = self.test.desugar(ctx)
-        formula = getattr(getattr(cond, "value", None), "formula", None)
-        if formula is None:
-            raise NotImplementedError(
-                "if-condition without a predicate formula is not lifted yet "
-                "(ground bool / bare truthiness): only `if <predicate>:` guards "
-                f"today; got {type(getattr(cond, 'value', cond)).__name__}"
-            )
-
         then_entries, _c1, then_falls, _f1 = reduce_statements(self.then_body, ctx)
         else_entries, _c2, else_falls, _f2 = reduce_statements(self.else_body, ctx)
+
+        # A purely TEMPORAL if -- branches that only bind -- is spent by
+        # substitute (its binding became an IfExp phi threaded past the if), so
+        # both branches reduce to nothing. It contributes no meaning and needs no
+        # guard: the condition is not even consulted (an inert if states nothing,
+        # whatever its test). This is the common residue of the phi rewrite.
+        if not then_entries and not else_entries:
+            return Complete(BlockValue((), can_fall_through=True))
+
+        # Branches carry facts/effects: the guard is the condition's TRUTHINESS
+        # as a predicate. `.truth` is uniform -- a predicate condition (`if a ==
+        # b`) stands as its own formula, a bare value (`if c`) emits the Python
+        # `py.truthy(c)` relation. A ground bool (`if True:`) folds to a literal
+        # with no formula and is not lifted yet -- LOUD, never guard by nothing.
+        cond = self.test.desugar(ctx)
+        formula = getattr(getattr(cond.value.truth(self.site), "value", None), "formula", None)
+        if formula is None:
+            raise NotImplementedError(
+                "if-condition that folds to a ground boolean is not lifted yet "
+                f"(got {type(getattr(cond, 'value', cond)).__name__}); a symbolic "
+                "predicate or bare-truthiness condition guards, a constant does not"
+            )
 
         # Each branch's facts ride under its polarity: then under c, else under ¬c.
         not_formula = not_(formula)
