@@ -137,31 +137,24 @@ class FunctionUniverseSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # A function body is the root of a reduction: if no context is threaded
-        # in, establish a fresh one (empty temporal scope) so statements can bind
-        # names and thread refinements down the body.
-        from dataclasses import replace
-
-        from sugar_lift_py_tests.floor import SymbolicValue
-        from sugar_lift_py_tests.ir import make_var
-
+        # The body was already SUBSTITUTED (FunctionDef.sugar), so there are no
+        # temporal bindings left to thread: a formal reaches its NameSugar as a
+        # free name and becomes its own symbolic Var, a local assignment is inert
+        # (spent by substitute), a conditional binding is an IfExp phi. There is
+        # nothing to bind_value here. A root context is still established because
+        # a few not-yet-converted floor values (GuardedFaces, BlockValue with a
+        # `with` as-binding) call extend_scope during block reduction -- that is
+        # the next slice of the temporal cut, not this one.
         if ctx is None:
             from sugar_lift_py_tests.context.reduce_context import ReduceContext
 
             ctx = ReduceContext.root(owner="FunctionUniverseSugar")
 
-        # Bind each formal to its universe variable, so a body that reads a
-        # parameter reduces against a symbolic value, not an unbound name.
-        temporal = ctx.temporal
-        for formal in self.formals:
-            temporal = temporal.bind_value(formal, SymbolicValue(make_var(formal)))
-        scoped = replace(ctx, temporal=temporal)
-
         # `.and_then` is the Complete/Incomplete distinction: a Complete body
         # (a BlockValue record) becomes the universe; an Incomplete body (an
         # effect) propagates untouched -- an effect is never wrapped into a
         # false contract.
-        return reduce_body(self.statements, scoped).and_then(
+        return reduce_body(self.statements, ctx).and_then(
             lambda record: Complete(
                 UniverseValue(name=self.name, formals=self.formals, record=record)
             )
