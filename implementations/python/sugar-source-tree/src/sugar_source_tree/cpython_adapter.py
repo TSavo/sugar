@@ -394,6 +394,17 @@ class CPythonAstBackend(Backend):
 
     name = "cpython-ast"
 
+    def fingerprint(self) -> str:
+        """CPython's ``ast`` produces a version-dependent node stream (e.g. the
+        empty ``Constant("")`` it staples into a nested f-string format spec on
+        3.12 but not 3.14), so the interpreter IS this backend's version-of-
+        record. Key the golden on it: same source, same interpreter -> same
+        tree; a new interpreter is faithfully its own pin."""
+        import sys
+
+        v = sys.version_info
+        return f"{self.name}-{sys.implementation.name}-{v.major}.{v.minor}"
+
     def root(self, unit: SourceUnit) -> BackendNode:
         try:
             tree = ast.parse(unit.source, filename=unit.filename)

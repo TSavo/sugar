@@ -269,12 +269,27 @@ class Node(Typed):
             return self
         return rewrite(self, **changed)
 
-    def substitution_binding(self) -> "Optional[dict[str, Node]]":
+    def substitution_binding(self, scope: "dict[str, Node]") -> "Optional[dict[str, Node]]":
         """The binding this STATEMENT introduces for the rest of its block, or
-        None. An assignment returns ``{name: its substituted rhs}``; everything
-        else binds nothing. Read AFTER this statement was substituted, so the
-        value is already rewritten against the scope that stood before it."""
+        None. An assignment returns ``{name: its substituted rhs}``; an augmented
+        assignment reads the OLD value from ``scope`` to build ``x OP e``;
+        everything else binds nothing. Read AFTER this statement was substituted,
+        so its value is already rewritten against the scope that stood before it."""
         return None
+
+    def _make_binop(self, left: "Node", op, right: "Node") -> "Node":
+        """Construct a fresh BinOp node ``<left> <op> <right>`` as a shadow that
+        borrows this node's span (so it still addresses this source site). Used
+        by an augmented assignment to synthesize its ``x OP e`` rebind."""
+        from .backend import Child, OpLeaf, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        slots = (
+            ("left", Child(_handle_of(left))),
+            ("op", OpLeaf(op)),
+            ("right", Child(_handle_of(right))),
+        )
+        return materialize(self.unit, ShadowNode("BinOp", self.span, slots), self.reporter)
 
     def _substitute_body(self, statements: tuple, scope: "dict[str, Node]"):
         """Substitute a statement sequence, THREADING each statement's binding:
@@ -282,7 +297,9 @@ class Node(Typed):
         block. This is the temporal that used to live in ``ctx.temporal`` -- now
         it is the tree rewriting itself, statement by statement, in single-
         assignment form (each binding a fresh entry; a rebind shadows the old
-        for the tail). Returns ``(new_statements, changed)``."""
+        for the tail). A walrus (``NamedExpr``) nested anywhere in the statement
+        also leaks its binding to the rest of the block. Returns
+        ``(new_statements, changed)``."""
         scope = dict(scope)
         new_items = []
         changed = False
@@ -291,9 +308,16 @@ class Node(Typed):
             if new_stmt is not stmt:
                 changed = True
             new_items.append(new_stmt)
-            binding = new_stmt.substitution_binding()
+            binding = new_stmt.substitution_binding(scope)
             if binding:
                 scope = {**scope, **binding}
+            # walrus bindings nested inside the statement's expressions leak out
+            # to the enclosing block (their scope is the containing function).
+            for node in new_stmt.walk():
+                if node.kind == "NamedExpr":
+                    wb = node.substitution_binding(scope)
+                    if wb:
+                        scope = {**scope, **wb}
         return (tuple(new_items) if changed else statements), changed
 
     def _bound_names_in(self, target: "Node") -> set:
@@ -765,7 +789,7 @@ class Assign(Statement):
             return self
         return rewrite(self, value=new_value)
 
-    def substitution_binding(self):
+    def substitution_binding(self, scope):
         # A single Name target binds its name to the already-substituted rhs.
         # Tuple / attribute / subscript targets thread nothing yet -- their
         # references stay honest gaps rather than a wrong binding.
@@ -795,6 +819,24 @@ class AugAssign(Statement):
     value: Expression
     _child_fields = ("target", "value")
 
+    def substitute(self, scope):
+        """`<target> OP= <value>` -- substitute the value; the target is both
+        read and written, but as a node it is a binding site, not substituted.
+        The rebind (target OP value) is threaded by substitution_binding."""
+        from .shadow import rewrite
+
+        new_value, d = self._substitute_field(self.value, scope)
+        return self if not d else rewrite(self, value=new_value)
+
+    def substitution_binding(self, scope):
+        # `x OP= e` rebinds x to `x OP e`, reading the OLD x from the scope
+        # (or the target itself if x was free). Only a plain Name target binds.
+        if not isinstance(self.target, Name):
+            return None
+        name = self.target.id
+        old = scope.get(name, self.target)
+        return {name: self._make_binop(old, self.op, self.value)}
+
 
 class AnnAssign(Statement):
     target: Expression
@@ -814,7 +856,7 @@ class AnnAssign(Statement):
                 changed[fld] = new
         return self if not changed else rewrite(self, **changed)
 
-    def substitution_binding(self):
+    def substitution_binding(self, scope):
         # Only an annotated assignment WITH a value and a plain Name target
         # binds; a bare `x: int` is a declaration and binds nothing.
         if self.value is not None and isinstance(self.target, Name):
@@ -1096,6 +1138,25 @@ class NamedExpr(Expression):
     target: Expression
     value: Expression
     _child_fields = ("target", "value")
+
+    def substitute(self, scope):
+        """`(<target> := <value>)` -- substitute the value; the target is a
+        binding site, not substituted. The walrus's binding leaks to the
+        enclosing block (collected by `_substitute_body`), and the expression
+        itself evaluates to the (substituted) value, so a use in the same
+        expression sees it. Here we rewrite to the value: `(x := e)` as a
+        sub-expression IS `e` once bound, and the binding is threaded out."""
+        from .shadow import rewrite
+
+        new_value, d = self._substitute_field(self.value, scope)
+        return self if not d else rewrite(self, value=new_value)
+
+    def substitution_binding(self, scope):
+        # `x := e` binds x to e for the rest of the enclosing block. Only a
+        # plain Name target binds.
+        if isinstance(self.target, Name):
+            return {self.target.id: self.value}
+        return None
 
 
 class BinOp(Expression):
