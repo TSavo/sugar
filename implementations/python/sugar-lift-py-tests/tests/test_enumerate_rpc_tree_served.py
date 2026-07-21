@@ -18,18 +18,16 @@ from sugar_lift_py_tests import lift_rpc
 def _run_ladder():
     captured = {}
     orig_send = lift_rpc._send_enumerate_result
-    orig_factory = lift_rpc._lift_file_for_enumeration
 
-    def _tripwire(*_a, **_k):
-        raise AssertionError(
-            "FACTORY CONSULTED: the tree-served enumeration leaked into "
-            "_lift_file_for_enumeration"
-        )
+    # The factory is DELETED, not merely bypassed -- a stronger guarantee than
+    # the old tripwire: there is no _lift_file_for_enumeration to consult.
+    assert not hasattr(lift_rpc, "_lift_file_for_enumeration"), (
+        "the factory enumeration fallback must be deleted, not present"
+    )
 
     lift_rpc._send_enumerate_result = lambda mid, nodes, gaps, **kw: captured.update(
         nodes=nodes, gaps=gaps
     )
-    lift_rpc._lift_file_for_enumeration = _tripwire
     try:
         with tempfile.TemporaryDirectory() as root:
             Path(root, "t.py").write_text("def test_one():\n    assert 1 == 1\n")
@@ -47,7 +45,6 @@ def _run_ladder():
             return enum("facts", cs_at)[0]["payload"]
     finally:
         lift_rpc._send_enumerate_result = orig_send
-        lift_rpc._lift_file_for_enumeration = orig_factory
 
 
 def test_rpc_ladder_serves_the_fact_from_the_tree():
