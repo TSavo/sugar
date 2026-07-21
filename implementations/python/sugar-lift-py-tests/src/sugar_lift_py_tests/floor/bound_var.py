@@ -23,7 +23,7 @@ class BoundVar(FloorValue):
     """
 
     name: str
-    source: object  # the rhs's composed body (a SugarBody): recoverable + recomposable
+    source: object  # the rhs sugar: recoverable + recomposable; answers .desugar
     # The DEFINITION scope -- the ctx as it stood when this binding was made, where the
     # name still holds its OLD value. A reference recomposes `source` against THIS, not
     # the current scope, so a self-referential rebind (`x = x + 1`) reads the old x and
@@ -55,13 +55,13 @@ class BoundVar(FloorValue):
         # A context-dependent alias has no stable definition key, so recompute it
         # against each caller rather than leaking one caller's answer into another.
         if self.scope is None:
-            return self.source.reduce(ctx)
+            return self.source.desugar(ctx)
 
         # A definition-scoped alias is semantically fixed. Reduce its recoverable
         # source once against the captured old scope, then replay that same Outcome.
         outcome = self._cached_outcome
         if outcome is _UNSET_OUTCOME:
-            outcome = self.source.reduce(self.scope)
+            outcome = self.source.desugar(self.scope)
             object.__setattr__(self, "_cached_outcome", outcome)
         return outcome
 
