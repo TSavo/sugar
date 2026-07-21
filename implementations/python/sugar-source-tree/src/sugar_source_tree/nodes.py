@@ -1099,9 +1099,9 @@ class For(Statement):
         purpose (a nested loop's own jumps also block): over-blocking falls to
         the symbolic branch (loud), never to a wrong unroll."""
         return any(
-            n.kind in ("Break", "Continue")
+            ("break" in stmt.segment() or "continue" in stmt.segment())
+            and any(n.kind in ("Break", "Continue") for n in stmt.walk())
             for stmt in self.body
-            for n in stmt.walk()
         )
 
     def _target_bindings_for(self, target: "Node", element: "Node") -> "Optional[dict]":
