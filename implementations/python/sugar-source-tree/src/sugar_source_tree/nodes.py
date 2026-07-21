@@ -323,6 +323,16 @@ class Param(Node):
     param_kind: str
     _child_fields = ("annotation", "default")
 
+    def sugar(self):
+        """A formal stands as its symbolic universe variable. Plain parameters
+        only; a default or annotation is not yet folded in, so a parameter that
+        carries one stays a loud gap rather than silently dropping it."""
+        if self.default is not None or self.annotation is not None:
+            return super().sugar()
+        from sugar_lift_py_tests.sugar.param_sugar import ParamSugar
+
+        return ParamSugar(name=self.name, site=self.fragment)
+
 
 class Keyword(Node):
     """A keyword argument at a call site. ``arg is None`` means ``**expr``
@@ -440,6 +450,15 @@ class ClassDef(Statement):
 class Return(Statement):
     value: Optional[Expression]
     _child_fields = ("value",)
+
+    def sugar(self):
+        """`return <expr>` constructs ReturnSugar WITH the value's sugar. A bare
+        `return` (no value) stays a loud gap -- no invented None return."""
+        if self.value is None:
+            return super().sugar()
+        from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
+
+        return ReturnSugar(value=self.value.sugar(), site=self.fragment)
 
 
 class Delete(Statement):
