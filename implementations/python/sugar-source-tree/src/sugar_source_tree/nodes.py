@@ -257,6 +257,13 @@ class Node(Typed):
             return value, False
         if isinstance(value, Node):
             new = value.substitute(scope)
+            if isinstance(new, _Splice):
+                raise TypeError(
+                    "_Splice escaped into a generic child field: a statement "
+                    f"tuple holding a {value.kind} must go through "
+                    "_substitute_body (a block), never _substitute_children -- "
+                    "give the containing node a block-aware substitute"
+                )
             return new, new is not value
         items = tuple(value)
         new_items = tuple(
@@ -1544,8 +1551,21 @@ class Try(Statement):
     _child_fields = ("body", "handlers", "orelse", "finalbody")
 
     def substitute(self, scope):
-        """Binds nothing itself (its handlers mask): recurse."""
-        return self._substitute_children(scope)
+        """Binds nothing itself (its handlers mask their own names). Its
+        statement tuples are BLOCKS: threaded via _substitute_body, which also
+        flattens a spliced loop/phi -- the generic child walk cannot, and a
+        _Splice leaking through it was the census's 24 AttributeErrors."""
+        from .shadow import rewrite
+
+        changed = {}
+        new_handlers, d = self._substitute_field(self.handlers, scope)
+        if d:
+            changed["handlers"] = new_handlers
+        for f in ("body", "orelse", "finalbody"):
+            new, d = self._substitute_body(getattr(self, f), scope)
+            if d:
+                changed[f] = new
+        return self if not changed else rewrite(self, **changed)
 
 
 class TryStar(Statement):
@@ -1556,8 +1576,8 @@ class TryStar(Statement):
     _child_fields = ("body", "handlers", "orelse", "finalbody")
 
     def substitute(self, scope):
-        """Binds nothing itself (its handlers mask): recurse."""
-        return self._substitute_children(scope)
+        """Same block-aware substitute as Try (identical fields)."""
+        return Try.substitute(self, scope)
 
 
 class Assert(Statement):
