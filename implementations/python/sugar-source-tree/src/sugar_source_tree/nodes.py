@@ -715,19 +715,32 @@ class FunctionDef(Statement):
         it. A body statement whose sugar is not written yet raises
         SugarNotWritten from its own `.sugar()`, which propagates out here.
         """
+        from sugar_lift_py_tests.engine_log import reduction_span
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             FunctionUniverseSugar,
         )
 
-        # Substitute the body against an empty scope: formals are masked (they
-        # stay free -> symbolic), locals thread and inline, phis land as IfExps.
-        substituted = self.substitute({})
-        return FunctionUniverseSugar(
-            name=self.name,
-            formals=tuple(p.name for p in self.params),
-            statements=tuple(stmt.sugar() for stmt in substituted.body),
-            site=self.fragment,
-        )
+        # CONSTRUCTION IS THE INSTRUMENTED BOUNDARY: the span names this
+        # function while it substitutes+constructs, so the engine log's
+        # heartbeat testifies exactly which function a slow lift is inside --
+        # the bisection instrument (macro says nothing; the active frame says
+        # where to cut next). The factory had this on SugarBody.reduce; the
+        # tree construction path re-enters it here.
+        lc = self.line_col_span()
+        with reduction_span(
+            sugar="FunctionUniverse",
+            role="construction",
+            site=f"{self.unit.filename}:{lc.start_line} {self.name}",
+        ):
+            # Substitute the body against an empty scope: formals are masked
+            # (stay free -> symbolic), locals thread and inline, phis -> IfExps.
+            substituted = self.substitute({})
+            return FunctionUniverseSugar(
+                name=self.name,
+                formals=tuple(p.name for p in self.params),
+                statements=tuple(stmt.sugar() for stmt in substituted.body),
+                site=self.fragment,
+            )
 
 
 class AsyncFunctionDef(Statement):
@@ -1099,9 +1112,9 @@ class For(Statement):
         purpose (a nested loop's own jumps also block): over-blocking falls to
         the symbolic branch (loud), never to a wrong unroll."""
         return any(
-            n.kind in ("Break", "Continue")
+            ("break" in stmt.segment() or "continue" in stmt.segment())
+            and any(n.kind in ("Break", "Continue") for n in stmt.walk())
             for stmt in self.body
-            for n in stmt.walk()
         )
 
     def _target_bindings_for(self, target: "Node", element: "Node") -> "Optional[dict]":
@@ -1340,19 +1353,21 @@ class If(Statement):
         return self if not changed else rewrite(self, **changed)
 
     def _branch_bindings(self, statements, scope):
-        """The net bindings a branch leaves for the rest of ITS block, threaded
-        exactly as ``_substitute_body`` threads a block: each statement's
-        ``substitution_binding`` plus any nested walrus. Returns the map of names
-        this branch bound to their final substituted values."""
+        """The net bindings an ALREADY-SUBSTITUTED branch leaves for the rest of
+        its block. The statements were substituted (threaded) by
+        ``If.substitute``; re-substituting them here would redo every subtree
+        once per enclosing if -- 2^nesting, the second computation. So this only
+        READS: each statement's ``substitution_binding`` (whose values are the
+        already-threaded nodes) plus any nested walrus, threading the local map
+        so an AugAssign-style binding sees its predecessor."""
         local = dict(scope)
         touched: "dict[str, Node]" = {}
         for stmt in statements:
-            new_stmt = stmt.substitute(local)
-            binding = new_stmt.substitution_binding(local)
+            binding = stmt.substitution_binding(local)
             if binding:
                 local = {**local, **binding}
                 touched.update(binding)
-            for node in new_stmt.walk():
+            for node in stmt.walk():
                 if node.kind == "NamedExpr":
                     wb = node.substitution_binding(local)
                     if wb:
