@@ -603,6 +603,43 @@ class FloorValue:
             ),
         )
 
+    def attribute(self, name, site):
+        # Default: this value does not stand on the attribute floor -- it cannot
+        # answer what it yields at `.name`. A symbolic receiver stays the
+        # py.getattr coordinate; a value that owns a field folds; absence here is
+        # the honest "no".
+        del name
+        from sugar_lift_py_tests.factory import (
+            FactoryAuditRow,
+            FactoryGapInfo,
+            GapKind,
+            GapLocus,
+            factory_panic,
+        )
+
+        observed = type(self).__name__
+        info = FactoryGapInfo(
+            owner="attribute",
+            blame=str(site),
+            observed=observed,
+            requested="stand on the attribute floor",
+            fix=f"write more Floor: implement {observed}.attribute",
+            gap_kind=GapKind.FLOOR,
+            gap_locus=GapLocus.CONSTRUCTION,
+        )
+        factory_panic(
+            info,
+            FactoryAuditRow(
+                role="attribute",
+                status=FactoryAuditStatus.FLOOR_GAP,
+                observed=observed,
+                blame=str(site),
+                selected=None,
+                candidates=[],
+                message=info.message,
+            ),
+        )
+
     def setitem(self, index, value, site):
         del index, value
         from sugar_lift_py_tests.factory import (

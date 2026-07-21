@@ -417,6 +417,18 @@ class SymbolicValue(FloorValue):
         # A symbolic receiver stays the py.subscript coordinate regardless of index.
         return self.py_subscript_coordinate(index, site)
 
+    def attribute(self, name, site):
+        # A symbolic receiver stays the py.getattr coordinate: an opaque term
+        # `py.getattr(recv, "name")`, the same EUF vocabulary as py.subscript.
+        # The lift does not know the receiver's fields, so `.name` is an
+        # uninterpreted projection -- decidable only where it later meets an
+        # equality, never invented.
+        del site
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(SymbolicValue(ctor("py.getattr", [self.term, str_const(name)])))
+
     def format_data_model(self, spec, site, ctx):
         """Construct ``format(symbolic, spec)`` as an exact data-model coordinate.
 

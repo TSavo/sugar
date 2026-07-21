@@ -58,8 +58,8 @@ class IfSugar(Sugar):
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_statements
 
-        then_entries, _c1, then_falls, _f1 = reduce_statements(self.then_body, ctx)
-        else_entries, _c2, else_falls, _f2 = reduce_statements(self.else_body, ctx)
+        then_entries, then_falls, _f1 = reduce_statements(self.then_body)
+        else_entries, else_falls, _f2 = reduce_statements(self.else_body)
 
         # A purely TEMPORAL if -- branches that only bind -- is spent by
         # substitute (its binding became an IfExp phi threaded past the if), so
