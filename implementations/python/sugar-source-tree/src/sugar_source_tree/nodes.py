@@ -772,6 +772,22 @@ class Call(Expression):
             return func.value
         return None
 
+    def sugar(self):
+        """`<name>(<args>)` constructs CallSiteSugar WITH the argument sugars.
+        The result is a call-site coordinate -- the DIG CUE the enclosing assert
+        carries into its InvValue. Plain positional calls to a NAMED callee
+        only; method/attribute/computed callees and keyword arguments stay loud
+        gaps until their own sugars are written."""
+        if not isinstance(self.func, Name) or self.keywords:
+            return super().sugar()
+        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+        return CallSiteSugar(
+            target_name=self.func.id,
+            args=tuple(a.sugar() for a in self.args),
+            site=self.fragment,
+        )
+
 
 class FormattedValue(Expression):
     value: Expression
