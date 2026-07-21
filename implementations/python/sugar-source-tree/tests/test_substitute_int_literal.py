@@ -81,6 +81,20 @@ def test_function_masks_its_parameter():
     assert ret.value.kind == "Constant" and ret.value.value == 3
 
 
+def test_a_block_threads_its_assignments():
+    # x = 5; return x -- the assignment binds x for the REST of the block, so
+    # substitute inlines it: `return x` becomes `return 5`. This is the temporal
+    # that used to live in ctx.temporal, now pure tree rewriting: the block
+    # threads each binding forward as it walks its statements.
+    f = next(_tree("def f():\n    x = 5\n    return x\n").functions())
+    ret = next(n for n in f.substitute({}).walk() if n.kind == "Return")
+    assert ret.value.kind == "Constant" and ret.value.value == 5
+    # a rebind shadows for the tail (single-assignment): y = 1; y = 2; return y -> 2
+    g = next(_tree("def g():\n    y = 1\n    y = 2\n    return y\n").functions())
+    retg = next(n for n in g.substitute({}).walk() if n.kind == "Return")
+    assert retg.value.value == 2
+
+
 def test_an_unwritten_binder_still_panics():
     # Lambda binds its own parameter and has no masking substitute yet: rather
     # than silently capturing, it is loud -- coverage visible in the hierarchy.

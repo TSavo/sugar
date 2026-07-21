@@ -269,6 +269,33 @@ class Node(Typed):
             return self
         return rewrite(self, **changed)
 
+    def substitution_binding(self) -> "Optional[dict[str, Node]]":
+        """The binding this STATEMENT introduces for the rest of its block, or
+        None. An assignment returns ``{name: its substituted rhs}``; everything
+        else binds nothing. Read AFTER this statement was substituted, so the
+        value is already rewritten against the scope that stood before it."""
+        return None
+
+    def _substitute_body(self, statements: tuple, scope: "dict[str, Node]"):
+        """Substitute a statement sequence, THREADING each statement's binding:
+        an assignment binds its name to its substituted rhs for the rest of the
+        block. This is the temporal that used to live in ``ctx.temporal`` -- now
+        it is the tree rewriting itself, statement by statement, in single-
+        assignment form (each binding a fresh entry; a rebind shadows the old
+        for the tail). Returns ``(new_statements, changed)``."""
+        scope = dict(scope)
+        new_items = []
+        changed = False
+        for stmt in statements:
+            new_stmt = stmt.substitute(scope)
+            if new_stmt is not stmt:
+                changed = True
+            new_items.append(new_stmt)
+            binding = new_stmt.substitution_binding()
+            if binding:
+                scope = {**scope, **binding}
+        return (tuple(new_items) if changed else statements), changed
+
     def sugar(self) -> object:
         """This node's sugar, constructed by the node itself.
 
@@ -459,6 +486,17 @@ class Module(Node):
     body: Tuple[Statement, ...]
     _child_fields = ("body",)
 
+    def substitute(self, scope):
+        """The module is the top block: it threads its statements (a module-
+        level assignment binds its name for the rest) but masks nothing -- there
+        is no enclosing scope above it."""
+        from .shadow import rewrite
+
+        new_body, changed = self._substitute_body(self.body, scope)
+        if not changed:
+            return self
+        return rewrite(self, body=new_body)
+
 
 class FunctionDef(Statement):
     name: str
@@ -496,8 +534,9 @@ class FunctionDef(Statement):
             new, diff = self._substitute_field(getattr(self, field), scope)
             if diff:
                 changed[field] = new
-        # body: the enclosing scope with the bound names held out.
-        new_body, body_diff = self._substitute_field(self.body, body_scope)
+        # body: the enclosing scope with the bound names held out, THREADED --
+        # each assignment binds its name for the statements after it.
+        new_body, body_diff = self._substitute_body(self.body, body_scope)
         if body_diff:
             changed["body"] = new_body
 
@@ -573,6 +612,26 @@ class Assign(Statement):
     targets: Tuple[Expression, ...]
     value: Expression
     _child_fields = ("targets", "value")
+
+    def substitute(self, scope):
+        """Substitute the RHS only. The targets are BINDING SITES -- a Name
+        being defined, not referenced -- so they are never substituted (that
+        would rewrite the name being bound). The binding this introduces for the
+        rest of the block is reported by substitution_binding()."""
+        from .shadow import rewrite
+
+        new_value, changed = self._substitute_field(self.value, scope)
+        if not changed:
+            return self
+        return rewrite(self, value=new_value)
+
+    def substitution_binding(self):
+        # A single Name target binds its name to the already-substituted rhs.
+        # Tuple / attribute / subscript targets thread nothing yet -- their
+        # references stay honest gaps rather than a wrong binding.
+        if len(self.targets) == 1 and isinstance(self.targets[0], Name):
+            return {self.targets[0].id: self.value}
+        return None
 
     def sugar(self):
         """`<name> = <rhs>` constructs AssignSugar WITH the rhs's sugar (held as
@@ -680,6 +739,10 @@ class Assert(Statement):
     test: Expression
     msg: Optional[Expression]
     _child_fields = ("test", "msg")
+
+    def substitute(self, scope):
+        """`assert <test>[, <msg>]` binds nothing: recurse into test and msg."""
+        return self._substitute_children(scope)
 
     def sugar(self):
         """`assert <test>[, <msg>]` constructs AssertSugar WITH the test's
@@ -864,6 +927,11 @@ class Compare(Expression):
     comparators: Tuple[Expression, ...]
     _child_fields = ("left", "comparators")
 
+    def substitute(self, scope):
+        """A comparison binds nothing: recurse into its operands (the operators
+        are leaves, carried through)."""
+        return self._substitute_children(scope)
+
     def sugar(self):
         """A comparison constructs its operator's sugar, built WITH its
         children's sugar. Each comparison operator is its own sugar type
@@ -890,6 +958,12 @@ class Call(Expression):
     args: Tuple[Expression, ...]
     keywords: Tuple[Keyword, ...]
     _child_fields = ("func", "args", "keywords")
+
+    def substitute(self, scope):
+        """A call binds nothing: recurse into the callee, args, and keywords.
+        (A receiver `v.c(1)` substitutes through `func`, its Attribute; the
+        chain rewrites naturally as the receiver's own tree is substituted.)"""
+        return self._substitute_children(scope)
 
     def receiver(self) -> Optional[Expression]:
         """The object a method call is invoked on, when the callee is an
@@ -969,6 +1043,10 @@ class Subscript(Expression):
     value: Expression
     slice_: Expression
     _child_fields = ("value", "slice_")
+
+    def substitute(self, scope):
+        """`<value>[<slice>]` binds nothing: recurse into receiver and index."""
+        return self._substitute_children(scope)
 
     def sugar(self):
         """`<value>[<slice_>]` constructs SubscriptSugar WITH the receiver's and
