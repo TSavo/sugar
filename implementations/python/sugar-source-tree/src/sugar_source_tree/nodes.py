@@ -985,6 +985,8 @@ class For(Statement):
             and not self._body_has_loop_control()
         )
         elements = self._concrete_elements(subst_iter) if concrete else None
+        if elements is not None and len(elements) > self._UNROLL_FUEL:
+            elements = None  # past the unroll budget: the fold/universal stands
         if elements is not None:
             bindings = [self._target_bindings(e) for e in elements]
             if all(b is not None for b in bindings):
@@ -1161,6 +1163,13 @@ class For(Statement):
             for stmt in self.body
         )
 
+    # The unroll budget. A concrete loop within it dissolves to its unroll; past
+    # it, the SYMBOLIC form (universal / fold coordinate) stands -- not merely
+    # cheaper: 1,100 iterations of a carried update is a fold, and unrolling it
+    # grows a term chain quadratically. Small on purpose; proofs want small
+    # unrolls.
+    _UNROLL_FUEL = 128
+
     def _target_bindings_for(self, target: "Node", element: "Node") -> "Optional[dict]":
         """`_target_bindings` for an explicit target (shared with comprehensions)."""
         if target.kind == "Name":
@@ -1278,7 +1287,7 @@ class While(Statement):
     # branch, which is loud) -- `while True:` lands there honestly rather than
     # spinning substitute forever. Not a semantic limit: a real concrete loop
     # that long is beyond what an unroll should dissolve anyway.
-    _FUEL = 1000
+    _FUEL = 128  # the shared unroll budget (see For._UNROLL_FUEL)
 
     def substitute(self, scope):
         """`while <test>: <body>` -- the unbounded loop, and over CONCRETE state
