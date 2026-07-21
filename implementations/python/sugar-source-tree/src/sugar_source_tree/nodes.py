@@ -202,16 +202,43 @@ class Node(Typed):
         return override if isinstance(override, str) else type(self).__name__
 
     def substitute(self, scope: "dict[str, Node]") -> "Node":
-        """Rewrite this node against a scope (name -> bound node), yielding a
-        NEW node. Reduction IS substitution into the tree — there is no
-        environment threaded alongside; the rewritten tree is the state, and
-        single assignment is its natural form (each rewrite is a fresh tree).
+        """Rewrite this node against a scope (name -> bound node).
 
-        Default: a node that binds nothing rewrites to itself. A Name resolves
-        against the scope; a compound node rewrites its children; a scope-
-        owning node masks its bound names before rewriting its body.
+        The whole verb, and it has no cases: substitute every child; if any
+        child changed, rebuild me around the substituted children (a shadow
+        node borrowing my span); if none changed, I am unchanged and I return
+        myself. That's it — a body block substitutes its statements, a BinOp
+        its left and right, a Call its receiver and args, none of them
+        "knowing about" substitution: they pass it down and reassemble.
+
+        Only ``Name`` overrides this, as the one base case that BINDS — it
+        swaps itself for its bound node. Every other leaf — a literal, an
+        operator — has no children and no hole, so the loop finds nothing to
+        change and this default returns it unchanged. The rewritten tree is
+        the state; there is no environment threaded alongside.
         """
-        return self
+        from .shadow import rewrite
+
+        changed: dict[str, object] = {}
+        for name in type(self)._child_fields:
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if isinstance(value, Node):
+                new_child = value.substitute(scope)
+                if new_child is not value:
+                    changed[name] = new_child
+            else:  # a tuple of child nodes (some slots optional -> None)
+                items = tuple(value)
+                new_items = tuple(
+                    item.substitute(scope) if isinstance(item, Node) else item
+                    for item in items
+                )
+                if any(new is not old for new, old in zip(new_items, items)):
+                    changed[name] = new_items
+        if not changed:
+            return self
+        return rewrite(self, **changed)
 
     def sugar(self) -> object:
         """This node's sugar, constructed by the node itself.
