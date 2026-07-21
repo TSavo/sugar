@@ -27,9 +27,10 @@ COMPARE_METHODS: dict[str, str] = {
 }
 
 # Every comparison kind this sugar owns (Eq is EqualityOpSugar's, not here).
-# `NotEq`/`IsNot` are their positive form negated; `Is` stands on the identity
-# floor; `In`/`NotIn` (membership) are not owned yet -- they stay loud.
-COMPARISON_KINDS = frozenset(COMPARE_METHODS) | {"NotEq", "Is", "IsNot"}
+# `NotEq`/`IsNot`/`NotIn` are their positive form negated; `Is` stands on the
+# identity floor; `In` on the membership floor (the CONTAINER is the right
+# operand: `x in xs` is `xs.contains(x)`).
+COMPARISON_KINDS = frozenset(COMPARE_METHODS) | {"NotEq", "Is", "IsNot", "In", "NotIn"}
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,14 @@ class ComparisonOpSugar(Sugar):
         if self.op_kind == "IsNot":
             # a is not b is not (a is b): identity floor, negated.
             return left.is_identical(right, self.site).and_then(
+                lambda predicate: predicate.negate()
+            )
+        if self.op_kind == "In":
+            # a in b: the CONTAINER (right) owns membership -- b.contains(a).
+            return right.contains(left, self.site)
+        if self.op_kind == "NotIn":
+            # a not in b is not (a in b): membership floor, negated.
+            return right.contains(left, self.site).and_then(
                 lambda predicate: predicate.negate()
             )
         method = COMPARE_METHODS[self.op_kind]

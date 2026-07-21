@@ -429,6 +429,22 @@ class SymbolicValue(FloorValue):
 
         return Complete(SymbolicValue(ctor("py.getattr", [self.term, str_const(name)])))
 
+    def contains(self, item, site):
+        # `item in self`: a symbolic container stays the py.in coordinate, a
+        # boolean-valued opaque predicate (`item in recv`). Membership on an
+        # unknown container is uninterpreted -- decidable only where a later
+        # equality/guard consumes it, never invented.
+        del site
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import atomic
+        from sugar_lift_py_tests.outcome import Complete
+
+        return Complete(
+            PredicateValue(
+                atomic("py.in", [item.to_term(owner="contains"), self.term])
+            )
+        )
+
     def format_data_model(self, spec, site, ctx):
         """Construct ``format(symbolic, spec)`` as an exact data-model coordinate.
 
