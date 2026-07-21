@@ -1405,6 +1405,19 @@ class Dict(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
+    def sugar(self):
+        """`{k: v, ...}` constructs DictSugar WITH each key and value sugar. A
+        `**d` spread (a DictItem with key None) stays loud until its own sugar."""
+        from sugar_lift_py_tests.sugar.collection_sugar import DictSugar
+
+        if any(item.key is None for item in self.items):
+            return super().sugar()
+        return DictSugar(
+            keys=tuple(item.key.sugar() for item in self.items),
+            values=tuple(item.value.sugar() for item in self.items),
+            site=self.fragment,
+        )
+
 
 class Set(Expression):
     elts: Tuple[Expression, ...]
@@ -1413,6 +1426,16 @@ class Set(Expression):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def sugar(self):
+        """`{e, ...}` constructs SetSugar WITH each element's sugar; `*xs` is loud."""
+        from sugar_lift_py_tests.sugar.collection_sugar import SetSugar
+
+        if any(e.kind == "Starred" for e in self.elts):
+            return super().sugar()
+        return SetSugar(
+            elements=tuple(e.sugar() for e in self.elts), site=self.fragment
+        )
 
 
 class ListComp(Expression):
@@ -1533,23 +1556,44 @@ class Compare(Expression):
 
     def sugar(self):
         """A comparison constructs its operator's sugar, built WITH its
-        children's sugar. Each comparison operator is its own sugar type
-        (no operator field to switch on downstream) — dispatch here on the
-        operator class and on arity. A single `==` is EqualityOpSugar; every
-        other operator and chained comparisons inherit the loud throw until
-        written.
+        children's sugar. `==` is EqualityOpSugar (it also refines); the ordering
+        family and `!=` are ComparisonOpSugar. A CHAINED comparison `a < b < c`
+        is `(a < b) and (b < c)` -- each adjacent pair becomes its own comparison
+        sugar and they conjoin (b is the same reduced term in both, as Python
+        evaluates it once). Identity/membership operators (is/in/...) inherit the
+        loud throw until written.
         """
         from .operators import Eq
+        from sugar_lift_py_tests.sugar.comparison_op_sugar import (
+            COMPARISON_KINDS,
+            ComparisonOpSugar,
+        )
+        from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 
-        if len(self.ops) == 1 and isinstance(self.ops[0], Eq):
-            from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
+        def supported(op):
+            return isinstance(op, Eq) or op.kind in COMPARISON_KINDS
 
-            return EqualityOpSugar(
-                left=self.left.sugar(),
-                right=self.comparators[0].sugar(),
-                site=self.fragment,
+        if not all(supported(op) for op in self.ops):
+            return super().sugar()
+
+        operands = (self.left, *self.comparators)
+
+        def pair(index):
+            op = self.ops[index]
+            left_s = operands[index].sugar()
+            right_s = operands[index + 1].sugar()
+            if isinstance(op, Eq):
+                return EqualityOpSugar(left=left_s, right=right_s, site=self.fragment)
+            return ComparisonOpSugar(
+                op_kind=op.kind, left=left_s, right=right_s, site=self.fragment
             )
-        return super().sugar()
+
+        pairs = tuple(pair(i) for i in range(len(self.ops)))
+        if len(pairs) == 1:
+            return pairs[0]
+        from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
+
+        return BoolOpSugar(op_kind="And", values=pairs, site=self.fragment)
 
 
 class Call(Expression):
@@ -1625,19 +1669,27 @@ class Constant(Expression):
         literal kind not yet converted inherits the loud SugarNotWritten throw.
         """
         v = self.value
+        if v is None:
+            from sugar_lift_py_tests.sugar.none_literal_sugar import NoneLiteralSugar
+
+            return NoneLiteralSugar(site=self.fragment)
         if isinstance(v, bool):
             return super().sugar()  # bool is its own sugar, not yet written
         if isinstance(v, int):
             from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 
             return IntLiteralSugar(value=v, site=self.fragment)
+        if type(v) is float:
+            from sugar_lift_py_tests.sugar.real_literal_sugar import RealLiteralSugar
+
+            return RealLiteralSugar(value=v, site=self.fragment)
         if type(v) is str:
             from sugar_lift_py_tests.sugar.string_literal_sugar import (
                 StringLiteralSugar,
             )
 
             return StringLiteralSugar(value=v, site=self.fragment)
-        return super().sugar()  # float / bytes / None / ... not yet written
+        return super().sugar()  # bool / bytes / ... not yet written
 
 
 class Attribute(Expression):
@@ -1717,6 +1769,17 @@ class List(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
+    def sugar(self):
+        """`[e, ...]` constructs ListSugar WITH each element's sugar. A `*xs`
+        spread is not one element -- it stays loud until its own sugar lands."""
+        from sugar_lift_py_tests.sugar.collection_sugar import ListSugar
+
+        if any(e.kind == "Starred" for e in self.elts):
+            return super().sugar()
+        return ListSugar(
+            elements=tuple(e.sugar() for e in self.elts), site=self.fragment
+        )
+
 
 class Tuple_(Expression):
     elts: Tuple[Expression, ...]
@@ -1725,6 +1788,16 @@ class Tuple_(Expression):
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
+
+    def sugar(self):
+        """`(e, ...)` constructs TupleSugar WITH each element's sugar; `*xs` is loud."""
+        from sugar_lift_py_tests.sugar.collection_sugar import TupleSugar
+
+        if any(e.kind == "Starred" for e in self.elts):
+            return super().sugar()
+        return TupleSugar(
+            elements=tuple(e.sugar() for e in self.elts), site=self.fragment
+        )
 
 
 # Wire word for tuples is "Tuple"; the class name carries a trailing
