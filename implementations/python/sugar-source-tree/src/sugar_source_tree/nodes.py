@@ -3160,11 +3160,12 @@ class Call(Expression):
         `d["k"](x)`) -> ComputedCallSugar, the `py.call(callee, args)`
         coordinate -- the callee reduces through whatever sugar its own node
         built, so a callee with no sugar (a Lambda called inline) still stays
-        loud through the ordinary recursion. Keyword arguments stay loud gaps
-        until written."""
-        if any(kw.arg is None for kw in self.keywords):
-            return super()._construct_sugar()  # **spread -- not one keyword, never guess
-        keyword_sugars = tuple((kw.arg, kw.value.sugar()) for kw in self.keywords)
+        loud through the ordinary recursion. Named keywords and ``**`` spreads
+        ride explicitly on every coordinate; none is dropped or interpreted."""
+        keyword_sugars = tuple(
+            (kw.arg if kw.arg is not None else "**", kw.value.sugar())
+            for kw in self.keywords
+        )
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
@@ -3184,14 +3185,13 @@ class Call(Expression):
                 site=self.fragment,
                 keywords=keyword_sugars,
             )
-        if keyword_sugars:
-            return super()._construct_sugar()  # kwargs on a computed callee -- not written
         from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 
         return ComputedCallSugar(
             callee=self.func.sugar(),
             args=tuple(a.sugar() for a in self.args),
             site=self.fragment,
+            keywords=keyword_sugars,
         )
 
 

@@ -10,7 +10,9 @@ unlike MethodCallSugar's attribute-callee case.
 A callee whose own node has no `.sugar()` (a Lambda called inline, for example)
 stays loud through the ordinary recursion: this sugar never masks that gap.
 
-Keyword arguments stay loud (the tree node guards them), as on plain calls.
+Keyword arguments and ``**`` spreads ride as explicit ``py.kwarg`` operands,
+the same bridge vocabulary used by named and method calls. They are pointed at,
+not interpreted or silently expanded here.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ class ComputedCallSugar(Sugar):
     callee: Sugar
     args: tuple  # the argument sugars, in source order
     site: object = dataclass_field(compare=False)
+    keywords: tuple = ()  # (name or explicit "**", sugar), source order
 
     @classmethod
     def witnesses(cls):
@@ -53,20 +56,41 @@ class ComputedCallSugar(Sugar):
                     callee, tuple(rest), accumulated + (value,), ctx
                 )
             )
+        return self._collect_kwargs(callee, self.keywords, (), accumulated, ctx)
+
+    def _collect_kwargs(
+        self, callee, remaining: tuple, kw_values: tuple, positional: tuple, ctx
+    ) -> Outcome:
+        if remaining:
+            (name, sugar), *rest = remaining
+            return sugar.desugar(ctx).and_then(
+                lambda value: self._collect_kwargs(
+                    callee,
+                    tuple(rest),
+                    kw_values + ((name, value),),
+                    positional,
+                    ctx,
+                )
+            )
         from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.ir import ctor, str_const
 
         owner = str(self.site)
+        keyword_terms = [
+            ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
+            for name, value in kw_values
+        ]
         term = ctor(
             "py.call",
             [callee.to_term(owner=owner)]
-            + [value.to_term(owner=owner) for value in accumulated],
+            + [value.to_term(owner=owner) for value in positional]
+            + keyword_terms,
             symbol_kind="coordinate",
         )
         return Complete(
             CallSiteValue(
                 target_name="py.call",
-                arg_values=(callee, *accumulated),
+                arg_values=(callee, *positional, *(value for _, value in kw_values)),
                 parameters=(),
                 term=term,
                 body=None,  # the dig is CUED, not inlined here

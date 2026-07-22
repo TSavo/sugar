@@ -5,10 +5,7 @@ receiver rides as runtime_dispatch_receiver for a future type-aware dig."""
 
 import tempfile
 
-import pytest
-
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -52,9 +49,15 @@ def test_keyword_args_lift():
     assert kwarg.args[0].value == "default"
 
 
-def test_spread_keyword_args_stay_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(z, d):\n    return z.get(1, **d)\n").sugar()
+def test_spread_keyword_args_build_method_bridge():
+    t = _out("def A(z, d):\n    return z.get(1, **d)\n")
+
+    assert t.name == "call:get"
+    assert t.args[0].name == "z"
+    spread = t.args[-1]
+    assert spread.name == "py.kwarg"
+    assert spread.args[0].value == "**"
+    assert spread.args[1].name == "d"
 
 
 if __name__ == "__main__":
