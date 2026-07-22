@@ -125,7 +125,7 @@ if __name__ == "__main__":
     test_suppress_non_match_propagates()
     test_unauthenticated_manager_stays_loud()
     test_as_witness_stays_loud()
-    test_warning_kind_stays_loud()
+    test_warning_kind_with_unresolved_call_retains_obligation()
     test_multiple_managers_stay_loud()
     print("ok: with under typed contracts -- ten twins")
 
