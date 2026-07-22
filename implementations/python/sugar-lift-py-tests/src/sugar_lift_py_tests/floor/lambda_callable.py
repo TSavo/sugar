@@ -18,6 +18,7 @@ class LambdaCallable(FloorValue):
 
     parameters: tuple[str, ...]
     body: Any
+    construction_identity: str
     default_values: tuple[Any, ...] = ()
     keyword_only_parameters: tuple[str, ...] = ()
     keyword_only_default_values: tuple[Any | None, ...] = ()
@@ -74,7 +75,10 @@ class LambdaCallable(FloorValue):
                 )
         if self.kwarg_parameter is not None:
             encoded_parameters.append(str_const(f"**{self.kwarg_parameter}"))
-        return ctor("python:lambda", encoded_parameters)
+        return ctor(
+            "python:lambda",
+            [str_const(self.construction_identity), *encoded_parameters],
+        )
 
     def apply(self, value: TermValue, ctx):
         from sugar_lift_py_tests.outcome import Incomplete, complete_value

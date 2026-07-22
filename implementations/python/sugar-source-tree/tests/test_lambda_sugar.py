@@ -34,6 +34,15 @@ def test_lambda_identity_truthful_and_lying_terms_discriminate():
     assert lying != truthful
 
 
+def test_lambda_body_changes_content_addressed_callable_identity():
+    identity = _post_term("def A(v):\n    return (lambda x: x)(v)\n")
+    increment = _post_term("def A(v):\n    return (lambda x: x + 1)(v)\n")
+
+    assert identity.name == increment.name == "py.call"
+    assert identity.args[1] == increment.args[1]
+    assert identity.args[0] != increment.args[0]
+
+
 def test_lambda_parameter_masks_same_spelled_outer_binding():
     expression = _return_expression(
         "def A():\n    x = 7\n    return lambda x: x\n"
@@ -64,6 +73,18 @@ def test_lambda_rebinding_changes_constructed_capture():
     ).sugar()
 
     assert first.body != second.body
+
+
+def test_nested_lambda_capture_rebinding_changes_opaque_coordinate():
+    first = _return_expression(
+        "def A():\n    z = 7\n    return lambda x: lambda x: x + z\n"
+    ).sugar().desugar().value
+    second = _return_expression(
+        "def A():\n    z = 8\n    return lambda x: lambda x: x + z\n"
+    ).sugar().desugar().value
+
+    assert first.parameters == second.parameters == ("x",)
+    assert first.to_term(owner="test") != second.to_term(owner="test")
 
 
 @pytest.mark.parametrize(
@@ -108,8 +129,10 @@ def test_lambda_coordinate_is_opaque_and_does_not_leak_nested_same_named_formals
     )
     outer = expression.sugar().desugar().value
 
-    assert outer.to_term(owner="test") == ctor("python:lambda", [str_const("x")])
-    assert _free_vars_in_ir_term(outer.to_term(owner="test")) == frozenset()
+    coordinate = outer.to_term(owner="test")
+    assert coordinate.name == "python:lambda"
+    assert coordinate.args[1] == str_const("x")
+    assert _free_vars_in_ir_term(coordinate) == frozenset()
     assert outer.body.formals == ("x",)
     assert outer.body.body.name == "x"
 

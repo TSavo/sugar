@@ -31,4 +31,14 @@ class LambdaSugar(Sugar):
         del ctx
         from sugar_lift_py_tests.floor import LambdaCallable
 
-        return Complete(LambdaCallable(parameters=self.formals, body=self.body))
+        sealed = self.site.seal()
+        construction_identity = (
+            f"{sealed.source_cid}@{sealed.start}:{sealed.end}#{sealed.cid}"
+        )
+        return Complete(
+            LambdaCallable(
+                parameters=self.formals,
+                body=self.body,
+                construction_identity=construction_identity,
+            )
+        )
