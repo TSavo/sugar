@@ -1,13 +1,21 @@
 """`a, b = <display>` destructures against a matching Tuple/List rhs, and
 `x = y = e` chains a single rhs to several names -- both are threaded by
 substitute exactly like the single-Name case, so both go inert at the
-meaning layer. Starred/nested targets, arity mismatches, and store targets
-(attribute/subscript) do not thread and stay loud gaps."""
+meaning layer. Starred/nested targets and arity mismatches do not thread
+and stay loud gaps. Store targets (attribute/subscript) are never bound --
+they lift straight to a typed red runtime effect instead (the fragment-type
+seam; see test_store_target_effect.py for the full witness/continuation
+discipline)."""
 
 import tempfile
 
 import pytest
 
+from sugar_lift_py_tests.effect import (
+    AttributeStoreRuntimeEffect,
+    SubscriptStoreRuntimeEffect,
+)
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -78,14 +86,18 @@ def test_mixed_chained_targets_stay_loud():
         _fn("def A():\n    x = (a, b) = (1, 2)\n    return x\n").sugar()
 
 
-def test_attribute_store_target_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(o):\n    o.a = 1\n    return o\n").sugar()
+def test_attribute_store_target_lifts_a_typed_red_effect():
+    entries = _fn("def A(o):\n    o.a = 1\n    return o\n").sugar().desugar().value.record.statements
+    red = [e for e in entries if isinstance(e, Incomplete)]
+    assert len(red) == 1
+    assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
 
 
-def test_subscript_store_target_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(xs):\n    xs[0] = 1\n    return xs\n").sugar()
+def test_subscript_store_target_lifts_a_typed_red_effect():
+    entries = _fn("def A(xs):\n    xs[0] = 1\n    return xs\n").sugar().desugar().value.record.statements
+    red = [e for e in entries if isinstance(e, Incomplete)]
+    assert len(red) == 1
+    assert isinstance(red[0].effect, SubscriptStoreRuntimeEffect)
 
 
 if __name__ == "__main__":
@@ -98,6 +110,9 @@ if __name__ == "__main__":
     test_arity_mismatch_stays_loud()
     test_non_display_rhs_stays_loud()
     test_mixed_chained_targets_stay_loud()
-    test_attribute_store_target_stays_loud()
-    test_subscript_store_target_stays_loud()
-    print("ok: tuple/chained assign destructures; starred/nested/store stay loud")
+    test_attribute_store_target_lifts_a_typed_red_effect()
+    test_subscript_store_target_lifts_a_typed_red_effect()
+    print(
+        "ok: tuple/chained assign destructures; starred/nested stay loud; "
+        "store targets lift typed red"
+    )
