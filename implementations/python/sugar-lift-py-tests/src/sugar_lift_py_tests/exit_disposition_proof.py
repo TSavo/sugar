@@ -353,6 +353,30 @@ class _ModuleBindingCensus(ast.NodeVisitor):
             if alias.name != "*" and (alias.asname or alias.name) == self.name
         )
 
+    def visit_Assign(self, node: ast.Assign) -> None:
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == self.name:
+                self.bindings.append(node)
+            else:
+                self.visit(target)
+        self.visit(node.value)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if isinstance(node.target, ast.Name) and node.target.id == self.name:
+            self.bindings.append(node)
+        else:
+            self.visit(node.target)
+        self.visit(node.annotation)
+        if node.value is not None:
+            self.visit(node.value)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        if isinstance(node.target, ast.Name) and node.target.id == self.name:
+            self.bindings.append(node)
+        else:
+            self.visit(node.target)
+        self.visit(node.value)
+
     def visit_Name(self, node: ast.Name) -> None:
         if isinstance(node.ctx, (ast.Store, ast.Del)) and node.id == self.name:
             self.bindings.append(node)
@@ -423,12 +447,18 @@ def _lookup_name_in_module(
                 module_name, node.bases[0].id, depth=depth + 1
             )
 
+    binding = _unique_unconditional_binding(tree, name)
+    if binding is None:
+        return None
+
     # 2. from X import name / from X import Y as name / star-import follow
     for node in _module_level_nodes(tree):
         if not isinstance(node, ast.ImportFrom):
             continue
         for alias in node.names:
             if alias.name == "*":
+                if binding is not node:
+                    return None
                 target = _resolve_relative(
                     module_name, filename, node.level, node.module
                 )
@@ -441,6 +471,8 @@ def _lookup_name_in_module(
             bound = alias.asname or alias.name
             if bound != name:
                 continue
+            if binding is not node:
+                return None
             target = _resolve_relative(
                 module_name, filename, node.level, node.module
             )
@@ -453,6 +485,8 @@ def _lookup_name_in_module(
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             t = node.targets[0]
             if isinstance(t, ast.Name) and t.id == name and isinstance(node.value, ast.Name):
+                if binding is not node:
+                    return None
                 return _lookup_name_in_module(
                     module_name, node.value.id, depth=depth + 1
                 )

@@ -18,23 +18,15 @@ def _fn(src: str):
     return next(SourceFile(path_source(path)).functions())
 
 
-def test_errstate_routes_to_with_resource_sugar():
-    sugar = _fn(
-        "import numpy as np\n"
-        "def A(z):\n"
-        "    with np.errstate(all='ignore'):\n"
-        "        z = z\n"
-        "    return z\n"
-    ).sugar()
-    # FunctionUniverseSugar body contains WithResourceSugar
-    from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
-
-    kinds = [type(s).__name__ for s in sugar.statements]
-    assert any(isinstance(s, WithResourceSugar) for s in sugar.statements), kinds
-    with_s = next(s for s in sugar.statements if isinstance(s, WithResourceSugar))
-    from sugar_lift_py_tests.context_manager_contract import NeverSuppresses
-
-    assert isinstance(with_s.disposition, NeverSuppresses)
+def test_errstate_conditional_facade_binding_stays_runtime_selected():
+    with pytest.raises(RuntimeSelectedContextManager):
+        _fn(
+            "import numpy as np\n"
+            "def A(z):\n"
+            "    with np.errstate(all='ignore'):\n"
+            "        z = z\n"
+            "    return z\n"
+        ).sugar()
 
 
 @pytest.mark.xfail(
