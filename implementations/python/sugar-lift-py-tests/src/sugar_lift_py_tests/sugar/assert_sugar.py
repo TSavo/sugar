@@ -28,6 +28,7 @@ class AssertSugar(Sugar):
 
     test: Sugar
     site: object = dataclass_field(compare=False)
+    message: object | None = dataclass_field(compare=False, default=None)
 
     @classmethod
     def witnesses(cls):
@@ -49,4 +50,3 @@ class AssertSugar(Sugar):
         return self.test.desugar(ctx).and_then(
             lambda value: value.stated(self.site)
         )
-

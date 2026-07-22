@@ -2210,18 +2210,15 @@ class Assert(Statement):
         """`assert <test>[, <msg>]` constructs AssertSugar WITH the test's
         sugar. The test recognizes itself (self.test.sugar()) — the recursion.
         The message is provenance only (#4593/#4594): AssertSugar never builds
-        or reduces it, so it is not passed as a child sugar.
+        or reduces it; its pinned fragment rides separately from the condition.
         """
         from sugar_lift_py_tests.sugar.assert_sugar import AssertSugar
 
-        if self.msg is not None:
-            # The message is provenance (assertMessage on the memento, #4593/
-            # #4594) — never a child sugar, but NOT nothing. Carrying it onto
-            # the memento is not written yet, so an assert that has one FAILS
-            # LOUDLY rather than silently dropping it. Silent loss is the exact
-            # MISSING-becomes-success this design forbids.
-            return super()._construct_sugar()
-        return AssertSugar(test=self.test.sugar(), site=self.fragment)
+        return AssertSugar(
+            test=self.test.sugar(),
+            message=self.msg.fragment if self.msg is not None else None,
+            site=self.fragment,
+        )
 
 
 class Import(Statement):

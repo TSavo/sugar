@@ -3,8 +3,8 @@
 Source string, parsed, the Assert node asked for its sugar: an AssertSugar
 whose `test` is the EqualityOpSugar the Compare node produced — the whole
 recursion, Assert → Compare → two Constants, all node.sugar() calling
-node.sugar(). No factory in the chain. The message operand is provenance
-only (never a child sugar): AssertSugar never builds or reduces it.
+node.sugar(). No factory in the chain. The message operand is source
+provenance only: AssertSugar carries its pinned fragment but never reduces it.
 """
 from __future__ import annotations
 
@@ -53,16 +53,31 @@ def test_a_bare_assert_holds_its_terms_sugar():
     assert isinstance(sugar.test, IntLiteralSugar) and sugar.test.value == 1
 
 
-def test_an_assert_with_a_message_fails_loudly_until_provenance_is_carried():
-    # `assert cond, "msg"` — the message is provenance (assertMessage on the
-    # memento), never a child sugar. Carrying it is not written yet, so an
-    # assert that HAS a message must throw loudly, not silently drop it.
-    # Silent loss is a MISSING becoming success — forbidden.
+def test_assert_with_message_builds_and_carries_message_provenance():
+    node = _assert_node("assert 1 == 1, 'boom'\n")
+    sugar = node.sugar()
+    outcome = sugar.desugar()
+
+    assert isinstance(sugar, AssertSugar)
+    assert sugar.message.text == "'boom'"
+    assert outcome.value.site.memento().extra["assertMessage"] == "'boom'"
+    assert outcome.value.site.memento().to_rpc()["assertMessage"] == "'boom'"
+
+
+def test_assert_message_is_not_reduced_on_the_success_path():
+    node = _assert_node("assert 1 == 1, (yield 2)\n")
+
+    sugar = node.sugar()
+
+    assert sugar.message.text == "yield 2"
+
+
+def test_unbuilt_condition_child_preserves_its_own_gap():
     from sugar_source_tree.panic import SugarNotWritten
 
-    node = _assert_node("assert 1 == 1, 'boom'\n")
+    node = _assert_node("assert (yield 1)\n")
     try:
         node.sugar()
-        assert False, "an assert with a message must fail loudly, not drop it"
-    except SugarNotWritten:
-        pass
+        assert False, "the Yield child gap must remain loud"
+    except SugarNotWritten as panic:
+        assert panic.owner == "Yield.sugar"

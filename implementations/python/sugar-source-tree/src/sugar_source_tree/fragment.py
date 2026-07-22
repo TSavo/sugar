@@ -116,10 +116,20 @@ class SourceFragment:
         from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
 
         lc = self.line_col_span
+        extra = {}
+        node = self.node
+        from .nodes import Assert
+
+        if isinstance(node, Assert) and node.msg is not None:
+            # Diagnostic provenance only.  CPython evaluates this expression
+            # on the failing path; the fact membrane carries its exact pinned
+            # spelling without constructing or reducing it (#4593/#4594).
+            extra["assertMessage"] = node.msg.fragment.text
         return SourceMementoDto(
             file=self.filename,
             span=SourceSpanDto(lc.start_line, lc.start_col, lc.end_line, lc.end_col),
             source_cid=self.seal().cid,
+            extra=extra,
         )
 
     def seal(self) -> SourceMemento:
