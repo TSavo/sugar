@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sugar_lift_py_tests.idd.live_factory_panic_isolation import (
+from sugar_lift_py_tests.idd.live_construction_panic_isolation import (
     assert_bearing_py_files,
     factory_engaged_empty_report,
     maybe_write_isolation_receipt_from_env,
@@ -33,7 +33,7 @@ def test_assert_bearing_py_files_finds_only_assert_sources(tmp_path: Path) -> No
 def test_panic_owner_fallback_and_engaged_report_shape() -> None:
     assert panic_owner_from_message("no owner here") == "unknown"
     assert (
-        panic_owner_from_message("FactoryPanic: owner=TemporalContext observed=result")
+        panic_owner_from_message("ConstructionPanic: owner=TemporalContext observed=result")
         == "TemporalContext"
     )
     engaged = factory_engaged_empty_report()
@@ -44,13 +44,13 @@ def test_panic_owner_fallback_and_engaged_report_shape() -> None:
 def test_write_isolation_receipt_and_env_gate(tmp_path: Path, monkeypatch) -> None:
     payload = {
         "package": "numpy",
-        "R_live_factory_panic_files": 2,
+        "R_live_construction_panic_files": 2,
         "owners": {"TemporalContext": 2},
         "exact_fronts": [],
     }
     out = write_isolation_receipt(payload, tmp_path / "r.json")
     body = json.loads(out.read_text(encoding="utf-8"))
-    assert body["R_live_factory_panic_files"] == 2
+    assert body["R_live_construction_panic_files"] == 2
     assert body["owners"]["TemporalContext"] == 2
 
     monkeypatch.delenv("SUGAR_4013_ISOLATION_OUT", raising=False)

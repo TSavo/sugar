@@ -18,7 +18,7 @@ class ReduceContext:
     source_oracle: Any = None
     proof_sink: Any = None
     report_sink: Any = None
-    factory_audit_sink: Any = None
+    construction_audit_sink: Any = None
     operation_log: list[tuple[str, str, str]] = field(default_factory=list)
     module_rewrite_log: list[Any] = field(default_factory=list)
     prefer_ground_module_bindings: bool = False
@@ -57,7 +57,7 @@ class ReduceContext:
             source_oracle=source.source_oracle,
             proof_sink=source.proof_sink,
             report_sink=source.report_sink,
-            factory_audit_sink=source.factory_audit_sink,
+            construction_audit_sink=source.construction_audit_sink,
             operation_log=source.operation_log,
             module_rewrite_log=getattr(source, "module_rewrite_log", []),
             prefer_ground_module_bindings=getattr(
@@ -95,7 +95,7 @@ class ReduceContext:
             source_oracle=self.source_oracle,
             proof_sink=self.proof_sink,
             report_sink=self.report_sink,
-            factory_audit_sink=self.factory_audit_sink,
+            construction_audit_sink=self.construction_audit_sink,
             operation_log=self.operation_log,
             module_rewrite_log=self.module_rewrite_log,
             prefer_ground_module_bindings=self.prefer_ground_module_bindings,

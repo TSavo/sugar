@@ -17,10 +17,10 @@ __all__ = [
 class AuditSink(Protocol):
     """The audit-row carrier: `factory.build` appends one row per selection.
 
-    `audit_sink` and `factory_audit_sink` on `FactoryBuildContext`, and
-    `factory_audit_sink` on `ReduceContext`, are all this shape: a list-like
+    `audit_sink` and `construction_audit_sink` on `FactoryBuildContext`, and
+    `construction_audit_sink` on `ReduceContext`, are all this shape: a list-like
     collector, never read back by the lifter. Callers append `FactoryAuditDto`
-    TypedDicts, plain dicts, or (pre-`.to_json()`) `FactoryAuditRow` values
+    TypedDicts, plain dicts, or (pre-`.to_json()`) `ConstructionAuditRow` values
     depending on call site, so the row stays `Any`: the typed edge this
     protocol pins is "is a collector", not the exact row shape.
     """

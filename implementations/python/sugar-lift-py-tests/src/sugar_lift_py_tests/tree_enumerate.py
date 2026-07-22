@@ -417,7 +417,7 @@ def frontier_leaf_rpc(full_path: Path, file_rel: str) -> dict:
     """
     from sugar_lift_py_tests.kit_rpc.recovered_audit_dto import (
         RecoveredAuditDto,
-        RecoveredFactoryPanicDto,
+        RecoveredConstructionPanicDto,
     )
 
     sf, gaps = audit_file_gaps(full_path)
@@ -427,7 +427,7 @@ def frontier_leaf_rpc(full_path: Path, file_rel: str) -> dict:
         pos, terminal = _gap_locus(node, file_rel)
         reason = panic.observed or str(panic)
         panics.append(
-            RecoveredFactoryPanicDto(
+            RecoveredConstructionPanicDto(
                 locus=pos,
                 demanded_source=demanded_source,
                 terminal_gap_locus=terminal,

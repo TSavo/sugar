@@ -1,25 +1,26 @@
 #!/usr/bin/env python3
-"""R_factory_panic_catches_outside_audit — permanent floor.
+"""R_construction_panic_catches_outside_audit — permanent floor.
 
-Only the per-file corpus / gap-enumeration audit membrane may catch
-``FactoryPanic``, and it must record a loud red row (or re-raise process-terminal).
+``ConstructionPanic`` is a sanctioned typed construction gap. Two membranes
+may catch it without pure re-raise:
 
-Production construction, dig, floors, and reports must never convert
-FactoryPanic into Incomplete, opacity, empty collections, soft None, or a
-missing row.
+1. **Audit enumeration** — ``audit_only/collect_construction_gaps.py`` holds
+   the panic to emit a loud red ``AuditOnlyGap`` row.
+2. **Production typed-gap classification** — ``scripts/_production_lift_child.py``
+   marks the file ``typed-gap`` for the zero-tolerance floors so kit-domain
+   construction panics are not misclassified as bare Python exceptions.
+   That path does NOT convert the panic into Incomplete, opacity, soft None,
+   or a missing report row.
 
-The single allowed membrane (relative to the package root) is
-``audit_only/collect_construction_gaps.py``. It enumerates a FactoryPanic as an
-``AuditOnlyGap`` loud red row.
-
-Every other ``except FactoryPanic`` (or catch of FactoryPanic via isinstance on
-Exception) under production ``src/sugar_lift_py_tests`` is debt unless the
-handler body is pure re-raise on every path (no soft assignment / continue /
-return None after catch).
+Every other ``except ConstructionPanic`` (or catch via BaseException / bare
+except) under production sources is debt unless the handler body is pure
+re-raise on every path (no soft assignment / continue / return None after
+catch). Production construction, dig, floors, and reports must never convert
+ConstructionPanic into Incomplete or silence.
 
 Exit 1 while R > 0. Missing roots and source read/parse failures are separate
 ``auditor_errors`` and also exit red. No baseline. No allowlist of production
-soft continues.
+soft continues beyond the two named membranes.
 """
 
 from __future__ import annotations
@@ -37,7 +38,15 @@ class PanicCatchOffender(NamedTuple):
     note: str
 
 
-_AUDIT_MEMBRANE = "audit_only/collect_construction_gaps.py"
+# Paths relative to the scanned package root (src/sugar_lift_py_tests) OR
+# relative to the kit root when the scanner walks scripts/ too.
+_SANCTIONED_CATCH_MEMBRANES = frozenset(
+    {
+        "audit_only/collect_construction_gaps.py",
+        "scripts/_production_lift_child.py",
+        "_production_lift_child.py",
+    }
+)
 
 _SOFT_AFTER_CATCH = frozenset(
     {
@@ -53,8 +62,10 @@ _SOFT_AFTER_CATCH = frozenset(
 )
 
 
-def _is_audit_membrane(rel: str) -> bool:
-    return rel == _AUDIT_MEMBRANE
+def _is_sanctioned_catch_membrane(rel: str) -> bool:
+    return rel in _SANCTIONED_CATCH_MEMBRANES or rel.endswith(
+        "/_production_lift_child.py"
+    )
 
 
 def _handler_names(handler: ast.ExceptHandler) -> set[str]:
@@ -78,11 +89,11 @@ def _handler_names(handler: ast.ExceptHandler) -> set[str]:
     return names
 
 
-def _catches_factory_panic(handler: ast.ExceptHandler) -> bool:
+def _catches_construction_panic(handler: ast.ExceptHandler) -> bool:
     names = _handler_names(handler)
-    return bool(
-        names & {"FactoryPanic", "FactoryGap", "BaseException"}
-    ) or names == {"<bare>"}
+    return bool(names & {"ConstructionPanic", "BaseException"}) or names == {
+        "<bare>"
+    }
 
 
 def _is_terminal_raise(stmt: ast.AST) -> bool:
@@ -200,7 +211,7 @@ def scan_package(package_root: Path) -> list[PanicCatchOffender]:
         ]
     for path in paths:
         rel = path.relative_to(resolved_root).as_posix()
-        if _is_audit_membrane(rel):
+        if _is_sanctioned_catch_membrane(rel):
             continue
         try:
             source = path.read_text(encoding="utf-8")
@@ -229,25 +240,26 @@ def scan_package(package_root: Path) -> list[PanicCatchOffender]:
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
-            if not _catches_factory_panic(node):
+            if not _catches_construction_panic(node):
                 continue
             if _pure_reraise(node):
                 # pure re-raise is process-terminal — not a soft membrane
                 continue
-            # Any non-pure-reraise catch outside audit membrane is debt.
+            # Any non-pure-reraise catch outside sanctioned membranes is debt.
             offenders.append(
                 PanicCatchOffender(
                     path=rel,
                     line=node.lineno,
-                    kind="factory-panic-catch-outside-audit",
+                    kind="construction-panic-catch-outside-membrane",
                     note=(
-                        "except FactoryPanic outside audit membrane must not "
-                        "continue; only per-file corpus audit may hold panic to "
-                        "emit a loud red row"
+                        "except ConstructionPanic outside sanctioned membranes "
+                        "must not continue; only audit enumeration "
+                        "(collect_construction_gaps) or production typed-gap "
+                        "classification (_production_lift_child) may hold it"
                     ),
                 )
             )
-        # isinstance(exc, FactoryPanic) soft return
+        # isinstance(exc, ConstructionPanic) soft return
         for node in ast.walk(tree):
             if not isinstance(node, ast.If):
                 continue
@@ -269,7 +281,7 @@ def scan_package(package_root: Path) -> list[PanicCatchOffender]:
                         else ""
                     )
                 )
-                == "FactoryPanic"
+                == "ConstructionPanic"
                 for call in calls
             ):
                 continue
@@ -281,7 +293,7 @@ def scan_package(package_root: Path) -> list[PanicCatchOffender]:
                         line=node.lineno,
                         kind="factory-panic-isinstance-soft-return",
                         note=(
-                            "isinstance(exc, FactoryPanic) then soft return/None — "
+                            "isinstance(exc, ConstructionPanic) then soft return/None — "
                             "dig/report must not convert panic into opacity"
                         ),
                     )
@@ -318,9 +330,9 @@ def format_report(offenders: list[PanicCatchOffender]) -> str:
         row for row in offenders if row.kind.startswith("auditor-")
     ]
     lines = [
-        f"R_factory_panic_catches_outside_audit = {len(panic_offenders)}",
+        f"R_construction_panic_catches_outside_audit = {len(panic_offenders)}",
         f"auditor_errors = {len(auditor_errors)}",
-        "Lawful: only per-file corpus / gap-enumeration audit holds FactoryPanic "
+        "Lawful: only per-file corpus / gap-enumeration audit holds ConstructionPanic "
         "and emits a loud red row. Production may only pure re-raise.",
         "",
         "Loci:",
@@ -343,12 +355,12 @@ def main() -> int:
         print(
             "FACTORY-PANIC-CATCH LAW RED: "
             f"{sum(not row.kind.startswith('auditor-') for row in offenders)} "
-            "illegal FactoryPanic catches; "
+            "illegal ConstructionPanic catches; "
             f"auditor_errors={sum(row.kind.startswith('auditor-') for row in offenders)}"
         )
         print(format_report(offenders))
         return 1
-    print("FACTORY-PANIC-CATCH LAW GREEN: R_factory_panic_catches_outside_audit = 0")
+    print("FACTORY-PANIC-CATCH LAW GREEN: R_construction_panic_catches_outside_audit = 0")
     return 0
 
 

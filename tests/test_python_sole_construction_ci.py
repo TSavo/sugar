@@ -5,10 +5,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "factory-zero-tolerance.yml"
 
+# Permanent axes with live instruments. factory_zero_tolerance and
+# construction_cache_context_law retired with the factory era (#6028).
 AXIS_COMMANDS = {
-    "R_behavior_side_doors = 0": "factory_zero_tolerance.py",
     "R_ownership = 0": "factory_ownership_law.py",
-    "R_factory_panic_catches_outside_audit = 0": "factory_panic_catch_law.py",
+    "R_construction_panic_catches_outside_membrane = 0": (
+        "construction_panic_catch_law.py"
+    ),
     "R_silent = 0": "silent_zero_tolerance.py",
     "R_native_crashes = 0": "native_crash_zero_tolerance.py",
     "R_bare_exceptions = 0": "bare_exception_zero_tolerance.py",
@@ -17,9 +20,6 @@ AXIS_COMMANDS = {
     "R_factory_walk_unclassified = 0": "factory_walk_unclassified_law.py",
     "R_finite_cap_opaque_completions = 0": ("finite_cap_opaque_completion_law.py"),
     "R_finite_unfold_compact_gaps = 0": ("finite_unfold_compact_projection_law.py"),
-    "R_context_incomplete_construction_caches = 0": (
-        "construction_cache_context_law.py"
-    ),
     "R_source_via_execution = 0": "source_via_execution_law.py",
 }
 
@@ -39,7 +39,7 @@ def test_binding_job_invokes_every_permanent_axis() -> None:
                 "R_factory_walk_unclassified only runs a fixture/discrimination; "
                 "binding CI must census the checked-in production surface"
             )
-        if axis != "R_behavior_side_doors = 0":
+        if axis != "R_ownership = 0":
             assert (
                 "if: always()" in step
             ), f"{axis} would be skipped after an earlier honest-red axis"

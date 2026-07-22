@@ -14,13 +14,14 @@ Outcome taxonomy (the child EMITS one ``lift-terminal`` row; its absence on a
 zero exit is the silent axis, and a signal death / timeout are observed by the
 parent):
   - ``completed``  -- every function constructed with no gap.
-  - ``typed-gap``  -- at least one ``SugarNotWritten``: an INTENTIONAL typed,
-    loud source-tree gap. NOT a failure; the floors do not count it red.
+  - ``typed-gap``  -- at least one sanctioned typed construction gap:
+    tree ``SugarNotWritten`` or kit ``ConstructionPanic``. INTENTIONAL; NOT a
+    failure; the floors do not count it red.
   - (bare exception) -- any OTHER exception propagates out of this child
     unhandled, so the child exits nonzero and the parent classifies it a bare
     Python exception. We never swallow it here.
 
-``SugarNotWritten`` is caught (it is the sanctioned typed gap); nothing else is.
+Only the two typed gap types above are caught. Nothing else is.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ def production_lift_bootstrap_error() -> str | None:
         from sugar_source_tree.tree import SourceFile  # noqa: F401
         from sugar_source_tree.reporter import CollectingReporter  # noqa: F401
         from sugar_source_tree.panic import SugarNotWritten  # noqa: F401
+        from sugar_lift_py_tests.gap.panic import ConstructionPanic  # noqa: F401
     except Exception as error:  # noqa: BLE001 -- reported once, by design
         return f"{type(error).__name__}: {error}"
     return None
@@ -50,13 +52,15 @@ def production_lift_bootstrap_error() -> str | None:
 def run_production_lift_child(path: Path, rel: str) -> int:
     """Lift one file through the production door and emit its terminal row.
 
-    A ``SugarNotWritten`` anywhere in the file's construction marks the whole
-    file ``typed-gap`` (intentional) but does not stop scanning the rest. Any
-    other exception is left to propagate -- that is the bare-exception signal.
+    A sanctioned typed gap (``SugarNotWritten`` or kit ``ConstructionPanic``)
+    anywhere in the file's construction marks the whole file ``typed-gap``
+    (intentional) but does not stop scanning the rest. Any other exception is
+    left to propagate -- that is the bare-exception signal.
     """
     from sugar_source_tree.tree import SourceFile
     from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.panic import SugarNotWritten
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
     reporter = CollectingReporter()
     sf = SourceFile.from_path(str(path), reporter=reporter)
@@ -64,7 +68,7 @@ def run_production_lift_child(path: Path, rel: str) -> int:
     for fn in sf.functions():
         try:
             fn.sugar()  # ONE construction; nested gaps self-report
-        except SugarNotWritten:
+        except (SugarNotWritten, ConstructionPanic):
             typed_gap = True  # sanctioned typed loud gap -- keep scanning
     outcome = OUTCOME_TYPED_GAP if typed_gap else OUTCOME_COMPLETED
     print(

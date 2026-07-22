@@ -3,13 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import NoReturn
 
-from sugar_lift_py_tests.gap.panic import factory_panic_gap
+from sugar_lift_py_tests.gap.panic import construction_panic_gap
 from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 
 from .temporal_binding import GuardedTemporalBinding, TemporalBinding
-from sugar_lift_py_tests.gap.audit_row import FactoryAuditStatus
 
 
 @dataclass(frozen=True)
@@ -39,7 +38,7 @@ class TemporalContext:
         for binding in reversed(self.bindings):
             if binding.name == name:
                 return Complete(binding.value)
-        factory_panic_gap(
+        construction_panic_gap(
             owner="TemporalContext",
             blame="<temporal>",
             observed=name,
@@ -143,10 +142,10 @@ class TemporalContext:
         requested: str,
         fix: str,
     ) -> NoReturn:
-        from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
+        from sugar_lift_py_tests.gap.panic import construction_panic
+        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
-        info = FactoryGapInfo(
+        info = ConstructionGap(
             owner=owner,
             blame=blame,
             observed=observed,
@@ -155,4 +154,4 @@ class TemporalContext:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(info)
+        construction_panic(info)

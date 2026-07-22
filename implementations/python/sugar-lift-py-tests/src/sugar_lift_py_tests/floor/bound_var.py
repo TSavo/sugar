@@ -66,7 +66,7 @@ class BoundVar(FloorValue):
         return outcome
 
     def to_term(self, *, owner: str):
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.gap.info import GapKind, GapLocus
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
@@ -74,8 +74,8 @@ class BoundVar(FloorValue):
         if isinstance(outcome, Incomplete):
             # The source lawfully remains a typed Incomplete at its producer.
             # Collapsing that incomplete effect into a completed term is a missing
-            # Floor recognizer: structured FactoryPanic, never bare RuntimeError.
-            factory_panic_gap(
+            # Floor recognizer: structured ConstructionPanic, never bare RuntimeError.
+            construction_panic_gap(
                 owner=owner,
                 blame=self.name,
                 observed=type(outcome.effect).__name__,

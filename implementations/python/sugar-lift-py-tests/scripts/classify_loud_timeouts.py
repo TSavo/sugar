@@ -8,7 +8,7 @@ masquerading as "didn't finish." This instrument re-measures each candidate
 with escalating bounds (60s → 120s → 300s) and records an explicit verdict:
 
   - completes-at-bound: finished with IR payload at bound B (not wall panic mass)
-  - completes-with-panic: typed FactoryPanic once given time (dispatchable fatal)
+  - completes-with-panic: typed ConstructionPanic once given time (dispatchable fatal)
   - bare-exception: untyped exception once given time
   - hang-at-300s: still non-terminating at 300s (real budget-exceeded frontier)
   - other terminal: crash/signal/transport (must stay loud)
@@ -49,9 +49,9 @@ from corpus_fatal_triage import (  # type: ignore[import-not-found]
     package_root,
     python_files,
 )
-from sugar_lift_py_tests.idd.factory_panic_fronts import (
+from sugar_lift_py_tests.idd.construction_panic_fronts import (
     fingerprint_from_gap,
-    rank_factory_panic_fronts,
+    rank_construction_panic_fronts,
 )
 
 SUPPORTED_PACKAGES = (*PACKAGES, "sqlalchemy")
@@ -67,7 +67,7 @@ RECENSUS_TIMEOUT_BLOB_COUNT = 293
 # when both are zero — hang is classified but remains product work until a
 # budget-exceeded terminal exists.
 CAUSE_CLASS_A_BOUND_TIGHT = "A"  # completes after bound > discovery (≤120s)
-CAUSE_CLASS_B_HIDDEN_PANIC = "B"  # completes-with-panic → typed FactoryPanic
+CAUSE_CLASS_B_HIDDEN_PANIC = "B"  # completes-with-panic → typed ConstructionPanic
 CAUSE_CLASS_C_PERF_COMPLETE = "C"  # completes-at-bound with elapsed/bound >120s
 CAUSE_CLASS_D_HANG = "D"  # hang-at-max-bound at 300s
 CAUSE_CLASS_E_BARE = "E"  # bare-exception after long work
@@ -683,7 +683,7 @@ def summarize_ledger(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 }
             )
 
-    ranking = rank_factory_panic_fronts(panic_rows)
+    ranking = rank_construction_panic_fronts(panic_rows)
     # Ranked B owners: same ranking as factory panic fronts, tagged for dispatch.
     ranked_b_owners = [
         {
@@ -692,7 +692,7 @@ def summarize_ledger(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "file_count": count,
             "cause_class": CAUSE_CLASS_B_HIDDEN_PANIC,
             "cause_class_label": CAUSE_CLASS_LABELS[CAUSE_CLASS_B_HIDDEN_PANIC],
-            "dispatch": "typed FactoryPanic owner — fold into factory-panic lane",
+            "dispatch": "typed ConstructionPanic owner — fold into factory-panic lane",
         }
         for index, (owner, count) in enumerate(
             sorted(
@@ -730,11 +730,11 @@ def summarize_ledger(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "bare_exceptions": bare_exceptions,
         "other_count": len(other),
         "other": other,
-        "R_live_factory_panic_files": ranking["R_live_factory_panic_files"],
+        "R_live_construction_panic_files": ranking["R_live_construction_panic_files"],
         "owner_family_count": ranking["owner_family_count"],
         "owner_families": ranking["owner_families"],
         "owners": ranking["owners"],
-        "factory_panic_fronts": ranking["exact_fronts"],
+        "construction_panic_fronts": ranking["exact_fronts"],
         "timeout_sugar_hotspots": [
             {"sugar": name, "file_count": count}
             for name, count in timeout_hotspot_counts.most_common(20)

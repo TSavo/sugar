@@ -210,7 +210,7 @@ def test_frontier_mode_mints_recovered_artifact_over_construction_gaps(
         if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
             return CommandResult(0, str(root / "sugar") + "\n", "")
         if command[1:4] == ["lift", "--report", "--json"]:
-            return CommandResult(2, "", "FactoryPanic")
+            return CommandResult(2, "", "ConstructionPanic")
         if "--audit-frontier" in command:
             frontier = Path(command[command.index("-o") + 1])
             frontier.write_text(
@@ -227,7 +227,7 @@ def test_frontier_mode_mints_recovered_artifact_over_construction_gaps(
                         },
                         "panics": [
                             {
-                                "kind": "FactoryPanic",
+                                "kind": "ConstructionPanic",
                                 "status": "mandatory-panic",
                                 "reason": "fixture gap",
                                 "locus": "pkg.py:1:0",
@@ -283,7 +283,7 @@ def test_report_mode_still_refuses_construction_gaps_without_frontier(
     def runner(command, _cwd, _env):
         if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
             return CommandResult(0, str(root / "sugar") + "\n", "")
-        return CommandResult(2, "", "FactoryPanic")
+        return CommandResult(2, "", "ConstructionPanic")
 
     with pytest.raises(RuntimeError, match="json report failed exit=2"):
         build_numpy_wall(

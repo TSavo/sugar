@@ -8,10 +8,10 @@ Illegal shape (vendor wall, sklearn fenwick / #5340 mechanism 3):
 Replacement shape:
   Iterative, bottom-up hash-cons keyed by finite structural tuples (child
   identity after child intern). Cycles are a construction bug and raise
-  ``FactoryPanic`` — loud, typed, never soft-complete, never timeout.
+  ``ConstructionPanic`` — loud, typed, never soft-complete, never timeout.
 
 R_native_crashes vendor wall: this retires the fenwick overflow-class SEGV
-seat when the file remeasures as FactoryPanic or completes; the historical
+seat when the file remeasures as ConstructionPanic or completes; the historical
 board row stays on the crash axis until remeasured.
 """
 
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.gap.panic import FactoryPanic
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import (
     _Ctor,
     _Var,
@@ -40,17 +40,17 @@ def _cyclic_ctor(name: str = "loop") -> _Ctor:
     return node
 
 
-def test_cyclic_ctor_intern_is_factory_panic_not_recursion_or_segv() -> None:
+def test_cyclic_ctor_intern_is_construction_panic_not_recursion_or_segv() -> None:
     """R=1 while intern still blows the stack on a cyclic _Ctor graph."""
     cyclic = _cyclic_ctor("call:fenwick.cycle")
     with term_intern_scope():
-        with pytest.raises(FactoryPanic) as raised:
+        with pytest.raises(ConstructionPanic) as raised:
             _intern_term(cyclic)
 
     info = raised.value.info
     assert info.owner == "ir._intern_term", (
         f"R=1 cyclic intern owner wrong: {info.owner!r}; "
-        "replacement=FactoryPanic from ir._intern_term naming the cyclic graph"
+        "replacement=ConstructionPanic from ir._intern_term naming the cyclic graph"
     )
     assert "cyclic" in info.observed, (
         f"R=1 observed must name the cyclic IR term shape, got {info.observed!r}"
@@ -59,11 +59,11 @@ def test_cyclic_ctor_intern_is_factory_panic_not_recursion_or_segv() -> None:
     assert "RuntimeEffect" in info.fix or "timeout" in info.fix.lower()
 
 
-def test_cyclic_ctor_via_public_ctor_parent_is_factory_panic() -> None:
+def test_cyclic_ctor_via_public_ctor_parent_is_construction_panic() -> None:
     """CallSiteValue.add → ctor('+', [cyclic, ...]) must panic, not SEGV."""
     cyclic = _cyclic_ctor("call:left")
     with term_intern_scope():
-        with pytest.raises(FactoryPanic) as raised:
+        with pytest.raises(ConstructionPanic) as raised:
             ctor("+", [cyclic, num(1)])
 
     assert raised.value.info.owner == "ir._intern_term"

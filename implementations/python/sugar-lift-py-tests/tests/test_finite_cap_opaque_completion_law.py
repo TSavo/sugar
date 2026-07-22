@@ -138,7 +138,7 @@ def test_loud_terminal_and_exact_symbolic_stay_green() -> None:
             """
 def reduce(values):
     if len(values) > MATERIALIZE_LIMIT:
-        return factory_panic_gap(owner="finite_unfold", observed=len(values))
+        return construction_panic_gap(owner="finite_unfold", observed=len(values))
     return build_all(values)
 """
         )

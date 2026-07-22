@@ -89,7 +89,7 @@ _TREE_OWNER_FIELDS = frozenset({"demandedBody", "demandedSource", "terminalGapLo
 
 
 @dataclass(frozen=True)
-class RecoveredFactoryPanicDto:
+class RecoveredConstructionPanicDto:
     locus: str
     demanded_source: str
     terminal_gap_locus: str
@@ -98,7 +98,7 @@ class RecoveredFactoryPanicDto:
 
     def to_rpc(self) -> dict[str, Any]:
         return {
-            "kind": "FactoryPanic",
+            "kind": "ConstructionPanic",
             "status": "mandatory-panic",
             "reason": self.reason,
             "locus": self.locus,
@@ -108,11 +108,11 @@ class RecoveredFactoryPanicDto:
         }
 
     @classmethod
-    def from_rpc(cls, data: object) -> RecoveredFactoryPanicDto:
+    def from_rpc(cls, data: object) -> RecoveredConstructionPanicDto:
         row = _require_mapping(data, "recovered panic")
         _reject_unknown(row, set(_LEAF_PANIC_FIELDS), "recovered panic")
-        if row.get("kind") != "FactoryPanic" or row.get("status") != "mandatory-panic":
-            raise ValueError("recovered panic must be a mandatory FactoryPanic")
+        if row.get("kind") != "ConstructionPanic" or row.get("status") != "mandatory-panic":
+            raise ValueError("recovered panic must be a mandatory ConstructionPanic")
         gap = _require_mapping(row.get("gap"), "recovered panic gap")
         return cls(
             locus=_require_str(row.get("locus"), "recovered panic locus"),
@@ -130,7 +130,7 @@ class RecoveredFactoryPanicDto:
 @dataclass(frozen=True)
 class SuppressedAuditLocusDto:
     locus: str
-    reason: str = "ancestor FactoryPanic poisoned this source locus"
+    reason: str = "ancestor ConstructionPanic poisoned this source locus"
 
     def to_rpc(self) -> dict[str, str]:
         return {"locus": self.locus, "reason": self.reason}
@@ -179,7 +179,7 @@ class RecoveredEffectDto:
 class RecoveredAuditDto:
     """Diagnostic-only panic inventory; deliberately carries no ProofIR lanes."""
 
-    panics: list[RecoveredFactoryPanicDto] = field(default_factory=list)
+    panics: list[RecoveredConstructionPanicDto] = field(default_factory=list)
     effects: list[RecoveredEffectDto] = field(default_factory=list)
     suppressed_descendants: list[SuppressedAuditLocusDto] = field(default_factory=list)
 
@@ -204,7 +204,7 @@ class RecoveredAuditDto:
         if row.get("recoveryOverride") is not True:
             raise ValueError("recovered audit leaf lacks recoveryOverride")
         panics = [
-            RecoveredFactoryPanicDto.from_rpc(item)
+            RecoveredConstructionPanicDto.from_rpc(item)
             for item in _require_list(row.get("panics"), "recovered audit leaf panics")
         ]
         effects = [
@@ -296,7 +296,7 @@ class RecoveredPanicOwnerIdentityDto:
 
 
 @dataclass(frozen=True)
-class RecoveredFactoryPanicTreeDto:
+class RecoveredConstructionPanicTreeDto:
     locus: str
     demanded_source: str
     terminal_gap_locus: str
@@ -307,7 +307,7 @@ class RecoveredFactoryPanicTreeDto:
 
     def to_rpc(self) -> dict[str, Any]:
         return {
-            "kind": "FactoryPanic",
+            "kind": "ConstructionPanic",
             "status": "mandatory-panic",
             "reason": self.reason,
             "locus": self.locus,
@@ -319,11 +319,11 @@ class RecoveredFactoryPanicTreeDto:
         }
 
     @classmethod
-    def from_rpc(cls, data: object) -> RecoveredFactoryPanicTreeDto:
+    def from_rpc(cls, data: object) -> RecoveredConstructionPanicTreeDto:
         row = _require_mapping(data, "recovered tree panic")
         _reject_unknown(row, set(_TREE_PANIC_FIELDS), "recovered tree panic")
-        if row.get("kind") != "FactoryPanic" or row.get("status") != "mandatory-panic":
-            raise ValueError("recovered tree panic must be a mandatory FactoryPanic")
+        if row.get("kind") != "ConstructionPanic" or row.get("status") != "mandatory-panic":
+            raise ValueError("recovered tree panic must be a mandatory ConstructionPanic")
         gap = _require_mapping(row.get("gap"), "recovered tree panic gap")
         body = _require_mapping(
             row.get("demandedBody"), "recovered tree panic demandedBody"
@@ -428,7 +428,7 @@ class RecoveredFrontierAuditDto:
 
     status: str
     census: RecoveredFrontierCensusDto
-    panics: list[RecoveredFactoryPanicTreeDto] = field(default_factory=list)
+    panics: list[RecoveredConstructionPanicTreeDto] = field(default_factory=list)
     effects: list[RecoveredEffectTreeDto] = field(default_factory=list)
     suppressed_descendants: list[SuppressedAuditLocusTreeDto] = field(
         default_factory=list
@@ -463,7 +463,7 @@ class RecoveredFrontierAuditDto:
                 f"demanded={census.source_bodies_demanded}"
             )
         panics = [
-            RecoveredFactoryPanicTreeDto.from_rpc(item)
+            RecoveredConstructionPanicTreeDto.from_rpc(item)
             for item in _require_list(row.get("panics"), "recovered audit tree panics")
         ]
         effects = [

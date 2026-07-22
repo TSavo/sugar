@@ -3,7 +3,7 @@
 
 Every production source file is lifted in an isolated child under a fixed wall
 clock bound. A child exceeding that bound is one timeout offender. Completed,
-FactoryPanic, bare-exception, and native-crash terminals remain separate axes.
+ConstructionPanic, bare-exception, and native-crash terminals remain separate axes.
 """
 
 from __future__ import annotations

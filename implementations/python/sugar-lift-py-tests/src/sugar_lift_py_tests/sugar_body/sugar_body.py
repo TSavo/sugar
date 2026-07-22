@@ -12,8 +12,8 @@ from typing import (
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.gap.audit_row import (
-    FactoryAuditRow,
-    FactoryAuditStatus,
+    ConstructionAuditRow,
+    ConstructionAuditStatus,
 )
 
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ class ReducibleSugar(Protocol[ReductionT_co]):
 class SugarBody(Generic[ReductionT_co]):
     sugar: ReducibleSugar[ReductionT_co]
     role: SugarRole
-    audit_row: FactoryAuditRow | None = None
+    audit_row: ConstructionAuditRow | None = None
 
     def __post_init__(self) -> None:
         # Static typing says self.sugar is always a ReducibleSugar; the runtime
@@ -153,7 +153,7 @@ class SugarBody(Generic[ReductionT_co]):
                     ),
                     source_cid=blake3_512_of(b""),
                 )
-            if audit.status is FactoryAuditStatus.SELECTED:
+            if audit.status is ConstructionAuditStatus.SELECTED:
                 rows.append(
                     FactoryWalkCompleteRowDto(
                         file=file,
@@ -193,13 +193,13 @@ class SugarBody(Generic[ReductionT_co]):
             rows.extend(child.factory_walk_rows())
         return tuple(rows)
 
-    def factory_audit_rows(self):
+    def construction_audit_rows(self):
         """Carry every construction decision, including term-role children."""
         rows: list[dict] = []
         if self.audit_row is not None:
             rows.append(self.audit_row.to_json())
         for child in self.sugar.walk_children():
-            rows.extend(child.factory_audit_rows())
+            rows.extend(child.construction_audit_rows())
         return tuple(rows)
 
 
@@ -230,5 +230,5 @@ class GuardedRawSugarBody:
     def factory_walk_rows(self):
         return self.body.factory_walk_rows()
 
-    def factory_audit_rows(self):
-        return self.body.factory_audit_rows()
+    def construction_audit_rows(self):
+        return self.body.construction_audit_rows()

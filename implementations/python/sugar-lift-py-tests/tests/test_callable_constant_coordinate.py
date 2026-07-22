@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.gap.panic import FactoryPanic
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.floor import FunctionCallable, ImportAliasValue
 from sugar_lift_py_tests.ir import ctor, eq, make_var, num, py_eq, str_const
 from sugar_lift_py_tests.proofir.formulas import formula_from_ir
@@ -33,5 +33,5 @@ def test_actually_undeclared_variable_still_refuses_scope() -> None:
     formula = formula_from_ir(
         eq(make_var("ghost"), num(1)), var_sorts={"ghost": IntSort()}
     )
-    with pytest.raises(FactoryPanic, match="illegal free var.*ghost"):
+    with pytest.raises(ConstructionPanic, match="illegal free var.*ghost"):
         ScopedFormula(formula, allowed_vars={})

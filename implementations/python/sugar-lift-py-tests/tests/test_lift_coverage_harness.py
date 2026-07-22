@@ -35,7 +35,7 @@ from sugar_lift_py_tests.idd.lift_coverage_census import (
     census_paths,
     census_source,
 )
-from sugar_lift_py_tests.idd.live_factory_panic_isolation import (
+from sugar_lift_py_tests.idd.live_construction_panic_isolation import (
     assert_bearing_py_files as _assert_bearing_py_files,
     live_per_file_isolation_conservation as _live_per_file_isolation_conservation,
     maybe_write_isolation_receipt_from_env,
@@ -519,7 +519,7 @@ _CONSERVATION_VENDORS = (
 )
 
 # Full installed package trees — residual named after #4721. Live sugar
-# --report on these trees panics (FactoryPanic floor gaps); the independent
+# --report on these trees panics (ConstructionPanic floor gaps); the independent
 # AST census + refuse-loud partition is the measurable conservation gate until
 # production floors make full-tree live report possible.
 _HEAVY_CONSERVATION_VENDORS = (
@@ -528,17 +528,17 @@ _HEAVY_CONSERVATION_VENDORS = (
 )
 
 # Live production isolation residual after #4760. Multi-file sugar lift
-# --report still dies on first FactoryPanic; --audit-frontier cannot pair with
+# --report still dies on first ConstructionPanic; --audit-frontier cannot pair with
 # --report. Per assert-bearing file isolation measures live conservation and
-# names R_live_factory_panic_files. numpy first (full assert-file set);
+# names R_live_construction_panic_files. numpy first (full assert-file set);
 # pandas is the same residual class (heavier; opt-in via env).
 #
 # Re-measure at 9fe134453 (wave-6, after #4808 ranking + intervening floors):
-#   assert_files=142 completed=69 R_live_factory_panic_files=71 R_other=2
+#   assert_files=142 completed=69 R_live_construction_panic_files=71 R_other=2
 #   onDisk=3208 accounted=3208 delta=0
 #   prior #4791 baseline R_panic=74 → Delta R = -3
 #   top owners: TemporalContext 21, RuntimeEffect 10, CallSugar 5, ...
-# Re-run: scripts/live_factory_panic_isolation.py --package numpy --out PATH
+# Re-run: scripts/live_construction_panic_isolation.py --package numpy --out PATH
 # or pytest + SUGAR_4013_ISOLATION_OUT=PATH (writes ranked receipt).
 _HEAVY_LIVE_ISOLATION_VENDORS = ("numpy",)
 
@@ -744,7 +744,7 @@ def test_heavy_vendor_full_tree_conservation_delta_is_zero(package: str) -> None
     Walks every ``*.py`` under the installed package (no 40-file cap). The
     independent AST census is the onDisk side; accounted is refuse-loud
     partition against a factory-engaged empty report. Live full-tree
-    ``sugar lift --report`` still panics on floor gaps (FactoryPanic) — that
+    ``sugar lift --report`` still panics on floor gaps (ConstructionPanic) — that
     live residual stays open; this gate measures the census half of
     conservation on the real heavy surface.
 
@@ -786,15 +786,15 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
 ) -> None:
     """#4013 residual after #4760: live production path via per-file isolation.
 
-    Full-tree multi-file ``sugar lift --report`` still FactoryPanics (cannot
+    Full-tree multi-file ``sugar lift --report`` still ConstructionPanics (cannot
     pair ``--audit-frontier`` with ``--report``). Isolate every assert-bearing
     file on the production file-lift path:
 
     * completed → real payload into conservation accounting
-    * FactoryPanic → refuse-loud for that file's on-disk asserts
+    * ConstructionPanic → refuse-loud for that file's on-disk asserts
 
     Gate: aggregate conservation delta==0 on the live path.
-    Residual axis (named, leave #4013 open): ``R_live_factory_panic_files``
+    Residual axis (named, leave #4013 open): ``R_live_construction_panic_files``
     must go to 0 via production floors before multi-file live report can gate.
     Opt-in pandas: set ``SUGAR_4013_HEAVY_PANDAS=1`` (same class, ~1h).
     """
@@ -816,7 +816,7 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
     assert (
         result["delta"] == 0
     ), f"{package} live isolation conservation delta must be 0; R={result}"
-    assert result["R_live_factory_panic_files"] == result["factory_panic_files"]
+    assert result["R_live_construction_panic_files"] == result["construction_panic_files"]
     assert result["onDisk"] == result["accounted"]
     assert result["onDisk"] > 0, f"{package}: vacuous live isolation (no asserts)"
     assert result["assert_files"] == len(files)
@@ -829,9 +829,9 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
     for row in result["perFile"]:
         assert int(row["delta"]) == 0, row
     # Residual is measured, not hidden. Multi-file live report stays open
-    # while R_live_factory_panic_files > 0 (production floors).
-    assert "factory_panic_files" in result
-    assert result["factory_panic_files"] >= 0
+    # while R_live_construction_panic_files > 0 (production floors).
+    assert "construction_panic_files" in result
+    assert result["construction_panic_files"] >= 0
     # Structured owner ranking feeds fatal recensus (same fingerprint axes).
     assert "owner_families" in result
     assert "exact_fronts" in result
@@ -839,11 +839,11 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
     assert result["exact_front_count"] == len(result["exact_fronts"])
     assert (
         sum(row["count"] for row in result["owner_families"])
-        == result["factory_panic_files"]
+        == result["construction_panic_files"]
     )
     assert (
         sum(row["count"] for row in result["exact_fronts"])
-        == result["factory_panic_files"]
+        == result["construction_panic_files"]
     )
     for row in result["panic_rows"]:
         assert "gap" in row and "fingerprint" in row and "front" in row

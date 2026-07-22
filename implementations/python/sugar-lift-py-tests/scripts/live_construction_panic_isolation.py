@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Re-measure #4013 live isolation residual: R_live_factory_panic_files.
+"""Re-measure #4013 live isolation residual: R_live_construction_panic_files.
 
 Runs the production per-file isolation path over assert-bearing files of an
-installed package (default: numpy), ranks FactoryPanic fronts with the shared
+installed package (default: numpy), ranks ConstructionPanic fronts with the shared
 fingerprint axes, and optionally writes a JSON receipt.
 
 Examples (from sugar-lift-py-tests, with src on PYTHONPATH)::
 
-  python scripts/live_factory_panic_isolation.py --package numpy \\
+  python scripts/live_construction_panic_isolation.py --package numpy \\
     --out /tmp/numpy-live-isolation.json
 
-  SUGAR_4013_LIMIT=5 python scripts/live_factory_panic_isolation.py  # smoke
+  SUGAR_4013_LIMIT=5 python scripts/live_construction_panic_isolation.py  # smoke
 
 This does not convert panics to RuntimeEffect. TemporalContext / RuntimeEffect
 construction belongs to dedicated floor lanes; this script only measures.
@@ -35,7 +35,7 @@ for _path in (_SRC, _SOURCE_SRC):
 from sugar_lift_py_tests.idd.collect_panic_audit import (  # noqa: E402
     _resolve_installed_package_path,
 )
-from sugar_lift_py_tests.idd.live_factory_panic_isolation import (  # noqa: E402
+from sugar_lift_py_tests.idd.live_construction_panic_isolation import (  # noqa: E402
     assert_bearing_py_files,
     live_per_file_isolation_conservation,
     write_isolation_receipt,
@@ -56,7 +56,7 @@ def _git_head(cwd: Path) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Measure R_live_factory_panic_files via per-file isolation"
+        description="Measure R_live_construction_panic_files via per-file isolation"
     )
     parser.add_argument(
         "--package",
@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     meta = {
         "git_head": os.environ.get("SUGAR_GIT_HEAD") or _git_head(_PKG_ROOT),
-        "instrument": "live_factory_panic_isolation",
+        "instrument": "live_construction_panic_isolation",
         "package_path": str(path),
     }
     result = live_per_file_isolation_conservation(

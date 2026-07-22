@@ -52,7 +52,7 @@ def reduction_span(*, sugar: str, role: str, site: str) -> Iterator[None]:
         else:
             # The deepest owner already emitted the loud structured terminal.
             # Parent SugarBody frames only unwind; reserializing the same
-            # FactoryPanic at every depth can itself push a bounded audit over
+            # ConstructionPanic at every depth can itself push a bounded audit over
             # its wall-clock ceiling.
             _finish(frame, event="propagate", level=logging.DEBUG)
         raise

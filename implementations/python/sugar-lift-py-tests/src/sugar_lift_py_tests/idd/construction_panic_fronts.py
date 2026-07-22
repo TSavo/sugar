@@ -1,6 +1,6 @@
-"""Rank live FactoryPanic fronts for isolation and fatal recensus.
+"""Rank live ConstructionPanic fronts for isolation and fatal recensus.
 
-The production gap is a typed ``FactoryGapInfo``. Live isolation (#4013) and
+The production gap is a typed ``ConstructionGap``. Live isolation (#4013) and
 fatal triage (#4684/#4775) must rank the same fingerprint so recensus and
 drain work from one owner map:
 
@@ -28,13 +28,13 @@ FINGERPRINT_FIELDS: tuple[str, ...] = (
 
 
 def fingerprint_from_gap(gap: Mapping[str, Any] | None) -> tuple[str, ...]:
-    """Exact-front identity from a gap JSON / ``FactoryGapInfo.to_json()`` map."""
+    """Exact-front identity from a gap JSON / ``ConstructionGap.to_json()`` map."""
     payload = gap if isinstance(gap, Mapping) else {}
     return tuple(str(payload.get(field) or "") for field in FINGERPRINT_FIELDS)
 
 
 def fingerprint_from_panic_info(info: Any) -> tuple[str, ...]:
-    """Exact-front identity from a live ``FactoryGapInfo`` (or gap-like object)."""
+    """Exact-front identity from a live ``ConstructionGap`` (or gap-like object)."""
     if info is None:
         return fingerprint_from_gap(None)
     to_json = getattr(info, "to_json", None)
@@ -57,7 +57,7 @@ def fingerprint_label(fingerprint: tuple[str, ...]) -> str:
     return " / ".join(parts[: len(FINGERPRINT_FIELDS)])
 
 
-def rank_factory_panic_fronts(
+def rank_construction_panic_fronts(
     rows: Iterable[Mapping[str, Any]],
     *,
     fingerprint_key: str = "fingerprint",
@@ -116,7 +116,7 @@ def rank_factory_panic_fronts(
         )
     ]
     return {
-        "R_live_factory_panic_files": total,
+        "R_live_construction_panic_files": total,
         "owner_family_count": len(owner_families),
         "exact_front_count": len(exact_fronts),
         "owner_families": owner_families,

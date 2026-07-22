@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
-
 
 @dataclass(frozen=True)
 class AuditOnlyGap:

@@ -29,10 +29,10 @@ class PartialFunctionCallable(FunctionCallable):
         term=None,
         native_shape=None,
     ):
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
         if self.target is None:
-            factory_panic_gap(
+            construction_panic_gap(
                 owner=type(self).__name__,
                 blame=str(site),
                 observed="missing partial target",

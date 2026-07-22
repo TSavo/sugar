@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 _SEMANTIC_ROOTS = ("floor", "temporal", "proofir", "audit_only")
-_FACTORY_AUDIT_NAMES = ("FactoryAuditStatus", "FactoryAuditRow")
+_FACTORY_AUDIT_NAMES = ("ConstructionAuditStatus", "ConstructionAuditRow")
 
 
 def test_construction_semantics_do_not_import_or_reconstruct_factory_audit_objects():

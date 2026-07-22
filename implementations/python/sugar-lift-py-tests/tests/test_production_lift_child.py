@@ -49,8 +49,36 @@ def test_intentional_typed_gap_is_typed_gap_not_failure(tmp_path: Path, capsys) 
     assert terminal in _CHILD.NON_FAILURE_OUTCOMES
 
 
+def test_kit_construction_panic_is_typed_gap_not_failure(tmp_path: Path, capsys, monkeypatch) -> None:
+    # Kit ConstructionPanic is a sanctioned typed gap alongside SugarNotWritten.
+    # The child must mark typed-gap and exit 0 — never misclassify as bare exception.
+    from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    import sugar_source_tree.nodes as nodes_mod
+
+    def _boom(self, *a, **k):
+        raise ConstructionPanic(
+            ConstructionGap(
+                owner="planted",
+                blame="t.py:1:0",
+                observed="planted",
+                requested="typed construction",
+                fix="none",
+                gap_kind=GapKind.FLOOR,
+                gap_locus=GapLocus.CONSTRUCTION,
+            )
+        )
+
+    monkeypatch.setattr(nodes_mod.FunctionDef, "sugar", _boom)
+    path = _write(tmp_path, "def a():\n    return 1\n")
+    assert _CHILD.run_production_lift_child(path, "mod.py") == 0
+    terminal = _CHILD.terminal_outcome(capsys.readouterr().out)
+    assert terminal == _CHILD.OUTCOME_TYPED_GAP
+    assert terminal in _CHILD.NON_FAILURE_OUTCOMES
+
+
 def test_bare_exception_propagates_never_swallowed(tmp_path: Path, monkeypatch) -> None:
-    # If construction raises a NON-SugarNotWritten exception, the child must let
+    # If construction raises a non-typed-gap exception, the child must let
     # it propagate (so the parent's subprocess exits nonzero = bare exception).
     # We force a bare exception from the production door and assert it escapes.
     import sugar_source_tree.tree as tree_mod

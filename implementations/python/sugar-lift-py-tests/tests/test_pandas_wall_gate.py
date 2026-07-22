@@ -551,7 +551,7 @@ def test_complete_mode_records_recovered_frontier_without_report_artifact(
             return CommandResult(
                 2,
                 "",
-                "FactoryPanic: observed=Subscript; lift plugin closed stdout",
+                "ConstructionPanic: observed=Subscript; lift plugin closed stdout",
             )
         frontier_path = Path(command[command.index("-o") + 1])
         frontier_path.write_text(

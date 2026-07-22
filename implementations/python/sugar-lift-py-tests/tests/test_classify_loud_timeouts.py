@@ -387,7 +387,7 @@ def test_summarize_ranks_panic_owners_and_keeps_hangs_loud() -> None:
     assert summary["ranked_B_owners"][0]["cause_class"] == "B"
     assert summary["perf_candidate_count"] == 1
     assert summary["hang_files"] == ["d.py"]
-    assert summary["R_live_factory_panic_files"] == 1
+    assert summary["R_live_construction_panic_files"] == 1
     assert summary["owners"]["TemporalContext"] == 1
 
 

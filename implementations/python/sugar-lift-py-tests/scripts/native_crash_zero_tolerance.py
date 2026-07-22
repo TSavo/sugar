@@ -2,7 +2,7 @@
 """R_native_crashes — permanent baseline-free corpus process floor.
 
 Each source file runs in an isolated Python child with faulthandler enabled.
-Only signal termination is a native crash. FactoryPanic, ordinary exceptions,
+Only signal termination is a native crash. ConstructionPanic, ordinary exceptions,
 and timeouts stay loud in their own categories and are never softened into
 success or folded into this axis.
 
@@ -76,7 +76,7 @@ def format_report(offenders: Sequence[NativeCrashOffender]) -> str:
         f"R_native_crashes = {r_native_crashes(offenders)}",
         (
             "Replacement: corpus children terminate with completed testimony, "
-            "typed FactoryPanic, bare-exception row, or loud timeout; never signal."
+            "typed ConstructionPanic, bare-exception row, or loud timeout; never signal."
         ),
         "",
         "Loci:",

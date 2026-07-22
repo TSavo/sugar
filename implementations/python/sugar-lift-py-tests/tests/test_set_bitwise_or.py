@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.gap.panic import FactoryPanic
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.floor import SetValue, TermValue
 from sugar_lift_py_tests.outcome import Complete
 
@@ -17,5 +17,5 @@ def test_set_bitwise_or_constructs_exact_union() -> None:
 
 
 def test_set_bitwise_or_unsupported_concrete_twin_stays_loud() -> None:
-    with pytest.raises(FactoryPanic, match="owner=bitwise_or"):
+    with pytest.raises(ConstructionPanic, match="owner=bitwise_or"):
         SetValue((TermValue(1),)).bitwise_or(TermValue(2), "t.py:1")

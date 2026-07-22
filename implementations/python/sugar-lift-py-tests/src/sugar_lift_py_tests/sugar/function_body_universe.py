@@ -12,7 +12,7 @@ class FunctionBodyUniverse(ABC):
     Subclasses define ONLY the universe formula (`constraint_formulas`): guarded
     implications for control flow, `str.eq-bv-blocks` for a string encoder. Everything
     else is shared and DERIVED from `statements` -- the Block's composed lines, each a
-    SugarBody carrying the FactoryAuditRow the factory minted when it built that line:
+    SugarBody carrying the ConstructionAuditRow the factory minted when it built that line:
       * the factory walk is one row per source statement, in build order, read off each
         line's audit row (the sugar that owns it, its AST kind), and
       * the universe is emitted on the last line (the return); the rest -- inert lets, a
@@ -38,7 +38,7 @@ class FunctionBodyUniverse(ABC):
                 raise TypeError(
                     "FunctionBodyUniverse factory step missing selected audit row: "
                     f"owner={type(self).__name__} index={index} "
-                    "replacement=factory-built SugarBody with FactoryAuditRow"
+                    "replacement=factory-built SugarBody with ConstructionAuditRow"
                 )
             steps.append((row.selected, row.observed, function.body[index], "—"))
         return steps

@@ -43,7 +43,7 @@ class FactoryBuildContext:
     contract_bindings: list[Any] = field(default_factory=list[Any])
     external_bridge_sink: ExternalBridgeSink | None = None
     audit_sink: AuditSink | None = None
-    factory_audit_sink: AuditSink | None = None
+    construction_audit_sink: AuditSink | None = None
     proof_sink: ProofSink | None = None
     report_sink: Any = None
     operation_log: list[tuple[str, str, str]] = field(
@@ -63,7 +63,7 @@ class FactoryBuildContext:
     # The set of callee names whose body is CURRENTLY being built, up the build stack.
     # A callee already in this set hits the install-source cycle guard: eagerly
     # building a recursive universe never terminates, so the missing finite
-    # recursive coordinate stays a typed loud FactoryPanic rather than opacity.
+    # recursive coordinate stays a typed loud ConstructionPanic rather than opacity.
     building: frozenset[str] = field(default_factory=frozenset[str])
     # Opt-in: when True, a resolved callee whose body cannot open during dig
     # emits symbolic call:f (ExternalBridge) so outer towers can finish.
@@ -72,8 +72,8 @@ class FactoryBuildContext:
     nested_external_bridge: bool = False
 
     def __post_init__(self) -> None:
-        if self.factory_audit_sink is None and self.audit_sink is not None:
-            object.__setattr__(self, "factory_audit_sink", self.audit_sink)
+        if self.construction_audit_sink is None and self.audit_sink is not None:
+            object.__setattr__(self, "construction_audit_sink", self.audit_sink)
 
     def with_temporal(self, temporal: TemporalContext) -> "FactoryBuildContext":
         return FactoryBuildContext(
@@ -91,7 +91,7 @@ class FactoryBuildContext:
             contract_bindings=self.contract_bindings,
             external_bridge_sink=self.external_bridge_sink,
             audit_sink=self.audit_sink,
-            factory_audit_sink=self.factory_audit_sink,
+            construction_audit_sink=self.construction_audit_sink,
             proof_sink=self.proof_sink,
             report_sink=self.report_sink,
             operation_log=self.operation_log,

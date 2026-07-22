@@ -117,7 +117,7 @@ def genuine_runtime_operand(operation: str, operand) -> RuntimeOperand:
             "RuntimeEffect requires a genuine runtime-dependent operand; "
             f"{term!r} is ground/decidable at lift time. Construction-gap prose "
             "and ground values cannot mint RuntimeEffect authority. "
-            "replacement=construct the exact result or FactoryPanic loudly."
+            "replacement=construct the exact result or ConstructionPanic loudly."
         )
     return RuntimeOperand(term, _seal=_RUNTIME_OPERAND_SEAL)
 
@@ -241,7 +241,7 @@ def runtime_effect_witness(
             "RuntimeEffectWitness requires a genuine runtime-dependent operand "
             "capability. Call genuine_runtime_operand(operation, operand) only "
             "for an opaque/runtime-derived value; ground values and gap prose "
-            "must construct or FactoryPanic."
+            "must construct or ConstructionPanic."
         )
     fragment = resolve_runtime_effect_site(site)
     return RuntimeEffectWitness(
@@ -260,10 +260,10 @@ def _runtime_operand_or_panic(operation: str, operand, site) -> RuntimeOperand:
     try:
         return genuine_runtime_operand(operation, operand)
     except TypeError as exc:
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 
-        factory_panic_gap(
+        construction_panic_gap(
             owner="RuntimeEffect",
             blame=resolve_runtime_effect_site(site),
             observed=f"{operation} operand={operand!r}",
@@ -276,7 +276,7 @@ def _runtime_operand_or_panic(operation: str, operand, site) -> RuntimeOperand:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        raise AssertionError("factory_panic_gap returned")
+        raise AssertionError("construction_panic_gap returned")
 
 
 def runtime_effect_evidence_from_terms(

@@ -121,7 +121,7 @@ class ImportAliasValue(FloorValue):
         - Dug ``resolved_value`` answers with its own truth.
         - Module objects are always truthy in Python (``bool(importlib) is True``).
         - Attribute from-imports without a constructed value cannot invent a
-          soft runtime condition over a ground coordinate: FactoryPanic.
+          soft runtime condition over a ground coordinate: ConstructionPanic.
         """
         from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
@@ -139,11 +139,11 @@ class ImportAliasValue(FloorValue):
         if _import_alias_binds_module(self):
             return Complete(TrueBoolLiteralSugar(site=site))
 
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 
         target = self.import_target or self.name
-        factory_panic_gap(
+        construction_panic_gap(
             owner="ImportAliasValue.truth",
             blame=site,
             observed=(
@@ -158,23 +158,23 @@ class ImportAliasValue(FloorValue):
                 "dig install-source to the value and construct its truth. Ground "
                 "python:import_alias cannot mint RuntimeEffect via py.truthy — "
                 "replacement=resolve_install_source_value then truth(), or keep "
-                "this FactoryPanic (never soft RuntimeEffect for ground cases)."
+                "this ConstructionPanic (never soft RuntimeEffect for ground cases)."
             ),
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        raise AssertionError("factory_panic_gap returned")
+        raise AssertionError("construction_panic_gap returned")
 
     def subscript(self, index, site):
         return self.py_subscript_coordinate(index, site)
 
     def getattr_static(self, name: str, site):
         """Keep an unresolvable ground alias lookup loud."""
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 
         target = self.import_target or self.name
-        factory_panic_gap(
+        construction_panic_gap(
             owner="ImportAliasValue",
             blame=site,
             observed=f"{target}.{name}",
@@ -187,7 +187,7 @@ class ImportAliasValue(FloorValue):
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        raise AssertionError("factory_panic_gap returned")
+        raise AssertionError("construction_panic_gap returned")
 
     def guarded(self, formula):
         del formula
@@ -652,10 +652,10 @@ def _runtime_alias_effect_at_site(
     installed = installed_module_source(module_name)
     origin = installed[1] if installed is not None else None
     if origin and origin.endswith((".py", ".pyi")):
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 
-        factory_panic_gap(
+        construction_panic_gap(
             owner="ImportAliasValue",
             blame=site,
             observed=target,
