@@ -1087,6 +1087,7 @@ pub fn fold_lift_report_response(
     let mut source_mementos = Vec::new();
     let mut facts = Vec::new();
     let mut source_audits = Vec::new();
+    let mut un_asserted_loci = Vec::new();
     let mut source_loci = 0u64;
     let mut source_warranted = 0u64;
     let mut source_unresolved = 0u64;
@@ -1157,6 +1158,20 @@ pub fn fold_lift_report_response(
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
                 }
+                // Each unresolved locus (absent -> the minority) becomes a
+                // Yellow un_asserted body the visual renderer paints.
+                if let Some(loci) = source_audit.get("loci").and_then(Value::as_array) {
+                    for locus in loci {
+                        if locus.get("status").and_then(Value::as_str) == Some("unresolved") {
+                            let place = locus.get("locus");
+                            un_asserted_loci.push(json!({
+                                "file": place.and_then(|p| p.get("file")).cloned().unwrap_or(Value::Null),
+                                "line": place.and_then(|p| p.get("line")).cloned().unwrap_or(Value::Null),
+                                "name": locus.get("name").cloned().unwrap_or(Value::Null),
+                            }));
+                        }
+                    }
+                }
                 source_audits.push(source_audit);
             }
             merge_recovered_audit_leaf(
@@ -1189,6 +1204,25 @@ pub fn fold_lift_report_response(
         "suppressedDescendants": suppressed,
         "ir": facts,
         "factoryAuditSummary": { "factoryWalk": [] },
+        // The dual-axis coverage the visual Minority Report paints: present
+        // (warranted, Blue) vs the un_asserted minority (unresolved, Yellow).
+        // Derived entirely from the reporter's roll call.
+        "liftCoverage": {
+            "totals": {
+                "stated": source_loci,
+                "accounted": source_warranted,
+                "silently_unaccounted": 0,
+                "minority_present": source_warranted,
+                "minority_dug": 0,
+                "minority_un_asserted": source_unresolved,
+            },
+            "minority": {
+                "present": source_warranted,
+                "dug": 0,
+                "un_asserted": source_unresolved,
+                "un_asserted_loci": un_asserted_loci,
+            },
+        },
         "census": {
             "sourceFilesEnumerated": source_files_enumerated,
             "sourceBodiesDemanded": source_bodies_demanded,
