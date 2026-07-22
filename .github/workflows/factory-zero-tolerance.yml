@@ -133,3 +133,14 @@ jobs:
         run: >-
           python
           implementations/python/sugar-lift-py-tests/scripts/source_via_execution_law.py
+      - name: R_no_sugar_in_desugar discrimination
+        if: always()
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/no_sugar_in_desugar_law.py
+          --self-test
+      - name: R_no_sugar_in_desugar = 0
+        if: always()
+        run: >-
+          python
+          implementations/python/sugar-lift-py-tests/scripts/no_sugar_in_desugar_law.py
