@@ -8,6 +8,7 @@ import tempfile
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.tree_enumerate import audit_file_gaps
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -21,6 +22,14 @@ def _fn(src):
 
 def _invs(src):
     return _fn(src).sugar().desugar().value.invs()
+
+
+def _for_gaps(src):
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
+        f.write(src)
+        path = f.name
+    _sf, gaps = audit_file_gaps(path)
+    return [(node, panic) for node, panic in gaps if node.kind == "For"]
 
 
 def test_concrete_for_unrolls_the_body_per_element():
@@ -60,6 +69,34 @@ def test_symbolic_carried_accumulator_is_a_fold_coordinate():
     assert fold.args[1].name == "xs"  # iterable
 
 
+def test_symbolic_call_accumulator_keeps_update_as_dig_coordinate():
+    post = _fn(
+        "def A(xs):\n    total = 0\n    for x in xs:\n"
+        "        total = step(total, x)\n    return total\n"
+        "def step(acc, x):\n    return acc + x\n"
+    ).sugar().desugar().value.post()
+    fold = post.args[1]
+    assert fold.name == "call:py.fold"
+    assert fold.args[0].value == 0
+    assert fold.args[1].name == "xs"
+    assert fold.args[2].name == "call:step"
+
+
+def test_unrecognized_symbolic_assignment_loop_stays_loud():
+    with pytest.raises(SugarNotWritten) as exc:
+        _fn(
+            "def A(xs):\n    total = 0\n    for x in xs:\n"
+            "        total = x\n    return total\n"
+        ).sugar()
+    assert "For.sugar" in str(exc.value)
+
+
+def test_symbolic_non_assert_fact_body_stays_loud():
+    with pytest.raises(SugarNotWritten) as exc:
+        _fn("def A(xs):\n    for x in xs:\n        consume(x)\n    return xs\n").sugar()
+    assert "For.sugar" in str(exc.value)
+
+
 def test_accumulator_referencing_assert_stays_loud():
     # for x in xs: assert total > 0; total = total + x  -- the assert references
     # the RUNNING accumulator (point 3, a real loop invariant), still loud.
@@ -89,6 +126,33 @@ def test_tuple_target_destructures_the_concrete_element():
     assert [(i.args[0].value, i.args[1].value) for i in invs] == [(1, 2), (3, 4)]
 
 
+def test_literal_set_assert_loop_substitutes_each_distinct_element():
+    invs = _invs("def A(z):\n    for x in {1, 2, 2}:\n        assert x == z\n    return z\n")
+    assert sorted(i.args[0].value for i in invs) == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "src",
+    (
+        "def A(range):\n    for x in range(2):\n        assert x == x\n    return x\n",
+        "range = source\ndef A():\n    for x in range(2):\n        assert x == x\n    return x\n",
+    ),
+)
+def test_unauthenticated_range_spelling_stays_loud(src):
+    with pytest.raises(SugarNotWritten) as exc:
+        _fn(src).sugar()
+    assert "For.sugar" in str(exc.value)
+
+
+def test_symbolic_tuple_target_fold_stays_loud():
+    with pytest.raises(SugarNotWritten) as exc:
+        _fn(
+            "def A(xs):\n    total = 0\n    for a, b in xs:\n"
+            "        total = total + a\n    return total\n"
+        ).sugar()
+    assert "For.sugar" in str(exc.value)
+
+
 def test_starred_target_stays_loud():
     # for a, *b -- a starred target does not destructure here; still loud.
     with pytest.raises(SugarNotWritten):
@@ -113,7 +177,7 @@ if __name__ == "__main__":
     test_starred_target_stays_loud()
     test_arity_mismatch_stays_loud()
     test_jump_bearing_body_never_unrolls()
-    test_for_else_splices_after_the_unroll()
+    test_for_else_stays_loud_in_the_for_lane()
     print("ok: concrete for unrolls; symbolic/carried/tuple-target loud")
 
 
@@ -129,11 +193,60 @@ def test_jump_bearing_body_never_unrolls():
     assert "For.sugar" in str(e.value)
 
 
-def test_for_else_splices_after_the_unroll():
-    # With no break possible (the jump-guard blocks jump-bearing bodies from
-    # unrolling), the else ALWAYS runs: just more block, after the iterations.
-    post = _fn(
-        "def A():\n    t = 0\n    for x in [1, 2]:\n        t = t + x\n"
-        "    else:\n        t = t + 100\n    return t\n"
-    ).sugar().desugar().value.post()
-    assert post.args[1].value == 103
+def test_for_else_stays_loud_in_the_for_lane():
+    with pytest.raises(SugarNotWritten) as exc:
+        _fn(
+            "def A():\n    t = 0\n    for x in [1, 2]:\n        t = t + x\n"
+            "    else:\n        t = t + 100\n    return t\n"
+        ).sugar()
+    assert "For.sugar" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "src",
+    (
+        "def A(z):\n    for x in [1, 2]:\n        assert x == z\n    return z\n",
+        "def A(z):\n    for x in [1, 2]:\n        assert x != z\n    return z\n",
+        "def A(xs):\n    for x in xs:\n        assert x == x\n    return xs\n",
+        "def A(xs):\n    total = 0\n    for x in xs:\n"
+        "        total = step(total, x)\n    return total\n"
+        "def step(acc, x):\n    return acc + x\n",
+    ),
+    ids=("concrete-truthful", "concrete-lying", "assert-universal", "symbolic-fold"),
+)
+def test_admitted_for_shapes_leave_no_production_for_gap(src):
+    assert _for_gaps(src) == []
+
+
+@pytest.mark.parametrize(
+    "src",
+    (
+        "def A():\n    for x in [1, 2]:\n        break\n    return 0\n",
+        "def A():\n    for x in [1, 2]:\n        assert x == x\n"
+        "    else:\n        assert True\n    return 0\n",
+        "def A(xs):\n    total = 0\n    for x in xs:\n"
+        "        assert x == x\n        total = total + x\n    return total\n",
+        "def A(xs):\n    total = 0\n    for a, b in xs:\n"
+        "        total = total + a\n    return total\n",
+        "def A(xs):\n    for x in xs:\n        consume(x)\n    return xs\n",
+        "def A(xss):\n    for xs in xss:\n        for x in xs:\n"
+        "            assert x == x\n    return xss\n",
+        "def A():\n    for x in range(129):\n        assert x == x\n    return 0\n",
+        "def A():\n    total = 0\n    for x in {1, 2}:\n"
+        "        total = total + x\n    return total\n",
+    ),
+    ids=(
+        "break",
+        "else",
+        "mixed",
+        "tuple-symbolic",
+        "non-assert",
+        "nested-symbolic",
+        "over-fuel",
+        "order-sensitive-set",
+    ),
+)
+def test_parked_for_shapes_report_exact_production_for_gap(src):
+    gaps = _for_gaps(src)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is SugarNotWritten

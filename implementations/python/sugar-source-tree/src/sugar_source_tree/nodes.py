@@ -1309,24 +1309,31 @@ class For(Statement):
         sequence, and there is no loop-sugar left to write.
 
         A SYMBOLIC iterable is the real fold (carried variables become fold terms,
-        the body a universal `forall x in iter`); it is not lifted yet, so it
-        keeps the `for` node (masking the target) and inherits the loud
-        SugarNotWritten. `else` and a tuple target likewise stay loud."""
+        the body a universal `forall x in iter`). Unsupported control flow,
+        tuple-target symbolic folds, and `else` keep the For node loud."""
         from .shadow import rewrite
 
         new_iter, iter_changed = self._substitute_field(self.iter, scope)
         subst_iter = new_iter if iter_changed else self.iter
 
-        # `else` is unrollable too: the jump-guard means no `break` exists, and
-        # with no break the else ALWAYS runs -- it is just more block, spliced
-        # after the unrolled iterations.
+        # Loop-else is a parked control-flow projection in this lane, even when
+        # the iterable is concrete. It must keep the For node loud.
+        shadowed_range = For._calls_shadowed_range(self, subst_iter, scope)
         concrete = (
             self.target.kind in ("Name", "Tuple", "List")
+            and not self.orelse
             and not self._body_has_loop_control()
+            and not shadowed_range
         )
         elements = self._concrete_elements(subst_iter) if concrete else None
+        if subst_iter.kind == "Set" and not all(
+            stmt.kind == "Assert" for stmt in self.body
+        ):
+            # A set's iteration order is runtime-selected. Repeated assertions
+            # are permutation-invariant; carried/effectful bodies are not.
+            elements = None
         if elements is not None and len(elements) > self._UNROLL_FUEL:
-            elements = None  # past the unroll budget: the fold/universal stands
+            elements = None  # past the budget: the surviving concrete For is loud
         if elements is not None:
             bindings = [self._target_bindings(e) for e in elements]
             if all(b is not None for b in bindings):
@@ -1347,9 +1354,6 @@ class For(Statement):
                     carried = {
                         k: v for k, v in iter_scope.items() if k not in target_names
                     }
-                if self.orelse:
-                    else_body, _c = self._substitute_body(self.orelse, carried)
-                    unrolled.extend(else_body)
                 return _Splice(tuple(unrolled))
 
         # Symbolic (or unsupported) loop: keep the node, mask the target AND every
@@ -1367,7 +1371,14 @@ class For(Statement):
             new, d = self._substitute_body(getattr(self, f), bs)
             if d:
                 changed[f] = new
-        return self if not changed else rewrite(self, **changed)
+        lexical = (
+            frozenset(("range",))
+            if "range" in scope.get(_LEXICALLY_BOUND_NAMES, ())
+            else frozenset()
+        )
+        if not changed and lexical == self.lexically_bound_names:
+            return self
+        return rewrite(self, lexically_bound_names=lexical, **changed)
 
     @staticmethod
     def _stmts_bound_names(statements) -> set:
@@ -1417,14 +1428,36 @@ class For(Statement):
         same shape as a recursion's `call:f(...)`, not an opaque dead-end. So
         `return total` after the loop becomes `return py.fold.add(0, xs)`. A
         concrete iterable never reaches here (it unrolled via _Splice); only the
-        symbolic single-accumulator `var = var OP x` shape is a fold today."""
+        symbolic single-accumulator `var = var OP x` or `var = f(var, x)`
+        shape is a fold today."""
         if self._concrete_elements(self.iter) is not None:
             return None  # concrete unrolled in substitute
+        spec = self._symbolic_fold_spec()
+        if spec is None:
+            return None
+        name, value = spec
+        init = scope.get(name.id)
+        if init is None:
+            return None  # no pre-loop value to seed the fold
+        if value.kind == "BinOp":
+            fold = self._make_call(
+                self._make_name(f"py.fold.{value.op.kind}"), (init, self.iter)
+            )
+        else:
+            # Preserve the actual update call as a nested callsite. `py.fold`
+            # is the recurrence coordinate; `value` is still the dig cue for f.
+            fold = self._make_call(
+                self._make_name("py.fold"), (init, self.iter, value)
+            )
+        return {name.id: fold}
+
+    def _symbolic_fold_spec(self):
+        """The single pure recurrence update, or None for a parked loop shape."""
         if self.orelse or self.target.kind != "Name":
             return None
         carried, facts = self._carried_and_facts()
         if facts or len(carried) != 1:
-            return None  # accumulator+assert, or multi/zero carried -- not a fold
+            return None
         assign = carried[0]
         if assign.kind != "Assign" or len(assign.targets) != 1:
             return None
@@ -1432,19 +1465,30 @@ class For(Statement):
         if name.kind != "Name":
             return None
         value = assign.value
-        # value must be `<name> OP <expr involving the loop target>`.
+        if value.kind == "BinOp":
+            if (
+                value.left.kind != "Name"
+                or value.left.id != name.id
+                or not any(
+                    n.kind == "Name" and n.id == self.target.id
+                    for n in value.right.walk()
+                )
+            ):
+                return None
+            return name, value
+        if value.kind != "Call" or value.keywords or len(value.args) != 2:
+            return None
+        if value.func.kind != "Name":
+            return None
+        first, second = value.args
         if (
-            value.kind != "BinOp"
-            or value.left.kind != "Name"
-            or value.left.id != name.id
+            first.kind != "Name"
+            or first.id != name.id
+            or second.kind != "Name"
+            or second.id != self.target.id
         ):
             return None
-        init = scope.get(name.id)
-        if init is None:
-            return None  # no pre-loop value to seed the fold
-        op = value.op.kind
-        fold = self._make_call(self._make_name(f"py.fold.{op}"), (init, self.iter))
-        return {name.id: fold}
+        return name, value
 
     def _make_name(self, identifier: str) -> "Node":
         from .backend import Leaf, materialize
@@ -1482,15 +1526,28 @@ class For(Statement):
 
         if self.orelse or self.target.kind != "Name":
             return super()._construct_sugar()
+        if self._concrete_elements(self.iter) is not None:
+            # A concrete iterable reaching construction failed bounded
+            # dissolution (fuel, order-sensitive set body, control flow, or
+            # target shape). It is not a symbolic iterable by convenience.
+            return super()._construct_sugar()
+        if For._calls_shadowed_range(
+            self,
+            self.iter,
+            {_LEXICALLY_BOUND_NAMES: self.lexically_bound_names},
+        ):
+            return super()._construct_sugar()
         carried, facts = self._carried_and_facts()
-        if carried and facts:
-            return super()._construct_sugar()  # accumulator-referencing assert -- point 3
         if carried:
+            if facts or self._symbolic_fold_spec() is None:
+                return super()._construct_sugar()
             # Pure fold: the loop states nothing; its meaning is the fold binding
             # (substitution_binding), consumed where the carried name is read.
             from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
             return InertSugar(site=self.fragment)
+        if not self.body or any(stmt.kind != "Assert" for stmt in self.body):
+            return super()._construct_sugar()
         return ForUniversalSugar(
             target=self.target.id,
             iterable=self.iter.sugar(),
@@ -1512,10 +1569,8 @@ class For(Statement):
         )
 
     # The unroll budget. A concrete loop within it dissolves to its unroll; past
-    # it, the SYMBOLIC form (universal / fold coordinate) stands -- not merely
-    # cheaper: 1,100 iterations of a carried update is a fold, and unrolling it
-    # grows a term chain quadratically. Small on purpose; proofs want small
-    # unrolls.
+    # it, the concrete loop remains loud rather than being relabeled symbolic.
+    # Small on purpose; proofs want small unrolls.
     _UNROLL_FUEL = 128
 
     def _target_bindings_for(self, target: "Node", element: "Node") -> "Optional[dict]":
@@ -1542,12 +1597,24 @@ class For(Statement):
 
     def _concrete_elements(self, iterable: "Expression") -> "Optional[list]":
         """The element nodes to unroll over, or ``None`` if `iterable` is not
-        concrete. A `List`/`Tuple_` literal is concrete by construction; a
+        concrete. A `List`/`Tuple_` literal is concrete by construction. A Set
+        is concrete only over the small ground scalar/collision domain. A
         `range(...)` call is concrete only when every argument (after
         substitution) is a literal `int` -- a symbolic bound leaves the fold
         real, so it is not recognized here."""
         if iterable.kind in ("List", "Tuple"):
             return list(iterable.elts)
+        if iterable.kind == "Set":
+            elements = []
+            seen = set()
+            for element in iterable.elts:
+                key = For._ground_hash_key(self, element)
+                if key is None:
+                    return None
+                if key not in seen:
+                    seen.add(key)
+                    elements.append(element)
+            return elements
         if (
             iterable.kind == "Call"
             and iterable.func.kind == "Name"
@@ -1561,6 +1628,34 @@ class For(Statement):
                     return None
                 ints.append(v)
             return [For._int_constant(self, i) for i in range(*ints)]
+        return None
+
+    def _calls_shadowed_range(self, iterable, scope) -> bool:
+        return (
+            iterable.kind == "Call"
+            and iterable.func.kind == "Name"
+            and iterable.func.id == "range"
+            and (
+                "range" in scope
+                or "range" in scope.get(_LEXICALLY_BOUND_NAMES, ())
+                or "range" in self.unit.module_bound_names
+            )
+        )
+
+    def _ground_hash_key(self, expression):
+        """A Python-equality key for the small ground scalar domain, or None."""
+        integer = For._concrete_int(self, expression)
+        if integer is not None:
+            return ("number", integer)
+        if expression.kind != "Constant":
+            return None
+        value = expression.value
+        if type(value) is bool:
+            return ("number", int(value))
+        if type(value) is str:
+            return ("str", value)
+        if value is None:
+            return ("none", None)
         return None
 
     def _concrete_int(self, arg: "Expression") -> "Optional[int]":
@@ -2724,8 +2819,10 @@ class ListComp(Expression):
             return None
         new_iter, ic = self._substitute_field(gen.iter, scope)
         it = new_iter if ic else gen.iter
-        if ListComp._calls_shadowed_range(self, it, scope):
+        if For._calls_shadowed_range(self, it, scope):
             return None
+        if it.kind == "Set":
+            return None  # set-iterable comprehension admission is a later lane
         elements = For._concrete_elements(self, it)
         if elements is None:
             return None
@@ -2759,40 +2856,6 @@ class ListComp(Expression):
             for root in roots
             for node in root.walk()
         )
-
-    def _calls_shadowed_range(self, iterable, scope) -> bool:
-        return (
-            iterable.kind == "Call"
-            and iterable.func.kind == "Name"
-            and iterable.func.id == "range"
-            and "range" in scope
-        ) or (
-            iterable.kind == "Call"
-            and iterable.func.kind == "Name"
-            and iterable.func.id == "range"
-            and "range" in scope.get(_LEXICALLY_BOUND_NAMES, ())
-        ) or (
-            iterable.kind == "Call"
-            and iterable.func.kind == "Name"
-            and iterable.func.id == "range"
-            and "range" in self.unit.module_bound_names
-        )
-
-    def _ground_hash_key(self, expression):
-        """A Python-equality key for the small ground scalar domain, or None."""
-        integer = For._concrete_int(self, expression)
-        if integer is not None:
-            return ("number", integer)
-        if expression.kind != "Constant":
-            return None
-        value = expression.value
-        if type(value) is bool:
-            return ("number", int(value))
-        if type(value) is str:
-            return ("str", value)
-        if value is None:
-            return ("none", None)
-        return None
 
     def _make_list(self, elements: tuple) -> "Node":
         """Synthesize a List display of these element nodes, borrowing this
@@ -2840,8 +2903,10 @@ class SetComp(Expression):
             return None
         new_iter, changed = self._substitute_field(gen.iter, scope)
         iterable = new_iter if changed else gen.iter
-        if ListComp._calls_shadowed_range(self, iterable, scope):
+        if For._calls_shadowed_range(self, iterable, scope):
             return None
+        if iterable.kind == "Set":
+            return None  # set-iterable comprehension admission is a later lane
         elements = For._concrete_elements(self, iterable)
         if elements is None or len(elements) > For._UNROLL_FUEL:
             return None
@@ -2855,7 +2920,7 @@ class SetComp(Expression):
                 self.elt, {**scope, **bindings}
             )
             result = new_elt if changed else self.elt
-            key = ListComp._ground_hash_key(self, result)
+            key = For._ground_hash_key(self, result)
             if key is None:
                 return None
             if key not in seen:
@@ -2909,8 +2974,10 @@ class DictComp(Expression):
             return None
         new_iter, changed = self._substitute_field(gen.iter, scope)
         iterable = new_iter if changed else gen.iter
-        if ListComp._calls_shadowed_range(self, iterable, scope):
+        if For._calls_shadowed_range(self, iterable, scope):
             return None
+        if iterable.kind == "Set":
+            return None  # set-iterable comprehension admission is a later lane
         elements = For._concrete_elements(self, iterable)
         if elements is None or len(elements) > For._UNROLL_FUEL:
             return None
@@ -2925,7 +2992,7 @@ class DictComp(Expression):
             value, value_changed = self._substitute_field(self.value, inner)
             result_key = key if key_changed else self.key
             result_value = value if value_changed else self.value
-            hash_key = ListComp._ground_hash_key(self, result_key)
+            hash_key = For._ground_hash_key(self, result_key)
             if hash_key is None:
                 return None
             pair = (result_key, result_value)

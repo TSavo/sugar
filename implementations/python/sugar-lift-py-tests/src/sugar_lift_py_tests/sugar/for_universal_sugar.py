@@ -10,8 +10,8 @@ it is an uninterpreted sort the compiler declares; membership and P constrain it
 This is the local fact A states -- post over the formal xs, exactly like
 `out == z` is post over z. A concrete call fills xs and the dig unrolls the loop
 (the AST-local machinery); a symbolic xs leaves the universal, honest FOL. A body
-with a carried accumulator (`total = total + x`) is the non-degenerate fold and
-is not written here yet.
+with a carried accumulator is the non-degenerate fold and is owned by For's
+substitution binding, not this universal sugar.
 """
 
 from __future__ import annotations
