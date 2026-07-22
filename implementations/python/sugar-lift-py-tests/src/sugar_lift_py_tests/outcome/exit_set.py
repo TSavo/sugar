@@ -1,0 +1,181 @@
+"""Guarded block exits: the effect-dimension phi for statement sequencing."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable, Generic, TypeVar
+
+from sugar_lift_py_tests.effect import Effect, require_effect
+from sugar_lift_py_tests.ir import Formula, and_, not_, or_
+
+from .complete import Complete
+from .incomplete import Incomplete
+
+
+T = TypeVar("T")
+U = TypeVar("U")
+
+
+def true_guard() -> Formula:
+    """The existing FOL encoding of truth: an empty conjunction."""
+    return and_([])
+
+
+def false_guard() -> Formula:
+    return not_(true_guard())
+
+
+def _is_true(guard: Formula) -> bool:
+    return guard == true_guard()
+
+
+def _is_false(guard: Formula) -> bool:
+    return guard == false_guard()
+
+
+def _is_negation(left: Formula, right: Formula) -> bool:
+    return (
+        getattr(left, "kind", None) == "not"
+        and getattr(left, "operands", ()) == (right,)
+    ) or (
+        getattr(right, "kind", None) == "not"
+        and getattr(right, "operands", ()) == (left,)
+    )
+
+
+def _and_guards(left: Formula, right: Formula) -> Formula:
+    if _is_false(left) or _is_false(right) or _is_negation(left, right):
+        return false_guard()
+    if _is_true(left):
+        return right
+    if _is_true(right) or left == right:
+        return left
+    return and_([left, right])
+
+
+def _or_guards(left: Formula, right: Formula) -> Formula:
+    if _is_true(left) or _is_true(right) or _is_negation(left, right):
+        return true_guard()
+    if _is_false(left):
+        return right
+    if _is_false(right) or left == right:
+        return left
+    return or_([left, right])
+
+
+@dataclass(frozen=True)
+class Completed(Generic[T]):
+    guard: Formula
+    value: T
+
+
+@dataclass(frozen=True)
+class Halted:
+    guard: Formula
+    effect: Effect
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "effect", require_effect(self.effect))
+
+
+Exit = Completed[T] | Halted
+
+
+@dataclass(frozen=True)
+class ExitSet(Generic[T]):
+    """A partition of reachable execution into completed and halted exits."""
+
+    exits: tuple[Exit[T], ...]
+
+    @classmethod
+    def completed(cls, value: T, guard: Formula | None = None) -> "ExitSet[T]":
+        return cls((Completed(guard or true_guard(), value),)).normalize()
+
+    @classmethod
+    def halted(cls, effect: Effect, guard: Formula | None = None) -> "ExitSet[T]":
+        return cls((Halted(guard or true_guard(), effect),)).normalize()
+
+    @classmethod
+    def conditional_halt(
+        cls, guard: Formula, effect: Effect, state: T
+    ) -> "ExitSet[T]":
+        return cls((Halted(guard, effect), Completed(not_(guard), state))).normalize()
+
+    def union(self, other: "ExitSet[T]") -> "ExitSet[T]":
+        return ExitSet((*self.exits, *other.exits)).normalize()
+
+    def guarded(self, guard: Formula) -> "ExitSet[T]":
+        """Restrict every exit to one branch of an enclosing partition."""
+        exits: list[Exit[T]] = []
+        for exit_ in self.exits:
+            combined = _and_guards(guard, exit_.guard)
+            if isinstance(exit_, Completed):
+                exits.append(Completed(combined, exit_.value))
+            else:
+                exits.append(Halted(combined, exit_.effect))
+        return ExitSet(tuple(exits)).normalize()
+
+    def normalize(self) -> "ExitSet[T]":
+        """Drop false exits and merge equal destinations by disjoining guards."""
+        merged: list[Exit[T]] = []
+        for exit_ in self.exits:
+            if _is_false(exit_.guard):
+                continue
+            for index, prior in enumerate(merged):
+                same_completed = (
+                    isinstance(exit_, Completed)
+                    and isinstance(prior, Completed)
+                    and exit_.value == prior.value
+                )
+                same_halted = (
+                    isinstance(exit_, Halted)
+                    and isinstance(prior, Halted)
+                    and exit_.effect == prior.effect
+                )
+                if same_completed:
+                    merged[index] = Completed(
+                        _or_guards(prior.guard, exit_.guard), prior.value
+                    )
+                    break
+                if same_halted:
+                    merged[index] = Halted(
+                        _or_guards(prior.guard, exit_.guard), prior.effect
+                    )
+                    break
+            else:
+                merged.append(exit_)
+        return ExitSet(tuple(merged))
+
+    def sequence(self, step: Callable[[T], "ExitSet[U]"]) -> "ExitSet[U]":
+        """Map ``step`` over completed exits; halted exits bypass the tail."""
+        exits: list[Exit[U]] = []
+        for exit_ in self.exits:
+            if isinstance(exit_, Halted):
+                exits.append(exit_)
+                continue
+            for following in step(exit_.value).exits:
+                guard = _and_guards(exit_.guard, following.guard)
+                if isinstance(following, Completed):
+                    exits.append(Completed(guard, following.value))
+                else:
+                    exits.append(Halted(guard, following.effect))
+        return ExitSet(tuple(exits)).normalize()
+
+    def collapse(self):
+        """Return the old linear Outcome only for one unconditional exit."""
+        normalized = self.normalize()
+        if len(normalized.exits) != 1 or not _is_true(normalized.exits[0].guard):
+            return self if normalized == self else normalized
+        exit_ = normalized.exits[0]
+        if isinstance(exit_, Completed):
+            return Complete(exit_.value)
+        return Incomplete(exit_.effect)
+
+
+__all__ = [
+    "Completed",
+    "ExitSet",
+    "Halted",
+    "false_guard",
+    "true_guard",
+]

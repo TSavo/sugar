@@ -21,60 +21,84 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor import BlockValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
-def reduce_statements(statements: tuple):
-    """Reduce a block's statement sugars in order.
+@dataclass(frozen=True)
+class _ReducedBlock:
+    entries: tuple[object, ...]
+    can_fall_through: bool
+    fall_through: tuple
+    transforms: tuple = ()
 
-    Each substituted statement's sugar answers `desugar()` with an Outcome that
-    owns its own contribution and whether the run continues -- the loop never
-    branches on a value's kind, and it threads NO scope: substitute already did
-    the binding, so a statement's meaning is a pure function of the (already
-    resolved) tree, not of any accumulated context.
-    """
-    entries: list[object] = []
-    transforms: list = []
-    fall_through: list = []
-    can_fall_through = True
+
+def reduce_block_to_exitset(statements: tuple) -> ExitSet[_ReducedBlock]:
+    """Reduce a suite to guarded exits before the linear compatibility view."""
+    exits = ExitSet.completed(
+        _ReducedBlock(entries=(), can_fall_through=True, fall_through=())
+    )
 
     for index, head in enumerate(statements):
-        outcome = head.desugar()
 
-        contribution = outcome.contribution()
-        for transform in reversed(transforms):
-            contribution = transform(contribution)
-        entries.extend(contribution)
+        def reduce_next(state: _ReducedBlock) -> ExitSet[_ReducedBlock]:
+            outcome = head.desugar()
+            contribution = outcome.contribution()
+            for transform in reversed(state.transforms):
+                contribution = transform(contribution)
+            entries = (*state.entries, *contribution)
 
-        follow = outcome.follow()
-        if not follow.continues:
-            # An early exit (return/raise) makes the tail unreachable. Handling
-            # the kept-but-unreduced tail entries (they must answer
-            # inv_contribution/post_contribution as "raw states nothing") is the
-            # SugarBody-wrapper job the factory did; it is not ported yet. No
-            # WRITTEN tree sugar halts a block today (assert continues), so this
-            # is unreachable now -- and it panics loudly rather than silently
-            # dropping the tail if a newly-written halting sugar reaches it.
-            if follow.keeps_rest and index + 1 < len(statements):
-                raise NotImplementedError(
-                    "block early-exit with a kept tail is not ported to the tree "
-                    "reduction yet: port the SugarBody raw-tail wrapper when the "
-                    f"first halting statement sugar lands (halted at index {index})"
+            follow = outcome.follow()
+            if not follow.continues:
+                if follow.keeps_rest and index + 1 < len(statements):
+                    raise NotImplementedError(
+                        "block early-exit with a kept tail is not ported to the "
+                        "tree reduction yet: port the SugarBody raw-tail wrapper "
+                        "when the first halting statement sugar lands "
+                        f"(halted at index {index})"
+                    )
+                if isinstance(outcome, Incomplete):
+                    if outcome.branch_conditions:
+                        from sugar_lift_py_tests.ir import and_
+
+                        condition = (
+                            outcome.branch_conditions[0]
+                            if len(outcome.branch_conditions) == 1
+                            else and_(list(outcome.branch_conditions))
+                        )
+                        return ExitSet.conditional_halt(
+                            condition, outcome.effect, state
+                        )
+                    return ExitSet.halted(outcome.effect)
+                return ExitSet.completed(
+                    _ReducedBlock(entries, can_fall_through=False, fall_through=())
                 )
-            can_fall_through = False
-            break
-        if follow.transform is not None:
-            transforms.append(follow.transform)
-        if follow.continuation_guard is not None:
-            fall_through.append(follow.continuation_guard)
 
-    return (
-        tuple(entries),
-        can_fall_through,
-        tuple(fall_through) if can_fall_through else (),
-    )
+            transforms = state.transforms
+            if follow.transform is not None:
+                transforms = (*transforms, follow.transform)
+            fall_through = state.fall_through
+            if follow.continuation_guard is not None:
+                fall_through = (*fall_through, follow.continuation_guard)
+            return ExitSet.completed(
+                _ReducedBlock(entries, True, fall_through, transforms)
+            )
+
+        exits = exits.sequence(reduce_next)
+
+    return exits
+
+
+def reduce_statements(statements: tuple):
+    """Return the legacy tuple only after ExitSet proves one unconditional exit."""
+    collapsed = reduce_block_to_exitset(statements).collapse()
+    if isinstance(collapsed, Incomplete):
+        return ((collapsed,), False, ())
+    if not isinstance(collapsed, Complete):
+        return collapsed
+    state = collapsed.value
+    return state.entries, state.can_fall_through, state.fall_through
 
 
 def reduce_body(statements: tuple):
@@ -89,9 +113,14 @@ def reduce_body(statements: tuple):
     always Complete -- the distinction is carried structurally for the sugars
     (calls, unsupported statements) that will.
     """
-    from sugar_lift_py_tests.outcome import Incomplete
-
-    entries, can_fall_through, fall_through = reduce_statements(statements)
+    exits = reduce_block_to_exitset(statements)
+    collapsed = exits.collapse()
+    if isinstance(collapsed, Incomplete):
+        return collapsed
+    if not isinstance(collapsed, Complete):
+        return collapsed
+    state = collapsed.value
+    entries = state.entries
     # A body that is nothing but a single propagating effect IS that effect --
     # there is no value, no fact, no exit to make a contract from. Propagate it
     # so the def surfaces as an effect (a halt), never a None-returning contract.
@@ -99,7 +128,9 @@ def reduce_body(statements: tuple):
         return entries[0]
     return Complete(
         BlockValue(
-            entries, fall_through=fall_through, can_fall_through=can_fall_through
+            entries,
+            fall_through=state.fall_through,
+            can_fall_through=state.can_fall_through,
         )
     )
 
