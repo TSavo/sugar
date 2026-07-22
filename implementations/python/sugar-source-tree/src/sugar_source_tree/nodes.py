@@ -1811,8 +1811,11 @@ class With(Statement):
             )
             self.reporter.report_gap(self, panic)
             raise panic
-        # NeverSuppresses (nothing enrolls yet): finally-faithful expansion
-        # unwritten — bare SugarNotWritten until that slice lands.
+        # NeverSuppresses: disposition-only license for WithResourceSugar
+        # (enter once, body ExitSet, exit on every face). Nothing enrolls yet;
+        # when it does, enter/exit must be constructed or left explicitly red —
+        # never a normal-path-only dissolve. Until enrollment + construction,
+        # stay loud.
         return super()._construct_sugar()
 
     def substitute(self, scope):
