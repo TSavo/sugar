@@ -52,16 +52,20 @@ class ComprehensionSugar(Sugar):
 
     def _complete(self, iterable, element, key=None) -> Outcome:
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
-        from sugar_lift_py_tests.ir import bound_transform, ctor
+        from sugar_lift_py_tests.ir import PrimitiveSort, _Lambda, _intern_term, ctor
 
         owner = str(self.site)
-        templates = []
         if key is not None:
-            templates.append(key.to_term(owner=owner))
-        templates.append(element.to_term(owner=owner))
+            body = ctor(
+                "python:dict_entry",
+                [key.to_term(owner=owner), element.to_term(owner=owner)],
+                symbol_kind="coordinate",
+            )
+        else:
+            body = element.to_term(owner=owner)
         args = [
             iterable.to_term(owner=owner),
-            bound_transform(self.target, templates),
+            _intern_term(_Lambda(self.target, PrimitiveSort("Value"), body)),
         ]
         return Complete(
             ComprehensionValue(ctor(self.kind, args, symbol_kind="coordinate"))

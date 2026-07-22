@@ -138,7 +138,14 @@ class _Ctor:
     args: Tuple["Term", ...]
 
 
-Term = Union[_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor]
+@dataclass(frozen=True)
+class _Lambda:
+    param_name: str
+    param_sort: Sort
+    body: "Term"
+
+
+Term = Union[_Var, _ConstInt, _ConstStr, _ConstBool, _ConstReal, _Ctor, _Lambda]
 
 # Intern tables are keyed by finite structural tuples, never by Term objects:
 # frozen-dataclass ``__hash__`` walks ctor spines recursively and SEGVs on
@@ -242,6 +249,17 @@ def _commit_interned_term(
             term.name,
             tuple(id(arg) for arg in interned_args),
         )
+    elif isinstance(term, _Lambda):
+        if len(interned_args) != 1:
+            raise AssertionError("lambda intern requires exactly one body")
+        if interned_args[0] is not term.body:
+            term = _Lambda(term.param_name, term.param_sort, interned_args[0])
+        key = (
+            "lambda",
+            term.param_name,
+            repr(term.param_sort),
+            id(interned_args[0]),
+        )
     else:
         key = _term_leaf_intern_key(term)
     existing = by_key.get(key)
@@ -290,12 +308,19 @@ def _intern_term(term: Term) -> Term:
         if phase == 0:
             if node_id in visiting:
                 _panic_cyclic_term(node)
-            if not isinstance(node, _Ctor) or not node.args:
+            children = (
+                node.args
+                if isinstance(node, _Ctor)
+                else (node.body,)
+                if isinstance(node, _Lambda)
+                else ()
+            )
+            if not children:
                 done[node_id] = _commit_interned_term(by_key, by_id, node, ())
                 continue
             visiting.add(node_id)
             stack.append((node, 1))
-            for child in reversed(node.args):
+            for child in reversed(children):
                 child_id = id(child)
                 if child_id in done:
                     continue
@@ -309,7 +334,8 @@ def _intern_term(term: Term) -> Term:
         # phase == 1: every child is interned (or the graph was cyclic).
         visiting.discard(node_id)
         interned_args_list: list[Term] = []
-        for child in node.args:
+        children = node.args if isinstance(node, _Ctor) else (node.body,)
+        for child in children:
             child_id = id(child)
             mapped = done.get(child_id)
             if mapped is None:
@@ -552,33 +578,6 @@ def num(n: int) -> Term:
 
 def str_const(s: str) -> Term:
     return _intern_term(_ConstStr(s, String()))
-
-
-def bound_transform(name: str, templates: List[Term]) -> Term:
-    """A transform template whose ``name`` is bound only inside its templates.
-
-    The iterable remains outside this coordinate, so an outer variable with the
-    same spelling stays free there.  This denotes an operation to apply later;
-    constructing it does not claim that any template call executed.
-    """
-    if not templates:
-        raise ValueError("a bound transform needs at least one template term")
-    return ctor(
-        "py.bound_transform",
-        [str_const(name), *templates],
-        symbol_kind="coordinate",
-    )
-
-
-def bound_transform_parts(term: Term) -> tuple[str, tuple[Term, ...]] | None:
-    if (
-        isinstance(term, _Ctor)
-        and term.name == "py.bound_transform"
-        and len(term.args) >= 2
-        and isinstance(term.args[0], _ConstStr)
-    ):
-        return term.args[0].value, term.args[1:]
-    return None
 
 
 def real_lit(decimal_string: str) -> Term:
@@ -1004,6 +1003,15 @@ def term_to_value(t: Term) -> Value:
                 ("args", varr([term_to_value(a) for a in t.args])),
             ]
         )
+    if isinstance(t, _Lambda):
+        return vobj(
+            [
+                ("kind", vstr("lambda")),
+                ("paramName", vstr(t.param_name)),
+                ("paramSort", sort_to_value(t.param_sort)),
+                ("body", term_to_value(t.body)),
+            ]
+        )
     raise TypeError(f"unknown Term: {type(t)!r}")
 
 
@@ -1119,15 +1127,22 @@ class TermTableBuilder:
                     "fix=source-lifter terms are JSON objects only"
                 )
             seen.add(identity)
-            if term.get("kind") == "ctor":
-                for child in term.get("args", []) or []:
-                    if not isinstance(child, dict):
-                        raise TypeError(
-                            f"RPC ctor arg must be a dict, got {type(child)!r}"
-                        )
-                    child_id = id(child)
-                    inbound[child_id] = inbound.get(child_id, 0) + 1
-                    pending.append(child)
+            kind = term.get("kind")
+            children = (
+                term.get("args", []) or []
+                if kind == "ctor"
+                else [term["body"]]
+                if kind == "lambda"
+                else []
+            )
+            for child in children:
+                if not isinstance(child, dict):
+                    raise TypeError(
+                        f"RPC term child must be a dict, got {type(child)!r}"
+                    )
+                child_id = id(child)
+                inbound[child_id] = inbound.get(child_id, 0) + 1
+                pending.append(child)
 
         shared_canonical: dict[int, str] = {}
         cid_by_id: dict[int, str] = {}
@@ -1140,10 +1155,15 @@ class TermTableBuilder:
             if not finishing and cached_value is not None:
                 values.append(cached_value)
                 continue
-            if term.get("kind") == "ctor" and not finishing:
+            kind = term.get("kind")
+            if kind in {"ctor", "lambda"} and not finishing:
                 work.append((term, True))
-                args = term.get("args", []) or []
-                work.extend((child, False) for child in reversed(args))
+                children = (
+                    term.get("args", []) or []
+                    if kind == "ctor"
+                    else [term["body"]]
+                )
+                work.extend((child, False) for child in reversed(children))
                 continue
 
             if term.get("kind") == "ctor":
@@ -1169,6 +1189,26 @@ class TermTableBuilder:
                         }
                         for child in children
                     ],
+                }
+            elif term.get("kind") == "lambda":
+                body = values.pop()
+                canonical = (
+                    '{"body":'
+                    + body
+                    + ',"kind":"lambda","paramName":'
+                    + encode_jcs(vstr(term["paramName"]))
+                    + ',"paramSort":'
+                    + encode_jcs(_json_like_to_value(term["paramSort"]))
+                    + "}"
+                )
+                node_payload = {
+                    "kind": "lambda",
+                    "paramName": term["paramName"],
+                    "paramSort": term["paramSort"],
+                    "body": {
+                        "kind": "term-ref",
+                        "cid": blake3_512_of(_rpc_canonical_bytes(body)),
+                    },
                 }
             else:
                 # Leaves are shallow JSON objects — encode_jcs over the value
@@ -1220,6 +1260,16 @@ class TermTableBuilder:
                     for arg in term.args
                 ],
             }
+        if isinstance(term, _Lambda):
+            return {
+                "kind": "lambda",
+                "paramName": term.param_name,
+                "paramSort": json.loads(encode_jcs(sort_to_value(term.param_sort))),
+                "body": {
+                    "kind": "term-ref",
+                    "cid": self._require_cached_cid(term.body),
+                },
+            }
         return json.loads(encode_jcs(term_to_value(term)))
 
     def _materialize(self, root: Term) -> None:
@@ -1233,11 +1283,17 @@ class TermTableBuilder:
             if identity in seen:
                 continue
             seen.add(identity)
-            if isinstance(term, _Ctor):
-                for child in term.args:
-                    child_id = id(child)
-                    inbound[child_id] = inbound.get(child_id, 0) + 1
-                    pending.append(child)
+            children = (
+                term.args
+                if isinstance(term, _Ctor)
+                else (term.body,)
+                if isinstance(term, _Lambda)
+                else ()
+            )
+            for child in children:
+                child_id = id(child)
+                inbound[child_id] = inbound.get(child_id, 0) + 1
+                pending.append(child)
 
         # Canonical strings are retained only for shared nodes. A linear spine
         # therefore uses O(depth + root-bytes) memory instead of retaining every
@@ -1252,9 +1308,10 @@ class TermTableBuilder:
             if not finishing and cached_value is not None:
                 values.append(cached_value)
                 continue
-            if isinstance(term, _Ctor) and not finishing:
+            if isinstance(term, (_Ctor, _Lambda)) and not finishing:
                 work.append((term, True))
-                work.extend((child, False) for child in reversed(term.args))
+                children = term.args if isinstance(term, _Ctor) else (term.body,)
+                work.extend((child, False) for child in reversed(children))
                 continue
 
             if isinstance(term, _Ctor):
@@ -1267,6 +1324,17 @@ class TermTableBuilder:
                     + ",".join(children)
                     + '],"kind":"ctor","name":'
                     + encode_jcs(vstr(term.name))
+                    + "}"
+                )
+            elif isinstance(term, _Lambda):
+                body = values.pop()
+                canonical = (
+                    '{"body":'
+                    + body
+                    + ',"kind":"lambda","paramName":'
+                    + encode_jcs(vstr(term.param_name))
+                    + ',"paramSort":'
+                    + encode_jcs(sort_to_value(term.param_sort))
                     + "}"
                 )
             else:
@@ -1387,16 +1455,40 @@ def subst_var_in_term(t: Term, formal: str, actual: Term) -> Term:
     if isinstance(t, _Var):
         return actual if t.name == formal else t
     if isinstance(t, _Ctor):
-        bound = bound_transform_parts(t)
-        if bound is not None:
-            name, templates = bound
-            if name == formal:
-                return t
-            return bound_transform(
-                name, [subst_var_in_term(item, formal, actual) for item in templates]
-            )
         return ctor(t.name, [subst_var_in_term(a, formal, actual) for a in t.args])
+    if isinstance(t, _Lambda):
+        if t.param_name == formal:
+            return t
+        replacement_free = _free_vars_in_term(actual)
+        param_name = t.param_name
+        body = t.body
+        if param_name in replacement_free:
+            taken = replacement_free | _free_vars_in_term(body) | {formal, param_name}
+            suffix = 1
+            fresh = f"{param_name}#{suffix}"
+            while fresh in taken:
+                suffix += 1
+                fresh = f"{param_name}#{suffix}"
+            body = subst_var_in_term(body, param_name, make_var(fresh))
+            param_name = fresh
+        return _intern_term(
+            _Lambda(
+                param_name,
+                t.param_sort,
+                subst_var_in_term(body, formal, actual),
+            )
+        )
     return t  # const variants are inert
+
+
+def _free_vars_in_term(t: Term) -> set[str]:
+    if isinstance(t, _Var):
+        return {t.name}
+    if isinstance(t, _Ctor):
+        return set().union(*(_free_vars_in_term(arg) for arg in t.args))
+    if isinstance(t, _Lambda):
+        return _free_vars_in_term(t.body) - {t.param_name}
+    return set()
 
 
 def subst_var_in_formula(f: Formula, formal: str, actual: Term) -> Formula:

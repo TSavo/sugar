@@ -1,12 +1,23 @@
 """Concrete comprehensions dissolve; simple symbolic forms retain coordinates."""
 
+import json
 import tempfile
 
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.ir import ctor, num
+from sugar_lift_py_tests.ir import (
+    ctor,
+    encode_jcs,
+    make_var,
+    num,
+    str_const,
+    subst_var_in_term,
+    term_to_value,
+)
 from sugar_lift_py_tests.proofir.formulas import _free_vars_in_ir_term
+from sugar_lift_py_tests.proofir.sorts import Sort
+from sugar_lift_py_tests.proofir.terms import term_from_ir
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -72,11 +83,52 @@ def test_simple_symbolic_comprehension_builds_coordinate(source, coordinate, tra
     term = _out(f"def A(xs):\n    return {source}\n")
     assert term.name == coordinate
     assert term.args[0].name == "xs"
-    assert term.args[1].name == "py.bound_transform"
-    assert term.args[1].args[0].value == "x"
-    assert any(
-        getattr(arg, "name", None) == transform for arg in term.args[1].args[1:]
+    assert term.args[1].param_name == "x"
+    assert term.args[1].param_sort.name == "Value"
+    body = term.args[1].body
+    if coordinate == "py.dictcomp":
+        assert body.name == "python:dict_entry"
+        assert body.args[1].name == transform
+    else:
+        assert body.name == transform
+
+
+def test_symbolic_comprehension_serializes_transform_as_real_lambda():
+    term = _out("def A(xs, y):\n    return [f(x, y) for x in xs]\n")
+    wire = json.loads(encode_jcs(term_to_value(term)))
+    transform = wire["args"][1]
+
+    assert transform == {
+        "kind": "lambda",
+        "paramName": "x",
+        "paramSort": {"kind": "primitive", "name": "Value"},
+        "body": {
+            "kind": "ctor",
+            "name": "call:f",
+            "args": [
+                {"kind": "var", "name": "x"},
+                {"kind": "var", "name": "y"},
+            ],
+        },
+    }
+    assert _free_vars_in_ir_term(term.args[1]) == frozenset({"y"})
+    assert _free_vars_in_ir_term(term) == frozenset({"xs", "y"})
+
+    value_sort = Sort(name="Value", ir_sort=term.args[1].param_sort)
+    wrapped = term_from_ir(term.args[1], sort=value_sort)
+    assert wrapped.free_vars == frozenset({"y"})
+    assert wrapped.free_var_sorts == {"y": value_sort}
+
+
+def test_old_bound_transform_ctor_is_nonbinding_lying_twin():
+    lying = ctor(
+        "py.bound_transform",
+        [str_const("x"), ctor("call:f", [make_var("x")])],
     )
+    wire = json.loads(encode_jcs(term_to_value(lying)))
+
+    assert wire["kind"] == "ctor"
+    assert _free_vars_in_ir_term(lying) == frozenset({"x"})
 
 
 def test_bound_target_is_absent_from_coordinate_free_variables():
@@ -88,11 +140,12 @@ def test_same_spelled_outer_iterable_remains_free_while_element_is_bound():
     term = _out("def A(x):\n    return [f(x) for x in x]\n")
     assert _free_vars_in_ir_term(term) == frozenset({"x"})
     transform = term.args[1]
-    assert transform.args[1].name == "call:f"
-    assert transform.args[1].args[0].name == "x"
+    assert _free_vars_in_ir_term(transform) == frozenset()
+    assert transform.body.name == "call:f"
+    assert transform.body.args[0].name == "x"
 
 
-def test_nested_lambda_same_name_does_not_escape_bound_transform():
+def test_nested_lambda_same_name_does_not_escape_comprehension_transform():
     term = _out("def A(xs):\n    return [(lambda x: x) for x in xs]\n")
     assert _free_vars_in_ir_term(term) == frozenset({"xs"})
 
@@ -104,19 +157,17 @@ def test_bound_target_masks_outer_same_spelling_and_keeps_call_coordinate():
         "    return [f(x) for x in xs]\n"
     )
     assert term.name == "py.listcomp"
-    assert term.args[1].name == "py.bound_transform"
-    assert term.args[1].args[0].value == "x"
-    assert term.args[1].args[1].name == "call:f"
-    assert term.args[1].args[1].args[0].name == "x"
+    assert term.args[1].param_name == "x"
+    assert term.args[1].body.name == "call:f"
+    assert term.args[1].body.args[0].name == "x"
 
 
 def test_concrete_generator_builds_lazy_coordinate_without_materializing():
     term = _out("def A():\n    return (f(x) for x in [1, 2])\n")
     assert term.name == "py.generatorexp"
     assert term.args[0].name == "array"
-    assert term.args[1].name == "py.bound_transform"
-    assert term.args[1].args[0].value == "x"
-    assert term.args[1].args[1].name == "call:f"
+    assert term.args[1].param_name == "x"
+    assert term.args[1].body.name == "call:f"
 
 
 @pytest.mark.parametrize("consumer", ["sum", "list", "consume", "any", "all"])
@@ -148,15 +199,27 @@ def test_list_and_generator_keep_distinct_eager_and_lazy_coordinates():
 def test_generator_creation_keeps_call_inside_unexecuted_transform_template():
     term = _out("def A(xs):\n    return (f(x) for x in xs)\n")
     transform = term.args[1]
-    assert transform.name == "py.bound_transform"
-    assert transform.args[1].name == "call:f"
+    assert transform.param_name == "x"
+    assert transform.body.name == "call:f"
     assert _free_vars_in_ir_term(term) == frozenset({"xs"})
 
 
-def test_over_fuel_concrete_comprehension_builds_bound_transform_coordinate():
+def test_over_fuel_concrete_comprehension_builds_lambda_transform_coordinate():
     term = _out("def A():\n    return [f(x) for x in range(129)]\n")
     assert term.name == "py.listcomp"
-    assert term.args[1].name == "py.bound_transform"
+    assert term.args[1].param_name == "x"
+
+
+def test_lambda_substitution_alpha_renames_to_avoid_capture():
+    term = _out("def A(xs, y):\n    return [y for x in xs]\n")
+    transform = term.args[1]
+
+    substituted = subst_var_in_term(transform, "y", make_var("x"))
+
+    assert substituted.param_name != "x"
+    assert substituted.param_sort.name == "Value"
+    assert substituted.body.name == "x"
+    assert _free_vars_in_ir_term(substituted) == frozenset({"x"})
 
 
 def test_shadowed_range_is_not_unrolled_but_builds_symbolic_coordinate():

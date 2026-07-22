@@ -11,7 +11,7 @@ use sugar_ir_types::membership::{
     BoolSort, CallTerm, ClaimFormula, ConstTerm, ConstructionError, EqualityFact,
     FormulaProvenance, IntSort, OpenFormula, ProvenanceKind, ScopedFormula, VarTerm,
 };
-use sugar_ir_types::{Formula, Sort};
+use sugar_ir_types::{Declaration, Document, Formula, Sort, Term};
 
 fn crate_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -235,4 +235,151 @@ fn legal_near_miss_scopes_explicit_free_var() {
 
     let scoped: ScopedFormula = open.scope(scope).expect("x is explicitly scoped as Int");
     assert!(scoped.formula().free_vars().contains("x"));
+}
+
+fn python_comprehension_document(expression: &str, parameters: &str) -> Document {
+    let repo = crate_root()
+        .ancestors()
+        .nth(3)
+        .expect("sugar-ir-types lives below the repository root");
+    let python_path = [
+        repo.join("implementations/python/sugar-source-tree/src"),
+        repo.join("implementations/python/sugar-lift-py-tests/src"),
+        repo.join("implementations/python/sugar-lift-python-source/src"),
+    ]
+    .iter()
+    .map(|path| path.display().to_string())
+    .collect::<Vec<_>>()
+    .join(":");
+    let script = r#"
+import json
+import sys
+import tempfile
+
+from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.ir import ContractDecl, atomic, declarations_to_value, encode_jcs, make_var
+from sugar_source_tree.tree import SourceFile
+
+expression, parameters = sys.argv[1], sys.argv[2]
+with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as source:
+    source.write(f"def A({parameters}):\n    return {expression}\n")
+    path = source.name
+function = next(SourceFile(path_source(path)).functions())
+term = function.sugar().desugar().value.post().args[1]
+post = atomic("=", [make_var("out"), term])
+print(encode_jcs(declarations_to_value([ContractDecl("A", post=post)])))
+"#;
+    let output = Command::new("python3")
+        .arg("-c")
+        .arg(script)
+        .arg(expression)
+        .arg(parameters)
+        .env("PYTHONPATH", python_path)
+        .current_dir(repo)
+        .output()
+        .expect("run Python comprehension construction");
+    assert!(
+        output.status.success(),
+        "Python construction failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("parse complete Python ProofIR document")
+}
+
+fn document_post_term(document: Document) -> Term {
+    let Declaration::Contract {
+        post: Some(Formula::Atomic { mut args, .. }),
+        ..
+    } = document.into_iter().next().expect("one contract")
+    else {
+        panic!("Python document must contain one contract with an atomic post")
+    };
+    assert_eq!(args.len(), 2, "post equality has output and comprehension");
+    args.pop().expect("comprehension term")
+}
+
+fn free_vars(term: Term) -> std::collections::BTreeSet<String> {
+    let formula = Formula::Atomic {
+        name: "=".to_string(),
+        args: vec![term],
+    };
+    let open = OpenFormula::from_ir_formula_with_sorts(formula, BTreeMap::new());
+    open.free_vars()
+}
+
+#[test]
+fn python_comprehension_lambda_survives_rust_parse_and_membership() {
+    let term = document_post_term(python_comprehension_document(
+        "[f(x, y) for x in xs]",
+        "xs, y",
+    ));
+    let Term::Ctor { args, .. } = &term else {
+        panic!("comprehension must remain a constructor coordinate")
+    };
+    let transform = args.get(1).expect("comprehension transform");
+    assert!(matches!(transform, Term::Lambda { .. }));
+    assert_eq!(free_vars(transform.clone()), ["y".to_string()].into());
+    assert_eq!(
+        free_vars(term.clone()),
+        ["xs".to_string(), "y".to_string()].into()
+    );
+
+    let formula = Formula::Atomic {
+        name: "=".to_string(),
+        args: vec![term],
+    };
+    let sorts = BTreeMap::from([
+        (
+            "xs".to_string(),
+            Sort::Primitive {
+                name: "Value".into(),
+            },
+        ),
+        (
+            "y".to_string(),
+            Sort::Primitive {
+                name: "Value".into(),
+            },
+        ),
+    ]);
+    OpenFormula::from_ir_formula_with_sorts(formula, sorts.clone())
+        .scope(sorts)
+        .expect("membership admits xs and y without admitting bound x");
+}
+
+#[test]
+fn bound_transform_spelling_does_not_turn_a_ctor_into_a_binder() {
+    let lying: Term = serde_json::from_value(json!({
+        "kind": "ctor",
+        "name": "py.bound_transform",
+        "args": [
+            {"kind": "const", "value": "x", "sort": {"kind": "primitive", "name": "String"}},
+            {"kind": "ctor", "name": "call:f", "args": [{"kind": "var", "name": "x"}]}
+        ]
+    }))
+    .expect("lying constructor parses as an ordinary term");
+    assert!(matches!(lying, Term::Ctor { .. }));
+    assert_eq!(free_vars(lying.clone()), ["x".to_string()].into());
+
+    let formula = Formula::Atomic {
+        name: "=".to_string(),
+        args: vec![lying],
+    };
+    let err = OpenFormula::from_ir_formula_with_sorts(formula, BTreeMap::new())
+        .scope(BTreeMap::new())
+        .expect_err("x is not admitted");
+    assert!(matches!(err, ConstructionError::IllegalFreeVars { .. }));
+}
+
+#[test]
+fn same_spelling_binds_only_transform_body_after_rust_parse() {
+    let term = document_post_term(python_comprehension_document("[f(x) for x in x]", "x"));
+    let Term::Ctor { args, .. } = &term else {
+        panic!("comprehension must remain a constructor coordinate")
+    };
+    assert_eq!(
+        free_vars(args[1].clone()),
+        std::collections::BTreeSet::new()
+    );
+    assert_eq!(free_vars(term), ["x".to_string()].into());
 }
