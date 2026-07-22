@@ -53,12 +53,12 @@ pub use proof::{build_proof_envelope, ProofEnvelopeInput, ProofEnvelopeOutput};
 pub use proof_graph::{
     member_body, member_field, member_kind, member_signature, member_signer, recompute_member_cid,
     verify_member_signature, AnchoredMember, AssertionSurfaceMemento, AtomCid, AtomMemento,
-    AuthorityMemento, AuthorityMementoRef, BridgeMemento, ClaimContractMemento, ContractBody,
-    ContractBodyCid, ContractEntry, ContractMemento, ContractMementoRef,
-    EffectSiteAnnotationMemento, FactoryWalkMemento, FlatAtom, ImplicationMemento,
-    LibrarySugarBindingMemento, MemberView, MementoCid, PlanMemberBytesError, PlanMemento,
-    ProofCatalog, ProofGraph, ProofIdentity, ProofRunMemento, SourceMemento, StageReceiptMemento,
-    StoredMember, WitnessClaimMemento, WitnessMemento,
+    AuthorityMemento, AuthorityMementoRef, BridgeMemento, ClaimContractMemento,
+    ContextManagerContractMemento, ContractBody, ContractBodyCid, ContractEntry, ContractMemento,
+    ContractMementoRef, EffectSiteAnnotationMemento, FactoryWalkMemento, FlatAtom,
+    ImplicationMemento, LibrarySugarBindingMemento, MemberView, MementoCid, PlanMemberBytesError,
+    PlanMemento, ProofCatalog, ProofGraph, ProofIdentity, ProofRunMemento, SourceMemento,
+    StageReceiptMemento, StoredMember, WitnessClaimMemento, WitnessMemento,
 };
 pub use sign::{
     ed25519_pubkey_string, ed25519_sign_string, ed25519_sign_with_seed, ed25519_verify_bytes,
@@ -66,10 +66,12 @@ pub use sign::{
     SignatureParseError, ED25519_KEY_PREFIX, ED25519_SIG_PREFIX,
 };
 pub use typed_member::{
+    context_manager_semantics_v1_to_json, import_signature_v1_to_json,
     AssertionSurfaceMementoMember, AuthorityMember, BridgeMember, ContextManagerContractMember,
-    ContractMember, EffectSiteAnnotationMember, FactoryWalkMementoMember, ImplicationMember,
-    LibrarySugarBindingEntryMember, Member, MemberError, MemberKind, PlanMementoMember,
-    ProofRunMember, SourceMementoMember, StageReceiptMember, WitnessClaimMember,
+    ContextManagerSemanticsV1, ContractMember, EffectSiteAnnotationMember, EnterResultContractV1,
+    ExitContractV1, ExitDispositionV1, FactoryWalkMementoMember, ImplicationMember,
+    ImportSignatureV1, LibrarySugarBindingEntryMember, Member, MemberError, MemberKind,
+    PlanMementoMember, ProofRunMember, SourceMementoMember, StageReceiptMember, WitnessClaimMember,
     WitnessMementoMember,
 };
 

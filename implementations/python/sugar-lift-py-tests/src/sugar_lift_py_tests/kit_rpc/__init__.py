@@ -14,6 +14,7 @@ from .factory_walk_row_dto import (
 )
 from .implication_dto import ImplicationDto
 from .lift_report_payload_dto import LiftReportPayloadDto
+from .context_manager_contract_dto import ContextManagerContractIrV1, ImportSignatureV1
 from .open_lane_dto import (
     CallEdgeDto,
     DiagnosticDto,
@@ -55,6 +56,8 @@ __all__ = [
     "FactoryWalkRowDto",
     "ImplicationDto",
     "LiftReportPayloadDto",
+    "ContextManagerContractIrV1",
+    "ImportSignatureV1",
     "PlanAtomDto",
     "RecoveredAuditDto",
     "RecoveredEffectDto",

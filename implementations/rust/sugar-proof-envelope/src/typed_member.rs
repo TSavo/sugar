@@ -14,7 +14,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs};
 use sugar_ir_types::Sort;
@@ -889,14 +889,62 @@ impl StageReceiptMember {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextManagerContractMember {
-    pub cid: MementoCid,
-    pub name: String,
-    pub kit: String,
+    pub payload_cid: MementoCid,
     pub bridge_source_symbol: String,
-    pub constructor_formals: Vec<String>,
-    pub constructor_sorts: Vec<Sort>,
-    pub enter_result_sort: Sort,
-    pub source_warrants: Vec<Json>,
+    pub import_signature: ImportSignatureV1,
+    pub semantics: ContextManagerSemanticsV1,
+    pub source_warrants: Vec<String>,
+    pub input_cids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportSignatureV1 {
+    pub formals: Vec<String>,
+    pub sorts: Vec<Sort>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextManagerSemanticsV1 {
+    pub enter: EnterResultContractV1,
+    pub exit: ExitContractV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnterResultContractV1 {
+    pub sort: Sort,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExitContractV1 {
+    pub disposition: ExitDispositionV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitDispositionV1 {
+    NeverSuppresses,
+}
+
+pub fn context_manager_semantics_v1_to_json(value: &ContextManagerSemanticsV1) -> Json {
+    serde_json::json!({
+        "kind": "context-manager-semantics",
+        "schemaVersion": "1",
+        "enter": {
+            "completion": "total",
+            "result": {
+                "kind": "projection",
+                "projection": "enter_result",
+                "sort": value.enter.sort,
+            },
+        },
+        "exit": {
+            "completion": "total",
+            "disposition": {"kind": "never-suppresses"},
+        },
+    })
+}
+
+pub fn import_signature_v1_to_json(value: &ImportSignatureV1) -> Json {
+    serde_json::json!({"formals": value.formals, "sorts": value.sorts})
 }
 
 #[derive(Deserialize)]
@@ -906,46 +954,56 @@ struct ContextManagerHeader {
     schema_version: String,
     kind: String,
     cid: String,
-    name: String,
-    kit: String,
+    #[serde(rename = "payloadCid")]
+    payload_cid: String,
     #[serde(rename = "bridgeSourceSymbol")]
     bridge_source_symbol: String,
-    #[serde(rename = "constructorSignature")]
-    constructor_signature: ConstructorSignature,
-    enter: EnterContract,
-    exit: ExitContract,
+    #[serde(rename = "importSignature")]
+    import_signature: ImportSignatureWire,
+    payload: ContextManagerSemanticsWire,
     #[serde(rename = "sourceWarrants")]
-    source_warrants: Vec<Json>,
+    source_warrants: Vec<String>,
+    #[serde(rename = "inputCids")]
+    input_cids: Vec<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ConstructorSignature {
+struct ImportSignatureWire {
     formals: Vec<String>,
     sorts: Vec<Sort>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct EnterContract {
-    outcome: String,
-    result: EnterResult,
+struct ContextManagerSemanticsWire {
+    kind: String,
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    enter: EnterContractWire,
+    exit: ExitContractWire,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct EnterResult {
+struct EnterContractWire {
+    completion: String,
+    result: EnterResultWire,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct EnterResultWire {
     kind: String,
     projection: String,
     sort: Sort,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ExitContract {
-    outcome: String,
-    disposition: ExitDisposition,
+struct ExitContractWire {
+    completion: String,
+    disposition: ExitDispositionWire,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ExitDisposition {
+struct ExitDispositionWire {
     kind: String,
 }
 
@@ -964,17 +1022,12 @@ impl ContextManagerContractMember {
                 "expected only envelope, header, and metadata layers".into(),
             ));
         }
-        let metadata = value
+        let _metadata = value
             .get("metadata")
             .and_then(Json::as_object)
             .ok_or_else(|| {
                 MemberError::InvalidContextManagerContract("layered metadata is missing".into())
             })?;
-        if !metadata.is_empty() {
-            return Err(MemberError::InvalidContextManagerContract(
-                "metadata must be empty in schema 1".into(),
-            ));
-        }
         let raw_header = value.get("header").cloned().ok_or_else(|| {
             MemberError::InvalidContextManagerContract("layered header is missing".into())
         })?;
@@ -982,65 +1035,87 @@ impl ContextManagerContractMember {
             serde_json::from_value(raw_header.clone()).map_err(|e| {
                 MemberError::InvalidContextManagerContract(format!("malformed header: {e}"))
             })?;
-        if header.schema_version != "1" || header.kind != "context-manager-contract" {
+        if header.schema_version != "1.2" || header.kind != "context-manager-contract" {
             return Err(MemberError::InvalidContextManagerContract(
                 "schemaVersion/kind mismatch".into(),
             ));
         }
-        if header.name.is_empty() || header.kit.is_empty() || header.bridge_source_symbol.is_empty()
+        if header.bridge_source_symbol.is_empty() {
+            return Err(MemberError::InvalidContextManagerContract(
+                "bridgeSourceSymbol must be non-empty".into(),
+            ));
+        }
+        if header.import_signature.formals.len() != header.import_signature.sorts.len() {
+            return Err(MemberError::InvalidContextManagerContract(
+                "import signature formals/sorts length mismatch".into(),
+            ));
+        }
+        if header.payload.kind != "context-manager-semantics"
+            || header.payload.schema_version != "1"
+            || header.payload.enter.completion != "total"
+            || header.payload.enter.result.kind != "projection"
+            || header.payload.enter.result.projection != "enter_result"
         {
             return Err(MemberError::InvalidContextManagerContract(
-                "identity fields must be non-empty".into(),
+                "unsupported context-manager semantics or enter testimony".into(),
             ));
         }
-        if header.constructor_signature.formals.len() != header.constructor_signature.sorts.len() {
-            return Err(MemberError::InvalidContextManagerContract(
-                "constructor formals/sorts length mismatch".into(),
-            ));
-        }
-        if header.enter.outcome != "total"
-            || header.enter.result.kind != "projection"
-            || header.enter.result.projection != "enter_result"
+        if header.payload.exit.completion != "total"
+            || header.payload.exit.disposition.kind != "never-suppresses"
         {
             return Err(MemberError::InvalidContextManagerContract(
-                "enter testimony is not total enter_result projection".into(),
+                "unknown exit disposition or non-total exit testimony".into(),
             ));
         }
-        if header.exit.outcome != "total" || header.exit.disposition.kind != "never-suppresses" {
-            return Err(MemberError::InvalidContextManagerContract(
-                "exit testimony is not total NeverSuppresses".into(),
-            ));
-        }
-        let mut payload = raw_header;
-        payload
-            .as_object_mut()
-            .expect("decoded header is object")
-            .shift_remove("cid");
+        let payload = serde_json::to_value(&header.payload).expect("typed payload serializes");
         let derived = blake3_512_of(
             encode_jcs(&crate::proof_graph::json_to_canonical_value(&payload)).as_bytes(),
         );
-        if derived != header.cid {
+        if derived != header.cid || derived != header.payload_cid {
             return Err(MemberError::InvalidContextManagerContract(format!(
-                "content CID {} derives to {derived}",
-                header.cid
+                "payload CID mismatch: cid={} payloadCid={} derived={derived}",
+                header.cid, header.payload_cid
             )));
         }
-        let cid = MementoCid::try_parse(header.cid.clone()).map_err(|raw| {
+        let payload_cid = MementoCid::try_parse(header.payload_cid.clone()).map_err(|raw| {
             MemberError::InvalidCidFormat {
                 kind: "context-manager-contract".into(),
-                field: "cid".into(),
+                field: "payloadCid".into(),
                 raw,
             }
         })?;
+        let mut sorted_warrants = header.source_warrants.clone();
+        if sorted_warrants
+            .iter()
+            .any(|cid| AtomCid::try_parse(cid.clone()).is_err())
+        {
+            return Err(MemberError::InvalidContextManagerContract(
+                "sourceWarrants contain a malformed CID".into(),
+            ));
+        }
+        sorted_warrants.sort();
+        if header.input_cids != sorted_warrants {
+            return Err(MemberError::InvalidContextManagerContract(
+                "inputCids do not equal sorted sourceWarrants".into(),
+            ));
+        }
         Ok(Self {
-            cid,
-            name: header.name,
-            kit: header.kit,
+            payload_cid,
             bridge_source_symbol: header.bridge_source_symbol,
-            constructor_formals: header.constructor_signature.formals,
-            constructor_sorts: header.constructor_signature.sorts,
-            enter_result_sort: header.enter.result.sort,
+            import_signature: ImportSignatureV1 {
+                formals: header.import_signature.formals,
+                sorts: header.import_signature.sorts,
+            },
+            semantics: ContextManagerSemanticsV1 {
+                enter: EnterResultContractV1 {
+                    sort: header.payload.enter.result.sort,
+                },
+                exit: ExitContractV1 {
+                    disposition: ExitDispositionV1::NeverSuppresses,
+                },
+            },
             source_warrants: header.source_warrants,
+            input_cids: header.input_cids,
         })
     }
 }
