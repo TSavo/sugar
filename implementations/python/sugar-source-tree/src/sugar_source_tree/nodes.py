@@ -1127,18 +1127,37 @@ class Delete(Statement):
     _child_fields = ("targets",)
 
     def substitute(self, scope):
-        """A plain name delete captures availability without loading its target."""
-        if len(self.targets) != 1 or not isinstance(self.targets[0], Name):
+        """Lower supported targets to ordered delete operations."""
+        if any(not isinstance(t, (Name, Attribute, Subscript)) for t in self.targets):
             return self._substitute_children(scope)
-        target = self.targets[0]
-        prior = _explicit_state(
-            target.id,
-            scope,
-            lambda name: self._make_formal_ref(name, target.span),
-        )
-        if prior is _MISSING:
-            prior = UnboundBinding(name=target.id, cause=target.fragment)
-        return self._make_delete_name(target.id, prior)
+
+        current = dict(scope)
+        operations = []
+        for target in self.targets:
+            if isinstance(target, Name):
+                prior = _explicit_state(
+                    target.id,
+                    current,
+                    lambda name: self._make_formal_ref(name, target.span),
+                )
+                if prior is _MISSING:
+                    prior = UnboundBinding(name=target.id, cause=target.fragment)
+                operation = self._make_delete_name(target.id, prior, target.span)
+                current[target.id] = UnboundBinding(
+                    name=target.id, cause=target.fragment
+                )
+            elif isinstance(target, Attribute):
+                operation = self._make_delete_attribute(
+                    target.value.substitute(current), target.attr, target.span
+                )
+            else:
+                operation = self._make_delete_subscript(
+                    target.value.substitute(current),
+                    target.slice_.substitute(current),
+                    target.span,
+                )
+            operations.append(operation)
+        return operations[0] if len(operations) == 1 else _Splice(tuple(operations))
 
     def _make_formal_ref(self, name: str, span: Span) -> "Node":
         from .backend import Leaf, materialize
@@ -1150,7 +1169,9 @@ class Delete(Statement):
             self.reporter,
         )
 
-    def _make_delete_name(self, name: str, prior: BindingState) -> "Node":
+    def _make_delete_name(
+        self, name: str, prior: BindingState, span: Span | None = None
+    ) -> "Node":
         from .backend import Leaf, materialize
         from .shadow import ShadowNode
 
@@ -1158,8 +1179,39 @@ class Delete(Statement):
             self.unit,
             ShadowNode(
                 "DeleteName",
-                self.span,
+                span or self.span,
                 (("name", Leaf(name)), ("prior", Leaf(prior))),
+            ),
+            self.reporter,
+        )
+
+    def _make_delete_attribute(self, receiver, attr: str, span: Span) -> "Node":
+        from .backend import Child, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "DeleteAttribute",
+                span,
+                (("receiver", Child(_handle_of(receiver))), ("attr", Leaf(attr))),
+            ),
+            self.reporter,
+        )
+
+    def _make_delete_subscript(self, receiver, index, span: Span) -> "Node":
+        from .backend import Child, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "DeleteSubscript",
+                span,
+                (
+                    ("receiver", Child(_handle_of(receiver))),
+                    ("index", Child(_handle_of(index))),
+                ),
             ),
             self.reporter,
         )
@@ -3699,6 +3751,46 @@ class DeleteName(Statement):
         from sugar_lift_py_tests.sugar.delete_name_sugar import DeleteNameSugar
 
         return DeleteNameSugar(name=self.name, prior=self.prior, site=self.fragment)
+
+
+class DeleteAttribute(Statement):
+    receiver: Expression
+    attr: str
+    _child_fields = ("receiver",)
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.delete_effect_sugar import (
+            AttributeDeleteEffectSugar,
+        )
+
+        return AttributeDeleteEffectSugar(
+            receiver=self.receiver.sugar(), attr=self.attr, site=self.fragment
+        )
+
+
+class DeleteSubscript(Statement):
+    receiver: Expression
+    index: Expression
+    _child_fields = ("receiver", "index")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.delete_effect_sugar import (
+            SubscriptDeleteEffectSugar,
+        )
+
+        return SubscriptDeleteEffectSugar(
+            receiver=self.receiver.sugar(),
+            index=self.index.sugar(),
+            site=self.fragment,
+        )
 
 
 class EffectRef(Expression):

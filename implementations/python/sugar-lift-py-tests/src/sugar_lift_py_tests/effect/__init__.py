@@ -5,6 +5,7 @@ from .append_runtime_effect import AppendRuntimeEffect
 from .async_context_manager_runtime_effect import AsyncContextManagerRuntimeEffect
 from .async_iteration_runtime_effect import AsyncIterationRuntimeEffect
 from .attribute_store_runtime_effect import AttributeStoreRuntimeEffect
+from .attribute_delete_runtime_effect import AttributeDeleteRuntimeEffect
 from .attribute_augassign_runtime_effect import AttributeAugAssignRuntimeEffect
 from .await_runtime_effect import AwaitRuntimeEffect
 from .block_operator_runtime_effect import BlockOperatorRuntimeEffect
@@ -68,6 +69,7 @@ from .sequence_concatenation_runtime_effect import SequenceConcatenationRuntimeE
 from .source_oracle_effect import SourceOracleEffect
 from .starred_positional_runtime_effect import StarredPositionalRuntimeEffect
 from .subscript_store_runtime_effect import SubscriptStoreRuntimeEffect
+from .subscript_delete_runtime_effect import SubscriptDeleteRuntimeEffect
 from .subscript_result_runtime_effect import SubscriptResultRuntimeEffect
 from .subtract_runtime_effect import SubtractRuntimeEffect, runtime_subtract
 from .type_error_runtime_effect import TypeErrorRuntimeEffect
@@ -80,6 +82,7 @@ __all__ = [
     "AsyncContextManagerRuntimeEffect",
     "AsyncIterationRuntimeEffect",
     "AttributeStoreRuntimeEffect",
+    "AttributeDeleteRuntimeEffect",
     "AttributeAugAssignRuntimeEffect",
     "AwaitRuntimeEffect",
     "BlockOperatorRuntimeEffect",
@@ -137,6 +140,7 @@ __all__ = [
     "SourceOracleEffect",
     "StarredPositionalRuntimeEffect",
     "SubscriptStoreRuntimeEffect",
+    "SubscriptDeleteRuntimeEffect",
     "SubscriptResultRuntimeEffect",
     "SubtractRuntimeEffect",
     "runtime_subtract",
