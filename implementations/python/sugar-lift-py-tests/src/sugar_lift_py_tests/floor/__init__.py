@@ -60,6 +60,7 @@ from .warning_observation_value import WarningObservationValue
 from .effect_coordinate import EffectCoordinate, ExceptionInfoCoordinate
 from .return_value import ReturnValue
 from .scope_rebind import GuardedScopeRebind, ScopeRebind
+from .scope_unbind import ScopeUnbind
 from .sequence_constructor import SequenceConstructor
 from .set_literal_value import SetLiteralValue
 from .set_value import SetValue
@@ -118,6 +119,7 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     RaisesWithValue,
     ReturnValue,
     ScopeRebind,
+    ScopeUnbind,
     SequenceConstructor,
     SetLiteralValue,
     SetValue,
@@ -197,6 +199,7 @@ __all__ = [
     "ExceptionInfoCoordinate",
     "ReturnValue",
     "ScopeRebind",
+    "ScopeUnbind",
     "SequenceConstructor",
     "SetLiteralValue",
     "SetValue",

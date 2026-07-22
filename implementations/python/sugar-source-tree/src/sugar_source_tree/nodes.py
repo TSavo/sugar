@@ -331,6 +331,10 @@ class Node(Typed):
         so its value is already rewritten against the scope that stood before it."""
         return None
 
+    def substitution_unbinding(self) -> "tuple[str, ...]":
+        """Names this statement removes before the block tail is rewritten."""
+        return ()
+
     def _make_binop(self, left: "Node", op, right: "Node") -> "Node":
         """Construct a fresh BinOp node ``<left> <op> <right>`` as a shadow that
         borrows this node's span (so it still addresses this source site). Used
@@ -475,6 +479,8 @@ class Node(Typed):
                 binding = produced_stmt.substitution_binding(scope)
                 if binding:
                     scope = {**scope, **binding}
+                for name in produced_stmt.substitution_unbinding():
+                    scope.pop(name, None)
                 # walrus bindings nested in the statement's expressions leak out
                 # to the enclosing block (their scope is the containing function).
                 for node in produced_stmt.walk():
@@ -1066,8 +1072,34 @@ class Delete(Statement):
     _child_fields = ("targets",)
 
     def substitute(self, scope):
-        """Binds nothing: recurse into children and reassemble."""
-        return self._substitute_children(scope)
+        """Names are deletion sites; store-target operands remain ordinary loads."""
+        from .shadow import rewrite
+
+        targets = []
+        changed = False
+        for target in self.targets:
+            new_target = target if isinstance(target, Name) else target.substitute(scope)
+            targets.append(new_target)
+            changed |= new_target is not target
+        return self if not changed else rewrite(self, targets=tuple(targets))
+
+    def substitution_unbinding(self):
+        return tuple(target.id for target in self.targets if isinstance(target, Name))
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.delete_sugar import DeleteSugar, DeleteTarget
+
+        targets = []
+        for target in self.targets:
+            if isinstance(target, Name):
+                targets.append(DeleteTarget("name", target.id))
+            elif isinstance(target, Attribute):
+                targets.append(DeleteTarget("attribute", target.attr))
+            elif isinstance(target, Subscript):
+                targets.append(DeleteTarget("subscript", target.slice_.fragment.text))
+            else:
+                return super()._construct_sugar()
+        return DeleteSugar(targets=tuple(targets), site=self.fragment)
 
 
 class Assign(Statement):

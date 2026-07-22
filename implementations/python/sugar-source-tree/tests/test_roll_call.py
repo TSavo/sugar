@@ -156,9 +156,8 @@ def test_the_roster_covers_every_source_line() -> None:
 
 def test_discharge_produces_the_true_minority_written_vs_not() -> None:
     # The whole loop: construction REGISTERS (constructor), discharge ANSWERS
-    # present (template) or absent (abstract). A written function's nodes
-    # discharge present; an unwritten construct (Delete has no sugar) and its
-    # ancestors stay in the minority -- red until written.
+    # present (template) or absent (abstract). Written Return and Delete nodes
+    # discharge present; genuinely unwritten registered nodes stay minority.
     from sugar_source_tree.roll_call import discharge
 
     r = CollectingReporter()
@@ -166,5 +165,6 @@ def test_discharge_produces_the_true_minority_written_vs_not() -> None:
     kinds_present = {e.kind for e in report.present}
     kinds_absent = {e.kind for e in report.minority}
     assert "Return" in kinds_present  # a's body desugared
-    assert "Delete" in kinds_absent  # the unwritten construct is minority
+    assert "Delete" in kinds_present  # lexical unbinding now constructs
+    assert "Delete" not in kinds_absent
     assert not report.is_clean  # R > 0 while anything is unwritten
