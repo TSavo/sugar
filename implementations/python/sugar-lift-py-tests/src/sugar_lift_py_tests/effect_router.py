@@ -45,7 +45,12 @@ class EffectBinding:
     effect: object  # RaiseEffect | WarningEffect | ...
 
     def to_facts(self, site=None) -> tuple:
-        """FOL rows authenticating the slot (kind, type, identity)."""
+        """FOL rows authenticating the slot.
+
+        The **witness identity is the slot itself** (effect-slot(S) on returns).
+        Type is separate testimony. Origin links the slot to a deterministic
+        raise-effect occurrence when available — never identity-from-type-alone.
+        """
         slot = str_const(self.slot_id)
         facts = [
             InvValue(
@@ -63,21 +68,18 @@ class EffectBinding:
                     site=site,
                 )
             )
-            if self.kind == "raise":
-                identity = ctor(
-                    "python:observed_exception", [str_const(self.type_name)]
-                )
-            elif self.kind == "warning":
-                identity = ctor(
-                    "python:observed_warning", [str_const(self.type_name)]
-                )
-            else:
-                identity = ctor(
-                    "python:observed_effect", [str_const(self.type_name)]
-                )
+        # Origin: relationship to the originating halt occurrence, if known.
+        occurrence = getattr(self.effect, "occurrence_id", None)
+        if isinstance(occurrence, str) and occurrence:
             facts.append(
                 InvValue(
-                    eq(atomic("effect_slot_identity", [slot]), identity),
+                    eq(
+                        atomic("effect_slot_origin", [slot]),
+                        ctor(
+                            "python:raise_effect_occurrence",
+                            [str_const(occurrence)],
+                        ),
+                    ),
                     site=site,
                 )
             )
