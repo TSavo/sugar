@@ -144,90 +144,40 @@ class TupleValue(FloorValue):
         )
 
     def multiply(self, other, site):
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.term_value import TermValue
 
-        if (
-            type(other) is CallSiteValue
-            and other.target_name == "MAXDIMS"
-            and len(other.arg_values) == 1
-            and type(other.arg_values[0]) is ImportAliasValue
-            and (
-                other.arg_values[0].name == "numpy._core._multiarray_umath"
-                or other.arg_values[0].import_target == "numpy._core._multiarray_umath"
-            )
-        ):
-            # NumPy 2.x publishes NPY_MAXDIMS as the source-owned MAXDIMS
-            # module constant. This is a static vendor pin, not a runtime count.
-            other = TermValue(64)
         if type(other) is TermValue and type(other.value) is int:
             from sugar_lift_py_tests.outcome import Complete
 
             repeated = len(self.elements) * max(other.value, 0)
-            from sugar_lift_py_tests.sugar.for_sugar import (
-                STATIC_UNFOLD_LIMIT,
-                finite_unfold_cap_panic,
-            )
+            static_unfold_limit = 128
 
-            if repeated > STATIC_UNFOLD_LIMIT:
-                finite_unfold_cap_panic(
-                    construction="TupleValue repetition",
-                    site=site,
+            if repeated > static_unfold_limit:
+                from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+                construction_panic_gap(
+                    owner="TupleValue.multiply",
+                    blame=str(site),
                     observed=f"tuple repetition cardinality={repeated}",
-                    limit=STATIC_UNFOLD_LIMIT,
+                    requested=f"finite repetition at or below {static_unfold_limit}",
+                    fix="keep exact sequence repetition within the finite unfold budget",
                 )
             return Complete(TupleValue(self.elements * other.value))
-        runtime_count_kind = None
-        if type(other) is SymbolicValue:
-            runtime_count_kind = "symbolic count"
-        elif type(other) is CallSiteValue and other.target_name == "ndim":
-            # ndarray.ndim is an integer data-model property. The value depends
-            # on the runtime array, while the __index__ warrant does not.
-            # (numpy/lib/tests/test_nanfunctions.py: (1,) * d.ndim)
-            runtime_count_kind = "integer-warranted callsite ndim"
-        elif type(other) is CallSiteValue and other.target_name == "nlanes":
-            runtime_count_kind = "integer-warranted callsite nlanes"
-        elif type(other) is CallSiteValue and other.target_name == "_AXIS_LEN":
-            runtime_count_kind = "integer-warranted callsite _AXIS_LEN"
-        elif (
-            type(other) is CallSiteValue
-            and other.target_name == "py.subscript"
-            and len(other.arg_values) == 2
-            and type(other.arg_values[0]) is CallSiteValue
-            and other.arg_values[0].target_name == "shape"
-        ):
-            runtime_count_kind = "integer-warranted shape element"
-        elif (
-            type(other) is CallSiteValue
-            and other.target_name == "max"
-            and other.arg_values
-            and all(
-                _is_runtime_integer_expression(value)
-                or (type(value) is TermValue and type(value.value) is int)
-                for value in other.arg_values
-            )
-        ):
-            # max preserves one of its operands.  A symbolic integer expression
-            # remains unavailable until Python evaluates the function inputs,
-            # while the ground integer peers preserve the __index__ warrant.
-            runtime_count_kind = "integer-warranted callsite max"
-        if runtime_count_kind is not None:
-            from sugar_lift_py_tests.effect import (
-                SequenceRepetitionRuntimeEffect,
-                runtime_effect_evidence,
-            )
-            from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
 
-            return Incomplete(
-                SequenceRepetitionRuntimeEffect(
-                    f"sequence repetition by {runtime_count_kind}: TupleValue depends "
-                    f"on runtime __index__/length semantics; site={site}",
-                    **runtime_effect_evidence("py.sequence_repeat", other, site),
+        return Complete(
+            SymbolicValue(
+                ctor(
+                    "python:mul",
+                    [
+                        self.to_term(owner=str(site)),
+                        other.to_term(owner=str(site)),
+                    ],
                 )
             )
-        return super().multiply(other, site)
+        )
 
     def subscript(self, index, site):
         # Concrete tuple + in-range TermValue int folds to the element; out of
@@ -252,18 +202,3 @@ class TupleValue(FloorValue):
                 site=site,
             )
         return self.py_subscript_coordinate(index, site)
-
-
-def _is_runtime_integer_expression(value) -> bool:
-    """Recognize the exact integer expression carried by NumPy's kron shape test."""
-    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-    from sugar_lift_py_tests.ir import _Ctor
-
-    if type(value) is not SymbolicValue or not isinstance(value.term, _Ctor):
-        return False
-    if value.term.name != "-" or len(value.term.args) != 2:
-        return False
-    return all(
-        isinstance(arg, _Ctor) and arg.name == "call:len" and len(arg.args) == 1
-        for arg in value.term.args
-    )
