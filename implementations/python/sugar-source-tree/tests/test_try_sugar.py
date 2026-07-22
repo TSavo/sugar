@@ -149,8 +149,8 @@ def test_finally_reduces_on_caught_path():
 
 
 def test_finally_reduces_on_uncaught_path():
-    # finally still reduces when the raise is NOT caught: the body's
-    # Incomplete survives AND finally's raise is spliced (both effects ride).
+    # Cleanup halt supersedes the incoming uncaught raise (Python: only
+    # RuntimeError propagates; ValueError does not also ride).
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
     v = _val(
@@ -165,9 +165,58 @@ def test_finally_reduces_on_uncaught_path():
     )
     reds = _incompletes(v)
     names = {r.effect.exception_name for r in reds if isinstance(r.effect, RaiseEffect)}
-    assert "ValueError" in names  # uncaught body raise survives
-    assert "RuntimeError" in names  # finally reduced and spliced
+    assert names == {"RuntimeError"}
 
+
+
+
+def test_finally_pass_restores_uncaught_raise():
+    """Cleanup fall-through restores the incoming halt (ValueError survives)."""
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+
+    v = _val(
+        "def A(z):\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except KeyError:\n"
+        "        pass\n"
+        "    finally:\n"
+        "        z = z\n"
+        "    return z\n"
+    )
+    reds = _incompletes(v)
+    assert len(reds) == 1
+    assert isinstance(reds[0].effect, RaiseEffect)
+    assert reds[0].effect.exception_name == "ValueError"
+
+
+def test_finally_return_supersedes_caught_path():
+    """Return in finally is the function exit after a matching except."""
+    v = _val(
+        "def A(z):\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError:\n"
+        "        x = 1\n"
+        "    finally:\n"
+        "        return z\n"
+    )
+    assert _incompletes(v) == []
+    assert v.post().args[1].name == "z"
+
+
+def test_finally_on_normal_completion():
+    """finally runs on the no-raise path; fall-through keeps body completion."""
+    v = _val(
+        "def A(z):\n"
+        "    try:\n"
+        "        x = z\n"
+        "    finally:\n"
+        "        y = 1\n"
+        "    return z\n"
+    )
+    assert _incompletes(v) == []
+    assert v.post().args[1].name == "z"
 
 def test_except_as_binds_matching_raise_witness_in_handler():
     # Tree rewrites `error` → EffectRef(slot); routing emits EffectBinding facts.

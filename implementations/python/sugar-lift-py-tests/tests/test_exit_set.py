@@ -79,3 +79,59 @@ def test_block_reduction_retains_complement_of_guarded_halt():
     assert exits.exits[0].guard == condition
     assert isinstance(exits.exits[1], Completed)
     assert exits.exits[1].guard == not_(condition)
+
+
+def test_and_finally_cleanup_completion_restores_incoming_completed():
+    incoming = ExitSet.completed("try-state")
+    after = incoming.and_finally(lambda: ExitSet.completed("cleanup-done"))
+    assert after.collapse() == Complete("try-state")
+
+
+def test_and_finally_cleanup_completion_restores_incoming_halted():
+    effect = RaiseEffect(exception_name="ValueError")
+    incoming = ExitSet.halted(effect)
+    after = incoming.and_finally(lambda: ExitSet.completed("cleanup-done"))
+    assert after.collapse() == Incomplete(effect)
+
+
+def test_and_finally_cleanup_halt_supersedes_incoming():
+    original = RaiseEffect(exception_name="ValueError")
+    cleanup = RaiseEffect(exception_name="RuntimeError")
+    incoming = ExitSet.halted(original)
+    after = incoming.and_finally(lambda: ExitSet.halted(cleanup))
+    assert after.collapse() == Incomplete(cleanup)
+
+
+def test_and_finally_cleanup_halt_supersedes_completed():
+    cleanup = RaiseEffect(exception_name="RuntimeError")
+    incoming = ExitSet.completed("ok")
+    after = incoming.and_finally(lambda: ExitSet.halted(cleanup))
+    assert after.collapse() == Incomplete(cleanup)
+
+
+def test_and_finally_terminal_cleanup_completion_supersedes():
+    incoming = ExitSet.completed("try-state")
+    after = incoming.and_finally(
+        lambda: ExitSet.completed("return-from-finally"),
+        cleanup_restores=lambda value: False,
+    )
+    assert after.collapse() == Complete("return-from-finally")
+
+
+def test_and_finally_runs_cleanup_on_every_conditional_exit():
+    condition = _guard("condition")
+    effect = RaiseEffect(exception_name="ValueError")
+    incoming = ExitSet.conditional_halt(condition, effect, "state")
+    seen = []
+
+    def cleanup():
+        seen.append(1)
+        return ExitSet.completed("done")
+
+    after = incoming.and_finally(cleanup)
+    # cleanup invoked once per construction of cleanup ExitSet — and_finally
+    # calls cleanup() once then fans the resulting exits across incoming.
+    assert len(seen) == 1
+    assert len(after.exits) == 2
+    assert any(isinstance(e, Halted) and e.effect == effect for e in after.exits)
+    assert any(isinstance(e, Completed) and e.value == "state" for e in after.exits)
