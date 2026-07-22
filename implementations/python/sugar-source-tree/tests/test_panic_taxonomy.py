@@ -19,6 +19,8 @@ from sugar_source_tree.panic import (
     VocabularyMissing,
     SourceTreePanic,
     BackendDefect,
+    RuntimeSelectedContextManager,
+    SugarNotWritten,
 )
 from sugar_source_tree.spans import LineTable, Span
 
@@ -78,3 +80,21 @@ def test_catching_the_common_base_catches_both():
         resolve_kind("NoSuchKind", observed_at="test")
     with pytest.raises(SourceTreePanic):
         Span(5, 2)
+
+
+def test_runtime_selected_context_manager_is_named_sugar_gap():
+    """Resource-with residual (#5994 step 4): subclass of SugarNotWritten so
+    report_gap / census still see a gap, but isinstance distinguishes it from
+    a bare unwritten shape."""
+    assert issubclass(RuntimeSelectedContextManager, SugarNotWritten)
+    assert issubclass(RuntimeSelectedContextManager, SourceTreePanic)
+    assert RuntimeSelectedContextManager is not SugarNotWritten
+    panic = RuntimeSelectedContextManager(
+        owner="With.sugar",
+        observed="unauthenticated context manager — exit suppression runtime-selected",
+        requested="typed exit contract",
+        fix="enroll with proof of __exit__ disposition",
+    )
+    assert isinstance(panic, SugarNotWritten)
+    assert type(panic) is RuntimeSelectedContextManager
+    assert "RUNTIME-SELECTED CONTEXT MANAGER" in str(panic)

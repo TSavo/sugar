@@ -45,6 +45,7 @@ from .operators import (
     UnaryOperator,
 )
 from .panic import (
+    RuntimeSelectedContextManager,
     SourceTreePanic,
     SubstituteNotWritten,
     SugarNotWritten,
@@ -1607,14 +1608,27 @@ class With(Statement):
         """`with <manager>: <body>` -- the node consults the MEMBRANE, never a
         vendor name (#5994). A single manager with no `as`, whose membrane-issued
         contract is a raise-kind Expects/Suppresses, wires through the shared
-        effect router (WithContractSugar). Everything else stays LOUD: the
-        unauthenticated manager (the named residual), warning-kind matchers (no
-        WarningEffect exists to observe -- wiring would mint false absent-twins),
-        `as` witnesses (step 5), multiple managers, and resource managers (the
-        finally-faithful expansion, step 4)."""
+        effect router (WithContractSugar).
+
+        Unauthenticated / RuntimeSelected managers (resource managers:
+        ``open(...)``, ``tm.ensure_clean(...)``, …) stay LOUD as the *named*
+        residual ``RuntimeSelectedContextManager`` — distinct from bare
+        ``SugarNotWritten`` so the census can count them. Temporal dissolution
+        is licensed only under a typed exit contract; we have no proof any
+        resource manager is ``NeverSuppresses`` (that requires reading
+        ``__exit__``, which we do not lift), so every unenrolled manager is
+        honestly RuntimeSelected. A normal-path-only enter/exit splice that
+        drops the exceptional edge is a different language — never written
+        here. ``NeverSuppresses`` enrollment (none yet) would gate the real
+        finally-faithful expansion; until then that arm stays unwritten loud.
+        `as` witnesses (step 5) and multiple managers remain bare unwritten."""
         if len(self.items) != 1 or self.items[0].optional_vars is not None:
             return super().sugar()
-        from sugar_lift_py_tests.context_manager_contract import Expects, Suppresses
+        from sugar_lift_py_tests.context_manager_contract import (
+            Expects,
+            RuntimeSelected,
+            Suppresses,
+        )
         from sugar_lift_py_tests.manifest_membrane import (
             contract_for_manager,
             default_community_manifest,
@@ -1624,15 +1638,45 @@ class With(Statement):
         contract = contract_for_manager(
             default_community_manifest(), self.items[0].context_expr
         )
-        if not isinstance(contract, (Expects, Suppresses)):
-            return super().sugar()  # unauthenticated / runtime-selected: loud
-        if contract.matcher.kind not in ("raise", "warning"):
-            return super().sugar()
-        return WithContractSugar(
-            contract=contract,
-            body=tuple(stmt.sugar() for stmt in self.body),
-            site=self.fragment,
-        )
+        if isinstance(contract, (Expects, Suppresses)):
+            if contract.matcher.kind not in ("raise", "warning"):
+                return super().sugar()
+            return WithContractSugar(
+                contract=contract,
+                body=tuple(stmt.sugar() for stmt in self.body),
+                site=self.fragment,
+            )
+        # None from the membrane OR an explicit RuntimeSelected enrollment:
+        # exit suppression is undecidable statically. Named residual — not a
+        # bare SugarNotWritten, not a false-green dissolve.
+        if contract is None or isinstance(contract, RuntimeSelected):
+            where = f"{self.unit.filename}"
+            try:
+                lc = self.line_col_span()
+                where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
+            except SourceTreePanic:
+                pass
+            panic = RuntimeSelectedContextManager(
+                owner="With.sugar",
+                observed=(
+                    "unauthenticated context manager — exit suppression "
+                    f"runtime-selected at {where}"
+                ),
+                requested=(
+                    "a typed exit contract (NeverSuppresses with "
+                    "finally-faithful expansion, or Expects/Suppresses via "
+                    "the membrane)"
+                ),
+                fix=(
+                    "enroll a manager only with proof of its __exit__ "
+                    "disposition; never invent a normal-path-only expansion"
+                ),
+            )
+            self.reporter.report_gap(self, panic)
+            raise panic
+        # NeverSuppresses (nothing enrolls yet): finally-faithful expansion
+        # unwritten — bare SugarNotWritten until that slice lands.
+        return super().sugar()
 
     def substitute(self, scope):
         """with ... as <vars>: binds the as-targets for the body."""

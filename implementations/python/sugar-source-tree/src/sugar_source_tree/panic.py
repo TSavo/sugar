@@ -86,6 +86,25 @@ class SugarNotWritten(SourceTreePanic):
     _LABEL = "SUGAR NOT WRITTEN"
 
 
+class RuntimeSelectedContextManager(SugarNotWritten):
+    """A `with` whose manager has no authenticated exit-suppression contract.
+
+    Resource managers (`open(...)`, `tm.ensure_clean(...)`, …) are not
+    enrolled as ``NeverSuppresses`` / ``Expects`` / ``Suppresses``: the lift
+    never reads ``__enter__`` / ``__exit__``, so suppression is
+    ``RuntimeSelected`` and must stay LOUD. This residual is deliberately a
+    *named* subclass of ``SugarNotWritten`` so the frontier census can count
+    unauthenticated context managers separately from shapes that simply have
+    no ``.sugar()`` override yet.
+
+    Never a normal-path-only ``__enter__``/``__exit__(None,None,None)``
+    rewrite — that drops the exceptional edge and is a different language
+    (issue #5994 step 4).
+    """
+
+    _LABEL = "RUNTIME-SELECTED CONTEXT MANAGER"
+
+
 class SubstituteNotWritten(SourceTreePanic):
     """Nobody has written this node's substitution yet. Raised by the abstract
     ``Node.substitute()``; every concrete class either OVERRIDES it (a leaf
