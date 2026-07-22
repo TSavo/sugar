@@ -409,6 +409,53 @@ def _unique_unconditional_binding(tree: ast.Module, name: str) -> ast.AST | None
     return binding
 
 
+def _class_creation_is_stable(node: ast.ClassDef) -> bool:
+    """Whether source pins the class object created for this definition."""
+    if node.decorator_list or node.keywords:
+        return False
+    if any(isinstance(base, ast.Subscript) for base in node.bases):
+        return False
+    transforming_hooks = {"__init_subclass__", "__class_getitem__"}
+    return not any(
+        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and item.name in transforming_hooks
+        for item in node.body
+    )
+
+
+def _module_mutates_class_exit(tree: ast.Module, class_name: str) -> bool:
+    """Detect source-visible mutation surfaces for one class spelling."""
+
+    def is_class_name(node: ast.AST) -> bool:
+        return isinstance(node, ast.Name) and node.id == class_name
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            if (
+                node.attr == "__exit__"
+                and is_class_name(node.value)
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+            ):
+                return True
+        elif isinstance(node, ast.Call):
+            if (
+                isinstance(node.func, ast.Name)
+                and node.func.id in {"setattr", "delattr"}
+                and node.args
+                and is_class_name(node.args[0])
+            ):
+                return True
+        elif isinstance(node, ast.Subscript):
+            if (
+                isinstance(node.ctx, (ast.Store, ast.Del))
+                and isinstance(node.value, ast.Attribute)
+                and node.value.attr == "__dict__"
+                and is_class_name(node.value.value)
+            ):
+                return True
+    return False
+
+
 def _lookup_name_in_module(
     module_name: str, name: str, *, depth: int = 0
 ) -> DefinitionMemento | None:
@@ -419,6 +466,8 @@ def _lookup_name_in_module(
     if parsed is None:
         return None
     tree, _source, filename, source_cid = parsed
+    if _module_mutates_class_exit(tree, name):
+        return None
 
     # 1. Class definition in this module. A direct override owns the
     # disposition. Otherwise admit only one statically named base; multiple or
@@ -426,6 +475,8 @@ def _lookup_name_in_module(
     for node in _module_level_nodes(tree):
         if isinstance(node, ast.ClassDef) and node.name == name:
             if _unique_unconditional_binding(tree, name) is not node:
+                return None
+            if not _class_creation_is_stable(node):
                 return None
             exit_fn = _direct_class_exit(node)
             if exit_fn is not None:
@@ -639,6 +690,8 @@ def resolve_definition_memento_from_manager_expr(
         source, getattr(unit, "filename", "<unknown>"), manager_line
     )
     if "*" in coordinate_bound or head in (lexically_bound_names | coordinate_bound):
+        return None
+    if _module_mutates_class_exit(source_tree, head):
         return None
     if head not in bindings:
         return None

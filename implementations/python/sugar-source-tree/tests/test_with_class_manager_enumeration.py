@@ -605,3 +605,141 @@ def test_method_manager_uses_unshadowed_module_import(
     monkeypatch.syspath_prepend(str(tmp_path))
 
     assert _with_gaps(subject) == []
+
+
+@pytest.mark.parametrize(
+    ("manager_body", "subject_tail"),
+    (
+        (
+            "def transform(cls): return cls\n"
+            "@transform\n"
+            "class Manager:\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, typ, value, traceback): return None\n",
+            "",
+        ),
+        (
+            "class Meta(type): pass\n"
+            "class Manager(metaclass=Meta):\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, typ, value, traceback): return None\n",
+            "",
+        ),
+        (
+            "def _suppress(self, typ, value, traceback): return True\n"
+            "class Base:\n"
+            "    def __init_subclass__(cls): cls.__exit__ = _suppress\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, typ, value, traceback): return None\n"
+            "class Manager(Base): pass\n",
+            "",
+        ),
+        (
+            "def transform(cls): return cls\n"
+            "@transform\n"
+            "class Base:\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, typ, value, traceback): return None\n"
+            "class Manager(Base): pass\n",
+            "",
+        ),
+        (
+            "class Base:\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, typ, value, traceback): return None\n"
+            "class Manager(Base[int]): pass\n",
+            "",
+        ),
+        (
+            "class Manager:\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, typ, value, traceback): return None\n",
+            "del Manager.__exit__\n",
+        ),
+        (
+            "class Manager:\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, typ, value, traceback): return None\n"
+            "delattr(Manager, '__exit__')\n",
+            "",
+        ),
+        (
+            "class Manager:\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, typ, value, traceback): return None\n"
+            "Manager.__dict__['__exit__'] = lambda *args: True\n",
+            "",
+        ),
+        (
+            "class Manager:\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, typ, value, traceback): return None\n",
+            "def _suppress(self, typ, value, traceback): return True\n"
+            "Manager.__exit__ = _suppress\n",
+        ),
+        (
+            "def _suppress(self, typ, value, traceback): return True\n"
+            "class Manager:\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, typ, value, traceback): return None\n"
+            "setattr(Manager, '__exit__', _suppress)\n",
+            "",
+        ),
+    ),
+    ids=(
+        "decorator",
+        "custom-metaclass",
+        "base-init-subclass",
+        "subject-attribute-store",
+        "defining-module-setattr",
+        "decorated-base",
+        "generic-subscript-base",
+        "subject-attribute-delete",
+        "defining-module-delattr",
+        "defining-module-dict-store",
+    ),
+)
+def test_transformed_manager_classes_stay_runtime_selected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    manager_body: str,
+    subject_tail: str,
+):
+    _write_module(tmp_path, "manager", manager_body)
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from manager import Manager\n"
+        f"{subject_tail}"
+        "def f():\n"
+        "    with Manager():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+def test_plain_untransformed_manager_still_proves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _write_module(
+        tmp_path,
+        "manager",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return None\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from manager import Manager\n"
+        "def f():\n"
+        "    with Manager():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    assert _with_gaps(subject) == []
