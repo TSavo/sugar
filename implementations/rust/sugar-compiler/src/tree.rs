@@ -1086,6 +1086,10 @@ pub fn fold_lift_report_response(
     let mut suppressed = Vec::new();
     let mut source_mementos = Vec::new();
     let mut facts = Vec::new();
+    let mut source_audits = Vec::new();
+    let mut source_loci = 0u64;
+    let mut source_warranted = 0u64;
+    let mut source_unresolved = 0u64;
     for file in files {
         source_mementos.push(file.memento.to_json());
         let (definitions, definition_gaps) =
@@ -1125,13 +1129,36 @@ pub fn fold_lift_report_response(
             if let Some(payload) = leaf.payload.clone() {
                 facts.push(payload);
             }
-            let audit = leaf.audit.ok_or_else(|| EnumerateError::Malformed {
+            let mut audit = leaf.audit.ok_or_else(|| EnumerateError::Malformed {
                 plugin: conn.surface.clone(),
                 reason: format!(
                     "report leaf {} omitted recovered body",
                     memento_locus_display(&definition.memento)
                 ),
             })?;
+            // The reporter's roll-call partition -- everything the CLI renders
+            // (present -> warranted/Blue, absent -> unresolved/Yellow). One
+            // source-audit row per leaf; its totals sum into the ledger.
+            if let Some(source_audit) = audit
+                .as_object_mut()
+                .and_then(|object| object.remove("sourceAudit"))
+            {
+                if let Some(totals) = source_audit.get("totals") {
+                    source_loci += totals
+                        .get("source_loci")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    source_warranted += totals
+                        .get("source_warranted")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    source_unresolved += totals
+                        .get("source_unresolved")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                }
+                source_audits.push(source_audit);
+            }
             merge_recovered_audit_leaf(
                 &conn.surface,
                 &definition.memento,
@@ -1151,11 +1178,17 @@ pub fn fold_lift_report_response(
         } else {
             "failed"
         },
-        "audits": panics,
+        "sourceLedger": {
+            "source_loci": source_loci,
+            "source_warranted": source_warranted,
+            "source_unresolved": source_unresolved,
+        },
+        "sourceAudits": source_audits,
+        "sourceMementos": source_mementos,
         "effects": effects,
         "suppressedDescendants": suppressed,
-        "sourceMementos": source_mementos,
-        "contracts": facts,
+        "ir": facts,
+        "factoryAuditSummary": { "factoryWalk": [] },
         "census": {
             "sourceFilesEnumerated": source_files_enumerated,
             "sourceBodiesDemanded": source_bodies_demanded,
