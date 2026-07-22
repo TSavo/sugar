@@ -206,7 +206,7 @@ def _panic_cyclic_term(term: Term) -> None:
         observed=observed,
         requested="DAG term hash-cons (finite structural intern key)",
         fix=(
-            "IR terms must be finite DAGs; refuse cyclic _Ctor graphs with "
+            "IR terms must be finite DAGs; cyclic _Ctor graphs are gaps with "
             "ConstructionPanic at intern. Never soft-complete, never timeout-launder, "
             "never leave recursive dataclass __hash__ as the intern seat, and "
             "never convert this into RuntimeEffect"

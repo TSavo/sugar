@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R_finite_unfold_compact_gaps — over-cap finite For/range must project compactly.
 
-Illegal residual: ForSugar / CallSugar still refuse decidable finite over-cap work
+Illegal residual: ForSugar / CallSugar still leave decidable finite over-cap work as gaps
 (or finite for + non-ground while) with ``finite_unfold_cap_panic`` instead of the
 shared compact projection door.
 

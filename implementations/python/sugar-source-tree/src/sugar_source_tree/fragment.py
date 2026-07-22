@@ -9,11 +9,11 @@ the sealed minimal address — file, span, two CIDs — inert, never grows.
 They are interchangeable through the SourceOracle, and ONLY through it:
 
     fragment.seal()            -> SourceMemento   (pin)
-    resolve_memento(memento)   -> SourceFragment  (recompute, exact-or-refuse)
+    resolve_memento(memento)   -> SourceFragment  (recompute, exact-or-source-unavailable)
 
 Resolution goes back through the oracle's ``resolve_span_memento``: the
 on-disk file must recompute to the pinned file CID and the sliced segment
-to the pinned segment CID, or the oracle refuses loudly. Nothing here
+to the pinned segment CID, or the source becomes unavailable loudly. Nothing here
 opens a file or mints a hash outside the oracle.
 
 Enumeration is the only fragment constructor: ``SourceFile.fragment``
@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 from sugar_lift_python_source.source_oracle import (
-    SourceOracleRefusal,
+    SourceUnavailable,
     resolve_span_memento,
 )
 
@@ -161,13 +161,13 @@ def resolve_memento(
     backend: Optional["Backend"] = None,
     project_root: Optional[str] = None,
 ) -> SourceFragment:
-    """Memento -> fragment, through the oracle. Exact or refuse.
+    """Memento -> fragment, through the oracle. Exact or source unavailable.
 
-    The oracle re-reads the file, recomputes both CIDs, and refuses on any
+    The oracle re-reads the file, recomputes both CIDs, and source is unavailable on any
     drift. On success the file is re-parsed through a backend and the
     fragment is re-bound to the node whose span equals the pinned span, so
     the resolved fragment is as live as the one that sealed. A pinned span
-    that matches no node when the CIDs aligned is a loud refusal — the
+    that matches no node when the CIDs aligned is a loud source-unavailable result — the
     backend disagreed with itself, and that never becomes silence.
     """
     from .tree import SourceFile
@@ -183,7 +183,7 @@ def resolve_memento(
     for node in file.nodes():
         if node.span == span:
             return node.fragment
-    raise SourceOracleRefusal(
+    raise SourceUnavailable(
         f"span [{span.start}, {span.end}) recomputed to the pinned CIDs in "
         f"`{memento.file}` but no enumerated node answers it -- the backend "
         "disagreed with the enumeration that sealed"

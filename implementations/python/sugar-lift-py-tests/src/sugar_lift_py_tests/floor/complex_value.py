@@ -11,7 +11,7 @@ class ComplexValue(FloorValue):
     parts (both Python floats). Stands as the vendor-canonical
     ``py.complex(<real>, <imag>)`` ctor: already in the verifier's structural
     ground-ctor whitelist (``consistency.rs`` #4398 -- "py.complex is a data
-    value, dual complex literals refuse"), the kit's own ground-ctor list
+    value, dual complex literals remain gaps"), the kit's own ground-ctor list
     (``call_site_value.py._GROUND_DATA_CTOR_NAMES``), and the isinstance fold
     table (``symbolic_value.py``: ``"py.complex": "complex"``). This is the
     ONE representation -- never a second complex encoding."""

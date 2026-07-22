@@ -23,7 +23,7 @@ boundary — never a permissive fallback.
 Source ``ast.parse`` cannot parse at all (a syntax error, or a null byte —
 ``ValueError`` on some CPython versions, ``SyntaxError`` on others; both
 mean the same thing: this text is not valid Python) is never let through as
-CPython's own exception type. It is re-raised as ``BackendRefused``
+CPython's own exception type. It is re-raised as ``BackendCouldNotParse``
 (backend.py) — the tree's own name for "the backend declined this
 input" — so no caller above this module ever needs to know CPython is
 behind the tree today.
@@ -44,7 +44,7 @@ from .backend import (
     OpsLeaf,
     Backend,
     BackendNode,
-    BackendRefused,
+    BackendCouldNotParse,
     Slot,
 )
 from .nodes import SourceUnit
@@ -413,7 +413,7 @@ class CPythonAstBackend(Backend):
             # IndentationError). ValueError: some CPython versions raise it
             # instead of SyntaxError for a null byte in the source. Both are
             # CPython declining this text — never let either escape as-is.
-            raise BackendRefused(
+            raise BackendCouldNotParse(
                 backend=self.name, file=unit.filename, reason=str(err)
             ) from err
         return _Handle(unit, tree)

@@ -48,7 +48,7 @@ class VendorConjoinDto(TypedDict, total=False):
 
 
 class DiagnosticDto(TypedDict, total=False):
-    """Ad hoc diagnostic rows (dig refusals, agreement violations, proofir
+    """Ad hoc diagnostic rows (dig gaps, agreement violations, proofir
     provenance notes). Each producer stamps its own `kind`; the payload
     fields vary by kind, so `Any` is the honest membrane for now.
     """

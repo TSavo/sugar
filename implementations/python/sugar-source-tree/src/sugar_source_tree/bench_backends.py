@@ -3,8 +3,8 @@
 Three independent passes, never conflated:
 
 1. CORRECTNESS — enumerate a SourceTree: every file becomes a SourceFile,
-   every SourceFile enumerates its nodes. Record backend refusals
-   (BackendRefused), panics (VocabularyMissing / BackendDefect), and any
+   every SourceFile enumerates its nodes. Record backend could-not-parse outcomes
+   (BackendCouldNotParse), panics (VocabularyMissing / BackendDefect), and any
    other crash verbatim. Not load sensitive; safe to run on a busy host.
 
 2. RSS — same enumeration, printing ru_maxrss at file-count checkpoints.
@@ -32,9 +32,9 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from sugar_lift_python_source.source_oracle import SourceOracleRefusal, path_source
+from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
 
-from .backend import BackendRefused
+from .backend import BackendCouldNotParse
 from .corpus import make_backend
 from .panic import SourceTreePanic
 from .tree import SourceFile, SourceTree
@@ -58,7 +58,7 @@ def run_correctness(backend_name: str, root: Path, rss: bool = False) -> int:
     tree = SourceTree(root, backend=make_backend(backend_name))
     parsed = 0
     node_count = 0
-    refused: list[tuple[str, str]] = []
+    could_not_process: list[tuple[str, str]] = []
     panics: list[tuple[str, str]] = []
     crashes: list[tuple[str, str]] = []
     checkpoint = 0
@@ -68,16 +68,16 @@ def run_correctness(backend_name: str, root: Path, rss: bool = False) -> int:
         rel = str(path)
         try:
             identity = path_source(rel)
-        except SourceOracleRefusal as err:
-            refused.append((rel, f"oracle refused: {err}"))
+        except SourceUnavailable as err:
+            could_not_process.append((rel, f"source unavailable: {err}"))
             continue
         try:
             file = SourceFile(identity, backend=tree.backend)
             for _node in file.nodes():
                 node_count += 1
             parsed += 1
-        except BackendRefused as err:
-            refused.append((rel, str(err).splitlines()[0]))
+        except BackendCouldNotParse as err:
+            could_not_process.append((rel, str(err).splitlines()[0]))
         except SourceTreePanic as err:
             panics.append((rel, " | ".join(str(err).splitlines())))
         except Exception as err:  # noqa: BLE001 - a crash IS a result here
@@ -90,9 +90,9 @@ def run_correctness(backend_name: str, root: Path, rss: bool = False) -> int:
     print(f"files:            {total}")
     print(f"constructed:      {parsed}")
     print(f"nodes enumerated: {node_count}")
-    print(f"backend refusals: {len(refused)}")
-    for rel, msg in refused:
-        print(f"  REFUSED  {rel}: {msg}")
+    print(f"backend could-not-parse outcomes: {len(could_not_process)}")
+    for rel, msg in could_not_process:
+        print(f"  COULD NOT PROCESS  {rel}: {msg}")
     print(f"panics:           {len(panics)}")
     for rel, msg in panics:
         print(f"  PANIC    {rel}: {msg}")
@@ -126,7 +126,7 @@ def run_throughput(backend_name: str, root: Path, limit: Optional[int]) -> None:
     for path in paths:
         try:
             identities.append(path_source(str(path)))
-        except SourceOracleRefusal:
+        except SourceUnavailable:
             continue
 
     load_start = _load1()

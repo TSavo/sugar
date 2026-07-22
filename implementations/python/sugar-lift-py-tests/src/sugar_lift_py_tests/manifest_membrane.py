@@ -21,7 +21,7 @@ Manifest format (JCS-canonicalized JSON)::
 
 The `cid` is the BLAKE3-512 JCS hash (see `canonicalizer.jcs_hash`) of the
 `rows` array alone. `load_manifest` recomputes that hash from the bytes on
-disk and REFUSES (raises `ManifestIntegrityError`) on any mismatch — never a
+disk and LEAVES A GAP (raises `ManifestIntegrityError`) on any mismatch — never a
 warning. A manifest carries its own integrity; nothing loads implicitly, and
 nothing loads silently-wrong.
 
@@ -127,7 +127,7 @@ def load_manifest(path: str | Path) -> Manifest:
     """Load a hashed kit manifest, verifying its integrity.
 
     Recomputes the JCS/BLAKE3-512 hash of the `rows` array and compares it
-    against the manifest's own `cid` field. A mismatch REFUSES to load: it
+    against the manifest's own `cid` field. A mismatch LEAVES A GAP to load: it
     raises `ManifestIntegrityError` rather than loading with a warning. This
     is the only lawful path by which community spellings enter the
     provider-neutral contract types.
@@ -149,7 +149,7 @@ def load_manifest(path: str | Path) -> Manifest:
         raise ManifestIntegrityError(
             f"manifest at {manifest_path} FAILED integrity check: "
             f"declared cid {declared_cid!r} does not match computed cid "
-            f"{computed_cid!r} over its rows. Refusing to load."
+            f"{computed_cid!r} over its rows. Manifest load gap."
         )
 
     rows = tuple(
@@ -256,7 +256,7 @@ def contract_for_manager(manifest: Manifest, manager_node) -> Optional[Contract]
             return None
         return builder(matcher)
 
-    # Unknown arity discipline: refuse rather than guess.
+    # Unknown arity discipline: leave a gap rather than guess.
     return None
 
 

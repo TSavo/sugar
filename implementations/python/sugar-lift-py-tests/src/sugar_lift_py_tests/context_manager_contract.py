@@ -45,7 +45,7 @@ class EffectMatcher:
     the unit of honesty is the individual obligation, never the surface
     construct). The type obligation is decidable against the observed halt;
     each payload obligation (e.g. MessagePattern from `match=`) carries its own
-    closed verdict -- discharged / refuted / undischarged -- sharing the same
+    closed verdict -- discharged / disproven / undischarged -- sharing the same
     observed-effect witness identity."""
 
     kind: str  # "raise" | "warning"

@@ -134,8 +134,8 @@ class UniverseMint(ProofIRNode):
                 ),
             ),
             lying=VerdictWitnessCase(
-                name="universe-mint-raw-formula-refuses",
-                expected="construction-refusal",
+                name="universe-mint-raw-formula-open",
+                expected="construction-open",
                 construct=lambda: cls(
                     name="module::lying::assertion",
                     slot="inv",

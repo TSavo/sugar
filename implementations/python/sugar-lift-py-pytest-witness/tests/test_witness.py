@@ -18,7 +18,7 @@ from sugar_pytest_witness import (
 )
 from sugar_pytest_witness.discharge_cli import main as discharge_main
 from sugar_lift_py_tests.witness_oracle import (
-    WitnessOracleRefusal,
+    WitnessOracleUnwitnessed,
     resolve_witness,
 )
 from sugar_lift_py_tests.filename import cid_filename
@@ -139,7 +139,7 @@ def test_oracle_refuses_minted_witness_when_code_drifts(tmp_path):
     def recompute(_m):
         return run_and_witness(proj, w.test_id, list(w.code_files)).cid
 
-    with pytest.raises(WitnessOracleRefusal, match="recompute misaligned"):
+    with pytest.raises(WitnessOracleUnwitnessed, match="recompute misaligned"):
         resolve_witness(m, recompute_fn=recompute)
 
 
@@ -147,7 +147,7 @@ def test_oracle_refuses_minted_witness_with_tampered_signature(tmp_path):
     proj = _project(tmp_path, GOOD)
     m = witness_memento(run_and_witness(proj, "test_add.py", CODE))
     m["signature"] = "00" * 64  # forge the mark
-    with pytest.raises(WitnessOracleRefusal, match="signature invalid"):
+    with pytest.raises(WitnessOracleUnwitnessed, match="signature invalid"):
         resolve_witness(m)
 
 
@@ -183,7 +183,7 @@ def test_package_tamper_is_refused_by_content_address(tmp_path):
     with open(paths[0], "ab") as f:
         f.write(b" tampered")  # swap the body under the same name
     body = read_witness_body(w.cid, str(pkg))
-    with pytest.raises(WitnessOracleRefusal, match="content misaligned"):
+    with pytest.raises(WitnessOracleUnwitnessed, match="content misaligned"):
         resolve_witness(witness_memento(w), witness_content=body)
 
 

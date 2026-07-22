@@ -20,7 +20,7 @@ it (``fragment.seal()`` / ``resolve_memento``). Every enumerated object
 answers ``.fragment``.
 """
 
-from .backend import Backend, BackendRefused
+from .backend import Backend, BackendCouldNotParse
 from .fragment import SourceFragment, SourceMemento, resolve_memento
 from .nodes import KIND_REGISTRY, Node, SourceUnit, Typeable, Typed
 from .panic import BackendDefect, SourceTreePanic, VocabularyMissing
@@ -30,7 +30,7 @@ from .tree import SourceFile, SourceTree
 __all__ = [
     "Backend",
     "BackendDefect",
-    "BackendRefused",
+    "BackendCouldNotParse",
     "KIND_REGISTRY",
     "LineColSpan",
     "LineTable",

@@ -534,7 +534,7 @@ class CallSiteValue(FloorValue):
         Concrete containers fold post-state. A callsite receiver (for example
         ``dict_class(...)``) has no element history, but the delete still
         rebinds the name: carry prior coordinate and index on ``py.delitem``.
-        Do not invent members; do not soft-refuse — silence stays illegal.
+        Do not invent members; do not hide the gap — silence stays illegal.
         """
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
@@ -569,7 +569,7 @@ class CallSiteValue(FloorValue):
         and the derived value remain independently visible at the EUF join.
         Only a single ``out = ground-value`` post is a derived value pin;
         opaque, effectful, symbolic, and multi-exit bodies stay absent and
-        therefore loud at the existing refusal/gap boundary.
+        therefore loud at the existing construction-gap boundary.
 
         Ground values are primitive consts *and* data constructors the
         verifier treats as structural values (``None``, ``py.ellipsis``,
@@ -1158,7 +1158,7 @@ def _project_callsite_floor(
 
 # Data constructors the verifier treats as structural *values* (not operators /
 # callsites). Must stay aligned with sugar-verifier `is_ground_data_ctor_name`
-# so Derived residue duals refuse the same ground faces structurally.
+# so Derived residue duals leave the same ground faces as gaps structurally.
 _GROUND_DATA_CTOR_NAMES = frozenset(
     {
         "tuple",
@@ -1186,7 +1186,7 @@ def _is_ground_value_term(term) -> bool:
     Mirrors sugar-verifier ``is_const_value``: primitive consts, plus ground
     data constructors whose args are themselves ground. Operator/callsite
     ctors (``+``, ``call:…``, ``py.attr``, …) stay out so dig residue cannot
-    invent a dual that structural consistency would not refuse.
+    invent a dual that structural consistency would not mark as a gap.
     """
     from sugar_lift_py_tests.ir import (
         _ConstBool,

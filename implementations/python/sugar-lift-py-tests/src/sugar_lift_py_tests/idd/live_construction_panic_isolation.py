@@ -43,7 +43,7 @@ def assert_bearing_py_files(root: Path) -> list[Path]:
 
 
 def factory_engaged_empty_report() -> dict[str, Any]:
-    """Factory instrument engaged, no spoken assert rows → refuse-loud partition."""
+    """Factory instrument engaged, no spoken assert rows → gap partition."""
     return {
         "factoryAuditSummary": {"statusCounts": {"unresolved": 1}},
         "auditOnlyGaps": [],
@@ -68,7 +68,7 @@ def live_per_file_isolation_conservation(
     """Production lift path per assert-bearing file; conservation + panic residual.
 
     Completed files feed the real lift payload into ``account_lift_coverage``.
-    ConstructionPanic / other hard fails engage refuse-loud for that file's on-disk
+    ConstructionPanic / other hard fails engage gap for that file's on-disk
     asserts (panic is loud, not silent). Aggregate delta must be 0.
 
     Returns a closed ranking payload including ``R_live_construction_panic_files``,

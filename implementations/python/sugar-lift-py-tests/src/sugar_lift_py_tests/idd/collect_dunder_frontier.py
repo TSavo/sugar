@@ -202,5 +202,5 @@ def _owned_dunder_slots() -> dict[str, str]:
 def _fix(axis: str, name: str) -> str:
     return (
         f"write {name} sugar/floor dispatch for the `{axis}` data-model slot; "
-        "the kit must lower by ownership or loudly effect/refuse"
+        "the kit must lower by ownership or leave a loud effect/gap"
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-Verdict = Literal["sat", "unsat", "refused"]
+Verdict = Literal["sat", "unsat", "unwitnessed"]
 
 
 @dataclass(frozen=True)
@@ -24,7 +24,7 @@ class SugarWitnessPair:
 
 
 @dataclass(frozen=True)
-class SugarRefusedWitnessPair:
+class SugarUnwitnessedPair:
     """A lawful epistemic-red pair: neither arm may be guessed."""
 
     name: str
@@ -71,13 +71,13 @@ class NotVerdictBearing:
 
 SugarWitnesses = (
     SugarWitnessPair
-    | SugarRefusedWitnessPair
+    | SugarUnwitnessedPair
     | SugarRedEffectWitnessPair
     | tuple[SugarWitnessPair, ...]
     | NotVerdictBearing
     | tuple[
         SugarWitnessPair
-        | SugarRefusedWitnessPair
+        | SugarUnwitnessedPair
         | SugarRedEffectWitnessPair
         | NotVerdictBearing,
         ...,
@@ -121,7 +121,7 @@ def _call_return_pair(
     )
 
 
-def _refused_call_return_pair(
+def _unwitnessed_call_return_pair(
     *,
     name: str,
     owner_sugar: str,
@@ -129,19 +129,19 @@ def _refused_call_return_pair(
     truthful: str,
     lying: str,
     prefix: str = "",
-) -> SugarRefusedWitnessPair:
+) -> SugarUnwitnessedPair:
     base = prefix + f"def A(z):\n    return {body}\n\n"
-    return SugarRefusedWitnessPair(
+    return SugarUnwitnessedPair(
         name=name,
         owner_sugar=owner_sugar,
-        family="opaque-equality-refusal",
+        family="opaque-equality-unwitnessed",
         truthful=WitnessSource(
             source=base + f"def test_a():\n    assert A(5) == {truthful}\n",
-            expected="refused",
+            expected="unwitnessed",
         ),
         lying=WitnessSource(
             source=base + f"def test_a():\n    assert A(5) == {lying}\n",
-            expected="refused",
+            expected="unwitnessed",
         ),
     )
 

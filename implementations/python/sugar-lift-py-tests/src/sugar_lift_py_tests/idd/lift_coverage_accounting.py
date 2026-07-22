@@ -5,12 +5,12 @@
 #4019 — assertions are the default report body (no "majority" brand).
 
 Assertions (claim layer, silent-loss detector — the report's default body):
-  stated / lifted+cited / refused-loud / silently-unaccounted
+  stated / lifted+cited / gap / silently-unaccounted
   Gate: silently-unaccounted == 0 (RED if > 0).
 
 Conservation (#4013 — independent AST vs report accounting):
   onDisk = independent ast assert count (shares NO code with the lift path)
-  accounted = report buckets (lifted+cited + refused-loud / AuditOnlyGap)
+  accounted = report buckets (lifted+cited + gap / AuditOnlyGap)
   delta = onDisk - accounted  (silent residue; MUST be 0)
   Emitted first-class on totals + conservation + perFile rows.
 
@@ -36,17 +36,17 @@ from .lift_coverage_census import (
 
 # Report statuses that mean the lifter *spoke* about the assertion.
 _LIFTED = frozenset({"warranted", "support", "inactive", "boundary"})
-_REFUSED = frozenset({"unresolved", "refused", "refuted", "unclassified"})
+_GAP_STATUSES = frozenset({"unresolved", "gap", "disproven", "unclassified"})
 
 
 @dataclass
 class AssertionAxis:
     stated: int = 0
     lifted_cited: int = 0
-    refused_loud: int = 0
+    gap: int = 0
     silently_unaccounted: int = 0
     lifted_loci: list[dict] = field(default_factory=list)
-    refused_loci: list[dict] = field(default_factory=list)
+    gap_loci: list[dict] = field(default_factory=list)
     silent_loci: list[dict] = field(default_factory=list)
     on_disk: list[dict] = field(default_factory=list)
 
@@ -55,12 +55,12 @@ class AssertionAxis:
             "axis": "assertions",
             "stated": self.stated,
             "lifted_cited": self.lifted_cited,
-            "refused_loud": self.refused_loud,
+            "gap": self.gap,
             "silently_unaccounted": self.silently_unaccounted,
             "gate": "silently_unaccounted == 0",
             "is_zero": self.silently_unaccounted == 0,
             "lifted_loci": list(self.lifted_loci),
-            "refused_loci": list(self.refused_loci),
+            "gap_loci": list(self.gap_loci),
             "silent_loci": list(self.silent_loci),
             "on_disk": list(self.on_disk),
         }
@@ -144,8 +144,8 @@ class LiftCoverageReport:
 
     @property
     def accounted(self) -> int:
-        """Report buckets that spoke: lifted+cited + refused-loud (M)."""
-        return self.assertions.lifted_cited + self.assertions.refused_loud
+        """Report buckets that spoke: lifted+cited + gap (M)."""
+        return self.assertions.lifted_cited + self.assertions.gap
 
     @property
     def delta(self) -> int:
@@ -233,8 +233,8 @@ def account_lift_coverage(
 def _per_file_conservation(assertions: AssertionAxis) -> list[dict]:
     """Per-file onDisk / accounted / delta from the on-disk assert partition.
 
-    Each on-disk assert is classified exactly once (lifted / refused / silent).
-    ``lifted_loci`` / ``refused_loci`` / ``silent_loci`` hold the matched on-disk
+    Each on-disk assert is classified exactly once (lifted / gap / silent).
+    ``lifted_loci`` / ``gap_loci`` / ``silent_loci`` hold the matched on-disk
     asserts when ``account_lift_coverage`` ran (they carry ``preview`` from the
     census). Report-side dump loci without preview are ignored for per-file
     accounting so extras cannot inflate ``accounted``.
@@ -260,18 +260,18 @@ def _per_file_conservation(assertions: AssertionAxis) -> list[dict]:
             continue
         file = str(locus.get("file") or "")
         ensure(file)["accounted"] = int(ensure(file)["accounted"]) + 1
-    for locus in assertions.refused_loci:
+    for locus in assertions.gap_loci:
         if not isinstance(locus, Mapping) or not is_on_disk_match(locus):
             continue
         file = str(locus.get("file") or "")
         ensure(file)["accounted"] = int(ensure(file)["accounted"]) + 1
 
     # Single-file fallback: when loci are report dumps without preview, the
-    # axis totals still conserve (lifted+refused+silent == stated).
+    # axis totals still conserve (lifted+gap+silent == stated).
     if assertions.on_disk and all(int(r["accounted"]) == 0 for r in rows.values()):
         if len(rows) == 1:
             only = next(iter(rows.values()))
-            only["accounted"] = assertions.lifted_cited + assertions.refused_loud
+            only["accounted"] = assertions.lifted_cited + assertions.gap
 
     for row in rows.values():
         row["delta"] = int(row["onDisk"]) - int(row["accounted"])
@@ -285,7 +285,7 @@ def _account_assertions(
 
     Doctrine (unambiguous):
       * Lifted+cited — floor implemented; fact row spoke.
-      * Refused-loud — instrument engaged and refused (ConstructionPanic held as gap,
+      * Gap — instrument engaged but construction stopped (ConstructionPanic held as gap,
         factory-walk unresolved/unclassified, auditOnlyGaps). **Panic is correct**
         when the code is not implemented yet; that is not silent.
       * Silently-unaccounted — stated assert and the instrument never engaged.
@@ -294,7 +294,7 @@ def _account_assertions(
 
     Lifted+cited: a kind=contract ::assertion (inv) row whose warrant memento
     covers the census file:line -- the warrant is the assert's sealed memento.
-    Refused-loud: auditOnlyGaps at locus **or** any non-lifted assert when the
+    Gap: auditOnlyGaps at locus **or** any non-lifted assert when the
     factory instrument engaged on this payload (unresolved walk / held panic).
     Silently-unaccounted: neither (Crime-1 gate; RED when positive).
 
@@ -302,9 +302,9 @@ def _account_assertions(
     older report shapes still classify; the collapse fact rows are the primary.
     """
     lifted_keys: set[tuple[str, int, int]] = set()
-    refused_keys: set[tuple[str, int, int]] = set()
+    gap_keys: set[tuple[str, int, int]] = set()
     lifted_loci: list[dict] = []
-    refused_loci: list[dict] = []
+    gap_loci: list[dict] = []
 
     # Primary: ::assertion fact rows the collapse minted (mirror minority join).
     for item in payload.get("ir") or []:
@@ -330,7 +330,7 @@ def _account_assertions(
                 }
             )
 
-    # Refused-loud: audit door gap rows (site = blame file:line:col).
+    # Gap: audit door gap rows (site = blame file:line:col).
     for gap in payload.get("auditOnlyGaps") or payload.get("audit_only_gaps") or []:
         if not isinstance(gap, Mapping):
             continue
@@ -338,13 +338,13 @@ def _account_assertions(
         if not file and not line:
             continue
         key = (file, line, col)
-        refused_keys.add(key)
-        refused_loci.append(
+        gap_keys.add(key)
+        gap_loci.append(
             {
                 "file": file,
                 "line": line,
                 "col": col,
-                "status": "refused",
+                "status": "gap",
                 "source": "audit-only-gap",
                 "label": str(gap.get("label") or ""),
                 "message": str(gap.get("message") or ""),
@@ -364,9 +364,9 @@ def _account_assertions(
         if status in _LIFTED:
             lifted_keys.add(key)
             lifted_loci.append(entry)
-        elif status in _REFUSED:
-            refused_keys.add(key)
-            refused_loci.append(entry)
+        elif status in _GAP_STATUSES:
+            gap_keys.add(key)
+            gap_loci.append(entry)
         else:
             # Unknown status -- treat as spoken (lifted) so we don't invent silent
             # loss from an unmapped vocabulary word; still listed under lifted.
@@ -374,22 +374,22 @@ def _account_assertions(
             lifted_loci.append(entry)
 
     # Doctrine (unambiguous): a stated assert is either lifted+cited or
-    # refused-loud. Silently-unaccounted is illegal — soft-skip is forbidden.
-    # Unimplemented floors → refuse-loud (panic/gap is the correct answer).
-    # Ground folds with no fact row also refuse-loud until a floor speaks them.
+    # gap. Silently-unaccounted is illegal — soft-skip is forbidden.
+    # Unimplemented floors → gap (panic/gap is the correct answer).
+    # Ground folds with no fact row also gap until a floor speaks them.
     instrument_engaged = _factory_instrument_engaged(payload)
     instrument_notes = _factory_instrument_notes(payload)
     recovered_panic_spans = _report_recovered_panic_spans(payload)
 
     silent: list[AssertLocus] = []
     lifted_matched: list[AssertLocus] = []
-    refused_matched: list[AssertLocus] = []
+    gap_matched: list[AssertLocus] = []
     for a in asserts:
         if _matched(a, lifted_keys):
             lifted_matched.append(a)
             continue
-        if _matched(a, refused_keys):
-            refused_matched.append(a)
+        if _matched(a, gap_keys):
+            gap_matched.append(a)
             continue
         if any(
             a.file == file and start_line <= a.line <= end_line
@@ -397,25 +397,25 @@ def _account_assertions(
         ):
             # The report rendered the ConstructionPanic loudly, but no assertion
             # fact exists for this poisoned definition. It therefore cannot
-            # be counted as cited or refused-and-accounted: retain it on the
+            # be counted as cited or gap-and-accounted: retain it on the
             # mandatory silently_unaccounted RED gate until construction
             # completes. "Silent" is the legacy gate name; the paired factory
             # row makes the cause visible and source-cited.
             silent.append(a)
             continue
-        # Not lifted: refuse-loud. Never silent.
-        refused_matched.append(a)
-        refused_loci.append(
+        # Not lifted: gap. Never silent.
+        gap_matched.append(a)
+        gap_loci.append(
             {
                 **a.to_json(),
-                "status": "refused",
+                "status": "gap",
                 "source": (
                     "factory-instrument"
                     if instrument_engaged
                     else "unimplemented-or-unspoken"
                 ),
                 "message": (
-                    "stated assert without ::assertion fact row — refuse-loud "
+                    "stated assert without ::assertion fact row — gap "
                     "(panic/gap or missing floor is correct; silent is illegal)"
                 ),
                 "instrument": instrument_notes[:3],
@@ -427,10 +427,10 @@ def _account_assertions(
         # Counts are over on-disk asserts classified by the report -- not raw
         # report row counts (a report may re-emit the same locus).
         lifted_cited=len(lifted_matched),
-        refused_loud=len(refused_matched),
+        gap=len(gap_matched),
         silently_unaccounted=len(silent),
         lifted_loci=[a.to_json() for a in lifted_matched] or lifted_loci,
-        refused_loci=[a.to_json() for a in refused_matched] or refused_loci,
+        gap_loci=[a.to_json() for a in gap_matched] or gap_loci,
         silent_loci=[
             {
                 **a.to_json(),
@@ -852,7 +852,7 @@ def paint_lines(
 ) -> list[dict]:
     """Per-line bucket paint for visual reports.
 
-    Buckets: lifted+cited | refused-loud | silently-unaccounted |
+    Buckets: lifted+cited | gap | silently-unaccounted |
              minority-dug | minority-un-asserted | non-proof | other
     """
     lines = source.splitlines()
@@ -860,10 +860,10 @@ def paint_lines(
 
     def _mark(line: int, tag: str) -> None:
         if 1 <= line <= len(tags):
-            # Priority: silent > refused > lifted > minority-dug > minority-un
+            # Priority: silent > gap > lifted > minority-dug > minority-un
             order = {
                 "silently-unaccounted": 50,
-                "refused-loud": 40,
+                "gap": 40,
                 "lifted+cited": 30,
                 "minority-dug": 20,
                 "minority-un-asserted": 10,
@@ -877,9 +877,9 @@ def paint_lines(
     for a in coverage.assertions.lifted_loci:
         if Path_basename(str(a.get("file", ""))) in {base, file}:
             _mark(int(a["line"]), "lifted+cited")
-    for a in coverage.assertions.refused_loci:
+    for a in coverage.assertions.gap_loci:
         if Path_basename(str(a.get("file", ""))) in {base, file}:
-            _mark(int(a["line"]), "refused-loud")
+            _mark(int(a["line"]), "gap")
     for a in coverage.assertions.silent_loci:
         if Path_basename(str(a.get("file", ""))) in {base, file}:
             _mark(int(a["line"]), "silently-unaccounted")

@@ -15,7 +15,7 @@ from sugar_lift_py_tests.sugar_binary import (
 )
 
 Verdict = Literal[
-    "sat", "unsat", "refused", "refused-modulo-unavailable-seats", "solver-timeout"
+    "sat", "unsat", "unwitnessed", "unwitnessed-modulo-unavailable-seats", "solver-timeout"
 ]
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -441,7 +441,7 @@ def prove_verdict(prove_doc: dict) -> Verdict:
         return "unsat"
     if statuses and all(status == "discharged" for status in statuses):
         return "sat"
-    if statuses and all(status == "refused" for status in statuses):
+    if statuses and all(status == "unwitnessed" for status in statuses):
         provisional = False
         for row in rows:
             invocations = row.get("verification", {}).get("solverInvocations", [])
@@ -458,7 +458,7 @@ def prove_verdict(prove_doc: dict) -> Verdict:
             ):
                 raise ProofObligationPanic(row)
             provisional = provisional or "unavailable" in states
-        return "refused-modulo-unavailable-seats" if provisional else "refused"
+        return "unwitnessed-modulo-unavailable-seats" if provisional else "unwitnessed"
     terminal = next(
         (
             row

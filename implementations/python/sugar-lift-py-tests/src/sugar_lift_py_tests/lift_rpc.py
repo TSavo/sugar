@@ -689,7 +689,7 @@ def _runtime_lift_command() -> List[str]:
 def _source_oracle_api():
     try:
         from sugar_lift_python_source.source_oracle import (
-            SourceOracleRefusal,
+            SourceUnavailable,
             resolve_source_memento,
         )
     except ModuleNotFoundError:
@@ -699,10 +699,10 @@ def _source_oracle_api():
         if str(sibling_src) not in sys.path:
             sys.path.insert(0, str(sibling_src))
         from sugar_lift_python_source.source_oracle import (
-            SourceOracleRefusal,
+            SourceUnavailable,
             resolve_source_memento,
         )
-    return SourceOracleRefusal, resolve_source_memento
+    return SourceUnavailable, resolve_source_memento
 
 
 def _source_memento_from_params(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -807,10 +807,10 @@ def _resolve_source_memento_result(params: Dict[str, Any]) -> Dict[str, Any]:
             "status": "absent",
             "reason": "invalid source memento shape",
         }
-    SourceOracleRefusal, resolve_source_memento = _source_oracle_api()
+    SourceUnavailable, resolve_source_memento = _source_oracle_api()
     try:
         resolved = resolve_source_memento(workspace_root, memento)
-    except SourceOracleRefusal as exc:
+    except SourceUnavailable as exc:
         return _source_oracle_effect_result(
             SourceOracleEffect(reason=str(exc)), memento
         )
@@ -1056,7 +1056,7 @@ def _term_ref_cids(value: Any):
     """Yield every term reference in a response-owned value.
 
     A term-ref is a leaf in the wire graph. Malformed reference objects are
-    refused here, before a JSON-RPC response can be constructed.
+    left as a gap here, before a JSON-RPC response can be constructed.
     """
     if isinstance(value, dict):
         if value.get("kind") == "term-ref":
@@ -1080,7 +1080,7 @@ def _closed_enumerate_result(
     *,
     term_tables: Optional[List[Dict[str, Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
-    """Construct one closed enumeration result or refuse it.
+    """Construct one closed enumeration result or leave a gap.
 
     The response is the ownership boundary for its term DAG. Every reachable
     term-ref brings exactly one canonical row with it; omitted/dangling tables,
@@ -1336,9 +1336,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             # fragments minted through the SourceOracle — identity without
             # parsing, no file read or hashed outside the oracle. The handler
             # only formats. An unreadable/undecodable file is a loud oracle
-            # refusal recorded as a protocol gap, never served as a node
+            # source-unavailable result recorded as a protocol gap, never served as a node
             # (previously it was hashed raw and masqueraded as enumerable).
-            from sugar_lift_python_source.source_oracle import SourceOracleRefusal
+            from sugar_lift_python_source.source_oracle import SourceUnavailable
             from sugar_source_tree.tree import SourceTree
 
             nodes = []
@@ -1351,11 +1351,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     rel_path = path.name
                 try:
                     fragment = tree.fragment_of(path)
-                except SourceOracleRefusal as refusal:
+                except SourceUnavailable as unavailable:
                     gaps.append(
                         {
                             "memento": _degenerate_file_memento(rel_path),
-                            "reason": str(refusal),
+                            "reason": str(unavailable),
                         }
                     )
                     continue
@@ -1433,16 +1433,16 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # sugar, `clean` when fully sugared -- no false green.
                 from sugar_lift_py_tests import tree_enumerate as _tree
                 from sugar_lift_python_source.source_oracle import (
-                    SourceOracleRefusal,
+                    SourceUnavailable,
                     path_source,
                 )
 
                 if level == "functions":
                     try:
                         identity = path_source(str(full_path))
-                    except SourceOracleRefusal as refusal:
+                    except SourceUnavailable as unavailable:
                         _send_enumerate_result(
-                            msg_id, [], [{"memento": at, "reason": str(refusal)}]
+                            msg_id, [], [{"memento": at, "reason": str(unavailable)}]
                         )
                         return
                     _src, _fname, file_cid = identity
@@ -1496,16 +1496,16 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # when FunctionDef.sugar() is written; syntax does not wait
                 # for it.
                 from sugar_lift_python_source.source_oracle import (
-                    SourceOracleRefusal,
+                    SourceUnavailable,
                     path_source,
                 )
                 from sugar_source_tree.tree import SourceFile as _TreeSourceFile
 
                 try:
                     identity = path_source(str(full_path))
-                except SourceOracleRefusal as refusal:
+                except SourceUnavailable as unavailable:
                     _send_enumerate_result(
-                        msg_id, [], [{"memento": at, "reason": str(refusal)}]
+                        msg_id, [], [{"memento": at, "reason": str(unavailable)}]
                     )
                     return
                 _source, _fname, file_cid = identity
@@ -1587,7 +1587,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         [
                             {
                                 "memento": at,
-                                "reason": "no call site for exact memento; refusing implication substitution",
+                                "reason": "no call site for exact memento; leaving implication substitution open",
                             }
                         ],
                     )

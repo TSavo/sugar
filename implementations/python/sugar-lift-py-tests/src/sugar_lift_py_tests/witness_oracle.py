@@ -23,7 +23,7 @@
 #   - RECOMPUTE (when re-runnable + deterministic): re-run, re-derive the CID,
 #       confirm it reproduces. Only the substrate's own runnable, deterministic
 #       witnesses (e.g. a unit test via the kit's discharge) take this path.
-# Any mismatch -> REFUSE, loudly. exact-or-refuse, no silent loss.
+# Any mismatch -> UNWITNESSED, loudly. exact-or-unwitnessed, no silent loss.
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from typing import Any, Callable
 from .canonicalizer import blake3_512_of
 
 
-class WitnessOracleRefusal(Exception):
+class WitnessOracleUnwitnessed(Exception):
     """Raised LOUDLY when a witness fails to verify: bad signature, package
     content that does not recompute to the pinned CID, or a re-run that drifts."""
 
@@ -47,16 +47,16 @@ def resolve_witness(
     """Verify a WitnessMemento. SIGNATURE is the universal check (whose sharpie);
     CONTENT-ADDRESS is checked when the witness package is supplied; RECOMPUTE is
     checked when the witness is re-runnable. Returns the strongest verification
-    achieved, or refuses loudly."""
+    achieved, or remains unwitnessed loudly."""
     witness_cid = memento.get("witness_cid")
     if not isinstance(witness_cid, str) or not witness_cid:
-        raise WitnessOracleRefusal("witness memento missing `witness_cid`")
+        raise WitnessOracleUnwitnessed("witness memento missing `witness_cid`")
 
     # 1. SIGNATURE -- the universal path. A witness is a signed mark; verify whose.
     if not _verify_signature(
         witness_cid, memento.get("signature"), memento.get("signer")
     ):
-        raise WitnessOracleRefusal(
+        raise WitnessOracleUnwitnessed(
             f"witness signature invalid for {witness_cid} "
             f"(signer {memento.get('signer')!r}) -- cannot trust the mark"
         )
@@ -67,7 +67,7 @@ def resolve_witness(
     if witness_content is not None:
         recomputed = blake3_512_of(witness_content)
         if recomputed != witness_cid:
-            raise WitnessOracleRefusal(
+            raise WitnessOracleUnwitnessed(
                 f"witness content misaligned: pinned {witness_cid}, "
                 f"package content {recomputed} -- the witness was swapped"
             )
@@ -79,7 +79,7 @@ def resolve_witness(
     if recompute_fn is not None:
         reproduced = recompute_fn(memento)
         if reproduced != witness_cid:
-            raise WitnessOracleRefusal(
+            raise WitnessOracleUnwitnessed(
                 f"witness recompute misaligned: pinned {witness_cid}, "
                 f"reproduced {reproduced} -- the run drifted"
             )

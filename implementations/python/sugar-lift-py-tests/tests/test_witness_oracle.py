@@ -4,7 +4,7 @@ import pytest
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of
 from sugar_lift_py_tests.witness_oracle import (
-    WitnessOracleRefusal,
+    WitnessOracleUnwitnessed,
     resolve_witness,
 )
 
@@ -40,15 +40,15 @@ def test_poem_witness_is_signature_then_content_verified():
         resolve_witness(memento, witness_content=poem)["verified_by"]
         == "content-address"
     )
-    # Swapped witness -> refuse loudly.
-    with pytest.raises(WitnessOracleRefusal, match="content misaligned"):
+    # Swapped witness -> remains unwitnessed loudly.
+    with pytest.raises(WitnessOracleUnwitnessed, match="content misaligned"):
         resolve_witness(memento, witness_content=b"a different poem")
 
 
 def test_bad_signature_refused():
     cid, _signature, signer = _signed(b"a CI run log")
     memento = {"witness_cid": cid, "signer": signer, "signature": "00" * 64}
-    with pytest.raises(WitnessOracleRefusal, match="signature invalid"):
+    with pytest.raises(WitnessOracleUnwitnessed, match="signature invalid"):
         resolve_witness(memento)
 
 
@@ -65,6 +65,6 @@ def test_runnable_witness_recompute_or_refuse():
         resolve_witness(memento, recompute_fn=lambda _m: cid)["verified_by"]
         == "recompute"
     )
-    # Re-run drifts -> refuse.
-    with pytest.raises(WitnessOracleRefusal, match="recompute misaligned"):
+    # Re-run drifts -> remains unwitnessed.
+    with pytest.raises(WitnessOracleUnwitnessed, match="recompute misaligned"):
         resolve_witness(memento, recompute_fn=lambda _m: "blake3-512:" + "0" * 128)
