@@ -59,6 +59,9 @@ class EffectMatcher:
 EXCEPTION_INFO = "exception_info"
 WARNING_OBSERVATION = "warning_observation"
 EFFECT = "effect"
+# Resource enter-result: tree coordinate for ``with m as x`` under a resource
+# disposition (NeverSuppresses / proven exit). Not an exception witness.
+ENTER_RESULT = "enter_result"
 
 
 @dataclass(frozen=True)

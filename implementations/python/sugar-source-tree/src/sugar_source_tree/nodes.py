@@ -362,6 +362,32 @@ class Node(Typed):
             self.unit, ShadowNode("Call", self.span, slots), self.reporter
         )
 
+    def _make_attribute(self, value: "Node", attr: str) -> "Node":
+        """Construct ``<value>.<attr>`` as a shadow borrowing this node's span."""
+        from .backend import Child, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        slots = (
+            ("value", Child(_handle_of(value))),
+            ("attr", Leaf(attr)),
+        )
+        return materialize(
+            self.unit, ShadowNode("Attribute", self.span, slots), self.reporter
+        )
+
+    def _make_none_constant(self) -> "Node":
+        """Synthesize ``None`` literal at this node's span."""
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        slots = (
+            ("value", Leaf(None)),
+            ("literal_kind", Leaf(None)),
+        )
+        return materialize(
+            self.unit, ShadowNode("Constant", self.span, slots), self.reporter
+        )
+
     def _effect_slot_id(self) -> str:
         """Deterministic slot identity from this binding site's source extent.
 
@@ -739,6 +765,22 @@ class WithItem(Node):
 
         new_ctx, d = self._substitute_field(self.context_expr, scope)
         return self if not d else rewrite(self, context_expr=new_ctx)
+
+    def _make_enter_call(self) -> "Node":
+        """Tree coordinate ``manager.__enter__()`` — not a callback, not a dig."""
+        enter_attr = self._make_attribute(self.context_expr, "__enter__")
+        return self._make_call(enter_attr, ())
+
+    def _make_exit_call(self) -> "Node":
+        """Tree coordinate ``manager.__exit__(None, None, None)``.
+
+        Type/value/tb args are structural placeholders at construction; a
+        later cut can rebind them from the body halt face. The method
+        coordinate is owned by the tree and sugars through the normal door.
+        """
+        exit_attr = self._make_attribute(self.context_expr, "__exit__")
+        none = self._make_none_constant()
+        return self._make_call(exit_attr, (none, none, none))
 
 
 class ImportAlias(Node):
@@ -1756,6 +1798,7 @@ class With(Statement):
             as_name = item.optional_vars.id
         from sugar_lift_py_tests.context_manager_contract import (
             Expects,
+            NeverSuppresses,
             RuntimeSelected,
             Suppresses,
         )
@@ -1764,6 +1807,7 @@ class With(Statement):
             default_community_manifest,
         )
         from sugar_lift_py_tests.sugar.with_contract_sugar import WithContractSugar
+        from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 
         contract = contract_for_manager(
             default_community_manifest(), item.context_expr
@@ -1782,6 +1826,21 @@ class With(Statement):
                 body=tuple(stmt.sugar() for stmt in self.body),
                 site=self.fragment,
                 slot_id=slot_id,
+            )
+        if isinstance(contract, NeverSuppresses):
+            # Tree-owned enter/exit method coordinates + typed disposition.
+            # Nothing enrolls NeverSuppresses yet; when it does, sugars go
+            # through the normal door — never callback injection.
+            enter_node = item._make_enter_call()
+            exit_node = item._make_exit_call()
+            enter_slot = item._effect_slot_id() if as_name is not None else None
+            return WithResourceSugar(
+                enter=enter_node.sugar(),
+                exit=exit_node.sugar(),
+                body=tuple(stmt.sugar() for stmt in self.body),
+                disposition=contract,
+                enter_slot_id=enter_slot,
+                site=self.fragment,
             )
         # None from the membrane OR an explicit RuntimeSelected enrollment:
         # exit suppression is undecidable statically. Named residual — not a
@@ -1811,22 +1870,21 @@ class With(Statement):
             )
             self.reporter.report_gap(self, panic)
             raise panic
-        # NeverSuppresses: disposition-only license for WithResourceSugar
-        # (enter once, body ExitSet, exit on every face). Nothing enrolls yet;
-        # when it does, enter/exit must be constructed or left explicitly red —
-        # never a normal-path-only dissolve. Until enrollment + construction,
-        # stay loud.
         return super()._construct_sugar()
 
     def substitute(self, scope):
         """with ... as <Name>: rewrite name → ObservationRef(slot, projection).
 
-        Projection comes from the membrane-issued Expects.binding. Syntax
-        creates the coordinate; routing authenticates the slot. Body sees the
-        ref; substitution_binding exports it for subsequent statements.
+        Projection comes from membrane Expects.binding or resource
+        ENTER_RESULT under NeverSuppresses. Syntax creates the coordinate;
+        routing/enter authenticates the slot.
         """
         from .shadow import rewrite
-        from sugar_lift_py_tests.context_manager_contract import Expects
+        from sugar_lift_py_tests.context_manager_contract import (
+            ENTER_RESULT,
+            Expects,
+            NeverSuppresses,
+        )
         from sugar_lift_py_tests.manifest_membrane import (
             contract_for_manager,
             default_community_manifest,
@@ -1849,13 +1907,17 @@ class With(Statement):
             contract = contract_for_manager(
                 default_community_manifest(), item.context_expr
             )
-            if not isinstance(contract, Expects) or not contract.binding:
-                # Unauthenticated / suppresses: mask the name, stay without ref.
-                body_scope.pop(item.optional_vars.id, None)
-                continue
             slot_id = item._effect_slot_id()
-            ref = item._make_observation_ref(slot_id, contract.binding)
-            body_scope[item.optional_vars.id] = ref
+            if isinstance(contract, Expects) and contract.binding:
+                ref = item._make_observation_ref(slot_id, contract.binding)
+                body_scope[item.optional_vars.id] = ref
+                continue
+            if isinstance(contract, NeverSuppresses):
+                ref = item._make_observation_ref(slot_id, ENTER_RESULT)
+                body_scope[item.optional_vars.id] = ref
+                continue
+            # Unauthenticated / suppresses: mask the name, stay without ref.
+            body_scope.pop(item.optional_vars.id, None)
 
         new_body, d = self._substitute_body(self.body, body_scope)
         if d:
@@ -1863,8 +1925,12 @@ class With(Statement):
         return self if not changed else rewrite(self, **changed)
 
     def substitution_binding(self, scope):
-        """Export ObservationRef for Expects as-names to the rest of the block."""
-        from sugar_lift_py_tests.context_manager_contract import Expects
+        """Export ObservationRef for Expects / resource enter-result as-names."""
+        from sugar_lift_py_tests.context_manager_contract import (
+            ENTER_RESULT,
+            Expects,
+            NeverSuppresses,
+        )
         from sugar_lift_py_tests.manifest_membrane import (
             contract_for_manager,
             default_community_manifest,
@@ -1878,12 +1944,15 @@ class With(Statement):
             contract = contract_for_manager(
                 default_community_manifest(), item.context_expr
             )
-            if not isinstance(contract, Expects) or not contract.binding:
-                continue
             slot_id = item._effect_slot_id()
-            exported[item.optional_vars.id] = item._make_observation_ref(
-                slot_id, contract.binding
-            )
+            if isinstance(contract, Expects) and contract.binding:
+                exported[item.optional_vars.id] = item._make_observation_ref(
+                    slot_id, contract.binding
+                )
+            elif isinstance(contract, NeverSuppresses):
+                exported[item.optional_vars.id] = item._make_observation_ref(
+                    slot_id, ENTER_RESULT
+                )
         return exported or None
 
 

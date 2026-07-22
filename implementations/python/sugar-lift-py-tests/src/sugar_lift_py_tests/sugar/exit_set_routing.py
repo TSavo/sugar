@@ -193,3 +193,30 @@ def site_inv_values(entries: tuple, site) -> tuple:
         else e
         for e in entries
     )
+
+
+def sugar_outcome_to_exitset(outcome) -> "ExitSet":
+    """Project one sugar ``Outcome`` into a (usually single-exit) ExitSet.
+
+    Used for tree-owned enter/exit method-coordinate sugars: Incomplete → Halted,
+    Complete → Completed. Multi-exit Outcomes are not produced by a single
+    method call desugar today.
+    """
+    from sugar_lift_py_tests.ir import and_
+    from sugar_lift_py_tests.outcome import Complete, Incomplete
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    if isinstance(outcome, Incomplete):
+        if outcome.branch_conditions:
+            condition = (
+                outcome.branch_conditions[0]
+                if len(outcome.branch_conditions) == 1
+                else and_(list(outcome.branch_conditions))
+            )
+            return ExitSet.halted(outcome.effect, condition)
+        return ExitSet.halted(outcome.effect)
+    if isinstance(outcome, Complete):
+        return ExitSet.completed(outcome.value)
+    raise TypeError(
+        f"sugar_outcome_to_exitset expects Complete|Incomplete, got {type(outcome).__name__}"
+    )

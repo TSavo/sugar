@@ -1,4 +1,11 @@
+from sugar_lift_py_tests.context_manager_contract import (
+    EffectMatcher,
+    NeverSuppresses,
+    RuntimeSelected,
+    Suppresses,
+)
 from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 from sugar_lift_py_tests.ir import atomic, make_var, not_, or_
 from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import (
@@ -137,19 +144,23 @@ def test_and_finally_runs_cleanup_on_every_conditional_exit():
     assert any(isinstance(e, Completed) and e.value == "state" for e in after.exits)
 
 
-# --- resource with: and_exit -------------------------------------------------
+# --- resource with: and_exit (typed disposition, ExitSet not callbacks) -----
 
 
 def test_and_exit_completion_keeps_body_completed():
     incoming = ExitSet.completed("body")
-    after = incoming.and_exit(lambda: ExitSet.completed(False))
+    after = incoming.and_exit(
+        ExitSet.completed(False), disposition=NeverSuppresses()
+    )
     assert after.collapse() == Complete("body")
 
 
 def test_and_exit_halt_supersedes_body_completed():
     exit_halt = RaiseEffect(exception_name="RuntimeError")
     incoming = ExitSet.completed("body")
-    after = incoming.and_exit(lambda: ExitSet.halted(exit_halt))
+    after = incoming.and_exit(
+        ExitSet.halted(exit_halt), disposition=NeverSuppresses()
+    )
     assert after.collapse() == Incomplete(exit_halt)
 
 
@@ -157,66 +168,69 @@ def test_and_exit_halt_supersedes_body_halted():
     body = RaiseEffect(exception_name="ValueError")
     exit_halt = RaiseEffect(exception_name="RuntimeError")
     incoming = ExitSet.halted(body)
-    after = incoming.and_exit(lambda: ExitSet.halted(exit_halt))
+    after = incoming.and_exit(
+        ExitSet.halted(exit_halt), disposition=NeverSuppresses()
+    )
     assert after.collapse() == Incomplete(exit_halt)
 
 
-def test_and_exit_false_restores_body_halt():
+def test_and_exit_never_suppresses_restores_body_halt():
     body = RaiseEffect(exception_name="ValueError")
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(
-        lambda: ExitSet.completed(False),
-        suppresses=lambda _e, _v: False,
+        ExitSet.completed(False), disposition=NeverSuppresses()
     )
     assert after.collapse() == Incomplete(body)
 
 
-def test_and_exit_true_consumes_body_halt():
+def test_and_exit_proven_contract_consumes_named_halt():
     body = RaiseEffect(exception_name="ValueError")
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(
-        lambda: ExitSet.completed(True),
-        suppresses=lambda _e, _v: True,
+        ExitSet.completed(True),
+        disposition=ExitSuppressionContract.suppresses(("ValueError",)),
     )
     assert after.collapse() == Complete(None)
 
 
-def test_and_exit_open_suppression_leaves_residual_not_guessed():
+def test_and_exit_runtime_selected_leaves_open_residual_not_guessed():
     body = RaiseEffect(exception_name="ValueError")
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(
-        lambda: ExitSet.completed("runtime"),
-        suppresses=lambda _e, _v: True,  # would suppress if decided
-        open_suppression=lambda effect: effect,  # open wins — never guess
+        ExitSet.completed(True),
+        disposition=RuntimeSelected(),
     )
     assert after.collapse() == Incomplete(body)
 
 
-def test_and_exit_fans_once_across_conditional_faces():
+def test_and_exit_fans_exitset_across_conditional_faces():
     condition = _guard("condition")
     effect = RaiseEffect(exception_name="ValueError")
     incoming = ExitSet.conditional_halt(condition, effect, "state")
-    seen = []
-
-    def exit_call():
-        seen.append(1)
-        return ExitSet.completed(False)
-
-    after = incoming.and_exit(exit_call, suppresses=lambda _e, _v: False)
-    assert len(seen) == 1
+    exit_es = ExitSet.completed(False)
+    after = incoming.and_exit(exit_es, disposition=NeverSuppresses())
     assert any(isinstance(e, Halted) and e.effect == effect for e in after.exits)
     assert any(isinstance(e, Completed) and e.value == "state" for e in after.exits)
 
 
-def test_and_exit_suppresses_only_matching_face_of_conditional():
+def test_and_exit_proven_contract_suppresses_only_matching_face():
     condition = _guard("condition")
     effect = RaiseEffect(exception_name="ValueError")
     incoming = ExitSet.conditional_halt(condition, effect, "state")
     after = incoming.and_exit(
-        lambda: ExitSet.completed(True),
-        suppresses=lambda e, _v: getattr(e, "exception_name", None) == "ValueError",
+        ExitSet.completed(True),
+        disposition=ExitSuppressionContract.suppresses(("ValueError",)),
     )
-    # Halted face consumed; completed face kept.
     assert all(isinstance(e, Completed) for e in after.exits)
     assert any(e.value == "state" for e in after.exits if isinstance(e, Completed))
     assert any(e.value is None for e in after.exits if isinstance(e, Completed))
+
+
+def test_and_exit_membrane_suppresses_matcher_authority():
+    body = RaiseEffect(exception_name="KeyError")
+    incoming = ExitSet.halted(body)
+    after = incoming.and_exit(
+        ExitSet.completed(True),
+        disposition=Suppresses(EffectMatcher(kind="raise", name="KeyError")),
+    )
+    assert after.collapse() == Complete(None)
