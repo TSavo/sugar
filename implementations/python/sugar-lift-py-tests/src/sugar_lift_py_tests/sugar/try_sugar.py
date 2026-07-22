@@ -1,8 +1,8 @@
-"""`try: body (except E [as e]: handler)+ [else] [finally]` -- effect routing.
+"""`try` effect routing: match once via route_except; binding facts in the record.
 
-``except E as e`` is rewritten by the tree to ``EffectRef(slot)`` before sugar.
-This sugar matches the raise and authenticates the slot with the Halted
-payload — never re-desugars the handler with a name map, never E().
+``except E as e`` is already rewritten to EffectRef(slot) by the tree.
+On match, route_except emits EffectBinding facts for that slot — no ContextVar,
+no re-desugar, no dual match.
 """
 
 from __future__ import annotations
@@ -42,10 +42,9 @@ class TrySugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.effect_auth import authenticate_slot
         from sugar_lift_py_tests.effect_router import (
             _first_effect_of_kind,
-            _matching_effect,
+            route_except,
         )
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.outcome import Incomplete
@@ -58,20 +57,14 @@ class TrySugar(Sugar):
 
         routed = None
         for matcher, handler_body, slot_id in self.handlers:
-            matching = (
-                _first_effect_of_kind(body_entries, "raise")
-                if matcher is None
-                else _matching_effect(body_entries, matcher)
+            arm = route_except(
+                body_entries, matcher, slot_id=slot_id, site=self.site
             )
-            if matching is None:
+            if arm is None:
                 continue
-            index, entry, _observation = matching
-            remaining = body_entries[:index] + body_entries[index + 1 :]
-            # Syntax created the coordinate; routing supplies testimony.
-            if slot_id is not None and isinstance(entry, Incomplete):
-                authenticate_slot(slot_id, entry.effect)
+            # Match decided once. Handler already contains EffectRef(slot).
             handler_entries, _hf, _ = reduce_statements(handler_body)
-            routed = (*remaining, *handler_entries)
+            routed = (*arm.entries, *handler_entries)
             break
 
         if routed is None:

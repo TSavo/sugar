@@ -111,15 +111,25 @@ def test_as_exception_info_completes_when_effect_matches():
 
 
 def test_as_exception_info_value_projects_effect_slot():
-    # ei.value is the same effect slot (ExceptionInfoCoordinate.attribute).
+    # ei.value is the pure EffectCoordinate; binding facts authenticate the slot.
     v = _val(
         "def A():\n    with pytest.raises(ValueError) as ei:\n"
         "        raise ValueError\n    return ei.value\n"
     )
-    assert v.invs()[0].args[0].value == "ValueError"
-    term = v.post().args[1]
-    assert term.name == "python:observed_exception"
-    assert term.args[0].value == "ValueError"
+    # Expects type discharge still present
+    assert any(
+        inv.name == "=" and inv.args[0].value == "ValueError"
+        for inv in v.invs()
+        if inv.name == "=" and hasattr(inv.args[0], "value")
+    )
+    assert v.post().args[1].name == "python:effect_slot"
+    typed = [
+        inv
+        for inv in v.invs()
+        if inv.name == "="
+        and getattr(inv.args[0], "name", None) == "effect_slot_type"
+    ]
+    assert typed and typed[0].args[1].value == "ValueError"
 
 
 def test_as_non_name_target_stays_loud():
