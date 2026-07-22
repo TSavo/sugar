@@ -280,6 +280,26 @@ fn fold_project_loads_with_consumer_speaker() {
     }
 }
 
+#[test]
+fn production_fold_installs_cm_ref_generation_before_semantic_enumeration() {
+    if !python_blake3_available() {
+        eprintln!("skip: python3/blake3 unavailable");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = stage_fixture(dir.path());
+    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
+    assert!(kit.supports_rpc_method("sugar.plugin.bind_contract_refs"));
+    let pool = fold_kit_to_pool(
+        &kit,
+        &project,
+        Speaker::consumer("cm-preconstruction-order"),
+        &runner_cfg(&project),
+    )
+    .expect("preconstruction bind must precede the first semantic enumerate request");
+    assert!(pool.mementos.len() > 0);
+}
+
 /// Full door: prove_from_kit discharges the enumerate fixture; verdict rows
 /// match solve_project_with_pool over the same consumer pool (identity of
 /// the thin face vs the preloaded-pool beats).
