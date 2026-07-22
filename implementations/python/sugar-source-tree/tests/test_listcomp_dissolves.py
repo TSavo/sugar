@@ -1,8 +1,8 @@
 """`[e for x in <concrete>]` DISSOLVES in substitute -- map disappearing for
 real: N substitutions of x into e, rewritten to the List display of the
 results. The comprehension was never a meaning; it was a count of rewrites.
-Symbolic iterables, filters (ifs), multi-generator, and async keep the node
-(loud until their segments are written)."""
+Symbolic iterables, undecidable filters, multi-generator, and async keep the
+node loud."""
 
 import tempfile
 
@@ -44,9 +44,9 @@ def test_composes_with_len():
     assert t.name == "call:len"
 
 
-def test_filtered_comprehension_stays_loud():
+def test_undecidable_filtered_comprehension_stays_loud():
     with pytest.raises(SugarNotWritten):
-        _fn("def A():\n    return [x for x in [1, 2] if x == 1]\n").sugar()
+        _fn("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n").sugar()
 
 
 def test_symbolic_comprehension_stays_loud():
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     test_mapped_comprehension_folds_per_element()
     test_tuple_target_comprehension_destructures()
     test_composes_with_len()
-    test_filtered_comprehension_stays_loud()
+    test_undecidable_filtered_comprehension_stays_loud()
     test_symbolic_comprehension_stays_loud()
     test_comprehension_over_range_dissolves()
     print("ok: the concrete comprehension dissolves to its display")
