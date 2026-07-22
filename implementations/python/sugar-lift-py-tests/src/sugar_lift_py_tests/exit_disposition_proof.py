@@ -23,6 +23,7 @@ This cut covers class ``__exit__`` methods only. Generator
 from __future__ import annotations
 
 import ast
+import symtable
 from dataclasses import dataclass
 from typing import Iterator, Literal
 
@@ -541,8 +542,55 @@ def _dotted_of_sugar_node(node) -> list[str] | None:
     return None
 
 
+def _lexically_bound_at_coordinate(
+    source: str, filename: str, line: int
+) -> frozenset[str]:
+    """Names local to any function enclosing ``line``.
+
+    AST supplies the lexical nesting coordinate; ``symtable`` supplies
+    Python's whole-scope binding decision, so conditional/late assignments
+    and captured outer locals are refused without executing the module.
+    """
+    try:
+        tree = ast.parse(source)
+        root = symtable.symtable(source, filename, "exec")
+    except (SyntaxError, ValueError):
+        return frozenset()
+
+    tables = []
+    pending = list(root.get_children())
+    while pending:
+        table = pending.pop()
+        tables.append(table)
+        pending.extend(table.get_children())
+
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        end_line = getattr(node, "end_lineno", None)
+        if end_line is None or not (node.lineno < line <= end_line):
+            continue
+        matches = [
+            table
+            for table in tables
+            if table.get_name() == node.name and table.get_lineno() == node.lineno
+        ]
+        if len(matches) != 1:
+            # Ambiguous scope testimony can only reduce admission.
+            return frozenset({"*"})
+        bound.update(
+            symbol.get_name()
+            for symbol in matches[0].get_symbols()
+            if symbol.is_local() and not symbol.get_name().startswith(".")
+        )
+    return frozenset(bound)
+
+
 def resolve_definition_memento_from_manager_expr(
     manager_node,
+    *,
+    lexically_bound_names: frozenset[str] = frozenset(),
 ) -> DefinitionMemento | None:
     """Static import binding → SourceOracle modules → class ``__exit__`` memento.
 
@@ -564,6 +612,15 @@ def resolve_definition_memento_from_manager_expr(
         return None
 
     head, *rest = parts
+    try:
+        manager_line = manager_node.line_col_span().start_line
+    except Exception:
+        return None
+    coordinate_bound = _lexically_bound_at_coordinate(
+        source, getattr(unit, "filename", "<unknown>"), manager_line
+    )
+    if "*" in coordinate_bound or head in (lexically_bound_names | coordinate_bound):
+        return None
     if head not in bindings:
         return None
     kind, payload, binding_node = bindings[head]
@@ -595,9 +652,13 @@ def resolve_definition_memento_from_manager_expr(
 
 def prove_exit_disposition_from_manager_expr(
     manager_node,
+    *,
+    lexically_bound_names: frozenset[str] = frozenset(),
 ) -> ExitDispositionProof | None:
     """Static resolve + return proof. None → RuntimeSelected."""
-    memento = resolve_definition_memento_from_manager_expr(manager_node)
+    memento = resolve_definition_memento_from_manager_expr(
+        manager_node, lexically_bound_names=lexically_bound_names
+    )
     if memento is None:
         return None
     try:

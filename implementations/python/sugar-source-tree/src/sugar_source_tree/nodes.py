@@ -62,6 +62,27 @@ from .spans import LineColSpan, LineTable, Span
 _LEXICALLY_BOUND_NAMES = object()
 
 
+def _function_local_names(unit: "SourceUnit", name: str, line: int) -> frozenset[str]:
+    """Compiler-authenticated locals for one function scope.
+
+    ``symtable`` applies Python's whole-function binding law, including
+    assignments in conditional arms and bindings after the use coordinate.
+    Nested function bodies remain separate child tables.
+    """
+    root = symtable.symtable(unit.source, unit.filename, "exec")
+    pending = list(root.get_children())
+    while pending:
+        table = pending.pop()
+        if table.get_name() == name and table.get_lineno() == line:
+            return frozenset(
+                symbol.get_name()
+                for symbol in table.get_symbols()
+                if symbol.is_local() and not symbol.get_name().startswith(".")
+            )
+        pending.extend(table.get_children())
+    return frozenset()
+
+
 @dataclass(frozen=True)
 class SourceUnit:
     """One parsed source: oracle-pinned text, its content address, its line table.
@@ -251,6 +272,11 @@ class Node(Typed):
         """Frozen wire word for serialization. Never a dispatch mechanism."""
         override = getattr(type(self), "_kind", None)
         return override if isinstance(override, str) else type(self).__name__
+
+    @property
+    def lexically_bound_names(self) -> frozenset[str]:
+        """Scope provenance carried by rewrites; source nodes carry none."""
+        return getattr(self.ref, "lexically_bound_names", frozenset())
 
     def substitute(self, scope: "dict[str, Node]") -> "Node":
         """This node's substitution — the temporal rewrite that binds a hole to
@@ -918,7 +944,11 @@ class FunctionDef(Statement):
         """
         from .shadow import rewrite
 
-        bound = {p.name for p in self.params}
+        bound = set(
+            _function_local_names(
+                self.unit, self.name, self.line_col_span().start_line
+            )
+        )
         for tp in self.type_params:
             name = getattr(tp, "name", None)
             if isinstance(name, str):
@@ -1904,7 +1934,10 @@ class With(Statement):
                 prove_exit_disposition_from_manager_expr,
             )
 
-            proof = prove_exit_disposition_from_manager_expr(item.context_expr)
+            proof = prove_exit_disposition_from_manager_expr(
+                item.context_expr,
+                lexically_bound_names=self.lexically_bound_names,
+            )
             if proof is not None and proof.kind == "never_suppresses":
                 return _resource_sugar(proof.disposition())
 
@@ -1985,7 +2018,10 @@ class With(Statement):
         new_body, d = self._substitute_body(self.body, body_scope)
         if d:
             changed["body"] = new_body
-        return self if not changed else rewrite(self, **changed)
+        lexical = frozenset(scope.get(_LEXICALLY_BOUND_NAMES, frozenset()))
+        if not changed and lexical == self.lexically_bound_names:
+            return self
+        return rewrite(self, lexically_bound_names=lexical, **changed)
 
     def substitution_binding(self, scope):
         """Export ObservationRef for Expects / resource enter-result as-names."""

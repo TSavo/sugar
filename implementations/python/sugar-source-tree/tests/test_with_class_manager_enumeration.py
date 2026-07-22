@@ -457,3 +457,55 @@ def test_unauthenticated_intermediate_package_attribute_stays_runtime_selected(
     gaps = _with_gaps(subject)
     assert len(gaps) == 1
     assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+def test_parameter_shadowed_manager_stays_runtime_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _write_module(
+        tmp_path,
+        "never_suppressing",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return False\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from never_suppressing import Manager\n"
+        "def f(Manager):\n"
+        "    with Manager():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+def test_captured_local_manager_stays_runtime_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _write_module(
+        tmp_path,
+        "never_suppressing",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return False\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from never_suppressing import Manager\n"
+        "def outer(Manager):\n"
+        "    def g():\n"
+        "        nonlocal Manager\n"
+        "        with Manager():\n"
+        "            raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
