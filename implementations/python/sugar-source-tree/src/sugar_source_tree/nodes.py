@@ -1297,6 +1297,11 @@ class For(Statement):
     orelse: Tuple[Statement, ...]
     _child_fields = ("target", "iter", "body", "orelse")
 
+    @property
+    def lexically_bound_names(self) -> frozenset[str]:
+        """For-local scope provenance carried by rewrites; source nodes have none."""
+        return getattr(self.ref, "lexically_bound_names", frozenset())
+
     def substitute(self, scope):
         """`for <target> in <iter>: <body>` -- a loop is a FOLD, and over a
         CONCRETE iterable it DISSOLVES: the fold has known length, so it unrolls.
