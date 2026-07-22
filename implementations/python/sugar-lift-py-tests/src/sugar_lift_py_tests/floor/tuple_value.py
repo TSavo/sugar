@@ -147,7 +147,7 @@ class TupleValue(FloorValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.term_value import TermValue
 
-        if type(other) is TermValue and type(other.value) is int:
+        if type(other) is TermValue and type(other.value) in (int, bool):
             from sugar_lift_py_tests.outcome import Complete
 
             repeated = len(self.elements) * max(other.value, 0)
@@ -164,6 +164,13 @@ class TupleValue(FloorValue):
                     fix="keep exact sequence repetition within the finite unfold budget",
                 )
             return Complete(TupleValue(self.elements * other.value))
+        from sugar_lift_py_tests.floor.sequence_repetition import (
+            is_known_invalid_repetition_count,
+            known_invalid_repetition_type_error,
+        )
+
+        if is_known_invalid_repetition_count(other):
+            return known_invalid_repetition_type_error(self, other, site)
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
 
