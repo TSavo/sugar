@@ -226,18 +226,18 @@ def _resolve_relative(
     return ".".join(base) if base else None
 
 
-def _find_class_exit(
-    tree: ast.Module, class_name: str
+def _direct_class_exit(
+    cls: ast.ClassDef,
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == class_name:
-            for item in node.body:
-                if (
-                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and item.name == "__exit__"
-                ):
-                    return item
-    return None
+    return next(
+        (
+            item
+            for item in cls.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and item.name == "__exit__"
+        ),
+        None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -279,31 +279,24 @@ def _lookup_name_in_module(
         return None
     tree, _source, filename, source_cid = parsed
 
-    # 1. Class definition in this module (any nesting depth for ClassDef name).
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == name:
-            exit_fn = _find_class_exit(tree, name)
-            if exit_fn is None:
-                return None
-            return DefinitionMemento(
-                module=module_name,
-                class_name=name,
-                source_cid=source_cid,
-                filename=filename,
-                exit_fn=exit_fn,
-            )
-    # Class under module-level If (rare)
+    # 1. Class definition in this module. A direct override owns the
+    # disposition. Otherwise admit only one statically named base; multiple or
+    # computed bases remain ambiguous and therefore unproven.
     for node in _module_level_nodes(tree):
         if isinstance(node, ast.ClassDef) and node.name == name:
-            exit_fn = _find_class_exit(tree, name)
-            if exit_fn is None:
+            exit_fn = _direct_class_exit(node)
+            if exit_fn is not None:
+                return DefinitionMemento(
+                    module=module_name,
+                    class_name=name,
+                    source_cid=source_cid,
+                    filename=filename,
+                    exit_fn=exit_fn,
+                )
+            if len(node.bases) != 1 or not isinstance(node.bases[0], ast.Name):
                 return None
-            return DefinitionMemento(
-                module=module_name,
-                class_name=name,
-                source_cid=source_cid,
-                filename=filename,
-                exit_fn=exit_fn,
+            return _lookup_name_in_module(
+                module_name, node.bases[0].id, depth=depth + 1
             )
 
     # 2. from X import name / from X import Y as name / star-import follow
