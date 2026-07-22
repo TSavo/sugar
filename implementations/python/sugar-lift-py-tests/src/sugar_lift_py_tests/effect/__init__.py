@@ -45,6 +45,7 @@ from .imported_module_runtime_effect import ImportedModuleRuntimeEffect
 from .key_error_runtime_effect import KeyErrorRuntimeEffect
 from .modulo_runtime_effect import ModuloRuntimeEffect, runtime_modulo
 from .modulo_by_zero_runtime_effect import ModuloByZeroRuntimeEffect
+from .name_error_effect import NameErrorEffect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .power_runtime_effect import PowerRuntimeEffect
 from .raise_effect import RaiseEffect
@@ -115,6 +116,7 @@ __all__ = [
     "ModuloRuntimeEffect",
     "runtime_modulo",
     "ModuloByZeroRuntimeEffect",
+    "NameErrorEffect",
     "OSExitRuntimeEffect",
     "PowerRuntimeEffect",
     "RaiseEffect",
