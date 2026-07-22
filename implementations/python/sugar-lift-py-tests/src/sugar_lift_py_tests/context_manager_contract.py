@@ -53,6 +53,14 @@ class EffectMatcher:
     payload_obligations: tuple = ()  # e.g. (MessagePattern(pat),)
 
 
+# Binding projections for `with … as name` — declared by the membrane, never
+# by matching vendor spellings in the tree. Syntax rewrites the name to an
+# ObservationRef(slot, projection=…); routing authenticates the slot.
+EXCEPTION_INFO = "exception_info"
+WARNING_OBSERVATION = "warning_observation"
+EFFECT = "effect"
+
+
 @dataclass(frozen=True)
 class NeverSuppresses:
     pass
@@ -66,6 +74,8 @@ class Suppresses:
 @dataclass(frozen=True)
 class Expects:
     matcher: EffectMatcher
+    # What `as name` denotes when this contract is issued (None → no as-export).
+    binding: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -349,9 +349,7 @@ class Node(Typed):
 
     def _make_call(self, func: "Node", args: tuple = ()) -> "Node":
         """Construct a fresh Call ``<func>(<args...>)`` as a shadow borrowing
-        this node's span. Used by Expects ``as``-witness binding: the matched
-        effect payload is the expected type/category constructed with no args
-        (a temporal stand-in for the exception/warning instance)."""
+        this node's span."""
         from .backend import Child, Children, materialize
         from .shadow import ShadowNode, _handle_of
 
@@ -362,6 +360,42 @@ class Node(Typed):
         )
         return materialize(
             self.unit, ShadowNode("Call", self.span, slots), self.reporter
+        )
+
+    def _effect_slot_id(self) -> str:
+        """Stable slot identity from this binding site's source extent."""
+        try:
+            lc = self.line_col_span()
+            return (
+                f"{self.unit.filename}:{lc.start_line}:{lc.start_col}:"
+                f"{lc.end_line}:{lc.end_col}"
+            )
+        except SourceTreePanic:
+            return f"{self.unit.filename}:{self.kind}:{id(self)}"
+
+    def _make_effect_ref(self, slot_id: str) -> "Node":
+        """Synthesize EffectRef(slot) — tree coordinate, not a floor object."""
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        slots = (("slot_id", Leaf(slot_id)),)
+        return materialize(
+            self.unit, ShadowNode("EffectRef", self.span, slots), self.reporter
+        )
+
+    def _make_observation_ref(self, slot_id: str, projection: str) -> "Node":
+        """Synthesize ObservationRef(slot, projection) for with-as bindings."""
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        slots = (
+            ("slot_id", Leaf(slot_id)),
+            ("projection", Leaf(projection)),
+        )
+        return materialize(
+            self.unit,
+            ShadowNode("ObservationRef", self.span, slots),
+            self.reporter,
         )
 
     def _substitute_body(self, statements: tuple, scope: "dict[str, Node]"):
@@ -661,16 +695,25 @@ class ExceptHandler(Node):
     _child_fields = ("type_", "body")
 
     def substitute(self, scope):
-        """except <type> as <name>: binds the exception name for the body."""
+        """except <type> as <name>: rewrite name → EffectRef(slot) in the body.
+
+        Syntax creates the coordinate; routing authenticates it. The name is
+        NOT exported after the handler (Python clears the exception target).
+        Never E() — EffectRef is not an exception object.
+        """
         from .shadow import rewrite
 
-        bound = {self.name} if self.name else set()
-        bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         changed = {}
         new_type, d = self._substitute_field(self.type_, scope)
         if d:
             changed["type_"] = new_type
-        new_body, d = self._substitute_body(self.body, bs)
+        if self.name:
+            slot_id = self._effect_slot_id()
+            ref = self._make_effect_ref(slot_id)
+            body_scope = {**scope, self.name: ref}
+        else:
+            body_scope = scope
+        new_body, d = self._substitute_body(self.body, body_scope)
         if d:
             changed["body"] = new_body
         return self if not changed else rewrite(self, **changed)
@@ -1695,13 +1738,13 @@ class With(Statement):
         if len(self.items) != 1:
             return super()._construct_sugar()
         item = self.items[0]
+        as_name = None
         if item.optional_vars is not None:
-            # ``as <name>`` stays LOUD: the honest binding is the ROUTED
-            # observed-effect witness (the payload of the Halted exit the
-            # router matches), NOT a manufactured ``E()``. That witness is
-            # produced at route time, so it needs the shared exit-set witness
-            # mechanism -- unwritten here until it lands.
-            return super()._construct_sugar()
+            # ``as <Name>`` only: substitute already rewrote loads to
+            # ObservationRef(slot). Non-Name targets stay loud.
+            if item.optional_vars.kind != "Name":
+                return super()._construct_sugar()
+            as_name = item.optional_vars.id
         from sugar_lift_py_tests.context_manager_contract import (
             Expects,
             RuntimeSelected,
@@ -1719,10 +1762,17 @@ class With(Statement):
         if isinstance(contract, (Expects, Suppresses)):
             if contract.matcher.kind not in ("raise", "warning"):
                 return super()._construct_sugar()
+            # Suppresses+as is not a routed observation surface — stay loud.
+            if as_name is not None and not isinstance(contract, Expects):
+                return super()._construct_sugar()
+            slot_id = None
+            if as_name is not None and isinstance(contract, Expects):
+                slot_id = item._effect_slot_id()
             return WithContractSugar(
                 contract=contract,
                 body=tuple(stmt.sugar() for stmt in self.body),
                 site=self.fragment,
+                slot_id=slot_id,
             )
         # None from the membrane OR an explicit RuntimeSelected enrollment:
         # exit suppression is undecidable statically. Named residual — not a
@@ -1757,28 +1807,72 @@ class With(Statement):
         return super()._construct_sugar()
 
     def substitute(self, scope):
-        """with ... as <vars>: masks as-targets for the body (binding sites).
+        """with ... as <Name>: rewrite name → ObservationRef(slot, projection).
 
-        No witness is EXPORTED for the tail: the honest ``as`` binding is the
-        routed observed-effect witness produced at route time (the payload of
-        the matched Halted exit), not a substitute-time stand-in -- so `as`
-        stays loud in sugar() until the shared exit-set witness lands.
+        Projection comes from the membrane-issued Expects.binding. Syntax
+        creates the coordinate; routing authenticates the slot. Body sees the
+        ref; substitution_binding exports it for subsequent statements.
         """
         from .shadow import rewrite
+        from sugar_lift_py_tests.context_manager_contract import Expects
+        from sugar_lift_py_tests.manifest_membrane import (
+            contract_for_manager,
+            default_community_manifest,
+        )
 
-        bound = set()
-        for item in self.items:
-            if item.optional_vars is not None:
-                bound |= self._bound_names_in(item.optional_vars)
-        bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         changed = {}
         new_items, d = self._substitute_field(self.items, scope)
         if d:
             changed["items"] = new_items
-        new_body, d = self._substitute_body(self.body, bs)
+        items = new_items if d else self.items
+
+        body_scope = dict(scope)
+        for item in items:
+            if item.optional_vars is None or item.optional_vars.kind != "Name":
+                # Non-Name as-targets: mask only (no coordinate invented).
+                if item.optional_vars is not None:
+                    for n in self._bound_names_in(item.optional_vars):
+                        body_scope.pop(n, None)
+                continue
+            contract = contract_for_manager(
+                default_community_manifest(), item.context_expr
+            )
+            if not isinstance(contract, Expects) or not contract.binding:
+                # Unauthenticated / suppresses: mask the name, stay without ref.
+                body_scope.pop(item.optional_vars.id, None)
+                continue
+            slot_id = item._effect_slot_id()
+            ref = item._make_observation_ref(slot_id, contract.binding)
+            body_scope[item.optional_vars.id] = ref
+
+        new_body, d = self._substitute_body(self.body, body_scope)
         if d:
             changed["body"] = new_body
         return self if not changed else rewrite(self, **changed)
+
+    def substitution_binding(self, scope):
+        """Export ObservationRef for Expects as-names to the rest of the block."""
+        from sugar_lift_py_tests.context_manager_contract import Expects
+        from sugar_lift_py_tests.manifest_membrane import (
+            contract_for_manager,
+            default_community_manifest,
+        )
+
+        del scope
+        exported: dict[str, Node] = {}
+        for item in self.items:
+            if item.optional_vars is None or item.optional_vars.kind != "Name":
+                continue
+            contract = contract_for_manager(
+                default_community_manifest(), item.context_expr
+            )
+            if not isinstance(contract, Expects) or not contract.binding:
+                continue
+            slot_id = item._effect_slot_id()
+            exported[item.optional_vars.id] = item._make_observation_ref(
+                slot_id, contract.binding
+            )
+        return exported or None
 
 
 class AsyncWith(Statement):
@@ -1888,25 +1982,21 @@ class Try(Statement):
         expressions and empty tuples stay loud. ``except*`` lives on TryStar
         and stays loud there.
 
-        ``except <type> as <name>`` stays LOUD: the honest binding is the
-        ROUTED observed-effect witness (the exception the router matched and
-        consumed), NOT a manufactured ``<type>()`` -- constructing the type
-        invents a constructor call that never ran and conflates the caught
-        object with the type. That witness is produced at route time, not at
-        substitute time, so it needs the shared observed-effect-witness
-        mechanism (a marker the router fills), unwritten here until it lands."""
+        ``except <type> as <name>``: substitute already rewrote loads of
+        ``name`` to ``EffectRef(slot)`` inside the handler. Routing
+        authenticates that slot with the matched Halted raise — never E().
+        """
         if not self.handlers:
             return super()._construct_sugar()  # try/finally-only: not the except-routing core
         from sugar_lift_py_tests.context_manager_contract import EffectMatcher
 
         handler_specs = []
         for handler in self.handlers:
-            if handler.name is not None:
-                return super()._construct_sugar()  # except-as: needs the routed witness, loud
+            # slot_id for authentication when this arm has `as` (substitute site).
+            slot_id = handler._effect_slot_id() if handler.name else None
+            body_sugars = tuple(stmt.sugar() for stmt in handler.body)
             if handler.type_ is None:
-                handler_specs.append(
-                    (None, tuple(stmt.sugar() for stmt in handler.body))
-                )
+                handler_specs.append((None, body_sugars, slot_id))
                 continue
 
             type_nodes = (
@@ -1921,7 +2011,8 @@ class Try(Statement):
                 handler_specs.append(
                     (
                         EffectMatcher(kind="raise", name=type_name),
-                        tuple(stmt.sugar() for stmt in handler.body),
+                        body_sugars,
+                        slot_id,
                     )
                 )
 
@@ -3023,6 +3114,52 @@ class Name(Expression):
         from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 
         return NameSugar(name=self.id, site=self.fragment)
+
+
+class EffectRef(Expression):
+    """Preallocated effect coordinate: syntax creates it; routing authenticates.
+
+    Not an exception object and not a floor witness. ``except E as e`` rewrites
+    ``e`` to ``EffectRef(slot)`` in the handler only. Routing later associates
+    the matched Halted raise payload with that slot — never E().
+    """
+
+    slot_id: str
+
+    def substitute(self, scope: "dict[str, Node]") -> "Node":
+        # Already a coordinate — never re-captured as a free name.
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.effect_ref_sugar import EffectRefSugar
+
+        return EffectRefSugar(slot_id=self.slot_id, site=self.fragment)
+
+
+class ObservationRef(Expression):
+    """Contract-declared observation of an effect slot (e.g. ExceptionInfo).
+
+    ``with Expects(...) as ei`` rewrites ``ei`` to ``ObservationRef(slot,
+    projection)``. ``.value`` projects the same slot as EffectRef. Projection
+    comes from the membrane contract, not from vendor names in the tree.
+    """
+
+    slot_id: str
+    projection: str  # exception_info | warning_observation | effect
+
+    def substitute(self, scope: "dict[str, Node]") -> "Node":
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.effect_ref_sugar import ObservationRefSugar
+
+        return ObservationRefSugar(
+            slot_id=self.slot_id,
+            projection=self.projection,
+            site=self.fragment,
+        )
 
 
 class List(Expression):

@@ -1,22 +1,8 @@
-"""`try: body (except E: handler)+ [else] [finally]` -- structural effect routing.
+"""`try: body (except E [as e]: handler)+ [else] [finally]` -- effect routing.
 
-The structural sibling of ``with``-raises (#5994). ``WithContractSugar`` routes
-via a membrane-issued contract; this sugar routes via the ``except E`` clauses
-themselves -- native syntax, no vendor names. Matching reuses the ONE effect
-router's exact kind+name rule (``_matching_effect``): a subclass raise is the
-mismatch twin, never silently matched.
-
-Arms (T's ruling, restated as reduction):
-
-- A matching ``except E`` CONSUMES the body's ``Incomplete(RaiseEffect)`` and
-  reduces the handler body; the handler's own effects propagate.
-- A non-matching raise propagates past all handlers.
-- A body with no observed raise reduces ``else`` (when present).
-- ``finally`` always reduces and splices; its effects ride on every path.
-
-Typed tuples are flattened into ordered exact-match arms. A bare ``except:``
-uses the router's widest existing raise query and consumes whichever raise it
-finds. ``except*`` and structurally exotic types stay loud at the node.
+``except E as e`` is rewritten by the tree to ``EffectRef(slot)`` before sugar.
+This sugar matches the raise and authenticates the slot with the Halted
+payload — never re-desugars the handler with a name map, never E().
 """
 
 from __future__ import annotations
@@ -30,23 +16,16 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class TrySugar(Sugar):
-    """`try` with typed except handlers, constructed by ``Try.sugar``.
+    """handlers: ((EffectMatcher|None, body_sugars, slot_id|None), ...)"""
 
-    ``handlers`` is an ordered tuple of ``(EffectMatcher | None, body_sugars)``.
-    ``None`` is the widest bare-except matcher; typed tuple clauses contribute
-    one arm per structurally admitted type.
-    """
-
-    body: tuple  # body statement sugars, source order
-    handlers: tuple  # ((EffectMatcher, handler_body_sugars), ...)
-    orelse: tuple = ()  # else-branch statement sugars
-    finalbody: tuple = ()  # finally statement sugars
+    body: tuple
+    handlers: tuple
+    orelse: tuple = ()
+    finalbody: tuple = ()
     site: object = dataclass_field(compare=False, default=None)
 
     @classmethod
     def witnesses(cls):
-        # Matching except consumes the raise so the function completes past the
-        # try; a lift that left the raise unconsumed would fail the post.
         prefix = (
             "def A(z):\n"
             "    try:\n"
@@ -63,6 +42,7 @@ class TrySugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.effect_auth import authenticate_slot
         from sugar_lift_py_tests.effect_router import (
             _first_effect_of_kind,
             _matching_effect,
@@ -76,11 +56,8 @@ class TrySugar(Sugar):
         body_entries, _body_falls, _ = reduce_statements(self.body)
         body_entries = tuple(body_entries)
 
-        # Route among handlers by the shared exact-match rule. First match wins
-        # (Python order); a match CONSUMES the Incomplete and splices the
-        # handler body's entries in its place.
         routed = None
-        for matcher, handler_body in self.handlers:
+        for matcher, handler_body, slot_id in self.handlers:
             matching = (
                 _first_effect_of_kind(body_entries, "raise")
                 if matcher is None
@@ -88,27 +65,24 @@ class TrySugar(Sugar):
             )
             if matching is None:
                 continue
-            index, _entry, _observation = matching
+            index, entry, _observation = matching
             remaining = body_entries[:index] + body_entries[index + 1 :]
+            # Syntax created the coordinate; routing supplies testimony.
+            if slot_id is not None and isinstance(entry, Incomplete):
+                authenticate_slot(slot_id, entry.effect)
             handler_entries, _hf, _ = reduce_statements(handler_body)
             routed = (*remaining, *handler_entries)
             break
 
         if routed is None:
-            # No handler matched. A body with no observed raise runs else; a
-            # non-matching raise propagates (kept in the entries).
             if _first_effect_of_kind(body_entries, "raise") is None:
                 else_entries, _ef, _ = reduce_statements(self.orelse)
                 routed = (*body_entries, *else_entries)
             else:
                 routed = body_entries
 
-        # finally runs on every path; its statements reduce and their effects
-        # propagate on all exits (caught, uncaught, else, fall-through).
         finally_entries, _ff, _ = reduce_statements(self.finalbody)
         entries = (*routed, *finally_entries)
 
-        # Mirror WithContractSugar: fall-through restored exactly when no red
-        # testimony survives the routing.
         can_fall_through = not any(isinstance(e, Incomplete) for e in entries)
         return Complete(BlockValue(entries, can_fall_through=can_fall_through))

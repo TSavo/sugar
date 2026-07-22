@@ -35,6 +35,8 @@ class WithContractSugar(Sugar):
     contract: object  # Expects | Suppresses (the node guards kind)
     body: tuple  # the body statements' sugars, in source order
     site: object = dataclass_field(compare=False, default=None)
+    # Preallocated by tree substitute for `as` (ObservationRef slot); None if no as.
+    slot_id: str | None = None
 
     @classmethod
     def witnesses(cls):
@@ -59,8 +61,26 @@ class WithContractSugar(Sugar):
         from sugar_lift_py_tests.floor.inv_value import InvValue
         from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_statements
 
+        from sugar_lift_py_tests.effect_auth import authenticate_slot
+        from sugar_lift_py_tests.effect_router import _matching_effect
+        from sugar_lift_py_tests.outcome import Incomplete
+
         entries, _falls, _ft = reduce_statements(self.body)
-        routed = route(tuple(entries), self.contract)
+        body_entries = tuple(entries)
+
+        # Authenticate the preallocated as-slot with the matched halt payload
+        # before/as we route (body already sugared with ObservationRef).
+        if self.slot_id is not None:
+            from sugar_lift_py_tests.context_manager_contract import Expects
+
+            if isinstance(self.contract, Expects):
+                matching = _matching_effect(body_entries, self.contract.matcher)
+                if matching is not None:
+                    _index, entry, _obs = matching
+                    if isinstance(entry, Incomplete):
+                        authenticate_slot(self.slot_id, entry.effect)
+
+        routed = route(body_entries, self.contract)
 
         # The router's facts carry no site; the mint demands one. Re-seat each
         # stated fact on this with's fragment (the locus that stated it).
@@ -70,7 +90,6 @@ class WithContractSugar(Sugar):
             else e
             for e in routed.entries
         )
-        from sugar_lift_py_tests.outcome import Incomplete
 
         # A consumed halt completes the with: fall-through is restored exactly
         # when no red testimony survives the routing.
