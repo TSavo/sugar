@@ -249,6 +249,7 @@ class BodyLocus:
     file: str
     line: int
     col: int
+    kind: str
     end_line: int | None
     end_col: int | None
     name: str
@@ -263,6 +264,7 @@ class BodyLocus:
             "file": self.file,
             "line": self.line,
             "col": self.col,
+            "kind": self.kind,
             "end_line": self.end_line,
             "end_col": self.end_col,
             "name": self.name,
@@ -338,6 +340,7 @@ def census_source(source: str, *, file: str) -> DiskCensus:
                     file=file,
                     line=node.lineno,
                     col=node.col_offset,
+                    kind=type(node).__name__,
                     end_line=getattr(node, "end_lineno", None),
                     end_col=getattr(node, "end_col_offset", None),
                     name=node.name,

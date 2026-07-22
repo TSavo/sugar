@@ -450,11 +450,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         "roots",
         nargs="*",
         type=Path,
+        # Construction/recognition surface (post-factory architecture).
+        # factory/ and recognition/ were folded across these dirs: construction
+        # decisions now flow through floor values, effects, outcomes, claims,
+        # ProofIR, temporal/context machinery, and lift/RPC orchestration.
+        # Excluded on purpose: audit_only + idd (measurement/reporting),
+        # manifests (declared contract data).
         default=[
-            package / "sugar",
-            package / "factory",
-            package / "recognition",
+            package / "claim",
+            package / "context",
+            package / "effect",
             package / "floor",
+            package / "gap",
+            package / "kit_rpc",
+            package / "lift",
+            package / "outcome",
+            package / "proofir",
+            package / "sugar",
+            package / "sugar_body",
+            package / "temporal",
         ],
     )
     try:

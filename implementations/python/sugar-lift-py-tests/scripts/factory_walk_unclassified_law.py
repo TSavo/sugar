@@ -228,21 +228,45 @@ def _python_paths(roots: Sequence[Path]) -> list[Path]:
     )
 
 
+def _roll_call_locus_to_walk_row(locus: Mapping[str, Any]) -> dict[str, Any]:
+    """One roll-call source-audit locus -> one factory-walk row.
+
+    Post-factory, the per-file measurement is the reporter's roll call, whose
+    only statuses are ``warranted`` (present) and ``unresolved`` (the honest,
+    loud minority). Roll call makes silence unrepresentable: every constructed
+    node is accounted, so a minority entry is a fully-classified coverage gap,
+    NOT the silent ``unclassified``/``unresolved`` residue the completeness
+    floor counts. Map ``warranted`` through unchanged and the minority to the
+    classified ``coverage-gap`` status so R_factory_walk_unclassified stays 0
+    by construction rather than falsely counting every honest gap.
+    """
+    inner = locus.get("locus", {}) if isinstance(locus.get("locus"), Mapping) else {}
+    return {
+        "status": "warranted" if locus.get("status") == "warranted" else "coverage-gap",
+        "ast_kind": locus.get("kind", ""),
+        "requested_role": locus.get("name", ""),
+        "file": inner.get("file", ""),
+        "line": inner.get("line", 0),
+        "source_cid": locus.get("source_cid", ""),
+    }
+
+
 def _run_live_child(path: Path, rel: str) -> int:
     from sugar_lift_py_tests.audit_only import collect_construction_panic
-    from sugar_lift_py_tests.lift_rpc import lift_file_payload
+    from sugar_lift_py_tests.tree_enumerate import source_audit_from_roll_call
 
-    source = path.read_text(encoding="utf-8", errors="replace")
-    payload, panic_gap = collect_construction_panic(
-        rel, lambda: lift_file_payload(source, rel)
+    # The deleted factory walk is replaced by the reporter's per-file roll-call
+    # partition (present Blue / absent Yellow).
+    audit, panic_gap = collect_construction_panic(
+        rel, lambda: source_audit_from_roll_call(path, rel)
     )
     if panic_gap is not None:
         category = "factory-panic"
         rows: list[dict[str, Any]] = []
     else:
-        assert payload is not None
+        assert audit is not None
         category = "completed"
-        rows = [row.to_rpc() for row in payload.factory_walk]
+        rows = [_roll_call_locus_to_walk_row(locus) for locus in audit["loci"]]
     print(
         json.dumps(
             {
