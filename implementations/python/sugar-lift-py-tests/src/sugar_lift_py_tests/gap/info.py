@@ -1,11 +1,16 @@
+"""Construction gap testimony — independent of audit projection.
+
+``ConstructionGap`` / ``GapKind`` / ``GapLocus`` are the pure gap authority.
+Audit status projection (``gap_kind_status`` → ``ConstructionAuditStatus``)
+lives on the audit-row boundary, not here.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict
 from typing import Never, NoReturn
-
-from .audit_row import ConstructionAuditStatus
 
 
 class GapKind(str, Enum):
@@ -112,22 +117,6 @@ def gap_locus_label(locus: GapLocus) -> str:
     if locus is GapLocus.CONSTRUCTION_LAW:
         return locus.value
     return _unhandled_gap_locus(locus)
-
-
-def gap_kind_status(kind: GapKind) -> ConstructionAuditStatus:
-    if kind is GapKind.FLOOR:
-        return ConstructionAuditStatus.FLOOR_GAP
-    if kind is GapKind.SUGAR:
-        return ConstructionAuditStatus.SUGAR_GAP
-    if kind is GapKind.CONSTRUCTOR:
-        return ConstructionAuditStatus.CONSTRUCTOR_GAP
-    if kind is GapKind.SUGAR_ORDERING:
-        return ConstructionAuditStatus.SUGAR_AMBIGUOUS
-    if kind is GapKind.OPERATION:
-        return ConstructionAuditStatus.OPERATION_GAP
-    if kind is GapKind.PROOFIR:
-        return ConstructionAuditStatus.PROOFIR_GAP
-    return _unhandled_gap_kind(kind)
 
 
 def _unhandled_gap_kind(kind: Never) -> NoReturn:
