@@ -175,24 +175,3 @@ def test_cli_structured_error_on_bad_json(tmp_path: Path) -> None:
     path.write_text("{not-json", encoding="utf-8")
     code = _SCANNER.main(["--from-json", str(path)])
     assert code == 2
-
-
-def test_cli_live_root_measures_checked_in_python(tmp_path: Path, capsys) -> None:
-    source = tmp_path / "clean.py"
-    source.write_text("value = 1\nassert value == 1\n", encoding="utf-8")
-
-    code = _SCANNER.main(
-        [
-            "--live-root",
-            str(tmp_path),
-            "--repo-root",
-            str(tmp_path),
-            "--workers",
-            "1",
-        ]
-    )
-
-    output = capsys.readouterr().out
-    assert code == 0
-    assert '"files_discovered": 1' in output
-    assert '"files_completed": 1' in output

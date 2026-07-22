@@ -112,7 +112,6 @@ def test_fingerprint_engine_events_names_dominant_and_multi_miss() -> None:
             "role": "factory.select",
             "sugar": "Name",
             "active_stack": [
-                "lift_file_payload|file|mod.py",
                 "Name|factory.select|mod.py:2",
             ],
         },

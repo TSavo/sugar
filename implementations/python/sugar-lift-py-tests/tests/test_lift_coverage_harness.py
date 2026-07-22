@@ -35,11 +35,6 @@ from sugar_lift_py_tests.idd.lift_coverage_census import (
     census_paths,
     census_source,
 )
-from sugar_lift_py_tests.idd.live_factory_panic_isolation import (
-    assert_bearing_py_files as _assert_bearing_py_files,
-    live_per_file_isolation_conservation as _live_per_file_isolation_conservation,
-    maybe_write_isolation_receipt_from_env,
-)
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -192,86 +187,6 @@ def test_assertions_cited_assert_is_not_silent() -> None:
     assert cov.assertions.lifted_cited == 1
     assert cov.assertions.silently_unaccounted == 0
     assert cov.assertions.to_json()["is_zero"] is True
-
-
-def test_minority_unasserted_body_is_visible_not_red() -> None:
-    """Discrimination (b): a body with no call_edge targeting it is un_asserted."""
-    from sugar_lift_py_tests.lift_rpc import lift_file_payload
-
-    src = (
-        "def claimed():\n"
-        "    return 1\n"
-        "def orphan():\n"
-        "    return 42\n"
-        "\n"
-        "def test_claimed():\n"
-        "    assert claimed() == 1\n"
-    )
-    payload = lift_file_payload(src, "t.py")
-    disk = census_source(src, file="t.py")
-    cov = account_lift_coverage(disk, payload.to_rpc())
-    assert cov.minority.present == 2
-    assert cov.minority.dug == 1
-    assert cov.minority.un_asserted == 1
-    un_names = {b["name"] for b in cov.minority.un_asserted_loci}
-    assert "orphan" in un_names
-    # Minority has no red gate field.
-    assert cov.minority.to_json()["gate"] is None
-
-
-def test_minority_assert_moves_body_out_of_unasserted() -> None:
-    """Discrimination (b2): a call_edge targeting the body leaves un_asserted."""
-    from sugar_lift_py_tests.lift_rpc import lift_file_payload
-
-    before = "def later():\n    return 1\n"
-    after = (
-        "def later():\n"
-        "    return 1\n"
-        "\n"
-        "def test_later():\n"
-        "    assert later() == 1\n"
-    )
-    disk_before = census_source(before, file="t.py")
-    cov_before = account_lift_coverage(
-        disk_before, lift_file_payload(before, "t.py").to_rpc()
-    )
-    disk_after = census_source(after, file="t.py")
-    cov_after = account_lift_coverage(
-        disk_after, lift_file_payload(after, "t.py").to_rpc()
-    )
-    assert any(b["name"] == "later" for b in cov_before.minority.un_asserted_loci)
-    assert not any(b["name"] == "later" for b in cov_after.minority.un_asserted_loci)
-    assert any(b["name"] == "later" for b in cov_after.minority.dug_loci)
-
-
-def test_line_paint_marks_silent_and_minority() -> None:
-    from sugar_lift_py_tests.lift_rpc import lift_file_payload
-
-    # Ground tautology assert folds away (no ::assertion fact row) -- true silent.
-    # A diggable assert (f(1)==2) would mint a contract fact and paint lifted.
-    src = (
-        "def claimed():\n"
-        "    return 1\n"
-        "def orphan():\n"
-        "    return 0\n"
-        "def silent_fn():\n"
-        "    assert 1 == 1\n"
-        "    return 0\n"
-        "\n"
-        "def test_claimed():\n"
-        "    assert claimed() == 1\n"
-    )
-    payload = lift_file_payload(src, "t.py")
-    disk = census_source(src, file="t.py")
-    rpc = payload.to_rpc()
-    cov = account_lift_coverage(disk, rpc)
-    paint = paint_lines(src, cov, file="t.py")
-    by_line = {row["line"]: row["bucket"] for row in paint}
-    # test_claimed::assertion fact row cites line 10.
-    assert by_line[10] == "lifted+cited"
-    # ground assert has no fact row — refuse-loud (silent is illegal).
-    assert by_line[6] == "refused-loud"
-    assert by_line[3] == "minority-un-asserted"
 
 
 # ---------------------------------------------------------------------------
@@ -696,9 +611,7 @@ _HEAVY_CONSERVATION_VENDORS = (
 #   onDisk=3208 accounted=3208 delta=0
 #   prior #4791 baseline R_panic=74 → Delta R = -3
 #   top owners: TemporalContext 21, RuntimeEffect 10, CallSugar 5, ...
-# Re-run: scripts/live_factory_panic_isolation.py --package numpy --out PATH
 # or pytest + SUGAR_4013_ISOLATION_OUT=PATH (writes ranked receipt).
-_HEAVY_LIVE_ISOLATION_VENDORS = ("numpy",)
 
 # Multi-file live sugar --report paths denser than single-module statistics.
 _SHOWCASE_CONSERVATION_TARGETS = (
@@ -936,91 +849,6 @@ def test_heavy_vendor_full_tree_conservation_delta_is_zero(package: str) -> None
     # Per-file conservation rows cover every assert-bearing file.
     assert body["perFile"], f"{package}: empty perFile on full-tree"
     assert len(body["perFile"]) <= len(files)
-
-
-@pytest.mark.parametrize("package", list(_HEAVY_LIVE_ISOLATION_VENDORS))
-def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
-    package: str,
-) -> None:
-    """#4013 residual after #4760: live production path via per-file isolation.
-
-    Full-tree multi-file ``sugar lift --report`` still FactoryPanics (cannot
-    pair ``--audit-frontier`` with ``--report``). Isolate every assert-bearing
-    file on the production ``lift_file_payload`` path:
-
-    * completed → real payload into conservation accounting
-    * FactoryPanic → refuse-loud for that file's on-disk asserts
-
-    Gate: aggregate conservation delta==0 on the live path.
-    Residual axis (named, leave #4013 open): ``R_live_factory_panic_files``
-    must go to 0 via production floors before multi-file live report can gate.
-    Opt-in pandas: set ``SUGAR_4013_HEAVY_PANDAS=1`` (same class, ~1h).
-    """
-    path = _resolve_installed_package_path(package)
-    if not path.exists():
-        pytest.skip(f"{package}: not installed at {path}")
-    if path.is_file():
-        files = [path] if _file_has_assert(path) else []
-        root = path.parent
-    else:
-        root = path
-        files = _assert_bearing_py_files(root)
-    if not files:
-        pytest.skip(f"{package}: no assert-bearing .py files under {path}")
-
-    result = _live_per_file_isolation_conservation(files, root=root, package=package)
-    # Optional durable receipt for recensus / wave re-measure (env path).
-    maybe_write_isolation_receipt_from_env(result)
-    assert (
-        result["delta"] == 0
-    ), f"{package} live isolation conservation delta must be 0; R={result}"
-    assert result["R_live_factory_panic_files"] == result["factory_panic_files"]
-    assert result["onDisk"] == result["accounted"]
-    assert result["onDisk"] > 0, f"{package}: vacuous live isolation (no asserts)"
-    assert result["assert_files"] == len(files)
-    # Non-vacuous: isolation must exercise more than the stdlib 40-file sample.
-    assert result["assert_files"] > 40, (
-        f"{package} live isolation must exceed stdlib sample; "
-        f"got assert_files={result['assert_files']}"
-    )
-    # Every per-file row conserved (completed or refuse-loud after panic).
-    for row in result["perFile"]:
-        assert int(row["delta"]) == 0, row
-    # Residual is measured, not hidden. Multi-file live report stays open
-    # while R_live_factory_panic_files > 0 (production floors).
-    assert "factory_panic_files" in result
-    assert result["factory_panic_files"] >= 0
-    # Structured owner ranking feeds fatal recensus (same fingerprint axes).
-    assert "owner_families" in result
-    assert "exact_fronts" in result
-    assert result["owner_family_count"] == len(result["owner_families"])
-    assert result["exact_front_count"] == len(result["exact_fronts"])
-    assert (
-        sum(row["count"] for row in result["owner_families"])
-        == result["factory_panic_files"]
-    )
-    assert (
-        sum(row["count"] for row in result["exact_fronts"])
-        == result["factory_panic_files"]
-    )
-    for row in result["panic_rows"]:
-        assert "gap" in row and "fingerprint" in row and "front" in row
-        assert len(row["fingerprint"]) == 5
-
-
-def test_heavy_vendor_live_isolation_opt_in_pandas() -> None:
-    """Same live isolation residual class as numpy; opt-in (heavy)."""
-    if os.environ.get("SUGAR_4013_HEAVY_PANDAS") != "1":
-        pytest.skip("set SUGAR_4013_HEAVY_PANDAS=1 for full pandas live isolation")
-    test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero("pandas")
-
-
-def _file_has_assert(path: Path) -> bool:
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    except SyntaxError:
-        return False
-    return any(isinstance(node, ast.Assert) for node in ast.walk(tree))
 
 
 @pytest.mark.parametrize("relative", list(_SHOWCASE_CONSERVATION_TARGETS))

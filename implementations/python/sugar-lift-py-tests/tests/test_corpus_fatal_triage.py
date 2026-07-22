@@ -1,66 +1,11 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
-sys.path.insert(0, str(SCRIPTS))
-
-from corpus_fatal_triage import _child_payload  # noqa: E402
 from sugar_lift_py_tests.idd.factory_walk_unclassified_locus import (  # noqa: E402
     LOCUS_FIELD_NAMES,
     locus_is_addressable,
     project_unclassified_locus,
     shape_split_unclassified,
 )
-
-
-def test_factory_panic_routes_through_audit_membrane_as_loud_child_row(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "unsupported.py"
-    source.write_text("def broken():\n    type T = int\n", encoding="utf-8")
-
-    testimony, returncode = _child_payload(source, "demo/unsupported.py")
-
-    assert returncode == 3
-    assert testimony["outcome"] == "factory-panic"
-    assert testimony["exception_type"] == "FactoryPanic"
-    assert testimony["file"] == "demo/unsupported.py"
-    assert testimony["gap"]["owner"] == "python.factory"
-    assert testimony["gap"]["observed"] == "TypeAlias"
-
-
-def test_completed_child_preserves_typed_effect_testimony() -> None:
-    import pandas
-
-    root = Path(pandas.__file__).resolve().parent
-    relative = "tests/arrays/masked/test_arithmetic.py"
-    testimony, returncode = _child_payload(root / relative, f"pandas/{relative}")
-
-    assert returncode == 0
-    assert testimony["outcome"] == "completed"
-    effects = testimony["effects"]
-    assert effects
-    assert all(
-        set(effect) == {"effect", "name", "status", "reason"} for effect in effects
-    )
-    assert any(
-        effect["effect"] == "SequenceRepetitionRuntimeEffect"
-        and effect["status"] == "runtime-effect"
-        and "runtime __index__/length semantics" in effect["reason"]
-        for effect in effects
-    )
-    # Completed testimony always carries the #5252 locus list key (may be empty).
-    assert "unclassified_rows" in testimony
-    assert "R_factory_walk_unclassified" in testimony
-    assert testimony["R_factory_walk_unclassified"] == len(
-        testimony["unclassified_rows"]
-    )
-    for locus in testimony["unclassified_rows"]:
-        assert set(LOCUS_FIELD_NAMES) <= set(locus)
-        assert locus["status"] == "unclassified"
-        assert isinstance(locus["line"], int)
 
 
 def test_project_unclassified_locus_schema() -> None:

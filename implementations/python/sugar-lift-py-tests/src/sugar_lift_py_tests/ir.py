@@ -178,7 +178,7 @@ _CONSTRUCTOR_SYMBOL_KINDS: ContextVar[dict[str, str] | None] = ContextVar(
 def term_intern_scope() -> Iterator[None]:
     """Request-scoped hash-cons for terms and formulas.
 
-    One table per lift_file_payload call. Structurally equal terms and formulas
+    One table per file lift. Structurally equal terms and formulas
     share object identity inside the scope; tables are discarded on exit so
     separate lifts never share identity.
     """
