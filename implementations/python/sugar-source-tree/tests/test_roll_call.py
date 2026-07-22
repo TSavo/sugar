@@ -5,6 +5,9 @@ dict). No reporter, no ``sugar()``, no construction is stood up anywhere. That
 triviality IS the point: reporting is decoupled from constructs except by the
 ``Attendance`` interface, so the accounting mechanism is testable in total
 isolation.
+
+ONE roster: every node, keyed by its fragment CID. "Functions construct clean"
+is a query over it, never a second roster.
 """
 
 import tempfile
@@ -16,8 +19,8 @@ from sugar_source_tree.roll_call import (
     EmptyAttendance,
     MappingAttendance,
     MinorityReport,
-    function_roster,
     minority_report,
+    roster,
     total_R,
 )
 
@@ -32,89 +35,112 @@ def _sf(src: str) -> SourceFile:
 _THREE = "def a(z):\n    return z\ndef b():\n    return 1\ndef c():\n    pass\n"
 
 
-def test_roster_is_pure_source_enumeration() -> None:
-    # Who SHOULD show up: every function, from the oracle, keyed by CID. No
-    # construction consulted.
-    roster = function_roster(_sf(_THREE))
-    assert [e.name for e in roster] == ["a", "b", "c"]
-    assert all(e.cid.startswith("blake3-512:") for e in roster)
+def _fn_names(entries):
+    return [e.name for e in entries if e.kind in ("FunctionDef", "AsyncFunctionDef")]
+
+
+def test_roster_is_pure_source_enumeration_of_every_node() -> None:
+    # ONE roster: every node, keyed by CID. The functions are a query over it.
+    r = roster(_sf(_THREE))
+    assert len(r) > 3  # far more than three: every node, not just functions
+    assert _fn_names(r) == ["a", "b", "c"]
+    assert all(e.cid.startswith("blake3-512:") for e in r)
 
 
 def test_moment_zero_minority_is_the_whole_roster() -> None:
-    # With nobody having answered, the minority is everyone: the honest
-    # "accounted for nothing yet" -- total and truthful before any reporter.
+    # Nobody answered -> the minority is everyone: the honest "accounted for
+    # nothing yet," total and truthful before any reporter.
     report = minority_report(_sf(_THREE))  # EmptyAttendance by default
     assert isinstance(report.attendance, EmptyAttendance)
-    assert report.R == 3
+    r = roster(_sf(_THREE))
+    assert report.R == len(r)
     assert not report.is_clean
-    assert {e.name for e in report.minority} == {"a", "b", "c"}
     assert report.present == ()
 
 
 def test_threading_attendance_only_shrinks_the_minority() -> None:
     sf = _sf(_THREE)
-    roster = function_roster(sf)
+    r = roster(sf)
     att = MappingAttendance(
-        {roster[0].cid: Answer.PRESENT_FACT, roster[2].cid: Answer.PRESENT_INERT}
+        {r[0].cid: Answer.PRESENT_FACT, r[1].cid: Answer.PRESENT_INERT}
     )
     report = minority_report(sf, att)
     # present-fact and present-inert both count as SHOWED UP.
-    assert {e.name for e in report.present} == {"a", "c"}
-    # b never answered -> absent, by difference (b never reported itself).
-    assert [e.name for e in report.minority] == ["b"]
-    assert report.R == 1
+    assert set(report.present) == {r[0], r[1]}
+    # everyone else never answered -> absent, by difference.
+    assert report.R == len(r) - 2
+    assert r[0] not in report.minority and r[1] not in report.minority
 
 
 def test_present_inert_is_showing_up_not_absence() -> None:
-    # A unit that states nothing still ANSWERED: it is accounted, not minority.
     sf = _sf(_THREE)
-    roster = function_roster(sf)
-    inert = MappingAttendance({e.cid: Answer.PRESENT_INERT for e in roster})
+    inert = MappingAttendance({e.cid: Answer.PRESENT_INERT for e in roster(sf)})
     assert minority_report(sf, inert).R == 0
 
 
 def test_explicit_absent_answer_stays_in_the_minority() -> None:
-    # An entry that loudly answered ABSENT is still minority (Yellow) -- present
-    # is only fact/inert.
+    # A loud ABSENT answer is still minority (Yellow) -- present is only
+    # fact/inert.
     sf = _sf(_THREE)
-    roster = function_roster(sf)
-    att = MappingAttendance({roster[0].cid: Answer.ABSENT})
+    r = roster(sf)
+    att = MappingAttendance({r[0].cid: Answer.ABSENT})
     report = minority_report(sf, att)
-    assert roster[0] in report.minority
-    assert report.R == 3
+    assert r[0] in report.minority
+    assert report.R == len(r)
 
 
 def test_R_zero_iff_no_minority() -> None:
     sf = _sf(_THREE)
-    roster = function_roster(sf)
-    full = MappingAttendance({e.cid: Answer.PRESENT_FACT for e in roster})
+    full = MappingAttendance({e.cid: Answer.PRESENT_FACT for e in roster(sf)})
     report = minority_report(sf, full)
     assert report.R == 0
     assert report.is_clean
 
 
 def test_roster_is_deterministic_and_content_addressed() -> None:
-    # Same source -> same roster CIDs (the oracle's hash), every time.
-    a = [e.cid for e in function_roster(_sf(_THREE))]
-    b = [e.cid for e in function_roster(_sf(_THREE))]
+    a = [e.cid for e in roster(_sf(_THREE))]
+    b = [e.cid for e in roster(_sf(_THREE))]
     assert a == b
 
 
 def test_total_R_sums_the_whole_minority() -> None:
-    reports = [minority_report(_sf(_THREE)), minority_report(_sf("def x():\n    return 0\n"))]
-    assert total_R(reports) == 4  # 3 + 1, all moment-zero minority
+    reports = [minority_report(_sf(_THREE)), minority_report(_sf("x = 1\n"))]
+    assert total_R(reports) == len(roster(_sf(_THREE))) + len(roster(_sf("x = 1\n")))
 
 
 def test_report_depends_only_on_the_attendance_interface() -> None:
-    # A hand-rolled Attendance (anything implementing answer_for) works -- the
-    # report never reaches past the interface into construction.
+    # A hand-rolled Attendance (anything with answer_for) works -- the report
+    # never reaches past the interface into construction.
     sf = _sf(_THREE)
-    roster = function_roster(sf)
+    r = roster(sf)
+    first = r[0]
 
-    class OnlyA:
+    class OnlyFirst:
         def answer_for(self, entry):
-            return Answer.PRESENT_FACT if entry.name == "a" else None
+            return Answer.PRESENT_FACT if entry.cid == first.cid else None
 
-    report = MinorityReport(roster=roster, attendance=OnlyA())
-    assert [e.name for e in report.present] == ["a"]
-    assert report.R == 2
+    report = MinorityReport(roster=r, attendance=OnlyFirst())
+    assert report.present == (first,)
+    assert report.R == len(r) - 1
+
+
+def test_the_roster_covers_every_source_line() -> None:
+    # The totality law: every line of source is spanned by some roster node, so
+    # every line is accounted (present) or in the minority (absent) -- never a
+    # third, unpainted state. Coverage is a property of the roster, not a check.
+    src = (
+        "def a(z):\n"
+        "    x = z + 1\n"
+        "    return x\n"
+        "\n"
+        "def b():\n"
+        "    with open('p'):\n"
+        "        pass\n"
+    )
+    sf = _sf(src)
+    code_lines = {i for i, ln in enumerate(src.splitlines(), 1) if ln.strip()}
+    covered: set[int] = set()
+    for node in sf.nodes():
+        lc = node.line_col_span()
+        covered |= set(range(lc.start_line, lc.end_line + 1))
+    assert not (code_lines - covered)  # zero unaccounted lines
