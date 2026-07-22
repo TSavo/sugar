@@ -15,6 +15,10 @@ class RaiseEffect:
     # type name: two raise ValueError at different loci have different
     # occurrences. Never used as a fabricated "instance identity" from type alone.
     occurrence: str | None = None
+    # The value built from ``raise <exc>``.  A Name is a coordinate pointing
+    # at the existing binding; a constructor call is its ordinary callsite.
+    # Bare re-raise has no child and therefore leaves this absent.
+    raised_value: object | None = None
 
     @property
     def occurrence_id(self) -> str | None:
