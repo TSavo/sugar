@@ -1,12 +1,14 @@
-"""Resource ``with``: manager once, enter, body ExitSet, exit per face.
+"""Resource ``with``: manager once, enter, body ExitSet, parametric exit.
 
-Tree ownership:
-- ``manager`` sugar evaluates the context expression **once**
-- ``ManagerRef(M)`` is the stable receiver for enter/exit method coordinates
-- ``enter`` is ``M.__enter__()`` sugar
-- exit is **built per body face** with correct ``(type, val, tb)`` args
-- ``enter_slot_id`` is authenticated from the completed enter value
-- disposition is typed (never a name-callback)
+Tree ownership (construction door only):
+- ``manager`` — context expr, desugared once
+- ``enter`` — ``ManagerRef(M).__enter__()``
+- ``exit`` — **one** prebuilt ``M.__exit__(ExitTypeRef(X), ExitValueRef(X),
+  ExitTracebackRef(X))`` sugar
+- face testimony via ``ExitFaceBinding`` under each body-exit guard
+
+``desugar`` must not import or construct sugars (MethodCallSugar, etc.).
+It only desugars existing sugars, emits binding facts, and runs ExitSet algebra.
 """
 
 from __future__ import annotations
@@ -20,16 +22,16 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class WithResourceSugar(Sugar):
-    """Resource with under tree-owned manager/enter coords + typed disposition."""
+    """Resource with: tree-owned manager/enter/exit + typed disposition."""
 
     manager: Sugar
-    """Context-expression sugar — desugared exactly once."""
-
     manager_slot_id: str
-    """Stable ManagerRef slot; enter/exit receivers share this coordinate."""
-
     enter: Sugar
-    """``ManagerRef(M).__enter__()`` method-coordinate sugar."""
+    exit: Sugar
+    """Single parametric ``M.__exit__(ExitTypeRef(X), …)`` — never rebuilt."""
+
+    exit_face_id: str
+    """Stable face coordinate X for ExitFaceBinding testimony."""
 
     body: tuple
     disposition: object
@@ -60,9 +62,12 @@ class WithResourceSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+        # Construction boundary: only ExitSet algebra + binding facts.
+        # No sugar-class imports or construction on this path.
+        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
+            ExitFaceBinding,
             ManagerBinding,
             prepend_facts_to_exitset,
         )
@@ -78,7 +83,6 @@ class WithResourceSugar(Sugar):
 
         del ctx
 
-        # 1. Evaluate context expression once.
         manager_es = sugar_outcome_to_exitset(self.manager.desugar())
         parts: list = []
 
@@ -93,7 +97,6 @@ class WithResourceSugar(Sugar):
                     self.manager_slot_id, mgr_exit.value
                 ).to_facts(site=self.site)
 
-            # 2. Enter once (receiver is ManagerRef coordinate sugar).
             enter_es = sugar_outcome_to_exitset(self.enter.desugar())
             for enter_exit in enter_es.exits:
                 face_guard = _and_guards(mgr_exit.guard, enter_exit.guard)
@@ -111,19 +114,21 @@ class WithResourceSugar(Sugar):
                         self.enter_slot_id, enter_exit.value
                     ).to_facts(site=self.site)
 
-                # 3. Body under enter-complete face.
                 body_es = promote_raise_halts(
                     reduce_block_to_exitset(self.body)
                 ).guarded(face_guard)
 
-                # 4. Exit per body face with face-correct args.
+                # Parametric exit: materialize once, fan over every body face.
+                exit_es = sugar_outcome_to_exitset(self.exit.desugar())
+
                 for body_exit in body_es.exits:
-                    exit_sugar = self._exit_sugar_for_face(body_exit)
-                    exit_es = sugar_outcome_to_exitset(exit_sugar.desugar())
+                    face_facts = ExitFaceBinding.from_body_exit(
+                        self.exit_face_id, body_exit
+                    ).to_facts(site=self.site, guard=body_exit.guard)
                     face = ExitSet((body_exit,))
                     after = face.and_exit(exit_es, disposition=self.disposition)
                     after = prepend_facts_to_exitset(
-                        after, (*mgr_facts, *enter_facts)
+                        after, (*mgr_facts, *enter_facts, *face_facts)
                     )
                     parts.append(after)
 
@@ -138,66 +143,10 @@ class WithResourceSugar(Sugar):
 
         return exitset_to_outcome(routed)
 
-    def _exit_sugar_for_face(self, body_exit) -> Sugar:
-        """Build ``M.__exit__(type, val, tb)`` for this body face only.
-
-        - Completed (incl. return): ``(None, None, None)``
-        - Halted raise: ``(open type, raise witness, open traceback)``
-        - Other halt: open triple residual (never invent completed None)
-        """
-        from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-        from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
-        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
-        from sugar_lift_py_tests.sugar.none_literal_sugar import NoneLiteralSugar
-        from sugar_lift_py_tests.sugar.resource_coord_sugar import (
-            ManagerRefSugar,
-            OpenExitArgSugar,
-            RaiseWitnessSugar,
-        )
-
-        receiver = ManagerRefSugar(slot_id=self.manager_slot_id, site=self.site)
-        none = NoneLiteralSugar(site=self.site)
-
-        if isinstance(body_exit, Completed):
-            args = (none, none, none)
-        elif isinstance(body_exit, Halted) and isinstance(
-            body_exit.effect, RaiseEffect
-        ):
-            effect = body_exit.effect
-            occurrence = (
-                getattr(effect, "occurrence_id", None)
-                or getattr(effect, "occurrence", None)
-                or getattr(effect, "blame", None)
-                or "unknown-raise"
-            )
-            args = (
-                OpenExitArgSugar(kind="exc_type", site=self.site),
-                RaiseWitnessSugar(
-                    occurrence=str(occurrence),
-                    exception_name=effect.exception_name,
-                    site=self.site,
-                ),
-                OpenExitArgSugar(kind="traceback", site=self.site),
-            )
-        else:
-            # Non-raise halt / unknown control: keep all three open.
-            args = (
-                OpenExitArgSugar(kind="exc_type", site=self.site),
-                OpenExitArgSugar(kind="exc_val", site=self.site),
-                OpenExitArgSugar(kind="traceback", site=self.site),
-            )
-
-        return MethodCallSugar(
-            receiver=receiver,
-            name="__exit__",
-            args=args,
-            site=self.site,
-        )
-
 
 def _and_guards(left, right):
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
     from sugar_lift_py_tests.ir import and_
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
 
     if left == true_guard():
         return right
