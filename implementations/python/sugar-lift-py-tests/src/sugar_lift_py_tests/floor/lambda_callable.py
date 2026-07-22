@@ -12,11 +12,9 @@ class LambdaCallable(FloorValue):
     """In-source lambda floor: parameters + body SugarBody for dig/apply.
 
     ``to_term`` is a *callable identity* coordinate
-    ``python:lambda(<param>, ...)`` -- parameter names only. Body FOL under a
-    free-var binding needs a reduction context ``to_term`` does not receive;
-    fabricating a body term from a synthetic empty ctx would lie about free-
-    variable capture. Apply remains the path that lowers the body under a
-    real binding. Never invent a computed value.
+    ``python:lambda(<param>, ..., <body>)``. The source tree has already masked
+    formals and substituted authenticated lexical captures before constructing
+    the body sugar, so its term is a faithful callable body, not reconstruction.
     """
 
     parameters: tuple[str, ...]
@@ -41,9 +39,9 @@ class LambdaCallable(FloorValue):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
 
-        # Source IR uses python:lambda(params…). Factory projection of a
-        # first-class callable value without a reduction ctx carries identity
-        # only (parameter names) -- honest opaque coordinate, not body FOL.
+        from sugar_lift_py_tests.outcome import complete_value
+
+        body_value = complete_value(self.body.desugar(), owner="LambdaCallable")
         default_offset = len(self.parameters) - len(self.default_values)
         encoded_parameters = []
         for index, parameter in enumerate(self.parameters):
@@ -80,7 +78,13 @@ class LambdaCallable(FloorValue):
                 )
         if self.kwarg_parameter is not None:
             encoded_parameters.append(str_const(f"**{self.kwarg_parameter}"))
-        return ctor("python:lambda", encoded_parameters)
+        return ctor(
+            "python:lambda",
+            [
+                *encoded_parameters,
+                body_value.to_term(owner="LambdaCallable.body"),
+            ],
+        )
 
     def apply(self, value: TermValue, ctx):
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
@@ -105,7 +109,7 @@ class LambdaCallable(FloorValue):
             owner="LambdaCallable",
             blame="<lambda>",
         )
-        outcome = self.body.reduce(next_ctx)
+        outcome = self.body.desugar(next_ctx)
         if isinstance(outcome, Incomplete):
             return outcome
         result = complete_value(outcome, owner="LambdaCallable")

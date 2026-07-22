@@ -8,10 +8,7 @@ that gap."""
 
 import tempfile
 
-import pytest
-
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -54,14 +51,18 @@ def test_discrimination_differs_by_callee_operand():
     assert t0 != t1
 
 
-def test_lambda_callee_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(x):\n    return (lambda z: z)(x)\n").sugar()
+def test_lambda_callee_uses_the_computed_call_path():
+    sugar = _fn("def A(x):\n    return (lambda z: z)(x)\n").sugar()
+    call = sugar.statements[0].value
+
+    assert type(call).__name__ == "ComputedCallSugar"
+    assert type(call.callee).__name__ == "LambdaSugar"
+    assert call.callee.formals == ("z",)
 
 
 if __name__ == "__main__":
     test_computed_call_is_the_py_call_coordinate()
     test_assert_consumes_the_coordinate()
     test_discrimination_differs_by_callee_operand()
-    test_lambda_callee_stays_loud()
-    print("ok: computed callee calls -- coordinate, assert, discrimination, lambda loud")
+    test_lambda_callee_uses_the_computed_call_path()
+    print("ok: computed callee calls -- coordinate, assert, discrimination, lambda")

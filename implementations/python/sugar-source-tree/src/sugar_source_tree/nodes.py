@@ -2589,6 +2589,28 @@ class Lambda(Expression):
             changed["body"] = new_body
         return self if not changed else rewrite(self, **changed)
 
+    def _construct_sugar(self):
+        """Construct only plain positional-or-keyword expression lambdas.
+
+        Every other binding role remains loud.  The body constructs through its
+        own node so an unsupported child preserves that child's exact panic.
+        """
+        if len(self.params) != 1 or any(
+            param.param_kind != "positional_or_keyword"
+            or param.default is not None
+            or param.annotation is not None
+            for param in self.params
+        ):
+            return super()._construct_sugar()
+
+        from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
+
+        return LambdaSugar(
+            formals=tuple(param.name for param in self.params),
+            body=self.body.sugar(),
+            site=self.fragment,
+        )
+
 
 class IfExp(Expression):
     test: Expression
