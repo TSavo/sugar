@@ -72,7 +72,7 @@ def test_every_runtime_effect_constructor_wrong_twin_refutes() -> None:
         runtime_effect_evidence,
         runtime_effect_evidence_from_terms,
     )
-    from sugar_lift_py_tests.gap.panic import FactoryPanic
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.ir import ctor, num
 
     class _Site:
@@ -104,7 +104,7 @@ def test_every_runtime_effect_constructor_wrong_twin_refutes() -> None:
                 runtime_effect_evidence_from_terms(
                     ctor("wrong_twin", [num(0)]), 0, site
                 )
-        except FactoryPanic:
+        except ConstructionPanic:
             continue
         raise AssertionError(
             f"{path.relative_to(PACKAGE)}:{node.lineno}: ground wrong twin "

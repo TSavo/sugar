@@ -27,7 +27,7 @@ def _validate_terminal_vectors(label: str, payload: Mapping[str, Any]) -> None:
         owner_identity = panic.get("ownerIdentity")
         gap = panic.get("gap")
         if (
-            panic.get("kind") != "FactoryPanic"
+            panic.get("kind") != "ConstructionPanic"
             or panic.get("status") != "mandatory-panic"
             or not isinstance(panic.get("reason"), str)
             or not isinstance(panic.get("locus"), str)

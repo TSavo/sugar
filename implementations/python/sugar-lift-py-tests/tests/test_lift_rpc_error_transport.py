@@ -5,11 +5,11 @@ from typing import Any
 
 import pytest
 
-from sugar_lift_py_tests.gap.panic import factory_panic_gap
+from sugar_lift_py_tests.gap.panic import construction_panic_gap
 from sugar_lift_py_tests import lift_rpc
 
 
-def test_rpc_dispatch_returns_factory_panic_as_json_rpc_error(monkeypatch) -> None:
+def test_rpc_dispatch_returns_construction_panic_as_json_rpc_error(monkeypatch) -> None:
     """A semantic lift failure must produce a frame, never transport EOF."""
     messages: list[dict[str, Any]] = [
         {"jsonrpc": "2.0", "id": 2, "method": "lift", "params": {}},
@@ -23,7 +23,7 @@ def test_rpc_dispatch_returns_factory_panic_as_json_rpc_error(monkeypatch) -> No
 
     def panic_lift(msg_id: Any, params: dict[str, Any]) -> None:
         del msg_id, params
-        factory_panic_gap(
+        construction_panic_gap(
             owner="rpc-fixture",
             blame="fixture.py:1:0",
             observed="missing",
@@ -45,13 +45,13 @@ def test_rpc_dispatch_returns_factory_panic_as_json_rpc_error(monkeypatch) -> No
             "error": {
                 "code": -32603,
                 "message": (
-                    "FACTORY PANIC: match(Sugar) { Some => cite_or_effect, "
+                    "CONSTRUCTION PANIC: match(Sugar) { Some => cite_or_effect, "
                     "None => panic!() }\nwrite more Floor for this Construction: "
                     "owner=rpc-fixture blame=fixture.py:1:0 observed=missing "
                     "requested=value fix=return a JSON-RPC error frame"
                 ),
                 "data": {
-                    "exception_type": "FactoryPanic",
+                    "exception_type": "ConstructionPanic",
                     "stage": "dispatch",
                     "diagnostic": {
                         "owner": "rpc-fixture",

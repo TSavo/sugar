@@ -43,7 +43,7 @@ class FunctionCallable(FloorValue):
 
     def call_scope_updates(self, arg_values, ctx, site):
         """Replay a straight-line local callback and return its caller rebinds."""
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.floor.call_site_value import (
             CallSiteValue,
             _ctx_with_curried_args,
@@ -57,7 +57,7 @@ class FunctionCallable(FloorValue):
             owner="FunctionCallable.call_scope_updates",
         )
         if not isinstance(callsite, CallSiteValue):
-            factory_panic_gap(
+            construction_panic_gap(
                 owner="FunctionCallable",
                 blame=str(site),
                 observed=type(callsite).__name__,
@@ -68,7 +68,7 @@ class FunctionCallable(FloorValue):
         if not isinstance(body, SugarBody) or not isinstance(
             body.sugar, ContextualizedDigBody
         ):
-            factory_panic_gap(
+            construction_panic_gap(
                 owner="FunctionCallable",
                 blame=str(site),
                 observed=type(body).__name__,
@@ -105,7 +105,7 @@ class FunctionCallable(FloorValue):
         term=None,
         native_shape=None,
     ):
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.gap.info import GapKind, GapLocus
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
@@ -125,7 +125,7 @@ class FunctionCallable(FloorValue):
             )
 
         if self.body is None:
-            factory_panic_gap(
+            construction_panic_gap(
                 owner="FunctionCallable",
                 blame=str(site),
                 observed=self.name,
@@ -140,7 +140,7 @@ class FunctionCallable(FloorValue):
         n_keywords = len(keyword_names)
         if n_keywords:
             if n_keywords > len(arg_values):
-                factory_panic_gap(
+                construction_panic_gap(
                     owner="FunctionCallable",
                     blame=str(site),
                     observed=(len(arg_values), keyword_names),
@@ -443,7 +443,7 @@ class FunctionCallable(FloorValue):
                         exception=exception,
                     )
                 )
-            factory_panic_gap(
+            construction_panic_gap(
                 owner="FunctionCallable",
                 blame=str(site),
                 observed=(self.parameter_kinds, keyword_names),
@@ -489,7 +489,7 @@ class FunctionCallable(FloorValue):
 
     def _apply_decorators(self, site):
         """Apply Python decorators as nested callable substitutions."""
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.floor.call_site_value import (
             CallSiteValue,
             _ctx_with_curried_args,
@@ -522,7 +522,7 @@ class FunctionCallable(FloorValue):
             if isinstance(decorator, CallSiteValue):
                 factory_name = decorator.target_name
                 if decorator.body is None:
-                    factory_panic_gap(
+                    construction_panic_gap(
                         owner=f"FunctionCallable decorator factory:{factory_name}",
                         blame=str(site),
                         observed=(
@@ -550,7 +550,7 @@ class FunctionCallable(FloorValue):
                     project_callsite=False,
                 )
             if not isinstance(decorator, FunctionCallable):
-                factory_panic_gap(
+                construction_panic_gap(
                     owner="FunctionCallable",
                     blame=str(site),
                     observed=type(decorator).__name__,
@@ -563,7 +563,7 @@ class FunctionCallable(FloorValue):
                 owner="FunctionCallable decorator application",
             )
             if not isinstance(applied, CallSiteValue):
-                factory_panic_gap(
+                construction_panic_gap(
                     owner="FunctionCallable",
                     blame=str(site),
                     observed=type(applied).__name__,
@@ -572,7 +572,7 @@ class FunctionCallable(FloorValue):
                 )
             assert isinstance(applied, CallSiteValue)
             if applied.body is None:
-                factory_panic_gap(
+                construction_panic_gap(
                     owner=f"FunctionCallable decorator application:{applied.target_name}",
                     blame=str(site),
                     observed=(
@@ -592,7 +592,7 @@ class FunctionCallable(FloorValue):
                 blame=applied.target_name,
             )
             if isinstance(result_outcome, Incomplete):
-                factory_panic_gap(
+                construction_panic_gap(
                     owner=(
                         "FunctionCallable decorator result:" f"{applied.target_name}"
                     ),
@@ -635,7 +635,7 @@ class FunctionCallable(FloorValue):
                     project_callsite=False,
                 )
             if not isinstance(current, FunctionCallable):
-                factory_panic_gap(
+                construction_panic_gap(
                     owner="FunctionCallable",
                     blame=str(site),
                     observed=type(current).__name__,

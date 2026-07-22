@@ -14,7 +14,7 @@ from sugar_lift_py_tests.effect import (
     is_lift_time_decidable,
     runtime_effect_evidence,
 )
-from sugar_lift_py_tests.gap.panic import FactoryPanic
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, make_var, str_const
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
@@ -88,7 +88,7 @@ def test_string_locus_cannot_mint_a_runtime_effect_witness() -> None:
 
 def test_arbitrary_object_operand_cannot_fabricate_a_witness_term() -> None:
     site = _site("x = 1\n")
-    with pytest.raises(FactoryPanic, match="cannot mint a RuntimeEffect"):
+    with pytest.raises(ConstructionPanic, match="cannot mint a RuntimeEffect"):
         runtime_effect_evidence("py.runtime", object(), site)
 
 
@@ -118,7 +118,7 @@ def test_import_exception_predicate_is_a_genuine_runtime_operand() -> None:
 
 def test_ground_boolean_constructor_still_cannot_mint_runtime_authority() -> None:
     site = _site("x = True\n")
-    with pytest.raises(FactoryPanic, match="ground/decidable"):
+    with pytest.raises(ConstructionPanic, match="ground/decidable"):
         runtime_effect_evidence(
             "py.ifexp.select",
             ctor("py.not", [ctor("py.and", [])]),

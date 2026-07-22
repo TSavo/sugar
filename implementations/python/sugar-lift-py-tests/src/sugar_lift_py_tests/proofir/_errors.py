@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import NoReturn
 
-from sugar_lift_py_tests.gap.panic import factory_panic
-from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
+from sugar_lift_py_tests.gap.panic import construction_panic
+from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
 
 def proofir_construction_gap(
@@ -13,7 +13,7 @@ def proofir_construction_gap(
     requested: str,
     fix: str,
 ) -> NoReturn:
-    info = FactoryGapInfo(
+    info = ConstructionGap(
         owner=owner,
         blame="proofir-construction-law",
         observed=observed,
@@ -22,4 +22,4 @@ def proofir_construction_gap(
         gap_kind=GapKind.PROOFIR,
         gap_locus=GapLocus.CONSTRUCTION_LAW,
     )
-    factory_panic(info)
+    construction_panic(info)

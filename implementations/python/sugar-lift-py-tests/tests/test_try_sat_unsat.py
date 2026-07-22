@@ -354,7 +354,7 @@ def test_try_finally_override_stays_a_loud_construction_gap(
 
     assert completed.returncode == 1
     assert "observed=Try requested=statement" in completed.stderr
-    assert "FACTORY PANIC" in completed.stderr
+    assert "CONSTRUCTION PANIC" in completed.stderr
 
 
 def test_try_finally_inert_body_preserves_try_return(

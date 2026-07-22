@@ -3,7 +3,7 @@
 
 Blind spot the side-door census does not close: a broad ``owns()`` can claim a
 shape and manufacture Incomplete instead of leaving the factory with no candidate
-(→ FactoryPanic).
+(→ ConstructionPanic).
 
 This instrument is STEP-1 static enforcement of the ownership law:
 
@@ -229,7 +229,7 @@ def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
                         "owns() present without witnesses() / opt-out — "
                         "cannot prove honest construction or typed red twin; "
                         "unsupported shapes must leave factory with no candidate "
-                        "→ FactoryPanic, never soft Incomplete",
+                        "→ ConstructionPanic, never soft Incomplete",
                     )
                 )
             # broad-owns is advisory only (observed-kind owns is lawful for many
@@ -242,7 +242,7 @@ def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
                         "broad-unenrolled-owns",
                         node.name,
                         "broad observed-only owns without witnesses — capture then "
-                        "Incomplete risk; enroll twin or narrow + FactoryPanic",
+                        "Incomplete risk; enroll twin or narrow + ConstructionPanic",
                     )
                 )
         if owned_sugars:
@@ -264,7 +264,7 @@ def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
                         "owns() selected this module's Sugar, but the selected "
                         "path manufactures Incomplete without a concrete "
                         "*RuntimeEffect; unsupported construction must leave no "
-                        "candidate so factory None → FactoryPanic",
+                        "candidate so factory None → ConstructionPanic",
                     )
                 )
             if any(
@@ -301,7 +301,7 @@ def format_report(offenders: list[OwnershipOffender]) -> str:
         f"auditor_errors = {len(auditor_errors)}",
         "Law: every selected Sugar arm produces cited construction or genuine typed "
         "runtime effect under a bad twin; unsupported shapes leave factory with no "
-        "candidate → FactoryPanic. Soft Incomplete after broad owns is illegal.",
+        "candidate → ConstructionPanic. Soft Incomplete after broad owns is illegal.",
         "",
         "By kind:",
     ]

@@ -14,9 +14,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from sugar_lift_py_tests.idd.factory_panic_fronts import (
+from sugar_lift_py_tests.idd.construction_panic_fronts import (
     fingerprint_from_gap,
-    rank_factory_panic_fronts,
+    rank_construction_panic_fronts,
 )
 from sugar_lift_py_tests.idd.factory_walk_unclassified_locus import (
     project_unclassified_loci,
@@ -71,7 +71,7 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
 
         configure_live_log()
     try:
-        from sugar_lift_py_tests.audit_only import collect_factory_panic
+        from sugar_lift_py_tests.audit_only import collect_construction_panic
         from sugar_lift_py_tests.effect import effect_reason, effect_status
         from sugar_lift_py_tests.lift_rpc import lift_file_payload
         from sugar_lift_py_tests.kit_manifest import (
@@ -89,12 +89,12 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
             source = path.read_text(encoding="utf-8", errors="replace")
         if progress:
             with reduction_span(sugar="lift_file_payload", role="file", site=rel):
-                payload, panic_gap = collect_factory_panic(
+                payload, panic_gap = collect_construction_panic(
                     rel,
                     lambda: lift_file_payload(source, rel),
                 )
         else:
-            payload, panic_gap = collect_factory_panic(
+            payload, panic_gap = collect_construction_panic(
                 rel,
                 lambda: lift_file_payload(source, rel),
             )
@@ -102,7 +102,7 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
             return {
                 "outcome": "factory-panic",
                 "file": rel,
-                "exception_type": "FactoryPanic",
+                "exception_type": "ConstructionPanic",
                 "reason": panic_gap.message.splitlines()[-1][:1000],
                 "gap": panic_gap.info,
                 "kit_manifest": (
@@ -247,7 +247,7 @@ def _run_parent(args: argparse.Namespace) -> int:
     assertion_counts: Counter[str] = Counter()
     terminal_rows: list[dict[str, Any]] = []
     representatives: dict[str, list[str]] = defaultdict(list)
-    factory_panic_rows: list[dict[str, Any]] = []
+    construction_panic_rows: list[dict[str, Any]] = []
     effect_occurrence_counts: Counter[str] = Counter()
     effect_file_counts: Counter[str] = Counter()
     effect_examples: dict[str, list[str]] = defaultdict(list)
@@ -317,7 +317,7 @@ def _run_parent(args: argparse.Namespace) -> int:
             fingerprint = _factory_fingerprint(row)
             testimony = row.get("testimony") or {}
             gap = testimony.get("gap") if isinstance(testimony, dict) else {}
-            factory_panic_rows.append(
+            construction_panic_rows.append(
                 {
                     "file": rel,
                     "owner": fingerprint[0] or "unknown",
@@ -355,7 +355,7 @@ def _run_parent(args: argparse.Namespace) -> int:
         if index % 25 == 0:
             print(f"triaged {index}/{len(paths)} files", file=sys.stderr)
 
-    ranking = rank_factory_panic_fronts(factory_panic_rows)
+    ranking = rank_construction_panic_fronts(construction_panic_rows)
     factory_fronts = ranking["exact_fronts"]
     owner_families = ranking["owner_families"]
     completed_effect_fronts = [
@@ -387,13 +387,13 @@ def _run_parent(args: argparse.Namespace) -> int:
         "census": dict(sorted(assertion_counts.items())),
         "terminal_categories": dict(sorted(categories.items())),
         "category_representatives": dict(sorted(representatives.items())),
-        "factory_panic_front_count": len(factory_fronts),
-        "factory_panic_fronts": (
+        "construction_panic_front_count": len(factory_fronts),
+        "construction_panic_fronts": (
             factory_fronts[: args.front_limit] if args.compact else factory_fronts
         ),
         # Structured owner ranking — same payload live isolation emits so
         # fatal recensus (#4775) can merge isolation + triage without re-parsing.
-        "R_live_factory_panic_files": ranking["R_live_factory_panic_files"],
+        "R_live_construction_panic_files": ranking["R_live_construction_panic_files"],
         "owner_family_count": ranking["owner_family_count"],
         "owner_families": (
             owner_families[: args.front_limit] if args.compact else owner_families

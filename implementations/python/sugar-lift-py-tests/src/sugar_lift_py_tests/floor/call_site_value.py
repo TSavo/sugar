@@ -10,7 +10,6 @@ from sugar_lift_py_tests.sugar_body import SugarBody
  
 
 from .floor_value import FloorValue
-from sugar_lift_py_tests.gap.audit_row import FactoryAuditStatus
 
 _FORCE_FLOOR_BUDGET = 64
 _NESTED_DIG_DEMAND_BUDGET = 8
@@ -153,7 +152,7 @@ class CallSiteValue(FloorValue):
         # Ground (lift-time-decidable) coordinates must construct, never mint
         # RuntimeEffect authority via py.truthy (#4993 / #5147).
         from sugar_lift_py_tests.effect import is_lift_time_decidable
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
         from sugar_lift_py_tests.outcome import Complete
@@ -162,7 +161,7 @@ class CallSiteValue(FloorValue):
             constructed = self._construct_decidable_truth(site)
             if constructed is not None:
                 return constructed
-            factory_panic_gap(
+            construction_panic_gap(
                 owner="CallSiteValue.truth",
                 blame=site,
                 observed=f"ground callsite term {self.term!r}",
@@ -201,7 +200,7 @@ class CallSiteValue(FloorValue):
         return None
 
     def is_identical(self, other, site):
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.floor.none_value import NoneValue
         from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -516,9 +515,9 @@ class CallSiteValue(FloorValue):
         if constructed is not None:
             return constructed
 
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
-        factory_panic_gap(
+        construction_panic_gap(
             owner="CallSiteValue.append_with",
             blame=str(site),
             observed=f"CallSiteValue({self.target_name})",
@@ -658,7 +657,7 @@ class CallSiteValue(FloorValue):
         """Addition floor via interface dispatch: dig then redispatch, else EUF +.
 
         AddOpSugar calls left.add(right) — not binary_operator_with. Without this
-        totalizer, dig of `want_bytes(x) + self.sep` factory_panics mid-body.
+        totalizer, dig of `want_bytes(x) + self.sep` construction_panics mid-body.
         """
         return self._dig_or_symbolic_binop(other, site, op="+", floor_method="add")
 
@@ -752,7 +751,7 @@ class CallSiteValue(FloorValue):
         """Dig body when present; redispatch op on dug floor; else SymbolicValue join.
 
         No invent of concrete sums. Ctx is None-tolerant (add(site) has no ctx).
-        Mid-dig FactoryPanic propagates (process-terminal; never dig opacity).
+        Mid-dig ConstructionPanic propagates (process-terminal; never dig opacity).
         """
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
@@ -998,7 +997,7 @@ class CallSiteValue(FloorValue):
             outcome = _reduce_callsite_body(body, reduce_ctx, blame=self.target_name)
         finally:
             _ACTIVE_DIG_DEMAND.reset(token)
-        # FactoryPanic is BaseException and process-terminal: dig must not convert
+        # ConstructionPanic is BaseException and process-terminal: dig must not convert
         # it into opacity/None (python-sole-construction; #5238).
         if isinstance(outcome, Incomplete):
             if incomplete_outcome is not None:
@@ -1213,10 +1212,10 @@ def _force_floor_gap(
     observed: str,
     fix: str,
 ) -> NoReturn:
-    from sugar_lift_py_tests.gap.panic import factory_panic
-    from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
+    from sugar_lift_py_tests.gap.panic import construction_panic
+    from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
-    info = FactoryGapInfo(
+    info = ConstructionGap(
         owner=owner,
         blame=target_name,
         observed=observed,
@@ -1225,7 +1224,7 @@ def _force_floor_gap(
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.PROJECTION,
     )
-    factory_panic(info)
+    construction_panic(info)
 
 
 def _ctx_with_curried_args(

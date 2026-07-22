@@ -8,7 +8,7 @@ surfaces:
 * source ledger: no unclassified source locus;
 * source→factory conservation: no vanished body-owning source locus.
 
-A typed FactoryPanic is loud testimony and is therefore not silent. Any other
+A typed ConstructionPanic is loud testimony and is therefore not silent. Any other
 exception remains process-terminal. Exit 1 whenever R_silent > 0; there is no
 baseline or allowlist.
 """
@@ -43,7 +43,7 @@ class ChildResult(NamedTuple):
 class AuditSummary(NamedTuple):
     discovered: int
     completed: int
-    factory_panics: int
+    construction_panics: int
     timeouts: int
     non_native_red: int
     native_crashes: int
@@ -151,7 +151,7 @@ def format_report(offenders: Sequence[SilentOffender]) -> str:
         f"R_silent = {r_silent(offenders)}",
         (
             "Replacement: every source locus speaks as warranted, support, "
-            "inactive, typed effect, or loud FactoryPanic."
+            "inactive, typed effect, or loud ConstructionPanic."
         ),
         "",
         "Loci:",
@@ -303,7 +303,7 @@ def audit_paths(
     return AuditSummary(
         discovered=len(rows),
         completed=sum(row.category == "completed" for row in rows),
-        factory_panics=sum(row.category == "factory-panic" for row in rows),
+        construction_panics=sum(row.category == "factory-panic" for row in rows),
         timeouts=sum(row.category == "timeout" for row in rows),
         non_native_red=sum(row.category == "non-native-red" for row in rows),
         native_crashes=sum(row.category == "native-crash" for row in rows),
@@ -367,7 +367,7 @@ def main() -> int:
     print(
         "SILENT SURFACE: "
         f"discovered={summary.discovered} completed={summary.completed} "
-        f"factory_panics={summary.factory_panics} "
+        f"construction_panics={summary.construction_panics} "
         f"non_native_red={summary.non_native_red} "
         f"native_crashes={summary.native_crashes} timeouts={summary.timeouts}"
     )

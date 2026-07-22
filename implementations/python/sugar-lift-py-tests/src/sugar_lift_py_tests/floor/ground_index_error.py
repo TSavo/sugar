@@ -19,13 +19,13 @@ def ground_index_error(
     from pathlib import Path
 
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.gap.panic import factory_panic_gap
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
     from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
     from sugar_lift_py_tests.outcome import Complete
 
     del owner, operation, index, length
     if Path(site.filename).is_absolute():
-        factory_panic_gap(
+        construction_panic_gap(
             owner="ground_index_error",
             blame=site,
             observed="absolute source locus",

@@ -10,7 +10,7 @@ none left unclassified.
 R_factory_walk_unclassified = count of factory-walk rows whose status is
 unclassified or unresolved. Exit 1 whenever R > 0. No baseline, no threshold,
 no allowlist. Keep this axis separate from crashes, bare exceptions, timeouts,
-and FactoryPanic file fatals.
+and ConstructionPanic file fatals.
 
 Measurement: pass factory-walk rows via --from-json (audit summary, recensus
 shard, or bare row list). Prefer row-addressable locus lists
@@ -229,11 +229,11 @@ def _python_paths(roots: Sequence[Path]) -> list[Path]:
 
 
 def _run_live_child(path: Path, rel: str) -> int:
-    from sugar_lift_py_tests.audit_only import collect_factory_panic
+    from sugar_lift_py_tests.audit_only import collect_construction_panic
     from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
     source = path.read_text(encoding="utf-8", errors="replace")
-    payload, panic_gap = collect_factory_panic(
+    payload, panic_gap = collect_construction_panic(
         rel, lambda: lift_file_payload(source, rel)
     )
     if panic_gap is not None:
@@ -320,7 +320,7 @@ def measure_live_roots(
     counts = {
         "files_discovered": len(results),
         "files_completed": sum(row.get("category") == "completed" for row in results),
-        "factory_panics": sum(row.get("category") == "factory-panic" for row in results),
+        "construction_panics": sum(row.get("category") == "factory-panic" for row in results),
         "timeouts": sum(row.get("category") == "timeout" for row in results),
         "native_crashes": sum(
             row.get("category") == "native-crash" for row in results

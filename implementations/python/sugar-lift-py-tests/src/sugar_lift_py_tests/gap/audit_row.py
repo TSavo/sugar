@@ -5,17 +5,15 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
-    # kit_rpc's own import chain runs back through factory (effect_dto ->
-    # effect -> factory_gap_effect -> factory.factory_gap ->
-    # factory_audit_row), so this stays type-checking-only to avoid a
-    # runtime circular import; `from __future__ import annotations` above
-    # makes the FactoryAuditDto annotation below lazy.
+    # kit_rpc import chain stays type-checking-only to avoid a runtime circular
+    # import; `from __future__ import annotations` makes FactoryAuditDto lazy.
+    # Wire kind remains "factory-audit-row" (retain-old-wire discriminator).
     from sugar_lift_py_tests.kit_rpc import FactoryAuditDto
 
 
-class FactoryAuditStatus(StrEnum):
+class ConstructionAuditStatus(StrEnum):
     """A lift-audit status. An enum, not a string: an illegal status is
-    unrepresentable by construction, so FactoryAuditRow needs no runtime
+    unrepresentable by construction, so ConstructionAuditRow needs no runtime
     membership guard. StrEnum keeps the wire bytes identical -- each member
     renders as its literal status string in RPC/JSON."""
 
@@ -29,9 +27,9 @@ class FactoryAuditStatus(StrEnum):
 
 
 @dataclass(frozen=True)
-class FactoryAuditRow:
+class ConstructionAuditRow:
     role: str
-    status: FactoryAuditStatus
+    status: ConstructionAuditStatus
     observed: str
     blame: str
     selected: Optional[str]

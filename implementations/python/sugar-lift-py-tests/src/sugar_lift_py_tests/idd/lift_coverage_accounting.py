@@ -285,7 +285,7 @@ def _account_assertions(
 
     Doctrine (unambiguous):
       * Lifted+cited — floor implemented; fact row spoke.
-      * Refused-loud — instrument engaged and refused (FactoryPanic held as gap,
+      * Refused-loud — instrument engaged and refused (ConstructionPanic held as gap,
         factory-walk unresolved/unclassified, auditOnlyGaps). **Panic is correct**
         when the code is not implemented yet; that is not silent.
       * Silently-unaccounted — stated assert and the instrument never engaged.
@@ -395,7 +395,7 @@ def _account_assertions(
             a.file == file and start_line <= a.line <= end_line
             for file, start_line, end_line in recovered_panic_spans
         ):
-            # The report rendered the FactoryPanic loudly, but no assertion
+            # The report rendered the ConstructionPanic loudly, but no assertion
             # fact exists for this poisoned definition. It therefore cannot
             # be counted as cited or refused-and-accounted: retain it on the
             # mandatory silently_unaccounted RED gate until construction
@@ -437,7 +437,7 @@ def _account_assertions(
                 "status": "recovered-factory-panic",
                 "message": (
                     "claim has no constructed fact because its definition "
-                    "ended in a loudly rendered FactoryPanic"
+                    "ended in a loudly rendered ConstructionPanic"
                 ),
             }
             for a in silent
@@ -478,7 +478,7 @@ def _factory_instrument_engaged(payload: Mapping[str, Any]) -> bool:
 def _report_recovered_panic_spans(
     payload: Mapping[str, Any],
 ) -> list[tuple[str, int, int]]:
-    """Definition spans whose report construction ended in FactoryPanic."""
+    """Definition spans whose report construction ended in ConstructionPanic."""
     summary = (
         payload.get("factoryAuditSummary") or payload.get("factory_audit_summary") or {}
     )

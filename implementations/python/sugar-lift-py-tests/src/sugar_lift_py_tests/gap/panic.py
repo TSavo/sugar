@@ -2,41 +2,32 @@ from __future__ import annotations
 
 from typing import NoReturn
 
-from .audit_row import FactoryAuditRow, FactoryAuditStatus
-from .info import FactoryGapInfo, GapKind, GapLocus
+from .info import ConstructionGap, GapKind, GapLocus
 
 
-class FactoryPanic(BaseException):
-    """The None arm of match(Sugar) { Some => cite_or_effect, None => panic!() }.
+class ConstructionPanic(BaseException):
+    """Kit-domain construction None arm: match(Sugar) { Some => …, None => panic!() }.
 
-    A BaseException, NOT an Exception: a normal `except Exception:` -- the usual swallow
-    -- will not catch it, so it propagates and halts loud, the way a process exit did.
-    Only an audit harness that explicitly does `except FactoryPanic:` can hold it, to
-    enumerate every gap instead of dying on the first. It carries the gap so the audit
-    can name what to write."""
+    A BaseException, NOT an Exception: ordinary ``except Exception:`` will not
+    catch it, so it propagates and halts loud. Audit harnesses that enumerate
+    gaps catch ``ConstructionPanic`` explicitly. The production lift child also
+    admits it as a sanctioned typed gap (alongside tree ``SugarNotWritten``).
 
-    def __init__(
-        self,
-        info: FactoryGapInfo,
-        audit_row: FactoryAuditRow | None = None,
-    ) -> None:
+    Carries only ``ConstructionGap`` testimony. Audit rows are construction
+    testimony elsewhere (SugarBody / report sinks) — never attached to the panic.
+    """
+
+    def __init__(self, info: ConstructionGap) -> None:
         self.info = info
-        self.audit_row = audit_row
         super().__init__(
-            "FACTORY PANIC: match(Sugar) { Some => cite_or_effect, None => panic!() }\n"
+            "CONSTRUCTION PANIC: match(Sugar) { Some => cite_or_effect, None => panic!() }\n"
             f"{info.message}"
         )
 
 
-def factory_panic(
-    info: FactoryGapInfo,
-    audit_row: FactoryAuditRow | None = None,
-) -> NoReturn:
-    """The None / no-recognizer arm. No recognizer is not a third state: there is no
-    FactoryGap type and no catchable Incomplete arm. The None slot panics -- loudly,
-    uncatchable by ordinary handlers -- via a BaseException that only audit mode holds.
-    """
-    raise FactoryPanic(info, audit_row)
+def construction_panic(info: ConstructionGap) -> NoReturn:
+    """Raise the construction None arm. No Incomplete soft arm; no audit row."""
+    raise ConstructionPanic(info)
 
 
 def _blame_prose(blame: object) -> str:
@@ -53,7 +44,7 @@ def _blame_prose(blame: object) -> str:
     return str(blame)
 
 
-def factory_panic_gap(
+def construction_panic_gap(
     *,
     owner: str,
     blame: object,
@@ -62,16 +53,15 @@ def factory_panic_gap(
     fix: str,
     gap_kind: GapKind = GapKind.FLOOR,
     gap_locus: GapLocus = GapLocus.CONSTRUCTION,
-    status: FactoryAuditStatus = FactoryAuditStatus.SUGAR_GAP,
-    selected: str | None = None,
 ) -> NoReturn:
     """Mouth for residual floor/temporal None arms.
 
     ``blame`` may be the one tree SourceFragment (RuntimeEffectSite) or prose.
-    FactoryGapInfo.blame is prose: project at this boundary, nowhere earlier.
+    ConstructionGap.blame is prose: project at this boundary, nowhere earlier.
+    Status/audit-row authority lives on construction testimony (#6029), not here.
     """
     prose = _blame_prose(blame)
-    info = FactoryGapInfo(
+    info = ConstructionGap(
         owner=owner,
         blame=prose,
         observed=observed,
@@ -80,16 +70,7 @@ def factory_panic_gap(
         gap_kind=gap_kind,
         gap_locus=gap_locus,
     )
-    audit_row = FactoryAuditRow(
-        role=requested,
-        status=status,
-        observed=observed,
-        blame=prose,
-        selected=selected,
-        candidates=[],
-        message=info.message,
-    )
-    factory_panic(info, audit_row)
+    construction_panic(info)
 
 
 def dig_boundary_panic(
@@ -100,11 +81,11 @@ def dig_boundary_panic(
     reason: str,
 ) -> NoReturn:
     """A dig gap is not a soft ledger row. It panics like any other None arm."""
-    info = FactoryGapInfo(
+    info = ConstructionGap(
         owner="dig",
         blame=blame,
         observed=callee,
         requested="dig",
         fix=f"caught={caught} reason={reason}",
     )
-    raise FactoryPanic(info)
+    raise ConstructionPanic(info)

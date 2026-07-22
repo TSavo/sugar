@@ -3,7 +3,7 @@
 These lanes (call_edges, vendor_conjoins, diagnostics, source_audits,
 factory_audits) have no closed recognizer hierarchy backing them yet: their
 producers emit shapes that vary by branch (CallEdgeDecl.to_declaration(),
-package accounting summaries, FactoryAuditRow.to_json(), ad hoc diagnostic
+package accounting summaries, ConstructionAuditRow.to_json(), ad hoc diagnostic
 dicts). Per the enforcement-ladder ceiling test (issue #3657/#3661) an open
 lane still gets a NAMED TypedDict membrane instead of an accidental
 `dict[str, Any]` -- the boundary is declared, even where individual field
@@ -86,7 +86,7 @@ class SourceAuditDto(TypedDict, total=False):
 
 
 class FactoryAuditDto(TypedDict, total=False):
-    """Mirrors FactoryAuditRow.to_json() (factory/factory_audit_row.py)."""
+    """Mirrors ConstructionAuditRow.to_json() (factory/factory_audit_row.py)."""
 
     kind: str
     role: str

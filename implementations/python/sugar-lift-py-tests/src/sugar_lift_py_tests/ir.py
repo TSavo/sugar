@@ -194,20 +194,20 @@ def term_intern_scope() -> Iterator[None]:
 
 
 def _panic_cyclic_term(term: Term) -> None:
-    from sugar_lift_py_tests.gap.panic import factory_panic_gap
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
     name = getattr(term, "name", None)
     observed = f"cyclic IR term graph at {type(term).__name__}"
     if isinstance(name, str):
         observed = f"{observed} name={name!r}"
-    factory_panic_gap(
+    construction_panic_gap(
         owner="ir._intern_term",
         blame="term_intern_scope",
         observed=observed,
         requested="DAG term hash-cons (finite structural intern key)",
         fix=(
             "IR terms must be finite DAGs; refuse cyclic _Ctor graphs with "
-            "FactoryPanic at intern. Never soft-complete, never timeout-launder, "
+            "ConstructionPanic at intern. Never soft-complete, never timeout-launder, "
             "never leave recursive dataclass __hash__ as the intern seat, and "
             "never convert this into RuntimeEffect"
         ),
@@ -259,7 +259,7 @@ def _intern_term(term: Term) -> Term:
     """Hash-cons ``term`` under the active request scope.
 
     Walks the term DAG iteratively (post-order). Cyclic graphs — illegal for
-    IR terms — raise ``FactoryPanic`` instead of recursive ``__hash__`` SEGV.
+    IR terms — raise ``ConstructionPanic`` instead of recursive ``__hash__`` SEGV.
     """
     tables = _TERM_INTERN_TABLE.get()
     if tables is None:

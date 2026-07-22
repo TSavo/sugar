@@ -4,7 +4,7 @@ import builtins
 
 import pytest
 
-from sugar_lift_py_tests.gap.panic import FactoryPanic
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
     GuardedValue,
@@ -33,7 +33,7 @@ def test_builtin_constants_are_derived_as_the_callable_complement() -> None:
 
 
 def test_truly_undefined_name_still_panics() -> None:
-    with pytest.raises(FactoryPanic, match="definitely_not_a_python_builtin"):
+    with pytest.raises(ConstructionPanic, match="definitely_not_a_python_builtin"):
         TemporalContext.empty().value_for("definitely_not_a_python_builtin")
 
 

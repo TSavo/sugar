@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.gap.panic import FactoryPanic
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.floor import PredicateValue, SymbolicValue
 from sugar_lift_py_tests.ir import (
     Int,
@@ -60,5 +60,5 @@ def test_predicate_can_ride_as_an_operation_operand() -> None:
 
 def test_quantified_predicate_projection_stays_loud() -> None:
     formula = forall("item", Int(), py_truthy(make_var("item")))
-    with pytest.raises(FactoryPanic, match="PredicateValue.to_term"):
+    with pytest.raises(ConstructionPanic, match="PredicateValue.to_term"):
         PredicateValue(formula).to_term(owner="test")

@@ -1,23 +1,23 @@
-"""#4013: structured FactoryPanic front ranking for isolation + fatal recensus."""
+"""#4013: structured ConstructionPanic front ranking for isolation + fatal recensus."""
 
 from __future__ import annotations
 
 from sugar_lift_py_tests.gap.info import (
-    FactoryGapInfo,
+    ConstructionGap,
     GapKind,
     GapLocus,
 )
-from sugar_lift_py_tests.idd.factory_panic_fronts import (
+from sugar_lift_py_tests.idd.construction_panic_fronts import (
     FINGERPRINT_FIELDS,
     fingerprint_from_gap,
     fingerprint_from_panic_info,
     fingerprint_label,
-    rank_factory_panic_fronts,
+    rank_construction_panic_fronts,
 )
 
 
 def test_fingerprint_from_typed_gap_info_matches_json() -> None:
-    info = FactoryGapInfo(
+    info = ConstructionGap(
         owner="TemporalContext",
         blame="x.py:1:1",
         observed="result",
@@ -47,7 +47,7 @@ def test_fingerprint_from_typed_gap_info_matches_json() -> None:
     )
 
 
-def test_rank_factory_panic_fronts_orders_owner_families_and_exact_fronts() -> None:
+def test_rank_construction_panic_fronts_orders_owner_families_and_exact_fronts() -> None:
     rows = [
         {
             "file": "numpy/a.py",
@@ -94,9 +94,9 @@ def test_rank_factory_panic_fronts_orders_owner_families_and_exact_fronts() -> N
             },
         },
     ]
-    ranking = rank_factory_panic_fronts(rows)
+    ranking = rank_construction_panic_fronts(rows)
 
-    assert ranking["R_live_factory_panic_files"] == 4
+    assert ranking["R_live_construction_panic_files"] == 4
     assert ranking["owner_family_count"] == 2
     assert ranking["exact_front_count"] == 3
     assert ranking["owners"] == {"TemporalContext": 3, "WithSugar": 1}
@@ -134,15 +134,15 @@ def test_rank_accepts_fingerprint_tuples_for_isolation_rows() -> None:
             ),
         }
     ]
-    ranking = rank_factory_panic_fronts(rows)
-    assert ranking["R_live_factory_panic_files"] == 1
+    ranking = rank_construction_panic_fronts(rows)
+    assert ranking["R_live_construction_panic_files"] == 1
     assert ranking["exact_fronts"][0]["owner"] == "ForSugar.static_unfold"
     assert "2000" in ranking["exact_fronts"][0]["observed"]
 
 
 def test_empty_ranking_is_stable_zero() -> None:
-    ranking = rank_factory_panic_fronts([])
-    assert ranking["R_live_factory_panic_files"] == 0
+    ranking = rank_construction_panic_fronts([])
+    assert ranking["R_live_construction_panic_files"] == 0
     assert ranking["owner_families"] == []
     assert ranking["exact_fronts"] == []
     assert ranking["owners"] == {}

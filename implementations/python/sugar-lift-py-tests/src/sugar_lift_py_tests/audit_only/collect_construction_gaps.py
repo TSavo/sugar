@@ -4,7 +4,7 @@ import re
 from typing import Callable, Iterable, TypeAlias, TypeVar
 
 from sugar_lift_py_tests.gap.info import GapKind
-from sugar_lift_py_tests.gap.panic import FactoryPanic
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
 from .audit_only_gap import AuditOnlyGap
 
@@ -21,16 +21,16 @@ _BACKTICK = re.compile(r"`([^`]+)`")
 
 
 def collect_construction_gaps(walkers: Iterable[AuditWalker]) -> list[AuditOnlyGap]:
-    """Run each walker; hold FactoryPanic (the audit door) and loud TypeError
+    """Run each walker; hold ConstructionPanic (the audit door) and loud TypeError
     construction gaps; re-raise everything else. Walkers continue after a gap
     so the frontier enumerates every offender, not just the first."""
     gaps: list[AuditOnlyGap] = []
     for label, walker in walkers:
         try:
             walker()
-        except FactoryPanic as panic:
-            # The ONE place FactoryPanic may be held -- audit enumeration.
-            gaps.append(gap_from_factory_panic(label, panic))
+        except ConstructionPanic as panic:
+            # The ONE place ConstructionPanic may be held -- audit enumeration.
+            gaps.append(gap_from_construction_panic(label, panic))
         except TypeError as exc:
             gap = _gap_from_loud_type_error(label, str(exc))
             if gap is None:
@@ -39,22 +39,22 @@ def collect_construction_gaps(walkers: Iterable[AuditWalker]) -> list[AuditOnlyG
     return gaps
 
 
-def collect_factory_panic(
+def collect_construction_panic(
     label: str,
     walker: Callable[[], T],
 ) -> tuple[T | None, AuditOnlyGap | None]:
-    """Run one per-file audit walker through the sole FactoryPanic membrane.
+    """Run one per-file audit walker through the sole ConstructionPanic membrane.
 
     A successful value and a loud panic row are disjoint. Other exceptions
     propagate to the caller for their own terminal classification.
     """
     try:
         return walker(), None
-    except FactoryPanic as panic:
-        return None, gap_from_factory_panic(label, panic)
+    except ConstructionPanic as panic:
+        return None, gap_from_construction_panic(label, panic)
 
 
-def gap_from_factory_panic(label: str, panic: FactoryPanic) -> AuditOnlyGap:
+def gap_from_construction_panic(label: str, panic: ConstructionPanic) -> AuditOnlyGap:
     """Carry the panic's own construction testimony across the audit membrane."""
     info = panic.info.to_json()
     return AuditOnlyGap(

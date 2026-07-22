@@ -1271,7 +1271,7 @@ def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
                 # Closed-envelope discriminators required by the current Rust
                 # reader. They construct no Python factory object and carry no
                 # role; the direct roll-call answer lives in `gap` below.
-                "kind": "FactoryPanic",
+                "kind": "ConstructionPanic",
                 "status": "mandatory-panic",
                 "reason": reason,
                 "locus": locus,

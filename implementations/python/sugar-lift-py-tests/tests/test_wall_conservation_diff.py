@@ -37,14 +37,14 @@ def _frontier(
     if panics is None:
         panics = [
             {
-                "kind": "FactoryPanic",
+                "kind": "ConstructionPanic",
                 "status": "mandatory-panic",
                 "locus": "a.py:1:0",
                 "demandedSource": "definition:a",
                 "demandedBody": {"path": "a.py", "line": 1},
             },
             {
-                "kind": "FactoryPanic",
+                "kind": "ConstructionPanic",
                 "status": "mandatory-panic",
                 "locus": "b.py:1:0",
                 "demandedSource": "definition:b",

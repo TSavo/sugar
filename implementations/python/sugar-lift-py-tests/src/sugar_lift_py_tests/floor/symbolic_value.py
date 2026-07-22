@@ -572,10 +572,10 @@ class SymbolicValue(FloorValue):
                     extra_args=tuple(operation.arguments),
                 )
             )
-        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.outcome import Incomplete
 
-        factory_panic_gap(
+        construction_panic_gap(
             owner=operation.owner,
             blame=operation.blame,
             observed=f"SymbolicValue.{operation.name}",

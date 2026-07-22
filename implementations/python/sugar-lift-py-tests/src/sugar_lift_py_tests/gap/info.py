@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Dict
 from typing import Never, NoReturn
 
-from .audit_row import FactoryAuditStatus
+from .audit_row import ConstructionAuditStatus
 
 
 class GapKind(str, Enum):
@@ -29,7 +29,7 @@ class GapLocus(str, Enum):
 
 
 @dataclass(frozen=True)
-class FactoryGapInfo:
+class ConstructionGap:
     owner: str
     blame: str
     observed: str
@@ -46,12 +46,12 @@ class FactoryGapInfo:
     def __post_init__(self) -> None:
         if not isinstance(self.gap_kind, GapKind):
             raise TypeError(
-                "FactoryGapInfo.gap_kind must be GapKind: owner=FactoryGapInfo "
+                "ConstructionGap.gap_kind must be GapKind: owner=ConstructionGap "
                 f"shape={type(self.gap_kind).__name__} replacement=GapKind.FLOOR"
             )
         if not isinstance(self.gap_locus, GapLocus):
             raise TypeError(
-                "FactoryGapInfo.gap_locus must be GapLocus: owner=FactoryGapInfo "
+                "ConstructionGap.gap_locus must be GapLocus: owner=ConstructionGap "
                 f"shape={type(self.gap_locus).__name__} "
                 "replacement=GapLocus.CONSTRUCTION"
             )
@@ -114,19 +114,19 @@ def gap_locus_label(locus: GapLocus) -> str:
     return _unhandled_gap_locus(locus)
 
 
-def gap_kind_status(kind: GapKind) -> FactoryAuditStatus:
+def gap_kind_status(kind: GapKind) -> ConstructionAuditStatus:
     if kind is GapKind.FLOOR:
-        return FactoryAuditStatus.FLOOR_GAP
+        return ConstructionAuditStatus.FLOOR_GAP
     if kind is GapKind.SUGAR:
-        return FactoryAuditStatus.SUGAR_GAP
+        return ConstructionAuditStatus.SUGAR_GAP
     if kind is GapKind.CONSTRUCTOR:
-        return FactoryAuditStatus.CONSTRUCTOR_GAP
+        return ConstructionAuditStatus.CONSTRUCTOR_GAP
     if kind is GapKind.SUGAR_ORDERING:
-        return FactoryAuditStatus.SUGAR_AMBIGUOUS
+        return ConstructionAuditStatus.SUGAR_AMBIGUOUS
     if kind is GapKind.OPERATION:
-        return FactoryAuditStatus.OPERATION_GAP
+        return ConstructionAuditStatus.OPERATION_GAP
     if kind is GapKind.PROOFIR:
-        return FactoryAuditStatus.PROOFIR_GAP
+        return ConstructionAuditStatus.PROOFIR_GAP
     return _unhandled_gap_kind(kind)
 
 

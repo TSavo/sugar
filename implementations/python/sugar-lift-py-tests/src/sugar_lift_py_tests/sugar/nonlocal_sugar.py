@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field, replace
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.gap.panic import factory_panic_gap
+from sugar_lift_py_tests.gap.panic import construction_panic_gap
 from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -15,7 +15,7 @@ def reject_unconstructed_nonlocal_store(ctx: object, name: str) -> None:
 
     if name not in getattr(ctx, "nonlocal_names", frozenset()):
         return
-    factory_panic_gap(
+    construction_panic_gap(
         owner="NonlocalRoute",
         blame=name,
         observed=name,
@@ -39,7 +39,7 @@ class NonlocalRoute(FloorValue):
     def extend_scope(self, ctx):
         for name in self.names:
             if ctx.temporal.value_if_bound(name) is None:
-                factory_panic_gap(
+                construction_panic_gap(
                     owner="NonlocalSugar",
                     blame=name,
                     observed=name,

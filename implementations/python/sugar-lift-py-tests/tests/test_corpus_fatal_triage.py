@@ -15,7 +15,7 @@ from sugar_lift_py_tests.idd.factory_walk_unclassified_locus import (  # noqa: E
 )
 
 
-def test_factory_panic_routes_through_audit_membrane_as_loud_child_row(
+def test_construction_panic_routes_through_audit_membrane_as_loud_child_row(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "unsupported.py"
@@ -25,7 +25,7 @@ def test_factory_panic_routes_through_audit_membrane_as_loud_child_row(
 
     assert returncode == 3
     assert testimony["outcome"] == "factory-panic"
-    assert testimony["exception_type"] == "FactoryPanic"
+    assert testimony["exception_type"] == "ConstructionPanic"
     assert testimony["file"] == "demo/unsupported.py"
     assert testimony["gap"]["owner"] == "python.factory"
     assert testimony["gap"]["observed"] == "TypeAlias"

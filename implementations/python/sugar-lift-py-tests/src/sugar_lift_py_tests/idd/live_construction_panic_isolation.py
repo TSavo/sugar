@@ -1,12 +1,12 @@
 """Live per-file isolation measure for #4013 residual.
 
 Full-tree multi-file ``sugar lift --report`` still dies on the first
-FactoryPanic. Isolation lifts every assert-bearing file on the production
+ConstructionPanic. Isolation lifts every assert-bearing file on the production
 ``lift_file_payload`` path so conservation can be gated while
-``R_live_factory_panic_files`` stays a named residual axis.
+``R_live_construction_panic_files`` stays a named residual axis.
 
-Panic residual is ranked by structured FactoryGapInfo fingerprints (same
-axes as ``corpus_fatal_triage`` / ``factory_panic_fronts``) so fatal
+Panic residual is ranked by structured ConstructionGap fingerprints (same
+axes as ``corpus_fatal_triage`` / ``construction_panic_fronts``) so fatal
 recensus and floor drain share one owner map.
 """
 
@@ -19,11 +19,11 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
-from sugar_lift_py_tests.audit_only import collect_factory_panic
-from sugar_lift_py_tests.idd.factory_panic_fronts import (
+from sugar_lift_py_tests.audit_only import collect_construction_panic
+from sugar_lift_py_tests.idd.construction_panic_fronts import (
     fingerprint_from_gap,
     fingerprint_label,
-    rank_factory_panic_fronts,
+    rank_construction_panic_fronts,
 )
 from sugar_lift_py_tests.idd.lift_coverage_accounting import account_lift_coverage
 from sugar_lift_py_tests.idd.lift_coverage_census import census_source
@@ -68,10 +68,10 @@ def live_per_file_isolation_conservation(
     """Production lift path per assert-bearing file; conservation + panic residual.
 
     Completed files feed the real lift payload into ``account_lift_coverage``.
-    FactoryPanic / other hard fails engage refuse-loud for that file's on-disk
+    ConstructionPanic / other hard fails engage refuse-loud for that file's on-disk
     asserts (panic is loud, not silent). Aggregate delta must be 0.
 
-    Returns a closed ranking payload including ``R_live_factory_panic_files``,
+    Returns a closed ranking payload including ``R_live_construction_panic_files``,
     ``owner_families``, and ``exact_fronts``.
     """
     from sugar_lift_py_tests.lift_rpc import lift_file_payload
@@ -95,7 +95,7 @@ def live_per_file_isolation_conservation(
         file_on_disk = len(disk.asserts)
         on_disk_total += file_on_disk
         try:
-            payload, panic_gap = collect_factory_panic(
+            payload, panic_gap = collect_construction_panic(
                 rel,
                 lambda: lift_file_payload(src, rel),
             )
@@ -107,7 +107,7 @@ def live_per_file_isolation_conservation(
                 completed += 1
             else:
                 body = account_lift_coverage(disk, engaged).to_json()
-                status = "factory_panic"
+                status = "construction_panic"
                 gap = panic_gap.info
                 fingerprint = fingerprint_from_gap(gap)
                 panic_rows.append(
@@ -163,17 +163,17 @@ def live_per_file_isolation_conservation(
                 flush=True,
             )
 
-    ranking = rank_factory_panic_fronts(panic_rows)
+    ranking = rank_construction_panic_fronts(panic_rows)
     result: dict[str, Any] = {
         "package": package,
         "assert_files": len(file_list),
         "completed": completed,
-        "factory_panic_files": len(panic_rows),
+        "construction_panic_files": len(panic_rows),
         "other_fail_files": len(other_rows),
         "onDisk": on_disk_total,
         "accounted": accounted_total,
         "delta": on_disk_total - accounted_total,
-        "R_live_factory_panic_files": ranking["R_live_factory_panic_files"],
+        "R_live_construction_panic_files": ranking["R_live_construction_panic_files"],
         # Prior instrument shape + structured ranking for fatal recensus.
         "owners": ranking["owners"],
         "owner_families": ranking["owner_families"],
@@ -193,7 +193,7 @@ def live_per_file_isolation_conservation(
         f"R[{package}-live-isolation]: onDisk={on_disk_total} "
         f"accounted={accounted_total} delta={result['delta']} "
         f"assert_files={len(file_list)} completed={completed} "
-        f"R_live_factory_panic_files={len(panic_rows)} "
+        f"R_live_construction_panic_files={len(panic_rows)} "
         f"R_other_fail_files={len(other_rows)} "
         f"owner_families={ranking['owners']} "
         f"exact_fronts={top_fronts}"

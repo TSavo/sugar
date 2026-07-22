@@ -88,9 +88,9 @@ class DictValue(FloorValue):
                         return Complete(value)
                     if type(key) is TermValue and key.value == index.value:
                         return Complete(value)
-            from sugar_lift_py_tests.gap.panic import factory_panic_gap
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
-            factory_panic_gap(
+            construction_panic_gap(
                 owner="dict.subscript",
                 blame=site,
                 observed=f"missing concrete key {index!r}",

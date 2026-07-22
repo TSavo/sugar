@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_factory_build_context_sink_fields_are_typed_protocols() -> None:
     annotations = FactoryBuildContext.__annotations__
     assert annotations["audit_sink"] == "AuditSink | None"
-    assert annotations["factory_audit_sink"] == "AuditSink | None"
+    assert annotations["construction_audit_sink"] == "AuditSink | None"
     assert annotations["proof_sink"] == "ProofSink | None"
     assert annotations["external_bridge_sink"] == "ExternalBridgeSink | None"
     assert annotations["record_operation"] == "OperationRecorder | None"

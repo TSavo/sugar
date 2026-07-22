@@ -32,7 +32,7 @@ there is no code path in this package that catches ``SourceTreePanic``
 and then re-derives which of the two arms it was by reading ``owner``;
 if a caller needs that distinction it must catch the concrete subclass).
 
-Modeled on ``factory_panic_gap`` (sugar_lift_py_tests.gap.panic),
+Modeled on ``construction_panic_gap`` (sugar_lift_py_tests.gap.panic),
 but standalone: this package deliberately imports nothing from the existing
 tree (#5940 builds the tree in isolation).
 """

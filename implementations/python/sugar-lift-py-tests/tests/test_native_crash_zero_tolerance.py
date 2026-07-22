@@ -48,7 +48,7 @@ def test_python_exception_is_not_a_native_crash() -> None:
     offender = _SCANNER.native_crash_offender(
         file="typed-red.py",
         returncode=3,
-        stderr="FactoryPanic",
+        stderr="ConstructionPanic",
     )
 
     assert offender is None
