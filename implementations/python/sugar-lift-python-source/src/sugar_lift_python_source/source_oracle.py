@@ -11,12 +11,12 @@
 # Oracle. Its contract is one line:
 #
 #   given a locus + CID, return the source IFF it recomputes to the CID;
-#   else REFUSE, loudly.
+#   else SOURCE UNAVAILABLE, loudly.
 #
-# That refusal is the BINARY axis of the three-axis pin made operational, checked
+# That source-unavailable result is the BINARY axis of the three-axis pin made operational, checked
 # at every resolution: a tampered or wrong-version package -> CID mismatch ->
-# refuse -> the sugar cannot resolve -> you KNOW the on-disk source is not what was
-# proven. exact-or-refuse, no silent loss (supra omnia, rectum).
+# source unavailable -> the sugar cannot resolve -> you KNOW the on-disk source is not what was
+# proven. exact-or-source-unavailable, no silent loss (supra omnia, rectum).
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ from .canonical import blake3_512_of, template_cid_of_json
 from .source_tables import parsed_tree, source_segment, source_splitlines
 
 
-class SourceOracleRefusal(Exception):
+class SourceUnavailable(Exception):
     """Raised LOUDLY when on-disk source does not recompute to the pinned CID:
     the source has drifted from what the `.proof` pins. Never a silent fallback."""
 
@@ -137,57 +137,57 @@ def path_source(path: str) -> tuple[str, str, str]:
     HERE so no parser ever reads or hashes a file itself.
 
     Minting only: read + decode + CID. No parse gate — which parses is the
-    backend's question, and refusing here would decide it for every backend.
-    Unreadable/undecodable is a LOUD `SourceOracleRefusal`, never `None`:
-    callers record it as a refusal, not an absence.
+    backend's question, and marking source unavailable here would decide it for every backend.
+    Unreadable/undecodable is a LOUD `SourceUnavailable`, never `None`:
+    callers record it as a source-unavailable result, not an absence.
     """
     try:
         source = Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeError, ValueError) as exc:
-        raise SourceOracleRefusal(f"cannot read source `{path}`: {exc}") from exc
+        raise SourceUnavailable(f"cannot read source `{path}`: {exc}") from exc
     return (source, str(path), blake3_512_of(source.encode("utf-8")))
 
 
 def resolve_span_memento(
     memento: dict[str, Any], project_root: str | None = None
 ) -> dict[str, Any]:
-    """Resolve a span-addressed SourceMemento by RECOMPUTE — exact or refuse.
+    """Resolve a span-addressed SourceMemento by RECOMPUTE — exact or source unavailable.
 
     ORACLE-CONTRACT EXTENSION (#5940 tree), the resolution half of
     `path_source`. Memento shape: `{file, span: {start, end}, source_cid,
     cid}` — file plus a half-open codepoint span into it, pinned twice:
     the whole file (`source_cid`) and the sliced segment (`cid`). Reads the
     on-disk file through `path_source`, re-slices, and returns the identity
-    plus segment IFF both CIDs recompute; else raises `SourceOracleRefusal`.
+    plus segment IFF both CIDs recompute; else raises `SourceUnavailable`.
     """
     file = memento.get("file")
     if not isinstance(file, str) or not file:
-        raise SourceOracleRefusal("span memento missing `file`")
+        raise SourceUnavailable("span memento missing `file`")
     span = memento.get("span")
     if not isinstance(span, dict):
-        raise SourceOracleRefusal("span memento missing `span`")
+        raise SourceUnavailable("span memento missing `span`")
     start, end = span.get("start"), span.get("end")
     if not isinstance(start, int) or not isinstance(end, int) or not (0 <= start <= end):
-        raise SourceOracleRefusal(f"span memento has degenerate span {span!r}")
+        raise SourceUnavailable(f"span memento has degenerate span {span!r}")
 
     path = str(Path(project_root) / file) if project_root else file
     source, filename, source_cid = path_source(path)
 
     pinned_source_cid = memento.get("source_cid")
     if pinned_source_cid is not None and source_cid != pinned_source_cid:
-        raise SourceOracleRefusal(
+        raise SourceUnavailable(
             f"source CID misaligned for `{file}`: pinned {pinned_source_cid}, "
             f"on-disk {source_cid} -- the source drifted from the memento"
         )
     if end > len(source):
-        raise SourceOracleRefusal(
+        raise SourceUnavailable(
             f"span [{start}, {end}) exceeds `{file}` length {len(source)}"
         )
     segment = source[start:end]
     segment_cid = blake3_512_of(segment.encode("utf-8"))
     pinned_cid = memento.get("cid")
     if pinned_cid is not None and segment_cid != pinned_cid:
-        raise SourceOracleRefusal(
+        raise SourceUnavailable(
             f"segment CID misaligned for `{file}` [{start}, {end}): pinned "
             f"{pinned_cid}, on-disk {segment_cid} -- the segment drifted"
         )
@@ -209,11 +209,11 @@ def resolve_source_memento(
     Reads the on-disk source at the memento's locus, re-derives the pinned
     function body or source node with the same machinery that minted it, and
     returns the source/AST IFF the recomputed `source_cid`/`template_cid` equal
-    the pinned ones. Otherwise raises `SourceOracleRefusal`.
+    the pinned ones. Otherwise raises `SourceUnavailable`.
     """
     file = memento.get("file")
     if not isinstance(file, str) or not file:
-        raise SourceOracleRefusal("source memento missing `file`")
+        raise SourceUnavailable("source memento missing `file`")
     function_name = memento.get("source_function_name")
     pinned_source_cid = memento.get("source_cid")
     pinned_template_cid = memento.get("template_cid")
@@ -223,15 +223,15 @@ def resolve_source_memento(
     try:
         source = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise SourceOracleRefusal(f"cannot read source `{path}`: {exc}") from exc
+        raise SourceUnavailable(f"cannot read source `{path}`: {exc}") from exc
     try:
         tree = parsed_tree(source, filename=str(path))
     except SyntaxError as exc:
-        raise SourceOracleRefusal(f"cannot parse source `{path}`: {exc}") from exc
+        raise SourceUnavailable(f"cannot parse source `{path}`: {exc}") from exc
 
     node = _locate_function(tree, function_name, span)
     if node is None:
-        raise SourceOracleRefusal(
+        raise SourceUnavailable(
             f"source function `{function_name}` not found in `{file}` near line "
             f"{span.get('start_line')}"
         )
@@ -255,7 +255,7 @@ def resolve_source_memento(
         pinned_source_cid is not None
         and recomputed.get("source_cid") != pinned_source_cid
     ):
-        raise SourceOracleRefusal(
+        raise SourceUnavailable(
             f"source CID misaligned for `{function_name}` in `{file}`: "
             f"pinned {pinned_source_cid}, on-disk {recomputed.get('source_cid')} "
             "-- the source drifted from the proof"
@@ -264,7 +264,7 @@ def resolve_source_memento(
         pinned_template_cid is not None
         and recomputed.get("template_cid") != pinned_template_cid
     ):
-        raise SourceOracleRefusal(
+        raise SourceUnavailable(
             f"template CID misaligned for `{function_name}` in `{file}`: "
             f"pinned {pinned_template_cid}, on-disk {recomputed.get('template_cid')} "
             "-- the AST drifted from the proof"
@@ -288,13 +288,13 @@ def _node_source_locator(
 ) -> dict[str, Any]:
     node = _locate_spanned_node(fn, span, source_kind)
     if node is None:
-        raise SourceOracleRefusal(
+        raise SourceUnavailable(
             f"{source_kind} source node not found in `{rel_path}` near line "
             f"{span.get('start_line')}"
         )
     body_text = source_segment(source, node)
     if body_text is None:
-        raise SourceOracleRefusal(
+        raise SourceUnavailable(
             f"{source_kind} source node in `{rel_path}` had no source segment"
         )
     params = function_param_names(fn)
@@ -303,7 +303,7 @@ def _node_source_locator(
     elif isinstance(node, ast.expr):
         ast_template = expr_to_template(node, params)
     else:
-        raise SourceOracleRefusal(
+        raise SourceUnavailable(
             f"unsupported source node kind `{type(node).__name__}`"
         )
     return {
@@ -354,17 +354,17 @@ def _span_of(node: ast.AST) -> dict[str, int]:
 def resolve_from_roots(memento: dict[str, Any], roots: list[str]) -> dict[str, Any]:
     """Resolve a SourceMemento against the first root whose on-disk source aligns
     to the pinned CIDs. The source already lives SOMEWHERE on disk (the consumer's
-    project, or the vendor's installed package); try each candidate root, refuse
-    loudly only if none aligns."""
-    last: SourceOracleRefusal | None = None
+    project, or the vendor's installed package); try each candidate root, reporting
+    source unavailable loudly only if none aligns."""
+    last: SourceUnavailable | None = None
     for root in roots:
         if not root:
             continue
         try:
             return resolve_source_memento(root, memento)
-        except SourceOracleRefusal as exc:
+        except SourceUnavailable as exc:
             last = exc
-    raise last or SourceOracleRefusal("no root resolved the source memento")
+    raise last or SourceUnavailable("no root resolved the source memento")
 
 
 def importlib_package_root(file: str) -> str | None:

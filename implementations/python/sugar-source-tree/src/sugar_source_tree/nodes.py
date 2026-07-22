@@ -670,7 +670,7 @@ class Param(Node):
 
 class Keyword(Node):
     """A keyword argument at a call site. ``arg is None`` means ``**expr``
-    (double-star spread) — a structural absence, not a refusal."""
+    (double-star spread) — a structural absence, not a gap."""
 
     arg: Optional[str]
     value: Expression
@@ -683,7 +683,7 @@ class Keyword(Node):
 
 class DictItem(Node):
     """One ``key: value`` entry of a Dict display. ``key is None`` means
-    ``**expr`` (double-star spread) — a structural absence, not a refusal."""
+    ``**expr`` (double-star spread) — a structural absence, not a gap."""
 
     key: Optional[Expression]
     value: Expression
@@ -914,7 +914,7 @@ class FunctionDef(Statement):
         return annotation) is evaluated in the ENCLOSING scope, unmasked. This
         is why the abstract panics rather than recursing blindly: a blind
         recurse would substitute an outer `x` into a body whose parameter is
-        `x`, capturing it. Masking is that capture, refused.
+        `x`, capturing it. Masking is that capture, left as a gap.
         """
         from .shadow import rewrite
 
@@ -1206,7 +1206,7 @@ class AugAssign(Statement):
         bound yet, so there is no shape where a Name target both fails to
         thread and stays loud). The rebind rode into the tail as the fold
         binding; the statement itself states nothing more. Attribute/subscript
-        targets are the shapes substitution_binding refuses (returns None --
+        targets are the shapes substitution_binding leaves as a gap (returns None --
         they are never threaded), so they stay loud gaps here too, mirrored
         exactly against that same isinstance check."""
         if not isinstance(self.target, Name):

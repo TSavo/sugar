@@ -74,7 +74,7 @@ from .backend import (
     OpsLeaf,
     Backend,
     BackendNode,
-    BackendRefused,
+    BackendCouldNotParse,
     Slot,
 )
 from .nodes import SourceUnit
@@ -1509,13 +1509,13 @@ class ParsoBackend(Backend):
         self._grammar = parso.load_grammar(version=version)
 
     def root(self, unit: SourceUnit) -> BackendNode:
-        # parso's own refusal exception (ParserSyntaxError, NOT a
+        # parso's own parse-failure exception (ParserSyntaxError, NOT a
         # SyntaxError subclass) never escapes as-is: it is translated to
-        # BackendRefused, the contract's own type, like every adapter.
+        # BackendCouldNotParse, the contract's own type, like every adapter.
         try:
             module = self._grammar.parse(unit.source, error_recovery=False)
         except parso.parser.ParserSyntaxError as err:
-            raise BackendRefused(
+            raise BackendCouldNotParse(
                 backend=self.name, file=unit.filename, reason=str(err)
             ) from err
         return _Handle(unit, module)

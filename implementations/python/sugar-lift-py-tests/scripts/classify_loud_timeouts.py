@@ -15,7 +15,7 @@ with escalating bounds (60s → 120s → 300s) and records an explicit verdict:
 
 Hard law:
   - Timeout is NEVER silently reclassified as complete or dropped.
-  - No panic/refusal weakened; no bound raised to invent green without recording slow.
+  - No panic/gap weakened; no bound raised to invent green without recording slow.
   - Single-lane sequential replay only (no host parallelism).
   - Ledger is append-only JSONL so partial progress ships and residual R is measured.
 

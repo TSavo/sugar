@@ -151,7 +151,7 @@ def _resolve_installed_package_path(package: str) -> Path:
         "path = os.path.abspath(path)\n"
         "base = os.path.basename(path)\n"
         "if base.endswith(('.so', '.pyd', '.dll')) or 'lib-dynload' in path:\n"
-        "    raise SystemExit('refused C-extension path: ' + path)\n"
+        "    raise SystemExit('C-extension path gap: ' + path)\n"
         "if base == '__init__.py':\n"
         "    print(os.path.dirname(path))\n"
         "else:\n"

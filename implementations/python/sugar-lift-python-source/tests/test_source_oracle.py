@@ -14,7 +14,7 @@ from sugar_lift_python_source.bind_lifter import (
 from sugar_lift_python_source.ast_template import function_param_names, stmt_to_template
 from sugar_lift_python_source.canonical import blake3_512_of, template_cid_of_json
 from sugar_lift_python_source.source_oracle import (
-    SourceOracleRefusal,
+    SourceUnavailable,
     installed_module_source,
     resolve_source_memento,
 )
@@ -197,7 +197,7 @@ def test_oracle_refuses_loudly_when_source_drifts(tmp_path: Path) -> None:
     (tmp_path / "pkg" / "calc.py").write_text(
         "def add(x, y):\n    return x - y\n", encoding="utf-8"
     )
-    with pytest.raises(SourceOracleRefusal) as exc:
+    with pytest.raises(SourceUnavailable) as exc:
         resolve_source_memento(str(tmp_path), memento)
     assert "misaligned" in str(exc.value)
 
@@ -238,11 +238,11 @@ def test_path_source_mints_the_identity_triple(tmp_path: Path) -> None:
 def test_path_source_refuses_loudly_never_none(tmp_path: Path) -> None:
     from sugar_lift_python_source.source_oracle import path_source
 
-    with pytest.raises(SourceOracleRefusal):
+    with pytest.raises(SourceUnavailable):
         path_source(str(tmp_path / "absent.py"))
     bad = tmp_path / "bad.py"
     bad.write_bytes(b"\xff\xfe\x00x")
-    with pytest.raises(SourceOracleRefusal):
+    with pytest.raises(SourceUnavailable):
         path_source(str(bad))
 
 
@@ -266,5 +266,5 @@ def test_resolve_span_memento_recomputes_or_refuses(tmp_path: Path) -> None:
     assert resolved["source_cid"] == cid
 
     p.write_text("a = 1\nc = 3\n", encoding="utf-8")
-    with pytest.raises(SourceOracleRefusal):
+    with pytest.raises(SourceUnavailable):
         resolve_span_memento(memento)

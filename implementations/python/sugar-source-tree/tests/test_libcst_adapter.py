@@ -24,7 +24,7 @@ import pytest
 libcst = pytest.importorskip("libcst", reason="LibCST backend not installed")
 
 from conftest import oracle_source_file
-from sugar_source_tree.backend import BackendRefused  # noqa: E402
+from sugar_source_tree.backend import BackendCouldNotParse  # noqa: E402
 from sugar_source_tree.tree import SourceFile  # noqa: E402
 from sugar_source_tree.cpython_adapter import CPythonAstBackend  # noqa: E402
 from sugar_source_tree.libcst_adapter import LibCSTBackend, _describe, _Ctx  # noqa: E402
@@ -262,23 +262,23 @@ def test_unknown_operator_panics_rather_than_defaulting():
         _op(_BINARY_OPS, libcst.And(), "binop")
 
 
-def test_provider_refusal_is_a_membrane_BackendRefused_never_a_SyntaxError():
+def test_provider_parse_failure_is_a_membrane_BackendCouldNotParse_never_a_SyntaxError():
     """FIX FOR #5946 (the contract finding recorded against #5940): the
-    backend contract now declares how a backend signals refusal
-    (``backend.BackendRefused``), and this adapter maps its native
+    backend contract now declares how a backend signals could-not-parse outcome
+    (``backend.BackendCouldNotParse``), and this adapter maps its native
     ``libcst.ParserSyntaxError`` — which does NOT subclass ``SyntaxError``
     — onto it. Before the fix, ``corpus.py`` caught only ``SyntaxError``,
     so with LibCST installed a corpus containing one unparseable file let
     the exception escape and killed the whole run instead of recording a
     row. This test pins the fix: LibCST's native exception never escapes
-    this adapter, and the tree's own refusal type does.
+    this adapter, and the tree's own could-not-parse outcome type does.
     """
     assert not issubclass(libcst.ParserSyntaxError, SyntaxError), (
         "if this starts failing, LibCST changed its exception base; the "
         "underlying #5946 defect may no longer apply, but the mapping "
         "below must still hold regardless"
     )
-    with pytest.raises(BackendRefused) as excinfo:
+    with pytest.raises(BackendCouldNotParse) as excinfo:
         build("def (:\n")
     assert not isinstance(excinfo.value, SourceTreePanic)
     assert not isinstance(excinfo.value, SyntaxError)

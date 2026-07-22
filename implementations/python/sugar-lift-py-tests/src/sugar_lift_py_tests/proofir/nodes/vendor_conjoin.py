@@ -43,7 +43,7 @@ class VendorConjoin(ProofIRNode):
 
     fact: FactAtom | None = field(init=False)
     universe: UniverseAtom | None = field(init=False)
-    refusal: BoundaryRecord | None = field(init=False)
+    open: BoundaryRecord | None = field(init=False)
     _provenance: Provenance = field(init=False, repr=False)
 
     def __init__(
@@ -51,18 +51,18 @@ class VendorConjoin(ProofIRNode):
         *,
         fact: FactAtom | None = None,
         universe: UniverseAtom | None = None,
-        refusal: BoundaryRecord | None = None,
+        open: BoundaryRecord | None = None,
         provenance: Provenance,
     ) -> None:
         _require_provenance(provenance, owner=self.node_class)
-        if refusal is not None:
-            if not isinstance(refusal, BoundaryRecord):
-                raise TypeError("VendorConjoin refusal must be BoundaryRecord")
+        if open is not None:
+            if not isinstance(open, BoundaryRecord):
+                raise TypeError("VendorConjoin open must be BoundaryRecord")
             if fact is not None or universe is not None:
                 _proofir_gap(
                     owner=self.node_class,
-                    observed="fact/universe plus refusal",
-                    requested="either typed fact+universe or explicit refusal",
+                    observed="fact/universe plus open",
+                    requested="either typed fact+universe or explicit open",
                     fix="do not let a vendor fact float in the silent third state",
                 )
         else:
@@ -72,7 +72,7 @@ class VendorConjoin(ProofIRNode):
                 raise TypeError("VendorConjoin universe must be UniverseAtom")
         object.__setattr__(self, "fact", fact)
         object.__setattr__(self, "universe", universe)
-        object.__setattr__(self, "refusal", refusal)
+        object.__setattr__(self, "open", open)
         object.__setattr__(self, "_provenance", provenance)
 
     def denotation(self):
@@ -82,10 +82,10 @@ class VendorConjoin(ProofIRNode):
         return self._provenance
 
     def to_declaration(self) -> dict[str, Any]:
-        if self.refusal is not None:
+        if self.open is not None:
             return {
                 "kind": "vendor-conjoin",
-                "refusal": self.refusal.to_declaration(),
+                "open": self.open.to_declaration(),
                 "provenance": self.provenance().to_rpc(),
             }
         assert self.fact is not None and self.universe is not None
@@ -110,8 +110,8 @@ class VendorConjoin(ProofIRNode):
                 construct=lambda: _witness_vendor_conjoin(cls),
             ),
             lying=VerdictWitnessCase(
-                name="vendor-conjoin-raw-formula-refuses",
-                expected="construction-refusal",
+                name="vendor-conjoin-raw-formula-open",
+                expected="construction-open",
                 construct=lambda: cls(
                     fact={"kind": "atomic"},
                     universe=None,

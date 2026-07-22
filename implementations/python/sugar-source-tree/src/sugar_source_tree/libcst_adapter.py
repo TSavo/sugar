@@ -65,7 +65,7 @@ the conformance finding itself.
 
 Source LibCST cannot parse at all raises ``libcst.ParserSyntaxError`` —
 which does NOT subclass ``SyntaxError`` (#5946). This adapter catches it
-and re-raises ``BackendRefused`` (backend.py), never letting the
+and re-raises ``BackendCouldNotParse`` (backend.py), never letting the
 library-native type escape, so a caller written against one backend
 never silently stops working when the other is swapped in.
 """
@@ -87,7 +87,7 @@ from .backend import (
     OpsLeaf,
     Backend,
     BackendNode,
-    BackendRefused,
+    BackendCouldNotParse,
     Slot,
 )
 from .nodes import SourceUnit
@@ -1256,7 +1256,7 @@ def _r_concatstring(ctx: _Ctx, n: cst.ConcatenatedString) -> Description:
             owner="libcst_adapter._r_concatstring",
             observed="implicit concatenation mixing str and bytes pieces",
             requested="pieces of one literal type",
-            fix="this is not valid Python; the backend accepted something CPython would refuse",
+            fix="this is not valid Python; the backend accepted something CPython could not parse",
         )
     return _desc(
         "Constant", span, ("value", Leaf(joined)), ("literal_kind", Leaf(None))
@@ -1540,7 +1540,7 @@ class LibCSTBackend(Backend):
             # param shapes) is always upconverted to ParserSyntaxError before
             # it reaches parse_module (libcst._parser.base_parser) — this is
             # the one exception type that escapes LibCST's own parser.
-            raise BackendRefused(
+            raise BackendCouldNotParse(
                 backend=self.name, file=unit.filename, reason=str(err)
             ) from err
         wrapper = MetadataWrapper(module, unsafe_skip_copy=True)

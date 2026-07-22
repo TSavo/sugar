@@ -140,8 +140,8 @@ class AuditMemento(ProofIRNode):
                 ),
             ),
             lying=VerdictWitnessCase(
-                name="audit-memento-raw-locus-refuses",
-                expected="construction-refusal",
+                name="audit-memento-raw-locus-open",
+                expected="construction-open",
                 construct=lambda: cls(
                     role="python.literal-call-sugar",
                     contract="module::source::assertion",

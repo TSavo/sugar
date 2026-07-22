@@ -180,7 +180,7 @@ class RuntimeEffectWitness:
     the address, so an absolute or empty locus is unrepresentable by
     construction (both fragment currencies normalize filenames at their own
     construction doors). Fabricated string sites and non-term operands are
-    refused here.
+    remains a gap here.
     """
 
     operation: Term

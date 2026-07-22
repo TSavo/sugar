@@ -6,7 +6,7 @@ from sugar_lift_py_tests.canonicalizer import blake3_512_of
 from sugar_lift_py_tests.witness_oracle import resolve_witness
 from sugar_lift_py_tests.witness_verify import (
     BrokenOracleError,
-    WitnessVerifyRefusal,
+    WitnessVerifyUnwitnessed,
     verify_witness,
 )
 
@@ -47,8 +47,8 @@ def test_verify_recomputes_and_passes_aligned_witness():
 
 def test_verify_refuses_tampered_body_even_with_real_oracle():
     m = _memento(b"junit: 42 passed")
-    # the real oracle would also refuse -- but verify recomputes regardless.
-    with pytest.raises(WitnessVerifyRefusal, match="content misaligned"):
+    # the real oracle would also leave it unwitnessed -- verify recomputes regardless.
+    with pytest.raises(WitnessVerifyUnwitnessed, match="content misaligned"):
         verify_witness(m, witness_content=b"junit: 0 passed", oracle=resolve_witness)
 
 
@@ -73,14 +73,14 @@ def test_broken_oracle_no_false_alarm_on_aligned_body():
 def test_verify_refuses_tampered_body_with_NO_oracle():
     # No oracle at all -> verify is still the backstop; recompute catches it.
     m = _memento(b"a CI run log")
-    with pytest.raises(WitnessVerifyRefusal, match="content misaligned"):
+    with pytest.raises(WitnessVerifyUnwitnessed, match="content misaligned"):
         verify_witness(m, witness_content=b"a different CI run log")
 
 
 def test_verify_refuses_bad_signature():
     m = _memento(b"a compiler report")
     m["signature"] = "00" * 64
-    with pytest.raises(WitnessVerifyRefusal, match="signature invalid"):
+    with pytest.raises(WitnessVerifyUnwitnessed, match="signature invalid"):
         verify_witness(m)
 
 
@@ -89,5 +89,5 @@ def test_verify_recompute_dimension_for_runnable_witness():
     m = {"witness_cid": cid, "signer": signer, "signature": signature}
     out = verify_witness(m, recompute_fn=lambda _m: cid)
     assert "recompute" in out["checks"]
-    with pytest.raises(WitnessVerifyRefusal, match="recompute misaligned"):
+    with pytest.raises(WitnessVerifyUnwitnessed, match="recompute misaligned"):
         verify_witness(m, recompute_fn=lambda _m: "blake3-512:" + "0" * 128)

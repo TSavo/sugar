@@ -3,7 +3,7 @@
 # The VERIFY dimension over witnesses.
 #
 # verify does NOT trust the Witness Oracle. The oracle RESOLVES a witness body
-# and refuses loudly on drift -- that is its job, the resolution layer. verify
+# and remains unwitnessed loudly on drift -- that is its job, the resolution layer. verify
 # AUDITS: it recomputes the CID itself (blake3 over the body) and re-checks the
 # signature, independently of whatever the oracle reported.
 #
@@ -15,19 +15,19 @@
 #
 # This is the witness axis of the three-axis pin made a first-class attestation:
 # not lazily resolved at materialize time, but enumerated and recomputed as a
-# checked dimension of `verify`. exact-or-refuse, no silent loss.
+# checked dimension of `verify`. exact-or-unwitnessed, no silent loss.
 
 from __future__ import annotations
 
 from typing import Any, Callable
 
 from .canonicalizer import blake3_512_of
-from .witness_oracle import WitnessOracleRefusal, _verify_signature
+from .witness_oracle import WitnessOracleUnwitnessed, _verify_signature
 
 
-class WitnessVerifyRefusal(Exception):
+class WitnessVerifyUnwitnessed(Exception):
     """The witness does not hold: signature invalid, or a body that does not
-    recompute to the pinned witness_cid. verify refuses loudly."""
+    recompute to the pinned witness_cid. Verification remains unwitnessed loudly."""
 
 
 class BrokenOracleError(Exception):
@@ -54,15 +54,15 @@ def verify_witness(
     - RECOMPUTE (when re-runnable): re-derive the CID via ``recompute_fn`` and
       compare.
 
-    Any misalignment -> ``WitnessVerifyRefusal``. A lying/broken oracle ->
+    Any misalignment -> ``WitnessVerifyUnwitnessed``. A lying/broken oracle ->
     ``BrokenOracleError``. Returns the checks performed on success."""
     cid = memento.get("witness_cid")
     if not isinstance(cid, str) or not cid:
-        raise WitnessVerifyRefusal("witness memento missing `witness_cid`")
+        raise WitnessVerifyUnwitnessed("witness memento missing `witness_cid`")
 
     # 1. SIGNATURE -- recomputed here, not taken from the oracle's word.
     if not _verify_signature(cid, memento.get("signature"), memento.get("signer")):
-        raise WitnessVerifyRefusal(
+        raise WitnessVerifyUnwitnessed(
             f"signature invalid for {cid} (signer {memento.get('signer')!r})"
         )
     checks = ["signature"]
@@ -80,16 +80,16 @@ def verify_witness(
             try:
                 verdict = oracle(memento, witness_content=witness_content)
                 oracle_approved = verdict.get("verified_by") == "content-address"
-            except WitnessOracleRefusal:
+            except WitnessOracleUnwitnessed:
                 oracle_approved = False
             if oracle_approved and recomputed != cid:
                 raise BrokenOracleError(
                     f"oracle APPROVED {cid} but its body computes to {recomputed} "
-                    f"-- the oracle is broken; verify recomputed the CID and refused"
+                    f"-- the oracle is broken; verify recomputed the CID and left it unwitnessed"
                 )
 
         if recomputed != cid:
-            raise WitnessVerifyRefusal(
+            raise WitnessVerifyUnwitnessed(
                 f"content misaligned: pinned {cid}, body computes to {recomputed} "
                 f"-- this witness is not the body that was signed for"
             )
@@ -99,7 +99,7 @@ def verify_witness(
     if recompute_fn is not None:
         reproduced = recompute_fn(memento)
         if reproduced != cid:
-            raise WitnessVerifyRefusal(
+            raise WitnessVerifyUnwitnessed(
                 f"recompute misaligned: pinned {cid}, reproduced {reproduced} "
                 f"-- the run drifted"
             )

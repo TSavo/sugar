@@ -24,7 +24,7 @@ that diverges is not debugged — it is uninstalled.
 Failures are LOUD: a VocabularyMissing (our vocabulary is incomplete for
 a shape the backend legitimately produced), a BackendDefect (the backend
 or its adapter produced something structurally invalid), or a backend
-refusal (BackendRefused, backend.py — the backend's own "not valid input
+could-not-parse outcome (BackendCouldNotParse, backend.py — the backend's own "not valid input
 for me", never its native exception type) on any file is recorded,
 reported, and fails the run. None of the three ever becomes silence.
 
@@ -48,9 +48,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
 
-from sugar_lift_python_source.source_oracle import SourceOracleRefusal, path_source
+from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
 
-from .backend import Backend, BackendRefused
+from .backend import Backend, BackendCouldNotParse
 from .nodes import Node
 from .panic import BackendDefect, VocabularyMissing
 from .tree import SourceFile
@@ -138,23 +138,23 @@ def emit_corpus(
             rel = str(path.relative_to(base)) if base is not None else str(path)
             try:
                 identity = path_source(str(path))
-            except SourceOracleRefusal as err:
-                # The ORACLE refused to mint an identity (unreadable or
+            except SourceUnavailable as err:
+                # The ORACLE reported source unavailable (unreadable or
                 # undecodable). Text enters only through the oracle, so
                 # this is where a bad file surfaces — recorded, never
                 # swallowed.
-                failures.append((rel, "oracle_refused", str(err)))
+                failures.append((rel, "source_unavailable", str(err)))
                 continue
             try:
                 file = SourceFile(identity, backend=backend)
                 recs = records_for_file(file, display=rel)
-            except BackendRefused as err:
-                # The BACKEND refused the file (not valid input for it).
+            except BackendCouldNotParse as err:
+                # The BACKEND could not parse the file (not valid input for it).
                 # Recorded loudly; distinct from a vocabulary MISSING. Never
                 # the backend's native exception type (#5946) — the tree's
                 # own contract type, so this catch works identically no
                 # matter which backend is installed.
-                failures.append((rel, "backend_refused", str(err)))
+                failures.append((rel, "backend_could_not_parse", str(err)))
                 continue
             except VocabularyMissing as err:
                 # OUR vocabulary is incomplete for a shape the backend
@@ -248,7 +248,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"FAIL[{failure_class}] {rel}: {message.splitlines()[0]}")
     print(f"vocabulary missing (our gaps): {len(missing)}")
     print(f"backend defects: {len(defects)}")
-    print(f"backend refusals / undecodable: {len(other)}")
+    print(f"backend could-not-parse outcomes / undecodable: {len(other)}")
     return 1 if result.failures else 0
 
 

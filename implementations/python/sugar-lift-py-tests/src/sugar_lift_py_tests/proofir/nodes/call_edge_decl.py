@@ -142,8 +142,8 @@ class CallEdgeDecl(ProofIRNode):
                 ),
             ),
             lying=VerdictWitnessCase(
-                name="call-edge-decl-raw-json-refuses",
-                expected="construction-refusal",
+                name="call-edge-decl-raw-json-open",
+                expected="construction-open",
                 construct=lambda: cls(
                     bridge={"kind": "call-edge"},
                     provenance=_witness_provenance(

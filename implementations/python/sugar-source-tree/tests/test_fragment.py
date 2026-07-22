@@ -2,14 +2,14 @@
 
 fragment.seal() -> SourceMemento; resolve_memento(memento) -> an EQUAL
 SourceFragment; sealing the resolved fragment reproduces an EQUAL memento.
-Drift refuses loudly (SourceOracleRefusal) — never silence, never None.
+Drift is unavailable loudly (SourceUnavailable) — never silence, never None.
 """
 
 from pathlib import Path
 
 import pytest
 from conftest import oracle_source_file
-from sugar_lift_python_source.source_oracle import SourceOracleRefusal, path_source
+from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
 from sugar_source_tree import (
     Node,
     SourceFile,
@@ -88,7 +88,7 @@ def test_drifted_source_refuses_loudly_never_silence():
     node = next(n for n in file.nodes() if n.kind == "Return")
     memento = node.fragment.seal()
     Path(file.filename).write_text(SOURCE + "\ny = 3\n", encoding="utf-8")
-    with pytest.raises(SourceOracleRefusal):
+    with pytest.raises(SourceUnavailable):
         resolve_memento(memento)
 
 
@@ -96,7 +96,7 @@ def test_missing_file_refuses_loudly_never_silence():
     file = oracle_source_file(SOURCE)
     memento = file.fragment.seal()
     Path(file.filename).unlink()
-    with pytest.raises(SourceOracleRefusal):
+    with pytest.raises(SourceUnavailable):
         resolve_memento(memento)
 
 

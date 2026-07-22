@@ -2,7 +2,7 @@
 
 Every question the tree answers has exactly two outcomes: a resolved,
 Typed answer, or a panic. There is no third arm — no permissive fallback,
-no default case, no quiet ``False``, no bare ``None`` refusal.
+no default case, no quiet ``False``, no bare ``None`` gap.
 
 Two panics were one before, and the merge was itself a bug: an ``owner``
 string a caller had to read and interpret to tell apart two entirely

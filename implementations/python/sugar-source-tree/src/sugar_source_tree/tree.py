@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Iterator, Optional, Tuple
 
 from sugar_lift_python_source.source_oracle import (
-    SourceOracleRefusal,
+    SourceUnavailable,
     installed_module_source,
     path_source,
 )
@@ -64,7 +64,7 @@ class SourceFile:
     ``nodes()`` enumerates every node of the file, pre-order, iterative.
 
     Failure at construction is one of the three loud outcomes:
-    ``BackendRefused`` (the backend's own "not valid input"),
+    ``BackendCouldNotParse`` (the backend's own "not valid input"),
     ``VocabularyMissing`` (our vocabulary has no class for a shape the
     backend produced), or ``BackendDefect`` (the backend produced
     something structurally invalid). Never silence, never a bare None.
@@ -104,7 +104,7 @@ class SourceFile:
         reporter: AuditReporter = NULL_REPORTER,
     ) -> "SourceFile":
         """Through the oracle's path-addressed door. Unreadable/undecodable
-        is the oracle's loud ``SourceOracleRefusal``, never a swallow."""
+        is the oracle's loud ``SourceUnavailable``, never a swallow."""
         return cls(path_source(str(path)), backend=backend, reporter=reporter)
 
     @classmethod
@@ -117,7 +117,7 @@ class SourceFile:
         """Through the oracle's installed-module door."""
         identity = installed_module_source(module_name)
         if identity is None:
-            raise SourceOracleRefusal(
+            raise SourceUnavailable(
                 f"oracle has no installed source for module `{module_name}`"
             )
         return cls(identity, backend=backend, reporter=reporter)
@@ -196,7 +196,7 @@ class SourceTree:
     def fragment_of(self, path: Path) -> "SourceFragment":
         """One file's WHOLE-FILE fragment: the oracle's identity, full span,
         no parse. The per-file unit ``fragments()`` iterates. Loud oracle
-        refusal on unreadable/undecodable input."""
+        source-unavailable result on unreadable/undecodable input."""
         from .fragment import SourceFragment
         from .nodes import SourceUnit
         from .spans import Span
@@ -212,7 +212,7 @@ class SourceTree:
         (source, filename, CID) with the full span. No backend runs, no
         tree is built; this is the ``source_files`` enumeration level, and
         a memento sealed from one of these fragments is the file's locator.
-        An unreadable/undecodable file raises ``SourceOracleRefusal`` loudly
+        An unreadable/undecodable file raises ``SourceUnavailable`` loudly
         here — a caller that wants record-and-continue catches per file and
         records a gap; nothing is swallowed and nothing masquerades as a
         source file.
@@ -224,7 +224,7 @@ class SourceTree:
         """Enumerate ``SourceFile``s, each through the oracle's identity.
         Parse failures propagate loudly — a caller that wants
         record-and-continue catches the three contract types plus
-        ``SourceOracleRefusal`` per file (see corpus.py); nothing here
+        ``SourceUnavailable`` per file (see corpus.py); nothing here
         swallows."""
         for path in self.paths():
             yield SourceFile(path_source(str(path)), backend=self.backend)

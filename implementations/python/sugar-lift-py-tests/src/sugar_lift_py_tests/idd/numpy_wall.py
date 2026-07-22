@@ -98,7 +98,7 @@ def summarize_numpy_wall(report_json: Mapping[str, Any]) -> NumpyWallSummary:
     red_reasoned  -- lines classified `effect`: a named typed effect with
                       grounds anchored to the line.
     red_bare      -- effect lines with no grounds. `line_accounting`
-                      always attaches grounds (the refusal reason, or the
+                      always attaches grounds (the gap reason, or the
                       callee name as a fallback), so this is 0 by
                       construction; kept as a field so the invariant stays
                       visible and the floor check below still fires if that

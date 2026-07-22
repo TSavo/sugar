@@ -148,21 +148,21 @@ def test_independent_census_counts_asserts_and_bodies() -> None:
 
 
 def test_assertions_silent_measured_not_hardcoded() -> None:
-    """Discrimination (a): unaccounted construct → refuse-loud (silent illegal)."""
+    """Discrimination (a): unaccounted construct → gap (silent illegal)."""
     src = (
         "def f():\n"
         "    assert True\n"
         "    assert False  # second assert never cited by empty report\n"
     )
     disk = census_source(src, file="t.py")
-    # Empty report → every assert is refuse-loud; silent counter stays 0.
+    # Empty report → every assert is gap; silent counter stays 0.
     cov = account_lift_coverage(disk, {})
     assert cov.assertions.stated == 2
     assert cov.assertions.lifted_cited == 0
     assert cov.assertions.silently_unaccounted == 0
-    assert cov.assertions.refused_loud == 2
+    assert cov.assertions.gap == 2
     assert cov.assertions.to_json()["is_zero"] is True  # silent gate green
-    lines = {a["line"] for a in cov.assertions.refused_loci}
+    lines = {a["line"] for a in cov.assertions.gap_loci}
     assert lines == {2, 3}
 
 
@@ -250,7 +250,7 @@ def test_statistics_headline_delta_matches_probe(statistics_report: dict) -> Non
     cov = statistics_report["liftCoverage"]
     ax = cov["assertions"]
     assert ax["stated"] == len(disk.asserts) == 4
-    assert ax["lifted_cited"] + ax["refused_loud"] == 4
+    assert ax["lifted_cited"] + ax["gap"] == 4
     assert ax["silently_unaccounted"] == 0, (
         f"expected 0 silent asserts on statistics after #4017; got "
         f"{ax['silently_unaccounted']}: {ax['silent_loci']}"
@@ -329,7 +329,7 @@ def test_statistics_human_report_contains_literal_minority_report_header() -> No
         ok = (
             "Minority Report" in human
             or "silently_unaccounted=0" in human
-            or "refused-loud" in human
+            or "gap" in human
             or "accounted=" in human
         )
         assert (
@@ -397,11 +397,11 @@ def test_discrimination_inject_unaccounted_construct_reds_assertions(
     cov_full = account_lift_coverage(disk, full)
     cov_partial = account_lift_coverage(disk, partial)
     assert cov_full.assertions.silently_unaccounted == 0
-    # Partial cite: one lifted, one refuse-loud (never silent).
+    # Partial cite: one lifted, one gap (never silent).
     assert cov_partial.assertions.silently_unaccounted == 0
     assert cov_partial.assertions.lifted_cited == 1
-    assert cov_partial.assertions.refused_loud == 1
-    assert cov_partial.assertions.refused_loci[0]["line"] == 3
+    assert cov_partial.assertions.gap == 1
+    assert cov_partial.assertions.gap_loci[0]["line"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -520,7 +520,7 @@ _CONSERVATION_VENDORS = (
 
 # Full installed package trees — residual named after #4721. Live sugar
 # --report on these trees panics (ConstructionPanic floor gaps); the independent
-# AST census + refuse-loud partition is the measurable conservation gate until
+# AST census + gap partition is the measurable conservation gate until
 # production floors make full-tree live report possible.
 _HEAVY_CONSERVATION_VENDORS = (
     "numpy",
@@ -561,7 +561,7 @@ def test_conservation_triple_emitted_and_conserves() -> None:
         "    assert a() is None or True\n"
     )
     disk = census_source(src, file="c.py")
-    # Empty report: every assert is refuse-loud → accounted == onDisk, delta 0.
+    # Empty report: every assert is gap → accounted == onDisk, delta 0.
     cov = account_lift_coverage(disk, {})
     body = cov.to_json()
     totals = body["totals"]
@@ -596,7 +596,7 @@ def test_conservation_per_file_rows_for_multi_file_census() -> None:
         ],
         bodies=[],
     )
-    # Cite only a.py:1 as warranted; rest refuse-loud.
+    # Cite only a.py:1 as warranted; rest gap.
     report = {
         "sourceAudits": [
             {
@@ -616,7 +616,7 @@ def test_conservation_per_file_rows_for_multi_file_census() -> None:
     cov = account_lift_coverage(disk, report)
     body = cov.to_json()
     assert body["totals"]["onDisk"] == 3
-    assert body["totals"]["accounted"] == 3  # 1 lifted + 2 refuse
+    assert body["totals"]["accounted"] == 3  # 1 lifted + 2 gaps
     assert body["totals"]["delta"] == 0
     by_file = {r["file"]: r for r in body["perFile"]}
     assert by_file["a.py"]["onDisk"] == 2
@@ -630,7 +630,7 @@ def test_conservation_per_file_rows_for_multi_file_census() -> None:
 def test_conservation_bad_twin_drop_from_axis_flips_delta() -> None:
     """Discrimination: if accounted under-counts onDisk, delta > 0 and RED.
 
-    The production partition never leaves silent residue (refuse-loud fills
+    The production partition never leaves silent residue (gap fills
     the gap). This unit twin plants a hand-built axis that violates
     conservation so the gate field itself is proven measured, not hardcoded.
     """
@@ -645,7 +645,7 @@ def test_conservation_bad_twin_drop_from_axis_flips_delta() -> None:
     assertions = AssertionAxis(
         stated=2,
         lifted_cited=1,
-        refused_loud=0,
+        gap=0,
         silently_unaccounted=1,
         on_disk=[
             {"file": "t.py", "line": 1, "col": 0, "preview": "assert 1"},
@@ -686,9 +686,9 @@ def test_statistics_report_emits_conservation_triple(
 def _census_conservation_for_paths(
     files: list[Path], *, root: Path, label: str
 ) -> dict:
-    """Independent AST census + refuse-loud partition; returns coverage JSON."""
+    """Independent AST census + gap partition; returns coverage JSON."""
     disk = census_paths(files, root=root)
-    # Factory-instrument-engaged empty report: refuse-loud fills the gap;
+    # Factory-instrument-engaged empty report: gap fills the gap;
     # conservation identity still holds (delta == 0). The independent census
     # is the only onDisk source — no lift code is shared.
     eng_report = {
@@ -711,7 +711,7 @@ def test_stdlib_vendor_conservation_delta_is_zero(package: str) -> None:
 
     Six stdlib modules. The independent AST census (shares NO code with the
     lift path) is the onDisk side. Accounted is the report-bucket partition
-    (lifted+cited + refused-loud). Under the refuse-loud doctrine every
+    (lifted+cited + gap). Under the gap doctrine every
     stated assert is classified, so delta must be 0. Live sugar --report
     emission of the same triple is gated by
     ``test_statistics_report_emits_conservation_triple``.
@@ -742,14 +742,14 @@ def test_heavy_vendor_full_tree_conservation_delta_is_zero(package: str) -> None
     """#4013 residual after #4721: full-tree numpy/pandas conservation.
 
     Walks every ``*.py`` under the installed package (no 40-file cap). The
-    independent AST census is the onDisk side; accounted is refuse-loud
+    independent AST census is the onDisk side; accounted is gap
     partition against a factory-engaged empty report. Live full-tree
     ``sugar lift --report`` still panics on floor gaps (ConstructionPanic) — that
     live residual stays open; this gate measures the census half of
     conservation on the real heavy surface.
 
     Measured R (local instrument): numpy onDisk≈3208, pandas onDisk≈17543,
-    both delta=0 under refuse-loud.
+    both delta=0 under gap.
     """
     path = _resolve_installed_package_path(package)
     if not path.exists():
@@ -791,7 +791,7 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
     file on the production file-lift path:
 
     * completed → real payload into conservation accounting
-    * ConstructionPanic → refuse-loud for that file's on-disk asserts
+    * ConstructionPanic → gap for that file's on-disk asserts
 
     Gate: aggregate conservation delta==0 on the live path.
     Residual axis (named, leave #4013 open): ``R_live_construction_panic_files``
@@ -825,7 +825,7 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
         f"{package} live isolation must exceed stdlib sample; "
         f"got assert_files={result['assert_files']}"
     )
-    # Every per-file row conserved (completed or refuse-loud after panic).
+    # Every per-file row conserved (completed or gap after panic).
     for row in result["perFile"]:
         assert int(row["delta"]) == 0, row
     # Residual is measured, not hidden. Multi-file live report stays open

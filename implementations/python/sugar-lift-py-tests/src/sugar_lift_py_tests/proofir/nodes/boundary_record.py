@@ -28,7 +28,7 @@ from . import (
 
 @dataclass(frozen=True, init=False)
 class BoundaryRecord:
-    """A typed-effect record with grounds, not a lift-side refusal."""
+    """A typed-effect record with grounds; no open lift-side boundary."""
 
     node_class: ClassVar[str] = "BoundaryRecord"
 
@@ -124,10 +124,10 @@ class BoundaryRecord:
                 expected="sat",
                 formulas=(),
                 declarations={},
-                source=_effectful_refusal_source(),
+                source=_effectful_open_source(),
                 node_class=cls.node_class,
                 expected_sugar="python.literal-call-sugar",
-                refusal_absence=True,
+                open_absence=True,
                 construct=lambda: cls.from_incomplete(
                     _runtime_effect_incomplete("opaque runtime effect"),
                     provenance=_witness_provenance(
@@ -136,16 +136,16 @@ class BoundaryRecord:
                 ),
             ),
             lying=VerdictWitnessCase(
-                name="boundary-record-fact-and-refusal-refuses",
-                expected="construction-refusal",
+                name="boundary-record-fact-and-open-open",
+                expected="construction-open",
                 formulas=(),
                 declarations={},
-                construct=lambda: _fact_and_refusal_refuses(cls),
+                construct=lambda: _fact_and_open_is_open(cls),
             ),
         )
 
 
-def _effectful_refusal_source() -> str:
+def _effectful_open_source() -> str:
     return (
         "def A(x):\n"
         "    print(x)\n"
@@ -176,7 +176,7 @@ def _runtime_effect_incomplete(reason: str) -> Incomplete:
     )
 
 
-def _fact_and_refusal_refuses(cls: type[BoundaryRecord]) -> BoundaryRecord:
+def _fact_and_open_is_open(cls: type[BoundaryRecord]) -> BoundaryRecord:
     return cast(Any, cls.from_incomplete)(
         _runtime_effect_incomplete("opaque runtime effect"),
         provenance=_witness_provenance(cls.node_class, warrants=("Derived",)),

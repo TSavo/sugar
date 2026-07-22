@@ -109,14 +109,14 @@ class Provenance:
 @dataclass(frozen=True)
 class VerdictWitnessCase:
     name: str
-    expected: Literal["sat", "unsat", "construction-refusal"]
+    expected: Literal["sat", "unsat", "construction-open"]
     formulas: tuple[Formula, ...] = ()
     declarations: Mapping[str, Sort] = field(default_factory=dict)
     construct: Callable[[], object] | None = None
     source: str | None = None
     node_class: str | None = None
     expected_sugar: str | None = None
-    refusal_absence: bool = False
+    open_absence: bool = False
 
 
 @dataclass(frozen=True)
@@ -348,7 +348,7 @@ def registered_verdict_witnesses() -> tuple[tuple[str, bool, bool], ...]:
                     and pair.truthful.expected_sugar is not None
                 ),
                 (
-                    pair.lying.expected == "construction-refusal"
+                    pair.lying.expected == "construction-open"
                     or (
                         pair.lying.expected == "unsat"
                         and pair.lying.source is not None

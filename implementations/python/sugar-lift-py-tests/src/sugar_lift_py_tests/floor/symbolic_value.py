@@ -765,7 +765,7 @@ class SymbolicValue(FloorValue):
         Concrete containers fold post-state. A symbolic formal (for example
         ``**kwargs``) has no element history, but the assignment still rebinds
         the name: carry prior coordinate, index, and value on ``py.setitem``.
-        Do not invent members; do not soft-refuse — silence stays illegal.
+        Do not invent members; do not hide the gap — silence stays illegal.
         """
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor

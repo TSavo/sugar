@@ -3,7 +3,7 @@
 Two queries, one per level:
 
 - ``Backend.root(unit)`` — give me this file's root. Two outcomes: a
-  ``BackendNode`` reference, or ``BackendRefused`` raised when the source
+  ``BackendNode`` reference, or ``BackendCouldNotParse`` raised when the source
   is not valid input for this backend.
 - ``BackendNode.describe()`` — give me THIS node's children (and its
   kind, its span, its leaf values). Called on demand, per node, when our
@@ -31,7 +31,7 @@ Failure vocabulary, three distinct classes, never a string:
   shape we have no class for.
 - ``BackendDefect`` (panic.py) — the backend produced something
   structurally invalid.
-- ``BackendRefused`` (here) — the backend's own gap: the raw text was
+- ``BackendCouldNotParse`` (here) — the backend's own parse outcome: the raw text was
   not valid input for it at all. Every adapter must raise exactly this —
   never its native library exception (``SyntaxError``,
   ``libcst.ParserSyntaxError``, ...) — so no caller above this module
@@ -144,8 +144,8 @@ class OpsLeaf:
 Slot = Child | MaybeChild | Children | Leaf | OpLeaf | OpsLeaf
 
 
-class BackendRefused(Exception):
-    """The backend refused the source unit: not valid input for it.
+class BackendCouldNotParse(Exception):
+    """The backend could not parse the source unit: not valid input for it.
 
     Distinct from both panics (panic.py): ``VocabularyMissing`` is a shape
     the backend DID produce that we have no class for; ``BackendDefect``
@@ -155,7 +155,7 @@ class BackendRefused(Exception):
     this on such input, carrying its own backend name, the file, and the
     backend's own reason — never letting its native exception type escape.
 
-    Never caught to continue silently: a refusal is a recorded outcome
+    Never caught to continue silently: a could-not-parse outcome is a recorded outcome
     (corpus.py records it as a failure row), not a substitute for success
     and never a bare ``None``.
     """
@@ -167,7 +167,7 @@ class BackendRefused(Exception):
         self.reason = reason
 
     def __str__(self) -> str:  # pragma: no cover - formatting only
-        return f"BACKEND REFUSED [{self.backend}] {self.file}: {self.reason}"
+        return f"BACKEND COULD NOT PARSE [{self.backend}] {self.file}: {self.reason}"
 
 
 @dataclass(frozen=True)
@@ -206,7 +206,7 @@ class Backend:
     """A parsing backend behind the query contract.
 
     ``root`` is the file-level query: give me this file's root. Two
-    outcomes: a ``BackendNode``, or ``BackendRefused`` — never the
+    outcomes: a ``BackendNode``, or ``BackendCouldNotParse`` — never the
     backend's native library exception.
     """
 

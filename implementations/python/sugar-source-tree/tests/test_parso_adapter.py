@@ -16,7 +16,7 @@ from pathlib import Path
 
 from conftest import oracle_source_file
 from sugar_source_tree import SourceFile
-from sugar_source_tree.backend import BackendRefused
+from sugar_source_tree.backend import BackendCouldNotParse
 from sugar_source_tree.panic import SourceTreePanic
 from sugar_source_tree.parso_adapter import ParsoBackend
 
@@ -79,15 +79,15 @@ def test_match_statement_is_not_supported_by_parso_080_grammar():
     """The load-bearing finding: parso's shipped grammar311/312/etc. has no
     match_stmt/case_block productions at all (verified by grepping the
     grammar text files directly). This is not an adapter gap — there is no
-    tree to translate. A source using `match` refuses to parse."""
+    tree to translate. A source using `match` could not be parsed."""
     source = "match x:\n    case 0:\n        pass\n"
-    with pytest.raises(BackendRefused):
+    with pytest.raises(BackendCouldNotParse):
         _root(source, filename="match.py")
 
 
 def test_quirks_golden_fails_on_the_known_match_gap():
     source = (GOLDENS / "quirks.py").read_text(encoding="utf-8")
-    with pytest.raises(BackendRefused):
+    with pytest.raises(BackendCouldNotParse):
         _root(source, filename="quirks.py")
 
 
