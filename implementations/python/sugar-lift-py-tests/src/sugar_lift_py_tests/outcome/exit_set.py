@@ -201,6 +201,56 @@ class ExitSet(Generic[T]):
                     exits.append(Completed(guard, clean.value))
         return ExitSet(tuple(exits)).normalize()
 
+    def and_exit(
+        self,
+        exit_call: Callable[[], "ExitSet[object]"],
+        *,
+        suppresses: Callable[[object, object], bool] | None = None,
+        open_suppression: Callable[[object], object] | None = None,
+    ) -> "ExitSet[object]":
+        """Run ``__exit__`` over every body exit (resource ``with``).
+
+        ``exit_call`` is constructed **once** and fanned across faces (same
+        posture as ``and_finally``). Laws:
+
+        - Exit **halt** supersedes the incoming exit.
+        - Exit **completion** on a **Completed** incoming keeps the body value.
+        - Exit **completion** on a **Halted** incoming:
+          - ``suppresses(effect, exit_value)`` is True → consume the halt
+            (Completed with empty residue).
+          - False → restore/rethrow the incoming halt.
+          - ``open_suppression(effect)`` set → leave that residual halt under
+            the guard (runtime-selected / unproved — never guessed True/False).
+
+        ``NeverSuppresses`` is disposition, not purity: the exit call still
+        runs and can itself halt (supersede). Disposition only answers the
+        completed-exit question: never suppress the body halt.
+        """
+        decide = suppresses or (lambda _effect, _exit_value: False)
+        exit_exits = exit_call().exits
+        exits: list[Exit[object]] = []
+        for incoming in self.exits:
+            for ex in exit_exits:
+                guard = _and_guards(incoming.guard, ex.guard)
+                if isinstance(ex, Halted):
+                    exits.append(Halted(guard, ex.effect))
+                    continue
+                if isinstance(incoming, Completed):
+                    exits.append(Completed(guard, incoming.value))
+                    continue
+                # Incoming Halted + exit completed.
+                if open_suppression is not None:
+                    residual = open_suppression(incoming.effect)
+                    if residual is not None:
+                        exits.append(Halted(guard, residual))
+                        continue
+                if decide(incoming.effect, ex.value):
+                    # Suppress: body halt is consumed; face completes.
+                    exits.append(Completed(guard, None))
+                else:
+                    exits.append(Halted(guard, incoming.effect))
+        return ExitSet(tuple(exits)).normalize()
+
     def collapse(self):
         """Return the old linear Outcome only for one unconditional exit."""
         normalized = self.normalize()

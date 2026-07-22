@@ -135,3 +135,88 @@ def test_and_finally_runs_cleanup_on_every_conditional_exit():
     assert len(after.exits) == 2
     assert any(isinstance(e, Halted) and e.effect == effect for e in after.exits)
     assert any(isinstance(e, Completed) and e.value == "state" for e in after.exits)
+
+
+# --- resource with: and_exit -------------------------------------------------
+
+
+def test_and_exit_completion_keeps_body_completed():
+    incoming = ExitSet.completed("body")
+    after = incoming.and_exit(lambda: ExitSet.completed(False))
+    assert after.collapse() == Complete("body")
+
+
+def test_and_exit_halt_supersedes_body_completed():
+    exit_halt = RaiseEffect(exception_name="RuntimeError")
+    incoming = ExitSet.completed("body")
+    after = incoming.and_exit(lambda: ExitSet.halted(exit_halt))
+    assert after.collapse() == Incomplete(exit_halt)
+
+
+def test_and_exit_halt_supersedes_body_halted():
+    body = RaiseEffect(exception_name="ValueError")
+    exit_halt = RaiseEffect(exception_name="RuntimeError")
+    incoming = ExitSet.halted(body)
+    after = incoming.and_exit(lambda: ExitSet.halted(exit_halt))
+    assert after.collapse() == Incomplete(exit_halt)
+
+
+def test_and_exit_false_restores_body_halt():
+    body = RaiseEffect(exception_name="ValueError")
+    incoming = ExitSet.halted(body)
+    after = incoming.and_exit(
+        lambda: ExitSet.completed(False),
+        suppresses=lambda _e, _v: False,
+    )
+    assert after.collapse() == Incomplete(body)
+
+
+def test_and_exit_true_consumes_body_halt():
+    body = RaiseEffect(exception_name="ValueError")
+    incoming = ExitSet.halted(body)
+    after = incoming.and_exit(
+        lambda: ExitSet.completed(True),
+        suppresses=lambda _e, _v: True,
+    )
+    assert after.collapse() == Complete(None)
+
+
+def test_and_exit_open_suppression_leaves_residual_not_guessed():
+    body = RaiseEffect(exception_name="ValueError")
+    incoming = ExitSet.halted(body)
+    after = incoming.and_exit(
+        lambda: ExitSet.completed("runtime"),
+        suppresses=lambda _e, _v: True,  # would suppress if decided
+        open_suppression=lambda effect: effect,  # open wins — never guess
+    )
+    assert after.collapse() == Incomplete(body)
+
+
+def test_and_exit_fans_once_across_conditional_faces():
+    condition = _guard("condition")
+    effect = RaiseEffect(exception_name="ValueError")
+    incoming = ExitSet.conditional_halt(condition, effect, "state")
+    seen = []
+
+    def exit_call():
+        seen.append(1)
+        return ExitSet.completed(False)
+
+    after = incoming.and_exit(exit_call, suppresses=lambda _e, _v: False)
+    assert len(seen) == 1
+    assert any(isinstance(e, Halted) and e.effect == effect for e in after.exits)
+    assert any(isinstance(e, Completed) and e.value == "state" for e in after.exits)
+
+
+def test_and_exit_suppresses_only_matching_face_of_conditional():
+    condition = _guard("condition")
+    effect = RaiseEffect(exception_name="ValueError")
+    incoming = ExitSet.conditional_halt(condition, effect, "state")
+    after = incoming.and_exit(
+        lambda: ExitSet.completed(True),
+        suppresses=lambda e, _v: getattr(e, "exception_name", None) == "ValueError",
+    )
+    # Halted face consumed; completed face kept.
+    assert all(isinstance(e, Completed) for e in after.exits)
+    assert any(e.value == "state" for e in after.exits if isinstance(e, Completed))
+    assert any(e.value is None for e in after.exits if isinstance(e, Completed))

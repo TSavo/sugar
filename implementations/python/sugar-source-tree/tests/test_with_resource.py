@@ -1,11 +1,11 @@
 """Resource `with` under RuntimeSelected (#5994 step 4).
 
-Honest v1: we never lift ``__enter__``/``__exit__``, so no resource manager
-is proven ``NeverSuppresses``. Every unenrolled resource manager is therefore
-``RuntimeSelected`` and stays LOUD as the named residual
-``RuntimeSelectedContextManager`` — not a silent dissolve, not a bare
-``SugarNotWritten``, not a false green. Assertion managers (Expects/Suppresses
-via the membrane) keep their wired path.
+Production: unenrolled managers (``open``, …) stay LOUD as the named residual
+``RuntimeSelectedContextManager`` until enter/exit are constructed. The
+enter/exit ExitSet transformation lives on ``WithResourceSugar`` (unit twins
+in ``test_with_resource_sugar.py``); assertion managers (Expects/Suppresses)
+stay on ``WithContractSugar``. No manager is admitted green without constructed
+enter/exit or an explicit red residual.
 """
 
 from __future__ import annotations
