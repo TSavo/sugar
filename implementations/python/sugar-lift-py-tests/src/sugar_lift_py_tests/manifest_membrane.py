@@ -49,6 +49,14 @@ from sugar_lift_py_tests.context_manager_contract import (
     Suppresses,
 )
 
+# Manifest schema vocabulary. ``never-suppresses`` is deliberately reserved
+# without an issuer below or an enrolled row in the committed manifest: the
+# tree cannot yet represent its finally-faithful exceptional exit. Naming the
+# future proof kind is not permission to infer it from a manager call.
+MANIFEST_CONTRACT_KINDS = frozenset(
+    {"expects", "suppresses", "never-suppresses"}
+)
+
 _CONTRACT_BUILDERS = {
     "expects": Expects,
     "suppresses": Suppresses,

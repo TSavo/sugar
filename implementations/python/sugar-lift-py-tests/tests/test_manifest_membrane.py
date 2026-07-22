@@ -12,6 +12,7 @@ import pytest
 
 from sugar_lift_py_tests.context_manager_contract import Expects, Suppresses
 from sugar_lift_py_tests.manifest_membrane import (
+    MANIFEST_CONTRACT_KINDS,
     ManifestIntegrityError,
     contract_for_manager,
     default_community_manifest,
@@ -52,6 +53,16 @@ def test_committed_manifest_loads_and_hash_verifies():
         "contextlib.suppress",
         "tm.assert_produces_warning",
     }
+
+
+def test_manifest_schema_reserves_never_suppresses_without_enrollment():
+    """Investigation-only step 4: name the future proof kind as schema,
+    without authenticating any manager or licensing an expansion."""
+    assert MANIFEST_CONTRACT_KINDS == frozenset(
+        {"expects", "suppresses", "never-suppresses"}
+    )
+    manifest = default_community_manifest()
+    assert all(row.contract != "never-suppresses" for row in manifest.rows)
 
 
 def test_tampered_manifest_refuses_loudly(tmp_path):
