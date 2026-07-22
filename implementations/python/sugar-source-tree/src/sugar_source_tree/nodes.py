@@ -32,6 +32,7 @@ the backend contract stays read-only.
 
 from __future__ import annotations
 
+import symtable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar, Iterator, Optional, Tuple
 
@@ -55,6 +56,12 @@ from .reporter import NULL_REPORTER, AuditReporter
 from .spans import LineColSpan, LineTable, Span
 
 
+# Scope metadata travels beside temporal bindings under an unforgeable key.
+# It lets recognition distinguish a builtin spelling from a lexically bound
+# formal without substituting a fake value for that formal.
+_LEXICALLY_BOUND_NAMES = object()
+
+
 @dataclass(frozen=True)
 class SourceUnit:
     """One parsed source: oracle-pinned text, its content address, its line table.
@@ -71,9 +78,24 @@ class SourceUnit:
 
     # populated in __post_init__, never by callers
     line_table: LineTable = field(init=False, default=None)  # type: ignore[assignment]
+    module_bound_names: frozenset[str] = field(
+        init=False, default_factory=frozenset
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
+        symbols = symtable.symtable(self.source, self.filename, "exec").get_symbols()
+        object.__setattr__(
+            self,
+            "module_bound_names",
+            frozenset(
+                symbol.get_name()
+                for symbol in symbols
+                if symbol.is_assigned()
+                or symbol.is_imported()
+                or symbol.is_namespace()
+            ),
+        )
 
 
 class Typeable:
@@ -733,6 +755,11 @@ class FunctionDef(Statement):
         body_scope = (
             {k: v for k, v in scope.items() if k not in bound} if bound else scope
         )
+        inherited_bound = scope.get(_LEXICALLY_BOUND_NAMES, frozenset())
+        body_scope = {
+            **body_scope,
+            _LEXICALLY_BOUND_NAMES: frozenset(inherited_bound) | bound,
+        }
 
         changed: dict[str, object] = {}
         # signature: the enclosing scope, unmasked (evaluated before the body).
@@ -2419,33 +2446,90 @@ class ListComp(Expression):
 
     def _try_unroll_to_display(self, scope):
         """The List display this comprehension dissolves to, or None. One
-        synchronous generator, no ifs (the filtered form is a later segment),
+        synchronous generator with ground-decidable filters,
         over a CONCRETE iterable whose elements destructure into the target:
         each element substitutes into `elt`, and the results are the display's
         elements. Reuses For's readers (same structural recognition)."""
-        if len(self.generators) != 1:
+        if len(self.generators) != 1 or ListComp._contains_forbidden_shape(
+            self, (self.elt,)
+        ):
             return None
         gen = self.generators[0]
-        if gen.is_async or gen.ifs:
+        if gen.is_async or ListComp._contains_forbidden_shape(
+            self, (gen.iter, *gen.ifs)
+        ):
             return None
         new_iter, ic = self._substitute_field(gen.iter, scope)
         it = new_iter if ic else gen.iter
+        if ListComp._calls_shadowed_range(self, it, scope):
+            return None
         elements = For._concrete_elements(self, it)
         if elements is None:
+            return None
+        if len(elements) > For._UNROLL_FUEL:
             return None
         target = gen.target
         results = []
         for element in elements:
-            if target.kind == "Name":
-                bindings = {target.id: element}
-            else:
-                bindings = For._target_bindings_for(self, target, element)
-                if bindings is None:
-                    return None
+            bindings = For._target_bindings_for(self, target, element)
+            if bindings is None:
+                return None
             inner = {**scope, **bindings}
+            verdicts = []
+            for guard in gen.ifs:
+                new_guard, changed = self._substitute_field(guard, inner)
+                verdict = While._ground_truth(self, new_guard if changed else guard)
+                if verdict is None:
+                    return None
+                verdicts.append(verdict)
+            if not all(verdicts):
+                continue
             new_elt, _d = self._substitute_field(self.elt, inner)
             results.append(new_elt if _d else self.elt)
-        return self._make_list(tuple(results))
+        return ListComp._make_list(self, tuple(results))
+
+    def _contains_forbidden_shape(self, roots: tuple) -> bool:
+        """True for a nested comprehension or walrus in this comprehension."""
+        return any(
+            node.kind
+            in ("ListComp", "SetComp", "DictComp", "GeneratorExp", "NamedExpr")
+            for root in roots
+            for node in root.walk()
+        )
+
+    def _calls_shadowed_range(self, iterable, scope) -> bool:
+        return (
+            iterable.kind == "Call"
+            and iterable.func.kind == "Name"
+            and iterable.func.id == "range"
+            and "range" in scope
+        ) or (
+            iterable.kind == "Call"
+            and iterable.func.kind == "Name"
+            and iterable.func.id == "range"
+            and "range" in scope.get(_LEXICALLY_BOUND_NAMES, ())
+        ) or (
+            iterable.kind == "Call"
+            and iterable.func.kind == "Name"
+            and iterable.func.id == "range"
+            and "range" in self.unit.module_bound_names
+        )
+
+    def _ground_hash_key(self, expression):
+        """A Python-equality key for the small ground scalar domain, or None."""
+        integer = For._concrete_int(self, expression)
+        if integer is not None:
+            return ("number", integer)
+        if expression.kind != "Constant":
+            return None
+        value = expression.value
+        if type(value) is bool:
+            return ("number", int(value))
+        if type(value) is str:
+            return ("str", value)
+        if value is None:
+            return ("none", None)
+        return None
 
     def _make_list(self, elements: tuple) -> "Node":
         """Synthesize a List display of these element nodes, borrowing this
@@ -2467,6 +2551,9 @@ class SetComp(Expression):
     def substitute(self, scope):
         """A comprehension: thread each generator's target, then substitute the
         element against the scope with every target masked."""
+        display = self._try_unroll_to_display(scope)
+        if display is not None:
+            return display
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
@@ -2478,6 +2565,50 @@ class SetComp(Expression):
             changed["elt"] = new_elt
         return self if not changed else rewrite(self, **changed)
 
+    def _try_unroll_to_display(self, scope):
+        if len(self.generators) != 1 or ListComp._contains_forbidden_shape(
+            self, (self.elt,)
+        ):
+            return None
+        gen = self.generators[0]
+        if gen.is_async or gen.ifs or ListComp._contains_forbidden_shape(
+            self, (gen.iter,)
+        ):
+            return None
+        new_iter, changed = self._substitute_field(gen.iter, scope)
+        iterable = new_iter if changed else gen.iter
+        if ListComp._calls_shadowed_range(self, iterable, scope):
+            return None
+        elements = For._concrete_elements(self, iterable)
+        if elements is None or len(elements) > For._UNROLL_FUEL:
+            return None
+        results = []
+        seen = set()
+        for element in elements:
+            bindings = For._target_bindings_for(self, gen.target, element)
+            if bindings is None:
+                return None
+            new_elt, changed = self._substitute_field(
+                self.elt, {**scope, **bindings}
+            )
+            result = new_elt if changed else self.elt
+            key = ListComp._ground_hash_key(self, result)
+            if key is None:
+                return None
+            if key not in seen:
+                seen.add(key)
+                results.append(result)
+        return SetComp._make_set(self, tuple(results))
+
+    def _make_set(self, elements: tuple) -> "Node":
+        from .backend import Children, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        slots = (("elts", Children(tuple(_handle_of(e) for e in elements))),)
+        return materialize(
+            self.unit, ShadowNode("Set", self.span, slots), self.reporter
+        )
+
 
 class DictComp(Expression):
     key: Expression
@@ -2488,6 +2619,9 @@ class DictComp(Expression):
     def substitute(self, scope):
         """A dict comprehension: thread the generators, then key and value
         against the scope with every target masked."""
+        display = self._try_unroll_to_display(scope)
+        if display is not None:
+            return display
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
@@ -2499,6 +2633,66 @@ class DictComp(Expression):
             if d:
                 changed[fld] = new
         return self if not changed else rewrite(self, **changed)
+
+    def _try_unroll_to_display(self, scope):
+        if len(self.generators) != 1 or ListComp._contains_forbidden_shape(
+            self, (self.key, self.value)
+        ):
+            return None
+        gen = self.generators[0]
+        if gen.is_async or gen.ifs or ListComp._contains_forbidden_shape(
+            self, (gen.iter,)
+        ):
+            return None
+        new_iter, changed = self._substitute_field(gen.iter, scope)
+        iterable = new_iter if changed else gen.iter
+        if ListComp._calls_shadowed_range(self, iterable, scope):
+            return None
+        elements = For._concrete_elements(self, iterable)
+        if elements is None or len(elements) > For._UNROLL_FUEL:
+            return None
+        pairs = []
+        key_indexes = {}
+        for element in elements:
+            bindings = For._target_bindings_for(self, gen.target, element)
+            if bindings is None:
+                return None
+            inner = {**scope, **bindings}
+            key, key_changed = self._substitute_field(self.key, inner)
+            value, value_changed = self._substitute_field(self.value, inner)
+            result_key = key if key_changed else self.key
+            result_value = value if value_changed else self.value
+            hash_key = ListComp._ground_hash_key(self, result_key)
+            if hash_key is None:
+                return None
+            pair = (result_key, result_value)
+            prior = key_indexes.get(hash_key)
+            if prior is None:
+                key_indexes[hash_key] = len(pairs)
+                pairs.append(pair)
+            else:
+                pairs[prior] = pair
+        return DictComp._make_dict(self, tuple(pairs))
+
+    def _make_dict(self, pairs: tuple) -> "Node":
+        from .backend import Child, Children, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        items = []
+        for key, value in pairs:
+            slots = (
+                ("key", Child(_handle_of(key))),
+                ("value", Child(_handle_of(value))),
+            )
+            item = materialize(
+                self.unit, ShadowNode("DictItem", self.span, slots), self.reporter
+            )
+            items.append(_handle_of(item))
+        return materialize(
+            self.unit,
+            ShadowNode("Dict", self.span, (("items", Children(tuple(items))),)),
+            self.reporter,
+        )
 
 
 class GeneratorExp(Expression):
@@ -2519,7 +2713,6 @@ class GeneratorExp(Expression):
         if de:
             changed["elt"] = new_elt
         return self if not changed else rewrite(self, **changed)
-
 
 class Await(Expression):
     value: Expression
