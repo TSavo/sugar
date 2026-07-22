@@ -163,17 +163,13 @@ class FunctionUniverseSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # No temporal name map. The body was already SUBSTITUTED
-        # (FunctionDef.sugar): formals stay free Vars, locals/phis are rewritten
-        # tree coordinates (including EffectRef / ObservationRef for as-bindings).
-        # effect_auth_wave holds route-time slot→effect testimony for those
-        # coordinates — not a second construction door.
+        # No temporal name map and no ambient effect auth. The body was already
+        # SUBSTITUTED (FunctionDef.sugar): formals stay free Vars; as-bindings
+        # are EffectRef/ObservationRef coordinates. Routing deposits
+        # EffectBinding facts into the same record as other testimony.
         del ctx
-        from sugar_lift_py_tests.effect_auth import effect_auth_wave
-
-        with effect_auth_wave():
-            return reduce_body(self.statements).and_then(
-                lambda record: Complete(
-                    UniverseValue(name=self.name, formals=self.formals, record=record)
-                )
+        return reduce_body(self.statements).and_then(
+            lambda record: Complete(
+                UniverseValue(name=self.name, formals=self.formals, record=record)
             )
+        )

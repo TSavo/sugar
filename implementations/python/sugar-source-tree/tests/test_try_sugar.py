@@ -170,11 +170,8 @@ def test_finally_reduces_on_uncaught_path():
 
 
 def test_except_as_binds_matching_raise_witness_in_handler():
-    # Tree rewrites `error` → EffectRef(slot); routing authenticates the slot
-    # with the matched Halted raise. Identity is the payload — never E().
-    from sugar_lift_py_tests.floor.effect_coordinate import EffectCoordinate
-    from sugar_lift_py_tests.ir import ctor
-
+    # Tree rewrites `error` → EffectRef(slot); routing emits EffectBinding facts.
+    # Coordinate stays effect-slot(S); identity lives in constructed testimony.
     v = _val(
         "def A():\n"
         "    try:\n"
@@ -183,12 +180,34 @@ def test_except_as_binds_matching_raise_witness_in_handler():
         "        return error\n"
     )
     assert _incompletes(v) == []
-    # post is out == observed exception identity for the authenticated slot
     post = v.post()
     assert post.args[0].name == "out"
-    term = post.args[1]
-    assert term.name == "python:observed_exception"
-    assert term.args[0].value == "ValueError"
+    assert post.args[1].name == "python:effect_slot"
+    # Authentication is explicit record testimony (not ambient seal).
+    inv_names = [inv.name for inv in v.invs()]
+    assert "effect_slot_type" in inv_names or any(
+        getattr(inv, "name", None) == "effect_slot_type"
+        or (hasattr(inv, "args") and inv.name == "=")
+        for inv in v.invs()
+    )
+    # Find effect_slot_type fact: atomic effect_slot_type(S) = "ValueError"
+    typed = [
+        inv
+        for inv in v.invs()
+        if inv.name == "="
+        and getattr(inv.args[0], "name", None) == "effect_slot_type"
+    ]
+    assert typed, f"missing effect_slot_type in {[i.name for i in v.invs()]}: {v.invs()}"
+    assert typed[0].args[1].value == "ValueError"
+    identity = [
+        inv
+        for inv in v.invs()
+        if inv.name == "="
+        and getattr(inv.args[0], "name", None) == "effect_slot_identity"
+    ]
+    assert identity
+    assert identity[0].args[1].name == "python:observed_exception"
+    assert identity[0].args[1].args[0].value == "ValueError"
 
 
 def test_except_as_does_not_bind_on_uncaught_path():
@@ -249,9 +268,14 @@ def test_tuple_except_as_binds_the_matched_type_witness():
         "        return error\n"
     )
     assert _incompletes(v) == []
-    term = v.post().args[1]
-    assert term.name == "python:observed_exception"
-    assert term.args[0].value == "ValueError"
+    assert v.post().args[1].name == "python:effect_slot"
+    typed = [
+        inv
+        for inv in v.invs()
+        if inv.name == "="
+        and getattr(inv.args[0], "name", None) == "effect_slot_type"
+    ]
+    assert typed and typed[0].args[1].value == "ValueError"
 
 
 def test_bare_except_catches_arbitrary_raise():

@@ -1,35 +1,7 @@
 """The one effect router shared by ``Try`` and ``With`` (issue #5994, step 2/3).
 
-T's ruling (verbatim intent, restated as code): the router takes a reduced
-block's contribution entries and a typed ``context_manager_contract.Contract``
-and decides what the contract's arm does to those entries -- never a vendor
-spelling, never a manufactured green.
-
-Arms:
-
-- ``Expects(matcher)`` -- an OBLIGATION. The emitted fact is the FOL equality
-  ``eq(str_const(expected_name), observed_term)``, wrapped in an ``InvValue``:
-    * a matching-kind ``Incomplete(RaiseEffect)`` present -> ground-true
-      (``observed_term = str_const(raised_name)``); the effect is CONSUMED --
-      it was evidence, now discharged.
-    * body completed with NO unresolved call coordinates -> ground-false
-      (``observed_term = str_const("py.effect.none")``) -- the lying twin:
-      the expected effect is asserted absent.
-    * body carries unresolved call coordinates (the halt may be hiding behind
-      a dig) -> do NOT claim absence; emit an opaque obligation
-      ``atomic("py.effect.expected", [str_const(name), ...])`` instead of the
-      InvValue (honest red until composition resolves the dig).
-    * a non-matching Incomplete(RaiseEffect) (wrong effect) -> emit the
-      ground-false equality AND KEEP the Incomplete: the wrong effect must not
-      disappear.
-- ``Suppresses(matcher)`` -- permission. A matching Incomplete is consumed
-  (removed, nothing stated). Absence is fine (no fact). A non-matching effect
-  propagates untouched.
-- ``NeverSuppresses`` -- entries pass through unchanged. The router asserts
-  nothing; it exists so resource expansion can name its policy.
-- ``RuntimeSelected`` -- the router REFUSES: a loud, named error. Reaching the
-  router with a runtime-selected contract is a defect in the caller (it must
-  have stayed loud before reaching the router), not a policy the router picks.
+Match once. Emit obligations and optional EffectBinding testimony for a
+preallocated effect slot. No ambient tables; no second matching authority.
 """
 
 from __future__ import annotations
@@ -48,7 +20,7 @@ from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.inv_value import InvValue
-from sugar_lift_py_tests.ir import atomic, eq, str_const
+from sugar_lift_py_tests.ir import atomic, ctor, eq, str_const
 from sugar_lift_py_tests.outcome.incomplete import Incomplete
 
 _EFFECT_ABSENT_NAME = "py.effect.none"
@@ -56,42 +28,86 @@ _EFFECT_EXPECTED_OBLIGATION = "py.effect.expected"
 
 
 class RuntimeSelectedReachedRouter(RuntimeError):
-    """Raised when a ``RuntimeSelected`` contract reaches ``route``.
+    """Raised when a ``RuntimeSelected`` contract reaches ``route``."""
 
-    A runtime-selected exit must remain loud before it ever reaches this
-    router (the caller's job); arriving here with one is a defect, never a
-    policy this router is entitled to guess at.
+
+@dataclass(frozen=True)
+class EffectBinding:
+    """Explicit constructed testimony: slot S is authenticated by this effect.
+
+    Part of the same record as other facts — not ambient memory, not embedded
+    inside an EffectCoordinate floor value.
     """
+
+    slot_id: str
+    kind: str
+    type_name: str | None
+    effect: object  # RaiseEffect | WarningEffect | ...
+
+    def to_facts(self, site=None) -> tuple:
+        """FOL rows authenticating the slot (kind, type, identity)."""
+        slot = str_const(self.slot_id)
+        facts = [
+            InvValue(
+                eq(atomic("effect_slot_kind", [slot]), str_const(self.kind)),
+                site=site,
+            ),
+        ]
+        if self.type_name is not None:
+            facts.append(
+                InvValue(
+                    eq(
+                        atomic("effect_slot_type", [slot]),
+                        str_const(self.type_name),
+                    ),
+                    site=site,
+                )
+            )
+            if self.kind == "raise":
+                identity = ctor(
+                    "python:observed_exception", [str_const(self.type_name)]
+                )
+            elif self.kind == "warning":
+                identity = ctor(
+                    "python:observed_warning", [str_const(self.type_name)]
+                )
+            else:
+                identity = ctor(
+                    "python:observed_effect", [str_const(self.type_name)]
+                )
+            facts.append(
+                InvValue(
+                    eq(atomic("effect_slot_identity", [slot]), identity),
+                    site=site,
+                )
+            )
+        return tuple(facts)
 
 
 @dataclass(frozen=True)
 class RoutedOutcome:
-    """What the router hands back to its caller (Try or With).
-
-    ``entries`` is the surviving contribution tuple -- what the caller splices
-    into its own ``BlockValue.statements`` (or equivalent). ``stated_facts``
-    is the subset of ``entries`` that are freshly-minted ``InvValue`` facts
-    the router added (already included in ``entries`` too, since the caller
-    needs both "here is the full record" and "here is what I just asserted"
-    views without re-scanning for identity).
-    """
+    """Router result: surviving entries, stated obligation facts, slot bindings."""
 
     entries: tuple
     stated_facts: tuple = ()
+    bindings: tuple = ()  # EffectBinding, ...
 
 
 def _observed_effect(entry):
     if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect):
-        return "raise", entry.effect.exception_name, None, True
+        return "raise", entry.effect.exception_name, None, entry.effect
     if isinstance(entry, WarningObservationValue):
-        return "warning", entry.effect.category_name, entry.effect.message, False
+        return (
+            "warning",
+            entry.effect.category_name,
+            entry.effect.message,
+            entry.effect,
+        )
     return None
 
 
 def _matching_effect(entries: tuple, matcher: EffectMatcher):
-    """Return the (index, Incomplete) of the first Incomplete(RaiseEffect)
-    whose effect matches ``matcher`` by EXACT kind+name (pinned rule -- a
-    subclass raise is the mismatch twin, never silently matched), or None."""
+    """First exact kind+name match, or None. Single match authority for route."""
     for index, entry in enumerate(entries):
         observed = _observed_effect(entry)
         if (
@@ -104,8 +120,6 @@ def _matching_effect(entries: tuple, matcher: EffectMatcher):
 
 
 def _first_effect_of_kind(entries: tuple, kind: str):
-    """Any Incomplete(RaiseEffect) at all, matching or not (for the wrong-effect
-    twin: some raise happened, just not the one that was expected)."""
     for index, entry in enumerate(entries):
         observed = _observed_effect(entry)
         if observed is not None and observed[0] == kind:
@@ -114,14 +128,6 @@ def _first_effect_of_kind(entries: tuple, kind: str):
 
 
 def _has_unresolved_call_coordinates(entries: tuple) -> bool:
-    """True when the entries carry a call coordinate that has not yet been
-    reduced -- the halt this router is asked to classify may be hiding behind
-    that dig, so absence of a matching effect is NOT yet a fact.
-
-    A callsite is "unresolved" when a ``CallSiteValue`` rides among the entries
-    directly, or is cited by an ``InvValue.operand_callsites`` -- the one
-    documented shape the ruling names. Both are inspected by this single
-    helper; no other code in this module walks entries for callsites."""
     for entry in entries:
         if isinstance(entry, CallSiteValue):
             return True
@@ -130,23 +136,33 @@ def _has_unresolved_call_coordinates(entries: tuple) -> bool:
     return False
 
 
-def _route_expects(entries: tuple, matcher: EffectMatcher) -> RoutedOutcome:
+def _binding_for_slot(slot_id: str | None, observed) -> tuple:
+    if slot_id is None or observed is None:
+        return ()
+    kind, type_name, _message, effect = observed
+    return (
+        EffectBinding(
+            slot_id=slot_id,
+            kind=kind,
+            type_name=type_name,
+            effect=effect,
+        ),
+    )
+
+
+def _route_expects(
+    entries: tuple,
+    matcher: EffectMatcher,
+    *,
+    slot_id: str | None = None,
+    site=None,
+) -> RoutedOutcome:
     matching = _matching_effect(entries, matcher)
     if matching is not None:
         index, _entry, observation = matching
         observed = str_const(observation[1])
-        # The TYPE obligation: discharged (ground-true equality; the halt is
-        # the evidence, consumed). Each PAYLOAD obligation (T's conjunction
-        # ruling) is its own row with its own verdict: a MessagePattern stays
-        # UNDISCHARGED -- an opaque py.effect.message_matches over the SAME
-        # observed witness -- until the effect carries authenticated message
-        # content. Never one aggregate boolean; the unobservable message
-        # neither silences the type testimony nor pretends the pattern held.
-        facts = [InvValue(eq(str_const(matcher.name), observed))]
+        facts = [InvValue(eq(str_const(matcher.name), observed), site=site)]
         for obligation in matcher.payload_obligations:
-            # Message absence is an explicit open obligation over the SAME
-            # effect witness.  An observed message can now state the concrete
-            # message coordinate; regex discharge remains the solver's job.
             message = observation[2]
             message_term = observed if message is None else str_const(message)
             facts.append(
@@ -154,56 +170,76 @@ def _route_expects(entries: tuple, matcher: EffectMatcher) -> RoutedOutcome:
                     atomic(
                         "py.effect.message_matches",
                         [message_term, str_const(obligation.pattern)],
-                    )
+                    ),
+                    site=site,
                 )
             )
+        bindings = _binding_for_slot(slot_id, observation)
+        binding_facts = tuple(
+            f for b in bindings for f in b.to_facts(site=site)
+        )
         remaining = entries[:index] + entries[index + 1 :]
-        return RoutedOutcome(entries=(*remaining, *facts), stated_facts=tuple(facts))
+        all_facts = (*facts, *binding_facts)
+        return RoutedOutcome(
+            entries=(*remaining, *all_facts),
+            stated_facts=all_facts,
+            bindings=bindings,
+        )
 
     wrong = _first_effect_of_kind(entries, matcher.kind)
     if wrong is not None:
         _, _entry, observation = wrong
-        # Wrong effect: the type obligation is REFUTED (ground-false equality)
-        # and the Incomplete is NOT consumed -- F must not disappear. Payload
-        # obligations are INAPPLICABLE (their witness is the matching halt,
-        # which does not exist), never independently emitted or passed.
-        fact = InvValue(eq(str_const(matcher.name), str_const(observation[1])))
+        fact = InvValue(
+            eq(str_const(matcher.name), str_const(observation[1])), site=site
+        )
+        # Wrong path: slot not authenticated (no binding).
         return RoutedOutcome(entries=(*entries, fact), stated_facts=(fact,))
 
     if _has_unresolved_call_coordinates(entries):
-        # Honest red: a dig may still produce the expected effect. Do not
-        # claim absence -- emit an opaque obligation carrying the WHOLE
-        # conjunction (type name + any payload patterns), all undischarged.
         operands = [str_const(matcher.name)] + [
             str_const(o.pattern) for o in matcher.payload_obligations
         ]
-        obligation = InvValue(atomic(_EFFECT_EXPECTED_OBLIGATION, operands))
-        return RoutedOutcome(entries=(*entries, obligation), stated_facts=(obligation,))
+        obligation = InvValue(atomic(_EFFECT_EXPECTED_OBLIGATION, operands), site=site)
+        return RoutedOutcome(
+            entries=(*entries, obligation), stated_facts=(obligation,)
+        )
 
-    # Completion with no hiding coordinates: the required-effect obligation is
-    # REFUTED (asserted absent, ground-false). Payload obligations are
-    # inapplicable -- no effect witness exists -- not independently "passed".
-    fact = InvValue(eq(str_const(matcher.name), str_const(_EFFECT_ABSENT_NAME)))
+    fact = InvValue(
+        eq(str_const(matcher.name), str_const(_EFFECT_ABSENT_NAME)), site=site
+    )
     return RoutedOutcome(entries=(*entries, fact), stated_facts=(fact,))
 
 
-def _route_suppresses(entries: tuple, matcher: EffectMatcher) -> RoutedOutcome:
+def _route_suppresses(
+    entries: tuple, matcher: EffectMatcher, *, slot_id: str | None = None, site=None
+) -> RoutedOutcome:
+    del site
     matching = _matching_effect(entries, matcher)
     if matching is None:
-        # Absence is fine; non-matching effects (if any) propagate untouched.
         return RoutedOutcome(entries=entries)
-    index, _entry, _observation = matching
+    index, _entry, observation = matching
     remaining = entries[:index] + entries[index + 1 :]
+    # Suppresses consumes; as-binding is not a Suppresses surface (tree stays loud).
+    del slot_id, observation
     return RoutedOutcome(entries=remaining)
 
 
-def route(entries: tuple, contract: Contract) -> RoutedOutcome:
-    """Route a reduced block's contribution ``entries`` per the typed
-    ``contract``. See module docstring for the per-arm semantics ruling."""
+def route(
+    entries: tuple,
+    contract: Contract,
+    *,
+    slot_id: str | None = None,
+    site=None,
+) -> RoutedOutcome:
+    """Route once. Optional ``slot_id`` receives EffectBinding testimony on match."""
     if isinstance(contract, Expects):
-        return _route_expects(entries, contract.matcher)
+        return _route_expects(
+            entries, contract.matcher, slot_id=slot_id, site=site
+        )
     if isinstance(contract, Suppresses):
-        return _route_suppresses(entries, contract.matcher)
+        return _route_suppresses(
+            entries, contract.matcher, slot_id=slot_id, site=site
+        )
     if isinstance(contract, NeverSuppresses):
         return RoutedOutcome(entries=entries)
     if isinstance(contract, RuntimeSelected):
@@ -213,3 +249,33 @@ def route(entries: tuple, contract: Contract) -> RoutedOutcome:
             "let it arrive here for the router to guess a policy"
         )
     raise TypeError(f"unknown context-manager contract: {type(contract).__name__}")
+
+
+def route_except(
+    entries: tuple,
+    matcher: EffectMatcher | None,
+    *,
+    slot_id: str | None = None,
+    site=None,
+) -> RoutedOutcome | None:
+    """Single match for one try-handler arm. None = this arm does not match.
+
+    Bare except (matcher is None) matches any raise; typed arms use exact name.
+    On match: consume halt, emit optional slot binding facts.
+    """
+    matching = (
+        _first_effect_of_kind(entries, "raise")
+        if matcher is None
+        else _matching_effect(entries, matcher)
+    )
+    if matching is None:
+        return None
+    index, _entry, observation = matching
+    remaining = entries[:index] + entries[index + 1 :]
+    bindings = _binding_for_slot(slot_id, observation)
+    binding_facts = tuple(f for b in bindings for f in b.to_facts(site=site))
+    return RoutedOutcome(
+        entries=(*remaining, *binding_facts),
+        stated_facts=binding_facts,
+        bindings=bindings,
+    )

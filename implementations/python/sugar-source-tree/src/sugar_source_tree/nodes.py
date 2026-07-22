@@ -363,15 +363,24 @@ class Node(Typed):
         )
 
     def _effect_slot_id(self) -> str:
-        """Stable slot identity from this binding site's source extent."""
+        """Deterministic slot identity from this binding site's source extent.
+
+        No process identity fallback. If a stable span cannot be produced,
+        stay loud — do not invent a nondeterministic coordinate.
+        """
         try:
             lc = self.line_col_span()
-            return (
-                f"{self.unit.filename}:{lc.start_line}:{lc.start_col}:"
-                f"{lc.end_line}:{lc.end_col}"
-            )
-        except SourceTreePanic:
-            return f"{self.unit.filename}:{self.kind}:{id(self)}"
+        except SourceTreePanic as exc:
+            raise SugarNotWritten(
+                owner=f"{type(self).__name__}._effect_slot_id",
+                observed=f"{self.kind} has no stable source span for an effect slot",
+                requested="a deterministic file:line:col extent for the binding site",
+                fix="ensure the adapter anchors this node; never invent a process-local identity",
+            ) from exc
+        return (
+            f"{self.unit.filename}:{lc.start_line}:{lc.start_col}:"
+            f"{lc.end_line}:{lc.end_col}"
+        )
 
     def _make_effect_ref(self, slot_id: str) -> "Node":
         """Synthesize EffectRef(slot) — tree coordinate, not a floor object."""
