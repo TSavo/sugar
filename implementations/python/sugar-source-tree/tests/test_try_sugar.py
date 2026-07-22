@@ -218,6 +218,68 @@ def test_finally_on_normal_completion():
     assert _incompletes(v) == []
     assert v.post().args[1].name == "z"
 
+
+def test_conditional_raise_both_exits_survive_through_finally():
+    """Pressure twin: body -> ExitSet -> route Halted -> finally over every exit.
+
+    ``if c: raise`` / ``return 1`` / ``except: return 2`` / ``finally`` must keep
+    both guarded completions — not consume the raise into an unconditional
+    handler while only the ¬c return rides as residual testimony.
+    """
+    v = _val(
+        "def A(c):\n"
+        "    try:\n"
+        "        if c:\n"
+        "            raise ValueError\n"
+        "        return 1\n"
+        "    except ValueError:\n"
+        "        return 2\n"
+        "    finally:\n"
+        "        y = 0\n"
+    )
+    assert _incompletes(v) == []
+    # Same dual post shape as ``if c: return 2\\nelse: return 1``.
+    ideal = _val(
+        "def A(c):\n"
+        "    if c:\n"
+        "        return 2\n"
+        "    else:\n"
+        "        return 1\n"
+    )
+    assert v.post() == ideal.post()
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+
+    returns = [
+        e for e in v.record.contribution() if isinstance(e, GuardedReturn)
+    ]
+    assert len(returns) == 2
+    values = {r.value.value for r in returns}
+    assert values == {1, 2}
+
+
+def test_conditional_raise_assign_paths_through_finally_no_residual_halt():
+    """User surface: assign on both faces + cleanup; raise must not leak red.
+
+    Temporal phi for ``x`` across try/except is separate substitute work; this
+    twin locks that conditional routing + finally does not leave a bare raise.
+    """
+    v = _val(
+        "def A(c):\n"
+        "    try:\n"
+        "        if c:\n"
+        "            raise ValueError\n"
+        "        x = 1\n"
+        "    except ValueError:\n"
+        "        x = 2\n"
+        "    finally:\n"
+        "        y = 0\n"
+        "    return x\n"
+    )
+    assert _incompletes(v) == []
+    assert v.post().args[0].name == "out"
+    assert v.post().args[1].name == "x"
+
+
 def test_except_as_binds_matching_raise_witness_in_handler():
     # Tree rewrites `error` → EffectRef(slot); routing emits EffectBinding facts.
     # Coordinate stays effect-slot(S); identity lives in constructed testimony.
