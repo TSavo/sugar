@@ -1,4 +1,4 @@
-"""Concrete comprehensions dissolve to displays; symbolic/lazy shapes stay loud."""
+"""Concrete comprehensions dissolve; simple symbolic forms retain coordinates."""
 
 import tempfile
 
@@ -58,77 +58,47 @@ def test_dictcomp_preserves_last_value_for_duplicate_key():
 
 
 @pytest.mark.parametrize(
-    "source",
+    ("source", "coordinate", "transform"),
     [
-        "[x for x in xs]",
-        "{x for x in xs}",
-        "{x: x for x in xs}",
+        ("[f(x) for x in xs]", "py.listcomp", "call:f"),
+        ("{f(x) for x in xs}", "py.setcomp", "call:f"),
+        ("{x: f(x) for x in xs}", "py.dictcomp", "call:f"),
+        ("(f(x) for x in xs)", "py.generatorexp", "call:f"),
     ],
 )
-def test_symbolic_iterable_comprehensions_stay_loud(source):
-    with pytest.raises(SugarNotWritten):
-        _fn(f"def A(xs):\n    return {source}\n").sugar()
+def test_simple_symbolic_comprehension_builds_coordinate(source, coordinate, transform):
+    term = _out(f"def A(xs):\n    return {source}\n")
+    assert term.name == coordinate
+    assert term.args[0].name == "xs"
+    assert term.args[1].value == "x"
+    assert any(getattr(arg, "name", None) == transform for arg in term.args[2:])
 
 
-def test_generator_directly_consumed_by_sum_stays_loud_without_builtin_identity():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A():\n    return sum(x + 1 for x in range(3))\n").sugar()
+def test_concrete_generator_builds_lazy_coordinate_without_materializing():
+    term = _out("def A():\n    return (f(x) for x in [1, 2])\n")
+    assert term.name == "py.generatorexp"
+    assert term.args[0].name == "array"
+    assert term.args[1].value == "x"
+    assert term.args[2].name == "call:f"
 
 
-def test_generator_directly_consumed_by_list_stays_loud_without_builtin_identity():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A():\n    return list(x + 1 for x in range(3))\n").sugar()
+@pytest.mark.parametrize("consumer", ["sum", "list", "consume", "any", "all"])
+def test_generator_consumer_points_at_lazy_coordinate(consumer):
+    term = _out(f"def A():\n    return {consumer}(x for x in [0, 1])\n")
+    assert term.name == f"call:{consumer}"
+    assert term.args[0].name == "py.generatorexp"
 
 
-def test_bare_generator_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A():\n    return (x for x in range(3))\n").sugar()
-
-
-def test_generator_passed_to_unknown_call_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A():\n    return consume(x for x in range(3))\n").sugar()
-
-
-def test_shadowed_range_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(range):\n    return [x for x in range(3)]\n").sugar()
-
-
-def test_shadowed_materializer_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(sum):\n    return sum(x for x in [1, 2])\n").sugar()
-
-
-def test_locally_rebound_materializer_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(consume):\n"
-            "    sum = consume\n"
-            "    return sum(x for x in [1, 2])\n"
-        ).sugar()
-
-
-def test_module_rebound_materializer_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "sum = consume\n"
-            "def A():\n"
-            "    return sum(x for x in [1, 2])\n"
-        ).sugar()
-
-
-@pytest.mark.parametrize("consumer", ["any", "all"])
-def test_short_circuit_generator_consumer_stays_loud(consumer):
-    with pytest.raises(SugarNotWritten):
-        _fn(f"def A():\n    return {consumer}(x for x in [0, 1])\n").sugar()
+def test_shadowed_range_is_not_unrolled_but_builds_symbolic_coordinate():
+    term = _out("def A(range):\n    return [x for x in range(3)]\n")
+    assert term.name == "py.listcomp"
+    assert term.args[0].name == "call:range"
 
 
 def test_every_filter_must_be_ground_decidable():
     with pytest.raises(SugarNotWritten):
         _fn(
-            "def A(limit):\n"
-            "    return [x for x in [0] if x > 0 if x > limit]\n"
+            "def A(limit):\n" "    return [x for x in [0] if x > 0 if x > limit]\n"
         ).sugar()
 
 
@@ -138,7 +108,6 @@ def test_every_filter_must_be_ground_decidable():
         "[y for x in [[1]] for y in x]",
         "[[y for y in [1]] for x in [1]]",
         "[(y := x) for x in [1]]",
-        "[x for x in range(129)]",
     ],
 )
 def test_unsupported_comprehension_structures_stay_loud(source):
