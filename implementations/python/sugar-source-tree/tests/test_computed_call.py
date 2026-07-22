@@ -51,6 +51,19 @@ def test_discrimination_differs_by_callee_operand():
     assert t0 != t1
 
 
+def test_computed_call_keywords_build_on_the_py_call_bridge():
+    t = _out("def A(fs, x, d):\n    return fs[0](x, key=1, **d)\n")
+
+    assert t.name == "py.call"
+    assert t.args[0].name == "py.subscript"
+    named, spread = t.args[-2:]
+    assert named.name == spread.name == "py.kwarg"
+    assert named.args[0].value == "key"
+    assert named.args[1].value == 1
+    assert spread.args[0].value == "**"
+    assert spread.args[1].name == "d"
+
+
 def test_lambda_callee_uses_the_computed_call_path():
     sugar = _fn("def A(x):\n    return (lambda z: z)(x)\n").sugar()
     call = sugar.statements[0].value
