@@ -126,3 +126,41 @@ if __name__ == "__main__":
     test_warning_kind_stays_loud()
     test_multiple_managers_stay_loud()
     print("ok: with under typed contracts -- ten twins")
+
+
+def test_match_conjunction_type_discharged_message_undischarged():
+    # The 96% shape: raises(E, match=pat). Two rows, closed verdicts each:
+    # type discharged (ground-true eq), message UNDISCHARGED (opaque
+    # py.effect.message_matches over the SAME observed witness) -- never one
+    # aggregate boolean, never a silent drop of match=.
+    v = _val(
+        'def A(z):\n    with pytest.raises(ValueError, match="bad"):\n'
+        "        raise ValueError\n    return z\n"
+    )
+    invs = v.invs()
+    assert len(invs) == 2
+    type_row = [i for i in invs if getattr(i, "name", "") == "="][0]
+    msg_row = [i for i in invs if getattr(i, "name", "") == "py.effect.message_matches"][0]
+    assert type_row.args[0].value == type_row.args[1].value == "ValueError"
+    assert msg_row.args[0].value == "ValueError"  # shared observed witness
+    assert msg_row.args[1].value == "bad"
+
+
+def test_match_deferred_carries_the_whole_conjunction():
+    v = _val(
+        'def A(z):\n    with pytest.raises(ValueError, match="x"):\n'
+        "        do_thing(z)\n    return z\n"
+    )
+    inv = v.invs()[0]
+    assert inv.name == "py.effect.expected"
+    assert [a.value for a in inv.args] == ["ValueError", "x"]
+
+
+def test_match_rejections_stay_loud():
+    for src in (
+        'def A(z):\n    with pytest.raises(ValueError, match=None):\n        pass\n    return z\n',
+        'def A(z):\n    with pytest.raises(ValueError, match="["):\n        pass\n    return z\n',
+        'def A(z):\n    with pytest.raises(ValueError, check=1):\n        pass\n    return z\n',
+    ):
+        with pytest.raises(SugarNotWritten):
+            _fn(src).sugar()

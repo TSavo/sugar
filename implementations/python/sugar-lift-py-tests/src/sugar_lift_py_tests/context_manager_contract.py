@@ -31,11 +31,26 @@ from typing import Optional
 
 
 @dataclass(frozen=True)
+class MessagePattern:
+    """A payload obligation: the observed effect's message must match this
+    regex. Independently dischargeable -- undischarged (not passed, not failed)
+    until the effect witness carries authenticated message content."""
+
+    pattern: str
+
+
+@dataclass(frozen=True)
 class EffectMatcher:
-    """Matches an effect by kind and exception/warning name (exact)."""
+    """A CONJUNCTION of independently dischargeable obligations (T's ruling:
+    the unit of honesty is the individual obligation, never the surface
+    construct). The type obligation is decidable against the observed halt;
+    each payload obligation (e.g. MessagePattern from `match=`) carries its own
+    closed verdict -- discharged / refuted / undischarged -- sharing the same
+    observed-effect witness identity."""
 
     kind: str  # "raise" | "warning"
     name: str  # e.g. "ValueError", "FutureWarning"
+    payload_obligations: tuple = ()  # e.g. (MessagePattern(pat),)
 
 
 @dataclass(frozen=True)

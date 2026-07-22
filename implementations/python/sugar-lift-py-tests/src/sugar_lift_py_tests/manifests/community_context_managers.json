@@ -2,7 +2,7 @@
   "rows": [
     {
       "spelling": "pytest.raises",
-      "arity": "one-exception-arg",
+      "arity": "exception-arg-optional-match",
       "contract": "expects",
       "effect_kind": "raise"
     },
@@ -19,5 +19,5 @@
       "effect_kind": "warning"
     }
   ],
-  "cid": "blake3-512:977d6d4341008a65eb71a6a54e072fb676749dde2a50b563e0f0153890754115de1a952b0830a750c7bfadb015ec4a970620807681fd04d96d76fb16b1c250e7"
+  "cid": "blake3-512:f68630ce0039444f5d370fc4aadc635c0ba497615908e877cf66a82382c54344b2db03f4be7c50745c34e823d32c88c174999135289c4dcc108027f3f438448c"
 }
