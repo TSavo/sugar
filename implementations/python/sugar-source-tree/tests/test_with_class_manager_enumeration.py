@@ -509,3 +509,99 @@ def test_captured_local_manager_stays_runtime_selected(
     gaps = _with_gaps(subject)
     assert len(gaps) == 1
     assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+def test_conditional_class_body_binding_stays_runtime_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _write_module(
+        tmp_path,
+        "never_suppressing",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return False\n",
+    )
+    _write_module(
+        tmp_path,
+        "suppressing",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return True\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from never_suppressing import Manager\n"
+        "from suppressing import Manager as BadManager\n"
+        "class C:\n"
+        "    if FLAG:\n"
+        "        Manager = BadManager\n"
+        "    with Manager():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+def test_custom_prepare_class_body_manager_stays_runtime_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _write_module(
+        tmp_path,
+        "never_suppressing",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return False\n",
+    )
+    _write_module(
+        tmp_path,
+        "suppressing",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return True\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from never_suppressing import Manager\n"
+        "from suppressing import Manager as BadManager\n"
+        "class Meta(type):\n"
+        "    @classmethod\n"
+        "    def __prepare__(mcls, name, bases):\n"
+        "        return {'Manager': BadManager}\n"
+        "class C(metaclass=Meta):\n"
+        "    with Manager():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+def test_method_manager_uses_unshadowed_module_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _write_module(
+        tmp_path,
+        "never_suppressing",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return False\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from never_suppressing import Manager\n"
+        "class C:\n"
+        "    def method(self):\n"
+        "        with Manager():\n"
+        "            raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    assert _with_gaps(subject) == []

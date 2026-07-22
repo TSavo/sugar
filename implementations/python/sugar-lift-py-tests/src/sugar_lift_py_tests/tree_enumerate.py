@@ -213,11 +213,22 @@ def audit_file_gaps(full_path: Path):
 
     reporter = CollectingReporter()
     sf = SourceFile.from_path(str(full_path), reporter=reporter)
-    for stmt in sf.root.body:
+
+    def audit_statement(stmt):
         try:
             stmt.sugar()
         except SugarNotWritten:
-            pass  # reported through the channel already; keep counting
+            # ClassDef has no construction arm yet, so its throw happens
+            # before its executable body is visited. Continue exactly that
+            # blocked frontier once; methods/functions then own their normal
+            # body construction, while direct class-body statements are not
+            # hidden behind the enclosing ClassDef gap.
+            if stmt.kind == "ClassDef":
+                for body_stmt in stmt.body:
+                    audit_statement(body_stmt)
+
+    for stmt in sf.root.body:
+        audit_statement(stmt)
     seen: dict[tuple, Any] = {}
     for node, panic in reporter.gaps:
         lc = node.line_col_span()

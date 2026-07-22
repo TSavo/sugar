@@ -557,6 +557,25 @@ def _lexically_bound_at_coordinate(
     except (SyntaxError, ValueError):
         return frozenset()
 
+    enclosing_scopes = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and getattr(node, "end_lineno", None) is not None
+        and node.lineno < line <= node.end_lineno
+    ]
+    if enclosing_scopes:
+        immediate_scope = min(
+            enclosing_scopes,
+            key=lambda node: (node.end_lineno - node.lineno, -node.lineno),
+        )
+        if isinstance(immediate_scope, ast.ClassDef):
+            # Class bodies execute through LOAD_NAME against a live namespace,
+            # which may be supplied by metaclass __prepare__. Source imports
+            # cannot authenticate that lookup. Methods are inner functions and
+            # therefore do not take this refusal arm.
+            return frozenset({"*"})
+
     tables = []
     pending = list(root.get_children())
     while pending:
