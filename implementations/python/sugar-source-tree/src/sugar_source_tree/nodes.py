@@ -80,6 +80,13 @@ def _explicit_state(name: str, state, make_formal_ref):
 
 
 @dataclass(frozen=True)
+class _ConditionalRaiseRoute:
+    test: "Node"
+    raised_on_true: bool
+    exception_name: str
+
+
+@dataclass(frozen=True)
 class SourceUnit:
     """One parsed source: oracle-pinned text, its content address, its line table.
 
@@ -2303,7 +2310,9 @@ class Try(Statement):
             if unconditional is not None:
                 include = self._handler_matches(handler, unconditional)
             elif conditional is not None:
-                include = self._handler_matches(handler, conditional[1])
+                include = self._handler_matches(
+                    handler, conditional.exception_name
+                )
             else:
                 include = True
             if include:
@@ -2312,7 +2321,7 @@ class Try(Statement):
         merged = self._merge_completion_nets(
             scope,
             completion_nets,
-            conditional_test=conditional[0] if conditional is not None else None,
+            conditional_route=conditional,
         )
         final_scope = {**scope, **merged}
         new_finalbody, d, final_net = self._substitute_body_tracked(
@@ -2359,7 +2368,17 @@ class Try(Statement):
             left = Try._unconditional_raise_name(statement.body)
             right = Try._unconditional_raise_name(statement.orelse)
             if left is not None and right is None:
-                return statement.test, left
+                return _ConditionalRaiseRoute(
+                    test=statement.test,
+                    raised_on_true=True,
+                    exception_name=left,
+                )
+            if right is not None and left is None:
+                return _ConditionalRaiseRoute(
+                    test=statement.test,
+                    raised_on_true=False,
+                    exception_name=right,
+                )
         return None
 
     def _merge_completion_nets(
@@ -2367,7 +2386,7 @@ class Try(Statement):
         scope,
         nets,
         *,
-        conditional_test,
+        conditional_route,
     ) -> BindingMap:
         if not nets:
             return {}
@@ -2385,12 +2404,17 @@ class Try(Statement):
             if all(state is states[0] or state == states[0] for state in states[1:]):
                 merged[name] = states[0]
                 continue
-            if conditional_test is not None and len(states) == 2:
-                # body completion is the false edge; the matching handler is true.
+            if conditional_route is not None and len(states) == 2:
+                body_state, handler_state = states
+                when_true, when_false = (
+                    (handler_state, body_state)
+                    if conditional_route.raised_on_true
+                    else (body_state, handler_state)
+                )
                 merged[name] = join_binding_state(
-                    test=conditional_test,
-                    when_true=states[1],
-                    when_false=states[0],
+                    test=conditional_route.test,
+                    when_true=when_true,
+                    when_false=when_false,
                     make_ifexp=self._make_ifexp,
                 )
                 continue

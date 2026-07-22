@@ -279,6 +279,30 @@ def test_conditional_raise_assign_paths_through_finally_no_residual_halt():
     post = v.post()
     assert post.kind == "and"
     assert {face.operands[1].args[1].value for face in post.operands} == {1, 2}
+    by_value = {face.operands[1].args[1].value: face.operands[0] for face in post.operands}
+    assert by_value[2].name == "py.truthy"
+    assert by_value[1].kind == "not"
+
+
+def test_false_arm_conditional_raise_routes_with_reverse_polarity():
+    v = _val(
+        "def A(c):\n"
+        "    try:\n"
+        "        if c:\n"
+        "            pass\n"
+        "        else:\n"
+        "            raise ValueError\n"
+        "        x = 1\n"
+        "    except ValueError:\n"
+        "        x = 2\n"
+        "    return x\n"
+    )
+    assert _incompletes(v) == []
+    post = v.post()
+    assert post.kind == "and"
+    by_value = {face.operands[1].args[1].value: face.operands[0] for face in post.operands}
+    assert by_value[1].name == "py.truthy"
+    assert by_value[2].kind == "not"
 
 
 def test_except_as_binds_matching_raise_witness_in_handler():
