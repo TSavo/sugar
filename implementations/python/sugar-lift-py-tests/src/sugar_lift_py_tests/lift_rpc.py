@@ -18,6 +18,18 @@ from typing import Any, Dict, List, Literal, Optional
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Self-bootstrap the sibling package src trees onto sys.path. The kit imports
+# sugar_lift_python_source (source_tables, at load via source_fragment) and
+# sugar_source_tree (the tree lift / enumeration). When the lift-plugin resolver
+# spawns this as a bare `python3 lift_rpc.py --rpc` -- dropping the manifest's
+# PYTHONPATH -- those siblings are otherwise unreachable and initialize dies
+# before the handshake. Add them here so the kit is spawnable however invoked.
+_python_root = Path(__file__).resolve().parents[3]  # implementations/python
+for _sibling in ("sugar-lift-python-source", "sugar-source-tree"):
+    _src = _python_root / _sibling / "src"
+    if _src.is_dir() and str(_src) not in sys.path:
+        sys.path.insert(0, str(_src))
+
 from sugar_lift_py_tests.audit_only import AuditOnlyGap, gap_from_factory_panic
 from sugar_lift_py_tests.effect import SourceOracleEffect, effect_reason, effect_status
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
