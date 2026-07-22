@@ -56,17 +56,26 @@ class IfSugar(Sugar):
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
         from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_statements
+        from sugar_lift_py_tests.outcome import Completed, Halted, Incomplete
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
 
-        then_entries, then_falls, _f1 = reduce_statements(self.then_body)
-        else_entries, else_falls, _f2 = reduce_statements(self.else_body)
+        then_exits = reduce_block_to_exitset(self.then_body)
+        else_exits = reduce_block_to_exitset(self.else_body)
+
+        def entries_are_empty(exits):
+            return all(
+                isinstance(exit_, Completed) and not exit_.value.entries
+                for exit_ in exits.exits
+            )
 
         # A purely TEMPORAL if -- branches that only bind -- is spent by
         # substitute (its binding became an IfExp phi threaded past the if), so
         # both branches reduce to nothing. It contributes no meaning and needs no
         # guard: the condition is not even consulted (an inert if states nothing,
         # whatever its test). This is the common residue of the phi rewrite.
-        if not then_entries and not else_entries:
+        if entries_are_empty(then_exits) and entries_are_empty(else_exits):
             return Complete(BlockValue((), can_fall_through=True))
 
         # Branches carry facts/effects: the guard is the condition's TRUTHINESS
@@ -83,30 +92,43 @@ class IfSugar(Sugar):
                 "predicate or bare-truthiness condition guards, a constant does not"
             )
 
-        # Each branch's facts ride under its polarity: then under c, else under ¬c.
+        # If is union in the exit algebra: each branch is restricted to its
+        # polarity, then the partitions normalize together. In particular, a
+        # halt on one face coexists with the complementary Completed exit.
         not_formula = not_(formula)
-        entries = (
-            *(entry.guarded(formula) for entry in then_entries),
-            *(entry.guarded(not_formula) for entry in else_entries),
-        )
+        exits = then_exits.guarded(formula).union(else_exits.guarded(not_formula))
+        entries = []
+        for exit_ in exits.exits:
+            if isinstance(exit_, Halted):
+                entries.append(Incomplete(exit_.effect).guarded(exit_.guard))
+            else:
+                entries.extend(
+                    entry.guarded(exit_.guard) for entry in exit_.value.entries
+                )
 
-        then_exits = not then_falls
-        else_exits = not else_falls
-        can_fall_through = not (then_exits and else_exits)
+        def can_fall_through(branch_exits):
+            return any(
+                isinstance(exit_, Completed) and exit_.value.can_fall_through
+                for exit_ in branch_exits.exits
+            )
+
+        then_branch_exits = not can_fall_through(then_exits)
+        else_branch_exits = not can_fall_through(else_exits)
+        can_fall_through = not (then_branch_exits and else_branch_exits)
         # The tail rides under the polarity of whichever branch did NOT exit; if
         # both fall through it is unconditional, if both exit it is unreachable.
         continuation_guard = None
-        if then_exits and not else_exits:
+        if then_branch_exits and not else_branch_exits:
             continuation_guard = not_formula
-        elif else_exits and not then_exits:
+        elif else_branch_exits and not then_branch_exits:
             continuation_guard = formula
 
         return Complete(
             GuardedFaces(
                 guard=formula,
-                entries=entries,
-                then_exits=then_exits,
-                else_exits=else_exits,
+                entries=tuple(entries),
+                then_exits=then_branch_exits,
+                else_exits=else_branch_exits,
                 joined_bindings=(),  # bindings are substitute's job (the IfExp phi)
                 guarded_bindings=(),
                 can_fall_through=can_fall_through,
