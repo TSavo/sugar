@@ -1052,13 +1052,13 @@ class Return(Statement):
         return self._substitute_children(scope)
 
     def _construct_sugar(self):
-        """`return <expr>` constructs ReturnSugar WITH the value's sugar. A bare
-        `return` (no value) stays a loud gap -- no invented None return."""
-        if self.value is None:
-            return super()._construct_sugar()
+        """Construct the function exit, including Python's real empty return."""
         from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 
-        return ReturnSugar(value=self.value.sugar(), site=self.fragment)
+        return ReturnSugar(
+            value=self.value.sugar() if self.value is not None else None,
+            site=self.fragment,
+        )
 
 
 class Delete(Statement):
@@ -2163,9 +2163,7 @@ class Raise(Statement):
         return ".".join(reversed(parts))
 
     def _construct_sugar(self):
-        """`raise <exc>[ from <cause>]` constructs RaiseSugar -- the halt arm.
-        The exception name is provenance, read structurally; the expression is
-        never desugared as a child (we do not construct the exception)."""
+        """Build the raised child and carry it on the function's halt exit."""
         if self.cause is not None:
             # `raise X from Y` -- the cause is exception-chaining provenance, not
             # part of the halt. Carrying it is not written yet, so rather than
@@ -2174,7 +2172,11 @@ class Raise(Statement):
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
 
-        return RaiseSugar(exception_name=self._exception_name(), site=self.fragment)
+        return RaiseSugar(
+            exception=self.exc.sugar() if self.exc is not None else None,
+            exception_name=self._exception_name(),
+            site=self.fragment,
+        )
 
 
 class Try(Statement):

@@ -14,11 +14,11 @@ class ReturnSugar(Sugar):
     ReturnValue carrying that reduced floor. The block carries it as an exit,
     and the universe's post projects `out == <return term>` from it.
 
-    Meaning-only, node-constructed. Bare `return` (no value) is not this sugar
-    -- the tree node keeps it a gap rather than inventing a None return.
+    Meaning-only, node-constructed.  ``value=None`` is the syntax-owned bare
+    return arm and constructs Python's existing ``NoneValue`` floor.
     """
 
-    value: object  # the returned expression's sugar
+    value: object | None  # expression sugar, or syntactic empty return
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -32,6 +32,10 @@ class ReturnSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        if self.value is None:
+            from sugar_lift_py_tests.floor import NoneValue
+
+            return Complete(ReturnValue(NoneValue()))
         return self.value.desugar(ctx).and_then(
             lambda value: Complete(ReturnValue(value))
         )

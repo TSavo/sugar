@@ -20,15 +20,12 @@ class RaiseSugar(Sugar):
     not a store effect, so the rest of the block stays unreduced); a matching
     ``TrySugar`` handler may later route it, and unrouted it is the block's exit.
 
-    The exception's NAME is provenance, read structurally off the raised
-    expression and carried onto the effect -- exactly as ``AssertSugar`` treats
-    its message. We do NOT desugar the exception expression as a child sugar:
-    the lift does not construct the exception object, it records that control
-    leaves here and under what name. An exotic raised expression whose name we
-    cannot read is still a raise -- ``exception_name`` is ``None`` and the halt
-    is no less real (the effect is the fact, the name is only its label).
+    The exception child is built normally and carried on the effect.  Its
+    structural name remains routing provenance only; spelling never creates
+    or authenticates an exception value.
     """
 
+    exception: object | None
     exception_name: str | None
     site: object = dataclass_field(compare=False)
 
@@ -55,12 +52,19 @@ class RaiseSugar(Sugar):
             hashlib.sha256(source.encode()).hexdigest() if source is not None else None
         )
         blame = f"{self.site.filename}:{self.site.line}:{self.site.col}"
-        return Incomplete(
-            RaiseEffect(
-                exception_name=self.exception_name,
-                blame=blame,
-                source_sha256=source_sha256,
-                # Occurrence is the raise site — not a type-level identity.
-                occurrence=blame,
+
+        def halt(raised_value=None):
+            return Incomplete(
+                RaiseEffect(
+                    exception_name=self.exception_name,
+                    blame=blame,
+                    source_sha256=source_sha256,
+                    # Occurrence is the raise site — not a type-level identity.
+                    occurrence=blame,
+                    raised_value=raised_value,
+                )
             )
-        )
+
+        if self.exception is None:
+            return halt()
+        return self.exception.desugar(ctx).and_then(halt)

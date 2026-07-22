@@ -3,8 +3,8 @@
 A raise never states a fact and never returns a value -- it exits. So its
 `.sugar().desugar()` is an `Incomplete(RaiseEffect)`, the halt arm of
 `match(Sugar) { Some => cite_or_effect, None => panic }`, not a `Complete`
-floor value. The exception name is provenance read structurally off `exc`;
-the expression is never desugared as a child. `raise X from Y` is loud until
+floor value. The exception child builds normally and rides on the effect; its
+structural name is routing provenance only. `raise X from Y` is loud until
 cause-carrying is written -- a MISSING never becomes a silent success.
 """
 
@@ -44,7 +44,7 @@ def test_raise_is_the_halt_arm_not_a_value():
 
 def test_exception_name_is_read_structurally():
     # raise E, raise E(...), raise mod.E, raise mod.E(...) all name E / mod.E,
-    # read off the expression WITHOUT desugaring it (we never construct E).
+    # independently of the normally built child carried by the exit.
     assert _effect("def A():\n    raise ValueError\n").exception_name == "ValueError"
     assert _effect("def A():\n    raise ValueError('x')\n").exception_name == "ValueError"
     assert _effect("def A():\n    raise os.error\n").exception_name == "os.error"
