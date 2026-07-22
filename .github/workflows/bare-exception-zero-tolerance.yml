@@ -13,7 +13,7 @@ jobs:
   bare-exception-zero-tolerance:
     runs-on: ubuntu-latest
     env:
-      PYTHONPATH: "implementations/python/sugar-lift-python-source/src:implementations/python/sugar-lift-py-tests/src"
+      PYTHONPATH: "implementations/python/sugar-lift-python-source/src:implementations/python/sugar-source-tree/src:implementations/python/sugar-lift-py-tests/src"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,7 +33,7 @@ jobs:
       - name: Panic-catch self-check
         run: >-
           python
-          implementations/python/sugar-lift-py-tests/scripts/factory_panic_catch_law.py
+          implementations/python/sugar-lift-py-tests/scripts/construction_panic_catch_law.py
       - name: R_bare_exceptions = 0
         run: >-
           python

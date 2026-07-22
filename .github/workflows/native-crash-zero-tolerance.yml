@@ -23,6 +23,7 @@ jobs:
           python -m pip install
           pytest
           ./implementations/python/sugar-lift-python-source
+          ./implementations/python/sugar-source-tree
           ./implementations/python/sugar-lift-py-tests
       - name: R_native_crashes discrimination
         run: >-
