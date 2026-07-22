@@ -1732,6 +1732,67 @@ class Try(Statement):
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
 
+    @staticmethod
+    def _except_type_name(type_node):
+        """Structural exception type name off an ``except E`` clause: bare
+        ``Name`` -> ``"E"``, dotted ``Attribute`` chain -> ``"mod.E"``. Same
+        walk as ``Raise._exception_name`` (no desugar, no factory). Tuple types,
+        bare ``except:``, and exotic expressions return ``None`` so the sugar
+        stays LOUD rather than inventing a matcher."""
+        if type_node is None:
+            return None
+        node = type_node
+        parts = []
+        while node is not None and node.kind == "Attribute":
+            parts.append(node.attr)
+            node = node.value
+        if node is not None and node.kind == "Name":
+            parts.append(node.id)
+        if not parts:
+            return None
+        return ".".join(reversed(parts))
+
+    def sugar(self):
+        """`try: body (except E: handler)+ [else] [finally]` -- the STRUCTURAL
+        sibling of with-raises. Each ``except E`` is an EffectMatcher built
+        from the clause's type (native syntax, no membrane). The shared effect
+        router's exact kind+name match decides which handler consumes the
+        body's Incomplete(RaiseEffect). Loud residuals: bare ``except:``,
+        tuple types ``except (A, B):``, ``except E as name:`` (as-binding is a
+        parallel worker), and try with no typed handlers. ``except*`` lives on
+        TryStar and stays loud there."""
+        if not self.handlers:
+            return super().sugar()  # try/finally-only: not the except-routing core
+        handler_specs = []
+        for handler in self.handlers:
+            if handler.name is not None:
+                return super().sugar()  # `as` witness -- parallel worker; stay loud
+            if handler.type_ is None:
+                return super().sugar()  # bare except:
+            if handler.type_.kind == "Tuple":
+                return super().sugar()  # except (A, B):
+            type_name = self._except_type_name(handler.type_)
+            if type_name is None:
+                return super().sugar()  # exotic except type -- never invent a name
+            handler_specs.append((type_name, handler.body))
+
+        from sugar_lift_py_tests.context_manager_contract import EffectMatcher
+        from sugar_lift_py_tests.sugar.try_sugar import TrySugar
+
+        return TrySugar(
+            body=tuple(stmt.sugar() for stmt in self.body),
+            handlers=tuple(
+                (
+                    EffectMatcher(kind="raise", name=type_name),
+                    tuple(stmt.sugar() for stmt in body),
+                )
+                for type_name, body in handler_specs
+            ),
+            orelse=tuple(stmt.sugar() for stmt in self.orelse),
+            finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
+            site=self.fragment,
+        )
+
 
 class TryStar(Statement):
     body: Tuple[Statement, ...]
