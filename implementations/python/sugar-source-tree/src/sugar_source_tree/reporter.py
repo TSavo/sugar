@@ -78,16 +78,19 @@ class CollectingReporter:
     def __init__(self) -> None:
         self.gaps: List[Tuple["Node", "SugarNotWritten"]] = []
         self.registered: List["Node"] = []
-        self.present: dict[int, str] = {}
+        self.present: List["Node"] = []
 
     def register(self, node: "Node") -> None:
+        # The lazy tree re-materializes a node on every access, so register
+        # fires many times per logical node; the report dedupes by CID (the
+        # stable identity). Here we only collect the reference.
         self.registered.append(node)
 
     def present_fact(self, node: "Node") -> None:
-        self.present[id(node)] = "present-fact"
+        self.present.append(node)
 
     def present_inert(self, node: "Node") -> None:
-        self.present[id(node)] = "present-inert"
+        self.present.append(node)
 
     def report_gap(self, node: "Node", panic: "SugarNotWritten") -> None:
         self.gaps.append((node, panic))
