@@ -3,7 +3,8 @@ use std::process::Command;
 
 use serde_json::Value as Json;
 use sugar_compiler::feed_from_tree::graph_from_context_manager_contract_ir;
-use sugar_proof_envelope::{ExitDispositionV1, Member, MemberKind};
+use sugar_compiler::orchestrate::pool_from_graph_with_speaker;
+use sugar_proof_envelope::{ExitDispositionV1, Member, MemberKind, Speaker};
 
 #[test]
 fn production_kit_declaration_becomes_bodyless_signed_graph_member() {
@@ -45,5 +46,11 @@ print(json.dumps(row.to_rpc_with_term_table(None)))
     assert_eq!(
         cm.semantics.exit.disposition,
         ExitDispositionV1::NeverSuppresses
+    );
+    let pool = pool_from_graph_with_speaker(&graph, Speaker::consumer("fixture-consumer"))
+        .expect("ordinary authenticated member-pool intake");
+    assert_eq!(
+        pool.member_count_by_kind(MemberKind::ContextManagerContract),
+        1
     );
 }
