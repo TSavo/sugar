@@ -30,10 +30,7 @@ for _sibling in ("sugar-lift-python-source", "sugar-source-tree"):
     if _src.is_dir() and str(_src) not in sys.path:
         sys.path.insert(0, str(_src))
 
-from sugar_lift_py_tests.audit_only import AuditOnlyGap, gap_from_factory_panic
 from sugar_lift_py_tests.effect import SourceOracleEffect, effect_reason, effect_status
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-from sugar_lift_py_tests.factory.factory_gap_info import FactoryGapInfo
 from sugar_lift_py_tests.filename import cid_from_proof_stem
 from sugar_lift_py_tests.idd.lift_coverage_accounting import (
     account_lift_coverage,
@@ -43,14 +40,12 @@ from sugar_lift_py_tests.idd.lift_coverage_census import census_paths
 from sugar_lift_py_tests.kit_rpc import (
     EffectDto,
     LiftReportPayloadDto,
-    RecoveredAuditDto,
     RecoveredEffectDto,
-    RecoveredFactoryPanicDto,
     SuppressedAuditLocusDto,
 )
 from sugar_lift_py_tests.kit_rpc.rpc_value import to_rpc_value
-from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 from sugar_lift_py_tests.source_provenance import kit_source_provenance
+from sugar_source_tree.panic import SourceTreePanic
 
 KIT_ID = "python"
 KIT_VERSION = "0.1.0"
@@ -1002,73 +997,6 @@ def _qualify_factory_walk_owner(rows, start: int, qualified_name: str) -> None:
         rows[index] = dataclasses.replace(row, source_memento=memento)
 
 
-def _factory_walk_red_from_gap(
-    gap: AuditOnlyGap,
-    *,
-    recovered_owner_span: tuple[int, int] | None = None,
-):
-    """Project a held FactoryPanic as a factory-walk red row.
-
-    status=unclassified serializes to unresolved/verdict=gap so
-    visual_factory_walk_rows takes the existing RED-with-grounds arm.
-    """
-    from sugar_lift_py_tests.canonicalizer import blake3_512_of
-    from sugar_lift_py_tests.kit_rpc.factory_walk_row_dto import (
-        FactoryWalkRedRowDto,
-        FactoryWalkStatus,
-    )
-    from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
-    from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
-
-    audit = gap.audit_row
-    blame = str(audit.blame or gap.info.get("blame") or gap.label or "")
-    file, line, col = _parse_blame_locus(blame)
-    if not file:
-        # Fall back to the def label (filename:line:col) when blame is bare.
-        file, line, col = _parse_blame_locus(gap.label)
-    memento = SourceMementoDto(
-        file=file or "<unknown>",
-        span=SourceSpanDto(
-            start_line=line,
-            start_col=col,
-            end_line=line,
-            end_col=col,
-        ),
-        source_cid=blake3_512_of(b""),
-    )
-    reason = gap.message or audit.message or "factory gap"
-    extra = {
-        "candidates": list(audit.candidates),
-        "blame": blame,
-        "gap_kind": str(gap.info.get("gap_kind") or ""),
-        "gap_locus": str(gap.info.get("gap_locus") or ""),
-        # Recognition outcome already computed for this callee's gap, when
-        # the producer computes one (#5252/#5913 audit). Empty when the
-        # producer (e.g. conservation violations) has no callee to classify.
-        "resolution_kind": str(gap.info.get("resolution_kind") or ""),
-    }
-    if recovered_owner_span is not None:
-        extra.update(
-            {
-                "reportRecoveredPanic": True,
-                "recoveredOwnerStartLine": recovered_owner_span[0],
-                "recoveredOwnerEndLine": recovered_owner_span[1],
-            }
-        )
-    return FactoryWalkRedRowDto(
-        file=file or "<unknown>",
-        line=line,
-        requested_role=str(audit.role or gap.info.get("requested") or "statement"),
-        ast_kind=str(audit.observed or gap.info.get("observed") or "unknown"),
-        selected=audit.selected,
-        status=FactoryWalkStatus.UNCLASSIFIED,
-        output=str(audit.status or FactoryAuditStatus.SUGAR_GAP),
-        source_memento=memento,
-        reason=reason,
-        extra=extra,
-    )
-
-
 def _parse_blame_locus(site: str) -> tuple[str, int, int]:
     """Parse 'path:line:col' from the right (paths may contain colons)."""
     if not site:
@@ -1267,6 +1195,111 @@ def _send_enumerate_result(
     )
 
 
+def _roll_call_audit_leaf(full_path: Path, file_rel: str) -> dict:
+    """Project one construction roll call directly onto the legacy audit wire.
+
+    The old wire names remain compatibility spelling only. They are populated
+    at this serialization boundary from the one ``MinorityReport`` and its
+    reporter testimony; no factory gap or audit model is reconstructed.
+    """
+    from sugar_source_tree.reporter import CollectingReporter
+    from sugar_source_tree.roll_call import discharge
+    from sugar_source_tree.tree import SourceFile
+
+    reporter = CollectingReporter()
+    source_file = SourceFile.from_path(str(full_path), reporter=reporter)
+    report = discharge(source_file)
+    present_cids = {entry.cid for entry in report.present}
+    loci = [
+        {
+            "status": "warranted" if entry.cid in present_cids else "unresolved",
+            "kind": entry.kind,
+            "name": entry.name,
+            "source_cid": entry.cid,
+            "locus": {
+                "file": file_rel,
+                "line": entry.start_line,
+                "col": entry.start_col,
+            },
+        }
+        for entry in report.roster
+    ]
+    warranted = sum(row["status"] == "warranted" for row in loci)
+    source_audit = {
+        "role": file_rel,
+        "loci": loci,
+        "totals": {
+            "source_loci": len(loci),
+            "source_warranted": warranted,
+            "source_unresolved": report.R,
+        },
+    }
+
+    demanded_source = f"module:{source_file.unit.source_cid}"
+    panics = []
+    nodes_by_cid = {}
+    for node in reporter.registered:
+        nodes_by_cid.setdefault(node.fragment.seal().cid, node)
+    gaps_by_cid = {}
+    for node, panic in reporter.gaps:
+        cid = node.fragment.seal().cid
+        nodes_by_cid.setdefault(cid, node)
+        gaps_by_cid.setdefault(cid, panic)
+    absent_cids = [entry.cid for entry in report.minority]
+    absent_cids.extend(cid for cid in gaps_by_cid if cid not in absent_cids)
+    for cid in absent_cids:
+        node = nodes_by_cid[cid]
+        panic = gaps_by_cid.get(cid)
+        lc = node.line_col_span()
+        locus = f"{file_rel}:{lc.start_line}:{lc.start_col}"
+        terminal = (
+            f"{file_rel}:{lc.start_line}:{lc.start_col}-"
+            f"{lc.end_line}:{lc.end_col}[{node.kind}]"
+        )
+        panic_kind = (
+            type(panic).__name__
+            if panic is not None
+            else "UnaccountedConstruction"
+        )
+        reason = (
+            panic.observed or str(panic)
+            if panic is not None
+            else f"{node.kind} registered but never answered the roll call"
+        )
+        panics.append(
+            {
+                # Closed-envelope discriminators required by the current Rust
+                # reader. They construct no Python factory object and carry no
+                # role; the direct roll-call answer lives in `gap` below.
+                "kind": "FactoryPanic",
+                "status": "mandatory-panic",
+                "reason": reason,
+                "locus": locus,
+                "demandedSource": demanded_source,
+                "terminalGapLocus": terminal,
+                "gap": {
+                    "blame": terminal,
+                    "kind": panic_kind,
+                    "nodeKind": node.kind,
+                    "reason": reason,
+                },
+            }
+        )
+
+    # `kind` and `recoveryOverride` are closed-envelope discriminators required
+    # by the current Rust reader. No recovery policy is consulted here; every
+    # semantic value is projected from the roll call above.
+    return {
+        "kind": "recovered-construction-audit",
+        "recoveryOverride": True,
+        "status": "failed" if panics else "clean",
+        "panics": panics,
+        "effects": [],
+        "suppressedDescendants": [],
+        "sourceAudit": source_audit,
+    }
+
+
 def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     """`sugar.enumerate`: the ONE wire method behind the Rust `tree` module's
     lazy accessors (Part 6 Phase 2,
@@ -1428,7 +1461,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     return
 
                 if level == "facts":
-                    leaf = _tree.frontier_leaf_rpc(full_path, file_rel)
+                    leaf = _roll_call_audit_leaf(full_path, file_rel)
                     _send_enumerate_result(
                         msg_id,
                         [{"memento": at, "audit": leaf, "payload": None}],
@@ -1841,6 +1874,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 },
             }
         )
+    except SourceTreePanic:
+        # Preserve the concrete tree taxonomy for the resident RPC boundary;
+        # VocabularyMissing, BackendDefect, SugarNotWritten, and its
+        # RuntimeSelected specialization are different repair roles.
+        raise
     except Exception as exc:
         _TRANSPORT_LOG.exception(
             "enumeration_request_failed",
@@ -1997,7 +2035,7 @@ def _serve() -> None:
         request_count += 1
         try:
             keep_serving = _dispatch_request(msg)
-        except FactoryPanic as panic:
+        except SourceTreePanic as panic:
             _send(
                 {
                     "jsonrpc": "2.0",
@@ -2008,7 +2046,12 @@ def _serve() -> None:
                         "data": {
                             "exception_type": type(panic).__name__,
                             "stage": "dispatch",
-                            "diagnostic": panic.info.to_json(),
+                            "diagnostic": {
+                                "owner": panic.owner,
+                                "observed": panic.observed,
+                                "requested": panic.requested,
+                                "fix": panic.fix,
+                            },
                         },
                     },
                 }
