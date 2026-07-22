@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -16,8 +15,19 @@ class UnboundBinding:
 
 
 @dataclass(frozen=True)
+class BranchResultSlot:
+    slot_id: str
+
+
+def branch_result_slot(test: Node) -> BranchResultSlot:
+    memento = test.fragment.seal()
+    address = f"{memento.source_cid}@{memento.start}:{memento.end}#{memento.cid}"
+    return BranchResultSlot(f"branch-result:{address}")
+
+
+@dataclass(frozen=True)
 class GuardedBinding:
-    test: Node
+    slot: BranchResultSlot
     when_true: BindingState
     when_false: BindingState
 
@@ -28,19 +38,19 @@ BindingMap: TypeAlias = dict[str, BindingState]
 
 def join_binding_state(
     *,
-    test: Node,
+    slot: BranchResultSlot,
     when_true: BindingState,
     when_false: BindingState,
-    make_ifexp: Callable[[Node, Node, Node], Node],
+    make_ifexp,
 ) -> BindingState:
     from sugar_source_tree.nodes import Node
 
     if when_true is when_false or when_true == when_false:
         return when_true
     if isinstance(when_true, Node) and isinstance(when_false, Node):
-        return make_ifexp(test, when_true, when_false)
+        return make_ifexp(slot, when_true, when_false)
     if isinstance(when_true, UnboundBinding) and isinstance(
         when_false, UnboundBinding
     ):
         return UnboundBinding(name=when_true.name, cause=when_true.cause)
-    return GuardedBinding(test=test, when_true=when_true, when_false=when_false)
+    return GuardedBinding(slot=slot, when_true=when_true, when_false=when_false)

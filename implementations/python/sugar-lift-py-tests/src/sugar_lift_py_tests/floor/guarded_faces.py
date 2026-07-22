@@ -24,18 +24,22 @@ class GuardedFaces(FloorValue):
     guarded_bindings: tuple = ()
     can_fall_through: bool = True
     continuation_guard: Formula | None = None
+    unconditional_entries: tuple = ()
 
     def contribution(self):
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 
         return (
+            *self.unconditional_entries,
             *self.entries,
             *(ScopeRebind(name, value) for name, value in self.joined_bindings),
         )
 
     def inv_contribution(self):
         return tuple(
-            formula for entry in self.entries for formula in entry.inv_contribution()
+            formula
+            for entry in (*self.unconditional_entries, *self.entries)
+            for formula in entry.inv_contribution()
         )
 
     def post_contribution(self):

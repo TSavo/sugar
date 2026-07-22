@@ -39,7 +39,7 @@ def test_if_else_assignment_becomes_a_phi():
     # if c: x = 5 else: x = 6 ; return x  ->  return (5 if c else 6)
     ret = _return_of(_fn("def A(c):\n    if c:\n        x = 5\n    else:\n        x = 6\n    return x\n"))
     assert ret.value.kind == "IfExp"
-    assert ret.value.test.kind == "Name" and ret.value.test.id == "c"
+    assert ret.value.test.kind == "BranchResultRef"
     assert ret.value.body.value == 5  # then arm
     assert ret.value.orelse.value == 6  # else arm
 
@@ -82,22 +82,23 @@ def _invs(fn):
 def test_guarded_assert_is_an_implication():
     # if z == 1: assert z == 1  ->  inv  (z == 1) -> (z == 1)
     invs = _invs(_fn("def A(z):\n    if z == 1:\n        assert z == 1\n    return z\n"))
-    assert len(invs) == 1
-    guard = invs[0]
+    assert len(invs) == 2
+    guard = invs[-1]
     assert getattr(guard, "kind", None) == "implies", guard
-    # both operands are the same atomic (z == 1): antecedent is the condition,
-    # consequent is the guarded fact.
+    # The antecedent is the authenticated branch result and the consequent is
+    # the guarded fact.
     ante, cons = guard.operands
-    assert ante.name == "py.eq" and cons.name == "py.eq"
+    assert ante.name == "py.truthy" and cons.name == "py.eq"
 
 
 def test_guard_discriminates_condition_from_fact():
     # if z == 1: assert z == 2  ->  (z == 1) -> (z == 2): antecedent is the
     # CONDITION, consequent the FACT, and they are not conflated.
     invs = _invs(_fn("def A(z):\n    if z == 1:\n        assert z == 2\n    return z\n"))
-    ante, cons = invs[0].operands
-    # antecedent right operand is 1 (the condition), consequent right operand 2.
-    assert ante.args[1].value == 1
+    ante, cons = invs[-1].operands
+    # The antecedent is the authenticated branch-result coordinate; the fact
+    # retains its original value.
+    assert ante.args[0].name == "python:branch_result"
     assert cons.args[1].value == 2
 
 
@@ -115,7 +116,7 @@ def test_guarded_return_posts_both_faces():
     then_imp, else_imp = post.operands
     assert then_imp.kind == "implies" and else_imp.kind == "implies"
     # then face: z == 1 -> out == 10
-    assert then_imp.operands[0].args[1].value == 1
+    assert then_imp.operands[0].args[0].name == "python:branch_result"
     assert then_imp.operands[1].args[1].value == 10
     # else face: not(z == 1) -> out == 20
     assert else_imp.operands[0].kind == "not"
@@ -136,8 +137,8 @@ def test_guarded_raise_halts_its_branch_and_guards_the_tail():
     halted = next(e for e in out.exits if isinstance(e, Halted))
     v = completed.value
     invs = v.invs()
-    assert len(invs) == 1
-    tail = invs[0]
+    assert len(invs) == 2
+    tail = invs[-1]
     assert completed.guard.kind == "not"  # tail edge is guarded by not(z == 1)
     assert tail.args[1].value == 2  # the tail fact z == 2
 
@@ -145,7 +146,7 @@ def test_guarded_raise_halts_its_branch_and_guards_the_tail():
     # condition recorded on the Incomplete wrapper (not smashed into the effect).
     assert type(halted.effect).__name__ == "RaiseEffect"
     assert halted.effect.exception_name == "ValueError"
-    assert halted.guard.args[1].value == 1  # under z == 1
+    assert halted.guard.args[0].name == "python:branch_result"
 
 
 if __name__ == "__main__":

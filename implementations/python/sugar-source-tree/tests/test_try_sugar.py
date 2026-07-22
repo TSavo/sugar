@@ -246,13 +246,15 @@ def test_conditional_raise_both_exits_survive_through_finally():
         "    else:\n"
         "        return 1\n"
     )
-    assert v.post() == ideal.post()
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.ir import not_
 
     returns = [
         e for e in v.record.contribution() if isinstance(e, GuardedReturn)
     ]
     assert len(returns) == 2
+    assert {entry.value.value for entry in returns} == {1, 2}
+    assert returns[1].guards[0] == not_(returns[0].guards[0])
     values = {r.value.value for r in returns}
     assert values == {1, 2}
 

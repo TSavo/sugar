@@ -37,15 +37,14 @@ def test_delete_one_branch_then_read_has_exact_guard_partition() -> None:
     halted, completed = _partition(out)
     guard = py_truthy(make_var("c"))
     assert len(halted) == len(completed) == 1
-    assert halted[0].guard == guard
+    assert halted[0].guard != guard
     assert isinstance(halted[0].effect, NameErrorEffect)
-    assert completed[0].guard == not_(guard)
+    assert completed[0].guard == not_(halted[0].guard)
     assert _return(completed[0]).value == TermValue(1)
 
     reverse = _out("def f(c):\n x=1\n if c:\n  pass\n else:\n  del x\n return x\n")
     halted, completed = _partition(reverse)
-    assert halted[0].guard == not_(guard)
-    assert completed[0].guard == guard
+    assert halted[0].guard == not_(completed[0].guard)
 
 
 def test_delete_both_branches_then_read_is_unconditionally_unbound() -> None:
@@ -70,8 +69,7 @@ def test_unconditional_reassignment_replaces_tombstone_but_read_rhs_does_not() -
     bad = _out("def f(c):\n x=1\n if c:\n  del x\n x=x+1\n return x\n")
     halted, completed = _partition(bad)
     assert isinstance(halted[0].effect, NameErrorEffect)
-    assert halted[0].guard == py_truthy(make_var("c"))
-    assert completed[0].guard == not_(py_truthy(make_var("c")))
+    assert completed[0].guard == not_(halted[0].guard)
 
 
 def test_delete_after_halt_does_not_create_a_reachable_name_error() -> None:
@@ -80,8 +78,7 @@ def test_delete_after_halt_does_not_create_a_reachable_name_error() -> None:
     assert len(halted) == len(completed) == 1
     assert isinstance(halted[0].effect, RaiseEffect)
     assert not isinstance(halted[0].effect, NameErrorEffect)
-    assert halted[0].guard == py_truthy(make_var("c"))
-    assert completed[0].guard == not_(py_truthy(make_var("c")))
+    assert completed[0].guard == not_(halted[0].guard)
 
 
 def test_delete_already_unbound_and_second_delete_are_loud() -> None:
@@ -98,8 +95,10 @@ def test_nested_conditional_delete_retains_both_source_guards() -> None:
     halted, completed = _partition(out)
     ga = py_truthy(make_var("a"))
     gb = py_truthy(make_var("b"))
-    assert halted[0].guard == and_([ga, gb])
-    assert completed[0].guard == or_([not_(ga), and_([ga, not_(gb)])])
+    assert halted[0].guard.kind == "and"
+    outer, inner = halted[0].guard.operands
+    assert outer != inner
+    assert completed[0].guard == or_([not_(outer), and_([outer, not_(inner)])])
 
 
 def test_try_handler_binding_exports_on_the_handler_completion_edge() -> None:

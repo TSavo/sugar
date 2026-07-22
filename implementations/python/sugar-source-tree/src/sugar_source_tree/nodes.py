@@ -57,8 +57,10 @@ from .spans import LineColSpan, LineTable, Span
 from .binding_state import (
     BindingMap,
     BindingState,
+    BranchResultSlot,
     GuardedBinding,
     UnboundBinding,
+    branch_result_slot,
     join_binding_state,
 )
 
@@ -81,7 +83,7 @@ def _explicit_state(name: str, state, make_formal_ref):
 
 @dataclass(frozen=True)
 class _ConditionalRaiseRoute:
-    test: "Node"
+    slot: BranchResultSlot
     raised_on_true: bool
     exception_name: str
 _NESTED_COMPREHENSION_TEMPLATE = object()
@@ -1930,14 +1932,14 @@ class If(Statement):
         new_test, d = self._substitute_field(self.test, scope)
         if d:
             changed["test"] = new_test
-        test = new_test if d else self.test
+        slot = branch_result_slot(self.test)
         new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
         if d:
             changed["body"] = new_body
         new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, scope)
         if d:
             changed["orelse"] = new_orelse
-        node = self if not changed else rewrite(self, **changed)
+        node = self if not changed else self._rewrite_with_slot(changed, slot)
 
         names = set(then_net) | set(else_net)
         phis = []
@@ -1953,7 +1955,7 @@ class If(Statement):
             if then_val is _MISSING or else_val is _MISSING:
                 continue
             joined = join_binding_state(
-                test=test,
+                slot=slot,
                 when_true=then_val,
                 when_false=else_val,
                 make_ifexp=self._make_ifexp,
@@ -1965,6 +1967,22 @@ class If(Statement):
         if not phis and not availability:
             return node
         return _Splice((node, *phis), availability)
+
+    def _rewrite_with_slot(self, changed, slot):
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode, rewrite
+
+        rewritten = rewrite(self, **changed)
+        desc = rewritten.ref.describe()
+        return materialize(
+            self.unit,
+            ShadowNode(
+                desc.kind,
+                desc.raw_span or self.span,
+                (*desc.slots, ("branch_result_slot_id", Leaf(slot.slot_id))),
+            ),
+            self.reporter,
+        )
 
     def _make_formal_ref(self, name: str) -> "Node":
         from .backend import Leaf, materialize
@@ -1991,12 +2009,15 @@ class If(Statement):
             self.unit, ShadowNode("Assign", self.span, slots), self.reporter
         )
 
-    def _make_ifexp(self, test: "Node", body: "Node", orelse: "Node") -> "Node":
+    def _make_ifexp(
+        self, slot: BranchResultSlot, body: "Node", orelse: "Node"
+    ) -> "Node":
         """Synthesize ``<body> if <test> else <orelse>`` as a shadow IfExp that
         borrows this if's span (so the phi still addresses this source site)."""
         from .backend import Child, materialize
         from .shadow import ShadowNode, _handle_of
 
+        test = self._make_branch_result_ref(slot)
         slots = (
             ("body", Child(_handle_of(body))),
             ("test", Child(_handle_of(test))),
@@ -2006,6 +2027,18 @@ class If(Statement):
             self.unit, ShadowNode("IfExp", self.span, slots), self.reporter
         )
 
+    def _make_branch_result_ref(self, slot: BranchResultSlot) -> "Node":
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "BranchResultRef", self.span, (("slot_id", Leaf(slot.slot_id)),)
+            ),
+            self.reporter,
+        )
+
     def _construct_sugar(self):
         """`if <test>: <body> [else: <orelse>]` constructs IfSugar -- the guard.
         The test recognizes itself; each branch's statements recognize themselves.
@@ -2013,8 +2046,13 @@ class If(Statement):
         phi is substitute's job, never this."""
         from sugar_lift_py_tests.sugar.if_sugar import IfSugar
 
+        try:
+            slot = BranchResultSlot(self.branch_result_slot_id)
+        except AttributeError:
+            slot = branch_result_slot(self.test)
         return IfSugar(
             test=self.test.sugar(),
+            branch_slot=slot,
             then_body=tuple(s.sugar() for s in self.body),
             else_body=tuple(s.sugar() for s in self.orelse),
             site=self.fragment,
@@ -2422,13 +2460,13 @@ class Try(Statement):
             right = Try._unconditional_raise_name(statement.orelse)
             if left is not None and right is None:
                 return _ConditionalRaiseRoute(
-                    test=statement.test,
+                    slot=branch_result_slot(statement.test),
                     raised_on_true=True,
                     exception_name=left,
                 )
             if right is not None and left is None:
                 return _ConditionalRaiseRoute(
-                    test=statement.test,
+                    slot=branch_result_slot(statement.test),
                     raised_on_true=False,
                     exception_name=right,
                 )
@@ -2465,7 +2503,7 @@ class Try(Statement):
                     else (body_state, handler_state)
                 )
                 merged[name] = join_binding_state(
-                    test=conditional_route.test,
+                    slot=conditional_route.slot,
                     when_true=when_true,
                     when_false=when_false,
                     make_ifexp=self._make_ifexp,
@@ -2487,6 +2525,9 @@ class Try(Statement):
 
     def _make_ifexp(self, test, body, orelse):
         return If._make_ifexp(self, test, body, orelse)
+
+    def _make_branch_result_ref(self, slot):
+        return If._make_branch_result_ref(self, slot)
 
     @staticmethod
     def _except_type_name(type_node):
@@ -3810,6 +3851,44 @@ class FormalRef(Expression):
         return NameSugar(name=self.name, site=self.fragment)
 
 
+class BranchResultRef(Expression):
+    """Projection of the one condition result authenticated by its owning if."""
+
+    slot_id: str
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.branch_result_ref_sugar import (
+            BranchResultRefSugar,
+        )
+
+        return BranchResultRefSugar(
+            slot=BranchResultSlot(self.slot_id), site=self.fragment
+        )
+
+
+def _construct_binding_projection(state):
+    from sugar_lift_py_tests.sugar.binding_projection import (
+        GuardedProjection,
+        UnboundProjection,
+    )
+
+    if isinstance(state, Node):
+        return state.sugar()
+    if isinstance(state, UnboundBinding):
+        return UnboundProjection(state.name, state.cause)
+    if isinstance(state, GuardedBinding):
+        return GuardedProjection(
+            state.slot,
+            _construct_binding_projection(state.when_true),
+            _construct_binding_projection(state.when_false),
+        )
+    raise TypeError(type(state))
+
+
 class GuardedBindingRead(Expression):
     """A read-site projection of immutable binding-state testimony."""
 
@@ -3826,7 +3905,9 @@ class GuardedBindingRead(Expression):
         )
 
         return GuardedBindingReadSugar(
-            name=self.name, state=self.state, site=self.fragment
+            name=self.name,
+            state=_construct_binding_projection(self.state),
+            site=self.fragment,
         )
 
 
@@ -3847,7 +3928,11 @@ class DeleteName(Statement):
     def _construct_sugar(self):
         from sugar_lift_py_tests.sugar.delete_name_sugar import DeleteNameSugar
 
-        return DeleteNameSugar(name=self.name, prior=self.prior, site=self.fragment)
+        return DeleteNameSugar(
+            name=self.name,
+            prior=_construct_binding_projection(self.prior),
+            site=self.fragment,
+        )
 
 
 class DeleteAttribute(Statement):
