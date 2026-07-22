@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+
 import pytest
+
+from sugar_lift_py_tests.idd.lift_coverage_census import census_source
 
 _KIT = Path(__file__).resolve().parents[1]
 _SCANNER_PATH = _KIT / "scripts" / "silent_zero_tolerance.py"
@@ -14,100 +17,52 @@ _SCANNER = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_SCANNER)
 
 
-def test_planted_silent_residue_trips_floor() -> None:
-    report = {
-        "sourceLedger": {"unclassified_source": 1},
-        "liftCoverage": {
-            "totals": {"silently_unaccounted": 2},
-            "conservation": {"delta": 2},
-        },
-        "factoryAuditSummary": {
-            "sourceFactoryConservation": {
-                "violations": [
-                    {
-                        "locus": "planted.py:3:0:FunctionDef",
-                        "reason": "source body owner disappeared",
-                    }
-                ]
-            }
-        },
+def _locus(status: str, kind: str, line: int, col: int) -> dict:
+    return {
+        "status": status,
+        "kind": kind,
+        "name": kind,
+        "source_cid": f"cid-{kind}-{line}-{col}",
+        "locus": {"file": "sample.py", "line": line, "col": col},
     }
 
-    offenders = _SCANNER.silent_offenders(report, file="planted.py")
 
-    assert {offender.kind for offender in offenders} == {
-        "silent-assertion",
-        "unclassified-source",
-        "unclassified-source-owner",
+def test_absent_assert_and_body_loci_trip_the_silent_floor() -> None:
+    census = census_source("def f():\n    assert True\n", file="sample.py")
+
+    offenders = _SCANNER.silent_offenders(census, {"loci": []})
+
+    assert {(row.kind, row.count) for row in offenders} == {
+        ("silent-Assert", 1),
+        ("silent-FunctionDef", 1),
     }
-    assert _SCANNER.r_silent(offenders) == 4
+    assert _SCANNER.r_silent(offenders) == 2
 
 
-def test_fully_spoken_report_is_zero() -> None:
-    report = {
-        "sourceLedger": {"unclassified_source": 0},
-        "liftCoverage": {
-            "totals": {"silently_unaccounted": 0},
-            "conservation": {"delta": 0},
-        },
-        "factoryAuditSummary": {"sourceFactoryConservation": {"violations": []}},
-    }
-
-    assert _SCANNER.silent_offenders(report, file="spoken.py") == []
-
-
-def test_conservation_violation_with_matching_loud_gap_is_not_silent() -> None:
-    locus = "spoken.py:7:12:ListComp"
-    report = {
-        "sourceLedger": {"unclassified_source": 0},
-        "liftCoverage": {
-            "totals": {"silently_unaccounted": 0},
-            "conservation": {"delta": 0},
-        },
-        "factoryAuditSummary": {
-            "factoryWalk": [
-                {
-                    "verdict": "gap",
-                    "status": "unresolved",
-                    "gap_kind": "Conservation",
-                    "gap_locus": locus,
-                }
-            ],
-            "sourceFactoryConservation": {
-                "violations": [
-                    {
-                        "locus": locus,
-                        "reason": "source body owner disappeared",
-                    }
-                ]
-            },
-        },
+def test_warranted_and_unresolved_loci_are_both_not_silent() -> None:
+    census = census_source("def f():\n    assert True\n", file="sample.py")
+    audit = {
+        "loci": [
+            _locus("warranted", "FunctionDef", 1, 0),
+            _locus("unresolved", "Assert", 2, 4),
+        ]
     }
 
-    assert _SCANNER.silent_offenders(report, file="spoken.py") == []
+    assert _SCANNER.silent_offenders(census, audit) == []
 
 
-def test_missing_accounting_is_silent() -> None:
-    offenders = _SCANNER.silent_offenders({}, file="missing.py")
-
-    assert [(row.kind, row.count) for row in offenders] == [
-        ("missing-accounting-testimony", 1)
-    ]
-
-
-def test_negative_conservation_delta_trips_floor() -> None:
-    report = {
-        "sourceLedger": {"unclassified_source": 0},
-        "liftCoverage": {
-            "totals": {"silently_unaccounted": 0},
-            "conservation": {"delta": -2},
-        },
-        "factoryAuditSummary": {"sourceFactoryConservation": {"violations": []}},
+def test_wrong_kind_at_same_coordinate_is_silent() -> None:
+    census = census_source("def f():\n    assert True\n", file="sample.py")
+    audit = {
+        "loci": [
+            _locus("warranted", "FunctionDef", 1, 0),
+            _locus("warranted", "Expr", 2, 4),
+        ]
     }
 
-    offenders = _SCANNER.silent_offenders(report, file="over-accounted.py")
+    offenders = _SCANNER.silent_offenders(census, audit)
 
-    assert [(row.kind, row.count) for row in offenders] == [("silent-assertion", 2)]
+    assert [(row.kind, row.count) for row in offenders] == [("silent-Assert", 1)]
 
 
 def test_production_roots_cover_package_and_corpus_tooling(tmp_path: Path) -> None:

@@ -63,24 +63,28 @@ class MinorityReport:
 
     reporter: object  # a reporter.CollectingReporter
 
-    def _by_cid(self, nodes) -> dict[str, RosterEntry]:
-        # Dedupe by CID: the lazy tree registers a logical node many times
-        # (fresh instance per access), but the CID is the one identity.
-        out: dict[str, RosterEntry] = {}
+    def _by_coordinate(self, nodes) -> dict[tuple, RosterEntry]:
+        # The lazy tree registers a logical source node many times. Equal source
+        # text may share a CID at distinct loci, so the roll-call identity keeps
+        # the authenticated source coordinate alongside that content identity.
+        out: dict[tuple, RosterEntry] = {}
         for n in nodes:
             e = roster_entry_for(n)
-            out.setdefault(e.cid, e)
+            key = (e.file, e.start_line, e.start_col, e.kind, e.cid)
+            out.setdefault(key, e)
         return out
 
     @property
     def roster(self) -> tuple[RosterEntry, ...]:
-        return tuple(self._by_cid(self.reporter.registered).values())
+        return tuple(self._by_coordinate(self.reporter.registered).values())
 
     @property
     def present(self) -> tuple[RosterEntry, ...]:
-        present_cids = set(self._by_cid(self.reporter.present))
+        present = set(self._by_coordinate(self.reporter.present))
         return tuple(
-            e for e in self.roster if e.cid in present_cids
+            e
+            for e in self.roster
+            if (e.file, e.start_line, e.start_col, e.kind, e.cid) in present
         )
 
     @property
@@ -88,8 +92,12 @@ class MinorityReport:
         """registered \\ present -- roster CIDs that never discharged a present
         answer. The absent never report themselves; the roster computes them by
         difference (deduped on the CID, the one stable identity)."""
-        present_cids = set(self._by_cid(self.reporter.present))
-        return tuple(e for e in self.roster if e.cid not in present_cids)
+        present = set(self._by_coordinate(self.reporter.present))
+        return tuple(
+            e
+            for e in self.roster
+            if (e.file, e.start_line, e.start_col, e.kind, e.cid) not in present
+        )
 
     @property
     def R(self) -> int:

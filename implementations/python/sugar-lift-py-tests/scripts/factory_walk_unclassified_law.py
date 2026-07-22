@@ -255,9 +255,8 @@ def _run_live_child(path: Path, rel: str) -> int:
     from sugar_lift_py_tests.audit_only import collect_construction_panic
     from sugar_lift_py_tests.tree_enumerate import source_audit_from_roll_call
 
-    # lift_file_payload/factory_walk were removed in the factory nuke. The
-    # current per-file construction measurement is source_audit_from_roll_call,
-    # the reporter's roll-call partition (present Blue / absent Yellow).
+    # The deleted factory walk is replaced by the reporter's per-file roll-call
+    # partition (present Blue / absent Yellow).
     audit, panic_gap = collect_construction_panic(
         rel, lambda: source_audit_from_roll_call(path, rel)
     )

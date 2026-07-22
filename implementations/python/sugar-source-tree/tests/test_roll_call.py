@@ -34,10 +34,24 @@ def test_construction_registers_every_node_through_the_one_interface() -> None:
     # second interface -- the reporter threaded through construction holds it.
     r = CollectingReporter()
     report = minority_report(_sf(_THREE, r))
-    # roster dedupes by CID; the lazy tree registers a node many times.
+    # The lazy tree registers a node many times; source-coordinate identity
+    # dedupes those accesses without collapsing equal text at distinct loci.
     assert 0 < len(report.roster) <= len(r.registered)
-    assert len({e.cid for e in report.roster}) == len(report.roster)  # unique
+    identities = {
+        (e.file, e.start_line, e.start_col, e.kind, e.cid) for e in report.roster
+    }
+    assert len(identities) == len(report.roster)
     assert len(report.roster) > 3  # every node, not just the three functions
+
+
+def test_identical_source_nodes_keep_distinct_roster_coordinates() -> None:
+    src = "class A:\n    def f(self): ...\nclass B:\n    def f(self): ...\n"
+    r = CollectingReporter()
+    report = minority_report(_sf(src, r))
+
+    functions = [entry for entry in report.roster if entry.kind == "FunctionDef"]
+
+    assert [(entry.start_line, entry.start_col) for entry in functions] == [(2, 4), (4, 4)]
 
 
 def test_moment_zero_minority_is_the_whole_roster() -> None:

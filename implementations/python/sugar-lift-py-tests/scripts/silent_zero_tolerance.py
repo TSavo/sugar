@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""R_silent — permanent baseline-free source-accounting floor.
-
-Every checked source file must speak through all three independent accounting
-surfaces:
-
-* assertion coverage: no silently-unaccounted assertion / conservation delta;
-* source ledger: no unclassified source locus;
-* source→factory conservation: no vanished body-owning source locus.
-
-A typed ConstructionPanic is loud testimony and is therefore not silent. Any other
-exception remains process-terminal. Exit 1 whenever R_silent > 0; there is no
-baseline or allowlist.
-"""
+"""R_silent — independent disk census versus current construction roll call."""
 
 from __future__ import annotations
 
@@ -23,6 +11,8 @@ from pathlib import Path
 import subprocess
 import sys
 from typing import Any, Mapping, NamedTuple, Sequence
+
+from sugar_lift_py_tests.idd.lift_coverage_census import DiskCensus
 
 
 class SilentOffender(NamedTuple):
@@ -50,96 +40,51 @@ class AuditSummary(NamedTuple):
     offenders: tuple[SilentOffender, ...]
 
 
-def _mapping(value: object) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
+def _roll_call_keys(audit: Mapping[str, Any]) -> set[tuple[str, int, int, str]]:
+    keys = set()
+    for raw in audit.get("loci", []):
+        if not isinstance(raw, Mapping):
+            continue
+        status = raw.get("status")
+        locus = raw.get("locus")
+        kind = raw.get("kind")
+        if status not in {"warranted", "unresolved"} or not isinstance(
+            locus, Mapping
+        ):
+            continue
+        file = locus.get("file")
+        line = locus.get("line")
+        col = locus.get("col")
+        if (
+            isinstance(file, str)
+            and isinstance(line, int)
+            and isinstance(col, int)
+            and isinstance(kind, str)
+        ):
+            keys.add((file, line, col, kind))
+    return keys
 
 
-def _integer(mapping: Mapping[str, Any], key: str) -> int:
-    value = mapping.get(key, 0)
-    return value if isinstance(value, int) else 0
-
-
-def silent_offenders(report: Mapping[str, Any], *, file: str) -> list[SilentOffender]:
-    coverage = _mapping(report.get("liftCoverage"))
-    ledger = _mapping(report.get("sourceLedger"))
-    factory_summary = _mapping(report.get("factoryAuditSummary"))
-    conservation = _mapping(factory_summary.get("sourceFactoryConservation"))
-
-    if not coverage or not ledger or not conservation:
-        return [
-            SilentOffender(
-                file=file,
-                kind="missing-accounting-testimony",
-                count=1,
-                note=(
-                    "report must emit liftCoverage, sourceLedger, and "
-                    "sourceFactoryConservation; missing testimony is silent"
-                ),
-            )
-        ]
-
-    offenders: list[SilentOffender] = []
-    totals = _mapping(coverage.get("totals"))
-    coverage_conservation = _mapping(coverage.get("conservation"))
-    silent_assertions = _integer(totals, "silently_unaccounted")
-    delta = _integer(coverage_conservation, "delta")
-    assertion_residue = max(silent_assertions, abs(delta))
-    if assertion_residue:
-        offenders.append(
-            SilentOffender(
-                file=file,
-                kind="silent-assertion",
-                count=assertion_residue,
-                note=(
-                    "independent on-disk assertions must equal lifted+cited plus "
-                    "refused-loud accounting"
-                ),
-            )
+def silent_offenders(
+    census: DiskCensus, audit: Mapping[str, Any]
+) -> list[SilentOffender]:
+    """Return disk loci absent from the construction roll-call roster."""
+    constructed_or_gap = _roll_call_keys(audit)
+    disk_loci = [
+        (locus.file, locus.line, locus.col, "Assert") for locus in census.asserts
+    ] + [
+        (locus.file, locus.line, locus.col, locus.kind) for locus in census.bodies
+    ]
+    return [
+        SilentOffender(
+            file=f"{file}:{line}:{col}",
+            kind=f"silent-{kind}",
+            count=1,
+            note="on-disk source locus is absent from the construction roll call",
         )
-
-    unclassified_source = _integer(ledger, "unclassified_source")
-    if unclassified_source:
-        offenders.append(
-            SilentOffender(
-                file=file,
-                kind="unclassified-source",
-                count=unclassified_source,
-                note=(
-                    "every source locus must be warranted, support, inactive, "
-                    "boundary, unresolved-loud, or typed effect"
-                ),
-            )
-        )
-
-    loud_conservation_loci = {
-        str(row.get("gap_locus"))
-        for raw in factory_summary.get("factoryWalk", [])
-        if isinstance(raw, Mapping)
-        for row in (raw,)
-        if row.get("verdict") == "gap"
-        and row.get("status") == "unresolved"
-        and row.get("gap_kind") == "Conservation"
-        and isinstance(row.get("gap_locus"), str)
-    }
-    violations = conservation.get("violations")
-    if isinstance(violations, list):
-        for raw in violations:
-            locus = str(raw.get("locus") or file) if isinstance(raw, Mapping) else file
-            if locus in loud_conservation_loci:
-                continue
-            reason = str(raw.get("reason") or "") if isinstance(raw, Mapping) else ""
-            offenders.append(
-                SilentOffender(
-                    file=locus,
-                    kind="unclassified-source-owner",
-                    count=1,
-                    note=(
-                        reason
-                        or "source body owner disappeared before factory classification"
-                    ),
-                )
-            )
-    return offenders
+        for file, line, col, kind in disk_loci
+        if (file, line, col, kind) not in constructed_or_gap
+    ]
 
 
 def r_silent(offenders: Sequence[SilentOffender]) -> int:
@@ -162,20 +107,13 @@ def format_report(offenders: Sequence[SilentOffender]) -> str:
 
 
 def _audit_file(path: Path, *, rel: str) -> tuple[str, tuple[SilentOffender, ...]]:
-    from sugar_lift_py_tests.idd.lift_coverage_accounting import (
-        account_lift_coverage,
-    )
     from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-    from sugar_lift_py_tests.lift_rpc import lift_file_payload
+    from sugar_lift_py_tests.tree_enumerate import source_audit_from_roll_call
 
     source = path.read_text(encoding="utf-8", errors="replace")
-    payload = lift_file_payload(source, rel)
-    report = payload.to_rpc()
-    report["liftCoverage"] = account_lift_coverage(
-        census_source(source, file=rel),
-        report,
-    ).to_json()
-    return "completed", tuple(silent_offenders(report, file=rel))
+    census = census_source(source, file=rel)
+    audit = source_audit_from_roll_call(path, rel)
+    return "completed", tuple(silent_offenders(census, audit))
 
 
 def _python_paths(roots: Sequence[Path]) -> list[Path]:
@@ -335,8 +273,8 @@ def main() -> int:
         "paths",
         nargs="*",
         type=Path,
-        default=list(production_roots(repo_root)),
     )
+    parser.add_argument("--live-root", action="append", type=Path, default=[])
     parser.add_argument("--repo-root", type=Path, default=repo_root)
     parser.add_argument("--file-timeout", type=int, default=30)
     parser.add_argument(
@@ -354,7 +292,8 @@ def main() -> int:
         return _run_child(args.child_file, args.child_rel)
 
     try:
-        paths = require_python_paths(args.paths)
+        roots = args.live_root or args.paths or list(production_roots(repo_root))
+        paths = require_python_paths(roots)
     except ValueError as error:
         print(f"SILENT ZERO-TOLERANCE RED: {error}")
         return 1
@@ -366,7 +305,8 @@ def main() -> int:
     )
     print(
         "SILENT SURFACE: "
-        f"discovered={summary.discovered} completed={summary.completed} "
+        f"files_discovered={summary.discovered} files_completed={summary.completed} "
+        f"auditor_errors={summary.non_native_red} "
         f"construction_panics={summary.construction_panics} "
         f"non_native_red={summary.non_native_red} "
         f"native_crashes={summary.native_crashes} timeouts={summary.timeouts}"
