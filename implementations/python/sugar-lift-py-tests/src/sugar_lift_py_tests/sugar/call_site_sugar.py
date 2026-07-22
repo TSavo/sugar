@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import builtins
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -79,11 +78,10 @@ class CallSiteSugar(Sugar):
         term = ctor(
             f"call:{self.target_name}",
             [value.to_term(owner=owner) for value in positional] + kwarg_terms,
-            symbol_kind=(
-                "builtin"
-                if hasattr(builtins, self.target_name)
-                else "coordinate"
-            ),
+            # Spelling is never builtin authority.  An authenticated builtin
+            # recognizer may refine its own coordinate later; a plain Name
+            # call (including a shadowed ``len``/``sum`` twin) stays generic.
+            symbol_kind="coordinate",
         )
         return Complete(
             CallSiteValue(
