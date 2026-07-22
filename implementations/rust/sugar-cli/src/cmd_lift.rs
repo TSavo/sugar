@@ -392,7 +392,7 @@ pub fn run(args: LiftArgs) -> u8 {
                     // #5152 / #5104: FactoryPanic (or any hole) during implication
                     // enumeration is a real construction gap — EXIT_USER_ERROR,
                     // never soft-continue with an empty call book that paints
-                    // false missing/undecidable/refused showcase verdicts.
+                    // false prove-side missing/undecidable/refused showcase verdicts.
                     eprintln!("{}: {error}", "error".red().bold());
                     return EXIT_USER_ERROR;
                 }
