@@ -84,10 +84,39 @@ def test_suppress_manager_still_lifts():
     assert v.invs() == () and v.post().args[1].name == "z"
 
 
+def test_with_item_synthesizes_enter_exit_method_coordinates():
+    """Tree owns ``manager.__enter__()`` / ``__exit__(None,None,None)`` coords.
+
+    Production open still RuntimeSelected; synthesis is the door for a future
+    typed disposition — not a callback injection site.
+    """
+    fn = _fn("def A(m):\n    with m:\n        pass\n    return m\n")
+    with_node = next(s for s in fn.body if s.kind == "With")
+    item = with_node.items[0]
+    enter = item._make_enter_call()
+    exit_ = item._make_exit_call()
+    assert enter.kind == "Call"
+    assert enter.func.kind == "Attribute"
+    assert enter.func.attr == "__enter__"
+    assert enter.args == ()
+    assert exit_.kind == "Call"
+    assert exit_.func.kind == "Attribute"
+    assert exit_.func.attr == "__exit__"
+    assert len(exit_.args) == 3
+    # Method coords sugar through the normal Call/Attribute door.
+    enter_sugar = enter.sugar()
+    exit_sugar = exit_.sugar()
+    assert type(enter_sugar).__name__ == "MethodCallSugar"
+    assert type(exit_sugar).__name__ == "MethodCallSugar"
+    assert enter_sugar.name == "__enter__"
+    assert exit_sugar.name == "__exit__"
+
+
 if __name__ == "__main__":
     test_resource_open_is_runtime_selected_named_residual()
     test_resource_open_is_not_silent_dissolve()
     test_resource_named_residual_distinct_from_bare_sugar_not_written()
     test_assertion_manager_pytest_raises_still_lifts()
     test_suppress_manager_still_lifts()
+    test_with_item_synthesizes_enter_exit_method_coordinates()
     print("ok: resource with is RuntimeSelected named residual; Expects undisturbed")

@@ -203,31 +203,32 @@ class ExitSet(Generic[T]):
 
     def and_exit(
         self,
-        exit_call: Callable[[], "ExitSet[object]"],
+        exit_es: "ExitSet[object]",
         *,
-        suppresses: Callable[[object, object], bool] | None = None,
-        open_suppression: Callable[[object], object] | None = None,
+        disposition: object,
     ) -> "ExitSet[object]":
-        """Run ``__exit__`` over every body exit (resource ``with``).
+        """Run constructed ``__exit__`` over every body exit (resource ``with``).
 
-        ``exit_call`` is constructed **once** and fanned across faces (same
-        posture as ``and_finally``). Laws:
+        ``exit_es`` is the already-reduced exit ExitSet (built once from tree
+        sugar, not a callback). ``disposition`` is a **typed** exit contract:
+
+        - ``NeverSuppresses`` — restore body halt (exit still ran; may supersede)
+        - ``ExitSuppressionContract`` — proven named suppress / restore
+        - ``RuntimeSelected`` — open residual under the guard (never guessed)
+        - ``Suppresses(matcher)`` — membrane matcher authority only
+
+        Laws:
 
         - Exit **halt** supersedes the incoming exit.
         - Exit **completion** on a **Completed** incoming keeps the body value.
-        - Exit **completion** on a **Halted** incoming:
-          - ``suppresses(effect, exit_value)`` is True → consume the halt
-            (Completed with empty residue).
-          - False → restore/rethrow the incoming halt.
-          - ``open_suppression(effect)`` set → leave that residual halt under
-            the guard (runtime-selected / unproved — never guessed True/False).
-
-        ``NeverSuppresses`` is disposition, not purity: the exit call still
-        runs and can itself halt (supersede). Disposition only answers the
-        completed-exit question: never suppress the body halt.
+        - Exit **completion** on a **Halted** incoming applies ``disposition``:
+          suppress → consume; restore → rethrow; open → residual halt.
         """
-        decide = suppresses or (lambda _effect, _exit_value: False)
-        exit_exits = exit_call().exits
+        from sugar_lift_py_tests.outcome.resource_exit_disposition import (
+            disposition_verdict,
+        )
+
+        exit_exits = exit_es.exits
         exits: list[Exit[object]] = []
         for incoming in self.exits:
             for ex in exit_exits:
@@ -238,16 +239,14 @@ class ExitSet(Generic[T]):
                 if isinstance(incoming, Completed):
                     exits.append(Completed(guard, incoming.value))
                     continue
-                # Incoming Halted + exit completed.
-                if open_suppression is not None:
-                    residual = open_suppression(incoming.effect)
-                    if residual is not None:
-                        exits.append(Halted(guard, residual))
-                        continue
-                if decide(incoming.effect, ex.value):
-                    # Suppress: body halt is consumed; face completes.
+                # Incoming Halted + exit completed → typed disposition.
+                verdict = disposition_verdict(disposition, incoming.effect)
+                if verdict == "suppress":
                     exits.append(Completed(guard, None))
+                elif verdict == "open":
+                    exits.append(Halted(guard, incoming.effect))
                 else:
+                    # restore
                     exits.append(Halted(guard, incoming.effect))
         return ExitSet(tuple(exits)).normalize()
 

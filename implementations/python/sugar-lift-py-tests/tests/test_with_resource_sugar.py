@@ -1,40 +1,55 @@
-"""Unit twins for resource ``WithResourceSugar`` enter/exit ExitSet laws.
+"""Unit twins for resource ``WithResourceSugar`` — sugars + typed disposition.
 
-Production ``open(...)`` stays ``RuntimeSelected`` until enter/exit are
-constructed. These twins drive the transformation with explicit ExitSets —
-constructed green faces or explicit red residuals — never invented suppress.
+No Python callbacks for enter/exit/suppress. Production ``open(...)`` stays
+``RuntimeSelected`` until a typed disposition is enrolled with constructed
+enter/exit method-coordinate sugars.
 """
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.ir import atomic, make_var, not_
-from sugar_lift_py_tests.outcome import Complete, Incomplete
-from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
-from sugar_lift_py_tests.sugar.with_resource_sugar import (
-    WithResourceSugar,
-    never_suppresses_disposition,
-    open_suppression_residual,
-    suppresses_named,
+from sugar_lift_py_tests.context_manager_contract import (
+    NeverSuppresses,
+    RuntimeSelected,
 )
+from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
+from sugar_lift_py_tests.floor.block_value import BlockValue
+from sugar_lift_py_tests.ir import atomic, make_var
+from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 
 
-class _Pass:
+class _FixedSugar(Sugar):
+    """Test sugar: desugars to a fixed Outcome (tree door stand-in)."""
+
+    def __init__(self, outcome, *, probe=None):
+        self._outcome = outcome
+        self._probe = probe
+
     def desugar(self, ctx=None):
         del ctx
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.outcome import Complete as C
+        if self._probe is not None:
+            self._probe.append(1)
+        return self._outcome
 
-        return C(BlockValue((), can_fall_through=True))
+    @classmethod
+    def witnesses(cls):
+        return ()
 
 
-class _Raise:
-    def __init__(self, name: str):
-        self.name = name
+class _Pass(_FixedSugar):
+    def __init__(self, probe=None):
+        super().__init__(
+            Complete(BlockValue((), can_fall_through=True)), probe=probe
+        )
 
-    def desugar(self, ctx=None):
-        del ctx
-        return Incomplete(RaiseEffect(exception_name=self.name))
+
+class _Raise(_FixedSugar):
+    def __init__(self, name: str, probe=None):
+        super().__init__(
+            Incomplete(RaiseEffect(exception_name=name)), probe=probe
+        )
 
 
 def _guard(name: str):
@@ -44,19 +59,14 @@ def _guard(name: str):
 def test_enter_halt_skips_body_and_exit():
     body_ran = []
     exit_ran = []
-
-    class BodyProbe:
-        def desugar(self, ctx=None):
-            del ctx
-            body_ran.append(1)
-            return _Pass().desugar()
-
     enter_halt = RaiseEffect(exception_name="OSError")
     sugar = WithResourceSugar(
-        body=(BodyProbe(),),
-        enter=lambda: ExitSet.halted(enter_halt),
-        exit_call=lambda: (exit_ran.append(1) or ExitSet.completed(False)),
-        suppresses=never_suppresses_disposition,
+        enter=_FixedSugar(Incomplete(enter_halt)),
+        exit=_FixedSugar(
+            Complete(BlockValue((), can_fall_through=True)), probe=exit_ran
+        ),
+        body=(_Pass(probe=body_ran),),
+        disposition=NeverSuppresses(),
     )
     out = sugar.desugar()
     assert body_ran == []
@@ -68,12 +78,11 @@ def test_enter_halt_skips_body_and_exit():
 
 
 def test_never_suppresses_restores_body_halt_after_exit_completes():
-    body_halt = RaiseEffect(exception_name="ValueError")
     sugar = WithResourceSugar(
+        enter=_Pass(),
+        exit=_Pass(),
         body=(_Raise("ValueError"),),
-        enter=lambda: ExitSet.completed("resource"),
-        exit_call=lambda: ExitSet.completed(False),
-        suppresses=never_suppresses_disposition,
+        disposition=NeverSuppresses(),
     )
     out = sugar.desugar()
     reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
@@ -83,10 +92,10 @@ def test_never_suppresses_restores_body_halt_after_exit_completes():
 
 def test_exit_halt_supersedes_body_halt():
     sugar = WithResourceSugar(
+        enter=_Pass(),
+        exit=_Raise("RuntimeError"),
         body=(_Raise("ValueError"),),
-        enter=lambda: ExitSet.completed("resource"),
-        exit_call=lambda: ExitSet.halted(RaiseEffect(exception_name="RuntimeError")),
-        suppresses=never_suppresses_disposition,
+        disposition=NeverSuppresses(),
     )
     out = sugar.desugar()
     reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
@@ -94,24 +103,24 @@ def test_exit_halt_supersedes_body_halt():
     assert reds[0].effect.exception_name == "RuntimeError"
 
 
-def test_exit_true_consumes_matching_body_halt():
+def test_proven_contract_consumes_matching_body_halt():
     sugar = WithResourceSugar(
+        enter=_Pass(),
+        exit=_Pass(),
         body=(_Raise("ValueError"),),
-        enter=lambda: ExitSet.completed("resource"),
-        exit_call=lambda: ExitSet.completed(True),
-        suppresses=suppresses_named("ValueError"),
+        disposition=ExitSuppressionContract.suppresses(("ValueError",)),
     )
     out = sugar.desugar()
     reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
     assert reds == []
 
 
-def test_exit_true_does_not_consume_wrong_type():
+def test_proven_contract_does_not_consume_wrong_type():
     sugar = WithResourceSugar(
+        enter=_Pass(),
+        exit=_Pass(),
         body=(_Raise("KeyError"),),
-        enter=lambda: ExitSet.completed("resource"),
-        exit_call=lambda: ExitSet.completed(True),
-        suppresses=suppresses_named("ValueError"),
+        disposition=ExitSuppressionContract.suppresses(("ValueError",)),
     )
     out = sugar.desugar()
     reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
@@ -119,13 +128,12 @@ def test_exit_true_does_not_consume_wrong_type():
     assert reds[0].effect.exception_name == "KeyError"
 
 
-def test_open_suppression_not_guessed_even_if_exit_returns_true():
+def test_runtime_selected_not_guessed_even_if_exit_completes():
     sugar = WithResourceSugar(
+        enter=_Pass(),
+        exit=_Pass(),
         body=(_Raise("ValueError"),),
-        enter=lambda: ExitSet.completed("resource"),
-        exit_call=lambda: ExitSet.completed(True),
-        suppresses=suppresses_named("ValueError"),
-        open_suppression=open_suppression_residual,
+        disposition=RuntimeSelected(),
     )
     out = sugar.desugar()
     reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
@@ -135,44 +143,38 @@ def test_open_suppression_not_guessed_even_if_exit_returns_true():
 
 def test_completed_body_survives_never_suppresses_exit():
     sugar = WithResourceSugar(
+        enter=_Pass(),
+        exit=_Pass(),
         body=(_Pass(),),
-        enter=lambda: ExitSet.completed("resource"),
-        exit_call=lambda: ExitSet.completed(False),
-        suppresses=never_suppresses_disposition,
+        disposition=NeverSuppresses(),
     )
     out = sugar.desugar()
     assert isinstance(out, Complete)
     assert not any(isinstance(e, Incomplete) for e in out.value.contribution())
 
 
-def test_exit_runs_on_every_conditional_body_face():
-    """Conditional body halt + completion: exit fans once; both faces decided."""
+def test_exit_sugar_desugars_once_across_conditional_body_faces():
     condition = _guard("c")
     effect = RaiseEffect(exception_name="ValueError")
 
-    class ConditionalBody:
+    class ConditionalBody(Sugar):
         def desugar(self, ctx=None):
             del ctx
-            # Multi-exit via Incomplete under guard is produced by if-sugar;
-            # here inject the dual ExitSet by wrapping in a statement that
-            # reduce_block would not dualize — use promote path via Incomplete.
             return Incomplete(effect).guarded(condition)
 
-    seen = []
+        @classmethod
+        def witnesses(cls):
+            return ()
 
-    def exit_call():
-        seen.append(1)
-        return ExitSet.completed(False)
-
+    exit_ran = []
     sugar = WithResourceSugar(
+        enter=_Pass(),
+        exit=_Pass(probe=exit_ran),
         body=(ConditionalBody(),),
-        enter=lambda: ExitSet.completed("resource"),
-        exit_call=exit_call,
-        suppresses=never_suppresses_disposition,
+        disposition=NeverSuppresses(),
     )
     out = sugar.desugar()
-    assert len(seen) == 1
-    # Guarded halt restored under c (never suppress).
+    assert len(exit_ran) == 1
     reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
     assert len(reds) == 1
     assert reds[0].effect.exception_name == "ValueError"
@@ -180,15 +182,23 @@ def test_exit_runs_on_every_conditional_body_face():
 
 
 def test_unconstructed_enter_is_explicit_red_not_dissolve():
-    """Admission: missing enter stays Incomplete residual, never silent pass."""
     enter_gap = RaiseEffect(exception_name="ConstructionGapEnter")
     sugar = WithResourceSugar(
+        enter=_FixedSugar(Incomplete(enter_gap)),
+        exit=_Pass(),
         body=(_Pass(),),
-        enter=lambda: ExitSet.halted(enter_gap),
-        exit_call=lambda: ExitSet.completed(False),
-        suppresses=never_suppresses_disposition,
+        disposition=NeverSuppresses(),
     )
     out = sugar.desugar()
     reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
     assert len(reds) == 1
     assert reds[0].effect.exception_name == "ConstructionGapEnter"
+
+
+def test_suppresses_named_is_not_exported():
+    """Callback side door must not exist on the resource sugar module."""
+    import sugar_lift_py_tests.sugar.with_resource_sugar as mod
+
+    assert not hasattr(mod, "suppresses_named")
+    assert not hasattr(mod, "never_suppresses_disposition")
+    assert not hasattr(mod, "open_suppression_residual")
