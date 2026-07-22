@@ -63,28 +63,33 @@ class MinorityReport:
 
     reporter: object  # a reporter.CollectingReporter
 
+    def _by_cid(self, nodes) -> dict[str, RosterEntry]:
+        # Dedupe by CID: the lazy tree registers a logical node many times
+        # (fresh instance per access), but the CID is the one identity.
+        out: dict[str, RosterEntry] = {}
+        for n in nodes:
+            e = roster_entry_for(n)
+            out.setdefault(e.cid, e)
+        return out
+
     @property
     def roster(self) -> tuple[RosterEntry, ...]:
-        return tuple(roster_entry_for(n) for n in self.reporter.registered)
+        return tuple(self._by_cid(self.reporter.registered).values())
 
     @property
     def present(self) -> tuple[RosterEntry, ...]:
+        present_cids = set(self._by_cid(self.reporter.present))
         return tuple(
-            roster_entry_for(n)
-            for n in self.reporter.registered
-            if id(n) in self.reporter.present
+            e for e in self.roster if e.cid in present_cids
         )
 
     @property
     def minority(self) -> tuple[RosterEntry, ...]:
-        """registered \\ present -- registered nodes that never discharged a
-        present answer. The absent never report themselves; the roster (the
-        registered set) computes them by difference."""
-        return tuple(
-            roster_entry_for(n)
-            for n in self.reporter.registered
-            if id(n) not in self.reporter.present
-        )
+        """registered \\ present -- roster CIDs that never discharged a present
+        answer. The absent never report themselves; the roster computes them by
+        difference (deduped on the CID, the one stable identity)."""
+        present_cids = set(self._by_cid(self.reporter.present))
+        return tuple(e for e in self.roster if e.cid not in present_cids)
 
     @property
     def R(self) -> int:
@@ -103,6 +108,28 @@ def minority_report(source_file) -> MinorityReport:
     whole roster -- the honest 'accounted for nothing yet.'"""
     for _ in source_file.nodes():  # materialize the tree -> register every node
         pass
+    return MinorityReport(reporter=source_file.reporter)
+
+
+def discharge(source_file) -> MinorityReport:
+    """Run the discharge over the roster: desugar every function (which recurses
+    through its whole subtree). Each node that constructs answers PRESENT through
+    the template; each unwritten node reports ABSENT and stops its subtree. The
+    reporter -- the one interface, threaded through construction -- now holds both
+    sides, so the minority is the true diff of desugared-vs-not."""
+    from .panic import SugarNotWritten
+
+    for _ in source_file.nodes():  # materialize -> register the whole roster
+        pass
+    # Attempt every accounting root so each records its OWN answer: the module
+    # (top-level), then each function. A written root discharges its subtree
+    # present; an unwritten one (e.g. Module.sugar, still on the frontier)
+    # reports absent -- honestly, by attempt, red until written.
+    for root_node in (source_file.root, *source_file.functions()):
+        try:
+            root_node.sugar()
+        except SugarNotWritten:
+            pass  # the gap is on the roll; the report reads it
     return MinorityReport(reporter=source_file.reporter)
 
 

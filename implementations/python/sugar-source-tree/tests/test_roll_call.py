@@ -34,7 +34,9 @@ def test_construction_registers_every_node_through_the_one_interface() -> None:
     # second interface -- the reporter threaded through construction holds it.
     r = CollectingReporter()
     report = minority_report(_sf(_THREE, r))
-    assert len(report.roster) == len(r.registered)
+    # roster dedupes by CID; the lazy tree registers a node many times.
+    assert 0 < len(report.roster) <= len(r.registered)
+    assert len({e.cid for e in report.roster}) == len(report.roster)  # unique
     assert len(report.roster) > 3  # every node, not just the three functions
 
 
@@ -124,7 +126,9 @@ def test_null_reporter_still_satisfies_construction() -> None:
 def test_total_R_sums_the_whole_minority() -> None:
     r1, r2 = CollectingReporter(), CollectingReporter()
     reps = [minority_report(_sf(_THREE, r1)), minority_report(_sf("x = 1\n", r2))]
-    assert total_R(reps) == len(r1.registered) + len(r2.registered)
+    # moment zero: nothing discharged, so each minority IS its whole (deduped)
+    # roster.
+    assert total_R(reps) == len(reps[0].roster) + len(reps[1].roster)
 
 
 def test_the_roster_covers_every_source_line() -> None:
@@ -148,3 +152,19 @@ def test_the_roster_covers_every_source_line() -> None:
         lc = node.line_col_span()
         covered |= set(range(lc.start_line, lc.end_line + 1))
     assert not (code_lines - covered)
+
+
+def test_discharge_produces_the_true_minority_written_vs_not() -> None:
+    # The whole loop: construction REGISTERS (constructor), discharge ANSWERS
+    # present (template) or absent (abstract). A written function's nodes
+    # discharge present; an unwritten construct (Delete has no sugar) and its
+    # ancestors stay in the minority -- red until written.
+    from sugar_source_tree.roll_call import discharge
+
+    r = CollectingReporter()
+    report = discharge(_sf("def a(z):\n    return z\ndef b(xs):\n    del xs\n", r))
+    kinds_present = {e.kind for e in report.present}
+    kinds_absent = {e.kind for e in report.minority}
+    assert "Return" in kinds_present  # a's body desugared
+    assert "Delete" in kinds_absent  # the unwritten construct is minority
+    assert not report.is_clean  # R > 0 while anything is unwritten

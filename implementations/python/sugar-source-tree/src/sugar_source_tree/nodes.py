@@ -459,6 +459,21 @@ class Node(Typed):
         return names
 
     def sugar(self) -> object:
+        """The roll-call DISCHARGE. A node registered on the roll when it was
+        constructed (``__post_init__``); desugaring is how it answers. This
+        template constructs the node's sugar (``_construct_sugar``, which each
+        concrete class overrides) and records the PRESENT answer through the
+        reporter the node already carries -- no parameter is threaded, because
+        the node holds its own roll call. The ABSENT answer is recorded inside
+        the abstract ``_construct_sugar`` before it throws. So every node either
+        answers present here or is reported absent there: no node discharges
+        silently.
+        """
+        result = self._construct_sugar()
+        self.reporter.present_fact(self)
+        return result
+
+    def _construct_sugar(self) -> object:
         """This node's sugar, constructed by the node itself.
 
         The tree recognizes and CONSTRUCTS; sugar carries the meaning
@@ -573,12 +588,12 @@ class Param(Node):
         of the name itself is the enclosing FunctionDef's job, for the body."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """A formal stands as its symbolic universe variable. Plain parameters
         only; a default or annotation is not yet folded in, so a parameter that
         carries one stays a loud gap rather than silently dropping it."""
         if self.default is not None or self.annotation is not None:
-            return super().sugar()
+            return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.param_sugar import ParamSugar
 
         return ParamSugar(name=self.name, site=self.fragment)
@@ -786,7 +801,7 @@ class FunctionDef(Statement):
             return self
         return rewrite(self, **changed)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`def <name>(<formals>): <body>` constructs FunctionUniverseSugar WITH
         each body statement's own sugar — the recursion, child-before-parent.
 
@@ -889,11 +904,11 @@ class Return(Statement):
         """`return <expr>` binds nothing: recurse into the returned expression."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`return <expr>` constructs ReturnSugar WITH the value's sugar. A bare
         `return` (no value) stays a loud gap -- no invented None return."""
         if self.value is None:
-            return super().sugar()
+            return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 
         return ReturnSugar(value=self.value.sugar(), site=self.fragment)
@@ -954,7 +969,7 @@ class Assign(Statement):
             return {t.id: self.value for t in self.targets}
         return None
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`<name> = <rhs>` constructs AssignSugar WITH the rhs's sugar (held as
         the deferred source). A destructured tuple/list target or a chained
         `x = y = e` whose binding threaded constructs MultiAssignSugar -- both
@@ -974,7 +989,7 @@ class Assign(Statement):
         if len(self.targets) == 1 and isinstance(self.targets[0], (Tuple_, List)):
             bindings = self._destructured_binding()
             if bindings is None:
-                return super().sugar()
+                return super()._construct_sugar()
             from sugar_lift_py_tests.sugar.assign_sugar import MultiAssignSugar
 
             return MultiAssignSugar(
@@ -1010,7 +1025,7 @@ class Assign(Statement):
                 site=self.fragment,
             )
 
-        return super().sugar()
+        return super()._construct_sugar()
 
 
 class AugAssign(Statement):
@@ -1037,7 +1052,7 @@ class AugAssign(Statement):
         old = scope.get(name, self.target)
         return {name: self._make_binop(old, self.op, self.value)}
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`<target> OP= <value>` -- a plain Name target is INERT at the
         meaning layer: substitution_binding ALWAYS threads for a Name target
         (it falls back to the target itself as the old value when nothing was
@@ -1048,7 +1063,7 @@ class AugAssign(Statement):
         they are never threaded), so they stay loud gaps here too, mirrored
         exactly against that same isinstance check."""
         if not isinstance(self.target, Name):
-            return super().sugar()
+            return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
         return InertSugar(site=self.fragment)
@@ -1080,7 +1095,7 @@ class AnnAssign(Statement):
             return {self.target.id: self.value}
         return None
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`<target>: <annotation> [= <value>]` -- a plain Name target is
         INERT at the meaning layer. If there is a value, its binding already
         threaded via substitution_binding, exactly as a plain Assign's does;
@@ -1094,7 +1109,7 @@ class AnnAssign(Statement):
         passes through, never a stated post. Non-Name targets (attribute,
         subscript) stay loud gaps -- no partial binding, no partial sugar."""
         if not isinstance(self.target, Name):
-            return super().sugar()
+            return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
         return InertSugar(site=self.fragment)
@@ -1307,7 +1322,7 @@ class For(Statement):
             self.unit, ShadowNode("Call", self.span, slots), self.reporter
         )
 
-    def sugar(self):
+    def _construct_sugar(self):
         """A loop that did NOT dissolve in substitute is symbolic: its iterable is
         a hole (a formal), so it cannot unroll. Its meaning is the FOL that was
         always there. An assert-only body is the degenerate fold -- the universal
@@ -1319,10 +1334,10 @@ class For(Statement):
         from sugar_lift_py_tests.sugar.for_universal_sugar import ForUniversalSugar
 
         if self.orelse or self.target.kind != "Name":
-            return super().sugar()
+            return super()._construct_sugar()
         carried, facts = self._carried_and_facts()
         if carried and facts:
-            return super().sugar()  # accumulator-referencing assert -- point 3
+            return super()._construct_sugar()  # accumulator-referencing assert -- point 3
         if carried:
             # Pure fold: the loop states nothing; its meaning is the fold binding
             # (substitution_binding), consumed where the carried name is read.
@@ -1637,7 +1652,7 @@ class If(Statement):
             self.unit, ShadowNode("IfExp", self.span, slots), self.reporter
         )
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`if <test>: <body> [else: <orelse>]` constructs IfSugar -- the guard.
         The test recognizes itself; each branch's statements recognize themselves.
         The guard turns each branch's stated facts into implications; the binding
@@ -1657,7 +1672,7 @@ class With(Statement):
     body: Tuple[Statement, ...]
     _child_fields = ("items", "body")
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`with <manager> [as <name>]: <body>` -- the node consults the
         MEMBRANE, never a vendor name (#5994). A single manager whose
         membrane-issued contract is raise/warning Expects/Suppresses wires
@@ -1678,7 +1693,7 @@ class With(Statement):
         finally-faithful expansion; until then that arm stays unwritten loud.
         Non-Name as-targets, Suppresses+as, and multiple managers stay loud."""
         if len(self.items) != 1:
-            return super().sugar()
+            return super()._construct_sugar()
         item = self.items[0]
         if item.optional_vars is not None:
             # ``as <name>`` stays LOUD: the honest binding is the ROUTED
@@ -1686,7 +1701,7 @@ class With(Statement):
             # router matches), NOT a manufactured ``E()``. That witness is
             # produced at route time, so it needs the shared exit-set witness
             # mechanism -- unwritten here until it lands.
-            return super().sugar()
+            return super()._construct_sugar()
         from sugar_lift_py_tests.context_manager_contract import (
             Expects,
             RuntimeSelected,
@@ -1703,7 +1718,7 @@ class With(Statement):
         )
         if isinstance(contract, (Expects, Suppresses)):
             if contract.matcher.kind not in ("raise", "warning"):
-                return super().sugar()
+                return super()._construct_sugar()
             return WithContractSugar(
                 contract=contract,
                 body=tuple(stmt.sugar() for stmt in self.body),
@@ -1739,7 +1754,7 @@ class With(Statement):
             raise panic
         # NeverSuppresses (nothing enrolls yet): finally-faithful expansion
         # unwritten — bare SugarNotWritten until that slice lands.
-        return super().sugar()
+        return super()._construct_sugar()
 
     def substitute(self, scope):
         """with ... as <vars>: masks as-targets for the body (binding sites).
@@ -1806,7 +1821,7 @@ class Raise(Statement):
             return None
         return ".".join(reversed(parts))
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`raise <exc>[ from <cause>]` constructs RaiseSugar -- the halt arm.
         The exception name is provenance, read structurally; the expression is
         never desugared as a child (we do not construct the exception)."""
@@ -1815,7 +1830,7 @@ class Raise(Statement):
             # part of the halt. Carrying it is not written yet, so rather than
             # silently drop it we FAIL LOUDLY (the MISSING-becomes-success this
             # design forbids), exactly as AssertSugar does with its message.
-            return super().sugar()
+            return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
 
         return RaiseSugar(exception_name=self._exception_name(), site=self.fragment)
@@ -1865,7 +1880,7 @@ class Try(Statement):
             return None
         return ".".join(reversed(parts))
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`try: body (except E: handler)+ [else] [finally]` -- the STRUCTURAL
         sibling of with-raises. A typed clause contributes one exact router
         matcher per bare/dotted type (including each element of a tuple); a
@@ -1881,13 +1896,13 @@ class Try(Statement):
         substitute time, so it needs the shared observed-effect-witness
         mechanism (a marker the router fills), unwritten here until it lands."""
         if not self.handlers:
-            return super().sugar()  # try/finally-only: not the except-routing core
+            return super()._construct_sugar()  # try/finally-only: not the except-routing core
         from sugar_lift_py_tests.context_manager_contract import EffectMatcher
 
         handler_specs = []
         for handler in self.handlers:
             if handler.name is not None:
-                return super().sugar()  # except-as: needs the routed witness, loud
+                return super()._construct_sugar()  # except-as: needs the routed witness, loud
             if handler.type_ is None:
                 handler_specs.append(
                     (None, tuple(stmt.sugar() for stmt in handler.body))
@@ -1898,11 +1913,11 @@ class Try(Statement):
                 handler.type_.elts if handler.type_.kind == "Tuple" else (handler.type_,)
             )
             if not type_nodes:
-                return super().sugar()  # empty tuple: no honest matcher
+                return super()._construct_sugar()  # empty tuple: no honest matcher
             for type_node in type_nodes:
                 type_name = self._except_type_name(type_node)
                 if type_name is None:
-                    return super().sugar()  # exotic tuple elt/type -- stay loud
+                    return super()._construct_sugar()  # exotic tuple elt/type -- stay loud
                 handler_specs.append(
                     (
                         EffectMatcher(kind="raise", name=type_name),
@@ -1942,7 +1957,7 @@ class Assert(Statement):
         """`assert <test>[, <msg>]` binds nothing: recurse into test and msg."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`assert <test>[, <msg>]` constructs AssertSugar WITH the test's
         sugar. The test recognizes itself (self.test.sugar()) — the recursion.
         The message is provenance only (#4593/#4594): AssertSugar never builds
@@ -1956,7 +1971,7 @@ class Assert(Statement):
             # the memento is not written yet, so an assert that has one FAILS
             # LOUDLY rather than silently dropping it. Silent loss is the exact
             # MISSING-becomes-success this design forbids.
-            return super().sugar()
+            return super()._construct_sugar()
         return AssertSugar(test=self.test.sugar(), site=self.fragment)
 
 
@@ -1968,7 +1983,7 @@ class Import(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`import <module>` binds a module name that stays a FREE SYMBOLIC
         in the meaning layer: nothing about the import itself is stated as
         a fact. A later `pd.concat(...)` reduces as a method coordinate on
@@ -1989,7 +2004,7 @@ class ImportFrom(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`from <module> import <names>` binds free symbolics the same way
         plain `import` does: the bound names stay FREE SYMBOLIC in the
         meaning layer, reduced only where a later expression uses them as a
@@ -2006,7 +2021,7 @@ class Global(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`global <names>` is a scope DECLARATION, not a fact: it tells
         substitute which enclosing binding a name resolves against. That
         binding semantics lives entirely in substitute (see above) -- by
@@ -2024,7 +2039,7 @@ class Nonlocal(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`nonlocal <names>` is a scope DECLARATION like `global`: it
         routes a name to an enclosing function scope during substitute.
         Once substitute has resolved the binding, the declaration carries
@@ -2044,7 +2059,7 @@ class Expr(Statement):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`<expr>` as a statement constructs ExprStatementSugar WITH the
         value's sugar. States nothing; an effect in the value rides."""
         from sugar_lift_py_tests.sugar.expr_statement_sugar import (
@@ -2061,7 +2076,7 @@ class Pass(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`pass` states nothing by definition: it is the syntax for an
         intentionally empty statement body. Its sugar is the honestly
         empty record, not a placeholder awaiting content."""
@@ -2176,7 +2191,7 @@ class Match(Statement):
             return pattern.name
         return None
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`match <subject>: case P: body ...` constructs MatchSugar -- an n-way
         guarded split. This first cut owns VALUE patterns (`case <literal>:`) and
         the wildcard (`case _:`), with no pattern guard and no capture. Any other
@@ -2188,10 +2203,10 @@ class Match(Statement):
         specs = []
         for case in self.cases:
             if case.guard is not None:
-                return super().sugar()  # `case P if g:` not written
+                return super()._construct_sugar()  # `case P if g:` not written
             alternatives = self._pattern_alternatives(case.pattern)
             if alternatives is None:
-                return super().sugar()  # structural pattern (sequence/class/...)
+                return super()._construct_sugar()  # structural pattern (sequence/class/...)
             specs.append(
                 MatchCaseSpec(
                     alternatives=alternatives,
@@ -2217,7 +2232,7 @@ class BoolOp(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`a and b` / `a or b` constructs BoolOpSugar WITH each operand's sugar.
         The node knows its connective (And/Or); the operands recognize themselves."""
         from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
@@ -2265,7 +2280,7 @@ class BinOp(Expression):
         operands and reassembles. The op itself is a leaf, carried through."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`<left> <op> <right>` constructs BinOpSugar WITH both sides' sugars.
         The node already knows its operator, so one sugar dispatches to the
         floor method that operator names. An operator with no floor method is a
@@ -2273,7 +2288,7 @@ class BinOp(Expression):
         from sugar_lift_py_tests.sugar.binop_sugar import BINOP_METHODS, BinOpSugar
 
         if self.op.kind not in BINOP_METHODS:
-            return super().sugar()
+            return super()._construct_sugar()
         return BinOpSugar(
             op_kind=self.op.kind,
             left=self.left.sugar(),
@@ -2291,7 +2306,7 @@ class UnaryOp(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`<op> <operand>` constructs UnaryOpSugar WITH the operand's sugar. The
         node already knows its operator; an operator with no floor method inherits
         the base throw, never a silent default."""
@@ -2301,7 +2316,7 @@ class UnaryOp(Expression):
         )
 
         if self.op.kind != "Not" and self.op.kind not in UNARYOP_METHODS:
-            return super().sugar()
+            return super()._construct_sugar()
         return UnaryOpSugar(
             op_kind=self.op.kind, operand=self.operand.sugar(), site=self.fragment
         )
@@ -2338,7 +2353,7 @@ class IfExp(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`<body> if <test> else <orelse>` constructs IfExpSugar -- the
         conditional VALUE the phi produces. It desugars to a GuardedValue that
         DISTRIBUTES (a return/equality splits into per-arm implications, each arm
@@ -2362,13 +2377,13 @@ class Dict(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`{k: v, ...}` constructs DictSugar WITH each key and value sugar. A
         `**d` spread (a DictItem with key None) stays loud until its own sugar."""
         from sugar_lift_py_tests.sugar.collection_sugar import DictSugar
 
         if any(item.key is None for item in self.items):
-            return super().sugar()
+            return super()._construct_sugar()
         return DictSugar(
             keys=tuple(item.key.sugar() for item in self.items),
             values=tuple(item.value.sugar() for item in self.items),
@@ -2384,12 +2399,12 @@ class Set(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`{e, ...}` constructs SetSugar WITH each element's sugar; `*xs` is loud."""
         from sugar_lift_py_tests.sugar.collection_sugar import SetSugar
 
         if any(e.kind == "Starred" for e in self.elts):
-            return super().sugar()
+            return super()._construct_sugar()
         return SetSugar(
             elements=tuple(e.sugar() for e in self.elts), site=self.fragment
         )
@@ -2730,7 +2745,7 @@ class Compare(Expression):
         are leaves, carried through)."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """A comparison constructs its operator's sugar, built WITH its
         children's sugar. `==` is EqualityOpSugar (it also refines); the ordering
         family and `!=` are ComparisonOpSugar. A CHAINED comparison `a < b < c`
@@ -2750,7 +2765,7 @@ class Compare(Expression):
             return isinstance(op, Eq) or op.kind in COMPARISON_KINDS
 
         if not all(supported(op) for op in self.ops):
-            return super().sugar()
+            return super()._construct_sugar()
 
         operands = (self.left, *self.comparators)
 
@@ -2792,7 +2807,7 @@ class Call(Expression):
             return func.value
         return None
 
-    def sugar(self):
+    def _construct_sugar(self):
         """A call constructs its callee's sugar WITH the argument sugars.
         `<name>(<args>)` -> CallSiteSugar, the call-site coordinate (THE DIG
         CUE). `<receiver>.<name>(<args>)` -> MethodCallSugar, the method
@@ -2804,7 +2819,7 @@ class Call(Expression):
         loud through the ordinary recursion. Keyword arguments stay loud gaps
         until written."""
         if any(kw.arg is None for kw in self.keywords):
-            return super().sugar()  # **spread -- not one keyword, never guess
+            return super()._construct_sugar()  # **spread -- not one keyword, never guess
         keyword_sugars = tuple((kw.arg, kw.value.sugar()) for kw in self.keywords)
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
@@ -2826,7 +2841,7 @@ class Call(Expression):
                 keywords=keyword_sugars,
             )
         if keyword_sugars:
-            return super().sugar()  # kwargs on a computed callee -- not written
+            return super()._construct_sugar()  # kwargs on a computed callee -- not written
         from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 
         return ComputedCallSugar(
@@ -2846,13 +2861,13 @@ class FormattedValue(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`{value}` in an f-string. A conversion (!r/!s/!a) or a format spec is
         not lifted yet -- LOUD rather than a silently dropped modifier."""
         from sugar_lift_py_tests.sugar.fstring_sugar import FormattedValueSugar
 
         if self.conversion != -1 or self.format_spec is not None:
-            return super().sugar()
+            return super()._construct_sugar()
         return FormattedValueSugar(value=self.value.sugar(), site=self.fragment)
 
 
@@ -2864,7 +2879,7 @@ class JoinedStr(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """The f-string: JoinedStrSugar over each part's sugar (literal chunks
         and {value} interpolations), concatenated."""
         from sugar_lift_py_tests.sugar.fstring_sugar import JoinedStrSugar
@@ -2883,7 +2898,7 @@ class Constant(Expression):
         itself under any scope. The terminus of the rewrite."""
         return self
 
-    def sugar(self):
+    def _construct_sugar(self):
         """A literal constructs its literal sugar directly — a leaf: no child
         sugar, the value stands. Dispatch on the value's exact type (bool is a
         subclass of int, so it is checked first and is its own sugar). Every
@@ -2938,7 +2953,7 @@ class Constant(Expression):
             )
 
             return ComplexLiteralSugar(real=v.real, imag=v.imag, site=self.fragment)
-        return super().sugar()  # every literal kind is now converted
+        return super()._construct_sugar()  # every literal kind is now converted
 
 
 class Attribute(Expression):
@@ -2946,7 +2961,7 @@ class Attribute(Expression):
     attr: str
     _child_fields = ("value",)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`<value>.<attr>` constructs AttributeSugar WITH the receiver's sugar.
         The attr name is a static identifier carried onto the coordinate."""
         from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
@@ -2969,7 +2984,7 @@ class Subscript(Expression):
         """`<value>[<slice>]` binds nothing: recurse into receiver and index."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`<value>[<slice_>]` constructs SubscriptSugar WITH the receiver's and
         index's sugars. A Slice index reduces to its own gap through the
         recursion (slice_.sugar()), never silently handled here."""
@@ -3001,7 +3016,7 @@ class Name(Expression):
         bound = scope.get(self.id)
         return bound if bound is not None else self
 
-    def sugar(self):
+    def _construct_sugar(self):
         """A name constructs NameSugar with its identifier. A name is a leaf:
         nothing to build from children, only to look up against the temporal
         scope when the body reduces (an unbound name panics there, loudly)."""
@@ -3018,13 +3033,13 @@ class List(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`[e, ...]` constructs ListSugar WITH each element's sugar. A `*xs`
         spread is not one element -- it stays loud until its own sugar lands."""
         from sugar_lift_py_tests.sugar.collection_sugar import ListSugar
 
         if any(e.kind == "Starred" for e in self.elts):
-            return super().sugar()
+            return super()._construct_sugar()
         return ListSugar(
             elements=tuple(e.sugar() for e in self.elts), site=self.fragment
         )
@@ -3038,12 +3053,12 @@ class Tuple_(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`(e, ...)` constructs TupleSugar WITH each element's sugar; `*xs` is loud."""
         from sugar_lift_py_tests.sugar.collection_sugar import TupleSugar
 
         if any(e.kind == "Starred" for e in self.elts):
-            return super().sugar()
+            return super()._construct_sugar()
         return TupleSugar(
             elements=tuple(e.sugar() for e in self.elts), site=self.fragment
         )
@@ -3065,7 +3080,7 @@ class Slice(Expression):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
-    def sugar(self):
+    def _construct_sugar(self):
         """`lower:upper:step` constructs SliceSugar; an omitted bound stays None
         (its NoneValue), as Python fills it."""
         from sugar_lift_py_tests.sugar.slice_sugar import SliceSugar
