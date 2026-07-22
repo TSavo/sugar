@@ -2,12 +2,11 @@
 
 A JoinedStr is the CONCATENATION of its parts -- literal chunks (StringLiteral)
 and interpolations (FormattedValue). It folds them left with `add`, the same
-string concatenation `+` uses: ground chunks fold to one string, an interpolated
-symbol becomes a `str.++` coordinate. A FormattedValue is `format(value, spec)`:
-with no conversion and no format spec it is the value's own `__format__`
-coordinate (`call:__format__(value, "")`), decidable without inventing a
-rendered string. A conversion (`!r`/`!s`/`!a`) or a format spec (`{x:>10}`) is
-not lifted yet -- LOUD, never a silently dropped modifier.
+string concatenation `+` uses. A FormattedValue projects the Python reference's
+opaque ``python:fstring_value(value, conversion, format_spec)`` coordinate.
+Conversion and format spec remain typed operands: absence is explicit ``None``
+and a present spec is a nested ``python:fstring`` coordinate. The coordinate
+carries Python's conversion-then-format meaning without claiming execution.
 """
 
 from __future__ import annotations
@@ -21,9 +20,11 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class FormattedValueSugar(Sugar):
-    """`{value}` inside an f-string -- format(value) with an empty spec."""
+    """A Python-reference formatted-value coordinate, without execution."""
 
     value: Sugar
+    conversion: str | None
+    format_spec: JoinedStrSugar | None
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -31,10 +32,36 @@ class FormattedValueSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.outcome import Incomplete
 
-        return self.value.desugar(ctx).and_then(
-            lambda value: value.format_data_model(StringValue(""), self.site, ctx)
+        value = self.value.desugar(ctx)
+        if isinstance(value, Incomplete):
+            return value
+        if self.format_spec is None:
+            format_spec_term = ctor("None", [])
+        else:
+            format_spec = self.format_spec.reference_term(ctx)
+            if isinstance(format_spec, Incomplete):
+                return format_spec
+            format_spec_term = format_spec.value
+        conversion_term = (
+            ctor("None", [])
+            if self.conversion is None
+            else str_const(self.conversion)
+        )
+        return Complete(
+            SymbolicValue(
+                ctor(
+                    "python:fstring_value",
+                    [
+                        value.value.to_term(owner="FormattedValueSugar.value"),
+                        conversion_term,
+                        format_spec_term,
+                    ],
+                )
+            )
         )
 
 
@@ -70,3 +97,18 @@ class JoinedStrSugar(Sugar):
                 return right
             acc = acc.value.add(right.value, self.site)
         return acc
+
+    def reference_term(self, ctx: object = None) -> Outcome:
+        """Project this JoinedStr as the reference ``python:fstring`` ctor."""
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete, Incomplete
+
+        terms = []
+        for part in self.parts:
+            projected = part.desugar(ctx)
+            if isinstance(projected, Incomplete):
+                return projected
+            terms.append(
+                projected.value.to_term(owner="JoinedStrSugar.reference_term")
+            )
+        return Complete(ctor("python:fstring", terms))

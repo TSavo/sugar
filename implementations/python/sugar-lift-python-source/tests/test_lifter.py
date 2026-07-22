@@ -1530,6 +1530,42 @@ def test_fstring_roundtrip_is_structurally_stable() -> None:
     assert cid_of_json(body) == cid_of_json(_return(term))
 
 
+def test_fstring_decoder_rejects_swapped_conversion_and_format_spec() -> None:
+    swapped = _fstring(
+        _fstring_value(
+            _var("x"),
+            conversion=_fstring(_str_const(">10")),
+            format_spec=_str_const("r"),
+        )
+    )
+
+    with pytest.raises(ValueError):
+        compile_body_term(_return(swapped), formals=["x"])
+
+
+@pytest.mark.parametrize(
+    "conversion, format_spec",
+    [
+        (_str_const("q"), None),
+        (None, _str_const(">10")),
+    ],
+)
+def test_fstring_decoder_rejects_malformed_typed_operands(
+    conversion: dict[str, object] | None,
+    format_spec: dict[str, object] | None,
+) -> None:
+    malformed = _fstring(
+        _fstring_value(
+            _var("x"),
+            conversion=conversion,
+            format_spec=format_spec,
+        )
+    )
+
+    with pytest.raises(ValueError):
+        compile_body_term(_return(malformed), formals=["x"])
+
+
 def test_bare_assert_lifts_to_assert_statement_with_assertion_error_locus() -> None:
     source = "def f(x):\n    assert x\n"
 

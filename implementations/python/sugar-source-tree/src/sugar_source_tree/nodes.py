@@ -3684,13 +3684,41 @@ class FormattedValue(Expression):
         return self._substitute_children(scope)
 
     def _construct_sugar(self):
-        """`{value}` in an f-string. A conversion (!r/!s/!a) or a format spec is
-        not lifted yet -- LOUD rather than a silently dropped modifier."""
+        """Project the Python-reference three-operand formatted-value shape.
+
+        CPython carries conversion as ``-1`` or the codepoint for exactly
+        ``a``/``r``/``s``.  Anything else is malformed backend testimony, not
+        a new language arm.  The optional format spec remains its own nested
+        JoinedStr sugar; neither operand is dropped or replaced with an empty
+        string.
+        """
         from sugar_lift_py_tests.sugar.fstring_sugar import FormattedValueSugar
 
-        if self.conversion != -1 or self.format_spec is not None:
-            return super()._construct_sugar()
-        return FormattedValueSugar(value=self.value.sugar(), site=self.fragment)
+        if self.conversion == -1:
+            conversion = None
+        elif self.conversion in {ord("a"), ord("r"), ord("s")}:
+            conversion = chr(self.conversion)
+        else:
+            backend_defect(
+                owner="FormattedValue._construct_sugar",
+                observed=f"unsupported f-string conversion slot {self.conversion!r}",
+                requested="-1 or the codepoint for 'a', 'r', or 's'",
+                fix="repair the backend adapter; never invent a conversion",
+            )
+        format_spec = self.format_spec
+        if format_spec is not None and not isinstance(format_spec, JoinedStr):
+            backend_defect(
+                owner="FormattedValue._construct_sugar",
+                observed=f"format_spec constructed as {type(format_spec).__name__}",
+                requested="None or a nested JoinedStr",
+                fix="repair the backend adapter; never coerce a bare expression",
+            )
+        return FormattedValueSugar(
+            value=self.value.sugar(),
+            conversion=conversion,
+            format_spec=format_spec.sugar() if format_spec is not None else None,
+            site=self.fragment,
+        )
 
 
 class JoinedStr(Expression):
