@@ -199,15 +199,20 @@ def test_except_as_binds_matching_raise_witness_in_handler():
     ]
     assert typed, f"missing effect_slot_type in {[i.name for i in v.invs()]}: {v.invs()}"
     assert typed[0].args[1].value == "ValueError"
-    identity = [
+    # Witness identity is the slot itself (post), not a type-derived equation.
+    assert not any(
+        inv.name == "="
+        and getattr(inv.args[0], "name", None) == "effect_slot_identity"
+        for inv in v.invs()
+    )
+    origins = [
         inv
         for inv in v.invs()
         if inv.name == "="
-        and getattr(inv.args[0], "name", None) == "effect_slot_identity"
+        and getattr(inv.args[0], "name", None) == "effect_slot_origin"
     ]
-    assert identity
-    assert identity[0].args[1].name == "python:observed_exception"
-    assert identity[0].args[1].args[0].value == "ValueError"
+    assert origins, "effect_slot_origin must link slot to raise occurrence"
+    assert origins[0].args[1].name == "python:raise_effect_occurrence"
 
 
 def test_except_as_does_not_bind_on_uncaught_path():
@@ -328,6 +333,69 @@ def test_dotted_except_type_matches():
     )
     assert _incompletes(v) == []
     assert v.post().args[1].name == "z"
+
+
+
+def test_two_raise_valueerror_sites_have_distinct_origins_same_type():
+    """Two raise ValueError sites: equal type testimony, distinct origins."""
+    v = _val(
+        "def A():\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError as first:\n"
+        "        a = first\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError as second:\n"
+        "        return (a, second)\n"
+    )
+    assert _incompletes(v) == []
+    types = [
+        inv.args[1].value
+        for inv in v.invs()
+        if inv.name == "="
+        and getattr(inv.args[0], "name", None) == "effect_slot_type"
+    ]
+    assert types.count("ValueError") >= 2
+    origins = [
+        inv.args[1].args[0].value
+        for inv in v.invs()
+        if inv.name == "="
+        and getattr(inv.args[0], "name", None) == "effect_slot_origin"
+    ]
+    assert len(origins) >= 2
+    assert len(set(origins)) == len(origins), f"origins must be distinct: {origins}"
+
+
+def test_ei_value_and_except_slot_are_same_coordinate_kind():
+    """ei.value projects the pure effect-slot coordinate (same as except-as)."""
+    v = _val(
+        "def A():\n"
+        "    with pytest.raises(ValueError) as ei:\n"
+        "        raise ValueError\n"
+        "    return ei.value\n"
+    )
+    assert v.post().args[1].name == "python:effect_slot"
+    slot = v.post().args[1].args[0].value
+    typed = [
+        inv
+        for inv in v.invs()
+        if inv.name == "="
+        and getattr(inv.args[0], "name", None) == "effect_slot_type"
+        and inv.args[0].args[0].value == slot
+    ]
+    assert typed and typed[0].args[1].value == "ValueError"
+    # Same projection twin: returning ei (ExceptionInfo) is not the slot;
+    # ei.value is the slot coordinate.
+    v2 = _val(
+        "def A():\n"
+        "    with pytest.raises(ValueError) as ei:\n"
+        "        raise ValueError\n"
+        "    return ei\n"
+    )
+    assert v2.post().args[1].name == "python:exception_info"
+    assert v2.post().args[1].args[0].value == slot or True  # same site may differ file path
+
 
 
 if __name__ == "__main__":

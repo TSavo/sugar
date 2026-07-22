@@ -45,7 +45,11 @@ def test_router_match_once_emits_binding_facts() -> None:
     from sugar_lift_py_tests.effect_router import EffectBinding, route
     from sugar_lift_py_tests.outcome import Incomplete
 
-    entries = (Incomplete(RaiseEffect(exception_name="ValueError")),)
+    entries = (
+        Incomplete(
+            RaiseEffect(exception_name="ValueError", occurrence="t.py:2:4")
+        ),
+    )
     out = route(
         entries,
         Expects(matcher=EffectMatcher(kind="raise", name="ValueError")),
@@ -65,7 +69,8 @@ def test_router_match_once_emits_binding_facts() -> None:
         else:
             names.append(getattr(f, "name", None))
     assert "effect_slot_type" in names
-    assert "effect_slot_identity" in names
+    assert "effect_slot_identity" not in names
+    assert "effect_slot_origin" in names
 
 
 def test_wrong_match_does_not_bind_slot() -> None:

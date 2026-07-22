@@ -60,5 +60,7 @@ class RaiseSugar(Sugar):
                 exception_name=self.exception_name,
                 blame=blame,
                 source_sha256=source_sha256,
+                # Occurrence is the raise site — not a type-level identity.
+                occurrence=blame,
             )
         )
