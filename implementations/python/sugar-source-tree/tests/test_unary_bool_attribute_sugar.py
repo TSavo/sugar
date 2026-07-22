@@ -38,9 +38,10 @@ def test_unary_minus_and_invert_emit_symbolic_ops():
 def test_not_is_truth_then_negate():
     # if not (z == 1): the guard is not(z == 1), so the body's fact rides under it.
     invs = _invs("def A(z):\n    if not (z == 1):\n        assert z == z\n    return z\n")
-    guard = invs[0].operands[0]  # antecedent of the guarded implication
-    assert guard.kind == "not"
-    assert guard.operands[0].name == "py.eq"
+    authentication = invs[0]
+    observed = authentication.operands[0].operands[1]
+    assert observed.kind == "not"
+    assert observed.operands[0].name == "py.eq"
 
 
 # ---- BoolOp ------------------------------------------------------------------

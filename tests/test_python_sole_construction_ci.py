@@ -21,6 +21,7 @@ AXIS_COMMANDS = {
     "R_finite_cap_opaque_completions = 0": ("finite_cap_opaque_completion_law.py"),
     "R_finite_unfold_compact_gaps = 0": ("finite_unfold_compact_projection_law.py"),
     "R_source_via_execution = 0": "source_via_execution_law.py",
+    "R_no_sugar_in_desugar = 0": "no_sugar_in_desugar_law.py",
 }
 
 

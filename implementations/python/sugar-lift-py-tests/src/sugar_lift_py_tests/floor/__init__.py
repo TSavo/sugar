@@ -3,6 +3,10 @@ from __future__ import annotations
 from .array_literal import ArrayLiteral
 from .async_function_callable import AsyncFunctionCallable
 from .block_value import BlockValue
+from .branch_result_coordinate import (
+    BranchResultAuthentication,
+    BranchResultCoordinate,
+)
 from .bound_var import BoundVar
 from .module_bound_var import ModuleBoundVar
 from .named_expression_value import NamedExpressionValue
@@ -77,6 +81,8 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ArrayLiteral,
     AsyncFunctionCallable,
     BlockValue,
+    BranchResultAuthentication,
+    BranchResultCoordinate,
     BoundVar,
     NamedExpressionValue,
     NativeCallableValue,

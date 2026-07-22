@@ -52,6 +52,7 @@ class IfSugar(Sugar):
     test's sugar and each branch's statement sugars already built."""
 
     test: Sugar
+    branch_slot: object
     then_body: tuple  # the then-branch statements' sugars, in source order
     else_body: tuple  # the else-branch statements' sugars (empty if no else)
     site: object = dataclass_field(compare=False, default=None)
@@ -70,7 +71,10 @@ class IfSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.floor.branch_result_coordinate import (
+            BranchResultAuthentication,
+            branch_result_guard,
+        )
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Completed, Halted, Incomplete
@@ -78,30 +82,22 @@ class IfSugar(Sugar):
             reduce_block_to_exitset,
         )
 
-        then_exits = reduce_block_to_exitset(self.then_body)
-        else_exits = reduce_block_to_exitset(self.else_body)
-
-        def entries_are_empty(exits):
-            return all(
-                isinstance(exit_, Completed) and not exit_.value.entries
-                for exit_ in exits.exits
-            )
-
-        # A purely TEMPORAL if -- branches that only bind -- is spent by
-        # substitute (its binding became an IfExp phi threaded past the if), so
-        # both branches reduce to nothing. It contributes no meaning and needs no
-        # guard: the condition is not even consulted (an inert if states nothing,
-        # whatever its test). This is the common residue of the phi rewrite.
-        if entries_are_empty(then_exits) and entries_are_empty(else_exits):
-            return Complete(BlockValue((), can_fall_through=True))
-
         # Branches carry facts/effects: the guard is the condition's TRUTHINESS
         # as a predicate. `.truth` is uniform -- a predicate condition (`if a ==
         # b`) stands as its own formula, a bare value (`if c`) emits the Python
         # `py.truthy(c)` relation. A ground bool (`if True:`) folds to a literal
         # with no formula and is not lifted yet -- LOUD, never guard by nothing.
         cond = self.test.desugar(ctx)
-        formula = predicate_formula(cond.value, self.site)
+        if not isinstance(cond, Complete):
+            return cond
+        observed_formula = predicate_formula(cond.value, self.site)
+        formula = branch_result_guard(self.branch_slot, self.site)
+        authentication = BranchResultAuthentication(
+            self.branch_slot, observed_formula, self.site
+        )
+
+        then_exits = reduce_block_to_exitset(self.then_body)
+        else_exits = reduce_block_to_exitset(self.else_body)
 
         # If is union in the exit algebra: each branch is restricted to its
         # polarity, then the partitions normalize together. In particular, a
@@ -144,5 +140,6 @@ class IfSugar(Sugar):
                 guarded_bindings=(),
                 can_fall_through=can_fall_through,
                 continuation_guard=continuation_guard,
+                unconditional_entries=(authentication,),
             )
         )
