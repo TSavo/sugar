@@ -44,17 +44,23 @@ class ShadowNode(BackendNode):
     layer above cannot tell a shadow child from a source child, and must not.
     """
 
-    __slots__ = ("_kind", "_span", "_slots")
+    __slots__ = ("_kind", "_span", "_slots", "_lexically_bound_names")
 
     def __init__(
         self,
         kind: str,
         span: Span,
         slots: Tuple[Tuple[str, Slot], ...],
+        lexically_bound_names: frozenset[str] = frozenset(),
     ) -> None:
         self._kind = kind
         self._span = span
         self._slots = slots
+        self._lexically_bound_names = lexically_bound_names
+
+    @property
+    def lexically_bound_names(self) -> frozenset[str]:
+        return self._lexically_bound_names
 
     def describe(self) -> Description:
         return Description(
@@ -76,7 +82,12 @@ def _handle_of(node: Node) -> BackendNode:
     return node.ref  # type: ignore[attr-defined]
 
 
-def rewrite(origin: Node, **children: object) -> Node:
+def rewrite(
+    origin: Node,
+    *,
+    lexically_bound_names: frozenset[str] | None = None,
+    **children: object,
+) -> Node:
     """Produce a shadow-backed rewrite of ``origin`` with some child slots
     replaced, keeping its kind, span and every unchanged slot.
 
@@ -103,7 +114,13 @@ def rewrite(origin: Node, **children: object) -> Node:
             )
         else:  # an optional single child given as a Node was handled above
             new_slots.append((name, MaybeChild(_handle_of(replacement))))
-    shadow = ShadowNode(desc.kind, desc.raw_span or origin.span, tuple(new_slots))
+    inherited = getattr(origin.ref, "lexically_bound_names", frozenset())
+    shadow = ShadowNode(
+        desc.kind,
+        desc.raw_span or origin.span,
+        tuple(new_slots),
+        inherited if lexically_bound_names is None else lexically_bound_names,
+    )
     # A rewrite inherits the origin's audit channel: the shadow tree reports
     # its gaps to the same reporter the source tree did.
     return materialize(origin.unit, shadow, origin.reporter)

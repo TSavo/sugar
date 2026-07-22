@@ -23,6 +23,7 @@ This cut covers class ``__exit__`` methods only. Generator
 from __future__ import annotations
 
 import ast
+import symtable
 from dataclasses import dataclass
 from typing import Iterator, Literal
 
@@ -54,6 +55,7 @@ class DefinitionMemento:
     source_cid: str
     filename: str
     exit_fn: ast.FunctionDef | ast.AsyncFunctionDef
+    determining_classes: tuple[tuple[str, str], ...]
 
 
 class ExitDispositionUnproven(Exception):
@@ -226,18 +228,18 @@ def _resolve_relative(
     return ".".join(base) if base else None
 
 
-def _find_class_exit(
-    tree: ast.Module, class_name: str
+def _direct_class_exit(
+    cls: ast.ClassDef,
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == class_name:
-            for item in node.body:
-                if (
-                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and item.name == "__exit__"
-                ):
-                    return item
-    return None
+    return next(
+        (
+            item
+            for item in cls.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and item.name == "__exit__"
+        ),
+        None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +270,236 @@ def _module_level_nodes(tree: ast.Module) -> Iterator[ast.AST]:
             stack.extend(node.body)
 
 
+def _direct_bound_names(node: ast.AST) -> Iterator[str]:
+    if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        yield node.name
+    elif isinstance(node, ast.Import):
+        for alias in node.names:
+            yield alias.asname or alias.name.split(".")[0]
+    elif isinstance(node, ast.ImportFrom):
+        for alias in node.names:
+            if alias.name != "*":
+                yield alias.asname or alias.name
+    elif isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                yield target.id
+    elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        yield node.target.id
+
+
+class _ModuleBindingCensus(ast.NodeVisitor):
+    """Count one spelling's module-scope bindings without entering scopes."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.bindings: list[ast.AST] = []
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        if node.name == self.name:
+            self.bindings.append(node)
+        for expr in (*node.decorator_list, *node.bases):
+            self.visit(expr)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
+        for type_param in getattr(node, "type_params", ()):
+            self.visit(type_param)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        if node.name == self.name:
+            self.bindings.append(node)
+        self._visit_function_header(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        if node.name == self.name:
+            self.bindings.append(node)
+        self._visit_function_header(node)
+
+    def _visit_function_header(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> None:
+        args = node.args
+        for expr in (
+            *node.decorator_list,
+            *args.defaults,
+            *(default for default in args.kw_defaults if default is not None),
+        ):
+            self.visit(expr)
+        for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+            if arg.annotation is not None:
+                self.visit(arg.annotation)
+        for arg in (args.vararg, args.kwarg):
+            if arg is not None and arg.annotation is not None:
+                self.visit(arg.annotation)
+        if node.returns is not None:
+            self.visit(node.returns)
+        for type_param in getattr(node, "type_params", ()):
+            self.visit(type_param)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        del node
+
+    def visit_Import(self, node: ast.Import) -> None:
+        self.bindings.extend(
+            node
+            for alias in node.names
+            if (alias.asname or alias.name.split(".")[0]) == self.name
+        )
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if any(alias.name == "*" for alias in node.names):
+            self.bindings.append(node)
+        self.bindings.extend(
+            node
+            for alias in node.names
+            if alias.name != "*" and (alias.asname or alias.name) == self.name
+        )
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == self.name:
+                self.bindings.append(node)
+            else:
+                self.visit(target)
+        self.visit(node.value)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if isinstance(node.target, ast.Name) and node.target.id == self.name:
+            self.bindings.append(node)
+        else:
+            self.visit(node.target)
+        self.visit(node.annotation)
+        if node.value is not None:
+            self.visit(node.value)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        if isinstance(node.target, ast.Name) and node.target.id == self.name:
+            self.bindings.append(node)
+        else:
+            self.visit(node.target)
+        self.visit(node.value)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, (ast.Store, ast.Del)) and node.id == self.name:
+            self.bindings.append(node)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name == self.name:
+            self.bindings.append(node)
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        if node.name == self.name:
+            self.bindings.append(node)
+        self.generic_visit(node)
+
+    def visit_MatchStar(self, node: ast.MatchStar) -> None:
+        if node.name == self.name:
+            self.bindings.append(node)
+
+
+def _unique_unconditional_binding(tree: ast.Module, name: str) -> ast.AST | None:
+    """Return one direct module binding; all ambiguity remains unproven."""
+    census = _ModuleBindingCensus(name)
+    census.visit(tree)
+    if len(census.bindings) != 1:
+        return None
+    binding = census.bindings[0]
+    if not any(name in set(_direct_bound_names(node)) for node in tree.body):
+        return None
+    return binding
+
+
+def _class_creation_is_stable(node: ast.ClassDef) -> bool:
+    """Whether source pins the class object created for this definition."""
+    if node.decorator_list or node.keywords:
+        return False
+    if any(isinstance(base, ast.Subscript) for base in node.bases):
+        return False
+    transforming_hooks = {"__init_subclass__", "__class_getitem__"}
+    return not any(
+        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and item.name in transforming_hooks
+        for item in node.body
+    )
+
+
+def _dotted_ast(node: ast.AST) -> tuple[str, ...] | None:
+    if isinstance(node, ast.Name):
+        return (node.id,)
+    if isinstance(node, ast.Attribute):
+        base = _dotted_ast(node.value)
+        if base is not None:
+            return (*base, node.attr)
+    return None
+
+
+def _module_uses_class_unsafely(
+    tree: ast.Module, class_coordinate: tuple[str, ...]
+) -> bool:
+    """Refuse every detectable use except aliasing, basing, and managed use.
+
+    The coordinate is either a local class spelling (``Manager``) or the
+    authenticated subject head path (``manager.Manager``). Simple module-scope
+    aliases are closed to a fixed point before uses are classified.
+    """
+    aliases: set[str] = set()
+    alias_nodes: set[int] = set()
+
+    def is_coordinate(node: ast.AST) -> bool:
+        dotted = _dotted_ast(node)
+        return dotted == class_coordinate or (
+            isinstance(node, ast.Name) and node.id in aliases
+        )
+
+    assignments = [
+        node
+        for node in _module_level_nodes(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+    ]
+    coordinate_binding_nodes = {
+        id(assignment.targets[0])
+        for assignment in assignments
+        if len(class_coordinate) == 1
+        and assignment.targets[0].id == class_coordinate[0]
+    }
+    changed = True
+    while changed:
+        changed = False
+        for assignment in assignments:
+            target = assignment.targets[0]
+            if target.id in aliases or not is_coordinate(assignment.value):
+                continue
+            aliases.add(target.id)
+            alias_nodes.update((id(target), id(assignment.value)))
+            changed = True
+
+    parents: dict[int, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[id(child)] = parent
+
+    for node in ast.walk(tree):
+        if not is_coordinate(node):
+            continue
+        if id(node) in alias_nodes or id(node) in coordinate_binding_nodes:
+            continue
+        parent = parents.get(id(node))
+        if isinstance(parent, ast.ClassDef) and any(node is b for b in parent.bases):
+            continue
+        if isinstance(parent, ast.Call) and parent.func is node:
+            call_parent = parents.get(id(parent))
+            if (
+                isinstance(call_parent, ast.withitem)
+                and call_parent.context_expr is parent
+            ):
+                continue
+        return True
+    return False
+
+
 def _lookup_name_in_module(
     module_name: str, name: str, *, depth: int = 0
 ) -> DefinitionMemento | None:
@@ -278,33 +510,56 @@ def _lookup_name_in_module(
     if parsed is None:
         return None
     tree, _source, filename, source_cid = parsed
+    if _module_uses_class_unsafely(tree, (name,)):
+        return None
 
-    # 1. Class definition in this module (any nesting depth for ClassDef name).
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == name:
-            exit_fn = _find_class_exit(tree, name)
-            if exit_fn is None:
-                return None
-            return DefinitionMemento(
-                module=module_name,
-                class_name=name,
-                source_cid=source_cid,
-                filename=filename,
-                exit_fn=exit_fn,
-            )
-    # Class under module-level If (rare)
+    # 1. Class definition in this module. A direct override owns the
+    # disposition. Otherwise admit only one statically named base; multiple or
+    # computed bases remain ambiguous and therefore unproven.
     for node in _module_level_nodes(tree):
         if isinstance(node, ast.ClassDef) and node.name == name:
-            exit_fn = _find_class_exit(tree, name)
-            if exit_fn is None:
+            if _unique_unconditional_binding(tree, name) is not node:
+                return None
+            if not _class_creation_is_stable(node):
+                return None
+            exit_fn = _direct_class_exit(node)
+            if exit_fn is not None:
+                return DefinitionMemento(
+                    module=module_name,
+                    class_name=name,
+                    source_cid=source_cid,
+                    filename=filename,
+                    exit_fn=exit_fn,
+                    determining_classes=((module_name, name),),
+                )
+            if len(node.bases) != 1 or not isinstance(node.bases[0], ast.Name):
+                return None
+            binding = _unique_unconditional_binding(tree, node.bases[0].id)
+            if (
+                binding is None
+                or getattr(binding, "lineno", node.lineno) >= node.lineno
+            ):
+                return None
+            inherited = _lookup_name_in_module(
+                module_name, node.bases[0].id, depth=depth + 1
+            )
+            if inherited is None:
                 return None
             return DefinitionMemento(
-                module=module_name,
-                class_name=name,
-                source_cid=source_cid,
-                filename=filename,
-                exit_fn=exit_fn,
+                module=inherited.module,
+                class_name=inherited.class_name,
+                source_cid=inherited.source_cid,
+                filename=inherited.filename,
+                exit_fn=inherited.exit_fn,
+                determining_classes=(
+                    (module_name, name),
+                    *inherited.determining_classes,
+                ),
             )
+
+    binding = _unique_unconditional_binding(tree, name)
+    if binding is None:
+        return None
 
     # 2. from X import name / from X import Y as name / star-import follow
     for node in _module_level_nodes(tree):
@@ -312,6 +567,8 @@ def _lookup_name_in_module(
             continue
         for alias in node.names:
             if alias.name == "*":
+                if binding is not node:
+                    return None
                 target = _resolve_relative(
                     module_name, filename, node.level, node.module
                 )
@@ -324,6 +581,8 @@ def _lookup_name_in_module(
             bound = alias.asname or alias.name
             if bound != name:
                 continue
+            if binding is not node:
+                return None
             target = _resolve_relative(
                 module_name, filename, node.level, node.module
             )
@@ -336,6 +595,8 @@ def _lookup_name_in_module(
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             t = node.targets[0]
             if isinstance(t, ast.Name) and t.id == name and isinstance(node.value, ast.Name):
+                if binding is not node:
+                    return None
                 return _lookup_name_in_module(
                     module_name, node.value.id, depth=depth + 1
                 )
@@ -343,7 +604,29 @@ def _lookup_name_in_module(
     return None
 
 
-def _local_import_bindings(source: str) -> dict[str, tuple[str, str]]:
+def _authenticated_export_names(module_name: str) -> tuple[str, ...]:
+    """Uniquely bound names a statically loaded module exposes."""
+    parsed = _parse_module(module_name)
+    if parsed is None:
+        return ()
+    tree, _source, _filename, _source_cid = parsed
+    candidates = {
+        name
+        for node in _module_level_nodes(tree)
+        for name in _direct_bound_names(node)
+    }
+    return tuple(
+        sorted(
+            name
+            for name in candidates
+            if _unique_unconditional_binding(tree, name) is not None
+        )
+    )
+
+
+def _local_import_bindings(
+    source: str,
+) -> tuple[ast.Module | None, dict[str, tuple[str, str, ast.AST]]]:
     """Map local bound name → (kind, payload).
 
     kind ``module``: payload is absolute module name (``import numpy as np``).
@@ -353,25 +636,25 @@ def _local_import_bindings(source: str) -> dict[str, tuple[str, str]]:
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return {}
-    out: dict[str, tuple[str, str]] = {}
+        return None, {}
+    out: dict[str, tuple[str, str, ast.AST]] = {}
     for node in tree.body:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.asname:
                     # import numpy as np → np denotes module numpy
-                    out[alias.asname] = ("module", alias.name)
+                    out[alias.asname] = ("module", alias.name, node)
                 else:
                     # import a.b.c binds only top-level name `a`
                     top = alias.name.split(".")[0]
-                    out[top] = ("module", top)
+                    out[top] = ("module", top, node)
         if isinstance(node, ast.ImportFrom) and node.module is not None and node.level == 0:
             for alias in node.names:
                 if alias.name == "*":
                     continue
                 bound = alias.asname or alias.name
-                out[bound] = ("from", f"{node.module}.{alias.name}")
-    return out
+                out[bound] = ("from", f"{node.module}.{alias.name}", node)
+    return tree, out
 
 
 def _dotted_of_sugar_node(node) -> list[str] | None:
@@ -388,8 +671,74 @@ def _dotted_of_sugar_node(node) -> list[str] | None:
     return None
 
 
+def _lexically_bound_at_coordinate(
+    source: str, filename: str, line: int
+) -> frozenset[str]:
+    """Names local to any function enclosing ``line``.
+
+    AST supplies the lexical nesting coordinate; ``symtable`` supplies
+    Python's whole-scope binding decision, so conditional/late assignments
+    and captured outer locals are refused without executing the module.
+    """
+    try:
+        tree = ast.parse(source)
+        root = symtable.symtable(source, filename, "exec")
+    except (SyntaxError, ValueError):
+        return frozenset()
+
+    enclosing_scopes = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and getattr(node, "end_lineno", None) is not None
+        and node.lineno < line <= node.end_lineno
+    ]
+    if enclosing_scopes:
+        immediate_scope = min(
+            enclosing_scopes,
+            key=lambda node: (node.end_lineno - node.lineno, -node.lineno),
+        )
+        if isinstance(immediate_scope, ast.ClassDef):
+            # Class bodies execute through LOAD_NAME against a live namespace,
+            # which may be supplied by metaclass __prepare__. Source imports
+            # cannot authenticate that lookup. Methods are inner functions and
+            # therefore do not take this refusal arm.
+            return frozenset({"*"})
+
+    tables = []
+    pending = list(root.get_children())
+    while pending:
+        table = pending.pop()
+        tables.append(table)
+        pending.extend(table.get_children())
+
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        end_line = getattr(node, "end_lineno", None)
+        if end_line is None or not (node.lineno < line <= end_line):
+            continue
+        matches = [
+            table
+            for table in tables
+            if table.get_name() == node.name and table.get_lineno() == node.lineno
+        ]
+        if len(matches) != 1:
+            # Ambiguous scope testimony can only reduce admission.
+            return frozenset({"*"})
+        bound.update(
+            symbol.get_name()
+            for symbol in matches[0].get_symbols()
+            if symbol.is_local() and not symbol.get_name().startswith(".")
+        )
+    return frozenset(bound)
+
+
 def resolve_definition_memento_from_manager_expr(
     manager_node,
+    *,
+    lexically_bound_names: frozenset[str] = frozenset(),
 ) -> DefinitionMemento | None:
     """Static import binding → SourceOracle modules → class ``__exit__`` memento.
 
@@ -403,33 +752,38 @@ def resolve_definition_memento_from_manager_expr(
     source = getattr(unit, "source", None)
     if not source:
         return None
-    bindings = _local_import_bindings(source)
+    source_tree, bindings = _local_import_bindings(source)
+    if source_tree is None:
+        return None
     parts = _dotted_of_sugar_node(manager_node.func)
     if not parts:
         return None
 
     head, *rest = parts
+    try:
+        manager_line = manager_node.line_col_span().start_line
+    except Exception:
+        return None
+    coordinate_bound = _lexically_bound_at_coordinate(
+        source, getattr(unit, "filename", "<unknown>"), manager_line
+    )
+    if "*" in coordinate_bound or head in (lexically_bound_names | coordinate_bound):
+        return None
     if head not in bindings:
         return None
-    kind, payload = bindings[head]
+    kind, payload, binding_node = bindings[head]
     if payload is None:
+        return None
+    if _unique_unconditional_binding(source_tree, head) is not binding_node:
         return None
 
     if kind == "module":
         # head is a module binding; rest are attributes into that package.
-        if not rest:
-            return None  # calling a module is not a class CM
-        module_name = payload
-        # Walk attributes: each step is either a submodule or a name in module
-        for i, attr in enumerate(rest):
-            is_last = i == len(rest) - 1
-            if is_last:
-                return _lookup_name_in_module(module_name, attr)
-            # Non-final: treat as submodule package path
-            module_name = f"{module_name}.{attr}"
-        return None
+        if len(rest) != 1:
+            return None
+        memento = _lookup_name_in_module(payload, rest[0])
 
-    if kind == "from":
+    elif kind == "from":
         # from mod import name [as head]; rest must be empty for Class() form
         if rest:
             # from mod import pkg; pkg.Class — rare; treat payload module.attr
@@ -439,16 +793,62 @@ def resolve_definition_memento_from_manager_expr(
         if "." not in payload:
             return None
         mod, _, name = payload.rpartition(".")
-        return _lookup_name_in_module(mod, name)
+        memento = _lookup_name_in_module(mod, name)
 
-    return None
+    else:
+        return None
+
+    if memento is None:
+        return None
+
+    subject_coordinates = {tuple(parts)}
+    determining = set(memento.determining_classes)
+
+    def resolves_to(
+        class_module: str, class_name: str, target: tuple[str, str]
+    ) -> bool:
+        resolved = _lookup_name_in_module(class_module, class_name)
+        return (
+            resolved is not None
+            and resolved.determining_classes
+            and resolved.determining_classes[0] == target
+        )
+
+    for local_name, (binding_kind, binding_payload, _node) in bindings.items():
+        if binding_kind == "from" and "." in binding_payload:
+            bound_module, _, bound_name = binding_payload.rpartition(".")
+            for target in determining:
+                if (bound_module, bound_name) == target or resolves_to(
+                    bound_module, bound_name, target
+                ):
+                    subject_coordinates.add((local_name,))
+        elif binding_kind == "module":
+            for exported_name in _authenticated_export_names(binding_payload):
+                resolved = _lookup_name_in_module(binding_payload, exported_name)
+                if (
+                    resolved is not None
+                    and resolved.determining_classes
+                    and resolved.determining_classes[0] in determining
+                ):
+                    subject_coordinates.add((local_name, exported_name))
+
+    if any(
+        _module_uses_class_unsafely(source_tree, coordinate)
+        for coordinate in subject_coordinates
+    ):
+        return None
+    return memento
 
 
 def prove_exit_disposition_from_manager_expr(
     manager_node,
+    *,
+    lexically_bound_names: frozenset[str] = frozenset(),
 ) -> ExitDispositionProof | None:
     """Static resolve + return proof. None → RuntimeSelected."""
-    memento = resolve_definition_memento_from_manager_expr(manager_node)
+    memento = resolve_definition_memento_from_manager_expr(
+        manager_node, lexically_bound_names=lexically_bound_names
+    )
     if memento is None:
         return None
     try:
