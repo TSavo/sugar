@@ -144,7 +144,6 @@ class TemporalContext:
         fix: str,
     ) -> NoReturn:
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         info = FactoryGapInfo(
@@ -156,15 +155,4 @@ class TemporalContext:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role=requested,
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=blame,
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)

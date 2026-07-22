@@ -1214,7 +1214,6 @@ def _force_floor_gap(
     fix: str,
 ) -> NoReturn:
     from sugar_lift_py_tests.gap.panic import factory_panic
-    from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
     from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
     info = FactoryGapInfo(
@@ -1226,18 +1225,7 @@ def _force_floor_gap(
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.PROJECTION,
     )
-    factory_panic(
-        info,
-        FactoryAuditRow(
-            role="force_floor",
-            status=FactoryAuditStatus.FLOOR_GAP,
-            observed=observed,
-            blame=target_name,
-            selected=None,
-            candidates=[],
-            message=info.message,
-        ),
-    )
+    factory_panic(info)
 
 
 def _ctx_with_curried_args(

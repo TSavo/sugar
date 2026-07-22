@@ -10,7 +10,6 @@ _DECLARED_OPERATION_MODULE = "sugar_lift_py_tests.temporal."
 
 def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
     from sugar_lift_py_tests.gap.panic import factory_panic
-    from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
     from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
     operation_name = type(operation).__name__
@@ -29,18 +28,7 @@ def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
         gap_kind=GapKind.OPERATION,
         gap_locus=GapLocus.METHOD_NAME,
     )
-    factory_panic(
-        info,
-        FactoryAuditRow(
-            role="method_name",
-            status=FactoryAuditStatus.OPERATION_GAP,
-            observed=operation_name,
-            blame=blame,
-            selected=None,
-            candidates=[],
-            message=info.message,
-        ),
-    )
+    factory_panic(info)
 
 
 def _is_declared_operation(operation: object) -> bool:
@@ -55,7 +43,6 @@ def _missing_temporal_floor_gap(
     method_name: str,
 ):
     from sugar_lift_py_tests.gap.panic import factory_panic
-    from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
     from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
     observed = type(receiver).__name__
@@ -71,18 +58,7 @@ def _missing_temporal_floor_gap(
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.CONSTRUCTION,
     )
-    factory_panic(
-        info,
-        FactoryAuditRow(
-            role=method_name,
-            status=FactoryAuditStatus.FLOOR_GAP,
-            observed=observed,
-            blame=blame,
-            selected=None,
-            candidates=[],
-            message=info.message,
-        ),
-    )
+    factory_panic(info)
 
 
 def perform_temporal_operation(
@@ -104,7 +80,6 @@ def perform_temporal_operation(
                 method_name=method_name,
             )
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         operation_name = type(operation).__name__
@@ -120,18 +95,7 @@ def perform_temporal_operation(
             gap_kind=GapKind.OPERATION,
             gap_locus=GapLocus.METHOD_NAME,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role=method_name,
-                status=FactoryAuditStatus.OPERATION_GAP,
-                observed=operation_name,
-                blame=blame,
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
     recorder = None if ctx is None else ctx.record_operation
     if recorder is not None:
         recorder(owner=owner, method_name=method_name, operation=operation)

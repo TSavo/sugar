@@ -10,7 +10,6 @@ from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
 class AuditOnlyGap:
     label: str
     info: dict[str, str]
-    audit_row: FactoryAuditRow
     message: str
 
     def to_json(self) -> dict[str, Any]:
@@ -19,5 +18,4 @@ class AuditOnlyGap:
             "label": self.label,
             "message": self.message,
             "gap": dict(self.info),
-            "auditRow": self.audit_row.to_json(),
         }

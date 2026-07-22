@@ -115,7 +115,6 @@ class FloorValue:
         here, at the FactoryGapInfo boundary, and nowhere earlier.
         """
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         info = FactoryGapInfo(
@@ -131,18 +130,7 @@ class FloorValue:
             ),
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role=requested,
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(blame),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     non_fol_support = False
 
@@ -177,7 +165,6 @@ class FloorValue:
         # rebinds through py.list_append). Absence here is the honest "no".
         del value
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -190,18 +177,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="append_with",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def mint_contribution(self, name, formals):
         # Default: a record entry mints no row of its own.
@@ -229,7 +205,6 @@ class FloorValue:
         # that CAN override: a return becomes a GuardedReturn, an inv becomes
         # an implication. Absence is the honest no.
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         del formula
@@ -243,18 +218,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="guarded",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=observed,
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def inv_contribution(self):
         # Default: a record entry states no inv. InvValue overrides.
@@ -489,7 +453,6 @@ class FloorValue:
         # condition. Values that CAN answer implement truth (concrete folds,
         # symbolic emits py.truthy); absence here is the honest "no".
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -502,25 +465,13 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="truth",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def length(self, site):
         # Default: this value does not stand on the length floor -- it cannot
         # answer len(...). Values that CAN implement length (concrete folds,
         # symbolic stays the call:len coordinate); absence here is the honest "no".
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -533,18 +484,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="length",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def subscript(self, index, site):
         # Default: this value does not stand on the subscript floor -- it cannot
@@ -553,7 +493,6 @@ class FloorValue:
         # here is the honest "no".
         del index
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -566,18 +505,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="subscript",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def attribute(self, name, site):
         # Default: this value does not stand on the attribute floor -- it cannot
@@ -586,7 +514,6 @@ class FloorValue:
         # the honest "no".
         del name
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -599,18 +526,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="attribute",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def contains(self, item, site):
         # Default: this value does not stand on the membership floor -- it cannot
@@ -618,7 +534,6 @@ class FloorValue:
         # coordinate; a concrete container folds; absence here is the honest "no".
         del item
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -631,23 +546,11 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="contains",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def setitem(self, index, value, site):
         del index, value
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -660,23 +563,11 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="setitem",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def delitem(self, index, site):
         del index
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -689,22 +580,10 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="delitem",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def absolute(self, site):
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -717,18 +596,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="absolute",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def py_subscript_coordinate(self, index, site):
         # The legacy symbolic spelling: ctor("py.subscript", [recv, index]).
@@ -771,7 +639,6 @@ class FloorValue:
         # The None arm: a value that CAN implements negate (the bool literals); absence
         # here is the honest "no". No blame arg -- mirror binary_conditional.
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -784,24 +651,12 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="negate",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=observed,
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def unary_minus(self, site):
         # Default: no arithmetic negation floor. TermValue folds; SymbolicValue
         # emits py.neg; absence is the honest "no".
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -814,23 +669,11 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="unary_minus",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def unary_plus(self, site):
         # Default: no unary-plus floor. TermValue / SymbolicValue implement.
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -843,24 +686,12 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="unary_plus",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def bitwise_invert(self, site):
         # Default: no bitwise-not floor. TermValue folds ints; SymbolicValue
         # emits py.invert; absence is the honest "no".
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -873,18 +704,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="bitwise_invert",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def equals(self, other, site):
         # Equality vocabulary is resolved here, once, from construction-time
@@ -996,7 +816,6 @@ class FloorValue:
         # add and gives back the sum (or concat); absence here is the honest "no".
         del other
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -1009,18 +828,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="add",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def subtract(self, other, site):
         # Default: this value does not stand on the subtraction floor -- it cannot
@@ -1028,7 +836,6 @@ class FloorValue:
         # implements subtract and gives back a term; absence here is the honest "no".
         del other
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -1041,18 +848,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="subtract",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def multiply(self, other, site):
         # Default: this value does not stand on the multiplication floor -- it cannot
@@ -1060,7 +856,6 @@ class FloorValue:
         # implements multiply and gives back a product; absence here is the honest "no".
         del other
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -1073,18 +868,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="multiply",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def power(self, other, site):
         del other
@@ -1105,7 +889,6 @@ class FloorValue:
         # implements divide and gives back a quotient; absence here is the honest "no".
         del other
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -1118,18 +901,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="divide",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def modulo(self, other, site):
         # Default: this value does not stand on the modulo floor -- it cannot answer
@@ -1137,7 +909,6 @@ class FloorValue:
         # implements modulo and gives back a remainder; absence here is the honest "no".
         del other
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -1150,23 +921,11 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="modulo",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def floor_divide(self, other, site):
         del other
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -1179,23 +938,11 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="floor_divide",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def right_shift(self, other, site):
         del other
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -1208,18 +955,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="right_shift",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(site),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def bitwise_and(self, other, site):
         return self._runtime_bitwise_gap(other, site, "bitwise_and", "and")
@@ -1261,7 +997,6 @@ class FloorValue:
 
     def to_term(self, *, owner: str) -> "Term":
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -1274,22 +1009,10 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.PROJECTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role="to_term",
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=observed,
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def _operation_construction_gap(self, operation: Any, method_name: str) -> NoReturn:
         from sugar_lift_py_tests.gap.panic import factory_panic
-        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
         from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         observed = type(self).__name__
@@ -1304,18 +1027,7 @@ class FloorValue:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role=method_name,
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(blame),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
     def test_python_type(self, value, site):
         """Only a ``python:type`` coordinate may dispatch a vendor type test."""
