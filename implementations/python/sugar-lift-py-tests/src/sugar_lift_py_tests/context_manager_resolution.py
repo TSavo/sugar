@@ -98,6 +98,11 @@ class ResolvedContractRefsV1:
             ) from exc
 
 
+@dataclass(frozen=True)
+class TreeConstructionContextV1:
+    contract_refs: ResolvedContractRefsV1
+
+
 _GAP_KINDS = frozenset({
     "runtime-selected", "unresolved-symbol", "ambiguous-symbol",
     "wrong-contract-kind", "signature-mismatch", "unauthenticated-member",
@@ -135,7 +140,7 @@ def _resolution_cid_preimage(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _hash_json(raw: Any) -> str:
-    return blake3_512_of(encode_jcs(_json_value(raw)))
+    return blake3_512_of(encode_jcs(_json_value(raw)).encode("utf-8"))
 
 
 def _decode_ref(raw: Any) -> ContextManagerContractRefV1:

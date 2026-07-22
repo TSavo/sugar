@@ -55,7 +55,11 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use sugar_ir_compiler::registry::Registry as CompilerRegistry;
-use sugar_linker::{link, LinkerError, LinkerErrorKind, LinkerInputs};
+use sugar_linker::{
+    link, AuthenticatedContextManagerCatalog, ContextManagerContractDemandV1, LinkerError,
+    LinkerErrorKind, LinkerInputs, ResolvedContractRefsV1, SourceFragmentCoordinateV1, Symbol,
+};
+use sugar_proof_envelope::ImportSignatureV1;
 use sugar_proof_envelope::{build_proof_envelope, ProofEnvelopeInput, ProofGraph};
 use sugar_proof_envelope::{MementoPool, Speaker};
 use sugar_verifier::consistency::verify_consistency;
@@ -346,6 +350,8 @@ pub enum ProveFromKitError {
     LocalLoad(String),
     #[error("prove_from_kit: vendor testimony resolve failed: {0}")]
     Testimony(#[from] TestimonyError),
+    #[error("prove_from_kit: context-manager preconstruction failed: {0}")]
+    Preconstruction(String),
     #[error(transparent)]
     Solve(#[from] SolveError),
 }
@@ -391,15 +397,13 @@ pub fn fold_kit_to_pool(
     speaker: Speaker,
     cfg: &RunnerConfig,
 ) -> Result<MementoPool, ProveFromKitError> {
-    // 1. Local claim walk. Speaker is typed through fold so walk face and
-    // pool intake share one identity; stamping happens at step 2.
-    let local = feed_from_tree::fold_project(kit, workspace_root, Some(&speaker))?;
+    // Dependency testimony is the preliminary authenticated pool. It must be
+    // resident before any local tree construction: preconstruction contract
+    // declaration/catalog/demand binding reads this pool, while Sugar never
+    // does. Local construction is merged only after that front completes.
+    let mut pool = MementoPool::default();
 
-    // 2. Graph→pool intake with the consumer speaker (Task 7 door).
-    let mut pool =
-        pool_from_graph_with_speaker(&local, speaker).map_err(ProveFromKitError::LocalLoad)?;
-
-    // 3. Vendor testimony when the kit implements resolve_dependency_proofs.
+    // 1. Vendor testimony when the kit implements resolve_dependency_proofs.
     // Unavailable is a LINK-class absence (local-only prove still runs), not
     // a hard error — same law as Kit::testimony / resolve_testimony.
     //
@@ -430,14 +434,113 @@ pub fn fold_kit_to_pool(
         }
     }
 
-    // 4. CLI / RunnerConfig dependency proofs (same merge disk load_pool uses).
+    // 2. CLI / RunnerConfig dependency proofs (same merge disk load_pool uses).
     // Must happen here: `run_with_proof_run_with_pool` does not re-apply
     // `cfg.extra_proofs` (pool is already assembled).
     if !cfg.extra_proofs.is_empty() {
         load_proof_bytes_into_pool(&cfg.extra_proofs, &mut pool);
     }
 
+    // 3. Declaration-only enrollment and sealing. These rows never construct
+    // a body and enter the ordinary authenticated pool through the dedicated
+    // context-manager member arm.
+    if kit.supports_rpc_method("sugar.plugin.bind_contract_refs") {
+        let declaration_rows = kit
+            .context_manager_declarations(workspace_root)
+            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
+        for row in declaration_rows {
+            let graph = feed_from_tree::graph_from_context_manager_contract_ir(&row)?;
+            let declaration_pool = pool_from_graph_with_speaker(&graph, speaker.clone())
+                .map_err(ProveFromKitError::LocalLoad)?;
+            pool.merge(declaration_pool);
+        }
+
+        // 4-6. Freeze one authenticated snapshot, enroll non-constructing demands,
+        // prebind in Rust, then install the immutable typed table in the resident
+        // kit before any semantic enumeration begins.
+        let catalog = AuthenticatedContextManagerCatalog::freeze_from_pool(&pool)
+            .map_err(ProveFromKitError::Preconstruction)?;
+        let demand_rows = kit
+            .context_manager_demands(workspace_root)
+            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
+        let demands = demand_rows
+            .iter()
+            .map(context_manager_demand_from_wire)
+            .collect::<Result<Vec<_>, _>>()?;
+        let table = ResolvedContractRefsV1::new(&catalog, &demands);
+        kit.bind_contract_refs(&table.to_wire_value())
+            .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
+    }
+
+    // 7-8. Local semantic construction occurs only after ref installation.
+    let local = feed_from_tree::fold_project(kit, workspace_root, Some(&speaker))?;
+    let local_pool =
+        pool_from_graph_with_speaker(&local, speaker).map_err(ProveFromKitError::LocalLoad)?;
+    pool.merge(local_pool);
+
     Ok(pool)
+}
+
+fn context_manager_demand_from_wire(
+    row: &serde_json::Value,
+) -> Result<ContextManagerContractDemandV1, ProveFromKitError> {
+    let schema = row.get("schemaVersion").and_then(serde_json::Value::as_str);
+    let kind = row.get("kind").and_then(serde_json::Value::as_str);
+    let expected = row.get("expectedKind").and_then(serde_json::Value::as_str);
+    if schema != Some("1")
+        || kind != Some("context-manager-demand")
+        || expected != Some("context-manager-contract")
+    {
+        return Err(ProveFromKitError::Preconstruction(
+            "unsupported context-manager demand row".into(),
+        ));
+    }
+    let use_site: SourceFragmentCoordinateV1 = serde_json::from_value(
+        row.get("useSite")
+            .cloned()
+            .ok_or_else(|| ProveFromKitError::Preconstruction("demand missing useSite".into()))?,
+    )
+    .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
+    let signature = row
+        .get("importSignature")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            ProveFromKitError::Preconstruction("demand missing importSignature".into())
+        })?;
+    let formals = serde_json::from_value(
+        signature
+            .get("formals")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([])),
+    )
+    .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
+    let sorts = serde_json::from_value(
+        signature
+            .get("sorts")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([])),
+    )
+    .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
+    let import_signature = ImportSignatureV1 { formals, sorts };
+    match row.get("targetSymbol") {
+        Some(serde_json::Value::String(symbol)) => Ok(ContextManagerContractDemandV1::new(
+            use_site,
+            Symbol::from(symbol.as_str()),
+            import_signature,
+        )),
+        Some(serde_json::Value::Null)
+            if row.get("gapKind").and_then(serde_json::Value::as_str)
+                == Some("runtime-selected") =>
+        {
+            Ok(ContextManagerContractDemandV1::runtime_selected(
+                use_site,
+                import_signature,
+            ))
+        }
+        _ => Err(ProveFromKitError::Preconstruction(
+            "demand target is neither an authenticated symbol nor runtime-selected".into(),
+        )),
+    }
 }
 
 impl From<ProofRunArtifactError> for SolveError {

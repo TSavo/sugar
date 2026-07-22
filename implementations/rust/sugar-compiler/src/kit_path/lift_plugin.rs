@@ -94,6 +94,7 @@ pub struct LiftPluginKit {
     resident: std::sync::Arc<ResidentSlot>,
     resident_max_requests: usize,
     terminal_error: std::sync::Arc<Mutex<Option<LiftPluginKitError>>>,
+    contract_ref_generation: std::sync::Arc<Mutex<Option<(String, String)>>>,
 }
 
 struct ResidentSlot(Mutex<Option<ResidentLifter>>);
@@ -186,6 +187,7 @@ impl LiftPluginKit {
             resident: std::sync::Arc::new(ResidentSlot(Mutex::new(None))),
             resident_max_requests,
             terminal_error: std::sync::Arc::new(Mutex::new(None)),
+            contract_ref_generation: std::sync::Arc::new(Mutex::new(None)),
         }
     }
 
@@ -256,6 +258,29 @@ impl LiftPluginKit {
         cache.ask(params, || {
             self.dispatch(params).map(|(_, response)| response)
         })
+    }
+
+    pub(crate) fn install_contract_ref_generation(
+        &self,
+        catalog_cid: String,
+        table_cid: String,
+    ) -> Result<(), LiftPluginKitError> {
+        *self.contract_ref_generation.lock().map_err(|_| {
+            LiftPluginKitError::Failed("contract-ref generation lock poisoned".into())
+        })? = Some((catalog_cid, table_cid));
+        Ok(())
+    }
+
+    pub(crate) fn contract_ref_generation(
+        &self,
+    ) -> Result<Option<(String, String)>, LiftPluginKitError> {
+        Ok(self
+            .contract_ref_generation
+            .lock()
+            .map_err(|_| {
+                LiftPluginKitError::Failed("contract-ref generation lock poisoned".into())
+            })?
+            .clone())
     }
 
     /// Promote a lift-plugin response term into the first-class primitive claim.

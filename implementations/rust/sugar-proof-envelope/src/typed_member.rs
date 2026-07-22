@@ -1120,6 +1120,45 @@ impl ContextManagerContractMember {
     }
 }
 
+/// Decode a CM contract from a member already authenticated and normalized by
+/// `MementoPool`. This is the compiler/linker catalog boundary: it retains the
+/// typed fields needed for prebinding without reopening source or exposing a
+/// raw envelope to tree construction.
+pub fn context_manager_contract_from_stored(
+    member: &crate::StoredMember,
+) -> Result<ContextManagerContractMember, MemberError> {
+    if member.kind() != MemberKind::ContextManagerContract {
+        return Err(MemberError::InvalidContextManagerContract(
+            "stored member has the wrong contract kind".into(),
+        ));
+    }
+    let names = [
+        "schemaVersion",
+        "kind",
+        "cid",
+        "payloadCid",
+        "bridgeSourceSymbol",
+        "importSignature",
+        "payload",
+        "sourceWarrants",
+        "inputCids",
+    ];
+    let mut header = serde_json::Map::new();
+    for name in names {
+        let value = member.field(name).ok_or_else(|| {
+            MemberError::InvalidContextManagerContract(format!(
+                "authenticated stored member is missing `{name}`"
+            ))
+        })?;
+        header.insert(name.into(), value.clone());
+    }
+    ContextManagerContractMember::from_value(&serde_json::json!({
+        "envelope": {},
+        "header": header,
+        "metadata": {},
+    }))
+}
+
 /// Typed, parsed member. One variant per known kind.
 #[derive(Debug, Clone)]
 pub enum Member {

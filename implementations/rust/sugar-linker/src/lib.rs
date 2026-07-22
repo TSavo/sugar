@@ -39,7 +39,7 @@
 //! - `LinkerOutput.linker_errors` carries a `file` field so the daemon can
 //!   attach LSP diagnostics to the correct editor pane.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -49,7 +49,8 @@ use sugar_ir_compiler::{CompilerInput, IrCompiler};
 use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT as SMT_DIALECT};
 use sugar_ir_types::{IrFormula, Sort};
 use sugar_proof_envelope::{
-    AnchoredMember, ContextManagerSemanticsV1, ImportSignatureV1, Member, MemberKind, MementoCid,
+    context_manager_contract_from_stored, AnchoredMember, ContextManagerSemanticsV1,
+    ImportSignatureV1, MemberKind, MementoCid, MementoPool, StoredMember,
 };
 use sugar_verifier::solvers::{run_plan, SolverHandle, SolverPlan, SolverSeat};
 use sugar_verifier::types::ObligationVerdict;
@@ -288,7 +289,7 @@ pub struct SourceFragmentCoordinateV1 {
 pub struct ContextManagerContractDemandV1 {
     pub demand_cid: Cid,
     pub use_site: SourceFragmentCoordinateV1,
-    pub target_symbol: Symbol,
+    pub target_symbol: Option<Symbol>,
     pub import_signature: ImportSignatureV1,
 }
 
@@ -311,7 +312,25 @@ impl ContextManagerContractDemandV1 {
         Self {
             demand_cid,
             use_site,
-            target_symbol,
+            target_symbol: Some(target_symbol),
+            import_signature,
+        }
+    }
+
+    pub fn runtime_selected(
+        use_site: SourceFragmentCoordinateV1,
+        import_signature: ImportSignatureV1,
+    ) -> Self {
+        let preimage = serde_json::json!({
+            "useSite": use_site,
+            "targetSymbol": Json::Null,
+            "importSignature": import_signature_to_json(&import_signature),
+            "expectedKind": "context-manager-contract",
+        });
+        Self {
+            demand_cid: Cid::from(jcs_cid(&preimage)),
+            use_site,
+            target_symbol: None,
             import_signature,
         }
     }
@@ -320,7 +339,8 @@ impl ContextManagerContractDemandV1 {
 #[derive(Debug, Clone)]
 pub struct AuthenticatedContextManagerCatalog {
     catalog_cid: Cid,
-    members: BTreeMap<Cid, Json>,
+    members: BTreeMap<Cid, StoredMember>,
+    authenticated_cids: BTreeSet<Cid>,
 }
 
 impl AuthenticatedContextManagerCatalog {
@@ -329,8 +349,10 @@ impl AuthenticatedContextManagerCatalog {
         for (cid, envelope) in members {
             let typed = MementoCid::try_parse(cid.as_str().to_string())
                 .map_err(|bad| format!("invalid catalog member CID: {bad}"))?;
-            AnchoredMember::new(typed, envelope.clone())?;
-            if by_cid.insert(cid.clone(), envelope).is_some() {
+            AnchoredMember::new(typed.clone(), envelope.clone())?;
+            let stored = StoredMember::from_envelope(typed, &envelope)
+                .map_err(|error| format!("invalid catalog member: {error}"))?;
+            if by_cid.insert(cid.clone(), stored).is_some() {
                 return Err(format!("duplicate catalog member CID: {cid}"));
             }
         }
@@ -338,7 +360,29 @@ impl AuthenticatedContextManagerCatalog {
         let catalog_cid = Cid::from(jcs_cid(&serde_json::json!({"memberCids": member_cids})));
         Ok(Self {
             catalog_cid,
+            authenticated_cids: by_cid.keys().cloned().collect(),
             members: by_cid,
+        })
+    }
+
+    pub fn freeze_from_pool(pool: &MementoPool) -> Result<Self, String> {
+        let members = pool
+            .mementos
+            .iter()
+            .map(|(cid, member)| (Cid::from(cid.as_str()), member.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let member_cids: Vec<&str> = members.keys().map(Cid::as_str).collect();
+        let catalog_cid = Cid::from(jcs_cid(&serde_json::json!({"memberCids": member_cids})));
+        let authenticated_cids = members
+            .keys()
+            .cloned()
+            .chain(pool.atoms.keys().map(|cid| Cid::from(cid.as_str())))
+            .chain(pool.body.keys().map(|cid| Cid::from(cid.as_str())))
+            .collect();
+        Ok(Self {
+            catalog_cid,
+            members,
+            authenticated_cids,
         })
     }
 
@@ -545,7 +589,7 @@ fn cm_gap(
     ContextManagerResolutionV1::Unresolved(ContextManagerResolutionGapV1 {
         demand_cid: demand.demand_cid.clone(),
         use_site: demand.use_site.clone(),
-        target_symbol: Some(demand.target_symbol.clone()),
+        target_symbol: demand.target_symbol.clone(),
         kind,
         candidate_member_cids: candidates,
     })
@@ -555,12 +599,19 @@ pub fn resolve_context_manager_demand(
     demand: &ContextManagerContractDemandV1,
     catalog: &AuthenticatedContextManagerCatalog,
 ) -> ContextManagerResolutionV1 {
+    let Some(target_symbol) = demand.target_symbol.as_ref() else {
+        return cm_gap(
+            demand,
+            ContextManagerResolutionGapKindV1::RuntimeSelected,
+            vec![],
+        );
+    };
     let mut candidates = Vec::new();
-    for (cid, envelope) in &catalog.members {
-        if sugar_proof_envelope::member_field(envelope, "bridgeSourceSymbol").and_then(Json::as_str)
-            == Some(&demand.target_symbol.to_string())
+    for (cid, member) in &catalog.members {
+        if member.field("bridgeSourceSymbol").and_then(Json::as_str)
+            == Some(&target_symbol.to_string())
         {
-            candidates.push((cid.clone(), envelope));
+            candidates.push((cid.clone(), member));
         }
     }
     if candidates.is_empty() {
@@ -577,34 +628,16 @@ pub fn resolve_context_manager_demand(
             candidates.into_iter().map(|v| v.0).collect(),
         );
     }
-    let (member_cid, envelope) = candidates.pop().expect("one candidate");
-    if sugar_proof_envelope::member_kind(envelope).ok() != Some(MemberKind::ContextManagerContract)
-    {
+    let (member_cid, member) = candidates.pop().expect("one candidate");
+    if member.kind() != MemberKind::ContextManagerContract {
         return cm_gap(
             demand,
             ContextManagerResolutionGapKindV1::WrongContractKind,
             vec![member_cid],
         );
     }
-    let typed_cid = match MementoCid::try_parse(member_cid.as_str().to_string()) {
-        Ok(cid) => cid,
-        Err(_) => {
-            return cm_gap(
-                demand,
-                ContextManagerResolutionGapKindV1::UnauthenticatedMember,
-                vec![member_cid],
-            )
-        }
-    };
-    if AnchoredMember::new(typed_cid, envelope.clone()).is_err() {
-        return cm_gap(
-            demand,
-            ContextManagerResolutionGapKindV1::UnauthenticatedMember,
-            vec![member_cid],
-        );
-    }
-    let cm = match Member::from_value(envelope) {
-        Ok(Member::ContextManagerContract(cm)) => cm,
+    let cm = match context_manager_contract_from_stored(member) {
+        Ok(cm) => cm,
         Err(error) if error.to_string().contains("payload CID") => {
             return cm_gap(
                 demand,
@@ -632,7 +665,7 @@ pub fn resolve_context_manager_demand(
     let source_warrant_cids: Vec<Cid> = cm.source_warrants.iter().cloned().map(Cid::from).collect();
     if source_warrant_cids
         .iter()
-        .any(|cid| !catalog.members.contains_key(cid))
+        .any(|cid| !catalog.authenticated_cids.contains(cid))
     {
         return cm_gap(
             demand,
@@ -645,7 +678,7 @@ pub fn resolve_context_manager_demand(
         "schemaVersion": "1", "demandCid": demand.demand_cid,
         "useSite": demand.use_site, "catalogCid": catalog.catalog_cid,
         "memberCid": member_cid, "payloadCid": payload_cid,
-        "bridgeSourceSymbol": demand.target_symbol,
+        "bridgeSourceSymbol": target_symbol,
         "importSignature": {"formals": cm.import_signature.formals, "sorts": cm.import_signature.sorts},
         "semantics": sugar_proof_envelope::context_manager_semantics_v1_to_json(&cm.semantics),
         "sourceWarrantCids": source_warrant_cids,
@@ -658,7 +691,7 @@ pub fn resolve_context_manager_demand(
         catalog_cid: catalog.catalog_cid.clone(),
         member_cid,
         payload_cid,
-        bridge_source_symbol: demand.target_symbol.clone(),
+        bridge_source_symbol: target_symbol.clone(),
         import_signature: cm.import_signature,
         semantics: cm.semantics,
         source_warrant_cids,
@@ -677,7 +710,7 @@ pub fn final_check_context_manager_ref(
     let demand = ContextManagerContractDemandV1 {
         demand_cid: reference.demand_cid.clone(),
         use_site: reference.use_site.clone(),
-        target_symbol: reference.bridge_source_symbol.clone(),
+        target_symbol: Some(reference.bridge_source_symbol.clone()),
         import_signature: reference.import_signature.clone(),
     };
     match resolve_context_manager_demand(&demand, catalog) {
@@ -689,6 +722,40 @@ pub fn final_check_context_manager_ref(
         }
         _ => Err("stale-resolution"),
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextManagerEdgeV1 {
+    target_contract_cid: Cid,
+    demand_cid: Cid,
+    resolution_cid: Cid,
+    catalog_cid: Cid,
+}
+
+impl ContextManagerEdgeV1 {
+    pub fn from_resolved(reference: &ContextManagerContractRefV1) -> Self {
+        Self {
+            target_contract_cid: reference.member_cid.clone(),
+            demand_cid: reference.demand_cid.clone(),
+            resolution_cid: reference.resolution_cid.clone(),
+            catalog_cid: reference.catalog_cid.clone(),
+        }
+    }
+}
+
+pub fn final_check_context_manager_edge(
+    edge: &ContextManagerEdgeV1,
+    reference: &ContextManagerContractRefV1,
+    catalog: &AuthenticatedContextManagerCatalog,
+) -> Result<(), &'static str> {
+    if edge.target_contract_cid != reference.member_cid
+        || edge.demand_cid != reference.demand_cid
+        || edge.resolution_cid != reference.resolution_cid
+        || edge.catalog_cid != reference.catalog_cid
+    {
+        return Err("stale-resolution");
+    }
+    final_check_context_manager_ref(reference, catalog)
 }
 
 /// The formals / sorts / EUF-coordinate triple a contract *exports* or a call
