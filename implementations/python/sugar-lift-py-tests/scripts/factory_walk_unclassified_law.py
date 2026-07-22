@@ -363,6 +363,11 @@ def measure_live_roots(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
     repo_root = Path(__file__).resolve().parents[4]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
