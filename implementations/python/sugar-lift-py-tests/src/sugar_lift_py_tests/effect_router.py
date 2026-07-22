@@ -138,8 +138,10 @@ def _route_expects(entries: tuple, matcher: EffectMatcher) -> RoutedOutcome:
     if _has_unresolved_call_coordinates(entries):
         # Honest red: a dig may still produce the expected effect. Do not
         # claim absence -- emit an opaque obligation instead of a fact.
-        obligation = atomic(_EFFECT_EXPECTED_OBLIGATION, [str_const(matcher.name)])
-        return RoutedOutcome(entries=(*entries, obligation))
+        obligation = InvValue(
+            atomic(_EFFECT_EXPECTED_OBLIGATION, [str_const(matcher.name)])
+        )
+        return RoutedOutcome(entries=(*entries, obligation), stated_facts=(obligation,))
 
     # Completion with no hiding coordinates: the lying twin. The expected
     # effect is asserted absent, ground-false.

@@ -1549,6 +1549,37 @@ class With(Statement):
     body: Tuple[Statement, ...]
     _child_fields = ("items", "body")
 
+    def sugar(self):
+        """`with <manager>: <body>` -- the node consults the MEMBRANE, never a
+        vendor name (#5994). A single manager with no `as`, whose membrane-issued
+        contract is a raise-kind Expects/Suppresses, wires through the shared
+        effect router (WithContractSugar). Everything else stays LOUD: the
+        unauthenticated manager (the named residual), warning-kind matchers (no
+        WarningEffect exists to observe -- wiring would mint false absent-twins),
+        `as` witnesses (step 5), multiple managers, and resource managers (the
+        finally-faithful expansion, step 4)."""
+        if len(self.items) != 1 or self.items[0].optional_vars is not None:
+            return super().sugar()
+        from sugar_lift_py_tests.context_manager_contract import Expects, Suppresses
+        from sugar_lift_py_tests.manifest_membrane import (
+            contract_for_manager,
+            default_community_manifest,
+        )
+        from sugar_lift_py_tests.sugar.with_contract_sugar import WithContractSugar
+
+        contract = contract_for_manager(
+            default_community_manifest(), self.items[0].context_expr
+        )
+        if not isinstance(contract, (Expects, Suppresses)):
+            return super().sugar()  # unauthenticated / runtime-selected: loud
+        if contract.matcher.kind != "raise":
+            return super().sugar()  # no WarningEffect to observe yet: loud
+        return WithContractSugar(
+            contract=contract,
+            body=tuple(stmt.sugar() for stmt in self.body),
+            site=self.fragment,
+        )
+
     def substitute(self, scope):
         """with ... as <vars>: binds the as-targets for the body."""
         from .shadow import rewrite
