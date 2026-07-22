@@ -11,7 +11,7 @@ from typing import (
 )
 
 from sugar_lift_py_tests.claim import SugarRole
-from sugar_lift_py_tests.factory.factory_audit_row import (
+from sugar_lift_py_tests.gap.audit_row import (
     FactoryAuditRow,
     FactoryAuditStatus,
 )

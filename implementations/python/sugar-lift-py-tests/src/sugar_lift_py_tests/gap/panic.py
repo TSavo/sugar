@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NoReturn
+from typing import NoReturn
 
-from .factory_audit_row import FactoryAuditRow, FactoryAuditStatus
-from .factory_gap_info import FactoryGapInfo, GapKind, GapLocus
-
-if TYPE_CHECKING:
-    from .source_fragment import SourceFragment
+from .audit_row import FactoryAuditRow, FactoryAuditStatus
+from .info import FactoryGapInfo, GapKind, GapLocus
 
 
 class FactoryPanic(BaseException):
@@ -42,10 +39,24 @@ def factory_panic(
     raise FactoryPanic(info, audit_row)
 
 
+def _blame_prose(blame: object) -> str:
+    """Project a locus to prose at the gap boundary only.
+
+    One SourceFragment (sugar_source_tree) answers filename/line/col via
+    RuntimeEffectSite. Anything else stringifies.
+    """
+    filename = getattr(blame, "filename", None)
+    line = getattr(blame, "line", None)
+    col = getattr(blame, "col", None)
+    if isinstance(filename, str) and isinstance(line, int) and isinstance(col, int):
+        return f"{filename}:{line}:{col}"
+    return str(blame)
+
+
 def factory_panic_gap(
     *,
     owner: str,
-    blame: "SourceFragment | str",
+    blame: object,
     observed: str,
     requested: str,
     fix: str,
@@ -54,15 +65,15 @@ def factory_panic_gap(
     status: FactoryAuditStatus = FactoryAuditStatus.SUGAR_GAP,
     selected: str | None = None,
 ) -> NoReturn:
-    """Mouth for sites that previously built FactoryGapEffect / FactoryGap.
+    """Mouth for residual floor/temporal None arms.
 
-    ``blame`` accepts the SourceFragment itself; FactoryGapInfo.blame is prose,
-    so the fragment is projected to ``file:line:col`` here -- at the prose
-    boundary -- and nowhere earlier.
+    ``blame`` may be the one tree SourceFragment (RuntimeEffectSite) or prose.
+    FactoryGapInfo.blame is prose: project at this boundary, nowhere earlier.
     """
+    prose = _blame_prose(blame)
     info = FactoryGapInfo(
         owner=owner,
-        blame=str(blame),
+        blame=prose,
         observed=observed,
         requested=requested,
         fix=fix,
@@ -73,7 +84,7 @@ def factory_panic_gap(
         role=requested,
         status=status,
         observed=observed,
-        blame=str(blame),
+        blame=prose,
         selected=selected,
         candidates=[],
         message=info.message,

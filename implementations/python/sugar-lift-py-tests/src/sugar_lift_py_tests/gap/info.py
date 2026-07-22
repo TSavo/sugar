@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Dict
 from typing import Never, NoReturn
 
-from .factory_audit_row import FactoryAuditStatus
+from .audit_row import FactoryAuditStatus
 
 
 class GapKind(str, Enum):

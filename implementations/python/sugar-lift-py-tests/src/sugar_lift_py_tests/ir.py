@@ -194,7 +194,7 @@ def term_intern_scope() -> Iterator[None]:
 
 
 def _panic_cyclic_term(term: Term) -> None:
-    from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+    from sugar_lift_py_tests.gap.panic import factory_panic_gap
 
     name = getattr(term, "name", None)
     observed = f"cyclic IR term graph at {type(term).__name__}"

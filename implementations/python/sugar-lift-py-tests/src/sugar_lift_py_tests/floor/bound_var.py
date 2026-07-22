@@ -66,8 +66,8 @@ class BoundVar(FloorValue):
         return outcome
 
     def to_term(self, *, owner: str):
-        from sugar_lift_py_tests.factory import factory_panic_gap
-        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.info import GapKind, GapLocus
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
         outcome = self.answer(self.scope)

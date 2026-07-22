@@ -18,7 +18,7 @@ def test_scanner_flags_soft_factory_panic_catch(tmp_path: Path) -> None:
     pkg.mkdir()
     (pkg / "bad.py").write_text(
         """
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.gap.panic import FactoryPanic
 
 def dig():
     try:
@@ -37,7 +37,7 @@ def test_scanner_allows_pure_reraise(tmp_path: Path) -> None:
     pkg.mkdir()
     (pkg / "ok.py").write_text(
         """
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.gap.panic import FactoryPanic
 
 def dig():
     try:
@@ -58,7 +58,7 @@ def test_scanner_flags_corpus_tooling_catch(tmp_path: Path) -> None:
     scripts.mkdir()
     (scripts / "bad_corpus_tool.py").write_text(
         """
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.gap.panic import FactoryPanic
 
 def audit():
     try:

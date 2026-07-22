@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import NoReturn
 
-from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
-from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+from sugar_lift_py_tests.gap.panic import factory_panic_gap
+from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 
 from .temporal_binding import GuardedTemporalBinding, TemporalBinding
+from sugar_lift_py_tests.gap.audit_row import FactoryAuditStatus
 
 
 @dataclass(frozen=True)
@@ -142,12 +143,8 @@ class TemporalContext:
         requested: str,
         fix: str,
     ) -> NoReturn:
-        from sugar_lift_py_tests.factory import (
-            factory_panic,
-            FactoryGapInfo,
-            GapKind,
-            GapLocus,
-        )
+        from sugar_lift_py_tests.gap.panic import factory_panic
+        from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         info = FactoryGapInfo(
             owner=owner,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.factory.factory_gap_info import (
+from sugar_lift_py_tests.gap.info import (
     FactoryGapInfo,
     GapKind,
     GapLocus,

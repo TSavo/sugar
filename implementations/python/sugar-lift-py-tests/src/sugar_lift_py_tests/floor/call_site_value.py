@@ -7,9 +7,10 @@ from typing import Any, NoReturn
 from sugar_lift_py_tests.ir import Term, TermTableBuilder
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.sugar_body import SugarBody
-from sugar_lift_py_tests.recognition.native_shape import NativeShape
+ 
 
 from .floor_value import FloorValue
+from sugar_lift_py_tests.gap.audit_row import FactoryAuditStatus
 
 _FORCE_FLOOR_BUDGET = 64
 _NESTED_DIG_DEMAND_BUDGET = 8
@@ -99,7 +100,7 @@ class CallSiteValue(FloorValue):
     )
     # Issued by a registered Call Sugar from an authenticated import target.
     # The target spelling alone never grants native behavior.
-    native_shape: NativeShape | None = None
+    native_shape: object | None = None
 
     def __hash__(self) -> int:
         """Hash the finite call coordinate, never the recursively-owned body.
@@ -152,7 +153,7 @@ class CallSiteValue(FloorValue):
         # Ground (lift-time-decidable) coordinates must construct, never mint
         # RuntimeEffect authority via py.truthy (#4993 / #5147).
         from sugar_lift_py_tests.effect import is_lift_time_decidable
-        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import factory_panic_gap
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
         from sugar_lift_py_tests.outcome import Complete
@@ -200,7 +201,7 @@ class CallSiteValue(FloorValue):
         return None
 
     def is_identical(self, other, site):
-        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import factory_panic_gap
         from sugar_lift_py_tests.floor.none_value import NoneValue
         from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -515,7 +516,7 @@ class CallSiteValue(FloorValue):
         if constructed is not None:
             return constructed
 
-        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import factory_panic_gap
 
         factory_panic_gap(
             owner="CallSiteValue.append_with",
@@ -1212,12 +1213,8 @@ def _force_floor_gap(
     observed: str,
     fix: str,
 ) -> NoReturn:
-    from sugar_lift_py_tests.factory import (
-        factory_panic,
-        FactoryGapInfo,
-        GapKind,
-        GapLocus,
-    )
+    from sugar_lift_py_tests.gap.panic import factory_panic
+    from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
     info = FactoryGapInfo(
         owner=owner,

@@ -14,8 +14,6 @@ from sugar_lift_py_tests.context.sink_protocols import (
 from sugar_lift_py_tests.temporal import TemporalContext
 
 if TYPE_CHECKING:
-    from sugar_lift_py_tests.factory.factory_build_result import FactoryBuildResult
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.sugar_body import SugarBody
 
 
@@ -76,40 +74,6 @@ class FactoryBuildContext:
     def __post_init__(self) -> None:
         if self.factory_audit_sink is None and self.audit_sink is not None:
             object.__setattr__(self, "factory_audit_sink", self.audit_sink)
-
-    def build_child(
-        self, node: ast.AST | SourceFragment | None, role: SugarRole
-    ) -> FactoryBuildResult:
-        from sugar_lift_py_tests.factory.build import build_node
-
-        return build_node(
-            node,
-            filename=self.filename,
-            role=role,
-            catalog=self.catalog,
-            ctx=self,
-        )
-
-    def build_body(
-        self, node: ast.AST | SourceFragment | None, role: SugarRole
-    ) -> "SugarBody[Any]":
-        from sugar_lift_py_tests.factory.build import build_node
-        from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-        from sugar_lift_py_tests.sugar_body import SugarBody
-
-        # Accept a SourceFragment directly (idempotent) or an ast node.
-        if isinstance(node, SourceFragment):
-            site = node
-            result = build_node(
-                site,
-                filename=self.filename,
-                role=role,
-                catalog=self.catalog,
-                ctx=self,
-            )
-        else:
-            result = self.build_child(node, role)
-        return SugarBody(sugar=result.sugar, role=role, audit_row=result.audit_row)
 
     def with_temporal(self, temporal: TemporalContext) -> "FactoryBuildContext":
         return FactoryBuildContext(

@@ -35,8 +35,6 @@ SRC = ROOT / "src" / "sugar_lift_py_tests"
 STRICT_TARGETS: dict[str, Path] = {
     "context/factory_build_context.py": SRC / "context" / "factory_build_context.py",
     "sugar_body/sugar_body.py": SRC / "sugar_body" / "sugar_body.py",
-    "factory/factory_build_result.py": SRC / "factory" / "factory_build_result.py",
-    "effect/factory_gap_effect.py": SRC / "effect" / "factory_gap_effect.py",
     "floor/floor_value.py": SRC / "floor" / "floor_value.py",
     "floor/floor_dispatch_surface.py": SRC / "floor" / "floor_dispatch_surface.py",
     "kit_rpc/lift_report_payload_dto.py": SRC
@@ -50,8 +48,6 @@ STRICT_TARGETS: dict[str, Path] = {
 EXPECTED_STRICT_ERRORS: dict[str, int] = {
     "context/factory_build_context.py": 0,
     "sugar_body/sugar_body.py": 0,
-    "factory/factory_build_result.py": 0,
-    "effect/factory_gap_effect.py": 0,
     "floor/floor_value.py": 0,
     "floor/floor_dispatch_surface.py": 0,
     "kit_rpc/lift_report_payload_dto.py": 0,

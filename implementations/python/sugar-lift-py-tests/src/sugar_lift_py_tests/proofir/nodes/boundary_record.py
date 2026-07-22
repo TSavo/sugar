@@ -24,11 +24,7 @@ from . import (
     _witness_provenance,
 )
 
-if TYPE_CHECKING:
-    from sugar_lift_py_tests.factory.floor_contract_agreement import (
-        FloorContractAgreementViolation,
-    )
-
+    
 
 @dataclass(frozen=True, init=False)
 class BoundaryRecord:
@@ -90,10 +86,7 @@ class BoundaryRecord:
     def agreement_violation_diagnostic(
         violation: FloorContractAgreementViolation,
     ) -> dict[str, Any]:
-        from sugar_lift_py_tests.factory.floor_contract_agreement import (
-            FloorContractAgreementViolation,
-        )
-
+        
         if not isinstance(violation, FloorContractAgreementViolation):
             raise TypeError(
                 "agreement_violation_diagnostic requires "
@@ -164,11 +157,17 @@ def _effectful_refusal_source() -> str:
 
 
 def _runtime_effect_incomplete(reason: str) -> Incomplete:
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    import tempfile
 
-    site = SourceFragment.from_source(
-        "print(x)\n", "<boundary-record-witness-case>"
-    ).statements()[0]
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.tree import SourceFile
+
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".py", delete=False, dir="/tmp"
+    ) as handle:
+        handle.write("def _boundary_print(x):\n    print(x)\n")
+        path = handle.name
+    site = next(SourceFile(path_source(path)).functions()).fragment
     return Incomplete(
         CallResultTypeRuntimeEffect(
             reason,

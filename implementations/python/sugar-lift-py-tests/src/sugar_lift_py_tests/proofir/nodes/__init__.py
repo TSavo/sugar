@@ -1,4 +1,5 @@
 from __future__ import annotations
+from sugar_lift_py_tests.gap.audit_row import FactoryAuditStatus
 
 import json
 from abc import ABC, abstractmethod
@@ -6,12 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, ClassVar, Iterable, Literal, Mapping, NoReturn
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
-from sugar_lift_py_tests.factory import (
-    factory_panic,
-    FactoryGapInfo,
-    GapKind,
-    GapLocus,
-)
+from sugar_lift_py_tests.gap.panic import factory_panic
+from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 from sugar_lift_py_tests.ir import (
     Formula,
     Int,

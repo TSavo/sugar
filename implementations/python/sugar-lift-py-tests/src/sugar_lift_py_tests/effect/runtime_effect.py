@@ -9,22 +9,12 @@ from sugar_lift_py_tests.ir import Term
 
 @runtime_checkable
 class RuntimeEffectSite(Protocol):
-    """The structural contract a witness address must satisfy: a filename, a
-    1-based line, a 0-based column.
+    """Witness address: filename, 1-based line, 0-based column.
 
-    This is the ONE seam every fragment currency threads through. The tree's
-    live fragment (``sugar_source_tree.fragment.SourceFragment``) and the
-    kit's own factory-era fragment (``sugar_lift_py_tests.source_fragment
-    .SourceFragment``, re-exported for compatibility as
-    ``sugar_lift_py_tests.factory.source_fragment.SourceFragment``) both
-    already answer these three attributes — so admission here is structural,
-    never a name check against one concrete class over the other. The tree
-    fragment is the primary, hot-path address; the factory fragment remains
-    admitted through this SAME structural door for the kit's own floor
-    evaluators (list/dict/string/symbolic value dispatch, opaque call sites,
-    …) that still mint their evidence from a factory-owned operation node —
-    there is no separate legacy branch to fall back to, because both
-    fragments are the one shape this protocol names.
+    There is exactly one SourceFragment — ``sugar_source_tree.fragment
+    .SourceFragment`` — minted only by enumeration through the one
+    SourceOracle. Admission here is structural (these three attributes),
+    never an ``isinstance`` name-check of a second currency.
     """
 
     filename: str
@@ -33,7 +23,7 @@ class RuntimeEffectSite(Protocol):
 
 
 def resolve_runtime_effect_site(site) -> RuntimeEffectSite:
-    """Admit only a genuine fragment (any currency) as the witness address.
+    """Admit only a genuine fragment as the witness address.
 
     The fragment may arrive directly, or as the ``site`` / ``blame`` field of an
     operation object that still carries the fragment (not a locus string). A
@@ -270,8 +260,8 @@ def _runtime_operand_or_panic(operation: str, operand, site) -> RuntimeOperand:
     try:
         return genuine_runtime_operand(operation, operand)
     except TypeError as exc:
-        from sugar_lift_py_tests.factory import factory_panic_gap
-        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 
         factory_panic_gap(
             owner="RuntimeEffect",

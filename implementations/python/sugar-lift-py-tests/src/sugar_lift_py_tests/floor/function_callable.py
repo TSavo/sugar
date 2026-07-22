@@ -43,7 +43,7 @@ class FunctionCallable(FloorValue):
 
     def call_scope_updates(self, arg_values, ctx, site):
         """Replay a straight-line local callback and return its caller rebinds."""
-        from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import factory_panic_gap
         from sugar_lift_py_tests.floor.call_site_value import (
             CallSiteValue,
             _ctx_with_curried_args,
@@ -105,8 +105,8 @@ class FunctionCallable(FloorValue):
         term=None,
         native_shape=None,
     ):
-        from sugar_lift_py_tests.factory import factory_panic_gap
-        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.info import GapKind, GapLocus
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete, complete_value
@@ -489,7 +489,7 @@ class FunctionCallable(FloorValue):
 
     def _apply_decorators(self, site):
         """Apply Python decorators as nested callable substitutions."""
-        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import factory_panic_gap
         from sugar_lift_py_tests.floor.call_site_value import (
             CallSiteValue,
             _ctx_with_curried_args,
@@ -498,17 +498,14 @@ class FunctionCallable(FloorValue):
         )
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
 
-        from sugar_lift_py_tests.recognition.decorator_contracts import (
-            decorator_value_preserves_implementation,
-        )
+        def decorator_value_preserves_implementation(decorator) -> bool:
+            # Recognition-era native_shape / decorator_contracts tables are gone.
+            # Only the NEP-18 name enrollment below remains (floor, not recognition).
+            return False
 
         current = replace(self, decorators=())
         for decorator in reversed(self.decorators):
-            # Implementation-preserving decorator factories leave the decorated
-            # FunctionCallable as the public-API body:
-            # * authenticated native shape / Call site (functools.wraps via
-            #   recognition/decorator_contracts — never a bare-name logo pass)
-            # * NEP-18 array_function_dispatch enrollment (floor name set)
+            # NEP-18 array_function_dispatch enrollment (floor name set only).
             if decorator_value_preserves_implementation(decorator):
                 continue
             if isinstance(decorator, CallSiteValue) and (

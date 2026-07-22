@@ -139,8 +139,8 @@ class ImportAliasValue(FloorValue):
         if _import_alias_binds_module(self):
             return Complete(TrueBoolLiteralSugar(site=site))
 
-        from sugar_lift_py_tests.factory import factory_panic_gap
-        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 
         target = self.import_target or self.name
         factory_panic_gap(
@@ -170,8 +170,8 @@ class ImportAliasValue(FloorValue):
 
     def getattr_static(self, name: str, site):
         """Keep an unresolvable ground alias lookup loud."""
-        from sugar_lift_py_tests.factory import factory_panic_gap
-        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 
         target = self.import_target or self.name
         factory_panic_gap(
@@ -652,8 +652,8 @@ def _runtime_alias_effect_at_site(
     installed = installed_module_source(module_name)
     origin = installed[1] if installed is not None else None
     if origin and origin.endswith((".py", ".pyi")):
-        from sugar_lift_py_tests.factory import factory_panic_gap
-        from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+        from sugar_lift_py_tests.gap.panic import factory_panic_gap
+        from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 
         factory_panic_gap(
             owner="ImportAliasValue",

@@ -11,7 +11,7 @@ class ModuleBoundVar(BoundVar):
 
     def extend_scope(self, ctx):
         if ctx.module_temporal is None:
-            from sugar_lift_py_tests.factory import factory_panic_gap
+            from sugar_lift_py_tests.gap.panic import factory_panic_gap
 
             factory_panic_gap(
                 owner=type(self).__name__,

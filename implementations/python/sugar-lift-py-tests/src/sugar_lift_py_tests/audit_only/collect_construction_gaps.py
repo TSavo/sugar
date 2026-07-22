@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from typing import Callable, Iterable, TypeAlias, TypeVar
 
-from sugar_lift_py_tests.factory import GapKind
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.gap.info import GapKind
+from sugar_lift_py_tests.gap.panic import FactoryPanic
 
 from .audit_only_gap import AuditOnlyGap
 

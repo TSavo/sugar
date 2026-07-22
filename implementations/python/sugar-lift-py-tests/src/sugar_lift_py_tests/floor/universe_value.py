@@ -56,8 +56,8 @@ class UniverseValue(FloorValue):
                     make_var("out"),
                     NoneValue().to_term(owner="UniverseValue.post"),
                 )
-            from sugar_lift_py_tests.factory.factory_gap import factory_panic_gap
-            from sugar_lift_py_tests.factory.factory_gap_info import GapKind, GapLocus
+            from sugar_lift_py_tests.gap.panic import factory_panic_gap
+            from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 
             factory_panic_gap(
                 owner="UniverseValue",

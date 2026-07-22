@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .floor_value import FloorValue
+from sugar_lift_py_tests.gap.audit_row import FactoryAuditStatus
 
 
 @dataclass(frozen=True)
@@ -639,12 +640,8 @@ def _call_method_gap(
     requested: str,
     fix: str,
 ):
-    from sugar_lift_py_tests.factory import (
-        factory_panic,
-        FactoryGapInfo,
-        GapKind,
-        GapLocus,
-    )
+    from sugar_lift_py_tests.gap.panic import factory_panic
+    from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
     info = FactoryGapInfo(
         owner=owner,
