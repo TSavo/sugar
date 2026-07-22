@@ -61,6 +61,7 @@ from .binding_state import (
     BranchResultSlot,
     GuardedBinding,
     UnboundBinding,
+    binding_state_read_node,
     branch_result_slot,
     join_binding_state,
 )
@@ -391,7 +392,25 @@ class Node(Typed):
         borrows this node's span (so it still addresses this source site). Used
         by an augmented assignment to synthesize its ``x OP e`` rebind."""
         from .backend import Child, OpLeaf, materialize
+        from .panic import backend_defect
         from .shadow import ShadowNode, _handle_of
+
+        if not isinstance(left, Node) or not isinstance(right, Node):
+            backend_defect(
+                owner="nodes.Node._make_binop",
+                observed=(
+                    "a synthesized binary operation received non-Node "
+                    f"operands {type(left).__name__}, {type(right).__name__}"
+                ),
+                requested=(
+                    "both binary-operation operands projected into constructed "
+                    "tree Nodes before shadow enrollment"
+                ),
+                fix=(
+                    "project BindingState through binding_state_read_node at "
+                    "the read site; never put state-only testimony in Child"
+                ),
+            )
 
         slots = (
             ("left", Child(_handle_of(left))),
@@ -1347,8 +1366,12 @@ class AugAssign(Statement):
         if not isinstance(self.target, Name):
             return None
         name = self.target.id
-        old = scope.get(name, self.target)
-        return {name: self._make_binop(old, self.op, self.value)}
+        old_state = scope.get(name, self.target)
+        old_read = binding_state_read_node(
+            old_state,
+            make_read=self.target._make_binding_read,
+        )
+        return {name: self._make_binop(old_read, self.op, self.value)}
 
     def _construct_sugar(self):
         """`<target> OP= <value>` -- a plain Name target is INERT at the

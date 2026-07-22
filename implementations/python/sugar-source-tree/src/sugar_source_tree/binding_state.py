@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Callable, TypeAlias
 
 if TYPE_CHECKING:
     from sugar_source_tree.fragment import SourceFragment
@@ -34,6 +34,26 @@ class GuardedBinding:
 
 BindingState: TypeAlias = "Node | UnboundBinding | GuardedBinding"
 BindingMap: TypeAlias = dict[str, BindingState]
+
+
+def binding_state_read_node(
+    state: BindingState,
+    *,
+    make_read: Callable[[UnboundBinding | GuardedBinding], Node],
+) -> Node:
+    """Project binding availability into the tree's ordinary Node currency.
+
+    Binding-state witnesses are deliberately not AST nodes.  A consumer that
+    reads a binding must project an unbound/guarded state into the explicit
+    read node owned by the read site before placing it in a shadow child slot.
+    """
+    from sugar_source_tree.nodes import Node
+
+    if isinstance(state, Node):
+        return state
+    if isinstance(state, (UnboundBinding, GuardedBinding)):
+        return make_read(state)
+    raise TypeError(type(state))
 
 
 def join_binding_state(

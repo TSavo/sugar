@@ -77,7 +77,11 @@ def census(root: Path) -> int:
     print("--- crashes (defects, not gaps) ---")
     for k, n in crashes.most_common():
         print(f"{n:8d}  {k}")
-    return 0
+    # A construction crash is a backend defect, not census residue.  Printing
+    # the row is testimony, but a successful process status would let callers
+    # bank a partial denominator as a complete census.  Keep ordinary
+    # SugarNotWritten gaps measurable while making every defect row red.
+    return 1 if crashes else 0
 
 
 def main() -> int:
