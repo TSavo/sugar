@@ -163,21 +163,17 @@ class FunctionUniverseSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # No context. The body was already SUBSTITUTED (FunctionDef.sugar), so
-        # there is nothing temporal to thread: a formal reaches its NameSugar as
-        # a free name and becomes its own symbolic Var, a local assignment is
-        # inert (spent by substitute), a conditional binding is an IfExp phi. The
-        # block reduction consults no scope -- ctx.temporal is gone, and the
-        # `with`/nonlocal as-binding paths that once needed extend_scope are not
-        # lifted on the tree (they panic SugarNotWritten), so nothing calls it.
+        # No temporal name map. The body was already SUBSTITUTED
+        # (FunctionDef.sugar): formals stay free Vars, locals/phis are rewritten
+        # tree coordinates (including EffectRef / ObservationRef for as-bindings).
+        # effect_auth_wave holds route-time slot→effect testimony for those
+        # coordinates — not a second construction door.
         del ctx
+        from sugar_lift_py_tests.effect_auth import effect_auth_wave
 
-        # `.and_then` is the Complete/Incomplete distinction: a Complete body
-        # (a BlockValue record) becomes the universe; an Incomplete body (an
-        # effect) propagates untouched -- an effect is never wrapped into a
-        # false contract.
-        return reduce_body(self.statements).and_then(
-            lambda record: Complete(
-                UniverseValue(name=self.name, formals=self.formals, record=record)
+        with effect_auth_wave():
+            return reduce_body(self.statements).and_then(
+                lambda record: Complete(
+                    UniverseValue(name=self.name, formals=self.formals, record=record)
+                )
             )
-        )

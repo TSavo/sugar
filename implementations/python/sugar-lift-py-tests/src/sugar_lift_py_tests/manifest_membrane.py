@@ -57,8 +57,28 @@ MANIFEST_CONTRACT_KINDS = frozenset(
     {"expects", "suppresses", "never-suppresses"}
 )
 
+def _expects_with_binding(matcher: EffectMatcher) -> Expects:
+    """Issue Expects with the membrane-declared as-binding projection.
+
+    raise → exception_info (pytest.raises as ei; ei.value is the effect slot)
+    warning → warning_observation
+    Tree never names pytest; it only sees the typed projection string.
+    """
+    from sugar_lift_py_tests.context_manager_contract import (
+        EXCEPTION_INFO,
+        WARNING_OBSERVATION,
+    )
+
+    binding = None
+    if matcher.kind == "raise":
+        binding = EXCEPTION_INFO
+    elif matcher.kind == "warning":
+        binding = WARNING_OBSERVATION
+    return Expects(matcher=matcher, binding=binding)
+
+
 _CONTRACT_BUILDERS = {
-    "expects": Expects,
+    "expects": _expects_with_binding,
     "suppresses": Suppresses,
 }
 

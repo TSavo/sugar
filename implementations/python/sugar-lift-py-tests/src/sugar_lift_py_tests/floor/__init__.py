@@ -57,6 +57,7 @@ from .predicate_value import PredicateValue
 from .raise_value import RaiseValue
 from .raises_with_value import RaisesWithValue
 from .warning_observation_value import WarningObservationValue
+from .effect_coordinate import EffectCoordinate, ExceptionInfoCoordinate
 from .return_value import ReturnValue
 from .scope_rebind import GuardedScopeRebind, ScopeRebind
 from .sequence_constructor import SequenceConstructor
@@ -129,6 +130,8 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     TupleLiteralValue,
     TupleValue,
     UniverseValue,
+    EffectCoordinate,
+    ExceptionInfoCoordinate,
 )
 
 for _floor_type in REGISTERED_FLOOR_TYPES:
@@ -190,6 +193,8 @@ __all__ = [
     "RaiseValue",
     "RaisesWithValue",
     "WarningObservationValue",
+    "EffectCoordinate",
+    "ExceptionInfoCoordinate",
     "ReturnValue",
     "ScopeRebind",
     "SequenceConstructor",
