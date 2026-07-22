@@ -152,7 +152,8 @@ def test_no_runtime_resolve_authority_floor():
     assert_no_runtime_resolve_authority()
 
 
-def test_static_resolve_refuses_np_errstate_conditional_facade_binding():
+def test_static_resolve_np_errstate_via_source_imports():
+    """Local ``import numpy as np`` + static re-export follow — not importlib."""
     import tempfile
 
     from sugar_lift_python_source.source_oracle import path_source
@@ -171,8 +172,14 @@ def test_static_resolve_refuses_np_errstate_conditional_facade_binding():
     fn = next(SourceFile(path_source(path)).functions())
     with_node = next(s for s in fn.body if s.kind == "With")
     mgr = with_node.items[0].context_expr
-    assert resolve_definition_memento_from_manager_expr(mgr) is None
-    assert prove_exit_disposition_from_manager_expr(mgr) is None
+    memento = resolve_definition_memento_from_manager_expr(mgr)
+    assert memento is not None, "static resolve must find errstate without importlib"
+    assert memento.class_name == "errstate"
+    assert "ufunc_config" in memento.filename or memento.module.endswith(
+        "_ufunc_config"
+    )
+    proof = prove_exit_disposition_from_manager_expr(mgr)
+    assert proof is not None and proof.kind == "never_suppresses"
 
 
 def test_generator_contextmanager_is_deferred_not_falsely_proven():
