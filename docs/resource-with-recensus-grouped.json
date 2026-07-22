@@ -1,0 +1,918 @@
+{
+  "snapshot": "c11e5f647",
+  "packages": [
+    "numpy",
+    "pandas"
+  ],
+  "files_scanned": 1818,
+  "with_items_total": 11535,
+  "by_shape": {
+    "attribute": 1,
+    "call_dotted": 11417,
+    "call_other": 11,
+    "name": 104,
+    "other": 2
+  },
+  "manifest_spellings": {
+    "pytest.raises": {
+      "contract": "expects",
+      "effect_kind": "raise",
+      "arity": "exception-arg-optional-match"
+    },
+    "contextlib.suppress": {
+      "contract": "suppresses",
+      "effect_kind": "raise",
+      "arity": "one-exception-arg"
+    },
+    "tm.assert_produces_warning": {
+      "contract": "expects",
+      "effect_kind": "warning",
+      "arity": "one-exception-arg"
+    }
+  },
+  "assertion_wired": [
+    {
+      "identity": "pytest.raises",
+      "count": 6353,
+      "classification": "assertion_wired",
+      "manifest": true,
+      "manifest_row": {
+        "contract": "expects",
+        "effect_kind": "raise",
+        "arity": "exception-arg-optional-match"
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:188",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:450",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:461",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:464",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:472"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "tm.assert_produces_warning",
+      "count": 1836,
+      "classification": "assertion_wired",
+      "manifest": true,
+      "manifest_row": {
+        "contract": "expects",
+        "effect_kind": "warning",
+        "arity": "one-exception-arg"
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/api/test_api.py:380",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/api/test_api.py:242",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/api/test_types.py:61",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/apply/test_frame_apply.py:1611",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/apply/test_frame_apply.py:1696"
+      ],
+      "shape": "call_dotted"
+    }
+  ],
+  "resource_loud_top": [
+    {
+      "identity": "tm.ensure_clean",
+      "count": 348,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:37",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:75",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:111",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:124",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:141"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "np.errstate",
+      "count": 292,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_array_coercion.py:939",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_array_coercion.py:943",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_array_coercion.py:389",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_floatingpoint_errors.py:45",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_floatingpoint_errors.py:152"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "open",
+      "count": 273,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_cpu_features.py:24",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_cpu_features.py:103",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_cython.py:60",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_limited_api.py:58",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_longdouble.py:145"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "option_context",
+      "count": 252,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/apply.py:1078",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/frame.py:1375",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/groupby/groupby.py:1822",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/clipboards.py:193",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/formats/html.py:411"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "warnings.catch_warnings",
+      "count": 194,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/__init__.py:827",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_unittests.py:867",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_unittests.py:888",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_unittests.py:894",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_datetime.py:1645"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "pytest.warns",
+      "count": 167,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:475",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_array_coercion.py:443",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_array_coercion.py:940",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_floatingpoint_errors.py:149",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_unittests.py:466"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "assert_raises",
+      "count": 148,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:201",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_conversion_utils.py:26",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_datetime.py:204",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_dtype.py:138",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_dtype.py:1647"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "ensure_clean_store",
+      "count": 142,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_append.py:33",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_append.py:105",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_append.py:152",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_append.py:200",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_append.py:286"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "pd.option_context",
+      "count": 135,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arrays/categorical/test_missing.py:142",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arrays/categorical/test_missing.py:171",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arrays/string_/test_string.py:521",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arrays/string_/test_string.py:553",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arrays/string_/test_string.py:602"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "tm.assert_cow_warning",
+      "count": 133,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/apply/test_frame_apply.py:1504",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/computation/test_eval.py:1983",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/index/test_index.py:26",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/index/test_index.py:48",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/index/test_index.py:61"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "assert_raises_regex",
+      "count": 74,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_arrayprint.py:234",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_datetime.py:1746",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_datetime.py:2446",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_datetime.py:2466",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_defchararray.py:744"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "tm.raises_chained_assignment_error",
+      "count": 69,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/test_chained_assignment_deprecation.py:76",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/test_chained_assignment_deprecation.py:85",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/test_chained_assignment_deprecation.py:124",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/test_chained_assignment_deprecation.py:133",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/test_chained_assignment_deprecation.py:173"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "temppath",
+      "count": 54,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_longdouble.py:144",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_longdouble.py:228",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_longdouble.py:237",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_longdouble.py:246",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_longdouble.py:255"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "monkeypatch.context",
+      "count": 40,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arithmetic/test_numeric.py:35",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arithmetic/test_numeric.py:150",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arithmetic/test_numeric.py:158",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arrays/categorical/test_indexing.py:379",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/config/test_config.py:13"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "util.switchdir",
+      "count": 37,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:146",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:162",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:174",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:188",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:201"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "ExcelFile",
+      "count": 33,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_writers.py:397",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_writers.py:413",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_writers.py:474",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_writers.py:494",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_writers.py:515"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "ExcelWriter",
+      "count": 30,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_odswriter.py:58",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_odswriter.py:51",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:103",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:134",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:181"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "sql.SQLDatabase",
+      "count": 30,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1372",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1449",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:2465",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:2496",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:2509"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "i",
+      "count": 28,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:921",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:959",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:1018",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:1206",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:1219"
+      ],
+      "shape": "name"
+    },
+    {
+      "identity": "HDFStore",
+      "count": 28,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/pytables.py:308",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/common.py:32",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_file_handling.py:54",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_file_handling.py:65",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_file_handling.py:494"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "tm.external_error_raised",
+      "count": 28,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/dtypes/test_inference.py:220",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/indexes/categorical/test_category.py:79",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/indexes/test_numpy_compat.py:68",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/indexes/test_numpy_compat.py:120",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/indexes/test_numpy_compat.py:124"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "cf.config_prefix",
+      "count": 26,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/_config/dates.py:18",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/_config/display.py:59",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/config_init.py:73",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/config_init.py:313",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/config_init.py:406"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "parser.read_csv",
+      "count": 24,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_chunksize.py:56",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_chunksize.py:104",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_chunksize.py:127",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_chunksize.py:150",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_chunksize.py:178"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "errstate",
+      "count": 23,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/__init__.py:859",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/arrayprint.py:1027",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/arrayprint.py:1106",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/numeric.py:2440",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_errstate.py:78"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "pandasSQL_builder",
+      "count": 22,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:264",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:384",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:525",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:704",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:841"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "get_handle",
+      "count": 21,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/_testing/contexts.py:52",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/frame.py:2988",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/excel/_base.py:1402",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/feather_format.py:63",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/feather_format.py:120"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "StataReader",
+      "count": 21,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:1976",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:2110",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:302",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:663",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:746"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "tm.maybe_produces_warning",
+      "count": 20,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arithmetic/test_timedelta64.py:1766",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arithmetic/test_timedelta64.py:1774",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/computation/test_eval.py:728",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/indexing/test_indexing.py:1548",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/strings/test_find_replace.py:394"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "cf.option_context",
+      "count": 20,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/config/test_config.py:363",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/config/test_config.py:391",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/config/test_config.py:365",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/dtypes/test_missing.py:59",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/dtypes/test_missing.py:68"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "it",
+      "count": 19,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:933",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:939",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:2920",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:2935",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:2953"
+      ],
+      "shape": "name"
+    },
+    {
+      "identity": "pd.ExcelFile",
+      "count": 19,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_odswriter.py:95",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_readers.py:1503",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_readers.py:1513",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_readers.py:1522",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_readers.py:1532"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "contextlib.closing",
+      "count": 19,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:161",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:302",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:184",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:212",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:337"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "pandasSQL.run_transaction",
+      "count": 18,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:2726",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1559",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1579",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1594",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:2703"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "np.printoptions",
+      "count": 17,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_arrayprint.py:1240",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_arrayprint.py:1263",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_arrayprint.py:715",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_arrayprint.py:958",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_arrayprint.py:964"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "conn.begin",
+      "count": 16,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:3834",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:198",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:323",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:357",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1268"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "suppress_warnings",
+      "count": 15,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/_private/utils.py:1992",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1828",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1853",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1872",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1888"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "BytesIO",
+      "count": 14,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_regression.py:54",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_regression.py:104",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_regression.py:366",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/ma/tests/test_core.py:5619",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_writers.py:1225"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "identity": "exc_iter",
+      "count": 13,
+      "classification": "resource_loud",
+      "manifest": false,
+      "manifest_row": null,
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_extint128.py:73",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_extint128.py:88",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_extint128.py:96",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_extint128.py:107",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_extint128.py:116"
+      ],
+      "shape": "call_dotted"
+    }
+  ],
+  "resource_buckets": {
+    "io_resource_manager": [
+      {
+        "identity": "tm.ensure_clean",
+        "count": 348
+      },
+      {
+        "identity": "ensure_clean_store",
+        "count": 142
+      },
+      {
+        "identity": "temppath",
+        "count": 54
+      },
+      {
+        "identity": "ExcelFile",
+        "count": 33
+      },
+      {
+        "identity": "ExcelWriter",
+        "count": 30
+      },
+      {
+        "identity": "HDFStore",
+        "count": 28
+      },
+      {
+        "identity": "pd.ExcelFile",
+        "count": 19
+      }
+    ],
+    "config_context_manager": [
+      {
+        "identity": "np.errstate",
+        "count": 292
+      },
+      {
+        "identity": "option_context",
+        "count": 252
+      },
+      {
+        "identity": "pd.option_context",
+        "count": 135
+      },
+      {
+        "identity": "cf.config_prefix",
+        "count": 26
+      },
+      {
+        "identity": "errstate",
+        "count": 23
+      },
+      {
+        "identity": "cf.option_context",
+        "count": 20
+      }
+    ],
+    "builtin_or_open_defer_manifest": [
+      {
+        "identity": "open",
+        "count": 273
+      }
+    ],
+    "warning_observation_like": [
+      {
+        "identity": "warnings.catch_warnings",
+        "count": 194
+      },
+      {
+        "identity": "pytest.warns",
+        "count": 167
+      },
+      {
+        "identity": "tm.assert_cow_warning",
+        "count": 133
+      },
+      {
+        "identity": "tm.maybe_produces_warning",
+        "count": 20
+      },
+      {
+        "identity": "suppress_warnings",
+        "count": 15
+      }
+    ],
+    "raises_alias_not_on_manifest": [
+      {
+        "identity": "assert_raises",
+        "count": 148
+      },
+      {
+        "identity": "assert_raises_regex",
+        "count": 74
+      },
+      {
+        "identity": "tm.raises_chained_assignment_error",
+        "count": 69
+      }
+    ],
+    "other_resource": [
+      {
+        "identity": "monkeypatch.context",
+        "count": 40
+      },
+      {
+        "identity": "sql.SQLDatabase",
+        "count": 30
+      },
+      {
+        "identity": "tm.external_error_raised",
+        "count": 28
+      },
+      {
+        "identity": "parser.read_csv",
+        "count": 24
+      },
+      {
+        "identity": "pandasSQL_builder",
+        "count": 22
+      },
+      {
+        "identity": "get_handle",
+        "count": 21
+      },
+      {
+        "identity": "StataReader",
+        "count": 21
+      },
+      {
+        "identity": "contextlib.closing",
+        "count": 19
+      },
+      {
+        "identity": "pandasSQL.run_transaction",
+        "count": 18
+      },
+      {
+        "identity": "np.printoptions",
+        "count": 17
+      },
+      {
+        "identity": "conn.begin",
+        "count": 16
+      },
+      {
+        "identity": "BytesIO",
+        "count": 14
+      },
+      {
+        "identity": "exc_iter",
+        "count": 13
+      }
+    ],
+    "source_visible_cm_candidate": [
+      {
+        "identity": "util.switchdir",
+        "count": 37
+      }
+    ],
+    "bound_name_manager": [
+      {
+        "identity": "i",
+        "count": 28
+      },
+      {
+        "identity": "it",
+        "count": 19
+      }
+    ]
+  },
+  "bucket_totals": {
+    "io_resource_manager": 654,
+    "config_context_manager": 748,
+    "builtin_or_open_defer_manifest": 273,
+    "warning_observation_like": 529,
+    "raises_alias_not_on_manifest": 291,
+    "other_resource": 283,
+    "source_visible_cm_candidate": 37,
+    "bound_name_manager": 47
+  },
+  "exit_never_suppress_candidates": {
+    "count": 13,
+    "sample": [
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/_ufunc_config.py",
+        "line": 488,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/_locales.py",
+        "line": 71,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/_npyio_impl.py",
+        "line": 213,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/_private/utils.py",
+        "line": 2508,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/common.py",
+        "line": 151,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/excel/_base.py",
+        "line": 1347,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/excel/_base.py",
+        "line": 1653,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/json/_json.py",
+        "line": 1116,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/parsers/readers.py",
+        "line": 1990,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/pytables.py",
+        "line": 642,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sas/sasreader.py",
+        "line": 51,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py",
+        "line": 1451,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_pickle.py",
+        "line": 476,
+        "qualname": "__exit__"
+      }
+    ]
+  },
+  "recommended_next_proof_rule": {
+    "disposition": "NeverSuppresses",
+    "do_not": [
+      "enroll open by spelling",
+      "guess subclass exception matching",
+      "admit RuntimeSelected as green"
+    ],
+    "name": "source_visible_exit_returns_none_or_false",
+    "rule": "When a manager's __exit__ is source-visible and every return is provably None or False (no raise/yield, no branching body without the same property), issue NeverSuppresses. Admit via WithResourceSugar only with constructed enter/exit coords. Do not special-case open by name; built-ins need an attested semantic manifest later."
+  }
+}

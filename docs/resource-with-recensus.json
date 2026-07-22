@@ -1,0 +1,2259 @@
+{
+  "assertion_wired_groups": [
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 429,
+        "pos=1;kw=match": 5924
+      },
+      "count": 6353,
+      "enrollment_posture": "already_wired_assertion",
+      "identity": "pytest.raises",
+      "membranes": {
+        "expects": 6353
+      },
+      "residuals": {
+        "assertion_wired": 6353
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:188",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:450",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:461",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:464",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:472"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 8,
+        "pos=1;kw=-": 349,
+        "pos=1;kw=check_stacklevel": 30,
+        "pos=1;kw=check_stacklevel,match": 74,
+        "pos=1;kw=check_stacklevel,match,raise_on_extra_warnings": 11,
+        "pos=1;kw=check_stacklevel,raise_on_extra_warnings": 1,
+        "pos=1;kw=filter_level": 1,
+        "pos=1;kw=match": 1340,
+        "pos=1;kw=match,raise_on_extra_warnings": 12,
+        "pos=1;kw=raise_on_extra_warnings": 10
+      },
+      "count": 1836,
+      "enrollment_posture": "already_wired_assertion",
+      "identity": "tm.assert_produces_warning",
+      "membranes": {
+        "expects": 1836
+      },
+      "residuals": {
+        "assertion_wired": 1836
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/api/test_api.py:380",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/api/test_api.py:242",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/api/test_types.py:61",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/apply/test_frame_apply.py:1611",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/apply/test_frame_apply.py:1696"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 3
+      },
+      "count": 3,
+      "enrollment_posture": "already_wired_assertion",
+      "identity": "contextlib.suppress",
+      "membranes": {
+        "suppresses": 3
+      },
+      "residuals": {
+        "assertion_wired": 3
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_dtype.py:897",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/_histograms_impl.py:908",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/_private/utils.py:942"
+      ],
+      "shape": "call_dotted"
+    }
+  ],
+  "by_membrane": {
+    "expects": 8189,
+    "suppresses": 3,
+    "unknown": 3343
+  },
+  "by_residual": {
+    "assertion_wired": 8192,
+    "resource_candidate": 3343
+  },
+  "by_shape": {
+    "attribute": 1,
+    "call_dotted": 11417,
+    "call_other": 11,
+    "name": 104,
+    "other": 2
+  },
+  "exit_never_suppress_candidates": {
+    "count": 13,
+    "sample": [
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/_ufunc_config.py",
+        "line": 488,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/_locales.py",
+        "line": 71,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/_npyio_impl.py",
+        "line": 213,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/_private/utils.py",
+        "line": 2508,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/common.py",
+        "line": 151,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/excel/_base.py",
+        "line": 1347,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/excel/_base.py",
+        "line": 1653,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/json/_json.py",
+        "line": 1116,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/parsers/readers.py",
+        "line": 1990,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/pytables.py",
+        "line": 642,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sas/sasreader.py",
+        "line": 51,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py",
+        "line": 1451,
+        "qualname": "__exit__"
+      },
+      {
+        "evidence": "source_visible_exit_returns_none_or_false",
+        "file": "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_pickle.py",
+        "line": 476,
+        "qualname": "__exit__"
+      }
+    ]
+  },
+  "files_parse_error": 0,
+  "files_scanned": 1818,
+  "hits": 11535,
+  "manifest_spellings": {
+    "contextlib.suppress": "suppresses",
+    "pytest.raises": "expects",
+    "tm.assert_produces_warning": "expects"
+  },
+  "recommended_next_proof_rule": {
+    "disposition": "NeverSuppresses",
+    "do_not": [
+      "enroll open by spelling",
+      "guess subclass exception matching",
+      "admit RuntimeSelected as green"
+    ],
+    "first_general_admits_after_rule": [
+      "np.errstate / errstate (~315 sites; restore-only __exit__)",
+      "option_context family (~407 sites; restore-only with branches)",
+      "util.switchdir (37 sites; try/yield/finally)"
+    ],
+    "name": "source_visible_exit_returns_none_or_false",
+    "rule": "When a manager's __exit__ is source-visible and every return is provably None or False (implicit None allowed; branches allowed only if they never return a suppressing truth value), issue NeverSuppresses. Admit via WithResourceSugar only with constructed enter/exit coords. Do not special-case open by name; built-ins need an attested semantic manifest later."
+  },
+  "resource_loud_groups": [
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 175,
+        "pos=0;kw=encoding,mode,return_filelike": 1,
+        "pos=0;kw=filename": 8,
+        "pos=0;kw=mode,return_filelike": 1,
+        "pos=0;kw=return_filelike": 2,
+        "pos=1;kw=-": 161
+      },
+      "count": 348,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "tm.ensure_clean",
+      "membranes": {
+        "unknown": 348
+      },
+      "residuals": {
+        "resource_candidate": 348
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:37",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:75",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:111",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:124",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:141"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 3,
+        "pos=0;kw=all": 103,
+        "pos=0;kw=all,call": 1,
+        "pos=0;kw=all,under": 2,
+        "pos=0;kw=call": 2,
+        "pos=0;kw=call,divide,over": 1,
+        "pos=0;kw=call,invalid": 1,
+        "pos=0;kw=divide": 21,
+        "pos=0;kw=divide,invalid": 49,
+        "pos=0;kw=divide,over": 3,
+        "pos=0;kw=invalid": 78,
+        "pos=0;kw=invalid,over": 5,
+        "pos=0;kw=over": 18,
+        "pos=0;kw=over,under": 2,
+        "pos=0;kw=under": 3
+      },
+      "count": 292,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "np.errstate",
+      "membranes": {
+        "unknown": 292
+      },
+      "residuals": {
+        "resource_candidate": 292
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_array_coercion.py:939",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_array_coercion.py:943",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_array_coercion.py:389",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_floatingpoint_errors.py:45",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_floatingpoint_errors.py:152"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 14,
+        "pos=1;kw=buffering,mode": 1,
+        "pos=1;kw=encoding": 40,
+        "pos=1;kw=encoding,newline": 1,
+        "pos=1;kw=mode": 9,
+        "pos=2;kw=-": 171,
+        "pos=2;kw=buffering": 3,
+        "pos=2;kw=encoding": 30,
+        "pos=2;kw=encoding,newline": 3,
+        "pos=3;kw=-": 1
+      },
+      "count": 273,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "open",
+      "membranes": {
+        "unknown": 273
+      },
+      "residuals": {
+        "resource_candidate": 273
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_cpu_features.py:24",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_cpu_features.py:103",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_cython.py:60",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_limited_api.py:58",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_longdouble.py:145"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=10;kw=-": 4,
+        "pos=2;kw=-": 197,
+        "pos=4;kw=-": 45,
+        "pos=6;kw=-": 5,
+        "pos=8;kw=-": 1
+      },
+      "count": 252,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "option_context",
+      "membranes": {
+        "unknown": 252
+      },
+      "residuals": {
+        "resource_candidate": 252
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/apply.py:1078",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/frame.py:1375",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/groupby/groupby.py:1822",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/clipboards.py:193",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/formats/html.py:411"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 121,
+        "pos=0;kw=record": 73
+      },
+      "count": 194,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "warnings.catch_warnings",
+      "membranes": {
+        "unknown": 194
+      },
+      "residuals": {
+        "resource_candidate": 194
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/__init__.py:827",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_unittests.py:867",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_unittests.py:888",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_unittests.py:894",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_datetime.py:1645"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 1,
+        "pos=0;kw=expected_warning": 1,
+        "pos=0;kw=match": 3,
+        "pos=1;kw=-": 57,
+        "pos=1;kw=match": 105
+      },
+      "count": 167,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "pytest.warns",
+      "membranes": {
+        "unknown": 167
+      },
+      "residuals": {
+        "resource_candidate": 167
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:475",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_array_coercion.py:443",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_array_coercion.py:940",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_floatingpoint_errors.py:149",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_casting_unittests.py:466"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 146,
+        "pos=1;kw=msg": 2
+      },
+      "count": 148,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "assert_raises",
+      "membranes": {
+        "unknown": 148
+      },
+      "residuals": {
+        "resource_candidate": 148
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_api.py:201",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_conversion_utils.py:26",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_datetime.py:204",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_dtype.py:138",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_dtype.py:1647"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 130,
+        "pos=1;kw=mode": 10,
+        "pos=2;kw=**": 2
+      },
+      "count": 142,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "ensure_clean_store",
+      "membranes": {
+        "unknown": 142
+      },
+      "residuals": {
+        "resource_candidate": 142
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_append.py:33",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_append.py:105",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_append.py:152",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_append.py:200",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_append.py:286"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=2;kw=-": 135
+      },
+      "count": 135,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "pd.option_context",
+      "membranes": {
+        "unknown": 135
+      },
+      "residuals": {
+        "resource_candidate": 135
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arrays/categorical/test_missing.py:142",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arrays/categorical/test_missing.py:171",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arrays/string_/test_string.py:521",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arrays/string_/test_string.py:553",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arrays/string_/test_string.py:602"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 12,
+        "pos=0;kw=match": 6,
+        "pos=0;kw=raise_on_extra_warnings": 1,
+        "pos=1;kw=-": 111,
+        "pos=1;kw=match": 3
+      },
+      "count": 133,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "tm.assert_cow_warning",
+      "membranes": {
+        "unknown": 133
+      },
+      "residuals": {
+        "resource_candidate": 133
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/apply/test_frame_apply.py:1504",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/computation/test_eval.py:1983",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/index/test_index.py:26",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/index/test_index.py:48",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/index/test_index.py:61"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=2;kw=-": 74
+      },
+      "count": 74,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "assert_raises_regex",
+      "membranes": {
+        "unknown": 74
+      },
+      "residuals": {
+        "resource_candidate": 74
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_arrayprint.py:234",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_datetime.py:1746",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_datetime.py:2446",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_datetime.py:2466",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_defchararray.py:744"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 64,
+        "pos=0;kw=extra_warnings": 2,
+        "pos=1;kw=-": 3
+      },
+      "count": 69,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "tm.raises_chained_assignment_error",
+      "membranes": {
+        "unknown": 69
+      },
+      "residuals": {
+        "resource_candidate": 69
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/test_chained_assignment_deprecation.py:76",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/test_chained_assignment_deprecation.py:85",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/test_chained_assignment_deprecation.py:124",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/test_chained_assignment_deprecation.py:133",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/copy_view/test_chained_assignment_deprecation.py:173"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 28,
+        "pos=0;kw=prefix,suffix": 3,
+        "pos=0;kw=suffix": 23
+      },
+      "count": 54,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "temppath",
+      "membranes": {
+        "unknown": 54
+      },
+      "residuals": {
+        "resource_candidate": 54
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_longdouble.py:144",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_longdouble.py:228",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_longdouble.py:237",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_longdouble.py:246",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_longdouble.py:255"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 40
+      },
+      "count": 40,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "monkeypatch.context",
+      "membranes": {
+        "unknown": 40
+      },
+      "residuals": {
+        "resource_candidate": 40
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arithmetic/test_numeric.py:35",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arithmetic/test_numeric.py:150",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arithmetic/test_numeric.py:158",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arrays/categorical/test_indexing.py:379",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/config/test_config.py:13"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 37
+      },
+      "count": 37,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "util.switchdir",
+      "membranes": {
+        "unknown": 37
+      },
+      "residuals": {
+        "resource_candidate": 37
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:146",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:162",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:174",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:188",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:201"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 32,
+        "pos=1;kw=engine": 1
+      },
+      "count": 33,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "ExcelFile",
+      "membranes": {
+        "unknown": 33
+      },
+      "residuals": {
+        "resource_candidate": 33
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_writers.py:397",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_writers.py:413",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_writers.py:474",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_writers.py:494",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_writers.py:515"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 10,
+        "pos=1;kw=date_format,datetime_format": 1,
+        "pos=1;kw=engine": 9,
+        "pos=1;kw=engine,engine_kwargs": 3,
+        "pos=1;kw=engine,engine_kwargs,mode": 2,
+        "pos=1;kw=engine,if_sheet_exists,mode": 4,
+        "pos=1;kw=engine,mode": 1
+      },
+      "count": 30,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "ExcelWriter",
+      "membranes": {
+        "unknown": 30
+      },
+      "residuals": {
+        "resource_candidate": 30
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_odswriter.py:58",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_odswriter.py:51",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:103",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:134",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:181"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 7,
+        "pos=1;kw=need_transaction": 23
+      },
+      "count": 30,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "sql.SQLDatabase",
+      "membranes": {
+        "unknown": 30
+      },
+      "residuals": {
+        "resource_candidate": 30
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1372",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1449",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:2465",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:2496",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:2509"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 20,
+        "pos=1;kw=complevel,complib,fletcher32,mode": 1,
+        "pos=1;kw=complevel,complib,mode": 1,
+        "pos=1;kw=mode": 5,
+        "pos=2;kw=-": 1
+      },
+      "count": 28,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "HDFStore",
+      "membranes": {
+        "unknown": 28
+      },
+      "residuals": {
+        "resource_candidate": 28
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/pytables.py:308",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/common.py:32",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_file_handling.py:54",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_file_handling.py:65",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_file_handling.py:494"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {},
+      "count": 28,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "i",
+      "membranes": {
+        "unknown": 28
+      },
+      "residuals": {
+        "resource_candidate": 28
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:921",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:959",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:1018",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:1206",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:1219"
+      ],
+      "shape": "name"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 28
+      },
+      "count": 28,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "tm.external_error_raised",
+      "membranes": {
+        "unknown": 28
+      },
+      "residuals": {
+        "resource_candidate": 28
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/dtypes/test_inference.py:220",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/indexes/categorical/test_category.py:79",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/indexes/test_numpy_compat.py:68",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/indexes/test_numpy_compat.py:120",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/indexes/test_numpy_compat.py:124"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 26
+      },
+      "count": 26,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "cf.config_prefix",
+      "membranes": {
+        "unknown": 26
+      },
+      "residuals": {
+        "resource_candidate": 26
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/_config/dates.py:18",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/_config/display.py:59",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/config_init.py:73",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/config_init.py:313",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/config_init.py:406"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=**,chunksize": 4,
+        "pos=1;kw=**,iterator": 1,
+        "pos=1;kw=**,skipfooter": 1,
+        "pos=1;kw=chunksize": 8,
+        "pos=1;kw=chunksize,comment,header,iterator,skiprows": 1,
+        "pos=1;kw=chunksize,dtype": 2,
+        "pos=1;kw=chunksize,dtype,encoding,header": 1,
+        "pos=1;kw=chunksize,index_col": 2,
+        "pos=1;kw=chunksize,index_col,parse_dates": 1,
+        "pos=1;kw=chunksize,names": 2,
+        "pos=1;kw=iterator": 1
+      },
+      "count": 24,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "parser.read_csv",
+      "membranes": {
+        "unknown": 24
+      },
+      "residuals": {
+        "resource_candidate": 24
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_chunksize.py:56",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_chunksize.py:104",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_chunksize.py:127",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_chunksize.py:150",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_chunksize.py:178"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=all": 4,
+        "pos=0;kw=call,divide,invalid,over,under": 12,
+        "pos=0;kw=invalid": 4,
+        "pos=0;kw=over": 1
+      },
+      "count": 23,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "errstate",
+      "membranes": {
+        "unknown": 23
+      },
+      "residuals": {
+        "resource_candidate": 23
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/__init__.py:859",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/arrayprint.py:1027",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/arrayprint.py:1106",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/numeric.py:2440",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_errstate.py:78"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=con": 1,
+        "pos=1;kw=-": 13,
+        "pos=1;kw=need_transaction": 5,
+        "pos=1;kw=need_transaction,schema": 2,
+        "pos=1;kw=schema": 1
+      },
+      "count": 22,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "pandasSQL_builder",
+      "membranes": {
+        "unknown": 22
+      },
+      "residuals": {
+        "resource_candidate": 22
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:264",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:384",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:525",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:704",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:841"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 16,
+        "pos=1;kw=chunksize": 3,
+        "pos=1;kw=chunksize,order_categoricals": 1,
+        "pos=1;kw=convert_categoricals": 1
+      },
+      "count": 21,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "StataReader",
+      "membranes": {
+        "unknown": 21
+      },
+      "residuals": {
+        "resource_candidate": 21
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:1976",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:2110",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:302",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:663",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:746"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=2;kw=compression": 3,
+        "pos=2;kw=compression,encoding": 2,
+        "pos=2;kw=compression,encoding,errors,storage_options": 1,
+        "pos=2;kw=compression,encoding,storage_options": 1,
+        "pos=2;kw=compression,is_text": 1,
+        "pos=2;kw=compression,is_text,storage_options": 4,
+        "pos=2;kw=compression,storage_options": 1,
+        "pos=2;kw=encoding,storage_options": 1,
+        "pos=2;kw=is_text": 2,
+        "pos=2;kw=is_text,storage_options": 3,
+        "pos=2;kw=storage_options": 2
+      },
+      "count": 21,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "get_handle",
+      "membranes": {
+        "unknown": 21
+      },
+      "residuals": {
+        "resource_candidate": 21
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/_testing/contexts.py:52",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/frame.py:2988",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/excel/_base.py:1402",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/feather_format.py:63",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/feather_format.py:120"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=2;kw=-": 20
+      },
+      "count": 20,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "cf.option_context",
+      "membranes": {
+        "unknown": 20
+      },
+      "residuals": {
+        "resource_candidate": 20
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/config/test_config.py:363",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/config/test_config.py:391",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/config/test_config.py:365",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/dtypes/test_missing.py:59",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/dtypes/test_missing.py:68"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=2;kw=-": 17,
+        "pos=2;kw=check_stacklevel": 3
+      },
+      "count": 20,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "tm.maybe_produces_warning",
+      "membranes": {
+        "unknown": 20
+      },
+      "residuals": {
+        "resource_candidate": 20
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arithmetic/test_timedelta64.py:1766",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/arithmetic/test_timedelta64.py:1774",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/computation/test_eval.py:728",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/indexing/test_indexing.py:1548",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/strings/test_find_replace.py:394"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 19
+      },
+      "count": 19,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "contextlib.closing",
+      "membranes": {
+        "unknown": 19
+      },
+      "residuals": {
+        "resource_candidate": 19
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:161",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:302",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:184",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:212",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_openpyxl.py:337"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {},
+      "count": 19,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "it",
+      "membranes": {
+        "unknown": 19
+      },
+      "residuals": {
+        "resource_candidate": 19
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:933",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:939",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:2920",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:2935",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:2953"
+      ],
+      "shape": "name"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 19
+      },
+      "count": 19,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "pd.ExcelFile",
+      "membranes": {
+        "unknown": 19
+      },
+      "residuals": {
+        "resource_candidate": 19
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_odswriter.py:95",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_readers.py:1503",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_readers.py:1513",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_readers.py:1522",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_readers.py:1532"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 18
+      },
+      "count": 18,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "pandasSQL.run_transaction",
+      "membranes": {
+        "unknown": 18
+      },
+      "residuals": {
+        "resource_candidate": 18
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:2726",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1559",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1579",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1594",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:2703"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=**": 1,
+        "pos=0;kw=-": 1,
+        "pos=0;kw=legacy": 6,
+        "pos=0;kw=legacy,linewidth": 4,
+        "pos=0;kw=linewidth,precision": 2,
+        "pos=0;kw=override_repr": 1,
+        "pos=0;kw=precision": 2
+      },
+      "count": 17,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "np.printoptions",
+      "membranes": {
+        "unknown": 17
+      },
+      "residuals": {
+        "resource_candidate": 17
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_arrayprint.py:1240",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_arrayprint.py:1263",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_arrayprint.py:715",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_arrayprint.py:958",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_arrayprint.py:964"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 16
+      },
+      "count": 16,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "conn.begin",
+      "membranes": {
+        "unknown": 16
+      },
+      "residuals": {
+        "resource_candidate": 16
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:3834",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:198",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:323",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:357",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1268"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 10,
+        "pos=0;kw=_warn": 1,
+        "pos=1;kw=-": 4
+      },
+      "count": 15,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "suppress_warnings",
+      "membranes": {
+        "unknown": 15
+      },
+      "residuals": {
+        "resource_candidate": 15
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/_private/utils.py:1992",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1828",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1853",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1872",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1888"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 12,
+        "pos=1;kw=-": 2
+      },
+      "count": 14,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "BytesIO",
+      "membranes": {
+        "unknown": 14
+      },
+      "residuals": {
+        "resource_candidate": 14
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_regression.py:54",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_regression.py:104",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_regression.py:366",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/ma/tests/test_core.py:5619",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/excel/test_writers.py:1225"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 5,
+        "pos=2;kw=-": 7,
+        "pos=3;kw=-": 1
+      },
+      "count": 13,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "exc_iter",
+      "membranes": {
+        "unknown": 13
+      },
+      "residuals": {
+        "resource_candidate": 13
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_extint128.py:73",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_extint128.py:88",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_extint128.py:96",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_extint128.py:107",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_extint128.py:116"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 12
+      },
+      "count": 12,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "conn.connect",
+      "membranes": {
+        "unknown": 12
+      },
+      "residuals": {
+        "resource_candidate": 12
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:3905",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:3941",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:3989",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:317",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:351"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=2;kw=buffersize,casting,op_dtypes,order": 2,
+        "pos=3;kw=-": 5,
+        "pos=3;kw=casting": 1,
+        "pos=3;kw=casting,op_dtypes": 4
+      },
+      "count": 12,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "nditer",
+      "membranes": {
+        "unknown": 12
+      },
+      "residuals": {
+        "resource_candidate": 12
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:55",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:972",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:992",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:1024",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_nditer.py:1050"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=close_fds,stderr,stdout": 2,
+        "pos=1;kw=close_fds,stdin": 5,
+        "pos=1;kw=close_fds,stdout": 3,
+        "pos=1;kw=stderr,stdout": 1
+      },
+      "count": 11,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "subprocess.Popen",
+      "membranes": {
+        "unknown": 11
+      },
+      "residuals": {
+        "resource_candidate": 11
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/clipboard/__init__.py:102",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/clipboard/__init__.py:108",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/clipboard/__init__.py:174",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/clipboard/__init__.py:183",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/clipboard/__init__.py:205"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 10,
+        "pos=2;kw=-": 1
+      },
+      "count": 11,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "suppress",
+      "membranes": {
+        "unknown": 11
+      },
+      "residuals": {
+        "resource_candidate": 11
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/indexing.py:1366",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/indexing.py:1691",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/indexing.py:767",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/indexing.py:772",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/indexing.py:1056"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 3,
+        "pos=1;kw=mode": 3,
+        "pos=2;kw=-": 4,
+        "pos=2;kw=compression": 1
+      },
+      "count": 11,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "zipfile.ZipFile",
+      "membranes": {
+        "unknown": 11
+      },
+      "residuals": {
+        "resource_candidate": 11
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_io.py:218",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/excel/_base.py:1419",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/test_compression.py:42",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/test_compression.py:61",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/test_compression.py:73"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=chunksize": 4,
+        "pos=1;kw=convert_categoricals,convert_dates,iterator": 2,
+        "pos=1;kw=iterator": 4
+      },
+      "count": 10,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "read_stata",
+      "membranes": {
+        "unknown": 10
+      },
+      "residuals": {
+        "resource_candidate": 10
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:1183",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:1222",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:1226",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:1230",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:1234"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 8,
+        "pos=1;kw=-": 1
+      },
+      "count": 9,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "Attribute",
+      "membranes": {
+        "unknown": 9
+      },
+      "residuals": {
+        "resource_candidate": 9
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:375",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:493",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:549",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:567",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/test_f2py2e.py:599"
+      ],
+      "shape": "call_other"
+    },
+    {
+      "arity_sketches": {
+        "pos=3;kw=-": 7,
+        "pos=3;kw=condition": 2
+      },
+      "count": 9,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "com.temp_setattr",
+      "membranes": {
+        "unknown": 9
+      },
+      "residuals": {
+        "resource_candidate": 9
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/apply.py:1568",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/apply.py:1605",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/groupby/generic.py:357",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/groupby/groupby.py:2360",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/groupby/groupby.py:3072"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=2;kw=-": 3,
+        "pos=2;kw=compression": 3,
+        "pos=2;kw=is_text": 2,
+        "pos=2;kw=is_text,memory_map": 1
+      },
+      "count": 9,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "icom.get_handle",
+      "membranes": {
+        "unknown": 9
+      },
+      "residuals": {
+        "resource_candidate": 9
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_common.py:138",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_common.py:167",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_common.py:120",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_common.py:126",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_common.py:429"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=chunksize,engine,lines": 6,
+        "pos=1;kw=chunksize,engine,lines,nrows": 2,
+        "pos=1;kw=chunksize,engine,lines,typ": 1
+      },
+      "count": 9,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "read_json",
+      "membranes": {
+        "unknown": 9
+      },
+      "residuals": {
+        "resource_candidate": 9
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/json/test_readlines.py:138",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/json/test_readlines.py:171",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/json/test_readlines.py:190",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/json/test_readlines.py:374",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/json/test_readlines.py:149"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=compression": 3,
+        "pos=2;kw=-": 6
+      },
+      "count": 9,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "tm.decompress_file",
+      "membranes": {
+        "unknown": 9
+      },
+      "residuals": {
+        "resource_candidate": 9
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:1083",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:1088",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_to_csv.py:1354",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/json/test_compression.py:26",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_pickle.py:302"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 9
+      },
+      "count": 9,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "tm.set_timezone",
+      "membranes": {
+        "unknown": 9
+      },
+      "residuals": {
+        "resource_candidate": 9
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/indexes/datetimes/methods/test_normalize.py:86",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_timezones.py:304",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_timezones.py:309",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/scalar/timestamp/methods/test_replace.py:118",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/scalar/timestamp/methods/test_replace.py:128"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 7
+      },
+      "count": 7,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "conn.cursor",
+      "membranes": {
+        "unknown": 7
+      },
+      "residuals": {
+        "resource_candidate": 7
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:165",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:285",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:277",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:212",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:391"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 5,
+        "pos=1;kw=allow_pickle": 1,
+        "pos=1;kw=allow_pickle,encoding": 1
+      },
+      "count": 7,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "np.load",
+      "membranes": {
+        "unknown": 7
+      },
+      "residuals": {
+        "resource_candidate": 7
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_custom_dtypes.py:367",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_format.py:525",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_format.py:552",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_format.py:614",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_format.py:978"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=chunksize,encoding": 1,
+        "pos=1;kw=encoding,format,iterator": 2,
+        "pos=1;kw=encoding,iterator": 4
+      },
+      "count": 7,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "pd.read_sas",
+      "membranes": {
+        "unknown": 7
+      },
+      "residuals": {
+        "resource_candidate": 7
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/sas/test_sas7bdat.py:141",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/sas/test_sas7bdat.py:146",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/sas/test_sas7bdat.py:102",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/sas/test_sas7bdat.py:111",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/sas/test_sas7bdat.py:116"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=floatmode": 1,
+        "pos=0;kw=floatmode,precision": 1,
+        "pos=0;kw=infstr,nanstr": 1,
+        "pos=0;kw=linewidth": 1,
+        "pos=0;kw=precision": 3
+      },
+      "count": 7,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "printoptions",
+      "membranes": {
+        "unknown": 7
+      },
+      "residuals": {
+        "resource_candidate": 7
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/polynomial/tests/test_printing.py:246",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/polynomial/tests/test_printing.py:522",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/polynomial/tests/test_printing.py:533",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/polynomial/tests/test_printing.py:542",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/polynomial/tests/test_printing.py:545"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=chunksize,format": 2,
+        "pos=1;kw=chunksize,format,index": 1,
+        "pos=1;kw=chunksize,index": 1,
+        "pos=1;kw=format,index,iterator": 1,
+        "pos=1;kw=format,iterator": 2
+      },
+      "count": 7,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "read_sas",
+      "membranes": {
+        "unknown": 7
+      },
+      "residuals": {
+        "resource_candidate": 7
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/sas/test_xport.py:56",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/sas/test_xport.py:61",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/sas/test_xport.py:66",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/sas/test_xport.py:72",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/sas/test_xport.py:94"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=mode": 7
+      },
+      "count": 7,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "tables.open_file",
+      "membranes": {
+        "unknown": 7
+      },
+      "residuals": {
+        "resource_candidate": 7
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_compat.py:32",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_file_handling.py:206",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_file_handling.py:217",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_file_handling.py:228",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_file_handling.py:247"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 6
+      },
+      "count": 6,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "assert_no_warnings",
+      "membranes": {
+        "unknown": 6
+      },
+      "residuals": {
+        "resource_candidate": 6
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_umath.py:5084",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_umath.py:1601",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_umath.py:1947",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_umath.py:1959",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_io.py:1563"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 6
+      },
+      "count": 6,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "con.begin",
+      "membranes": {
+        "unknown": 6
+      },
+      "residuals": {
+        "resource_candidate": 6
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:3906",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:3942",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:3990",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1348",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1427"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {},
+      "count": 6,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "ctx",
+      "membranes": {
+        "unknown": 6
+      },
+      "residuals": {
+        "resource_candidate": 6
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/_methods.py:243",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/records.py:903",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/config/test_config.py:426",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/formats/style/test_style.py:736",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/plotting/test_converter.py:123"
+      ],
+      "shape": "name"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 2,
+        "pos=0;kw=rc": 4
+      },
+      "count": 6,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "mpl.rc_context",
+      "membranes": {
+        "unknown": 6
+      },
+      "residuals": {
+        "resource_candidate": 6
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/formats/style/test_matplotlib.py:30",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/plotting/conftest.py:22",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/plotting/frame/test_frame_color.py:638",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/plotting/test_style.py:27",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/plotting/test_style.py:48"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {},
+      "count": 6,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "sup",
+      "membranes": {
+        "unknown": 6
+      },
+      "residuals": {
+        "resource_candidate": 6
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1843",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1848",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1878",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1883",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1931"
+      ],
+      "shape": "name"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=fileobj": 2,
+        "pos=1;kw=-": 1,
+        "pos=1;kw=mode": 1,
+        "pos=2;kw=-": 2
+      },
+      "count": 6,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "tarfile.open",
+      "membranes": {
+        "unknown": 6
+      },
+      "residuals": {
+        "resource_candidate": 6
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/test_c_parser_only.py:529",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/test_compression.py:207",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_gcs.py:133",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_gcs.py:133",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_pickle.py:270"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 6
+      },
+      "count": 6,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "tempdir",
+      "membranes": {
+        "unknown": 6
+      },
+      "residuals": {
+        "resource_candidate": 6
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_io.py:568",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_io.py:582",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_io.py:1556",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_io.py:631",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:2029"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 3,
+        "pos=0;kw=mode": 1,
+        "pos=1;kw=delete,suffix": 1
+      },
+      "count": 5,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "NamedTemporaryFile",
+      "membranes": {
+        "unknown": 5
+      },
+      "residuals": {
+        "resource_candidate": 5
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_custom_dtypes.py:361",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_memmap.py:245",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_memmap.py:257",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_memmap.py:268",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_loadtxt.py:652"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=**,chunksize": 2,
+        "pos=1;kw=**,chunksize,skiprows": 1,
+        "pos=1;kw=**,header": 1,
+        "pos=1;kw=**,names": 1
+      },
+      "count": 5,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "TextParser",
+      "membranes": {
+        "unknown": 5
+      },
+      "residuals": {
+        "resource_candidate": 5
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/html.py:875",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/xml.py:747",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_data_list.py:31",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_data_list.py:50",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_data_list.py:73"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=max_workers": 5
+      },
+      "count": 5,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "ThreadPoolExecutor",
+      "membranes": {
+        "unknown": 5
+      },
+      "residuals": {
+        "resource_candidate": 5
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_hashtable.py:49",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_hashtable.py:67",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_hashtable.py:84",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_hashtable.py:110",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_hashtable.py:144"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=encoding,mode": 2,
+        "pos=2;kw=encoding": 3
+      },
+      "count": 5,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "codecs.open",
+      "membranes": {
+        "unknown": 5
+      },
+      "residuals": {
+        "resource_candidate": 5
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/formats/test_to_latex.py:45",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/formats/test_to_latex.py:53",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_common.py:521",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_common.py:523",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/util/_print_versions.py:142"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 3,
+        "pos=2;kw=-": 2
+      },
+      "count": 5,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "gzip.open",
+      "membranes": {
+        "unknown": 5
+      },
+      "residuals": {
+        "resource_candidate": 5
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/random/tests/test_direct.py:579",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/random/tests/test_generator_mt19937.py:2823",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_compression.py:361",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:1860",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:2034"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {},
+      "count": 5,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "reader",
+      "membranes": {
+        "unknown": 5
+      },
+      "residuals": {
+        "resource_candidate": 5
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sas/sasreader.py:177",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/stata.py:2108",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/json/test_readlines.py:237",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_file_buffer_url.py:426",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/common/test_file_buffer_url.py:447"
+      ],
+      "shape": "name"
+    },
+    {
+      "arity_sketches": {
+        "pos=2;kw=-": 5
+      },
+      "count": 5,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "rewrite_exception",
+      "membranes": {
+        "unknown": 5
+      },
+      "residuals": {
+        "resource_candidate": 5
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/indexes/base.py:1086",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/indexes/interval.py:233",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/indexes/interval.py:273",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/indexes/interval.py:309",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/core/indexes/interval.py:344"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 5
+      },
+      "count": 5,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "self.con.cursor",
+      "membranes": {
+        "unknown": 5
+      },
+      "residuals": {
+        "resource_candidate": 5
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:2104",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:2225",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:2305",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:2402",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/io/sql.py:2390"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=1;kw=-": 5
+      },
+      "count": 5,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "sql.pandasSQL_builder",
+      "membranes": {
+        "unknown": 5
+      },
+      "residuals": {
+        "resource_candidate": 5
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:1759",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:4156",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:4223",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:4265",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_sql.py:4287"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 3,
+        "pos=0;kw=suffix": 1,
+        "pos=1;kw=delete": 1
+      },
+      "count": 5,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "tempfile.NamedTemporaryFile",
+      "membranes": {
+        "unknown": 5
+      },
+      "residuals": {
+        "resource_candidate": 5
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_regression.py:1589",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_stringdtype.py:537",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/typing/tests/data/pass/ndarray_conversion.py:22",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/test_encoding.py:213",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/pytables/test_store.py:991"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 3,
+        "pos=1;kw=-": 1
+      },
+      "count": 4,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "StringIO",
+      "membranes": {
+        "unknown": 4
+      },
+      "residuals": {
+        "resource_candidate": 4
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_info.py:189",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/frame/methods/test_info.py:563",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/parser/test_c_parser_only.py:304",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_common.py:125"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 4
+      },
+      "count": 4,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "activated_tracemalloc",
+      "membranes": {
+        "unknown": 4
+      },
+      "residuals": {
+        "resource_candidate": 4
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/libs/test_hashtable.py:465",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/libs/test_hashtable.py:476",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/libs/test_hashtable.py:222",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/libs/test_hashtable.py:232"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 4
+      },
+      "count": 4,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "assert_no_gc_cycles",
+      "membranes": {
+        "unknown": 4
+      },
+      "residuals": {
+        "resource_candidate": 4
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_io.py:2696",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_io.py:2701",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:2088",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:2101"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 2,
+        "pos=0;kw=modules": 2
+      },
+      "count": 4,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "clear_and_catch_warnings",
+      "membranes": {
+        "unknown": 4
+      },
+      "residuals": {
+        "resource_candidate": 4
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1778",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1784",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1794",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/tests/test_utils.py:1800"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=-": 1,
+        "pos=0;kw=max_workers": 3
+      },
+      "count": 4,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "concurrent.futures.ThreadPoolExecutor",
+      "membranes": {
+        "unknown": 4
+      },
+      "residuals": {
+        "resource_candidate": 4
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_multithreading.py:338",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/_core/tests/test_multithreading.py:441",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/f2py/tests/util.py:93",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/testing/_private/utils.py:2815"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=2;kw=-": 4
+      },
+      "count": 4,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "ensure_removed",
+      "membranes": {
+        "unknown": 4
+      },
+      "residuals": {
+        "resource_candidate": 4
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/test_register_accessor.py:63",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/test_register_accessor.py:74",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/test_register_accessor.py:95",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/test_register_accessor.py:87"
+      ],
+      "shape": "call_dotted"
+    },
+    {
+      "arity_sketches": {
+        "pos=0;kw=fileobj,mode": 2,
+        "pos=2;kw=-": 2
+      },
+      "count": 4,
+      "enrollment_posture": "resource_loud_candidate",
+      "identity": "gzip.GzipFile",
+      "membranes": {
+        "unknown": 4
+      },
+      "residuals": {
+        "resource_candidate": 4
+      },
+      "sample_loci": [
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/numpy/lib/tests/test_io.py:2394",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_http_headers.py:26",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:1747",
+        "/Users/tsavo/provekit/.venv/lib/python3.14/site-packages/pandas/tests/io/test_stata.py:1749"
+      ],
+      "shape": "call_dotted"
+    }
+  ],
+  "top_identities": [
+    [
+      "pytest.raises",
+      6353
+    ],
+    [
+      "tm.assert_produces_warning",
+      1836
+    ],
+    [
+      "tm.ensure_clean",
+      348
+    ],
+    [
+      "np.errstate",
+      292
+    ],
+    [
+      "open",
+      273
+    ],
+    [
+      "option_context",
+      252
+    ],
+    [
+      "warnings.catch_warnings",
+      194
+    ],
+    [
+      "pytest.warns",
+      167
+    ],
+    [
+      "assert_raises",
+      148
+    ],
+    [
+      "ensure_clean_store",
+      142
+    ],
+    [
+      "pd.option_context",
+      135
+    ],
+    [
+      "tm.assert_cow_warning",
+      133
+    ],
+    [
+      "assert_raises_regex",
+      74
+    ],
+    [
+      "tm.raises_chained_assignment_error",
+      69
+    ],
+    [
+      "temppath",
+      54
+    ],
+    [
+      "monkeypatch.context",
+      40
+    ],
+    [
+      "util.switchdir",
+      37
+    ],
+    [
+      "ExcelFile",
+      33
+    ],
+    [
+      "ExcelWriter",
+      30
+    ],
+    [
+      "sql.SQLDatabase",
+      30
+    ],
+    [
+      "i",
+      28
+    ],
+    [
+      "HDFStore",
+      28
+    ],
+    [
+      "tm.external_error_raised",
+      28
+    ],
+    [
+      "cf.config_prefix",
+      26
+    ],
+    [
+      "parser.read_csv",
+      24
+    ],
+    [
+      "errstate",
+      23
+    ],
+    [
+      "pandasSQL_builder",
+      22
+    ],
+    [
+      "get_handle",
+      21
+    ],
+    [
+      "StataReader",
+      21
+    ],
+    [
+      "tm.maybe_produces_warning",
+      20
+    ],
+    [
+      "cf.option_context",
+      20
+    ],
+    [
+      "it",
+      19
+    ],
+    [
+      "pd.ExcelFile",
+      19
+    ],
+    [
+      "contextlib.closing",
+      19
+    ],
+    [
+      "pandasSQL.run_transaction",
+      18
+    ],
+    [
+      "np.printoptions",
+      17
+    ],
+    [
+      "conn.begin",
+      16
+    ],
+    [
+      "suppress_warnings",
+      15
+    ],
+    [
+      "BytesIO",
+      14
+    ],
+    [
+      "exc_iter",
+      13
+    ]
+  ],
+  "with_items_total": 11535
+}
