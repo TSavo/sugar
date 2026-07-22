@@ -2,38 +2,59 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import Protocol, TypedDict, cast, runtime_checkable
 
 from sugar_lift_py_tests.ir import Term
 
-if TYPE_CHECKING:
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+
+@runtime_checkable
+class RuntimeEffectSite(Protocol):
+    """The structural contract a witness address must satisfy: a filename, a
+    1-based line, a 0-based column.
+
+    This is the ONE seam every fragment currency threads through. The tree's
+    live fragment (``sugar_source_tree.fragment.SourceFragment``) and the
+    kit's own factory-era fragment (``sugar_lift_py_tests.source_fragment
+    .SourceFragment``, re-exported for compatibility as
+    ``sugar_lift_py_tests.factory.source_fragment.SourceFragment``) both
+    already answer these three attributes — so admission here is structural,
+    never a name check against one concrete class over the other. The tree
+    fragment is the primary, hot-path address; the factory fragment remains
+    admitted through this SAME structural door for the kit's own floor
+    evaluators (list/dict/string/symbolic value dispatch, opaque call sites,
+    …) that still mint their evidence from a factory-owned operation node —
+    there is no separate legacy branch to fall back to, because both
+    fragments are the one shape this protocol names.
+    """
+
+    filename: str
+    line: int
+    col: int
 
 
-def resolve_runtime_effect_site(site) -> "SourceFragment":
-    """Admit only a genuine SourceFragment as the witness address.
+def resolve_runtime_effect_site(site) -> RuntimeEffectSite:
+    """Admit only a genuine fragment (any currency) as the witness address.
 
     The fragment may arrive directly, or as the ``site`` / ``blame`` field of an
     operation object that still carries the fragment (not a locus string). A
     stringly locus cannot mint evidence — reconstruct from the owning fragment
     instead of projecting blame prose into a fake address.
     """
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-
-    if isinstance(site, SourceFragment):
+    if isinstance(site, RuntimeEffectSite):
         return site
     nested = getattr(site, "site", None)
-    if isinstance(nested, SourceFragment):
+    if isinstance(nested, RuntimeEffectSite):
         return nested
     blame = getattr(site, "blame", None)
-    if isinstance(blame, SourceFragment):
+    if isinstance(blame, RuntimeEffectSite):
         return blame
     raise TypeError(
-        "RuntimeEffectWitness.site must be a SourceFragment (genuine runtime "
-        f"locus). Got {type(site).__name__}={site!r}. Thread the fragment that "
-        "owns the boundary; do not reconstruct evidence from blame prose or "
-        "string loci. replacement=pass the SourceFragment (or an operation "
-        "whose .site/.blame still holds that fragment)."
+        "RuntimeEffectWitness.site must be a fragment answering filename/"
+        f"line/col (genuine runtime locus). Got {type(site).__name__}={site!r}."
+        " Thread the fragment that owns the boundary; do not reconstruct "
+        "evidence from blame prose or string loci. replacement=pass the "
+        "fragment (or an operation whose .site/.blame still holds that "
+        "fragment)."
     )
 
 
@@ -165,18 +186,18 @@ def is_lift_time_decidable(term: Term) -> bool:
 class RuntimeEffectWitness:
     """Evidence that perfect lift-time machinery still meets a runtime operand.
 
-    Constructed FROM the SourceFragment that owns the runtime boundary: the
-    site IS the address, so an absolute or empty locus is unrepresentable by
-    construction (SourceFragment.from_node normalizes filenames at the door).
-    Fabricated string sites and non-term operands are refused at the door.
+    Constructed FROM the fragment that owns the runtime boundary: the site IS
+    the address, so an absolute or empty locus is unrepresentable by
+    construction (both fragment currencies normalize filenames at their own
+    construction doors). Fabricated string sites and non-term operands are
+    refused here.
     """
 
     operation: Term
     runtime_operand: RuntimeOperand
-    site: "SourceFragment"
+    site: RuntimeEffectSite
 
     def __post_init__(self) -> None:
-        from sugar_lift_py_tests.factory.source_fragment import SourceFragment
         from sugar_lift_py_tests.ir import Term as TermType
 
         if not isinstance(self.operation, TermType):
@@ -194,17 +215,22 @@ class RuntimeEffectWitness:
                 "RuntimeEffectWitness.runtime_operand.term must be a Term; got "
                 f"{type(self.runtime_operand.term).__name__}"
             )
-        if not isinstance(self.site, SourceFragment):
+        if not isinstance(self.site, RuntimeEffectSite):
             raise TypeError(
-                "RuntimeEffectWitness.site must be a SourceFragment; got "
-                f"{type(self.site).__name__}={self.site!r}. Thread the fragment "
-                "that owns the boundary — string loci are unrepresentable."
+                "RuntimeEffectWitness.site must be a fragment answering "
+                f"filename/line/col; got {type(self.site).__name__}={self.site!r}."
+                " Thread the fragment that owns the boundary — string loci are "
+                "unrepresentable."
             )
 
     @property
     def locus(self) -> str:
-        """The witness address, projected for display: ``file:line:col``."""
-        return str(self.site)
+        """The witness address, projected for display: ``file:line:col``.
+
+        Built directly from the site's structural fields rather than
+        ``str(self.site)`` — the two fragment currencies are not required to
+        share a ``__str__`` rendering, only the filename/line/col contract."""
+        return f"{self.site.filename}:{self.site.line}:{self.site.col}"
 
     @property
     def operand(self) -> Term:

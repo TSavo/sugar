@@ -924,6 +924,26 @@ class Assign(Statement):
                 site=self.fragment,
             )
 
+        if len(self.targets) == 1 and isinstance(self.targets[0], Attribute):
+            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                AttributeStoreEffectSugar,
+            )
+
+            return AttributeStoreEffectSugar(
+                attr=self.targets[0].attr,
+                site=self.fragment,
+            )
+
+        if len(self.targets) == 1 and isinstance(self.targets[0], Subscript):
+            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                SubscriptStoreEffectSugar,
+            )
+
+            return SubscriptStoreEffectSugar(
+                index_text=self.targets[0].slice_.fragment.text,
+                site=self.fragment,
+            )
+
         return super().sugar()
 
 

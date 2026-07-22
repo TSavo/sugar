@@ -78,7 +78,7 @@ def test_source_fragment_passes_pseudo_filenames_untouched() -> None:
 def test_string_locus_cannot_mint_a_runtime_effect_witness() -> None:
     from sugar_lift_py_tests.effect import runtime_effect_witness
 
-    with pytest.raises(TypeError, match="SourceFragment"):
+    with pytest.raises(TypeError, match="filename/"):
         runtime_effect_witness(
             "py.divide",
             genuine_runtime_operand("py.divide", make_var("x")),
