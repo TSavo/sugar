@@ -1,4 +1,4 @@
-"""`with <manager>: <body>` under a TYPED contract -- the #5994 wiring.
+"""`with <manager> [as <name>]: <body>` under a TYPED contract -- #5994 wiring.
 
 The node consults the recognition membrane (never a vendor name); the membrane
 issues a typed contract; this sugar reduces the body as a block and hands the
@@ -12,10 +12,13 @@ outcome to the ONE effect router shared with Try. The contract decides:
 - ``Suppresses(matcher)``: permission -- a matching halt is consumed silently;
   absence is fine; a non-matching effect propagates.
 
-Everything else about `with` stays LOUD at the node: unauthenticated managers,
-RuntimeSelected, warning-kind matchers (no WarningEffect exists to observe yet
--- wiring them would mint false absent-twins), `as` witnesses (step 5), multiple
-managers, and the resource expansion (step 4, finally-faithful, its own build).
+``as <Name>`` (Expects only) is a TEMPORAL bind for the enclosing block's
+tail: ``With.substitution_binding`` exports the matched-effect witness
+(``E()`` stand-in from ``raises(E)``). This sugar records ``as_name`` for
+provenance; substitute already rewrote uses of the name in the tail.
+
+Loud at the node: unauthenticated managers, non-Name as-targets, Suppresses+as,
+multiple managers, resource expansion (step 4).
 """
 
 from __future__ import annotations
@@ -29,9 +32,10 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class WithContractSugar(Sugar):
-    contract: object  # Expects | Suppresses (raise-kind only; the node guards)
+    contract: object  # Expects | Suppresses (the node guards kind)
     body: tuple  # the body statements' sugars, in source order
     site: object = dataclass_field(compare=False, default=None)
+    as_name: str | None = None  # Expects as-witness; bound temporally for the tail
 
     @classmethod
     def witnesses(cls):
