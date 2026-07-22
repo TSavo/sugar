@@ -123,28 +123,51 @@ def _route_expects(entries: tuple, matcher: EffectMatcher) -> RoutedOutcome:
     if matching is not None:
         index, incomplete = matching
         observed = str_const(incomplete.effect.exception_name)
-        fact = InvValue(eq(str_const(matcher.name), observed))
+        # The TYPE obligation: discharged (ground-true equality; the halt is
+        # the evidence, consumed). Each PAYLOAD obligation (T's conjunction
+        # ruling) is its own row with its own verdict: a MessagePattern stays
+        # UNDISCHARGED -- an opaque py.effect.message_matches over the SAME
+        # observed witness -- until the effect carries authenticated message
+        # content. Never one aggregate boolean; the unobservable message
+        # neither silences the type testimony nor pretends the pattern held.
+        facts = [InvValue(eq(str_const(matcher.name), observed))]
+        for obligation in matcher.payload_obligations:
+            facts.append(
+                InvValue(
+                    atomic(
+                        "py.effect.message_matches",
+                        [observed, str_const(obligation.pattern)],
+                    )
+                )
+            )
         remaining = entries[:index] + entries[index + 1 :]
-        return RoutedOutcome(entries=(*remaining, fact), stated_facts=(fact,))
+        return RoutedOutcome(
+            entries=(*remaining, *facts), stated_facts=tuple(facts)
+        )
 
     wrong = _first_incomplete_raise(entries)
     if wrong is not None:
         _, incomplete = wrong
-        # Wrong effect: name the ground-false equality, but the Incomplete
-        # itself is NOT consumed -- F must not disappear.
+        # Wrong effect: the type obligation is REFUTED (ground-false equality)
+        # and the Incomplete is NOT consumed -- F must not disappear. Payload
+        # obligations are INAPPLICABLE (their witness is the matching halt,
+        # which does not exist), never independently emitted or passed.
         fact = InvValue(eq(str_const(matcher.name), str_const(incomplete.effect.exception_name)))
         return RoutedOutcome(entries=(*entries, fact), stated_facts=(fact,))
 
     if _has_unresolved_call_coordinates(entries):
         # Honest red: a dig may still produce the expected effect. Do not
-        # claim absence -- emit an opaque obligation instead of a fact.
-        obligation = InvValue(
-            atomic(_EFFECT_EXPECTED_OBLIGATION, [str_const(matcher.name)])
-        )
+        # claim absence -- emit an opaque obligation carrying the WHOLE
+        # conjunction (type name + any payload patterns), all undischarged.
+        operands = [str_const(matcher.name)] + [
+            str_const(o.pattern) for o in matcher.payload_obligations
+        ]
+        obligation = InvValue(atomic(_EFFECT_EXPECTED_OBLIGATION, operands))
         return RoutedOutcome(entries=(*entries, obligation), stated_facts=(obligation,))
 
-    # Completion with no hiding coordinates: the lying twin. The expected
-    # effect is asserted absent, ground-false.
+    # Completion with no hiding coordinates: the required-effect obligation is
+    # REFUTED (asserted absent, ground-false). Payload obligations are
+    # inapplicable -- no effect witness exists -- not independently "passed".
     fact = InvValue(eq(str_const(matcher.name), str_const(_EFFECT_ABSENT_NAME)))
     return RoutedOutcome(entries=(*entries, fact), stated_facts=(fact,))
 

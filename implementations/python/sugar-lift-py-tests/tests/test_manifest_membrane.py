@@ -122,11 +122,28 @@ def test_bare_name_spelling_not_enrolled_returns_none():
     assert contract_for_manager(manifest, node) is None
 
 
-def test_keyword_argument_manager_returns_none():
+def test_enrolled_match_kwarg_issues_the_conjunction():
+    # The 96% shape: the enrolled `match=` kwarg is ADMITTED and becomes an
+    # independently dischargeable MessagePattern payload obligation.
     manifest = default_community_manifest()
     source = (
         "def f():\n"
         "    with pytest.raises(ValueError, match='x'):\n"
+        "        pass\n"
+    )
+    node = _with_manager_node(source)
+    contract = contract_for_manager(manifest, node)
+    assert contract is not None
+    assert contract.matcher.name == "ValueError"
+    assert contract.matcher.payload_obligations[0].pattern == "x"
+
+
+def test_unknown_keyword_argument_returns_none():
+    # Only explicitly enrolled kwargs are admitted; anything else stays loud.
+    manifest = default_community_manifest()
+    source = (
+        "def f():\n"
+        "    with pytest.raises(ValueError, check=1):\n"
         "        pass\n"
     )
     node = _with_manager_node(source)

@@ -188,6 +188,46 @@ def contract_for_manager(manifest: Manifest, manager_node) -> Optional[Contract]
             return None
         return builder(matcher)
 
+    if row.arity == "exception-arg-optional-match":
+        # `raises(E)` or `raises(E, match=<str literal>)`. ONLY the enrolled
+        # kwarg is admitted; the pattern becomes an independently dischargeable
+        # MessagePattern payload obligation (T's ruling: the conjunction). All
+        # of these stay unauthenticated (None -> loud): unknown kwargs,
+        # duplicate match, match=None (community semantics unpinned), a
+        # non-literal pattern (nothing to state), an invalid regex (its own
+        # effect, never folded into non-match).
+        if len(manager_node.args) != 1:
+            return None
+        name = _dotted_name_of(manager_node.args[0])
+        if name is None:
+            return None
+        payload: tuple = ()
+        if manager_node.keywords:
+            if len(manager_node.keywords) != 1:
+                return None
+            kw = manager_node.keywords[0]
+            if kw.arg != "match":
+                return None
+            value = kw.value
+            if value.kind != "Constant" or not isinstance(value.value, str):
+                return None  # match=None / non-literal: unpinned or unstateable
+            import re as _re
+
+            try:
+                _re.compile(value.value)
+            except _re.error:
+                return None  # invalid regex: its own effect, not a non-match
+            from sugar_lift_py_tests.context_manager_contract import MessagePattern
+
+            payload = (MessagePattern(value.value),)
+        matcher = EffectMatcher(
+            kind=row.effect_kind, name=name, payload_obligations=payload
+        )
+        builder = _CONTRACT_BUILDERS.get(row.contract)
+        if builder is None:
+            return None
+        return builder(matcher)
+
     # Unknown arity discipline: refuse rather than guess.
     return None
 
