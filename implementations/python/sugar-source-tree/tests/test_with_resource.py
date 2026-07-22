@@ -84,32 +84,50 @@ def test_suppress_manager_still_lifts():
     assert v.invs() == () and v.post().args[1].name == "z"
 
 
-def test_with_item_synthesizes_enter_exit_method_coordinates():
-    """Tree owns ``manager.__enter__()`` / ``__exit__(None,None,None)`` coords.
+def test_with_item_manager_ref_is_shared_enter_exit_receiver():
+    """Context expr is NOT the enter/exit receiver — ManagerRef(M) is.
 
-    Production open still RuntimeSelected; synthesis is the door for a future
-    typed disposition — not a callback injection site.
+    Both method coords share one manager slot (single evaluation identity).
     """
     fn = _fn("def A(m):\n    with m:\n        pass\n    return m\n")
     with_node = next(s for s in fn.body if s.kind == "With")
     item = with_node.items[0]
+    mgr_slot = item._manager_slot_id()
+    ref = item._make_manager_ref()
+    assert ref.kind == "ManagerRef"
+    assert ref.slot_id == mgr_slot
+
     enter = item._make_enter_call()
-    exit_ = item._make_exit_call()
     assert enter.kind == "Call"
     assert enter.func.kind == "Attribute"
     assert enter.func.attr == "__enter__"
-    assert enter.args == ()
-    assert exit_.kind == "Call"
-    assert exit_.func.kind == "Attribute"
-    assert exit_.func.attr == "__exit__"
-    assert len(exit_.args) == 3
-    # Method coords sugar through the normal Call/Attribute door.
+    assert enter.func.value.kind == "ManagerRef"
+    assert enter.func.value.slot_id == mgr_slot
+    # Receiver is not a re-read of the free name / context expr node.
+    assert enter.func.value is not item.context_expr
+
+    exit_ok = item._make_exit_call_completed()
+    assert exit_ok.func.attr == "__exit__"
+    assert exit_ok.func.value.kind == "ManagerRef"
+    assert exit_ok.func.value.slot_id == mgr_slot
+    assert len(exit_ok.args) == 3
+    # Completed face: three Nones.
+    assert all(a.kind == "Constant" and a.value is None for a in exit_ok.args)
+
+    exit_raise = item._make_exit_call_raised(f"{mgr_slot}#raise")
+    assert exit_raise.func.value.slot_id == mgr_slot
+    assert len(exit_raise.args) == 3
+    # Raised face: not three Nones — EffectRef witnesses / open markers.
+    assert not all(
+        a.kind == "Constant" and a.value is None for a in exit_raise.args
+    )
+    assert exit_raise.args[1].kind == "EffectRef"
+
     enter_sugar = enter.sugar()
-    exit_sugar = exit_.sugar()
     assert type(enter_sugar).__name__ == "MethodCallSugar"
-    assert type(exit_sugar).__name__ == "MethodCallSugar"
     assert enter_sugar.name == "__enter__"
-    assert exit_sugar.name == "__exit__"
+    assert type(enter_sugar.receiver).__name__ == "ManagerRefSugar"
+    assert enter_sugar.receiver.slot_id == mgr_slot
 
 
 if __name__ == "__main__":

@@ -48,5 +48,13 @@ class ObservationRefSugar(Sugar):
             return Complete(
                 ExceptionInfoCoordinate(slot_id=self.slot_id, site=self.site)
             )
+        if self.projection == "enter_result":
+            from sugar_lift_py_tests.floor.manager_coordinate import (
+                EnterResultCoordinate,
+            )
+
+            return Complete(
+                EnterResultCoordinate(slot_id=self.slot_id, site=self.site)
+            )
         # warning_observation / effect: pure coordinate until binding facts exist
         return Complete(EffectCoordinate(slot_id=self.slot_id, site=self.site))
