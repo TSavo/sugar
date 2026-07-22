@@ -1414,7 +1414,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     try:
         if level == "contract-declarations":
             _send({"jsonrpc": "2.0", "id": msg_id, "result": {
-                "rows": [dict(row) for row in _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS]
+                "rows": [
+                    row.to_rpc_with_term_table(None)
+                    for row in _PUBLISHED_CONTEXT_MANAGER_DECLARATIONS
+                ]
             }})
             return
         if level == "contract-demands":

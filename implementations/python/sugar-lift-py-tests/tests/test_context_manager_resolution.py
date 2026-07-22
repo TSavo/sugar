@@ -126,18 +126,19 @@ def test_published_typed_declaration_is_served_only_by_declaration_pass(monkeypa
     from sugar_lift_py_tests.ir import PrimitiveSort
     from sugar_lift_py_tests.kit_rpc import ContextManagerContractIrV1, ImportSignatureV1
 
-    row = ContextManagerContractIrV1.never_suppresses(
+    declaration = ContextManagerContractIrV1.never_suppresses(
         bridge_source_symbol="context-manager:dependency.manager",
         import_signature=ImportSignatureV1(formals=(), sorts=()),
         enter_result_sort=PrimitiveSort("Value"),
         source_warrants=(),
-    ).to_rpc_with_term_table(None)
+    )
+    row = declaration.to_rpc_with_term_table(None)
     sent = []
     monkeypatch.setattr(lift_rpc, "_PUBLISHED_CONTEXT_MANAGER_DECLARATIONS", ())
     monkeypatch.setattr(lift_rpc, "_BOUND_CONTRACT_REFS", None)
     monkeypatch.setattr(lift_rpc, "_ENUMERATION_ACTIVE", False)
     monkeypatch.setattr(lift_rpc, "_send", sent.append)
-    lift_rpc.publish_context_manager_declaration(row)
+    lift_rpc.publish_context_manager_declaration(declaration)
     lift_rpc._handle_enumerate(9, {
         "level": "contract-declarations",
         "workspace_root": ".",
