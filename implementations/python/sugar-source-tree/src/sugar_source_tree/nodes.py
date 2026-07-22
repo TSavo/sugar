@@ -1206,14 +1206,31 @@ class AugAssign(Statement):
         bound yet, so there is no shape where a Name target both fails to
         thread and stays loud). The rebind rode into the tail as the fold
         binding; the statement itself states nothing more. Attribute/subscript
-        targets are the shapes substitution_binding leaves as a gap (returns None --
-        they are never threaded), so they stay loud gaps here too, mirrored
-        exactly against that same isinstance check."""
-        if not isinstance(self.target, Name):
-            return super()._construct_sugar()
-        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+        targets are runtime stores rather than lexical bindings, so they reuse
+        Assign's typed attribute/subscript store effects."""
+        if isinstance(self.target, Name):
+            from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
-        return InertSugar(site=self.fragment)
+            return InertSugar(site=self.fragment)
+        if isinstance(self.target, Attribute):
+            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                AttributeStoreEffectSugar,
+            )
+
+            return AttributeStoreEffectSugar(
+                attr=self.target.attr,
+                site=self.fragment,
+            )
+        if isinstance(self.target, Subscript):
+            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                SubscriptStoreEffectSugar,
+            )
+
+            return SubscriptStoreEffectSugar(
+                index_text=self.target.slice_.fragment.text,
+                site=self.fragment,
+            )
+        return super()._construct_sugar()
 
 
 class AnnAssign(Statement):
@@ -1253,13 +1270,32 @@ class AnnAssign(Statement):
         The annotation itself is NEVER a fact the meaning layer states either
         way: Python does not check it at runtime (no TypeError on mismatch),
         so an annotation asserts nothing -- it is documentation the tree
-        passes through, never a stated post. Non-Name targets (attribute,
-        subscript) stay loud gaps -- no partial binding, no partial sugar."""
-        if not isinstance(self.target, Name):
-            return super()._construct_sugar()
-        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+        passes through, never a stated post. A valued attribute/subscript target
+        is the same runtime store owned by Assign. A bare non-Name annotation
+        stays loud: evaluating that target is not an inert name declaration."""
+        if isinstance(self.target, Name):
+            from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
-        return InertSugar(site=self.fragment)
+            return InertSugar(site=self.fragment)
+        if self.value is not None and isinstance(self.target, Attribute):
+            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                AttributeStoreEffectSugar,
+            )
+
+            return AttributeStoreEffectSugar(
+                attr=self.target.attr,
+                site=self.fragment,
+            )
+        if self.value is not None and isinstance(self.target, Subscript):
+            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                SubscriptStoreEffectSugar,
+            )
+
+            return SubscriptStoreEffectSugar(
+                index_text=self.target.slice_.fragment.text,
+                site=self.fragment,
+            )
+        return super()._construct_sugar()
 
 
 class TypeAlias(Statement):

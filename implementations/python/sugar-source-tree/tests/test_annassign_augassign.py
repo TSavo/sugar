@@ -1,16 +1,18 @@
 """AnnAssign (`x: T = v` / bare `x: T`) and AugAssign (`x OP= e`) -- both are
 INERT at the meaning layer for a plain Name target, because their binding (if
 any) already threaded via substitute/substitution_binding before sugar runs;
-an annotation states nothing at runtime either way. Non-Name targets (and
-attribute/subscript augmented targets, the shape substitution_binding refuses)
-stay loud gaps."""
+an annotation states nothing at runtime either way. Attribute/subscript
+augmented targets and valued annotations build one typed runtime-store effect;
+bare non-Name annotations remain loud gaps."""
 
 import tempfile
 
-import pytest
-
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import SugarNotWritten
+from sugar_lift_py_tests.effect import (
+    AttributeStoreRuntimeEffect,
+    SubscriptStoreRuntimeEffect,
+)
+from sugar_lift_py_tests.outcome import Incomplete
 from sugar_source_tree.tree import SourceFile
 
 
@@ -39,13 +41,37 @@ def test_aug_assign_rebinds_and_is_inert():
     assert v.post().args[1].value == 2
 
 
-def test_attribute_aug_assign_stays_loud():
-    # obj.a += 1 -- the target is not a plain Name, so substitution_binding
-    # refuses it (returns None, never threads); sugar() mirrors that refusal
-    # exactly and stays a loud gap rather than a silent/partial binding.
-    fn = _fn("def A(obj):\n    obj.a += 1\n    return obj\n")
-    with pytest.raises(SugarNotWritten):
-        fn.sugar()
+def _red_effects(source):
+    entries = _fn(source).sugar().desugar().value.record.statements
+    return [entry.effect for entry in entries if isinstance(entry, Incomplete)]
+
+
+def test_attribute_aug_assign_builds_store_effect():
+    effects = _red_effects("def A(obj, y):\n    obj.a += y\n    return y\n")
+
+    assert len(effects) == 1
+    assert isinstance(effects[0], AttributeStoreRuntimeEffect)
+
+
+def test_subscript_aug_assign_builds_store_effect():
+    effects = _red_effects("def A(d, k, y):\n    d[k] += y\n    return y\n")
+
+    assert len(effects) == 1
+    assert isinstance(effects[0], SubscriptStoreRuntimeEffect)
+
+
+def test_annotated_attribute_with_value_builds_store_effect():
+    effects = _red_effects("def A(obj, y):\n    obj.a: int = y\n    return y\n")
+
+    assert len(effects) == 1
+    assert isinstance(effects[0], AttributeStoreRuntimeEffect)
+
+
+def test_annotated_subscript_with_value_builds_store_effect():
+    effects = _red_effects("def A(d, k, y):\n    d[k]: int = y\n    return y\n")
+
+    assert len(effects) == 1
+    assert isinstance(effects[0], SubscriptStoreRuntimeEffect)
 
 
 def test_aug_assign_with_no_prior_binding_is_sound():
@@ -76,7 +102,10 @@ if __name__ == "__main__":
     test_annotated_assign_with_value_is_inert_and_threads()
     test_bare_annotation_lifts_and_states_nothing()
     test_aug_assign_rebinds_and_is_inert()
-    test_attribute_aug_assign_stays_loud()
+    test_attribute_aug_assign_builds_store_effect()
+    test_subscript_aug_assign_builds_store_effect()
+    test_annotated_attribute_with_value_builds_store_effect()
+    test_annotated_subscript_with_value_builds_store_effect()
     test_aug_assign_with_no_prior_binding_is_sound()
     test_discrimination_annassign_value_changes_the_post()
-    print("ok: AnnAssign/AugAssign inert for Name targets, loud otherwise")
+    print("ok: AnnAssign/AugAssign target roles build or stay loud by shape")
