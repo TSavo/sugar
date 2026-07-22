@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import tempfile
 
+import pytest
+
 from sugar_lift_py_tests.effect import NameErrorEffect, RaiseEffect
 from sugar_lift_py_tests.floor import ReturnValue, TermValue, UniverseValue
 from sugar_lift_py_tests.ir import and_, make_var, not_, or_, py_truthy
 from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_source_tree.binding_state import BranchResultSlot, GuardedBinding, UnboundBinding
+from sugar_source_tree.nodes import Node
+from sugar_source_tree.panic import BackendDefect, SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -15,6 +20,13 @@ def _out(source: str):
         f.write(source)
         path = f.name
     return next(SourceFile(path_source(path)).functions()).sugar().desugar()
+
+
+def _substituted(source: str):
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
+        f.write(source)
+        path = f.name
+    return next(SourceFile(path_source(path)).functions()).substitute({})
 
 
 def _return(exit_):
@@ -99,6 +111,110 @@ def test_nested_conditional_delete_retains_both_source_guards() -> None:
     outer, inner = halted[0].guard.operands
     assert outer != inner
     assert completed[0].guard == or_([not_(outer), and_([outer, not_(inner)])])
+
+
+def test_pandas_blocks_nested_if_augassign_reads_unbound_binding_as_a_node() -> None:
+    source = (
+        "def f(i, values):\n"
+        " if isinstance(i, tuple):\n"
+        "  col, loc = i\n"
+        "  if loc < 0:\n"
+        "   loc += len(values)\n"
+        "  return loc\n"
+    )
+    function = _substituted(source)
+    reads = [node for node in function.walk() if node.kind == "GuardedBindingRead"]
+    assert any(isinstance(read.state, UnboundBinding) for read in reads)
+    with pytest.raises(SugarNotWritten):
+        _out(source)
+
+
+def test_pandas_html_if_augassign_reads_guarded_binding_as_a_node() -> None:
+    function = _substituted(
+        "def f(c, foot):\n"
+        " if c:\n"
+        "  body = 1\n"
+        " if foot:\n"
+        "  body += foot\n"
+        " return body\n"
+    )
+    first_if, second_if = function.body[:2]
+    reads = [node for node in function.walk() if node.kind == "GuardedBindingRead"]
+    outer = next(read for read in reads if isinstance(read.state, GuardedBinding))
+    addition = outer.state.when_true
+    old_read = addition.left
+    assert old_read.kind == "GuardedBindingRead"
+    assert isinstance(old_read.state, GuardedBinding)
+    assert old_read.state.slot.slot_id == first_if.branch_result_slot_id
+    assert outer.state.slot.slot_id == second_if.branch_result_slot_id
+
+    halted, completed = _partition(
+        _out(
+            "def f(c, foot):\n"
+            " if c:\n"
+            "  body = 1\n"
+            " if foot:\n"
+            "  body += foot\n"
+            " return body\n"
+        )
+    )
+    assert any(isinstance(face.effect, NameErrorEffect) for face in halted)
+    assert any(
+        getattr(getattr(_return(face).value, "term", None), "name", None) == "+"
+        for face in completed
+    )
+
+
+def test_pandas_converter_if_augassign_reads_unbound_binding_as_a_node() -> None:
+    source = (
+        "def f(locs):\n"
+        " vmin, vmax = locs\n"
+        " if vmin == vmax:\n"
+        "  vmin -= 1\n"
+        "  vmax += 1\n"
+        " return vmin\n"
+    )
+    function = _substituted(source)
+    reads = [node for node in function.walk() if node.kind == "GuardedBindingRead"]
+    names = {read.name for read in reads if isinstance(read.state, UnboundBinding)}
+    assert {"vmin", "vmax"} <= names
+    with pytest.raises(SugarNotWritten):
+        _out(source)
+
+
+def test_augassign_over_explicitly_unbound_local_builds_guarded_read() -> None:
+    out = _out("def f():\n x += 1\n return x\n")
+    assert isinstance(out, Incomplete)
+    assert isinstance(out.effect, NameErrorEffect)
+    assert out.effect.name == "x"
+
+
+def test_bound_augassign_control_remains_completed_value() -> None:
+    out = _out("def f():\n x = 1\n x += 2\n return x\n")
+    assert isinstance(out, Complete)
+    returns = [
+        entry
+        for entry in out.value.record.statements
+        if isinstance(entry, ReturnValue)
+    ]
+    assert returns[0].value == TermValue(3)
+
+
+def test_binding_state_is_never_an_ast_child_or_node_protocol_value() -> None:
+    unbound = UnboundBinding(name="x", cause=_substituted("def f():\n pass\n").fragment)
+    guarded = GuardedBinding(
+        slot=BranchResultSlot("test-slot"),
+        when_true=unbound,
+        when_false=unbound,
+    )
+    for state in (unbound, guarded):
+        assert not isinstance(state, Node)
+        assert not hasattr(state, "ref")
+        assert not hasattr(state, "sugar")
+
+    target = _substituted("def f(x):\n x += 1\n").body[0].target
+    with pytest.raises(BackendDefect, match="non-Node operands"):
+        target._make_binop(unbound, None, target)
 
 
 def test_try_handler_binding_exports_on_the_handler_completion_edge() -> None:
