@@ -604,6 +604,26 @@ def _lookup_name_in_module(
     return None
 
 
+def _authenticated_export_names(module_name: str) -> tuple[str, ...]:
+    """Uniquely bound names a statically loaded module exposes."""
+    parsed = _parse_module(module_name)
+    if parsed is None:
+        return ()
+    tree, _source, _filename, _source_cid = parsed
+    candidates = {
+        name
+        for node in _module_level_nodes(tree)
+        for name in _direct_bound_names(node)
+    }
+    return tuple(
+        sorted(
+            name
+            for name in candidates
+            if _unique_unconditional_binding(tree, name) is not None
+        )
+    )
+
+
 def _local_import_bindings(
     source: str,
 ) -> tuple[ast.Module | None, dict[str, tuple[str, str, ast.AST]]]:
@@ -803,12 +823,14 @@ def resolve_definition_memento_from_manager_expr(
                 ):
                     subject_coordinates.add((local_name,))
         elif binding_kind == "module":
-            for class_module, class_name in determining:
-                target = (class_module, class_name)
-                if binding_payload == class_module or resolves_to(
-                    binding_payload, class_name, target
+            for exported_name in _authenticated_export_names(binding_payload):
+                resolved = _lookup_name_in_module(binding_payload, exported_name)
+                if (
+                    resolved is not None
+                    and resolved.determining_classes
+                    and resolved.determining_classes[0] in determining
                 ):
-                    subject_coordinates.add((local_name, class_name))
+                    subject_coordinates.add((local_name, exported_name))
 
     if any(
         _module_uses_class_unsafely(source_tree, coordinate)
