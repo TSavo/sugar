@@ -10,15 +10,12 @@ handler through the real JSON-RPC membrane end to end).
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 
 import pytest
 
 from sugar_lift_py_tests import lift_rpc
 from sugar_lift_py_tests.canonicalizer import blake3_512_of, encode_jcs
-from sugar_lift_py_tests.factory import factory_panic_gap
 from sugar_lift_py_tests.ir import _json_like_to_value
 
 FIXTURE_SOURCE = """\
@@ -41,8 +38,7 @@ def project(tmp_path: Path) -> Path:
 def _enumerate(
     level: str, workspace_root: Path, at=None, seek: bool = False, options=None
 ):
-    """Call `_handle_enumerate` directly and capture its `_send` output by
-    monkeypatching the module's `_send` for the duration of one call."""
+    """Dispatch a real ``sugar.enumerate`` request and capture its response."""
     options = dict(options or {})
     if options.get("auditFrontier") is True:
         options.setdefault("allowedBrokenComponents", ["python"])
@@ -50,14 +46,18 @@ def _enumerate(
     original_send = lift_rpc._send
     lift_rpc._send = captured.append
     try:
-        lift_rpc._handle_enumerate(
-            1,
+        lift_rpc._dispatch_request(
             {
-                "level": level,
-                "workspace_root": str(workspace_root),
-                "at": at,
-                "seek": seek,
-                "options": options,
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sugar.enumerate",
+                "params": {
+                    "level": level,
+                    "workspace_root": str(workspace_root),
+                    "at": at,
+                    "seek": seek,
+                    "options": options,
+                },
             },
         )
     finally:
@@ -70,68 +70,6 @@ def _enumerate(
 
 
 
-
-
-def test_audit_context_is_parsed_once_per_file_cid_and_mutation_misses(
-    project: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
-
-    sibling = project / "sibling.py"
-    sibling.write_text("def test_sibling():\n    assert 1 == 1\n", encoding="utf-8")
-    lift_rpc._AUDIT_FILE_CONTEXTS.clear()
-    original = SourceFragment.from_source.__func__
-    parsed: list[str] = []
-
-    def counted(cls, source: str, filename: str):
-        parsed.append(filename)
-        return original(cls, source, filename)
-
-    monkeypatch.setattr(SourceFragment, "from_source", classmethod(counted))
-
-    file_nodes = {
-        node["memento"]["file"]: node["memento"]
-        for node in _enumerate("source_files", project)["nodes"]
-    }
-    mathy_key = file_nodes["mathy.py"]
-    sibling_key = file_nodes["sibling.py"]
-    assert mathy_key["source_cid"]
-    assert sibling_key["source_cid"]
-
-    definitions = _enumerate(
-        "functions", project, at=mathy_key, options={"auditFrontier": True}
-    )["nodes"]
-    for definition in definitions:
-        _enumerate(
-            "facts",
-            project,
-            at=definition["memento"],
-            seek=True,
-            options={"auditFrontier": True},
-        )
-    assert parsed.count("mathy.py") == 1
-
-    _enumerate("functions", project, at=sibling_key, options={"auditFrontier": True})
-    assert parsed.count("sibling.py") == 1
-
-    (project / "mathy.py").write_text(
-        FIXTURE_SOURCE + "\ndef test_changed():\n    assert 2 == 2\n", encoding="utf-8"
-    )
-    changed_nodes = {
-        node["memento"]["file"]: node["memento"]
-        for node in _enumerate("source_files", project)["nodes"]
-    }
-    assert changed_nodes["mathy.py"]["source_cid"] != mathy_key["source_cid"]
-    _enumerate(
-        "functions",
-        project,
-        at=changed_nodes["mathy.py"],
-        options={"auditFrontier": True},
-    )
-    _enumerate("functions", project, at=sibling_key, options={"auditFrontier": True})
-
-    assert parsed.count("mathy.py") == 2, "new file CID must parse once"
-    assert parsed.count("sibling.py") == 1, "untouched sibling CID must stay warm"
 
 
 def test_enumeration_file_context_cache_is_bounded(
@@ -147,29 +85,224 @@ def test_enumeration_file_context_cache_is_bounded(
     assert list(cache) == ["second", "third"]
 
 
-def test_resident_factory_panic_evidence_drops_recovery_frames() -> None:
-    with pytest.raises(lift_rpc.FactoryPanic) as caught:
-        factory_panic_gap(
-            owner="traceback-cycle-fixture",
-            blame="fixture.py:1:0",
-            observed="missing",
-            requested="value",
-            fix="detach recovery frames before caching evidence",
-        )
-
-    assert caught.value.__traceback__ is not None
-    detached = lift_rpc._detached_factory_panic(caught.value)
-    assert detached.__traceback__ is None
-    assert detached.__context__ is None
-    assert detached.__cause__ is None
-
-
-
 def test_source_files_scan_finds_the_fixture_file(project: Path) -> None:
     result = _enumerate("source_files", project)
     assert result["gaps"] == []
     files = [n["memento"]["file"] for n in result["nodes"]]
     assert files == ["mathy.py"]
+
+
+def _audit_leaf(workspace: Path, file: str = "mathy.py") -> dict:
+    file_key = next(
+        node["memento"]
+        for node in _enumerate("source_files", workspace)["nodes"]
+        if node["memento"]["file"] == file
+    )
+    module = _enumerate(
+        "functions", workspace, at=file_key, options={"auditFrontier": True}
+    )["nodes"]
+    assert len(module) == 1
+    return _enumerate(
+        "facts",
+        workspace,
+        at=module[0]["memento"],
+        seek=True,
+        options={"auditFrontier": True},
+    )["nodes"][0]["audit"]
+
+
+def _script_roll_call(monkeypatch: pytest.MonkeyPatch, answer: str) -> None:
+    """Fill the real reporter interface with a controlled roll-call answer."""
+    from sugar_source_tree.panic import SugarNotWritten
+    from sugar_source_tree.roll_call import MinorityReport
+    import sugar_source_tree.roll_call as roll_call
+
+    def scripted_discharge(source_file):
+        list(source_file.nodes())
+        reporter = source_file.reporter
+        by_cid = {}
+        for node in reporter.registered:
+            by_cid.setdefault(node.fragment.seal().cid, node)
+        nodes = list(by_cid.values())
+        assert nodes
+        absent = nodes[-1]
+        present = nodes if answer in {"truthful", "lying"} else nodes[:-1]
+        for node in present:
+            reporter.present_fact(node)
+        if answer in {"lying", "minority"}:
+            reporter.report_gap(
+                absent,
+                SugarNotWritten(
+                    owner="rpc-roll-call-twin",
+                    observed=absent.kind,
+                    requested="written tree sugar",
+                    fix="write the node sugar",
+                ),
+            )
+        return MinorityReport(reporter)
+
+    monkeypatch.setattr(roll_call, "discharge", scripted_discharge)
+
+
+def test_rpc_roll_call_truthful_twin_projects_present_as_warranted(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _script_roll_call(monkeypatch, "truthful")
+    leaf = _audit_leaf(project)
+    assert leaf["status"] == "clean"
+    assert leaf["panics"] == []
+    assert leaf["sourceAudit"]["totals"]["source_unresolved"] == 0
+    assert {row["status"] for row in leaf["sourceAudit"]["loci"]} == {"warranted"}
+
+
+def test_rpc_roll_call_lying_twin_does_not_hide_gap_testimony(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _script_roll_call(monkeypatch, "lying")
+    leaf = _audit_leaf(project)
+    assert leaf["status"] == "failed"
+    assert len(leaf["panics"]) == 1
+    assert leaf["sourceAudit"]["totals"]["source_unresolved"] == 0
+
+
+def test_rpc_roll_call_minority_twin_projects_one_absent_everywhere(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-home #6025's seed-panic law: one absent owns one panic row."""
+    _script_roll_call(monkeypatch, "minority")
+    leaf = _audit_leaf(project)
+    unresolved = [
+        row for row in leaf["sourceAudit"]["loci"] if row["status"] == "unresolved"
+    ]
+    assert leaf["status"] == "failed"
+    assert len(leaf["panics"]) == 1
+    assert len(unresolved) == 1
+    assert leaf["sourceAudit"]["totals"]["source_unresolved"] == 1
+    assert leaf["panics"][0]["gap"]["kind"] == "SugarNotWritten"
+    assert leaf["panics"][0]["gap"]["nodeKind"] == unresolved[0]["kind"]
+
+
+def test_rpc_roll_call_silently_unaccounted_twin_stays_loud(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _script_roll_call(monkeypatch, "silent")
+    leaf = _audit_leaf(project)
+    assert leaf["status"] == "failed"
+    assert len(leaf["panics"]) == 1
+    assert leaf["panics"][0]["gap"]["kind"] == "UnaccountedConstruction"
+    assert leaf["sourceAudit"]["totals"]["source_unresolved"] == 1
+
+
+def test_roll_call_audit_uses_one_construction_and_one_discharge(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-home monolithic-fold and partial-demand laws onto one module roll."""
+    from sugar_source_tree.tree import SourceFile
+    import sugar_source_tree.roll_call as roll_call
+
+    calls = {"construction": 0, "discharge": 0}
+    original_from_path = SourceFile.from_path.__func__
+    original_discharge = roll_call.discharge
+
+    def counted_from_path(cls, *args, **kwargs):
+        calls["construction"] += 1
+        return original_from_path(cls, *args, **kwargs)
+
+    def counted_discharge(source_file):
+        calls["discharge"] += 1
+        return original_discharge(source_file)
+
+    monkeypatch.setattr(SourceFile, "from_path", classmethod(counted_from_path))
+    monkeypatch.setattr(roll_call, "discharge", counted_discharge)
+    leaf = _audit_leaf(project)
+
+    assert leaf["sourceAudit"]["totals"]["source_loci"] > 0
+    assert calls == {"construction": 1, "discharge": 1}
+
+
+def test_roll_call_law_same_bytes_at_distinct_seats_keep_distinct_loci(
+    tmp_path: Path,
+) -> None:
+    """Re-homed: source identity may match, but each RPC seat stays distinct."""
+    source = "def f():\n    return 1\n"
+    (tmp_path / "first.py").write_text(source, encoding="utf-8")
+    (tmp_path / "second.py").write_text(source, encoding="utf-8")
+
+    first = _audit_leaf(tmp_path, "first.py")["sourceAudit"]
+    second = _audit_leaf(tmp_path, "second.py")["sourceAudit"]
+    assert first["role"] == "first.py"
+    assert second["role"] == "second.py"
+    assert {row["source_cid"] for row in first["loci"]} == {
+        row["source_cid"] for row in second["loci"]
+    }
+    assert {row["locus"]["file"] for row in first["loci"]} == {"first.py"}
+    assert {row["locus"]["file"] for row in second["loci"]} == {"second.py"}
+
+
+def test_roll_call_law_empty_file_has_one_canonical_module_leaf(tmp_path: Path) -> None:
+    """Re-homed: the empty child-set fold is one module roll-call projection."""
+    (tmp_path / "empty.py").write_bytes(b"")
+    leaf = _audit_leaf(tmp_path, "empty.py")
+    assert leaf["sourceAudit"]["role"] == "empty.py"
+    assert leaf["sourceAudit"]["totals"]["source_loci"] >= 1
+
+
+@pytest.mark.parametrize(
+    "panic_type",
+    [
+        pytest.param("VocabularyMissing", id="missing-tree-vocabulary"),
+        pytest.param("BackendDefect", id="invalid-backend-shape"),
+        pytest.param("SugarNotWritten", id="known-construction-missing"),
+        pytest.param(
+            "RuntimeSelectedContextManager", id="runtime-selected-construction"
+        ),
+    ],
+)
+def test_rpc_entry_preserves_tree_panic_role(
+    panic_type: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-home the no-recovery law; preserve each panic at the RPC entry."""
+    import sugar_source_tree.panic as tree_panic
+
+    panic = getattr(tree_panic, panic_type)(
+        owner="rpc-role-map",
+        observed="fixture",
+        requested="role-correct answer",
+        fix="preserve the concrete tree taxonomy",
+    )
+    (tmp_path / "role.py").write_text("x = 1\n", encoding="utf-8")
+    request = {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "sugar.enumerate",
+        "params": {
+            "level": "facts",
+            "workspace_root": str(tmp_path),
+            "at": {"file": "role.py"},
+            "seek": True,
+            "options": {"auditFrontier": True},
+        },
+    }
+    requests = iter([request])
+    sent = []
+    monkeypatch.setattr(lift_rpc, "_recv", lambda: next(requests, None))
+    monkeypatch.setattr(
+        "sugar_source_tree.tree.SourceFile.from_path",
+        classmethod(lambda _cls, *_args, **_kwargs: (_ for _ in ()).throw(panic)),
+    )
+    monkeypatch.setattr(lift_rpc, "_send", sent.append)
+
+    with pytest.raises(SystemExit):
+        lift_rpc._serve()
+
+    diagnostic = sent[0]["error"]["data"]
+    assert diagnostic["exception_type"] == panic_type
+    assert diagnostic["diagnostic"] == {
+        "owner": "rpc-role-map",
+        "observed": "fixture",
+        "requested": "role-correct answer",
+        "fix": "preserve the concrete tree taxonomy",
+    }
 
 
 def test_source_files_seek_matches_by_file(project: Path) -> None:
