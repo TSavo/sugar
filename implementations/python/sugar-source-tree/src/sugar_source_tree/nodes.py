@@ -315,6 +315,23 @@ class Node(Typed):
             self.unit, ShadowNode("BinOp", self.span, slots), self.reporter
         )
 
+    def _make_call(self, func: "Node", args: tuple = ()) -> "Node":
+        """Construct a fresh Call ``<func>(<args...>)`` as a shadow borrowing
+        this node's span. Used by Expects ``as``-witness binding: the matched
+        effect payload is the expected type/category constructed with no args
+        (a temporal stand-in for the exception/warning instance)."""
+        from .backend import Child, Children, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        slots = (
+            ("func", Child(_handle_of(func))),
+            ("args", Children(tuple(_handle_of(a) for a in args))),
+            ("keywords", Children(())),
+        )
+        return materialize(
+            self.unit, ShadowNode("Call", self.span, slots), self.reporter
+        )
+
     def _substitute_body(self, statements: tuple, scope: "dict[str, Node]"):
         new_items, changed, _net = self._substitute_body_tracked(statements, scope)
         return new_items, changed
@@ -1604,16 +1621,20 @@ class With(Statement):
     _child_fields = ("items", "body")
 
     def sugar(self):
-        """`with <manager>: <body>` -- the node consults the MEMBRANE, never a
-        vendor name (#5994). A single manager with no `as`, whose membrane-issued
-        contract is a raise-kind Expects/Suppresses, wires through the shared
-        effect router (WithContractSugar). Everything else stays LOUD: the
-        unauthenticated manager (the named residual), warning-kind matchers (no
-        WarningEffect exists to observe -- wiring would mint false absent-twins),
-        `as` witnesses (step 5), multiple managers, and resource managers (the
-        finally-faithful expansion, step 4)."""
-        if len(self.items) != 1 or self.items[0].optional_vars is not None:
+        """`with <manager> [as <name>]: <body>` -- the node consults the MEMBRANE,
+        never a vendor name (#5994). A single manager whose membrane-issued
+        contract is raise/warning Expects/Suppresses wires through the shared
+        effect router (WithContractSugar). Plain ``as <Name>`` is admitted for
+        Expects (step 5: matched-effect witness bound for the tail via
+        substitution_binding). Everything else stays LOUD: unauthenticated
+        managers, non-Name as-targets, Suppresses+as (no community witness
+        shape), multiple managers, and resource expansion (step 4)."""
+        if len(self.items) != 1:
             return super().sugar()
+        item = self.items[0]
+        as_target = item.optional_vars
+        if as_target is not None and not isinstance(as_target, Name):
+            return super().sugar()  # only plain Name as for step 5
         from sugar_lift_py_tests.context_manager_contract import Expects, Suppresses
         from sugar_lift_py_tests.manifest_membrane import (
             contract_for_manager,
@@ -1622,20 +1643,28 @@ class With(Statement):
         from sugar_lift_py_tests.sugar.with_contract_sugar import WithContractSugar
 
         contract = contract_for_manager(
-            default_community_manifest(), self.items[0].context_expr
+            default_community_manifest(), item.context_expr
         )
         if not isinstance(contract, (Expects, Suppresses)):
             return super().sugar()  # unauthenticated / runtime-selected: loud
         if contract.matcher.kind not in ("raise", "warning"):
             return super().sugar()
+        # Suppresses+as is not a community effect-witness shape; Expects+as is.
+        if as_target is not None and not isinstance(contract, Expects):
+            return super().sugar()
         return WithContractSugar(
             contract=contract,
             body=tuple(stmt.sugar() for stmt in self.body),
             site=self.fragment,
+            as_name=as_target.id if as_target is not None else None,
         )
 
     def substitute(self, scope):
-        """with ... as <vars>: binds the as-targets for the body."""
+        """with ... as <vars>: masks as-targets for the body (binding sites).
+
+        Expects ``as <Name>`` also EXPORTS a matched-effect witness for the
+        rest of the enclosing block via ``substitution_binding`` (step 5).
+        """
         from .shadow import rewrite
 
         bound = set()
@@ -1651,6 +1680,44 @@ class With(Statement):
         if d:
             changed["body"] = new_body
         return self if not changed else rewrite(self, **changed)
+
+    def substitution_binding(self, scope):
+        """Expects ``as <Name>``: bind the name for the TAIL to the matched-
+        effect witness (expected type/category constructed as ``E()``).
+
+        Only on the Expects membrane path; resource ``as`` is step 4.
+        Witness identity is the enrolled expected type expression -- the same
+        name the router discharges against the observed halt.
+        """
+        if len(self.items) != 1:
+            return None
+        ov = self.items[0].optional_vars
+        if not isinstance(ov, Name):
+            return None
+        from sugar_lift_py_tests.context_manager_contract import Expects
+        from sugar_lift_py_tests.manifest_membrane import (
+            contract_for_manager,
+            default_community_manifest,
+        )
+
+        contract = contract_for_manager(
+            default_community_manifest(), self.items[0].context_expr
+        )
+        if not isinstance(contract, Expects):
+            return None
+        if contract.matcher.kind not in ("raise", "warning"):
+            return None
+        witness = self._expects_effect_as_witness(self.items[0].context_expr)
+        if witness is None:
+            return None
+        return {ov.id: witness}
+
+    def _expects_effect_as_witness(self, context_expr: "Expression"):
+        """Temporal stand-in for the matched effect payload: ``E()`` from
+        ``raises(E, ...)`` / ``assert_produces_warning(E, ...)``."""
+        if context_expr.kind != "Call" or not context_expr.args:
+            return None
+        return self._make_call(context_expr.args[0], ())
 
 
 class AsyncWith(Statement):
