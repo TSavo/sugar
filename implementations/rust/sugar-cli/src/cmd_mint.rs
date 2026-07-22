@@ -2557,36 +2557,44 @@ fn report_toolchain_plan_steps(plugins: &[PluginEntry]) -> Vec<Value> {
 fn dispatch_report_lift_plugin(
     project_root: &Path,
     plugin: &PluginEntry,
-    contract_bindings: Vec<Value>,
-    library_bindings: bool,
-    report_summary: bool,
+    _contract_bindings: Vec<Value>,
+    _library_bindings: bool,
+    _report_summary: bool,
 ) -> Result<Value, String> {
-    let lift_options = LiftPluginOptions {
-        workspace_override: plugin.workspace_override.clone(),
-        emit: plugin.emit.clone(),
-        layer: plugin.layer.clone(),
-        library_bindings,
-        report_summary,
-        contract_bindings,
-        ..Default::default()
-    };
-    let session = lift_plugin::dispatch_lift(project_root, &plugin.surface, lift_options, true)
-        .map_err(|error| match error {
-            LiftPluginError::MissingBinary { binary } => {
-                format!("lifter binary `{binary}` not found")
-            }
-            LiftPluginError::Refused(refusal) => format!(
-                "{}: {}",
-                refusal.header.failure_kind, refusal.header.failure_detail
-            ),
-            LiftPluginError::FatalFactoryPanic(error) => error.to_string(),
-            LiftPluginError::Diagnostic(error) => error.to_string(),
-            LiftPluginError::SplitPipeline(error) => error,
-        })?;
-    let mut response = session
-        .response_projection()
-        .clone_response_for_compatibility()
-        .map_err(|error| error.to_string())?;
+    // lift and mint are just clients of `sugar.enumerate`. There is ONE path:
+    // fold the report over the enumeration protocol. No `lift` method, no
+    // fallback -- a kit that does not enumerate is a loud error, not a shell.
+    enumeration_report_response(project_root, plugin)
+}
+
+/// The enumeration-driven report response. lift and mint are just clients of
+/// `sugar.enumerate`: rendezvous the kit and fold the report over the
+/// enumeration protocol (`sugar_compiler::tree::fold_lift_report_response`),
+/// never the retired single-shot `lift` method. Returns `Ok(None)` when the
+/// kit does not advertise `sugar.enumerate` (fall back to the legacy dispatch).
+fn enumeration_report_response(project_root: &Path, plugin: &PluginEntry) -> Result<Value, String> {
+    use sugar_compiler::kit::{Kit, LiftManifest};
+
+    let manifest = lift_plugin::find_manifest_for_surface(project_root, &plugin.surface)
+        .map_err(|error| format!("lift-plugin.manifest: {error}"))?;
+    let kit = Kit::rendezvous(LiftManifest::resolved(
+        plugin.surface.clone(),
+        manifest.name.clone(),
+        lift_plugin::dialect_for_surface(&plugin.surface),
+        manifest.command.clone(),
+        lift_plugin::absolute_working_dir_for_manifest(project_root, &manifest),
+        manifest.method.clone(),
+    ))
+    .map_err(|error| format!("lift.rendezvous: {error}"))?;
+    if !kit.supports_rpc_method("sugar.enumerate") {
+        return Err(format!(
+            "lift kit `{}` does not advertise sugar.enumerate; lift and mint are \
+             enumeration clients -- there is no `lift`-method fallback",
+            plugin.surface
+        ));
+    }
+    let mut response = sugar_compiler::tree::fold_lift_report_response(&kit, project_root, &[])
+        .map_err(|error| format!("lift.path: {error}"))?;
     prefix_workspace_override_source_files(&mut response, plugin.workspace_override.as_deref());
     Ok(response)
 }

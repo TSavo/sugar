@@ -1058,6 +1058,178 @@ pub fn fold_recovered_audit(
     }))
 }
 
+/// The lift REPORT as an enumeration client -- lift and mint are just clients
+/// of `sugar.enumerate`, not callers of a `lift` method. Same walk as
+/// `fold_recovered_audit` (SourceFiles -> Functions -> Facts), but each leaf
+/// contributes BOTH its audit (the frontier / Yellow minority) and its fact
+/// payload (Blue), folded into the report response the visual renderer reads.
+pub fn fold_lift_report_response(
+    kit: &Kit,
+    workspace_root: &Path,
+    allowed_broken_components: &[String],
+) -> Result<Value, KitError> {
+    let mut conn = kit.enumerate_conn(workspace_root);
+    conn.audit_frontier = true;
+    conn.allowed_broken_components = allowed_broken_components.to_vec();
+    let (files, source_gaps) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
+    if !source_gaps.is_empty() {
+        return Err(EnumerateError::Malformed {
+            plugin: conn.surface.clone(),
+            reason: format!("source census returned {} gaps", source_gaps.len()),
+        }
+        .into());
+    }
+    let source_files_enumerated = files.len();
+    let mut source_bodies_demanded = 0usize;
+    let mut panics = Vec::new();
+    let mut effects = Vec::new();
+    let mut suppressed = Vec::new();
+    let mut source_mementos = Vec::new();
+    let mut facts = Vec::new();
+    let mut source_audits = Vec::new();
+    let mut un_asserted_loci = Vec::new();
+    let mut source_loci = 0u64;
+    let mut source_warranted = 0u64;
+    let mut source_unresolved = 0u64;
+    for file in files {
+        source_mementos.push(file.memento.to_json());
+        let (definitions, definition_gaps) =
+            enumerate_rpc(&conn, Level::Functions, Some(file.memento.to_json()), false)?;
+        source_bodies_demanded += 1;
+        if !definition_gaps.is_empty() {
+            return Err(EnumerateError::Malformed {
+                plugin: conn.surface.clone(),
+                reason: format!(
+                    "function census for {} returned {} gaps",
+                    file.memento.file,
+                    definition_gaps.len()
+                ),
+            }
+            .into());
+        }
+        for definition in definitions {
+            let (leaves, leaf_gaps) = enumerate_rpc(
+                &conn,
+                Level::Facts,
+                Some(definition.memento.to_json()),
+                true,
+            )?;
+            if !leaf_gaps.is_empty() || leaves.len() != 1 {
+                return Err(EnumerateError::Malformed {
+                    plugin: conn.surface.clone(),
+                    reason: format!(
+                        "report leaf demand for {} completed nodes={} gaps={}",
+                        memento_locus_display(&definition.memento),
+                        leaves.len(),
+                        leaf_gaps.len()
+                    ),
+                }
+                .into());
+            }
+            let leaf = leaves.into_iter().next().expect("length checked");
+            if let Some(payload) = leaf.payload.clone() {
+                facts.push(payload);
+            }
+            let mut audit = leaf.audit.ok_or_else(|| EnumerateError::Malformed {
+                plugin: conn.surface.clone(),
+                reason: format!(
+                    "report leaf {} omitted recovered body",
+                    memento_locus_display(&definition.memento)
+                ),
+            })?;
+            // The reporter's roll-call partition -- everything the CLI renders
+            // (present -> warranted/Blue, absent -> unresolved/Yellow). One
+            // source-audit row per leaf; its totals sum into the ledger.
+            if let Some(source_audit) = audit
+                .as_object_mut()
+                .and_then(|object| object.remove("sourceAudit"))
+            {
+                if let Some(totals) = source_audit.get("totals") {
+                    source_loci += totals
+                        .get("source_loci")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    source_warranted += totals
+                        .get("source_warranted")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    source_unresolved += totals
+                        .get("source_unresolved")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                }
+                // Each unresolved locus (absent -> the minority) becomes a
+                // Yellow un_asserted body the visual renderer paints.
+                if let Some(loci) = source_audit.get("loci").and_then(Value::as_array) {
+                    for locus in loci {
+                        if locus.get("status").and_then(Value::as_str) == Some("unresolved") {
+                            let place = locus.get("locus");
+                            un_asserted_loci.push(json!({
+                                "file": place.and_then(|p| p.get("file")).cloned().unwrap_or(Value::Null),
+                                "line": place.and_then(|p| p.get("line")).cloned().unwrap_or(Value::Null),
+                                "name": locus.get("name").cloned().unwrap_or(Value::Null),
+                            }));
+                        }
+                    }
+                }
+                source_audits.push(source_audit);
+            }
+            merge_recovered_audit_leaf(
+                &conn.surface,
+                &definition.memento,
+                audit,
+                &mut panics,
+                &mut effects,
+                &mut suppressed,
+            )?;
+        }
+    }
+    Ok(json!({
+        "kind": "lift-source-report",
+        "status": if source_files_enumerated == 0 {
+            "valid-empty"
+        } else if panics.is_empty() {
+            "complete"
+        } else {
+            "failed"
+        },
+        "sourceLedger": {
+            "source_loci": source_loci,
+            "source_warranted": source_warranted,
+            "source_unresolved": source_unresolved,
+        },
+        "sourceAudits": source_audits,
+        "sourceMementos": source_mementos,
+        "effects": effects,
+        "suppressedDescendants": suppressed,
+        "ir": facts,
+        "factoryAuditSummary": { "factoryWalk": [] },
+        // The dual-axis coverage the visual Minority Report paints: present
+        // (warranted, Blue) vs the un_asserted minority (unresolved, Yellow).
+        // Derived entirely from the reporter's roll call.
+        "liftCoverage": {
+            "totals": {
+                "stated": source_loci,
+                "accounted": source_warranted,
+                "silently_unaccounted": 0,
+                "minority_present": source_warranted,
+                "minority_dug": 0,
+                "minority_un_asserted": source_unresolved,
+            },
+            "minority": {
+                "present": source_warranted,
+                "dug": 0,
+                "un_asserted": source_unresolved,
+                "un_asserted_loci": un_asserted_loci,
+            },
+        },
+        "census": {
+            "sourceFilesEnumerated": source_files_enumerated,
+            "sourceBodiesDemanded": source_bodies_demanded,
+        },
+    }))
+}
+
 fn merge_recovered_audit_leaf(
     plugin: &str,
     demanded_body: &SourceMemento,

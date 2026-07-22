@@ -358,13 +358,62 @@ def _gap_locus(node, file_rel: str) -> tuple[str, str]:
     return pos, terminal
 
 
+def source_audit_from_roll_call(full_path: Path, file_rel: str) -> dict:
+    """The report feed the Rust CLI renders, straight from the reporter's roll
+    call. Construction registers every node; the discharge answers present
+    (desugared -> Blue) or absent (the minority -> Yellow). Each roster entry
+    becomes one source-audit locus keyed by its status; the CLI reads the source
+    text for each locus from its span.
+
+    ``warranted`` = present (accounted, Blue); ``unresolved`` = the minority
+    (absent, Yellow). ``source_loci`` / ``source_warranted`` / ``source_unresolved``
+    are the ledger counts the report summary measures.
+    """
+    from sugar_source_tree.reporter import CollectingReporter
+    from sugar_source_tree.roll_call import discharge
+
+    reporter = CollectingReporter()
+    sf = SourceFile.from_path(str(full_path), reporter=reporter)
+    report = discharge(sf)
+    present_cids = {e.cid for e in report.present}
+    loci = []
+    for entry in report.roster:
+        status = "warranted" if entry.cid in present_cids else "unresolved"
+        loci.append(
+            {
+                "status": status,
+                "kind": entry.kind,
+                "name": entry.name,
+                "source_cid": entry.cid,
+                "locus": {
+                    "file": file_rel,
+                    "line": entry.start_line,
+                    "col": entry.start_col,
+                },
+            }
+        )
+    warranted = sum(1 for locus in loci if locus["status"] == "warranted")
+    unresolved = len(loci) - warranted
+    return {
+        "role": file_rel,
+        "loci": loci,
+        "totals": {
+            "source_loci": len(loci),
+            "source_warranted": warranted,
+            "source_unresolved": unresolved,
+        },
+    }
+
+
 def frontier_leaf_rpc(full_path: Path, file_rel: str) -> dict:
     """The recovered-construction audit leaf for one file, tree-walked.
 
     Emits the closed ``RecoveredAuditDto`` wire shape (status ``failed`` when
     the file has any unwritten-sugar gap, ``clean`` when it is fully sugared).
     ``demandedSource`` is the file's own content CID: stable per file, so gap
-    uniqueness rides on each gap's terminal locus.
+    uniqueness rides on each gap's terminal locus. It ALSO carries the
+    ``sourceAudit`` -- the reporter's roll-call partition the Rust CLI renders
+    (present Blue / absent Yellow), everything the report needs on the CLI side.
     """
     from sugar_lift_py_tests.kit_rpc.recovered_audit_dto import (
         RecoveredAuditDto,
@@ -386,4 +435,6 @@ def frontier_leaf_rpc(full_path: Path, file_rel: str) -> dict:
                 gap={"blame": terminal, "kind": node.kind, "reason": reason},
             )
         )
-    return RecoveredAuditDto(panics=panics).to_rpc()
+    leaf = RecoveredAuditDto(panics=panics).to_rpc()
+    leaf["sourceAudit"] = source_audit_from_roll_call(full_path, file_rel)
+    return leaf
