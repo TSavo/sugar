@@ -645,7 +645,7 @@ pub fn resolve_context_manager_demand(
                 vec![member_cid],
             );
         }
-        Err(_) | Ok(_) => {
+        Err(_) => {
             return cm_gap(
                 demand,
                 ContextManagerResolutionGapKindV1::UnsupportedCmSchema,

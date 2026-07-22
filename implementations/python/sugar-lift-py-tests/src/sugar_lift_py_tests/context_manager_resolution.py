@@ -122,8 +122,8 @@ def _decode_signature(raw: Any) -> ImportSignatureV1:
     if not isinstance(raw["formals"], list) or not all(isinstance(v, str) for v in raw["formals"]):
         raise ContractRefProtocolError("malformed import formals")
     try:
-        from .context_manager_contract import _sort_from_json
-        sorts = tuple(_sort_from_json(value) for value in raw["sorts"])
+        from .context_manager_contract import _decode_sort
+        sorts = tuple(_decode_sort(value) for value in raw["sorts"])
     except (KeyError, TypeError, ContextManagerContractError) as exc:
         raise ContractRefProtocolError("malformed import sorts") from exc
     if len(sorts) != len(raw["formals"]):
