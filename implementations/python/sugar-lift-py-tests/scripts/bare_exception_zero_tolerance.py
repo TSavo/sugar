@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """R_bare_exceptions — permanent baseline-free untyped-failure floor.
 
-Every production source file is lifted in an isolated child. FactoryPanic is
-captured only by the repository's single audit membrane and remains a distinct
-loud terminal. Signal deaths and timeouts remain distinct axes. Every other
-non-successful child is a bare exception and makes this floor red.
+Every production source file is lifted in an isolated child through the current
+production construction door (``_production_lift_child``). An intentional typed
+source-tree gap (``SugarNotWritten``) is a distinct, sanctioned ``typed-gap``
+outcome, not a failure. Signal deaths and timeouts remain distinct axes. Every
+other non-successful child is a bare Python exception and makes this floor red.
+A one-time production-lift bootstrap failure is reported ONCE as scanner
+infrastructure failure, never multiplied into one bogus source failure per file.
 """
 
 from __future__ import annotations
@@ -17,6 +20,11 @@ from pathlib import Path
 import subprocess
 import sys
 from typing import Any, Mapping, NamedTuple, Sequence
+
+# The floors share ``_production_lift_child`` (this directory). Ensure the
+# scripts dir is importable whether run standalone, as a child, or spec-loaded
+# by a test.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 class BareExceptionOffender(NamedTuple):
@@ -45,13 +53,12 @@ def _terminal(stdout: str) -> Mapping[str, Any] | None:
 def bare_exception_offender(
     *, file: str, result: subprocess.CompletedProcess[str]
 ) -> BareExceptionOffender | None:
+    from _production_lift_child import NON_FAILURE_OUTCOMES
+
     if result.returncode < 0:
         return None
     testimony = _terminal(result.stdout)
-    if testimony is not None and testimony.get("outcome") in {
-        "completed",
-        "factory-panic",
-    }:
+    if testimony is not None and testimony.get("outcome") in NON_FAILURE_OUTCOMES:
         return None
     if result.returncode == 0:
         return None
@@ -115,38 +122,17 @@ def _run_isolated(
     if result.returncode < 0:
         return ChildResult(rel, "native-crash", None)
     testimony = _terminal(result.stdout)
-    category = (
-        str(testimony.get("outcome"))
-        if testimony is not None
-        else "completed"
-    )
-    return ChildResult(rel, category, None)
+    if testimony is None:
+        # Exit 0 with no terminal row: the silent / missing-result axis. Not a
+        # bare exception (offender already None), but named distinctly.
+        return ChildResult(rel, "silent", None)
+    return ChildResult(rel, str(testimony.get("outcome")), None)
 
 
 def _run_child(path: Path, rel: str) -> int:
-    from sugar_lift_py_tests.audit_only import collect_factory_panic
-    from sugar_lift_py_tests.lift_rpc import lift_file_payload
+    from _production_lift_child import run_production_lift_child
 
-    source = path.read_text(encoding="utf-8", errors="replace")
-    payload, panic_gap = collect_factory_panic(
-        rel, lambda: lift_file_payload(source, rel)
-    )
-    if panic_gap is not None:
-        print(
-            json.dumps(
-                {"kind": "lift-terminal", "outcome": "factory-panic", "file": rel}
-            ),
-            flush=True,
-        )
-        return 3
-    assert payload is not None
-    print(
-        json.dumps(
-            {"kind": "lift-terminal", "outcome": "completed", "file": rel}
-        ),
-        flush=True,
-    )
-    return 0
+    return run_production_lift_child(path, rel)
 
 
 def main() -> int:
@@ -167,6 +153,17 @@ def main() -> int:
         if args.child_file is None or args.child_rel is None:
             parser.error("child mode requires --child-file and --child-rel")
         return _run_child(args.child_file, args.child_rel)
+    from _production_lift_child import production_lift_bootstrap_error
+
+    boot_error = production_lift_bootstrap_error()
+    if boot_error is not None:
+        # ONE infrastructure failure -- never multiplied into a bogus bare
+        # exception per source file.
+        print(
+            "BARE-EXCEPTION SCANNER INFRASTRUCTURE FAILURE: the production lift "
+            f"door did not bootstrap: {boot_error}"
+        )
+        return 2
     try:
         paths = require_python_paths(args.paths)
     except ValueError as error:
@@ -186,9 +183,10 @@ def main() -> int:
         "BARE-EXCEPTION SURFACE: "
         f"discovered={len(rows)} "
         f"completed={sum(row.category == 'completed' for row in rows)} "
-        f"factory_panics={sum(row.category == 'factory-panic' for row in rows)} "
+        f"typed_gaps={sum(row.category == 'typed-gap' for row in rows)} "
         f"native_crashes={sum(row.category == 'native-crash' for row in rows)} "
-        f"timeouts={sum(row.category == 'timeout' for row in rows)}"
+        f"timeouts={sum(row.category == 'timeout' for row in rows)} "
+        f"silent={sum(row.category == 'silent' for row in rows)}"
     )
     print(f"R_bare_exceptions = {len(offenders)}")
     for row in offenders:

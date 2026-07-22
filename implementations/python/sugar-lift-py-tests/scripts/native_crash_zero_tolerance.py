@@ -18,6 +18,11 @@ import os
 import signal
 import subprocess
 import sys
+
+# Floors share ``_production_lift_child`` (this directory); make it
+# importable whether run standalone, as a child, or spec-loaded by a test.
+from pathlib import Path as _P
+sys.path.insert(0, str(_P(__file__).resolve().parent))
 from typing import NamedTuple, Sequence
 
 
@@ -204,16 +209,9 @@ def audit_paths(
 
 
 def _run_child(path: Path, rel: str) -> int:
-    from sugar_lift_py_tests.lift_rpc import lift_file_payload
+    from _production_lift_child import run_production_lift_child
 
-    source = path.read_text(encoding="utf-8", errors="replace")
-    payload = lift_file_payload(source, rel)
-    print(
-        f"completed row: {rel}: facts={len(payload.ir)} "
-        f"effects={len(payload.effects)}",
-        flush=True,
-    )
-    return 0
+    return run_production_lift_child(path, rel)
 
 
 def main() -> int:
@@ -240,6 +238,16 @@ def main() -> int:
         if args.child_file is None or args.child_rel is None:
             parser.error("child mode requires --child-file and --child-rel")
         return _run_child(args.child_file, args.child_rel)
+    from _production_lift_child import production_lift_bootstrap_error
+
+    boot_error = production_lift_bootstrap_error()
+    if boot_error is not None:
+        # ONE infrastructure failure -- never multiplied per source file.
+        print(
+            "NATIVE-CRASH SCANNER INFRASTRUCTURE FAILURE: the production "
+            f"lift door did not bootstrap: {boot_error}"
+        )
+        return 2
 
     try:
         paths = require_python_paths(args.paths)
