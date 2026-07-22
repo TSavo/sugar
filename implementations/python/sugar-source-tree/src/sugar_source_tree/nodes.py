@@ -1651,10 +1651,10 @@ class While(Statement):
         i = i + 1` unrolls to three rebinds of i; `return i` reads 3.
 
         A condition that is NOT ground-decidable against the carried state (a
-        formal in the state, an effect) keeps the node -- the symbolic while is
-        the recurrence-with-exit-condition, an unwritten segment that stays
-        loud. `while True:` exhausts the fuel and lands there too: an infinite
-        concrete loop is a non-termination the unroll must not fake."""
+        formal in the state, an effect) keeps the node for the symbolic fold or
+        assert-invariant construction arm. `while True:` exhausts the fuel and
+        stays loud: an infinite concrete loop is a non-termination the unroll
+        must not fake."""
         from .shadow import rewrite
 
         unrolled = self._try_unroll(scope)
@@ -1674,6 +1674,89 @@ class While(Statement):
             if d:
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
+
+    def substitution_binding(self, scope):
+        """Bind a clean symbolic recurrence into the tail as one dig coordinate."""
+        spec = self._symbolic_fold_spec()
+        if spec is None or self._has_literal_test_bound():
+            return None
+        name, update = spec
+        init = scope.get(name.id)
+        if init is None:
+            return None
+        fold = For._make_call(
+            self,
+            For._make_name(self, "py.while.fold"),
+            (init, self.test, update),
+        )
+        return {name.id: fold}
+
+    def _symbolic_fold_spec(self):
+        """The single condition-driven recurrence update, or None."""
+        if self.orelse or For._body_has_loop_control(self):
+            return None
+        carried, facts = For._carried_and_facts(self)
+        if facts or len(carried) != 1:
+            return None
+        assign = carried[0]
+        if assign.kind != "Assign" or len(assign.targets) != 1:
+            return None
+        name = assign.targets[0]
+        if name.kind != "Name" or not any(
+            node.kind == "Name" and node.id == name.id for node in self.test.walk()
+        ):
+            return None
+        update = assign.value
+        if update.kind == "BinOp":
+            if update.left.kind != "Name" or update.left.id != name.id:
+                return None
+            return name, update
+        if (
+            update.kind == "Call"
+            and update.func.kind == "Name"
+            and not update.keywords
+            and len(update.args) == 1
+            and update.args[0].kind == "Name"
+            and update.args[0].id == name.id
+        ):
+            return name, update
+        return None
+
+    def _has_literal_test_bound(self) -> bool:
+        """A surviving literal-bounded test is a failed concrete unroll."""
+        if self.test.kind == "Constant":
+            return True
+        if self.test.kind != "Compare":
+            return False
+        operands = (self.test.left, *self.test.comparators)
+        return any(
+            For._concrete_int(self, operand) is not None for operand in operands
+        )
+
+    def _construct_sugar(self):
+        """Construct only the symbolic fold and assert-invariant While roles."""
+        if (
+            self.orelse
+            or self._has_literal_test_bound()
+            or For._body_has_loop_control(self)
+        ):
+            return super()._construct_sugar()
+        carried, facts = For._carried_and_facts(self)
+        if carried:
+            if facts or self._symbolic_fold_spec() is None:
+                return super()._construct_sugar()
+            from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+            return InertSugar(site=self.fragment)
+        if not self.body or any(stmt.kind != "Assert" for stmt in self.body):
+            return super()._construct_sugar()
+        from sugar_lift_py_tests.sugar.while_invariant_sugar import WhileInvariantSugar
+
+        return WhileInvariantSugar(
+            test=self.test.sugar(),
+            body=tuple(stmt.sugar() for stmt in self.body),
+            site=self.fragment,
+        )
 
     def _try_unroll(self, scope):
         """The unrolled statement tuple, or None if the loop is not concrete
