@@ -766,21 +766,74 @@ class WithItem(Node):
         new_ctx, d = self._substitute_field(self.context_expr, scope)
         return self if not d else rewrite(self, context_expr=new_ctx)
 
+    def _manager_slot_id(self) -> str:
+        """Stable once-eval manager identity for this with-item."""
+        return self._effect_slot_id()
+
+    def _make_manager_ref(self) -> "Node":
+        """``ManagerRef(M)`` — single manager coordinate for enter and exit."""
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        slots = (("slot_id", Leaf(self._manager_slot_id())),)
+        return materialize(
+            self.unit, ShadowNode("ManagerRef", self.span, slots), self.reporter
+        )
+
     def _make_enter_call(self) -> "Node":
-        """Tree coordinate ``manager.__enter__()`` — not a callback, not a dig."""
-        enter_attr = self._make_attribute(self.context_expr, "__enter__")
+        """Tree coordinate ``ManagerRef(M).__enter__()`` — not ``context_expr`` twice."""
+        enter_attr = self._make_attribute(self._make_manager_ref(), "__enter__")
         return self._make_call(enter_attr, ())
 
-    def _make_exit_call(self) -> "Node":
-        """Tree coordinate ``manager.__exit__(None, None, None)``.
+    def _make_exit_call(self, typ: "Node", val: "Node", tb: "Node") -> "Node":
+        """Tree coordinate ``ManagerRef(M).__exit__(typ, val, tb)``."""
+        exit_attr = self._make_attribute(self._make_manager_ref(), "__exit__")
+        return self._make_call(exit_attr, (typ, val, tb))
 
-        Type/value/tb args are structural placeholders at construction; a
-        later cut can rebind them from the body halt face. The method
-        coordinate is owned by the tree and sugars through the normal door.
-        """
-        exit_attr = self._make_attribute(self.context_expr, "__exit__")
+    def _make_exit_call_completed(self) -> "Node":
+        """Normal-completion exit: ``__exit__(None, None, None)``."""
         none = self._make_none_constant()
-        return self._make_call(exit_attr, (none, none, none))
+        return self._make_exit_call(none, none, none)
+
+    def _make_exit_call_raised(self, effect_slot_id: str) -> "Node":
+        """Exceptional exit: open type/tb + EffectRef value (not all-None)."""
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        # Open args are Constant(None) only for the completed face; here type/tb
+        # stay as Name-less open markers via ObservationRef-style slots until a
+        # dedicated OpenExitArg node exists. Use EffectRef for the value arg.
+        effect_ref = materialize(
+            self.unit,
+            ShadowNode(
+                "EffectRef",
+                self.span,
+                (("slot_id", Leaf(effect_slot_id)),),
+            ),
+            self.reporter,
+        )
+        # Open type/tb: none is wrong; use a Constant that sugars to None only
+        # for completed. For raised we synthesize Attribute-free open via
+        # EffectRef of synthetic open slots (testimony red at disposition).
+        open_type = materialize(
+            self.unit,
+            ShadowNode(
+                "EffectRef",
+                self.span,
+                (("slot_id", Leaf(f"{effect_slot_id}#exc_type")),),
+            ),
+            self.reporter,
+        )
+        open_tb = materialize(
+            self.unit,
+            ShadowNode(
+                "EffectRef",
+                self.span,
+                (("slot_id", Leaf(f"{effect_slot_id}#traceback")),),
+            ),
+            self.reporter,
+        )
+        return self._make_exit_call(open_type, effect_ref, open_tb)
 
 
 class ImportAlias(Node):
@@ -1828,15 +1881,18 @@ class With(Statement):
                 slot_id=slot_id,
             )
         if isinstance(contract, NeverSuppresses):
-            # Tree-owned enter/exit method coordinates + typed disposition.
-            # Nothing enrolls NeverSuppresses yet; when it does, sugars go
-            # through the normal door — never callback injection.
+            # Manager once → ManagerRef(M); enter = M.__enter__(); exit built
+            # per body face in WithResourceSugar (completed vs raised args).
+            # Nothing enrolls NeverSuppresses yet.
+            manager_slot = item._manager_slot_id()
             enter_node = item._make_enter_call()
-            exit_node = item._make_exit_call()
-            enter_slot = item._effect_slot_id() if as_name is not None else None
+            enter_slot = (
+                f"{manager_slot}#enter_result" if as_name is not None else None
+            )
             return WithResourceSugar(
+                manager=item.context_expr.sugar(),
+                manager_slot_id=manager_slot,
                 enter=enter_node.sugar(),
-                exit=exit_node.sugar(),
                 body=tuple(stmt.sugar() for stmt in self.body),
                 disposition=contract,
                 enter_slot_id=enter_slot,
@@ -1913,7 +1969,9 @@ class With(Statement):
                 body_scope[item.optional_vars.id] = ref
                 continue
             if isinstance(contract, NeverSuppresses):
-                ref = item._make_observation_ref(slot_id, ENTER_RESULT)
+                # Enter-result slot is distinct from manager slot.
+                enter_slot = f"{item._manager_slot_id()}#enter_result"
+                ref = item._make_observation_ref(enter_slot, ENTER_RESULT)
                 body_scope[item.optional_vars.id] = ref
                 continue
             # Unauthenticated / suppresses: mask the name, stay without ref.
@@ -1950,8 +2008,9 @@ class With(Statement):
                     slot_id, contract.binding
                 )
             elif isinstance(contract, NeverSuppresses):
+                enter_slot = f"{item._manager_slot_id()}#enter_result"
                 exported[item.optional_vars.id] = item._make_observation_ref(
-                    slot_id, ENTER_RESULT
+                    enter_slot, ENTER_RESULT
                 )
         return exported or None
 
@@ -3229,6 +3288,26 @@ class EffectRef(Expression):
         return EffectRefSugar(slot_id=self.slot_id, site=self.fragment)
 
 
+class ManagerRef(Expression):
+    """Once-evaluated manager coordinate for resource ``with``.
+
+    Context expression evaluates once; ``ManagerRef(M)`` is the stable
+    receiver for ``__enter__`` / ``__exit__`` — never a second evaluation of
+    the context expression.
+    """
+
+    slot_id: str
+
+    def substitute(self, scope: "dict[str, Node]") -> "Node":
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.resource_coord_sugar import ManagerRefSugar
+
+        return ManagerRefSugar(slot_id=self.slot_id, site=self.fragment)
+
+
 class ObservationRef(Expression):
     """Contract-declared observation of an effect slot (e.g. ExceptionInfo).
 
@@ -3238,7 +3317,7 @@ class ObservationRef(Expression):
     """
 
     slot_id: str
-    projection: str  # exception_info | warning_observation | effect
+    projection: str  # exception_info | warning_observation | effect | enter_result
 
     def substitute(self, scope: "dict[str, Node]") -> "Node":
         del scope
