@@ -14,8 +14,9 @@ Arms (T's ruling, restated as reduction):
 - A body with no observed raise reduces ``else`` (when present).
 - ``finally`` always reduces and splices; its effects ride on every path.
 
-Loud residuals stay at the node (bare ``except:``, tuple types, ``as`` binding,
-``except*`` on TryStar) -- never silently dropped here.
+Typed tuples are flattened into ordered exact-match arms. A bare ``except:``
+uses the router's widest existing raise query and consumes whichever raise it
+finds. ``except*`` and structurally exotic types stay loud at the node.
 """
 
 from __future__ import annotations
@@ -31,8 +32,9 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 class TrySugar(Sugar):
     """`try` with typed except handlers, constructed by ``Try.sugar``.
 
-    ``handlers`` is an ordered tuple of ``(EffectMatcher, body_sugars)`` --
-    one per ``except E:`` clause, already structure-checked by the node.
+    ``handlers`` is an ordered tuple of ``(EffectMatcher | None, body_sugars)``.
+    ``None`` is the widest bare-except matcher; typed tuple clauses contribute
+    one arm per structurally admitted type.
     """
 
     body: tuple  # body statement sugars, source order
@@ -79,7 +81,11 @@ class TrySugar(Sugar):
         # handler body's entries in its place.
         routed = None
         for matcher, handler_body in self.handlers:
-            matching = _matching_effect(body_entries, matcher)
+            matching = (
+                _first_effect_of_kind(body_entries, "raise")
+                if matcher is None
+                else _matching_effect(body_entries, matcher)
+            )
             if matching is None:
                 continue
             index, _entry, _observation = matching
