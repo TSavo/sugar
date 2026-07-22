@@ -74,6 +74,18 @@ def test_simple_symbolic_comprehension_builds_coordinate(source, coordinate, tra
     assert any(getattr(arg, "name", None) == transform for arg in term.args[2:])
 
 
+def test_bound_target_masks_outer_same_spelling_and_keeps_call_coordinate():
+    term = _out(
+        "def A(xs):\n"
+        "    x = 999\n"
+        "    return [f(x) for x in xs]\n"
+    )
+    assert term.name == "py.listcomp"
+    assert term.args[1].value == "x"
+    assert term.args[2].name == "call:f"
+    assert term.args[2].args[0].name == "x"
+
+
 def test_concrete_generator_builds_lazy_coordinate_without_materializing():
     term = _out("def A():\n    return (f(x) for x in [1, 2])\n")
     assert term.name == "py.generatorexp"
@@ -86,6 +98,16 @@ def test_concrete_generator_builds_lazy_coordinate_without_materializing():
 def test_generator_consumer_points_at_lazy_coordinate(consumer):
     term = _out(f"def A():\n    return {consumer}(x for x in [0, 1])\n")
     assert term.name == f"call:{consumer}"
+    assert term.args[0].name == "py.generatorexp"
+
+
+def test_shadowed_consumer_does_not_materialize_generator():
+    term = _out(
+        "def A(materialize):\n"
+        "    list = materialize\n"
+        "    return list(x for x in [0, 1])\n"
+    )
+    assert term.name == "call:materialize"
     assert term.args[0].name == "py.generatorexp"
 
 
