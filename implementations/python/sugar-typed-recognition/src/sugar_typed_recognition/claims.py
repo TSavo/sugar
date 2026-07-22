@@ -121,7 +121,7 @@ class NameClaim(TypedClaim):
 
 
 # --------------------------------------------------------------------------
-# structural absence: a real question, and NOT a refusal
+# structural absence: a real question, and NOT a gap
 # --------------------------------------------------------------------------
 
 
@@ -136,7 +136,7 @@ class ReturnClaim(TypedClaim):
     question and survives: ``Return.value`` is ``Optional[Expression]``, and
     the two cases mean different things. ``value is None`` here is a
     STRUCTURAL absence being read, which is a fact — not a bare ``None``
-    being used as a refusal. Bare ``return`` then reaches ``resolve`` with no
+    being used as a gap sentinel. Bare ``return`` then reaches ``resolve`` with no
     owner and panics GAP, exactly as the original comment intended ("bare
     return stays a loud factory gap"), and now it is the resolver that makes
     it loud rather than each claim remembering to.

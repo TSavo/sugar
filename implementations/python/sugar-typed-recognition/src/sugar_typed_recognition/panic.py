@@ -2,7 +2,7 @@
 
 Resolution has exactly two outcomes: ONE claim, or this panic. There is no
 third arm — no "pick the first candidate", no permissive fallback, no
-default claim, no quiet ``False``, no bare ``None`` refusal.
+default claim, no quiet ``False``, no bare ``None`` gap sentinel.
 
 Three MISSING shapes, all panics, all loud:
 

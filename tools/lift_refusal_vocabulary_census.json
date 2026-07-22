@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 1896,
+  "lift_output_backlog": 1829,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -275,1396 +275,6 @@
       "wire_marker": "not-lift-output"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/effect/runtime_effect.py:af6124282abbdc9a:1",
-      "line": 144,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/effect/runtime_effect.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "Fabricated string sites and non-term operands are refused at the door.",
-      "wire_marker": "wire-protocol:effect-kind"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:6a546ced289ae880:1",
-      "line": 267,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "therefore loud at the existing refusal/gap boundary.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:6c8662d5661853f3:1",
-      "line": 871,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "invent a dual that structural consistency would not refuse.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:9faa8739ac9ce40d:1",
-      "line": 232,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "Do not invent members; do not soft-refuse \u2014 silence stays illegal.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:d8533025956b19f4:1",
-      "line": 843,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# so Derived residue duals refuse the same ground faces structurally.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/symbolic_value.py:3b52d207bb417e7b:1",
-      "line": 672,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/symbolic_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "Do not invent members; do not soft-refuse \u2014 silence stays illegal.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:1bc08d3f4f6ee34b:1",
-      "line": 149,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "\"subset; dynamic dispatch refuses by name\"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:1dd8c4af4d3a8fc7:1",
-      "line": 331,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "\"break, the compiler refuses it \u2014 no runnable witness can exist\"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:208f4c13ea17fb1a:1",
-      "line": 26,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "interpreter and refuses to import if any reachable bucket lacks a row.",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:20c80c88ce82c386:1",
-      "line": 556,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "\"bucket, which the ledger refuses to carry\"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:28511724c805e297:1",
-      "line": 10,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "at nothing refuses to import. ``residual`` names any",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:2b4b83c937a8eefd:1",
-      "line": 83,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "residual=\"dict-form str.maketrans bindings refuse by name\",",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:32af86e7e75a02e6:1",
-      "line": 247,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "\"returns, and loop/try tails refuse or stay non-candidates by \"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:421f3a844ad564f2:1",
-      "line": 232,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "\"false-refuse)\",",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:427b5637b22a1956:1",
-      "line": 143,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "residual=\"computed chain values and walrus assigns refuse by \"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:50b39379fc7da7d2:1",
-      "line": 7,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "emits conjuncts (refusal classes named inside the walk).",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:6a9002dfcc63d6d7:1",
-      "line": 177,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "\"substrate-side); operators outside + - * / % refuse by name; \"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:7ea564e9fc3a2abd:1",
-      "line": 273,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "residual=\"bodies with effect statements before the tail refuse \"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:7ea564e9fc3a2abd:2",
-      "line": 279,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "residual=\"bodies with effect statements before the tail refuse \"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:88cf2ed52c95b150:1",
-      "line": 230,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "\"refuse as non-candidates; non-comparison assert tests skip \"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:b31930d17510e6bb:1",
-      "line": 17,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "- ``membrane`` the world refusing to hold still \u2014 suspension points,",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:bdf5351de8d633dd:1",
-      "line": 134,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "\"computed arguments refuse by name\",",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:c48a1a7d50b97856:1",
-      "line": 546,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "real corpus data is exactly the silence this module exists to refuse.\"\"\"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:c93f99adf3094805:1",
-      "line": 183,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "residual=\"predicates over attributes/calls/free names refuse \"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:d0ce3ccea8378ea2:1",
-      "line": 19,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "CPython itself refuses to run. ``reason`` is mandatory:",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:e8fa596ac8105248:1",
-      "line": 160,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "residual=\"non-ascii bytes literals refuse loudly (named); multi-return literal bodies lift via the branch-literal disjunction family\",",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:e90e03c5d9606e4e:1",
-      "line": 126,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "\"instantiations refuse/skip by name; module-attr function calls \"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:f5e627aa84a06885:1",
-      "line": 155,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "\"refuse by name (by design)\",",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py:fe947a1ecaa000db:1",
-      "line": 457,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/grammar_ledger.py",
-      "reason": "grammar census documentation and scoring prose, not an emitted lift result",
-      "replacement": "keep as doctrine prose unless future docs sweep narrows it",
-      "speaker": "grammar-census-prose",
-      "text": "# translate_universe \u2014 a lifted claim pointing at nothing refuses",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/collect_dunder_frontier.py:55fac12753d3ee85:1",
-      "line": 205,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/collect_dunder_frontier.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "\"the kit must lower by ownership or loudly effect/refuse\"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py:cbdb8e585d9d737a:1",
-      "line": 19,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/collect_gap_swallow_frontier.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "\"_record_dig_refusal\",",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/collect_panic_audit.py:8f17d2ba5ddd34e6:1",
-      "line": 151,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/collect_panic_audit.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "\" raise SystemExit('refused C-extension path: ' + path)\\n\"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:02f38dc2e036e94d:1",
-      "line": 827,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "for a in coverage.assertions.refused_loci:",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:0feabfaa2b1a0c1f:1",
-      "line": 367,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "elif status in _REFUSED:",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:12697e8649ba0e9e:1",
-      "line": 391,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_matched.append(a)",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:12697e8649ba0e9e:2",
-      "line": 394,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_matched.append(a)",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:149673e80e73578c:1",
-      "line": 813,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "\"refused-loud\": 40,",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:1951626903192f03:1",
-      "line": 274,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "only[\"accounted\"] = assertions.lifted_cited + assertions.refused_loud",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:1dac2ec44bd4a140:1",
-      "line": 385,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_matched: list[AssertLocus] = []",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:214ddd73f8b0b1a3:1",
-      "line": 305,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_keys: set[tuple[str, int, int]] = set()",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:2613f3130c0941ab:1",
-      "line": 347,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "\"status\": \"refused\",",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:2613f3130c0941ab:2",
-      "line": 398,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "\"status\": \"refused\",",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:3027f2befcd79215:1",
-      "line": 810,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "# Priority: silent > refused > lifted > minority-dug > minority-un",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:3617183be1a91509:1",
-      "line": 417,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_loud=len(refused_matched),",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:437b240a26af5c49:1",
-      "line": 13,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "accounted = report buckets (lifted+cited + refused-loud / AuditOnlyGap)",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:4b56bc3543b26f0a:1",
-      "line": 288,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "* Refused-loud \u2014 instrument engaged and refused (FactoryPanic held as gap,",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:4bad895cba1a96a5:1",
-      "line": 8,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "stated / lifted+cited / refused-loud / silently-unaccounted",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:4efacee10d61fc58:1",
-      "line": 341,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_keys.add(key)",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:4efacee10d61fc58:2",
-      "line": 368,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_keys.add(key)",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:58cb0ea4bf330c00:1",
-      "line": 390,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "if _matched(a, refused_keys):",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:6323cb28d008df26:1",
-      "line": 147,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "\"\"\"Report buckets that spoke: lifted+cited + refused-loud (M).\"\"\"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:6334f461ccea5d36:1",
-      "line": 369,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_loci.append(entry)",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:64da55b1d1257d03:1",
-      "line": 237,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "``lifted_loci`` / ``refused_loci`` / ``silent_loci`` hold the matched on-disk",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:71dabc55b2f32f9f:1",
-      "line": 270,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "# axis totals still conserve (lifted+refused+silent == stated).",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:7560b1d80a6d92e7:1",
-      "line": 829,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "_mark(int(a[\"line\"]), \"refused-loud\")",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:7cfb52ea52809e4e:1",
-      "line": 263,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "for locus in assertions.refused_loci:",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:83efc802ac8fb3ad:1",
-      "line": 297,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "Refused-loud: auditOnlyGaps at locus **or** any non-lifted assert when the",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:843284f1cfc37814:1",
-      "line": 393,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "# Not lifted: refuse-loud. Never silent.",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:852ee8ec8fe3ff52:1",
-      "line": 236,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "Each on-disk assert is classified exactly once (lifted / refused / silent).",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:8dae962852b242e7:1",
-      "line": 379,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "# Ground folds with no fact row also refuse-loud until a floor speaks them.",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:965a3cb1b16f6834:1",
-      "line": 49,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_loci: list[dict] = field(default_factory=list)",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:a51cfa4a19809353:1",
-      "line": 378,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "# Unimplemented floors \u2192 refuse-loud (panic/gap is the correct answer).",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:a6117edd784dd612:1",
-      "line": 342,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_loci.append(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:a6117edd784dd612:2",
-      "line": 395,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_loci.append(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:b0bbea40a5325e5e:1",
-      "line": 39,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "_REFUSED = frozenset({\"unresolved\", \"refused\", \"refuted\", \"unclassified\"})",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:b58420e32d72c770:1",
-      "line": 46,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_loud: int = 0",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:b760ab848b03f8a5:1",
-      "line": 307,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_loci: list[dict] = []",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:c1aea4db12c53f81:1",
-      "line": 420,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refused_loci=[a.to_json() for a in refused_matched] or refused_loci,",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:d01e3f76755738a1:1",
-      "line": 377,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "# refused-loud. Silently-unaccounted is illegal \u2014 soft-skip is forbidden.",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:d96ded67fa3ef210:1",
-      "line": 802,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "Buckets: lifted+cited | refused-loud | silently-unaccounted |",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:e7b75e973416bc1b:1",
-      "line": 405,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "\"stated assert without ::assertion fact row \u2014 refuse-loud \"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:f0ff65ab30392bcd:1",
-      "line": 148,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "return self.assertions.lifted_cited + self.assertions.refused_loud",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:fa290eda9ba61fb3:1",
-      "line": 58,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "\"refused_loud\": self.refused_loud,",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:fa32142abd6e4fc3:1",
-      "line": 63,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "\"refused_loci\": list(self.refused_loci),",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py:fd4e040542679a98:1",
-      "line": 333,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/lift_coverage_accounting.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "# Refused-loud: audit door gap rows (site = blame file:line:col).",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/live_factory_panic_isolation.py:0f93d67b62efd60b:1",
-      "line": 45,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/live_factory_panic_isolation.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "\"\"\"Factory instrument engaged, no spoken assert rows \u2192 refuse-loud partition.\"\"\"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/live_factory_panic_isolation.py:44431cf74935fa3b:1",
-      "line": 70,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/live_factory_panic_isolation.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "FactoryPanic / other hard fails engage refuse-loud for that file's on-disk",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/numpy_wall.py:ae39c4af6797de8a:1",
-      "line": 101,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/numpy_wall.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "always attaches grounds (the refusal reason, or the",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/sugar_witness_instruments.py:2e44ecad95c8bb15:1",
-      "line": 34,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/sugar_witness_instruments.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "SugarWitnessPair | SugarRefusedWitnessPair | SugarRedEffectWitnessPair",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/sugar_witness_instruments.py:737a7863ce32d84e:1",
-      "line": 16,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/sugar_witness_instruments.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "SugarRefusedWitnessPair,",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/sugar_witness_instruments.py:cc7338c73901072a:1",
-      "line": 238,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/sugar_witness_instruments.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "# #4578 moved the opaque equality refusal witnesses to the classifier that",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/sugar_witness_instruments.py:e655d2b56691c6e5:1",
-      "line": 790,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/sugar_witness_instruments.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "witness, (SugarWitnessPair, SugarRefusedWitnessPair, SugarRedEffectWitnessPair)",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/sugar_witness_instruments.py:ea8a4a1a492db7e0:1",
-      "line": 799,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/sugar_witness_instruments.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "(SugarWitnessPair, SugarRefusedWitnessPair, SugarRedEffectWitnessPair),",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/open_lane_dto.py:f8f0038553d3bff1:1",
-      "line": 51,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/kit_rpc/open_lane_dto.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"\"\"Ad hoc diagnostic rows (dig refusals, agreement violations, proofir",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:0a1c415b29f7978e:1",
-      "line": 3354,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"reason\": \"no call site for exact memento; refusing implication substitution\",",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:2056e06be9cd313e:1",
-      "line": 3259,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"reason\": \"no call site for exact memento; refusing call-site substitution\",",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:275e3195e042e920:1",
-      "line": 983,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "SourceOracleRefusal, resolve_source_memento = _source_oracle_api()",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:516a86ab996c4da5:1",
-      "line": 717,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return SourceOracleRefusal, resolve_source_memento",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:678aa91dc0fc33bb:1",
-      "line": 822,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"bodyDischargeRefusalReason\": (",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:8613735061af6d4d:1",
-      "line": 2761,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "refused here, before a JSON-RPC response can be constructed.",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b13ac16af47d1f4d:1",
-      "line": 986,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "except SourceOracleRefusal as exc:",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b222d14df22a442a:1",
-      "line": 3489,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"reason\": \"no call site for exact memento; refusing universe substitution\",",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b85f2cb26012bf60:1",
-      "line": 704,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "SourceOracleRefusal,",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:b85f2cb26012bf60:2",
-      "line": 714,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "SourceOracleRefusal,",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:d3469ccfa48c2cd7:1",
-      "line": 2785,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"\"\"Construct one closed enumeration result or refuse it.",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:f87a140483c0687b:1",
-      "line": 2510,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "Ambiguous or absent evidence refuses substitution instead of choosing the",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py:279f0d747f004921:1",
-      "line": 118,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "expected: Literal[\"sat\", \"unsat\", \"construction-refusal\"]",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py:285831c4dadf1b68:1",
-      "line": 368,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "pair.lying.expected == \"construction-refusal\"",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py:8111817bbaf46949:1",
-      "line": 125,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/__init__.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "refusal_absence: bool = False",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/audit_memento.py:0fa009f648c13dfa:1",
-      "line": 144,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/audit_memento.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "expected=\"construction-refusal\",",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/audit_memento.py:a095f9ec1f015e70:1",
-      "line": 143,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/audit_memento.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "name=\"audit-memento-raw-locus-refuses\",",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:12165ae09b91e3b5:1",
-      "line": 137,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "refusal_absence=True,",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:1b9d0c85efd887cf:1",
-      "line": 180,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "def _fact_and_refusal_refuses(cls: type[BoundaryRecord]) -> BoundaryRecord:",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:3c361e4c88ad0352:1",
-      "line": 155,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "def _effectful_refusal_source() -> str:",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:69fbf970966db818:1",
-      "line": 35,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"\"\"A typed-effect record with grounds, not a lift-side refusal.\"\"\"",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:71ca3f25fc42dff2:1",
-      "line": 147,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "expected=\"construction-refusal\",",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:a162209c41cdd5e2:1",
-      "line": 134,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "source=_effectful_refusal_source(),",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:be260f09c476cf14:1",
-      "line": 150,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "construct=lambda: _fact_and_refusal_refuses(cls),",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py:eea283862e98c852:1",
-      "line": 146,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/boundary_record.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "name=\"boundary-record-fact-and-refusal-refuses\",",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/call_edge_decl.py:102eddf21d3bb6e5:1",
-      "line": 145,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/call_edge_decl.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "name=\"call-edge-decl-raw-json-refuses\",",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/call_edge_decl.py:773c472396e607be:1",
-      "line": 146,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/call_edge_decl.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "expected=\"construction-refusal\",",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/universe_mint.py:3d6c2789ddd0f51f:1",
-      "line": 138,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/universe_mint.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "expected=\"construction-refusal\",",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/universe_mint.py:f4f5693dcc7e3ff9:1",
-      "line": 137,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/universe_mint.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "name=\"universe-mint-raw-formula-refuses\",",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py:2967d00720ac0d5b:1",
-      "line": 64,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "observed=\"fact/universe plus refusal\",",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py:36efc39203f684cb:1",
-      "line": 88,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"refusal\": self.refusal.to_declaration(),",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py:528623dca6d280fa:1",
-      "line": 113,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "name=\"vendor-conjoin-raw-formula-refuses\",",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py:54d7007096a7880f:1",
-      "line": 65,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "requested=\"either typed fact+universe or explicit refusal\",",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py:6b654090632f5c2a:1",
-      "line": 114,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "expected=\"construction-refusal\",",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py:8d575e931a0c7902:1",
-      "line": 60,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "raise TypeError(\"VendorConjoin refusal must be BoundaryRecord\")",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py:8f880518d376496a:1",
-      "line": 75,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "object.__setattr__(self, \"refusal\", refusal)",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py:9f0486d90bb1c887:1",
-      "line": 46,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "refusal: BoundaryRecord | None = field(init=False)",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py:abe8313da93fe9c7:1",
-      "line": 85,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "if self.refusal is not None:",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py:c1063c90afb78fd5:1",
-      "line": 58,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "if refusal is not None:",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py:d7f8a98f5505968c:1",
-      "line": 54,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "refusal: BoundaryRecord | None = None,",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py:f4661b06a6f523fe:1",
-      "line": 59,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/proofir/nodes/vendor_conjoin.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "if not isinstance(refusal, BoundaryRecord):",
-      "wire_marker": "wire-protocol:proofir-node"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/keyword_call_sugar.py:ddbe732416bae3a5:1",
-      "line": 231,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/keyword_call_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# keyword_call_return). Do not soft-refuse \u2014 unbindable",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/object_equality_term_sugar.py:2cc50528611d67b4:1",
-      "line": 8,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/object_equality_term_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "from sugar_lift_py_tests.sugar.witnesses import _refused_call_return_pair",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/object_equality_term_sugar.py:b8d11259abf3c199:1",
-      "line": 43,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/object_equality_term_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "_refused_call_return_pair(",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/object_equality_term_sugar.py:b8d11259abf3c199:2",
-      "line": 51,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/object_equality_term_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "_refused_call_return_pair(",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py:1de16d677164b962:1",
-      "line": 27,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "class SugarRefusedWitnessPair:",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py:4d3536b143276358:1",
-      "line": 137,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "family=\"opaque-equality-refusal\",",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py:4d7d79e4064e5b57:1",
-      "line": 134,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return SugarRefusedWitnessPair(",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py:608699005365ed71:1",
-      "line": 6,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "Verdict = Literal[\"sat\", \"unsat\", \"refused\"]",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py:996207ed175aca7a:1",
-      "line": 132,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": ") -> SugarRefusedWitnessPair:",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py:dbabe0f63a566298:1",
-      "line": 74,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "| SugarRefusedWitnessPair",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py:dbabe0f63a566298:2",
-      "line": 80,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "| SugarRefusedWitnessPair",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py:f4971b9fea7e3490:1",
-      "line": 140,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "expected=\"refused\",",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py:f4971b9fea7e3490:2",
-      "line": 144,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "expected=\"refused\",",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py:f5e58f8503ffc7a5:1",
-      "line": 124,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/witnesses.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "def _refused_call_return_pair(",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/temporal/builtin_name_bindings.py:b3b3be6839a423c7:1",
       "line": 23,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/temporal/builtin_name_bindings.py",
@@ -1672,226 +282,6 @@
       "replacement": "preserve the substrate-owned symbol exactly",
       "speaker": "vendor-language-identifier",
       "text": "\"ConnectionRefusedError\",",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_harness.py:059f82975f75047a:1",
-      "line": 444,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_harness.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "if statuses and all(status == \"refused\" for status in statuses):",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_harness.py:1f49f2e92c719fc3:1",
-      "line": 18,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_harness.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"sat\", \"unsat\", \"refused\", \"refused-modulo-unavailable-seats\", \"solver-timeout\"",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_harness.py:90b0cc74a92c2cea:1",
-      "line": 461,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_harness.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return \"refused-modulo-unavailable-seats\" if provisional else \"refused\"",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py:2d82b1bec02988dd:1",
-      "line": 36,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "class WitnessOracleRefusal(Exception):",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py:5e89521773dd0b4d:1",
-      "line": 26,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "# Any mismatch -> REFUSE, loudly. exact-or-refuse, no silent loss.",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py:a30c366f5bbf6801:1",
-      "line": 50,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "achieved, or refuses loudly.\"\"\"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py:ebc20916a8aa5650:1",
-      "line": 53,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise WitnessOracleRefusal(\"witness memento missing `witness_cid`\")",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py:edec30935cd3c932:1",
-      "line": 59,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise WitnessOracleRefusal(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py:edec30935cd3c932:2",
-      "line": 70,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise WitnessOracleRefusal(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py:edec30935cd3c932:3",
-      "line": 82,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise WitnessOracleRefusal(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py:0131d9c111b38399:1",
-      "line": 57,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py",
-      "reason": "witness or verify RPC boundary quotes verifier refusal verdicts",
-      "replacement": "keep verifier status vocabulary; do not use as lift output name",
-      "speaker": "verifier-verdict-quote",
-      "text": "Any misalignment -> ``WitnessVerifyRefusal``. A lying/broken oracle ->",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py:02526677ede923fe:1",
-      "line": 88,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py",
-      "reason": "witness or verify RPC boundary quotes verifier refusal verdicts",
-      "replacement": "keep verifier status vocabulary; do not use as lift output name",
-      "speaker": "verifier-verdict-quote",
-      "text": "f\"-- the oracle is broken; verify recomputed the CID and refused\"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py:1fb330c2ee3973f3:1",
-      "line": 65,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py",
-      "reason": "witness or verify RPC boundary quotes verifier refusal verdicts",
-      "replacement": "keep verifier status vocabulary; do not use as lift output name",
-      "speaker": "verifier-verdict-quote",
-      "text": "raise WitnessVerifyRefusal(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py:1fb330c2ee3973f3:2",
-      "line": 92,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py",
-      "reason": "witness or verify RPC boundary quotes verifier refusal verdicts",
-      "replacement": "keep verifier status vocabulary; do not use as lift output name",
-      "speaker": "verifier-verdict-quote",
-      "text": "raise WitnessVerifyRefusal(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py:1fb330c2ee3973f3:3",
-      "line": 102,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py",
-      "reason": "witness or verify RPC boundary quotes verifier refusal verdicts",
-      "replacement": "keep verifier status vocabulary; do not use as lift output name",
-      "speaker": "verifier-verdict-quote",
-      "text": "raise WitnessVerifyRefusal(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py:42fd2fda7f8ffc6d:1",
-      "line": 30,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py",
-      "reason": "witness or verify RPC boundary quotes verifier refusal verdicts",
-      "replacement": "keep verifier status vocabulary; do not use as lift output name",
-      "speaker": "verifier-verdict-quote",
-      "text": "recompute to the pinned witness_cid. verify refuses loudly.\"\"\"",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py:49f398d0fd50826e:1",
-      "line": 6,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py",
-      "reason": "witness or verify RPC boundary quotes verifier refusal verdicts",
-      "replacement": "keep verifier status vocabulary; do not use as lift output name",
-      "speaker": "verifier-verdict-quote",
-      "text": "# and refuses loudly on drift -- that is its job, the resolution layer. verify",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py:7f0de44b4808cce6:1",
-      "line": 25,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py",
-      "reason": "witness or verify RPC boundary quotes verifier refusal verdicts",
-      "replacement": "keep verifier status vocabulary; do not use as lift output name",
-      "speaker": "verifier-verdict-quote",
-      "text": "from .witness_oracle import WitnessOracleRefusal, _verify_signature",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py:977c27d5f0e5e5ac:1",
-      "line": 83,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py",
-      "reason": "witness or verify RPC boundary quotes verifier refusal verdicts",
-      "replacement": "keep verifier status vocabulary; do not use as lift output name",
-      "speaker": "verifier-verdict-quote",
-      "text": "except WitnessOracleRefusal:",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py:9a17b84d2ef22aa7:1",
-      "line": 28,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py",
-      "reason": "witness or verify RPC boundary quotes verifier refusal verdicts",
-      "replacement": "keep verifier status vocabulary; do not use as lift output name",
-      "speaker": "verifier-verdict-quote",
-      "text": "class WitnessVerifyRefusal(Exception):",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py:b9feb3a2d7b01d7f:1",
-      "line": 61,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py",
-      "reason": "witness or verify RPC boundary quotes verifier refusal verdicts",
-      "replacement": "keep verifier status vocabulary; do not use as lift output name",
-      "speaker": "verifier-verdict-quote",
-      "text": "raise WitnessVerifyRefusal(\"witness memento missing `witness_cid`\")",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py:bd9b0a5f4407266a:1",
-      "line": 18,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/witness_verify.py",
-      "reason": "witness or verify RPC boundary quotes verifier refusal verdicts",
-      "replacement": "keep verifier status vocabulary; do not use as lift output name",
-      "speaker": "verifier-verdict-quote",
-      "text": "# checked dimension of `verify`. exact-or-refuse, no silent loss.",
       "wire_marker": "not-lift-output"
     },
     {
@@ -2545,196 +935,6 @@
       "wire_marker": "wire-protocol:lift-report-payload"
     },
     {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:052339910b996dad:1",
-      "line": 254,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "except SourceOracleRefusal as exc:",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:1ea81b875d8632be:1",
-      "line": 19,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "# proven. exact-or-refuse, no silent loss (supra omnia, rectum).",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:2917237348ad15ac:1",
-      "line": 119,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise SourceOracleRefusal(f\"cannot parse source `{path}`: {exc}\") from exc",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:394bca95f2bb8b51:1",
-      "line": 115,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise SourceOracleRefusal(f\"cannot read source `{path}`: {exc}\") from exc",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:4a70e77dfff43875:1",
-      "line": 101,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "the pinned ones. Otherwise raises `SourceOracleRefusal`.",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:5a0ec9a64c5cacd8:1",
-      "line": 256,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise last or SourceOracleRefusal(\"no root resolved the source memento\")",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:7197e9b5b3f531e9:1",
-      "line": 14,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "# else REFUSE, loudly.",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:7f5f8626068f26e8:1",
-      "line": 105,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise SourceOracleRefusal(\"source memento missing `file`\")",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:936c36da11dfd860:1",
-      "line": 16,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "# That refusal is the BINARY axis of the three-axis pin made operational, checked",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:99fa0dc901bef530:1",
-      "line": 123,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise SourceOracleRefusal(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:99fa0dc901bef530:2",
-      "line": 147,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise SourceOracleRefusal(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:99fa0dc901bef530:3",
-      "line": 156,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise SourceOracleRefusal(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:99fa0dc901bef530:4",
-      "line": 180,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise SourceOracleRefusal(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:99fa0dc901bef530:5",
-      "line": 186,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise SourceOracleRefusal(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:99fa0dc901bef530:6",
-      "line": 195,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "raise SourceOracleRefusal(",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:9ab573830ea2ea71:1",
-      "line": 40,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "class SourceOracleRefusal(Exception):",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:9e6a32250d554d3f:1",
-      "line": 246,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "project, or the vendor's installed package); try each candidate root, refuse",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:c136cd052e9dc4fa:1",
-      "line": 248,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "last: SourceOracleRefusal | None = None",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py:cba74df781e7527d:1",
-      "line": 18,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/source_oracle.py",
-      "reason": "source/witness oracle guards sealed evidence identity, not lifter output",
-      "replacement": "keep only as oracle guard vocabulary unless a future evidence-effect rename owns it",
-      "speaker": "provenance-oracle-guard",
-      "text": "# refuse -> the sugar cannot resolve -> you KNOW the on-disk source is not what was",
-      "wire_marker": "not-lift-output"
-    },
-    {
       "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py:0ea9d3db9fed818c:1",
       "line": 176,
       "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py",
@@ -3276,7 +1476,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:0c6bacd6321e4f06:1",
-      "line": 16187,
+      "line": 16297,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3286,7 +1486,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:0f7fb297008cfcc1:1",
-      "line": 16179,
+      "line": 16289,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3296,7 +1496,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:112758a0227f9da3:1",
-      "line": 16167,
+      "line": 16277,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3306,7 +1506,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:177fb6724754cd35:1",
-      "line": 11754,
+      "line": 11864,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3316,7 +1516,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:33c5e42d92ab224d:1",
-      "line": 16186,
+      "line": 16296,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3326,7 +1526,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:3992ca116b5ac1c7:1",
-      "line": 1854,
+      "line": 1861,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3336,7 +1536,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:3992ca116b5ac1c7:2",
-      "line": 2015,
+      "line": 2022,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3346,7 +1546,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:3f1e67de2cb276d1:1",
-      "line": 11760,
+      "line": 11870,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3356,7 +1556,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:4841d56cb6f67dc4:1",
-      "line": 16168,
+      "line": 16278,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3366,7 +1566,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:4b7fffd74e329bfb:1",
-      "line": 11745,
+      "line": 11855,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3376,7 +1576,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:4daf630d0caa2be3:1",
-      "line": 505,
+      "line": 509,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3386,7 +1586,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:6171795fba251ad4:1",
-      "line": 16170,
+      "line": 16280,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3396,7 +1596,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:6b7b6f2af828959a:1",
-      "line": 11773,
+      "line": 11883,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3406,7 +1606,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:6c76640185e571d9:1",
-      "line": 16184,
+      "line": 16294,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3416,7 +1616,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:6d31b8a63e21fa5c:1",
-      "line": 16176,
+      "line": 16286,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3426,7 +1626,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:8e238bc97800d568:1",
-      "line": 11769,
+      "line": 11879,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3435,8 +1635,18 @@
       "wire_marker": "internal-only"
     },
     {
+      "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:94be325106288ec7:1",
+      "line": 395,
+      "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
+      "reason": "line explicitly talks about verifier/prove-side refusal vocabulary",
+      "replacement": "keep verifier status vocabulary; do not use as lift output name",
+      "speaker": "verifier-verdict-quote",
+      "text": "// false prove-side missing/undecidable/refused showcase verdicts.",
+      "wire_marker": "not-lift-output"
+    },
+    {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:976633debc022a35:1",
-      "line": 9538,
+      "line": 9648,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "line explicitly talks about verifier/prove-side refusal vocabulary",
       "replacement": "keep verifier status vocabulary; do not use as lift output name",
@@ -3446,7 +1656,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:9fcf97abf8c76316:1",
-      "line": 2004,
+      "line": 2011,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3456,7 +1666,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:a3537c5b959e4a72:1",
-      "line": 11768,
+      "line": 11878,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3466,7 +1676,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:a588f37929ff6d61:1",
-      "line": 1848,
+      "line": 1855,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3476,7 +1686,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:a588f37929ff6d61:2",
-      "line": 2009,
+      "line": 2016,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3486,7 +1696,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:a6e2dd66ac5d07b5:1",
-      "line": 2003,
+      "line": 2010,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3496,7 +1706,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:a8bb7875dd6cbfc3:1",
-      "line": 11765,
+      "line": 11875,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3506,7 +1716,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:a8edd464c35e005f:1",
-      "line": 16178,
+      "line": 16288,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3516,7 +1726,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:b53b5452b20da1de:1",
-      "line": 16165,
+      "line": 16275,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3526,7 +1736,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:b63ee49b137e9f6c:1",
-      "line": 1103,
+      "line": 1109,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3536,7 +1746,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:c906d11864ad1cbc:1",
-      "line": 509,
+      "line": 513,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3546,7 +1756,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:cfb9861733b4c49e:1",
-      "line": 512,
+      "line": 516,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3556,7 +1766,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:d3c4edf387dc29ad:1",
-      "line": 11755,
+      "line": 11865,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3566,7 +1776,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:d55db08b9ada68f9:1",
-      "line": 11764,
+      "line": 11874,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3576,7 +1786,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_lift.rs:f0d953f65d7d5dd4:1",
-      "line": 11762,
+      "line": 11872,
       "path": "implementations/rust/sugar-cli/src/cmd_lift.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3586,7 +1796,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:0e01372e1d4da128:1",
-      "line": 4430,
+      "line": 4438,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3606,7 +1816,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:1691402edc0ab1c9:1",
-      "line": 8938,
+      "line": 8946,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3616,7 +1826,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:18753a35371c02bf:1",
-      "line": 5611,
+      "line": 5619,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3626,7 +1836,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:1b361a07e245180d:1",
-      "line": 7746,
+      "line": 7754,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3636,7 +1846,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:1cbc37b17fddcbd8:1",
-      "line": 3406,
+      "line": 3414,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3646,7 +1856,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:2524b8d838c5fd44:1",
-      "line": 7766,
+      "line": 7774,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3656,7 +1866,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:2b0c169996259c95:1",
-      "line": 9114,
+      "line": 9122,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3666,7 +1876,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:2e874578382c9c5c:1",
-      "line": 7967,
+      "line": 7975,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3676,7 +1886,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:3479f66aa9920760:1",
-      "line": 5002,
+      "line": 5010,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3696,7 +1906,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:3a15ee4688ea3644:1",
-      "line": 7255,
+      "line": 7263,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3706,7 +1916,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:3a24d3566a66f2fc:1",
-      "line": 7735,
+      "line": 7743,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3765,18 +1975,8 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:5303302f47d14292:4",
-      "line": 2580,
-      "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "refusal.header.failure_kind, refusal.header.failure_detail",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:5ee9567300371997:1",
-      "line": 7975,
+      "line": 7983,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3786,7 +1986,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:6c21546d2518624a:1",
-      "line": 7984,
+      "line": 7992,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3796,7 +1996,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:6d6c57bd7b2a6d7c:1",
-      "line": 8679,
+      "line": 8687,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3816,7 +2016,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:7d8a8347f3aa7401:1",
-      "line": 8700,
+      "line": 8708,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3826,7 +2026,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:7d8a8347f3aa7401:2",
-      "line": 8957,
+      "line": 8965,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3836,7 +2036,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:91b74959e632f791:1",
-      "line": 4569,
+      "line": 4577,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3846,7 +2046,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:91b74959e632f791:2",
-      "line": 4663,
+      "line": 4671,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3865,18 +2065,8 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:a8016719b19c0b34:1",
-      "line": 2578,
-      "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "LiftPluginError::Refused(refusal) => format!(",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:ac88807707905e04:1",
-      "line": 8780,
+      "line": 8788,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3886,7 +2076,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:ac88807707905e04:2",
-      "line": 8858,
+      "line": 8866,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3906,7 +2096,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:ae7849dec23ebd64:2",
-      "line": 4437,
+      "line": 4445,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3916,7 +2106,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:b1c2bf4793d5f72c:1",
-      "line": 5616,
+      "line": 5624,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3926,7 +2116,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:bbd8031609dcbe72:1",
-      "line": 3785,
+      "line": 3793,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3936,7 +2126,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:c15cad30363cd4d7:1",
-      "line": 8146,
+      "line": 8154,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3946,7 +2136,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:c87032206ddd5438:1",
-      "line": 7234,
+      "line": 7242,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3956,7 +2146,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:caecd8a303caa1a3:1",
-      "line": 7992,
+      "line": 8000,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3966,7 +2156,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:ce03a7fddd65c578:1",
-      "line": 4431,
+      "line": 4439,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3986,7 +2176,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:cfd883a7a6abc363:2",
-      "line": 3944,
+      "line": 3952,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -3996,7 +2186,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:d456672b809a792b:1",
-      "line": 7268,
+      "line": 7276,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4006,7 +2196,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:d6ea962968aacf61:1",
-      "line": 7719,
+      "line": 7727,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4026,7 +2216,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:d7e37935a03ce495:2",
-      "line": 3943,
+      "line": 3951,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4036,7 +2226,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:dbe281bfd11d2396:1",
-      "line": 8718,
+      "line": 8726,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4046,7 +2236,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:dbe281bfd11d2396:2",
-      "line": 8976,
+      "line": 8984,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4056,7 +2246,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:e472cac90f9d3a19:1",
-      "line": 8939,
+      "line": 8947,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4066,7 +2256,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:ea45b628db7e9545:1",
-      "line": 3998,
+      "line": 4006,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4106,7 +2296,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:f5b832ffeed4c983:1",
-      "line": 8560,
+      "line": 8568,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4116,7 +2306,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/cmd_mint.rs:fe76d478c729b536:1",
-      "line": 8678,
+      "line": 8686,
       "path": "implementations/rust/sugar-cli/src/cmd_mint.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4126,7 +2316,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:06f3956cf10bb1f5:1",
-      "line": 230,
+      "line": 232,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4136,7 +2326,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:0a8712119be94642:1",
-      "line": 1168,
+      "line": 1170,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4146,7 +2336,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:13c64a3d745b4186:1",
-      "line": 1160,
+      "line": 1162,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4156,7 +2346,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:1587b12d034536d9:1",
-      "line": 416,
+      "line": 418,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4166,7 +2356,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:4721cf720b3bd759:1",
-      "line": 418,
+      "line": 420,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4176,7 +2366,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:57618e949ba4813e:1",
-      "line": 542,
+      "line": 544,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4186,7 +2376,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:6d49b15d59be8535:1",
-      "line": 183,
+      "line": 185,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4196,7 +2386,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:7b843b89d524df8c:1",
-      "line": 1159,
+      "line": 1161,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4206,7 +2396,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:9265f58b957ea4a9:1",
-      "line": 450,
+      "line": 452,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4216,7 +2406,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:942388c53b2a296f:1",
-      "line": 231,
+      "line": 233,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4226,7 +2416,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:9a7b0c2383bb9714:1",
-      "line": 1166,
+      "line": 1168,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4236,7 +2426,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:a200f8e72cbdb95a:1",
-      "line": 420,
+      "line": 422,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4246,7 +2436,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:d8be8161e8cd5f2b:1",
-      "line": 425,
+      "line": 427,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4256,7 +2446,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:dc24f62662c8c48a:1",
-      "line": 1169,
+      "line": 1171,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4266,7 +2456,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:e33168530161c57c:1",
-      "line": 1157,
+      "line": 1159,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4276,7 +2466,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:f9e9936f1b9cd32d:1",
-      "line": 228,
+      "line": 230,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -4286,7 +2476,7 @@
     },
     {
       "key": "implementations/rust/sugar-cli/src/lift_plugin.rs:fccc916eec7e8133:1",
-      "line": 1162,
+      "line": 1164,
       "path": "implementations/rust/sugar-cli/src/lift_plugin.rs",
       "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
@@ -21498,13 +19688,11 @@
   "schema": 1,
   "speaker_counts": {
     "emitter-provenance-guard": 3,
-    "grammar-census-prose": 23,
-    "instrument-prose": 54,
-    "lift-output-backlog": 1896,
-    "provenance-oracle-guard": 79,
+    "lift-output-backlog": 1829,
+    "provenance-oracle-guard": 53,
     "vendor-language-identifier": 1,
-    "verifier-verdict-quote": 51,
+    "verifier-verdict-quote": 40,
     "verify-dialect-boundary": 42
   },
-  "total_occurrences": 2149
+  "total_occurrences": 1968
 }

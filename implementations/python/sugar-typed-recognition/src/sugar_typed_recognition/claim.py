@@ -172,7 +172,7 @@ def operand_types(site: SourceFragment) -> Tuple[type, ...]:
     Structural absence is not a MISSING: an ``Optional`` child that is ``None``
     (a bare ``return``, a ``Call`` with no receiver) is an answered question
     whose answer is "nothing is there". It contributes ``type(None)`` to the
-    key. A refusal would be a MISSING; a declared-absent field is a fact.
+    key. A gap would be a MISSING; a declared-absent field is a fact.
     """
     key: list[type] = []
     cls = type(site)
