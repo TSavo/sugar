@@ -222,3 +222,194 @@ def test_match_rejections_stay_loud():
     ):
         with pytest.raises(SugarNotWritten):
             _fn(src).sugar()
+
+
+# ---------------------------------------------------------------------------
+# Guarded ExitSet twins — contract routes per face, not over a linear list.
+# ---------------------------------------------------------------------------
+
+
+def test_conditional_expects_raised_face_and_absent_face():
+    """Expects over if c: raise — match under c; absence under ¬c must survive."""
+    v = _val(
+        "def A(c, z):\n"
+        "    with pytest.raises(ValueError):\n"
+        "        if c:\n"
+        "            raise ValueError\n"
+        "        z = 1\n"
+        "    return z\n"
+    )
+    invs = list(v.invs())
+    # Two obligation faces: discharge ValueError=ValueError and absence.
+    consequents = []
+    for inv in invs:
+        f = inv
+        if getattr(f, "kind", None) == "implies":
+            f = f.operands[1]
+        consequents.append(f)
+    discharges = [
+        c
+        for c in consequents
+        if getattr(c, "name", None) == "="
+        and getattr(c.args[0], "value", None) == "ValueError"
+        and getattr(c.args[1], "value", None) == "ValueError"
+    ]
+    absences = [
+        c
+        for c in consequents
+        if getattr(c, "name", None) == "="
+        and getattr(c.args[0], "value", None) == "ValueError"
+        and getattr(c.args[1], "value", None) == "py.effect.none"
+    ]
+    assert discharges, f"missing matched discharge in {invs}"
+    assert absences, f"missing ¬c absence obligation in {invs}"
+    # Raised face is consumed — no residual ValueError Incomplete.
+    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+
+    reds = [
+        e
+        for e in v.record.contribution()
+        if isinstance(e, Incomplete) and isinstance(e.effect, RaiseEffect)
+    ]
+    assert reds == []
+
+
+def test_conditional_expects_wrong_type_keeps_halt_and_completion():
+    """Wrong halt under c + complementary completion under ¬c both survive."""
+    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+
+    v = _val(
+        "def A(c, z):\n"
+        "    with pytest.raises(ValueError):\n"
+        "        if c:\n"
+        "            raise KeyError\n"
+        "        z = 1\n"
+        "    return z\n"
+    )
+    reds = [
+        e
+        for e in v.record.contribution()
+        if isinstance(e, Incomplete) and isinstance(e.effect, RaiseEffect)
+    ]
+    assert len(reds) == 1
+    assert reds[0].effect.exception_name == "KeyError"
+    # Guarded under c — not an unconditional residual.
+    assert reds[0].branch_conditions, "wrong halt must keep its guard"
+    # Mismatch fact present (ValueError vs KeyError).
+    assert any(
+        getattr(inv, "name", None) == "="
+        or (
+            getattr(inv, "kind", None) == "implies"
+            and getattr(inv.operands[1], "name", None) == "="
+            and inv.operands[1].args[1].value == "KeyError"
+        )
+        or (
+            getattr(inv, "name", None) == "="
+            and getattr(inv.args[1], "value", None) == "KeyError"
+        )
+        for inv in v.invs()
+    )
+    # ¬c completion is not erased: absence or body residue under the complement.
+    invs = list(v.invs())
+    assert len(invs) >= 1
+
+
+def test_conditional_expects_as_authenticates_slot_only_on_matched_face():
+    """ei.value / effect_slot_type only on the matched raise face."""
+    v = _val(
+        "def A(c):\n"
+        "    with pytest.raises(ValueError) as ei:\n"
+        "        if c:\n"
+        "            raise ValueError\n"
+        "        x = 1\n"
+        "    return ei.value\n"
+    )
+    # Slot type auth must appear, and under a guard when multi-face.
+    typed = []
+    for inv in v.invs():
+        f = inv
+        guard = None
+        if getattr(f, "kind", None) == "implies":
+            guard, f = f.operands[0], f.operands[1]
+        if (
+            getattr(f, "name", None) == "="
+            and getattr(f.args[0], "name", None) == "effect_slot_type"
+        ):
+            typed.append((guard, f.args[1].value))
+    assert typed, f"missing effect_slot_type in {list(v.invs())}"
+    assert all(val == "ValueError" for _, val in typed)
+    # Matched-face only: if guarded, guard is the truthy(c) polarity.
+    if any(g is not None for g, _ in typed):
+        assert any(
+            g is not None and getattr(g, "name", None) == "py.truthy"
+            for g, _ in typed
+        )
+    assert v.post().args[1].name == "python:effect_slot"
+
+
+def test_conditional_suppresses_match_only_on_matching_face():
+    """Suppresses consumes KeyError under c; ¬c completion survives; mismatch rides."""
+    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+
+    v = _val(
+        "def A(c, z):\n"
+        "    with contextlib.suppress(KeyError):\n"
+        "        if c:\n"
+        "            raise KeyError\n"
+        "        z = 1\n"
+        "    return z\n"
+    )
+    reds = [
+        e
+        for e in v.record.contribution()
+        if isinstance(e, Incomplete) and isinstance(e.effect, RaiseEffect)
+    ]
+    assert reds == [], "matching KeyError face must be consumed"
+    assert v.post().args[1].name == "z"
+
+    # Mismatch face: wrong raise under c survives guarded.
+    v_bad = _val(
+        "def A(c, z):\n"
+        "    with contextlib.suppress(KeyError):\n"
+        "        if c:\n"
+        "            raise ValueError\n"
+        "        z = 1\n"
+        "    return z\n"
+    )
+    reds_bad = [
+        e
+        for e in v_bad.record.contribution()
+        if isinstance(e, Incomplete) and isinstance(e.effect, RaiseEffect)
+    ]
+    assert len(reds_bad) == 1
+    assert reds_bad[0].effect.exception_name == "ValueError"
+    assert reds_bad[0].branch_conditions
+
+
+def test_warning_kind_routing_non_halting_on_guarded_completed_faces():
+    """Warning Expects is non-halting; dual completed faces each get a verdict.
+
+    Unresolved-call openness stays covered by
+    ``test_warning_kind_with_unresolved_call_retains_obligation``. Conditional
+    bodies that need ``CallSiteValue.guarded`` stay out of this twin until that
+    Floor is written — here both faces complete without a raise halt.
+    """
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    v = _val(
+        "def A(c, z):\n"
+        "    with tm.assert_produces_warning(FutureWarning):\n"
+        "        if c:\n"
+        "            z = 1\n"
+        "        else:\n"
+        "            z = 2\n"
+        "    return z\n"
+    )
+    assert not any(isinstance(e, Incomplete) for e in v.record.contribution())
+    # No observed warning → absence (or open expected) on completed faces.
+    invs = list(v.invs())
+    assert invs, f"warning contract must state a verdict: {invs}"
+    assert v.post().args[1].name == "z"

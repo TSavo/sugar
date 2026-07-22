@@ -1,10 +1,20 @@
-"""`with` under a typed contract: route once; slot binding is router testimony."""
+"""`with` under a typed contract: route over ExitSet faces, not a linear list.
+
+Path:
+
+    body -> reduce_block_to_exitset
+         -> promote guarded raises to Halted
+         -> route contract over each Halted / Completed exit
+         -> preserve unmatched Completed exits
+         -> authenticate slots only on matched guarded exits
+         -> normalize
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field as dataclass_field, replace
+from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
@@ -33,28 +43,62 @@ class WithContractSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.effect_router import route
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.floor.inv_value import InvValue
         from sugar_lift_py_tests.outcome import Incomplete
-        from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_statements
+        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+        from sugar_lift_py_tests.sugar.exit_set_routing import (
+            exitset_to_outcome,
+            promote_raise_halts,
+            routed_entries_to_exitset,
+            site_inv_values,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            _ReducedBlock,
+            reduce_block_to_exitset,
+        )
 
         del ctx
 
-        entries, _falls, _ft = reduce_statements(self.body)
-        # Single match authority — route once, including optional slot binding.
-        routed = route(
-            tuple(entries),
-            self.contract,
-            slot_id=self.slot_id,
-            site=self.site,
-        )
+        body_es = promote_raise_halts(reduce_block_to_exitset(self.body))
+        parts: list = []
+        for exit_ in body_es.exits:
+            if isinstance(exit_, Halted):
+                # One face, one observed halt — route under that guard only.
+                entries = (Incomplete(exit_.effect),)
+                routed = route(
+                    entries,
+                    self.contract,
+                    slot_id=self.slot_id,
+                    site=self.site,
+                )
+                sited = site_inv_values(routed.entries, self.site)
+                parts.append(routed_entries_to_exitset(sited, exit_.guard))
+                continue
 
-        sited = tuple(
-            replace(e, site=self.site)
-            if isinstance(e, InvValue) and e.site is None
-            else e
-            for e in routed.entries
-        )
+            state = exit_.value
+            if isinstance(state, _ReducedBlock):
+                entries = state.entries
+                prior = state
+            else:
+                entries = ()
+                prior = None
+            routed = route(
+                tuple(entries),
+                self.contract,
+                slot_id=self.slot_id,
+                site=self.site,
+            )
+            sited = site_inv_values(routed.entries, self.site)
+            parts.append(
+                routed_entries_to_exitset(sited, exit_.guard, prior_state=prior)
+            )
 
-        can_fall_through = not any(isinstance(e, Incomplete) for e in sited)
-        return Complete(BlockValue(sited, can_fall_through=can_fall_through))
+        if not parts:
+            routed_es = ExitSet.completed(
+                _ReducedBlock(entries=(), can_fall_through=True, fall_through=())
+            )
+        else:
+            routed_es = parts[0]
+            for part in parts[1:]:
+                routed_es = routed_es.union(part)
+
+        return exitset_to_outcome(routed_es)
