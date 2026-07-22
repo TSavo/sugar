@@ -48,6 +48,7 @@ from .modulo_by_zero_runtime_effect import ModuloByZeroRuntimeEffect
 from .os_exit_runtime_effect import OSExitRuntimeEffect
 from .power_runtime_effect import PowerRuntimeEffect
 from .raise_effect import RaiseEffect
+from .warning_effect import WarningEffect
 from .runtime_effect import (
     RuntimeEffect,
     RuntimeOperand,
@@ -117,6 +118,7 @@ __all__ = [
     "OSExitRuntimeEffect",
     "PowerRuntimeEffect",
     "RaiseEffect",
+    "WarningEffect",
     "RuntimeEffect",
     "RuntimeOperand",
     "RuntimeEffectWitness",
