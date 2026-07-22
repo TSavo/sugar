@@ -1,12 +1,20 @@
 """Source-visible ``__exit__`` → authenticated ``ExitDispositionProof``.
 
-Wording (exact): every reachable **completed** return of ``__exit__`` must be
-proven exactly ``None`` or ``False``, including implicit ``None`` fallthrough.
-It is not enough that no ``return True`` was observed.
+Pipeline (required)::
 
-Unknown, symbolic, delegated, or dynamically dispatched returns remain
-unproven → caller keeps ``RuntimeSelected``. Exit **halts** (raise inside
-``__exit__``) do not decide suppression; the proof covers suppression only.
+    source import binding (local AST)
+    → static re-export follow (module source via SourceOracle only)
+    → definition memento (module, class, cid, file, line)
+    → prove every completed return is exact None/False (+ implicit fallthrough)
+
+Wording: every reachable **completed** return must be proven exactly ``None``
+or ``False``, including implicit ``None`` fallthrough — not merely “no
+``return True`` observed.”
+
+**Forbidden** in the manager→definition path: ``importlib.import_module``,
+``getattr`` on live objects, MRO walks, ``inspect.getsource*``, and
+vendor-specific alias tables (``np``/``pd``). Those recreate recognition
+authority through Python execution.
 
 This cut covers class ``__exit__`` methods only. Generator
 ``@contextmanager`` (e.g. ``util.switchdir``) is a separate proof.
@@ -15,7 +23,6 @@ This cut covers class ``__exit__`` methods only. Generator
 from __future__ import annotations
 
 import ast
-import importlib
 from dataclasses import dataclass
 from typing import Iterator, Literal
 
@@ -38,6 +45,17 @@ class ExitDispositionProof:
         return NeverSuppresses()
 
 
+@dataclass(frozen=True)
+class DefinitionMemento:
+    """Authenticated definition coordinate before return analysis."""
+
+    module: str
+    class_name: str
+    source_cid: str
+    filename: str
+    exit_fn: ast.FunctionDef | ast.AsyncFunctionDef
+
+
 class ExitDispositionUnproven(Exception):
     """Internal reason; callers map this to RuntimeSelected."""
 
@@ -46,21 +64,20 @@ class ExitDispositionUnproven(Exception):
         self.reason = reason
 
 
+# ---------------------------------------------------------------------------
+# Return-value exactness (subject-independent theorem)
+# ---------------------------------------------------------------------------
+
+
 def _is_exact_none_or_false(node: ast.AST | None) -> bool:
-    """True only for bare return / literal ``None`` / literal ``False``."""
     if node is None:
-        return True  # bare ``return`` → None
+        return True
     if isinstance(node, ast.Constant):
         return node.value is None or node.value is False
     return False
 
 
 def _iter_direct_stmts(stmt: ast.stmt) -> Iterator[ast.stmt]:
-    """Yield stmt and nested stmts, skipping nested function/class bodies.
-
-    ``Try`` handlers are not ``ast.stmt`` children under generic walk — visit
-    them explicitly so ``except: return True`` is not invisible.
-    """
     yield stmt
     if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         return
@@ -93,8 +110,6 @@ def _iter_returns(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> Iterator[ast.Re
 
 
 def _body_contains_yield(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """True if ``fn`` body yields (skipping nested defs/classes/lambdas)."""
-
     class _V(ast.NodeVisitor):
         def __init__(self) -> None:
             self.found = False
@@ -134,10 +149,8 @@ def prove_exit_function_ast(
     """Prove every completed return of ``fn`` is exact None/False (+ fallthrough)."""
     if fn.name != "__exit__":
         raise ExitDispositionUnproven(f"expected __exit__, got {fn.name!r}")
-
     if _body_contains_yield(fn):
         raise ExitDispositionUnproven("yield in __exit__ is unproven")
-
     for ret in _iter_returns(fn):
         if not _is_exact_none_or_false(ret.value):
             kind = type(ret.value).__name__ if ret.value is not None else "bare"
@@ -146,9 +159,6 @@ def prove_exit_function_ast(
             raise ExitDispositionUnproven(
                 f"completed return is not exact None/False (got {kind})"
             )
-
-    # Implicit None fallthrough at end of __exit__ is a completed exit and is
-    # proven (Python: missing return → None). No extra observation required.
     return ExitDispositionProof(
         kind="never_suppresses",
         module=module,
@@ -160,16 +170,63 @@ def prove_exit_function_ast(
     )
 
 
-def _defining_class_and_exit(cls: type) -> tuple[type, object] | None:
-    for c in cls.__mro__:
-        if c is object:
-            continue
-        if "__exit__" in getattr(c, "__dict__", {}):
-            return c, c.__dict__["__exit__"]
-    return None
+def prove_from_definition_memento(memento: DefinitionMemento) -> ExitDispositionProof:
+    """Apply the return theorem to an already-authenticated definition."""
+    return prove_exit_function_ast(
+        memento.exit_fn,
+        module=memento.module,
+        class_name=memento.class_name,
+        source_cid=memento.source_cid,
+        filename=memento.filename,
+    )
 
 
-def _find_class_exit_ast(
+# ---------------------------------------------------------------------------
+# SourceOracle: module text only (no package execution)
+# ---------------------------------------------------------------------------
+
+
+def _oracle_module(module_name: str) -> tuple[str, str, str] | None:
+    """``(source, filename, content_cid)`` via SourceOracle — read, do not import."""
+    from sugar_lift_python_source.source_oracle import installed_module_source
+
+    return installed_module_source(module_name)
+
+
+def _parse_module(module_name: str) -> tuple[ast.Module, str, str, str] | None:
+    resolved = _oracle_module(module_name)
+    if resolved is None:
+        return None
+    source, filename, source_cid = resolved
+    from sugar_lift_python_source.source_tables import parsed_tree
+
+    try:
+        tree = parsed_tree(source, filename)
+    except SyntaxError:
+        return None
+    if not isinstance(tree, ast.Module):
+        return None
+    return tree, source, filename, source_cid
+
+
+def _resolve_relative(
+    current_module: str, filename: str, level: int, module: str | None
+) -> str | None:
+    """Absolute module name for a relative import (static)."""
+    if level == 0:
+        return module
+    parts = current_module.split(".")
+    is_pkg = filename.endswith("__init__.py")
+    pkg_parts = parts if is_pkg else parts[:-1]
+    if level - 1 > len(pkg_parts):
+        return None
+    base = pkg_parts[: len(pkg_parts) - (level - 1)] if level >= 1 else pkg_parts
+    if module:
+        return ".".join([*base, *module.split(".")]) if base else module
+    return ".".join(base) if base else None
+
+
+def _find_class_exit(
     tree: ast.Module, class_name: str
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     for node in ast.walk(tree):
@@ -183,192 +240,253 @@ def _find_class_exit_ast(
     return None
 
 
-def prove_never_suppresses_for_class(cls: type) -> ExitDispositionProof | None:
-    """SourceOracle-backed proof for a concrete class's defining ``__exit__``.
+# ---------------------------------------------------------------------------
+# Static name resolution in a module (re-exports, class defs)
+# ---------------------------------------------------------------------------
 
-    Uses the defining method's on-disk module (not a re-export module such as
-    ``numpy.__init__`` that only aliases the class).
+
+def _module_level_nodes(tree: ast.Module) -> Iterator[ast.AST]:
+    """Yield module-level statements, descending only into If/Try/With at top.
+
+    Package ``__init__`` re-exports often live under ``if not SETUP:`` guards.
+    Nested function/class bodies are not visited.
     """
-    import inspect
+    stack: list[ast.AST] = list(tree.body)
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, ast.If):
+            stack.extend(node.orelse)
+            stack.extend(node.body)
+        elif isinstance(node, ast.Try):
+            stack.extend(node.finalbody)
+            stack.extend(node.orelse)
+            for h in node.handlers:
+                stack.extend(h.body)
+            stack.extend(node.body)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            stack.extend(node.body)
 
-    found = _defining_class_and_exit(cls)
-    if found is None:
+
+def _lookup_name_in_module(
+    module_name: str, name: str, *, depth: int = 0
+) -> DefinitionMemento | None:
+    """Find class ``name`` or follow static import re-exports (depth-capped)."""
+    if depth > 12 or not name or not module_name:
         return None
-    defining_cls, method = found
-
-    # Prefer the module that *defines* the function object (not the re-export).
-    method_mod = getattr(method, "__module__", None) or getattr(
-        defining_cls, "__module__", None
-    )
-    if not method_mod:
+    parsed = _parse_module(module_name)
+    if parsed is None:
         return None
+    tree, _source, filename, source_cid = parsed
 
-    from sugar_lift_python_source.canonical import blake3_512_of
-    from sugar_lift_python_source.source_oracle import installed_module_source
-    from sugar_lift_python_source.source_tables import parsed_tree
-
-    resolved = installed_module_source(method_mod)
-    # If re-export module lacks the class body, resolve via source file of method.
-    source: str | None = None
-    filename: str | None = None
-    source_cid: str | None = None
-    if resolved is not None:
-        source, filename, source_cid = resolved
-        tree = None
-        try:
-            tree = parsed_tree(source, filename)
-        except SyntaxError:
-            tree = None
-        fn = (
-            _find_class_exit_ast(tree, defining_cls.__name__)
-            if isinstance(tree, ast.Module)
-            else None
-        )
-        if fn is not None:
-            try:
-                return prove_exit_function_ast(
-                    fn,
-                    module=method_mod,
-                    class_name=defining_cls.__name__,
-                    source_cid=source_cid,
-                    filename=filename,
-                )
-            except ExitDispositionUnproven:
+    # 1. Class definition in this module (any nesting depth for ClassDef name).
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == name:
+            exit_fn = _find_class_exit(tree, name)
+            if exit_fn is None:
                 return None
+            return DefinitionMemento(
+                module=module_name,
+                class_name=name,
+                source_cid=source_cid,
+                filename=filename,
+                exit_fn=exit_fn,
+            )
+    # Class under module-level If (rare)
+    for node in _module_level_nodes(tree):
+        if isinstance(node, ast.ClassDef) and node.name == name:
+            exit_fn = _find_class_exit(tree, name)
+            if exit_fn is None:
+                return None
+            return DefinitionMemento(
+                module=module_name,
+                class_name=name,
+                source_cid=source_cid,
+                filename=filename,
+                exit_fn=exit_fn,
+            )
 
-    # Fallback: defining source file from inspect (still CID-pinned).
-    try:
-        path = inspect.getsourcefile(method) or inspect.getfile(defining_cls)
-    except TypeError:
-        return None
-    if not path or not path.endswith((".py", ".pyi")):
-        return None
-    try:
-        from pathlib import Path
-
-        source = Path(path).read_text(encoding="utf-8")
-    except OSError:
-        return None
-    source_cid = blake3_512_of(source.encode("utf-8"))
-    filename = path
-    try:
-        tree = parsed_tree(source, filename)
-    except SyntaxError:
-        return None
-    if not isinstance(tree, ast.Module):
-        return None
-    fn = _find_class_exit_ast(tree, defining_cls.__name__)
-    if fn is None:
-        return None
-    try:
-        return prove_exit_function_ast(
-            fn,
-            module=method_mod,
-            class_name=defining_cls.__name__,
-            source_cid=source_cid,
-            filename=filename,
-        )
-    except ExitDispositionUnproven:
-        return None
-
-
-_IMPORT_ALIASES = {
-    "np": "numpy",
-    "pd": "pandas",
-}
-
-
-def _resolve_callable_from_dotted(dotted: str) -> object | None:
-    if not dotted:
-        return None
-    parts = dotted.split(".")
-    if len(parts) == 1:
-        return None  # bare name needs local scope — unproven
-    candidates = [dotted]
-    if parts[0] in _IMPORT_ALIASES:
-        candidates.append(".".join([_IMPORT_ALIASES[parts[0]], *parts[1:]]))
-    for candidate in candidates:
-        cparts = candidate.split(".")
-        for split in range(len(cparts) - 1, 0, -1):
-            mod_name = ".".join(cparts[:split])
-            rest = cparts[split:]
-            try:
-                mod = importlib.import_module(mod_name)
-            except Exception:
+    # 2. from X import name / from X import Y as name / star-import follow
+    for node in _module_level_nodes(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        for alias in node.names:
+            if alias.name == "*":
+                target = _resolve_relative(
+                    module_name, filename, node.level, node.module
+                )
+                if target is None:
+                    continue
+                hit = _lookup_name_in_module(target, name, depth=depth + 1)
+                if hit is not None:
+                    return hit
                 continue
-            obj: object = mod
-            try:
-                for attr in rest:
-                    obj = getattr(obj, attr)
-                return obj
-            except Exception:
+            bound = alias.asname or alias.name
+            if bound != name:
                 continue
+            target = _resolve_relative(
+                module_name, filename, node.level, node.module
+            )
+            if target is None:
+                return None
+            return _lookup_name_in_module(target, alias.name, depth=depth + 1)
+
+    # 3. Simple alias: name = OtherName (same module)
+    for node in _module_level_nodes(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            t = node.targets[0]
+            if isinstance(t, ast.Name) and t.id == name and isinstance(node.value, ast.Name):
+                return _lookup_name_in_module(
+                    module_name, node.value.id, depth=depth + 1
+                )
+
     return None
 
 
-def _dotted_of_sugar_node(node) -> str | None:
+def _local_import_bindings(source: str) -> dict[str, tuple[str, str]]:
+    """Map local bound name → (kind, payload).
+
+    kind ``module``: payload is absolute module name (``import numpy as np``).
+    kind ``from``: payload is ``module.name`` to look up
+    (``from pandas import option_context``).
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return {}
+    out: dict[str, tuple[str, str]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    # import numpy as np → np denotes module numpy
+                    out[alias.asname] = ("module", alias.name)
+                else:
+                    # import a.b.c binds only top-level name `a`
+                    top = alias.name.split(".")[0]
+                    out[top] = ("module", top)
+        if isinstance(node, ast.ImportFrom) and node.module is not None and node.level == 0:
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                bound = alias.asname or alias.name
+                out[bound] = ("from", f"{node.module}.{alias.name}")
+    return out
+
+
+def _dotted_of_sugar_node(node) -> list[str] | None:
+    """Attribute/Name chain as component list, or None if not pure."""
     from sugar_source_tree.nodes import Attribute, Name
 
     if isinstance(node, Name):
-        return node.id
+        return [node.id]
     if isinstance(node, Attribute):
         base = _dotted_of_sugar_node(node.value)
         if base is None:
             return None
-        return f"{base}.{node.attr}"
+        return [*base, node.attr]
     return None
 
 
-def _resolve_from_unit_imports(unit, name: str) -> object | None:
-    """Resolve a bare name via the source file's top-level imports only."""
+def resolve_definition_memento_from_manager_expr(
+    manager_node,
+) -> DefinitionMemento | None:
+    """Static import binding → SourceOracle modules → class ``__exit__`` memento.
+
+    No package execution. No vendor alias table.
+    """
+    from sugar_source_tree.nodes import Call, Name
+
+    if not isinstance(manager_node, Call):
+        return None
+    unit = manager_node.unit
     source = getattr(unit, "source", None)
-    if not source or not name:
+    if not source:
         return None
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
+    bindings = _local_import_bindings(source)
+    parts = _dotted_of_sugar_node(manager_node.func)
+    if not parts:
         return None
-    for node in tree.body:
-        if isinstance(node, ast.ImportFrom) and node.module:
-            for alias in node.names:
-                bound = alias.asname or alias.name
-                if bound == name:
-                    if alias.name == "*":
-                        return None
-                    return _resolve_callable_from_dotted(f"{node.module}.{alias.name}")
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                bound = alias.asname or alias.name
-                if bound == name:
-                    try:
-                        return importlib.import_module(alias.name)
-                    except Exception:
-                        return None
+
+    head, *rest = parts
+    if head not in bindings:
+        return None
+    kind, payload = bindings[head]
+    if payload is None:
+        return None
+
+    if kind == "module":
+        # head is a module binding; rest are attributes into that package.
+        if not rest:
+            return None  # calling a module is not a class CM
+        module_name = payload
+        # Walk attributes: each step is either a submodule or a name in module
+        for i, attr in enumerate(rest):
+            is_last = i == len(rest) - 1
+            if is_last:
+                return _lookup_name_in_module(module_name, attr)
+            # Non-final: treat as submodule package path
+            module_name = f"{module_name}.{attr}"
+        return None
+
+    if kind == "from":
+        # from mod import name [as head]; rest must be empty for Class() form
+        if rest:
+            # from mod import pkg; pkg.Class — rare; treat payload module.attr
+            # payload is mod.name; if rest, unproven unless name is submodule
+            return None
+        # payload "pandas.option_context" or "numpy.errstate" style
+        if "." not in payload:
+            return None
+        mod, _, name = payload.rpartition(".")
+        return _lookup_name_in_module(mod, name)
+
     return None
 
 
 def prove_exit_disposition_from_manager_expr(
     manager_node,
 ) -> ExitDispositionProof | None:
-    """Prove NeverSuppresses from a sugar-tree manager expression, or None.
-
-    Handles ``Class(...)`` calls where ``Class`` resolves to a type with a
-    source-visible defining ``__exit__``. Bare names resolve only through
-    authenticated top-level imports in the same file (not ambient globals).
-    Functions/generators and ambiguous dispatch → None (RuntimeSelected).
-    """
-    from sugar_source_tree.nodes import Call, Name
-
-    if not isinstance(manager_node, Call):
+    """Static resolve + return proof. None → RuntimeSelected."""
+    memento = resolve_definition_memento_from_manager_expr(manager_node)
+    if memento is None:
         return None
-    func = manager_node.func
-    obj = None
-    if isinstance(func, Name):
-        obj = _resolve_from_unit_imports(manager_node.unit, func.id)
-    else:
-        dotted = _dotted_of_sugar_node(func)
-        if dotted is not None:
-            obj = _resolve_callable_from_dotted(dotted)
-    if obj is None or not isinstance(obj, type):
+    try:
+        return prove_from_definition_memento(memento)
+    except ExitDispositionUnproven:
         return None
-    return prove_never_suppresses_for_class(obj)
+
+
+# ---------------------------------------------------------------------------
+# Executable floor: no reflection authority in this module's resolve path
+# ---------------------------------------------------------------------------
+
+_FORBIDDEN_RESOLVE_TOKENS = (
+    "importlib",
+    "inspect.getsource",
+    "inspect.getfile",
+    "inspect.getmodule",
+    "inspect.getattr_static",
+    "__mro__",
+    "_IMPORT_ALIASES",
+    "prove_never_suppresses_for_class",
+    "import_module",
+)
+
+
+def assert_no_runtime_resolve_authority() -> None:
+    """Floor: manager→definition path must not use runtime reflection tokens."""
+    import inspect as _inspect
+
+    # Only the resolve/lookup source is constrained (not this assert helper).
+    src = _inspect.getsource(resolve_definition_memento_from_manager_expr)
+    src += _inspect.getsource(_lookup_name_in_module)
+    src += _inspect.getsource(_local_import_bindings)
+    src += _inspect.getsource(prove_exit_disposition_from_manager_expr)
+    src += _inspect.getsource(_oracle_module)
+    src += _inspect.getsource(_parse_module)
+    for token in _FORBIDDEN_RESOLVE_TOKENS:
+        if token in src:
+            raise AssertionError(
+                f"exit disposition resolve path must not contain {token!r}"
+            )
