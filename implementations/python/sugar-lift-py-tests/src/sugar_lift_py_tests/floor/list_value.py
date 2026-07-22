@@ -105,143 +105,40 @@ class ListValue(FloorValue):
         return super().add(other, site)
 
     def multiply(self, other, site):
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.term_value import TermValue
 
-        # Materialize only concrete integer counts. Runtime parameters remain a
-        # typed length effect, and builtin len(...) carries the integer/index
-        # warrant needed to reach that same effect. Other opaque/import results
-        # have not proved Python's __index__ contract and stay a construction gap.
         if type(other) is TermValue and type(other.value) is int:
             from sugar_lift_py_tests.outcome import Complete
 
             repeated = len(self.elements) * max(other.value, 0)
-            from sugar_lift_py_tests.sugar.for_sugar import (
-                STATIC_UNFOLD_LIMIT,
-                finite_unfold_cap_panic,
-            )
+            static_unfold_limit = 128
 
-            if repeated > STATIC_UNFOLD_LIMIT:
-                finite_unfold_cap_panic(
-                    construction="ListValue repetition",
-                    site=site,
+            if repeated > static_unfold_limit:
+                from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+                construction_panic_gap(
+                    owner="ListValue.multiply",
+                    blame=str(site),
                     observed=f"list repetition cardinality={repeated}",
-                    limit=STATIC_UNFOLD_LIMIT,
+                    requested=f"finite repetition at or below {static_unfold_limit}",
+                    fix="keep exact sequence repetition within the finite unfold budget",
                 )
             return Complete(ListValue(self.elements * other.value))
-        runtime_count_kind = None
-        if type(other) is SymbolicValue:
-            runtime_count_kind = "symbolic count"
-        elif type(other) is OpaqueOpCallsite and other.callee == "len":
-            runtime_count_kind = "integer-warranted len(...) result"
-        elif type(other) is CallSiteValue and other.target_name == "ndim":
-            runtime_count_kind = "integer-warranted callsite ndim"
-        elif type(other) is CallSiteValue and other.target_name == "nlanes":
-            # NumPy SIMD helper nlanes is the integer lane width of the active
-            # vector type. Count depends on the runtime helper, not on lift.
-            runtime_count_kind = "integer-warranted callsite nlanes"
-        elif type(other) is CallSiteValue and other.target_name == "nlevels":
-            # pandas Index.nlevels is an integer-valued data-model property.
-            # Its value depends on the runtime index, but its __index__ warrant
-            # does not.
-            runtime_count_kind = "integer-warranted callsite nlevels"
-        elif type(other) is CallSiteValue and other.target_name == "_AXIS_LEN":
-            # pandas NDFrame._AXIS_LEN is the integer axis cardinality of the
-            # box type (Series=1, DataFrame=2, ...). The constant is type-owned
-            # but only available after the class coordinate is known at runtime.
-            runtime_count_kind = "integer-warranted callsite _AXIS_LEN"
-        elif (
-            type(other) is CallSiteValue
-            and other.target_name == "py.subscript"
-            and len(other.arg_values) == 2
-            and type(other.arg_values[0]) is CallSiteValue
-            and other.arg_values[0].target_name == "shape"
-        ):
-            # obj.shape[i] is a non-negative integer dimension. The element is
-            # unavailable until the concrete shape exists at runtime.
-            runtime_count_kind = "integer-warranted shape element"
-        elif (
-            type(other) is CallSiteValue
-            and other.target_name == "min"
-            and len(other.arg_values) == 2
-            and type(other.arg_values[0]) is CallSiteValue
-            and other.arg_values[0].target_name == "abs"
-            and len(other.arg_values[0].arg_values) == 1
-            and type(other.arg_values[1]) is OpaqueOpCallsite
-            and other.arg_values[1].callee == "len"
-        ):
-            # min(abs(periods), len(...)) is the pandas shift-count shape:
-            # both arms are integer-valued, while the selected count remains
-            # genuinely runtime-dependent.
-            runtime_count_kind = "integer-warranted callsite min"
-        elif (
-            type(other) is CallSiteValue
-            and other.target_name == "max"
-            and other.arg_values
-            and all(
-                type(value) is SymbolicValue
-                or (type(value) is TermValue and type(value.value) is int)
-                for value in other.arg_values
-            )
-        ):
-            # max preserves one of its operands. When every operand already
-            # carries the runtime-integer/count shape, its result carries it too.
-            runtime_count_kind = "integer-warranted callsite max"
-        elif (
-            type(other) is CallSiteValue
-            and other.target_name == "numpy.sum"
-            and len(other.arg_values) == 1
-            and type(other.arg_values[0]) is CallSiteValue
-            and other.arg_values[0].target_name == "isna"
-        ):
-            # numpy.sum over the Boolean result of Index.isna() is an integer
-            # count.  The count depends on the runtime index contents, while
-            # the exact qualified coordinate and Boolean producer warrant its
-            # Python integer/index role.
-            runtime_count_kind = "integer-warranted numpy.sum boolean count"
-        elif _is_pyarrow_list_length_max_as_py(other):
-            # Arrow list_value_length produces integer scalars, max preserves
-            # that element type, and Scalar.as_py returns its Python integer.
-            # The selected count itself still only exists when Arrow executes.
-            runtime_count_kind = "pyarrow list-length maximum"
-        if runtime_count_kind is not None:
-            from sugar_lift_py_tests.effect import SequenceRepetitionRuntimeEffect
-            from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Complete
 
-            return Incomplete(
-                SequenceRepetitionRuntimeEffect(
-                    f"sequence repetition by {runtime_count_kind}: ListValue depends "
-                    f"on runtime __index__/length semantics; site={site}",
-                    **runtime_effect_evidence("py.sequence_repeat", other, site),
+        return Complete(
+            SymbolicValue(
+                ctor(
+                    "python:sequence_repeat",
+                    [
+                        self.to_term(owner=str(site)),
+                        other.to_term(owner=str(site)),
+                    ],
                 )
             )
-        if (
-            type(other) is CallSiteValue
-            and other.target_name == "pandas._testing.box_expected"
-            and len(other.arg_values) == 2
-            and type(other.arg_values[0]) is CallSiteValue
-            and other.arg_values[0].target_name == "numpy.array"
-        ):
-            # box_expected(array, box) selects an ndarray/Index/Series face.
-            # Every face owns native elementwise multiplication; this is not
-            # Python sequence repetition by an unproved count.
-            from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.outcome import Complete
-
-            return Complete(
-                SymbolicValue(
-                    ctor(
-                        "*",
-                        [
-                            self.to_term(owner=str(site)),
-                            other.to_term(owner=str(site)),
-                        ],
-                    )
-                )
-            )
-        return super().multiply(other, site)
+        )
 
     def matrix_multiply(self, other, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
@@ -377,47 +274,3 @@ class ListValue(FloorValue):
                 **runtime_effect_evidence("py.delitem", index, site),
             )
         )
-
-
-def _is_pyarrow_compute(value) -> bool:
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.floor.import_alias_value import ImportAliasValue
-
-    return (
-        type(value) is CallSiteValue
-        and value.target_name == "compute"
-        and value.body is None
-        and len(value.arg_values) == 1
-        and type(value.arg_values[0]) is ImportAliasValue
-        and value.arg_values[0].name == "pyarrow"
-    )
-
-
-def _is_pyarrow_list_length_max_as_py(value) -> bool:
-    """Recognize the source-proved pandas Arrow list-length maximum."""
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-
-    if (
-        type(value) is not CallSiteValue
-        or value.target_name != "as_py"
-        or value.body is not None
-        or len(value.arg_values) != 1
-    ):
-        return False
-    maximum = value.arg_values[0]
-    if (
-        type(maximum) is not CallSiteValue
-        or maximum.target_name != "max"
-        or maximum.body is not None
-        or len(maximum.arg_values) != 2
-        or not _is_pyarrow_compute(maximum.arg_values[0])
-    ):
-        return False
-    lengths = maximum.arg_values[1]
-    return (
-        type(lengths) is CallSiteValue
-        and lengths.target_name == "list_value_length"
-        and lengths.body is None
-        and len(lengths.arg_values) == 2
-        and _is_pyarrow_compute(lengths.arg_values[0])
-    )
