@@ -1995,8 +1995,21 @@ class Try(Statement):
         ``name`` to ``EffectRef(slot)`` inside the handler. Routing
         authenticates that slot with the matched Halted raise — never E().
         """
+        from sugar_lift_py_tests.sugar.try_sugar import TrySugar
+
         if not self.handlers:
-            return super()._construct_sugar()  # try/finally-only: not the except-routing core
+            # try/finally-only (no except): same TrySugar with empty handlers;
+            # finally is ExitSet.and_finally over the body exits.
+            if not self.finalbody:
+                return super()._construct_sugar()
+            return TrySugar(
+                body=tuple(stmt.sugar() for stmt in self.body),
+                handlers=(),
+                orelse=tuple(stmt.sugar() for stmt in self.orelse),
+                finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
+                site=self.fragment,
+            )
+
         from sugar_lift_py_tests.context_manager_contract import EffectMatcher
 
         handler_specs = []
@@ -2024,8 +2037,6 @@ class Try(Statement):
                         slot_id,
                     )
                 )
-
-        from sugar_lift_py_tests.sugar.try_sugar import TrySugar
 
         return TrySugar(
             body=tuple(stmt.sugar() for stmt in self.body),

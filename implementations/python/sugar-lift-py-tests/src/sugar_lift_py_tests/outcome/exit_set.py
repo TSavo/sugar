@@ -161,6 +161,46 @@ class ExitSet(Generic[T]):
                     exits.append(Halted(guard, following.effect))
         return ExitSet(tuple(exits)).normalize()
 
+    def and_finally(
+        self,
+        cleanup: Callable[[], "ExitSet[object]"],
+        *,
+        cleanup_restores: Callable[[object], bool] | None = None,
+    ) -> "ExitSet[object]":
+        """Run cleanup over every completed and halted exit (try/finally).
+
+        Laws:
+        - Cleanup **completion that restores** keeps the incoming exit
+          (completed value or halted effect).
+        - Cleanup **halt** supersedes the incoming exit.
+        - Cleanup **terminal completion** (e.g. return in finally) supersedes
+          with that completed value — ``cleanup_restores`` is False.
+
+        Default: every completed cleanup restores (``cleanup_restores`` always
+        True). Callers that model return-in-finally pass a predicate on the
+        cleanup completed value.
+        """
+        restores = cleanup_restores or (lambda _value: True)
+        # Construct cleanup ExitSet once; fan the same exits across every
+        # incoming exit (cleanup runs on every path, not once per path).
+        cleanup_exits = cleanup().exits
+        exits: list[Exit[object]] = []
+        for incoming in self.exits:
+            for clean in cleanup_exits:
+                guard = _and_guards(incoming.guard, clean.guard)
+                if isinstance(clean, Halted):
+                    exits.append(Halted(guard, clean.effect))
+                    continue
+                if restores(clean.value):
+                    if isinstance(incoming, Completed):
+                        exits.append(Completed(guard, incoming.value))
+                    else:
+                        exits.append(Halted(guard, incoming.effect))
+                else:
+                    # Terminal cleanup completion supersedes (return in finally).
+                    exits.append(Completed(guard, clean.value))
+        return ExitSet(tuple(exits)).normalize()
+
     def collapse(self):
         """Return the old linear Outcome only for one unconditional exit."""
         normalized = self.normalize()
