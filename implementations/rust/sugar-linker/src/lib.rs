@@ -48,6 +48,9 @@ use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CanonValue};
 use sugar_ir_compiler::{CompilerInput, IrCompiler};
 use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT as SMT_DIALECT};
 use sugar_ir_types::{IrFormula, Sort};
+use sugar_proof_envelope::{
+    AnchoredMember, ContextManagerSemanticsV1, ImportSignatureV1, Member, MemberKind, MementoCid,
+};
 use sugar_verifier::solvers::{run_plan, SolverHandle, SolverPlan, SolverSeat};
 use sugar_verifier::types::ObligationVerdict;
 
@@ -260,6 +263,317 @@ impl std::fmt::Display for Cid {
 impl AsRef<str> for Cid {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+// -------------------------------------------------------------------
+// Authenticated context-manager preconstruction resolution (#6071)
+// -------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SourceFragmentCoordinateV1 {
+    #[serde(rename = "sourceCid")]
+    pub source_cid: Cid,
+    #[serde(rename = "startLine")]
+    pub start_line: usize,
+    #[serde(rename = "startCol")]
+    pub start_col: usize,
+    #[serde(rename = "endLine")]
+    pub end_line: usize,
+    #[serde(rename = "endCol")]
+    pub end_col: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextManagerContractDemandV1 {
+    pub demand_cid: Cid,
+    pub use_site: SourceFragmentCoordinateV1,
+    pub target_symbol: Symbol,
+    pub import_signature: ImportSignatureV1,
+}
+
+impl ContextManagerContractDemandV1 {
+    pub fn new(
+        use_site: SourceFragmentCoordinateV1,
+        target_symbol: Symbol,
+        import_signature: ImportSignatureV1,
+    ) -> Self {
+        let preimage = serde_json::json!({
+            "useSite": use_site,
+            "targetSymbol": target_symbol,
+            "importSignature": {
+                "formals": import_signature.formals,
+                "sorts": import_signature.sorts,
+            },
+            "expectedKind": "context-manager-contract",
+        });
+        let demand_cid = Cid::from(jcs_cid(&preimage));
+        Self {
+            demand_cid,
+            use_site,
+            target_symbol,
+            import_signature,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthenticatedContextManagerCatalog {
+    catalog_cid: Cid,
+    members: BTreeMap<Cid, Json>,
+}
+
+impl AuthenticatedContextManagerCatalog {
+    pub fn freeze(members: Vec<(Cid, Json)>) -> Result<Self, String> {
+        let mut by_cid = BTreeMap::new();
+        for (cid, envelope) in members {
+            let typed = MementoCid::try_parse(cid.as_str().to_string())
+                .map_err(|bad| format!("invalid catalog member CID: {bad}"))?;
+            AnchoredMember::new(typed, envelope.clone())?;
+            if by_cid.insert(cid.clone(), envelope).is_some() {
+                return Err(format!("duplicate catalog member CID: {cid}"));
+            }
+        }
+        let member_cids: Vec<&str> = by_cid.keys().map(Cid::as_str).collect();
+        let catalog_cid = Cid::from(jcs_cid(&serde_json::json!({"memberCids": member_cids})));
+        Ok(Self {
+            catalog_cid,
+            members: by_cid,
+        })
+    }
+
+    pub fn catalog_cid(&self) -> &Cid {
+        &self.catalog_cid
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContextManagerResolutionGapKindV1 {
+    RuntimeSelected,
+    UnresolvedSymbol,
+    AmbiguousSymbol,
+    WrongContractKind,
+    SignatureMismatch,
+    UnauthenticatedMember,
+    PayloadCidMismatch,
+    UnsupportedCmSchema,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextManagerResolutionGapV1 {
+    pub demand_cid: Cid,
+    pub use_site: SourceFragmentCoordinateV1,
+    pub target_symbol: Option<Symbol>,
+    pub kind: ContextManagerResolutionGapKindV1,
+    pub candidate_member_cids: Vec<Cid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextManagerContractRefV1 {
+    resolution_cid: Cid,
+    demand_cid: Cid,
+    use_site: SourceFragmentCoordinateV1,
+    catalog_cid: Cid,
+    member_cid: Cid,
+    payload_cid: Cid,
+    bridge_source_symbol: Symbol,
+    import_signature: ImportSignatureV1,
+    semantics: ContextManagerSemanticsV1,
+    source_warrant_cids: Vec<Cid>,
+}
+
+impl ContextManagerContractRefV1 {
+    pub fn resolution_cid(&self) -> &Cid {
+        &self.resolution_cid
+    }
+    pub fn demand_cid(&self) -> &Cid {
+        &self.demand_cid
+    }
+    pub fn use_site(&self) -> &SourceFragmentCoordinateV1 {
+        &self.use_site
+    }
+    pub fn catalog_cid(&self) -> &Cid {
+        &self.catalog_cid
+    }
+    pub fn member_cid(&self) -> &Cid {
+        &self.member_cid
+    }
+    pub fn payload_cid(&self) -> &Cid {
+        &self.payload_cid
+    }
+    pub fn bridge_source_symbol(&self) -> &Symbol {
+        &self.bridge_source_symbol
+    }
+    pub fn import_signature(&self) -> &ImportSignatureV1 {
+        &self.import_signature
+    }
+    pub fn semantics(&self) -> &ContextManagerSemanticsV1 {
+        &self.semantics
+    }
+    pub fn source_warrant_cids(&self) -> &[Cid] {
+        &self.source_warrant_cids
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextManagerResolutionV1 {
+    Resolved(ContextManagerContractRefV1),
+    Unresolved(ContextManagerResolutionGapV1),
+}
+
+fn cm_gap(
+    demand: &ContextManagerContractDemandV1,
+    kind: ContextManagerResolutionGapKindV1,
+    mut candidates: Vec<Cid>,
+) -> ContextManagerResolutionV1 {
+    candidates.sort();
+    ContextManagerResolutionV1::Unresolved(ContextManagerResolutionGapV1 {
+        demand_cid: demand.demand_cid.clone(),
+        use_site: demand.use_site.clone(),
+        target_symbol: Some(demand.target_symbol.clone()),
+        kind,
+        candidate_member_cids: candidates,
+    })
+}
+
+pub fn resolve_context_manager_demand(
+    demand: &ContextManagerContractDemandV1,
+    catalog: &AuthenticatedContextManagerCatalog,
+) -> ContextManagerResolutionV1 {
+    let mut candidates = Vec::new();
+    for (cid, envelope) in &catalog.members {
+        if sugar_proof_envelope::member_field(envelope, "bridgeSourceSymbol").and_then(Json::as_str)
+            == Some(&demand.target_symbol.to_string())
+        {
+            candidates.push((cid.clone(), envelope));
+        }
+    }
+    if candidates.is_empty() {
+        return cm_gap(
+            demand,
+            ContextManagerResolutionGapKindV1::UnresolvedSymbol,
+            vec![],
+        );
+    }
+    if candidates.len() > 1 {
+        return cm_gap(
+            demand,
+            ContextManagerResolutionGapKindV1::AmbiguousSymbol,
+            candidates.into_iter().map(|v| v.0).collect(),
+        );
+    }
+    let (member_cid, envelope) = candidates.pop().expect("one candidate");
+    if sugar_proof_envelope::member_kind(envelope).ok() != Some(MemberKind::ContextManagerContract)
+    {
+        return cm_gap(
+            demand,
+            ContextManagerResolutionGapKindV1::WrongContractKind,
+            vec![member_cid],
+        );
+    }
+    let typed_cid = match MementoCid::try_parse(member_cid.as_str().to_string()) {
+        Ok(cid) => cid,
+        Err(_) => {
+            return cm_gap(
+                demand,
+                ContextManagerResolutionGapKindV1::UnauthenticatedMember,
+                vec![member_cid],
+            )
+        }
+    };
+    if AnchoredMember::new(typed_cid, envelope.clone()).is_err() {
+        return cm_gap(
+            demand,
+            ContextManagerResolutionGapKindV1::UnauthenticatedMember,
+            vec![member_cid],
+        );
+    }
+    let cm = match Member::from_value(envelope) {
+        Ok(Member::ContextManagerContract(cm)) => cm,
+        Err(error) if error.to_string().contains("payload CID") => {
+            return cm_gap(
+                demand,
+                ContextManagerResolutionGapKindV1::PayloadCidMismatch,
+                vec![member_cid],
+            );
+        }
+        Err(_) | Ok(_) => {
+            return cm_gap(
+                demand,
+                ContextManagerResolutionGapKindV1::UnsupportedCmSchema,
+                vec![member_cid],
+            )
+        }
+    };
+    if demand.import_signature.formals != cm.import_signature.formals
+        || demand.import_signature.sorts != cm.import_signature.sorts
+    {
+        return cm_gap(
+            demand,
+            ContextManagerResolutionGapKindV1::SignatureMismatch,
+            vec![member_cid],
+        );
+    }
+    let source_warrant_cids: Vec<Cid> = cm.source_warrants.iter().cloned().map(Cid::from).collect();
+    if source_warrant_cids
+        .iter()
+        .any(|cid| !catalog.members.contains_key(cid))
+    {
+        return cm_gap(
+            demand,
+            ContextManagerResolutionGapKindV1::UnauthenticatedMember,
+            vec![member_cid],
+        );
+    }
+    let payload_cid = Cid::from(cm.payload_cid.as_str());
+    let preimage = serde_json::json!({
+        "schemaVersion": "1", "demandCid": demand.demand_cid,
+        "useSite": demand.use_site, "catalogCid": catalog.catalog_cid,
+        "memberCid": member_cid, "payloadCid": payload_cid,
+        "bridgeSourceSymbol": demand.target_symbol,
+        "importSignature": {"formals": cm.import_signature.formals, "sorts": cm.import_signature.sorts},
+        "semantics": sugar_proof_envelope::context_manager_semantics_v1_to_json(&cm.semantics),
+        "sourceWarrantCids": source_warrant_cids,
+    });
+    let resolution_cid = Cid::from(jcs_cid(&preimage));
+    ContextManagerResolutionV1::Resolved(ContextManagerContractRefV1 {
+        resolution_cid,
+        demand_cid: demand.demand_cid.clone(),
+        use_site: demand.use_site.clone(),
+        catalog_cid: catalog.catalog_cid.clone(),
+        member_cid,
+        payload_cid,
+        bridge_source_symbol: demand.target_symbol.clone(),
+        import_signature: cm.import_signature,
+        semantics: cm.semantics,
+        source_warrant_cids,
+    })
+}
+
+pub fn final_check_context_manager_ref(
+    reference: &ContextManagerContractRefV1,
+    catalog: &AuthenticatedContextManagerCatalog,
+) -> Result<(), &'static str> {
+    if reference.catalog_cid != catalog.catalog_cid
+        || !catalog.members.contains_key(&reference.member_cid)
+    {
+        return Err("stale-resolution");
+    }
+    let demand = ContextManagerContractDemandV1 {
+        demand_cid: reference.demand_cid.clone(),
+        use_site: reference.use_site.clone(),
+        target_symbol: reference.bridge_source_symbol.clone(),
+        import_signature: reference.import_signature.clone(),
+    };
+    match resolve_context_manager_demand(&demand, catalog) {
+        ContextManagerResolutionV1::Resolved(now)
+            if now.member_cid == reference.member_cid
+                && now.resolution_cid == reference.resolution_cid =>
+        {
+            Ok(())
+        }
+        _ => Err("stale-resolution"),
     }
 }
 
@@ -1837,6 +2151,10 @@ fn compute_set_cid_sorted(sorted_items: &[String]) -> String {
 
 fn jcs_of_json(v: &Json) -> Vec<u8> {
     encode_jcs(&json_to_canon_value(v)).into_bytes()
+}
+
+fn jcs_cid(v: &Json) -> String {
+    blake3_512_of(&jcs_of_json(v))
 }
 
 /// JCS-canonical bytes of a typed formula. Lowers the `IrFormula` to its
