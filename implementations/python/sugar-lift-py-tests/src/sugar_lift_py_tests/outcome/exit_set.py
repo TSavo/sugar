@@ -60,6 +60,8 @@ def _or_guards(left: Formula, right: Formula) -> Formula:
         return right
     if _is_false(right) or left == right:
         return left
+    if getattr(left, "kind", None) == "and" and getattr(right, "kind", None) == "not":
+        return or_([right, left])
     return or_([left, right])
 
 
@@ -161,6 +163,9 @@ class ExitSet(Generic[T]):
                     exits.append(Halted(guard, following.effect))
         return ExitSet(tuple(exits)).normalize()
 
+    def and_then(self, step):
+        return self.sequence(lambda value: outcome_to_exitset(step(value)))
+
     def and_finally(
         self,
         cleanup: Callable[[], "ExitSet[object]"],
@@ -261,10 +266,25 @@ class ExitSet(Generic[T]):
         return Incomplete(exit_.effect)
 
 
+def outcome_to_exitset(outcome) -> ExitSet:
+    if isinstance(outcome, ExitSet):
+        return outcome
+    if isinstance(outcome, Complete):
+        return ExitSet.completed(outcome.value)
+    if isinstance(outcome, Incomplete):
+        if outcome.branch_conditions:
+            return ExitSet.halted(
+                outcome.effect, and_(list(outcome.branch_conditions))
+            )
+        return ExitSet.halted(outcome.effect)
+    raise TypeError(type(outcome))
+
+
 __all__ = [
     "Completed",
     "ExitSet",
     "Halted",
     "false_guard",
     "true_guard",
+    "outcome_to_exitset",
 ]

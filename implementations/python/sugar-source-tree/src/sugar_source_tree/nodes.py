@@ -54,12 +54,36 @@ from .panic import (
 )
 from .reporter import NULL_REPORTER, AuditReporter
 from .spans import LineColSpan, LineTable, Span
+from .binding_state import (
+    BindingMap,
+    BindingState,
+    GuardedBinding,
+    UnboundBinding,
+    join_binding_state,
+)
 
 
 # Scope metadata travels beside temporal bindings under an unforgeable key.
 # It lets recognition distinguish a builtin spelling from a lexically bound
 # formal without substituting a fake value for that formal.
 _LEXICALLY_BOUND_NAMES = object()
+_FUNCTION_PARAMETERS = object()
+_MISSING = object()
+
+
+def _explicit_state(name: str, state, make_formal_ref):
+    if name in state:
+        return state[name]
+    if name in state.get(_FUNCTION_PARAMETERS, frozenset()):
+        return make_formal_ref(name)
+    return _MISSING
+
+
+@dataclass(frozen=True)
+class _ConditionalRaiseRoute:
+    test: "Node"
+    raised_on_true: bool
+    exception_name: str
 
 
 @dataclass(frozen=True)
@@ -81,10 +105,13 @@ class SourceUnit:
     module_bound_names: frozenset[str] = field(
         init=False, default_factory=frozenset
     )
+    module_symtable: object = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
-        symbols = symtable.symtable(self.source, self.filename, "exec").get_symbols()
+        table = symtable.symtable(self.source, self.filename, "exec")
+        object.__setattr__(self, "module_symtable", table)
+        symbols = table.get_symbols()
         object.__setattr__(
             self,
             "module_bound_names",
@@ -96,6 +123,31 @@ class SourceUnit:
                 or symbol.is_namespace()
             ),
         )
+
+    def function_symtable(self, name: str, lineno: int):
+        matches = []
+
+        def visit(table) -> None:
+            for child in table.get_children():
+                if (
+                    child.get_type() == "function"
+                    and child.get_name() == name
+                    and child.get_lineno() == lineno
+                ):
+                    matches.append(child)
+                visit(child)
+
+        visit(self.module_symtable)
+        if len(matches) != 1:
+            raise SourceTreePanic(
+                owner="SourceUnit.function_symtable",
+                observed=(
+                    f"{len(matches)} function symtables for {name!r} at line {lineno}"
+                ),
+                requested="one CPython function symtable selected by type, name, and line",
+                fix="preserve the source function's exact CPython symtable identity",
+            )
+        return matches[0]
 
 
 class Typeable:
@@ -155,10 +207,11 @@ class _Splice:
     Not a Node -- only ``_substitute_body`` handles it, and a `for` is always a
     statement in a block, so it is never substituted anywhere else."""
 
-    __slots__ = ("statements",)
+    __slots__ = ("statements", "bindings")
 
-    def __init__(self, statements: tuple) -> None:
+    def __init__(self, statements: tuple, bindings: BindingMap | None = None) -> None:
         self.statements = statements
+        self.bindings = bindings or {}
 
 
 @_abstract
@@ -304,7 +357,7 @@ class Node(Typed):
         changed = any(new is not old for new, old in zip(new_items, items))
         return (new_items if changed else value), changed
 
-    def _substitute_children(self, scope: "dict[str, Node]") -> "Node":
+    def _substitute_children(self, scope: BindingMap) -> "Node":
         """The structural recurse a NON-binding compound opts into: substitute
         every child against the SAME scope; if any changed, rebuild me around
         them (a shadow node borrowing my span); if none changed, return myself.
@@ -321,9 +374,7 @@ class Node(Typed):
             return self
         return rewrite(self, **changed)
 
-    def substitution_binding(
-        self, scope: "dict[str, Node]"
-    ) -> "Optional[dict[str, Node]]":
+    def substitution_binding(self, scope: BindingMap) -> "Optional[BindingMap]":
         """The binding this STATEMENT introduces for the rest of its block, or
         None. An assignment returns ``{name: its substituted rhs}``; an augmented
         assignment reads the OLD value from ``scope`` to build ``x OP e``;
@@ -433,11 +484,11 @@ class Node(Typed):
             self.reporter,
         )
 
-    def _substitute_body(self, statements: tuple, scope: "dict[str, Node]"):
+    def _substitute_body(self, statements: tuple, scope: BindingMap):
         new_items, changed, _net = self._substitute_body_tracked(statements, scope)
         return new_items, changed
 
-    def _substitute_body_tracked(self, statements: tuple, scope: "dict[str, Node]"):
+    def _substitute_body_tracked(self, statements: tuple, scope: BindingMap):
         """Substitute a statement sequence, THREADING each statement's binding:
         an assignment binds its name to its substituted rhs for the rest of the
         block. This is the temporal that used to live in ``ctx.temporal`` -- now
@@ -482,6 +533,8 @@ class Node(Typed):
                         wb = node.substitution_binding(scope)
                         if wb:
                             scope = {**scope, **wb}
+            if isinstance(new_stmt, _Splice) and new_stmt.bindings:
+                scope = {**scope, **new_stmt.bindings}
         net = {k: v for k, v in scope.items() if initial.get(k) is not v}
         return (tuple(new_items) if changed else statements), changed, net
 
@@ -918,6 +971,9 @@ class FunctionDef(Statement):
         """
         from .shadow import rewrite
 
+        table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
+        parameters = frozenset(table.get_parameters())
+        locals_ = frozenset(table.get_locals()) - parameters
         bound = {p.name for p in self.params}
         for tp in self.type_params:
             name = getattr(tp, "name", None)
@@ -929,7 +985,12 @@ class FunctionDef(Statement):
         inherited_bound = scope.get(_LEXICALLY_BOUND_NAMES, frozenset())
         body_scope = {
             **body_scope,
-            _LEXICALLY_BOUND_NAMES: frozenset(inherited_bound) | bound,
+            **{
+                name: UnboundBinding(name=name, cause=self.fragment)
+                for name in locals_
+            },
+            _LEXICALLY_BOUND_NAMES: frozenset(inherited_bound) | bound | locals_,
+            _FUNCTION_PARAMETERS: parameters,
         }
 
         changed: dict[str, object] = {}
@@ -1066,8 +1127,42 @@ class Delete(Statement):
     _child_fields = ("targets",)
 
     def substitute(self, scope):
-        """Binds nothing: recurse into children and reassemble."""
-        return self._substitute_children(scope)
+        """A plain name delete captures availability without loading its target."""
+        if len(self.targets) != 1 or not isinstance(self.targets[0], Name):
+            return self._substitute_children(scope)
+        target = self.targets[0]
+        prior = _explicit_state(
+            target.id,
+            scope,
+            lambda name: self._make_formal_ref(name, target.span),
+        )
+        if prior is _MISSING:
+            prior = UnboundBinding(name=target.id, cause=target.fragment)
+        return self._make_delete_name(target.id, prior)
+
+    def _make_formal_ref(self, name: str, span: Span) -> "Node":
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        return materialize(
+            self.unit,
+            ShadowNode("FormalRef", span, (("name", Leaf(name)),)),
+            self.reporter,
+        )
+
+    def _make_delete_name(self, name: str, prior: BindingState) -> "Node":
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "DeleteName",
+                self.span,
+                (("name", Leaf(name)), ("prior", Leaf(prior))),
+            ),
+            self.reporter,
+        )
 
 
 class Assign(Statement):
@@ -1793,17 +1888,40 @@ class If(Statement):
 
         names = set(then_net) | set(else_net)
         phis = []
+        availability: BindingMap = {}
         for name in sorted(names):
-            then_val = then_net.get(name, scope.get(name))
-            else_val = else_net.get(name, scope.get(name))
-            if then_val is None or else_val is None:
-                continue  # bound in one branch, no prior: honest gap, not a guess
-            phis.append(
-                self._make_assign(name, self._make_ifexp(test, then_val, else_val))
+            incoming = _explicit_state(
+                name,
+                scope,
+                lambda spelling: self._make_formal_ref(spelling),
             )
-        if not phis:
+            then_val = then_net.get(name, incoming)
+            else_val = else_net.get(name, incoming)
+            if then_val is _MISSING or else_val is _MISSING:
+                continue
+            joined = join_binding_state(
+                test=test,
+                when_true=then_val,
+                when_false=else_val,
+                make_ifexp=self._make_ifexp,
+            )
+            if isinstance(joined, Node):
+                phis.append(self._make_assign(name, joined))
+            else:
+                availability[name] = joined
+        if not phis and not availability:
             return node
-        return _Splice((node, *phis))
+        return _Splice((node, *phis), availability)
+
+    def _make_formal_ref(self, name: str) -> "Node":
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        return materialize(
+            self.unit,
+            ShadowNode("FormalRef", self.span, (("name", Leaf(name)),)),
+            self.reporter,
+        )
 
     def _make_assign(self, name: str, value: "Node") -> "Node":
         """Synthesize `name = <value>` -- the phi as an explicit SSA assignment,
@@ -2121,21 +2239,201 @@ class Try(Statement):
     _child_fields = ("body", "handlers", "orelse", "finalbody")
 
     def substitute(self, scope):
-        """Binds nothing itself (its handlers mask their own names). Its
-        statement tuples are BLOCKS: threaded via _substitute_body, which also
-        flattens a spliced loop/phi -- the generic child walk cannot, and a
-        _Splice leaking through it was the census's 24 AttributeErrors."""
+        """Rewrite each routed completion edge and export its binding state."""
         from .shadow import rewrite
 
-        changed = {}
-        new_handlers, d = self._substitute_field(self.handlers, scope)
-        if d:
-            changed["handlers"] = new_handlers
-        for f in ("body", "orelse", "finalbody"):
-            new, d = self._substitute_body(getattr(self, f), scope)
+        if type(self) is not Try:
+            changed = {}
+            new_handlers, d = self._substitute_field(self.handlers, scope)
             if d:
-                changed[f] = new
-        return self if not changed else rewrite(self, **changed)
+                changed["handlers"] = new_handlers
+            for field_name in ("body", "orelse", "finalbody"):
+                new_value, d = self._substitute_body(
+                    getattr(self, field_name), scope
+                )
+                if d:
+                    changed[field_name] = new_value
+            return self if not changed else rewrite(self, **changed)
+
+        changed = {}
+        new_body, d, body_net = self._substitute_body_tracked(self.body, scope)
+        if d:
+            changed["body"] = new_body
+        body_state = {**scope, **body_net}
+        new_orelse, d, else_net = self._substitute_body_tracked(
+            self.orelse, body_state
+        )
+        if d:
+            changed["orelse"] = new_orelse
+        body_completion = {**body_net, **else_net}
+
+        handler_nets = []
+        new_handlers = []
+        for handler in self.handlers:
+            handler_changed = {}
+            new_type, type_changed = handler._substitute_field(handler.type_, scope)
+            if type_changed:
+                handler_changed["type_"] = new_type
+            handler_scope = dict(scope)
+            if handler.name:
+                handler_scope[handler.name] = handler._make_effect_ref(
+                    handler._effect_slot_id()
+                )
+            new_handler_body, body_changed, handler_net = (
+                handler._substitute_body_tracked(handler.body, handler_scope)
+            )
+            if body_changed:
+                handler_changed["body"] = new_handler_body
+            rewritten = (
+                handler
+                if not handler_changed
+                else rewrite(handler, **handler_changed)
+            )
+            new_handlers.append(rewritten)
+            if handler.name:
+                handler_net = {
+                    **handler_net,
+                    handler.name: UnboundBinding(
+                        name=handler.name, cause=handler.fragment
+                    ),
+                }
+            handler_nets.append(handler_net)
+        if any(new is not old for new, old in zip(new_handlers, self.handlers)):
+            changed["handlers"] = tuple(new_handlers)
+
+        unconditional = self._unconditional_raise_name(self.body)
+        conditional = self._conditional_raise(self.body)
+        completion_nets = []
+        if unconditional is None:
+            completion_nets.append(body_completion)
+        for handler, handler_net in zip(self.handlers, handler_nets):
+            if unconditional is not None:
+                include = self._handler_matches(handler, unconditional)
+            elif conditional is not None:
+                include = self._handler_matches(
+                    handler, conditional.exception_name
+                )
+            else:
+                include = True
+            if include:
+                completion_nets.append(handler_net)
+
+        merged = self._merge_completion_nets(
+            scope,
+            completion_nets,
+            conditional_route=conditional,
+        )
+        final_scope = {**scope, **merged}
+        new_finalbody, d, final_net = self._substitute_body_tracked(
+            self.finalbody, final_scope
+        )
+        if d:
+            changed["finalbody"] = new_finalbody
+        merged = {**merged, **final_net}
+
+        node = self if not changed else rewrite(self, **changed)
+        return _Splice((node,), merged) if merged else node
+
+    @staticmethod
+    def _handler_matches(handler, exception_name: str) -> bool:
+        if handler.type_ is None:
+            return True
+        nodes = (
+            handler.type_.elts
+            if isinstance(handler.type_, Tuple_)
+            else (handler.type_,)
+        )
+        return any(Try._except_type_name(node) == exception_name for node in nodes)
+
+    @staticmethod
+    def _unconditional_raise_name(statements):
+        for statement in statements:
+            if isinstance(statement, Raise):
+                return statement._exception_name()
+            if isinstance(statement, Return):
+                return None
+            if isinstance(statement, If):
+                left = Try._unconditional_raise_name(statement.body)
+                right = Try._unconditional_raise_name(statement.orelse)
+                if left is not None and left == right:
+                    return left
+            # The first ordinary statement can complete, so continue scanning.
+        return None
+
+    @staticmethod
+    def _conditional_raise(statements):
+        for statement in statements:
+            if not isinstance(statement, If):
+                continue
+            left = Try._unconditional_raise_name(statement.body)
+            right = Try._unconditional_raise_name(statement.orelse)
+            if left is not None and right is None:
+                return _ConditionalRaiseRoute(
+                    test=statement.test,
+                    raised_on_true=True,
+                    exception_name=left,
+                )
+            if right is not None and left is None:
+                return _ConditionalRaiseRoute(
+                    test=statement.test,
+                    raised_on_true=False,
+                    exception_name=right,
+                )
+        return None
+
+    def _merge_completion_nets(
+        self,
+        scope,
+        nets,
+        *,
+        conditional_route,
+    ) -> BindingMap:
+        if not nets:
+            return {}
+        if len(nets) == 1:
+            return dict(nets[0])
+        names = set().union(*(net.keys() for net in nets))
+        merged: BindingMap = {}
+        for name in sorted(names):
+            states = [
+                net.get(name, _explicit_state(name, scope, self._make_formal_ref))
+                for net in nets
+            ]
+            if any(state is _MISSING for state in states):
+                continue
+            if all(state is states[0] or state == states[0] for state in states[1:]):
+                merged[name] = states[0]
+                continue
+            if conditional_route is not None and len(states) == 2:
+                body_state, handler_state = states
+                when_true, when_false = (
+                    (handler_state, body_state)
+                    if conditional_route.raised_on_true
+                    else (body_state, handler_state)
+                )
+                merged[name] = join_binding_state(
+                    test=conditional_route.test,
+                    when_true=when_true,
+                    when_false=when_false,
+                    make_ifexp=self._make_ifexp,
+                )
+                continue
+            if all(isinstance(state, UnboundBinding) for state in states):
+                merged[name] = states[0]
+        return merged
+
+    def _make_formal_ref(self, name: str) -> "Node":
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        return materialize(
+            self.unit,
+            ShadowNode("FormalRef", self.span, (("name", Leaf(name)),)),
+            self.reporter,
+        )
+
+    def _make_ifexp(self, test, body, orelse):
+        return If._make_ifexp(self, test, body, orelse)
 
     @staticmethod
     def _except_type_name(type_node):
@@ -3314,12 +3612,30 @@ class Starred(Expression):
 class Name(Expression):
     id: str
 
-    def substitute(self, scope: "dict[str, Node]") -> "Node":
+    def substitute(self, scope: BindingMap) -> "Node":
         # A name resolves to its bound node, or stands unbound. This is the
         # whole substitution base case — it returns an EXISTING node, so it
         # needs no synthetic construction.
-        bound = scope.get(self.id)
-        return bound if bound is not None else self
+        bound = scope.get(self.id, _MISSING)
+        if bound is _MISSING:
+            return self
+        if isinstance(bound, Node):
+            return bound
+        return self._make_binding_read(bound)
+
+    def _make_binding_read(self, state: BindingState) -> "Node":
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        return materialize(
+            self.unit,
+            ShadowNode(
+                "GuardedBindingRead",
+                self.span,
+                (("name", Leaf(self.id)), ("state", Leaf(state))),
+            ),
+            self.reporter,
+        )
 
     def _construct_sugar(self):
         """A name constructs NameSugar with its identifier. A name is a leaf:
@@ -3328,6 +3644,61 @@ class Name(Expression):
         from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 
         return NameSugar(name=self.id, site=self.fragment)
+
+
+class FormalRef(Expression):
+    """A lazily materialized formal used only when availability becomes explicit."""
+
+    name: str
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+
+        return NameSugar(name=self.name, site=self.fragment)
+
+
+class GuardedBindingRead(Expression):
+    """A read-site projection of immutable binding-state testimony."""
+
+    name: str
+    state: BindingState
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import (
+            GuardedBindingReadSugar,
+        )
+
+        return GuardedBindingReadSugar(
+            name=self.name, state=self.state, site=self.fragment
+        )
+
+
+class DeleteName(Statement):
+    """A plain-name delete carrying its pre-delete availability."""
+
+    name: str
+    prior: BindingState
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def substitution_binding(self, scope):
+        del scope
+        return {self.name: UnboundBinding(name=self.name, cause=self.fragment)}
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.delete_name_sugar import DeleteNameSugar
+
+        return DeleteNameSugar(name=self.name, prior=self.prior, site=self.fragment)
 
 
 class EffectRef(Expression):

@@ -23,6 +23,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
+from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
 
 @dataclass(frozen=True)
@@ -56,12 +57,7 @@ class IfExpSugar(Sugar):
         # `.truth`: a predicate test (`5 if a == b else 6`) stands as its formula,
         # a bare value (`5 if c else 6`) emits `py.truthy(c)`. A ground-bool test
         # folds to a literal with no formula and is not lifted yet -- LOUD.
-        formula = getattr(getattr(cond.value.truth(self.site), "value", None), "formula", None)
-        if formula is None:
-            raise NotImplementedError(
-                "conditional-expression test that folds to a ground boolean is "
-                f"not lifted yet (got {type(getattr(cond, 'value', cond)).__name__})"
-            )
+        formula = predicate_formula(cond.value, self.site)
 
         then_out = self.body.desugar(ctx)
         else_out = self.orelse.desugar(ctx)
