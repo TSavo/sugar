@@ -423,36 +423,79 @@ def _class_creation_is_stable(node: ast.ClassDef) -> bool:
     )
 
 
-def _module_mutates_class_exit(tree: ast.Module, class_name: str) -> bool:
-    """Detect source-visible mutation surfaces for one class spelling."""
+def _dotted_ast(node: ast.AST) -> tuple[str, ...] | None:
+    if isinstance(node, ast.Name):
+        return (node.id,)
+    if isinstance(node, ast.Attribute):
+        base = _dotted_ast(node.value)
+        if base is not None:
+            return (*base, node.attr)
+    return None
 
-    def is_class_name(node: ast.AST) -> bool:
-        return isinstance(node, ast.Name) and node.id == class_name
+
+def _module_uses_class_unsafely(
+    tree: ast.Module, class_coordinate: tuple[str, ...]
+) -> bool:
+    """Refuse every detectable use except aliasing, basing, and managed use.
+
+    The coordinate is either a local class spelling (``Manager``) or the
+    authenticated subject head path (``manager.Manager``). Simple module-scope
+    aliases are closed to a fixed point before uses are classified.
+    """
+    aliases: set[str] = set()
+    alias_nodes: set[int] = set()
+
+    def is_coordinate(node: ast.AST) -> bool:
+        dotted = _dotted_ast(node)
+        return dotted == class_coordinate or (
+            isinstance(node, ast.Name) and node.id in aliases
+        )
+
+    assignments = [
+        node
+        for node in _module_level_nodes(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+    ]
+    coordinate_binding_nodes = {
+        id(assignment.targets[0])
+        for assignment in assignments
+        if len(class_coordinate) == 1
+        and assignment.targets[0].id == class_coordinate[0]
+    }
+    changed = True
+    while changed:
+        changed = False
+        for assignment in assignments:
+            target = assignment.targets[0]
+            if target.id in aliases or not is_coordinate(assignment.value):
+                continue
+            aliases.add(target.id)
+            alias_nodes.update((id(target), id(assignment.value)))
+            changed = True
+
+    parents: dict[int, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[id(child)] = parent
 
     for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute):
+        if not is_coordinate(node):
+            continue
+        if id(node) in alias_nodes or id(node) in coordinate_binding_nodes:
+            continue
+        parent = parents.get(id(node))
+        if isinstance(parent, ast.ClassDef) and any(node is b for b in parent.bases):
+            continue
+        if isinstance(parent, ast.Call) and parent.func is node:
+            call_parent = parents.get(id(parent))
             if (
-                node.attr == "__exit__"
-                and is_class_name(node.value)
-                and isinstance(node.ctx, (ast.Store, ast.Del))
+                isinstance(call_parent, ast.withitem)
+                and call_parent.context_expr is parent
             ):
-                return True
-        elif isinstance(node, ast.Call):
-            if (
-                isinstance(node.func, ast.Name)
-                and node.func.id in {"setattr", "delattr"}
-                and node.args
-                and is_class_name(node.args[0])
-            ):
-                return True
-        elif isinstance(node, ast.Subscript):
-            if (
-                isinstance(node.ctx, (ast.Store, ast.Del))
-                and isinstance(node.value, ast.Attribute)
-                and node.value.attr == "__dict__"
-                and is_class_name(node.value.value)
-            ):
-                return True
+                continue
+        return True
     return False
 
 
@@ -466,7 +509,7 @@ def _lookup_name_in_module(
     if parsed is None:
         return None
     tree, _source, filename, source_cid = parsed
-    if _module_mutates_class_exit(tree, name):
+    if _module_uses_class_unsafely(tree, (name,)):
         return None
 
     # 1. Class definition in this module. A direct override owns the
@@ -691,7 +734,7 @@ def resolve_definition_memento_from_manager_expr(
     )
     if "*" in coordinate_bound or head in (lexically_bound_names | coordinate_bound):
         return None
-    if _module_mutates_class_exit(source_tree, head):
+    if _module_uses_class_unsafely(source_tree, tuple(parts)):
         return None
     if head not in bindings:
         return None

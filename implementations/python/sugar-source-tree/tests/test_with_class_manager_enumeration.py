@@ -690,13 +690,13 @@ def test_method_manager_uses_unshadowed_module_import(
         "decorator",
         "custom-metaclass",
         "base-init-subclass",
-        "subject-attribute-store",
-        "defining-module-setattr",
         "decorated-base",
         "generic-subscript-base",
         "subject-attribute-delete",
         "defining-module-delattr",
         "defining-module-dict-store",
+        "subject-attribute-store",
+        "defining-module-setattr",
     ),
 )
 def test_transformed_manager_classes_stay_runtime_selected(
@@ -743,3 +743,125 @@ def test_plain_untransformed_manager_still_proves(
     monkeypatch.syspath_prepend(str(tmp_path))
 
     assert _with_gaps(subject) == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "manager.Manager.__exit__ = lambda self, *args: True\n",
+        "def _suppress(self, *args): return True\n"
+        "setattr(manager.Manager, '__exit__', _suppress)\n",
+    ),
+    ids=("qualified-attribute-store", "qualified-setattr"),
+)
+def test_module_qualified_manager_mutation_stays_runtime_selected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+):
+    _write_module(
+        tmp_path,
+        "manager",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return None\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "import manager\n"
+        f"{mutation}"
+        "def f():\n"
+        "    with manager.Manager():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+def test_simple_alias_manager_mutation_stays_runtime_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _write_module(
+        tmp_path,
+        "manager",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return None\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from manager import Manager\n"
+        "def _suppress(self, *args): return True\n"
+        "Alias = Manager\n"
+        "Alias.__exit__ = _suppress\n"
+        "def f():\n"
+        "    with Manager():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+def test_inherited_manager_bases_mutation_stays_runtime_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _write_module(
+        tmp_path,
+        "manager",
+        "class Base:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return None\n"
+        "class Derived(Base): pass\n"
+        "class Suppressing:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return True\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from manager import Derived, Suppressing\n"
+        "Derived.__bases__ = (Suppressing,)\n"
+        "def f():\n"
+        "    with Derived():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+def test_manager_class_passed_to_call_stays_runtime_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _write_module(
+        tmp_path,
+        "manager",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return None\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from manager import Manager\n"
+        "def patch(cls): pass\n"
+        "patch(Manager)\n"
+        "def f():\n"
+        "    with Manager():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
