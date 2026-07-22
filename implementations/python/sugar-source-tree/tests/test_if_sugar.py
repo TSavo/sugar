@@ -59,7 +59,7 @@ def test_one_armed_if_with_no_prior_is_an_honest_gap_not_a_guess():
     # than invent a value for the not-c arm, x stays unbound: `return x` keeps a
     # free Name (a gap the sugar layer meets loudly), never a wrong phi.
     ret = _return_of(_fn("def A(c):\n    if c:\n        x = 5\n    return x\n"))
-    assert ret.value.kind == "Name" and ret.value.id == "x"
+    assert ret.value.kind == "GuardedBindingRead" and ret.value.name == "x"
 
 
 def test_the_phi_borrows_the_if_source_span():
@@ -126,26 +126,26 @@ def test_guarded_raise_halts_its_branch_and_guards_the_tail():
     # if z == 1: raise ValueError ; assert z == 2 ; return z
     # The raise halts the z == 1 branch, so the tail rides under its negation:
     # the assert becomes  not(z == 1) -> (z == 2).
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
-    v = _fn(
+    out = _fn(
         "def A(z):\n    if z == 1:\n        raise ValueError\n    assert z == 2\n    return z\n"
-    ).sugar().desugar().value
+    ).sugar().desugar()
+    assert isinstance(out, ExitSet)
+    completed = next(e for e in out.exits if isinstance(e, Completed))
+    halted = next(e for e in out.exits if isinstance(e, Halted))
+    v = completed.value
     invs = v.invs()
     assert len(invs) == 1
     tail = invs[0]
-    assert tail.kind == "implies"
-    assert tail.operands[0].kind == "not"  # guarded by not(z == 1)
-    assert tail.operands[1].args[1].value == 2  # the tail fact z == 2
+    assert completed.guard.kind == "not"  # tail edge is guarded by not(z == 1)
+    assert tail.args[1].value == 2  # the tail fact z == 2
 
     # The raise itself is red testimony, pristine RaiseEffect, with the branch
     # condition recorded on the Incomplete wrapper (not smashed into the effect).
-    raises = [e for e in v.record.contribution() if isinstance(e, Incomplete)]
-    assert len(raises) == 1
-    assert type(raises[0].effect).__name__ == "RaiseEffect"
-    assert raises[0].effect.exception_name == "ValueError"
-    assert len(raises[0].branch_conditions) == 1
-    assert raises[0].branch_conditions[0].args[1].value == 1  # under z == 1
+    assert type(halted.effect).__name__ == "RaiseEffect"
+    assert halted.effect.exception_name == "ValueError"
+    assert halted.guard.args[1].value == 1  # under z == 1
 
 
 if __name__ == "__main__":

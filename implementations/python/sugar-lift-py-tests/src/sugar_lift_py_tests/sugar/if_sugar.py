@@ -29,6 +29,23 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
+def predicate_formula(value, site):
+    """The one truth-to-formula projection shared by all guarded constructs."""
+    from sugar_lift_py_tests.outcome import Complete
+
+    truth = value.truth(site)
+    if not isinstance(truth, Complete):
+        raise NotImplementedError(
+            f"condition truth did not produce one value: {type(truth).__name__}"
+        )
+    formula = getattr(truth.value, "formula", None)
+    if formula is None:
+        raise NotImplementedError(
+            f"condition folded without a symbolic formula: {type(value).__name__}"
+        )
+    return formula
+
+
 @dataclass(frozen=True)
 class IfSugar(Sugar):
     """`if <test>: <then> [else: <else>]`, constructed by `If.sugar()` with the
@@ -84,13 +101,7 @@ class IfSugar(Sugar):
         # `py.truthy(c)` relation. A ground bool (`if True:`) folds to a literal
         # with no formula and is not lifted yet -- LOUD, never guard by nothing.
         cond = self.test.desugar(ctx)
-        formula = getattr(getattr(cond.value.truth(self.site), "value", None), "formula", None)
-        if formula is None:
-            raise NotImplementedError(
-                "if-condition that folds to a ground boolean is not lifted yet "
-                f"(got {type(getattr(cond, 'value', cond)).__name__}); a symbolic "
-                "predicate or bare-truthiness condition guards, a constant does not"
-            )
+        formula = predicate_formula(cond.value, self.site)
 
         # If is union in the exit algebra: each branch is restricted to its
         # polarity, then the partitions normalize together. In particular, a

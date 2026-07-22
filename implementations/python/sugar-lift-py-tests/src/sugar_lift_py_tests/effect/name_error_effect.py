@@ -1,13 +1,32 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+from dataclasses import dataclass, field
 
-from .runtime_effect import RuntimeEffect
+from .raise_effect import RaiseEffect
 
 
 @dataclass(frozen=True)
-class NameErrorEffect(RuntimeEffect):
-    """A Python read of an unbound name halts with a typed runtime NameError."""
+class NameErrorEffect(RaiseEffect):
+    """Deterministic Python halt caused by an unbound source name."""
 
-    def kind(self) -> type[RuntimeEffect]:
-        return NameErrorEffect
+    name: str = ""
+    site: object = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        locus = f"{self.site.filename}:{self.site.line}:{self.site.col}"
+        source = getattr(getattr(self.site, "unit", None), "source", None)
+        object.__setattr__(self, "exception_name", "NameError")
+        object.__setattr__(self, "blame", locus)
+        object.__setattr__(
+            self,
+            "source_sha256",
+            hashlib.sha256(source.encode()).hexdigest()
+            if isinstance(source, str)
+            else None,
+        )
+        object.__setattr__(self, "occurrence", locus)
+
+    @property
+    def reason(self) -> str:
+        return f"NameError for unbound name {self.name!r} at {self.blame}"

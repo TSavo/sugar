@@ -21,7 +21,15 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor import BlockValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete, Outcome
+from sugar_lift_py_tests.outcome import (
+    Complete,
+    Completed,
+    ExitSet,
+    Halted,
+    Incomplete,
+    Outcome,
+    true_guard,
+)
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
@@ -44,6 +52,77 @@ def reduce_block_to_exitset(statements: tuple) -> ExitSet[_ReducedBlock]:
 
         def reduce_next(state: _ReducedBlock) -> ExitSet[_ReducedBlock]:
             outcome = head.desugar()
+            from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
+
+            if isinstance(outcome, Complete) and isinstance(
+                outcome.value, GuardedFaces
+            ) and any(
+                isinstance(entry, Incomplete)
+                for entry in outcome.value.contribution()
+            ):
+                faces = outcome.value
+                entries = []
+                exits = []
+                for entry in faces.contribution():
+                    if isinstance(entry, Incomplete):
+                        from sugar_lift_py_tests.ir import and_
+
+                        guard = (
+                            entry.branch_conditions[0]
+                            if len(entry.branch_conditions) == 1
+                            else and_(list(entry.branch_conditions))
+                        )
+                        exits.append(Halted(guard, entry.effect))
+                    else:
+                        entries.append(entry)
+                completed_state = _ReducedBlock(
+                    (*state.entries, *entries),
+                    faces.can_fall_through,
+                    (),
+                    state.transforms,
+                )
+                if faces.can_fall_through:
+                    exits.append(
+                        Completed(
+                            faces.continuation_guard
+                            if faces.continuation_guard is not None
+                            else true_guard(),
+                            completed_state,
+                        )
+                    )
+                return ExitSet(tuple(exits)).normalize()
+            if isinstance(outcome, ExitSet):
+                if state.fall_through:
+                    from sugar_lift_py_tests.ir import and_
+
+                    continuation = (
+                        state.fall_through[0]
+                        if len(state.fall_through) == 1
+                        else and_(list(state.fall_through))
+                    )
+                    outcome = outcome.guarded(continuation)
+
+                def project(value):
+                    linear = Complete(value)
+                    contribution = linear.contribution()
+                    for transform in reversed(state.transforms):
+                        contribution = transform(contribution)
+                    entries = (*state.entries, *contribution)
+                    follow = linear.follow()
+                    if not follow.continues:
+                        return ExitSet.completed(
+                            _ReducedBlock(entries, False, ())
+                        )
+                    return ExitSet.completed(
+                        _ReducedBlock(
+                            entries,
+                            True,
+                            state.fall_through,
+                            state.transforms,
+                        )
+                    )
+
+                return outcome.and_then(project)
             contribution = outcome.contribution()
             for transform in reversed(state.transforms):
                 contribution = transform(contribution)
@@ -51,13 +130,6 @@ def reduce_block_to_exitset(statements: tuple) -> ExitSet[_ReducedBlock]:
 
             follow = outcome.follow()
             if not follow.continues:
-                if follow.keeps_rest and index + 1 < len(statements):
-                    raise NotImplementedError(
-                        "block early-exit with a kept tail is not ported to the "
-                        "tree reduction yet: port the SugarBody raw-tail wrapper "
-                        "when the first halting statement sugar lands "
-                        f"(halted at index {index})"
-                    )
                 if isinstance(outcome, Incomplete):
                     if outcome.branch_conditions:
                         from sugar_lift_py_tests.ir import and_
@@ -118,7 +190,15 @@ def reduce_body(statements: tuple):
     if isinstance(collapsed, Incomplete):
         return collapsed
     if not isinstance(collapsed, Complete):
-        return collapsed
+        return exits.and_then(
+            lambda state: Complete(
+                BlockValue(
+                    state.entries,
+                    fall_through=state.fall_through,
+                    can_fall_through=state.can_fall_through,
+                )
+            )
+        )
     state = collapsed.value
     entries = state.entries
     # A body that is nothing but a single propagating effect IS that effect --

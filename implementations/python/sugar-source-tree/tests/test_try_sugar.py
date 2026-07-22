@@ -276,8 +276,9 @@ def test_conditional_raise_assign_paths_through_finally_no_residual_halt():
         "    return x\n"
     )
     assert _incompletes(v) == []
-    assert v.post().args[0].name == "out"
-    assert v.post().args[1].name == "x"
+    post = v.post()
+    assert post.kind == "and"
+    assert {face.operands[1].args[1].value for face in post.operands} == {1, 2}
 
 
 def test_except_as_binds_matching_raise_witness_in_handler():
