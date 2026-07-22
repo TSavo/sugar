@@ -13,6 +13,7 @@ from sugar_lift_py_tests.ir import (
     _Var,
     PrimitiveSort,
     bool_const,
+    bound_transform_parts,
     ctor,
     num,
     real_lit,
@@ -214,6 +215,12 @@ def _free_vars_in_ir_term(ir_term: IrTerm) -> frozenset[str]:
     if isinstance(ir_term, _Var):
         return frozenset({ir_term.name})
     if isinstance(ir_term, _Ctor):
+        bound = bound_transform_parts(ir_term)
+        if bound is not None:
+            name, templates = bound
+            return frozenset().union(
+                *(_free_vars_in_ir_term(arg) for arg in templates)
+            ) - {name}
         return frozenset().union(*(_free_vars_in_ir_term(arg) for arg in ir_term.args))
     return frozenset()
 

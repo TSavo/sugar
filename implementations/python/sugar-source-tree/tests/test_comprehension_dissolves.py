@@ -5,6 +5,8 @@ import tempfile
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.ir import ctor, num
+from sugar_lift_py_tests.proofir.formulas import _free_vars_in_ir_term
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -70,8 +72,29 @@ def test_simple_symbolic_comprehension_builds_coordinate(source, coordinate, tra
     term = _out(f"def A(xs):\n    return {source}\n")
     assert term.name == coordinate
     assert term.args[0].name == "xs"
-    assert term.args[1].value == "x"
-    assert any(getattr(arg, "name", None) == transform for arg in term.args[2:])
+    assert term.args[1].name == "py.bound_transform"
+    assert term.args[1].args[0].value == "x"
+    assert any(
+        getattr(arg, "name", None) == transform for arg in term.args[1].args[1:]
+    )
+
+
+def test_bound_target_is_absent_from_coordinate_free_variables():
+    term = _out("def A(xs):\n    return [f(x) for x in xs]\n")
+    assert _free_vars_in_ir_term(term) == frozenset({"xs"})
+
+
+def test_same_spelled_outer_iterable_remains_free_while_element_is_bound():
+    term = _out("def A(x):\n    return [f(x) for x in x]\n")
+    assert _free_vars_in_ir_term(term) == frozenset({"x"})
+    transform = term.args[1]
+    assert transform.args[1].name == "call:f"
+    assert transform.args[1].args[0].name == "x"
+
+
+def test_nested_lambda_same_name_does_not_escape_bound_transform():
+    term = _out("def A(xs):\n    return [(lambda x: x) for x in xs]\n")
+    assert _free_vars_in_ir_term(term) == frozenset({"xs"})
 
 
 def test_bound_target_masks_outer_same_spelling_and_keeps_call_coordinate():
@@ -81,17 +104,19 @@ def test_bound_target_masks_outer_same_spelling_and_keeps_call_coordinate():
         "    return [f(x) for x in xs]\n"
     )
     assert term.name == "py.listcomp"
-    assert term.args[1].value == "x"
-    assert term.args[2].name == "call:f"
-    assert term.args[2].args[0].name == "x"
+    assert term.args[1].name == "py.bound_transform"
+    assert term.args[1].args[0].value == "x"
+    assert term.args[1].args[1].name == "call:f"
+    assert term.args[1].args[1].args[0].name == "x"
 
 
 def test_concrete_generator_builds_lazy_coordinate_without_materializing():
     term = _out("def A():\n    return (f(x) for x in [1, 2])\n")
     assert term.name == "py.generatorexp"
     assert term.args[0].name == "array"
-    assert term.args[1].value == "x"
-    assert term.args[2].name == "call:f"
+    assert term.args[1].name == "py.bound_transform"
+    assert term.args[1].args[0].value == "x"
+    assert term.args[1].args[1].name == "call:f"
 
 
 @pytest.mark.parametrize("consumer", ["sum", "list", "consume", "any", "all"])
@@ -109,6 +134,29 @@ def test_shadowed_consumer_does_not_materialize_generator():
     )
     assert term.name == "call:materialize"
     assert term.args[0].name == "py.generatorexp"
+
+
+def test_list_and_generator_keep_distinct_eager_and_lazy_coordinates():
+    eager = _out("def A(xs):\n    return [f(x) for x in xs]\n")
+    lazy = _out("def A(xs):\n    return (f(x) for x in xs)\n")
+    assert eager.name == "py.listcomp"
+    assert lazy.name == "py.generatorexp"
+    assert eager.args[1] == lazy.args[1]
+    assert eager != lazy
+
+
+def test_generator_creation_keeps_call_inside_unexecuted_transform_template():
+    term = _out("def A(xs):\n    return (f(x) for x in xs)\n")
+    transform = term.args[1]
+    assert transform.name == "py.bound_transform"
+    assert transform.args[1].name == "call:f"
+    assert _free_vars_in_ir_term(term) == frozenset({"xs"})
+
+
+def test_over_fuel_concrete_comprehension_builds_bound_transform_coordinate():
+    term = _out("def A():\n    return [f(x) for x in range(129)]\n")
+    assert term.name == "py.listcomp"
+    assert term.args[1].name == "py.bound_transform"
 
 
 def test_shadowed_range_is_not_unrolled_but_builds_symbolic_coordinate():
@@ -135,3 +183,37 @@ def test_every_filter_must_be_ground_decidable():
 def test_unsupported_comprehension_structures_stay_loud(source):
     with pytest.raises(SugarNotWritten):
         _fn(f"def A():\n    return {source}\n").sugar()
+
+
+def test_nested_comprehension_substitutes_outer_capture_before_own_gap():
+    fn = _fn(
+        "def A():\n"
+        "    values = [1]\n"
+        "    return [[y for y in values] for x in [1]]\n"
+    )
+    expression = fn.substitute({}).body[-1].value
+    nested = expression.elt
+    assert nested.generators[0].iter.kind == "List"
+    with pytest.raises(SugarNotWritten):
+        expression.sugar()
+
+
+def test_walrus_comprehension_substitutes_outer_capture_before_own_gap():
+    fn = _fn(
+        "def A():\n"
+        "    value = 7\n"
+        "    return [(captured := value) for x in [1]]\n"
+    )
+    expression = fn.substitute({}).body[-1].value
+    assert expression.elt.value.value == 7
+    with pytest.raises(SugarNotWritten):
+        expression.sugar()
+
+
+def test_existing_concrete_displays_keep_exact_terms():
+    filtered = _out("def A():\n    return [x for x in [1, 2, 3] if x > 1]\n")
+    destructured = _out(
+        "def A():\n    return [a + b for a, b in [(1, 2), (3, 4)]]\n"
+    )
+    assert filtered == ctor("array", [num(2), num(3)])
+    assert destructured == ctor("array", [num(3), num(7)])

@@ -84,6 +84,7 @@ class _ConditionalRaiseRoute:
     test: "Node"
     raised_on_true: bool
     exception_name: str
+_NESTED_COMPREHENSION_TEMPLATE = object()
 
 
 @dataclass(frozen=True)
@@ -3078,15 +3079,20 @@ class ListComp(Expression):
         `[e for x in [1, 2, 3]]` is three substitutions of x into e, and the
         comprehension rewrites to the List DISPLAY of those elements. The
         comprehension was never a meaning; it was a count of rewrites."""
-        if ListComp._contains_forbidden_shape(self, (self.elt,)):
-            return self
-        unrolled = self._try_unroll_to_display(scope)
+        unrolled = (
+            None
+            if scope.get(_NESTED_COMPREHENSION_TEMPLATE)
+            else self._try_unroll_to_display(scope)
+        )
         if unrolled is not None:
             return unrolled
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
-        new_elt, de = self._substitute_field(self.elt, inner)
+        template_scope = inner
+        if ListComp._contains_forbidden_shape(self, (self.elt,)):
+            template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
+        new_elt, de = self._substitute_field(self.elt, template_scope)
         changed = {}
         if gc:
             changed["generators"] = new_gens
@@ -3228,15 +3234,20 @@ class SetComp(Expression):
     def substitute(self, scope):
         """A comprehension: thread each generator's target, then substitute the
         element against the scope with every target masked."""
-        if ListComp._contains_forbidden_shape(self, (self.elt,)):
-            return self
-        display = self._try_unroll_to_display(scope)
+        display = (
+            None
+            if scope.get(_NESTED_COMPREHENSION_TEMPLATE)
+            else self._try_unroll_to_display(scope)
+        )
         if display is not None:
             return display
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
-        new_elt, de = self._substitute_field(self.elt, inner)
+        template_scope = inner
+        if ListComp._contains_forbidden_shape(self, (self.elt,)):
+            template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
+        new_elt, de = self._substitute_field(self.elt, template_scope)
         changed = {}
         if gc:
             changed["generators"] = new_gens
@@ -3312,19 +3323,24 @@ class DictComp(Expression):
     def substitute(self, scope):
         """A dict comprehension: thread the generators, then key and value
         against the scope with every target masked."""
-        if ListComp._contains_forbidden_shape(self, (self.key, self.value)):
-            return self
-        display = self._try_unroll_to_display(scope)
+        display = (
+            None
+            if scope.get(_NESTED_COMPREHENSION_TEMPLATE)
+            else self._try_unroll_to_display(scope)
+        )
         if display is not None:
             return display
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
+        template_scope = inner
+        if ListComp._contains_forbidden_shape(self, (self.key, self.value)):
+            template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
         changed = {}
         if gc:
             changed["generators"] = new_gens
         for fld in ("key", "value"):
-            new, d = self._substitute_field(getattr(self, fld), inner)
+            new, d = self._substitute_field(getattr(self, fld), template_scope)
             if d:
                 changed[fld] = new
         return self if not changed else rewrite(self, **changed)
@@ -3415,12 +3431,13 @@ class GeneratorExp(Expression):
     def substitute(self, scope):
         """A comprehension: thread each generator's target, then substitute the
         element against the scope with every target masked."""
-        if ListComp._contains_forbidden_shape(self, (self.elt,)):
-            return self
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
-        new_elt, de = self._substitute_field(self.elt, inner)
+        template_scope = inner
+        if ListComp._contains_forbidden_shape(self, (self.elt,)):
+            template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
+        new_elt, de = self._substitute_field(self.elt, template_scope)
         changed = {}
         if gc:
             changed["generators"] = new_gens

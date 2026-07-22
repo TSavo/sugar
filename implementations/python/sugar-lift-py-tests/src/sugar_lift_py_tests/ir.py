@@ -554,6 +554,33 @@ def str_const(s: str) -> Term:
     return _intern_term(_ConstStr(s, String()))
 
 
+def bound_transform(name: str, templates: List[Term]) -> Term:
+    """A transform template whose ``name`` is bound only inside its templates.
+
+    The iterable remains outside this coordinate, so an outer variable with the
+    same spelling stays free there.  This denotes an operation to apply later;
+    constructing it does not claim that any template call executed.
+    """
+    if not templates:
+        raise ValueError("a bound transform needs at least one template term")
+    return ctor(
+        "py.bound_transform",
+        [str_const(name), *templates],
+        symbol_kind="coordinate",
+    )
+
+
+def bound_transform_parts(term: Term) -> tuple[str, tuple[Term, ...]] | None:
+    if (
+        isinstance(term, _Ctor)
+        and term.name == "py.bound_transform"
+        and len(term.args) >= 2
+        and isinstance(term.args[0], _ConstStr)
+    ):
+        return term.args[0].value, term.args[1:]
+    return None
+
+
 def real_lit(decimal_string: str) -> Term:
     """A real literal carried as a canonical decimal string (e.g. "0.0000015").
 
@@ -1360,6 +1387,14 @@ def subst_var_in_term(t: Term, formal: str, actual: Term) -> Term:
     if isinstance(t, _Var):
         return actual if t.name == formal else t
     if isinstance(t, _Ctor):
+        bound = bound_transform_parts(t)
+        if bound is not None:
+            name, templates = bound
+            if name == formal:
+                return t
+            return bound_transform(
+                name, [subst_var_in_term(item, formal, actual) for item in templates]
+            )
         return ctor(t.name, [subst_var_in_term(a, formal, actual) for a in t.args])
     return t  # const variants are inert
 

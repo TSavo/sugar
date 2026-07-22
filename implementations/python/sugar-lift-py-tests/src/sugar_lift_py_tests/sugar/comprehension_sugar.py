@@ -52,16 +52,17 @@ class ComprehensionSugar(Sugar):
 
     def _complete(self, iterable, element, key=None) -> Outcome:
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
-        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.ir import bound_transform, ctor
 
         owner = str(self.site)
+        templates = []
+        if key is not None:
+            templates.append(key.to_term(owner=owner))
+        templates.append(element.to_term(owner=owner))
         args = [
             iterable.to_term(owner=owner),
-            str_const(self.target),
+            bound_transform(self.target, templates),
         ]
-        if key is not None:
-            args.append(key.to_term(owner=owner))
-        args.append(element.to_term(owner=owner))
         return Complete(
             ComprehensionValue(ctor(self.kind, args, symbol_kind="coordinate"))
         )

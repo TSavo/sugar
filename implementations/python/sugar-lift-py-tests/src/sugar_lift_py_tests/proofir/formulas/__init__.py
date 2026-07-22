@@ -9,6 +9,7 @@ from sugar_lift_py_tests.ir import Formula as IrFormula
 from sugar_lift_py_tests.ir import Term as IrTerm
 from sugar_lift_py_tests.ir import _Atomic, _Connective, _Ctor, _Quantifier, _Var
 from sugar_lift_py_tests.ir import and_ as ir_and
+from sugar_lift_py_tests.ir import bound_transform_parts
 from sugar_lift_py_tests.ir import eq as ir_eq
 from sugar_lift_py_tests.ir import formula_to_value
 from sugar_lift_py_tests.proofir._errors import proofir_construction_gap
@@ -170,9 +171,16 @@ def _free_vars_in_ir_term(
     if isinstance(ir_term, _Var):
         result = frozenset({ir_term.name})
     elif isinstance(ir_term, _Ctor):
-        result = frozenset().union(
-            *(_free_vars_in_ir_term(arg, memo) for arg in ir_term.args)
-        )
+        bound = bound_transform_parts(ir_term)
+        if bound is None:
+            result = frozenset().union(
+                *(_free_vars_in_ir_term(arg, memo) for arg in ir_term.args)
+            )
+        else:
+            name, templates = bound
+            result = frozenset().union(
+                *(_free_vars_in_ir_term(arg, memo) for arg in templates)
+            ) - {name}
     else:
         result = frozenset()
     memo[id(ir_term)] = result
