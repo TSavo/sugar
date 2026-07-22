@@ -494,7 +494,9 @@ def _lookup_name_in_module(
     return None
 
 
-def _local_import_bindings(source: str) -> dict[str, tuple[str, str]]:
+def _local_import_bindings(
+    source: str,
+) -> tuple[ast.Module | None, dict[str, tuple[str, str, ast.AST]]]:
     """Map local bound name → (kind, payload).
 
     kind ``module``: payload is absolute module name (``import numpy as np``).
@@ -504,25 +506,25 @@ def _local_import_bindings(source: str) -> dict[str, tuple[str, str]]:
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return {}
-    out: dict[str, tuple[str, str]] = {}
+        return None, {}
+    out: dict[str, tuple[str, str, ast.AST]] = {}
     for node in tree.body:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.asname:
                     # import numpy as np → np denotes module numpy
-                    out[alias.asname] = ("module", alias.name)
+                    out[alias.asname] = ("module", alias.name, node)
                 else:
                     # import a.b.c binds only top-level name `a`
                     top = alias.name.split(".")[0]
-                    out[top] = ("module", top)
+                    out[top] = ("module", top, node)
         if isinstance(node, ast.ImportFrom) and node.module is not None and node.level == 0:
             for alias in node.names:
                 if alias.name == "*":
                     continue
                 bound = alias.asname or alias.name
-                out[bound] = ("from", f"{node.module}.{alias.name}")
-    return out
+                out[bound] = ("from", f"{node.module}.{alias.name}", node)
+    return tree, out
 
 
 def _dotted_of_sugar_node(node) -> list[str] | None:
@@ -554,7 +556,9 @@ def resolve_definition_memento_from_manager_expr(
     source = getattr(unit, "source", None)
     if not source:
         return None
-    bindings = _local_import_bindings(source)
+    source_tree, bindings = _local_import_bindings(source)
+    if source_tree is None:
+        return None
     parts = _dotted_of_sugar_node(manager_node.func)
     if not parts:
         return None
@@ -562,23 +566,17 @@ def resolve_definition_memento_from_manager_expr(
     head, *rest = parts
     if head not in bindings:
         return None
-    kind, payload = bindings[head]
+    kind, payload, binding_node = bindings[head]
     if payload is None:
+        return None
+    if _unique_unconditional_binding(source_tree, head) is not binding_node:
         return None
 
     if kind == "module":
         # head is a module binding; rest are attributes into that package.
-        if not rest:
-            return None  # calling a module is not a class CM
-        module_name = payload
-        # Walk attributes: each step is either a submodule or a name in module
-        for i, attr in enumerate(rest):
-            is_last = i == len(rest) - 1
-            if is_last:
-                return _lookup_name_in_module(module_name, attr)
-            # Non-final: treat as submodule package path
-            module_name = f"{module_name}.{attr}"
-        return None
+        if len(rest) != 1:
+            return None
+        return _lookup_name_in_module(payload, rest[0])
 
     if kind == "from":
         # from mod import name [as head]; rest must be empty for Class() form

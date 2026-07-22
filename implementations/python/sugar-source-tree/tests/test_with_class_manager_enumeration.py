@@ -385,3 +385,75 @@ def test_conditional_facade_reexports_stay_runtime_selected(
     gaps = _with_gaps(subject)
     assert len(gaps) == 1
     assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+def test_subject_manager_head_rebinding_stays_runtime_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _write_module(
+        tmp_path,
+        "never_suppressing",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return False\n",
+    )
+    _write_module(
+        tmp_path,
+        "suppressing",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return True\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from never_suppressing import Manager\n"
+        "from suppressing import Manager as SuppressingManager\n"
+        "Manager = SuppressingManager\n"
+        "def f():\n"
+        "    with Manager():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+def test_unauthenticated_intermediate_package_attribute_stays_runtime_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _write_module(
+        tmp_path,
+        "suppressing",
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return True\n"
+        "class Holder:\n"
+        "    Manager = Manager\n",
+    )
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from suppressing import Holder as sub\n", encoding="utf-8"
+    )
+    (package / "sub.py").write_text(
+        "class Manager:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return False\n",
+        encoding="utf-8",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "import pkg\n"
+        "def f():\n"
+        "    with pkg.sub.Manager():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
