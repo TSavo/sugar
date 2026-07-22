@@ -74,7 +74,7 @@ def _child_payload(path: Path, rel: str) -> tuple[dict[str, Any], int]:
         from sugar_lift_py_tests.audit_only import collect_factory_panic
         from sugar_lift_py_tests.effect import effect_reason, effect_status
         from sugar_lift_py_tests.lift_rpc import lift_file_payload
-        from sugar_lift_py_tests.recognition.kit_manifest import (
+        from sugar_lift_py_tests.kit_manifest import (
             load_kit_manifest_from_env,
         )
 

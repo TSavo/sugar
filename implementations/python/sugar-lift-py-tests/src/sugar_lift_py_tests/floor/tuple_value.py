@@ -133,7 +133,7 @@ class TupleValue(FloorValue):
                 value, site, index + 1, (*predicates, result)
             )
 
-        from sugar_lift_py_tests.factory import factory_panic_gap
+        from sugar_lift_py_tests.gap.panic import factory_panic_gap
 
         factory_panic_gap(
             owner="TupleValue.test_python_type",

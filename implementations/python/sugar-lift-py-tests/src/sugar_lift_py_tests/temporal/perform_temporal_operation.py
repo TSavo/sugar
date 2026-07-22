@@ -3,19 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 from .temporal_context import TemporalContext
-from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
+from sugar_lift_py_tests.gap.audit_row import FactoryAuditStatus
 
 _DECLARED_OPERATION_MODULE = "sugar_lift_py_tests.temporal."
 
 
 def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
-    from sugar_lift_py_tests.factory import (
-        FactoryAuditRow,
-        factory_panic,
-        FactoryGapInfo,
-        GapKind,
-        GapLocus,
-    )
+    from sugar_lift_py_tests.gap.panic import factory_panic
+    from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
+    from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
     operation_name = type(operation).__name__
     method_name = getattr(operation, "method_name", None)
@@ -58,13 +54,9 @@ def _missing_temporal_floor_gap(
     receiver: TemporalContext,
     method_name: str,
 ):
-    from sugar_lift_py_tests.factory import (
-        FactoryAuditRow,
-        factory_panic,
-        FactoryGapInfo,
-        GapKind,
-        GapLocus,
-    )
+    from sugar_lift_py_tests.gap.panic import factory_panic
+    from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
+    from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
     observed = type(receiver).__name__
     info = FactoryGapInfo(
@@ -111,13 +103,9 @@ def perform_temporal_operation(
                 receiver=receiver,
                 method_name=method_name,
             )
-        from sugar_lift_py_tests.factory import (
-            FactoryAuditRow,
-            factory_panic,
-            FactoryGapInfo,
-            GapKind,
-            GapLocus,
-        )
+        from sugar_lift_py_tests.gap.panic import factory_panic
+        from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
+        from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
         operation_name = type(operation).__name__
         info = FactoryGapInfo(

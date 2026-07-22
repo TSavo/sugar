@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.gap.panic import FactoryPanic
 from sugar_lift_py_tests.floor import FunctionCallable, ImportAliasValue
 from sugar_lift_py_tests.ir import ctor, eq, make_var, num, py_eq, str_const
 from sugar_lift_py_tests.proofir.formulas import formula_from_ir

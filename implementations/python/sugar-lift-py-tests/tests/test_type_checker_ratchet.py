@@ -20,7 +20,6 @@ PACKAGE_TARGETS: dict[str, Path] = {
     "effect": SRC / "effect",
     "context": SRC / "context",
     "sugar_body": SRC / "sugar_body",
-    "constraint_flow": SRC / "constraint_flow",
     "temporal": SRC / "temporal",
     "audit_only": SRC / "audit_only",
     "operations": SRC / "operations",
@@ -28,7 +27,6 @@ PACKAGE_TARGETS: dict[str, Path] = {
     "idd": SRC / "idd",
     "lift": SRC / "lift",
     "kit_rpc": SRC / "kit_rpc",
-    "factory": SRC / "factory",
 }
 
 
@@ -39,7 +37,6 @@ EXPECTED_PYRIGHT_ERRORS: dict[str, int] = {
     "effect": 0,
     "context": 0,
     "sugar_body": 0,
-    "constraint_flow": 0,
     "temporal": 0,
     "audit_only": 0,
     "operations": 0,
@@ -47,7 +44,6 @@ EXPECTED_PYRIGHT_ERRORS: dict[str, int] = {
     "idd": 0,
     "lift": 0,
     "kit_rpc": 0,
-    "factory": 0,
 }
 
 

@@ -366,11 +366,15 @@ def test_numpy_add_literal_call_reduces_to_sibling_fact(tmp_path: Path) -> None:
 
 
 def test_computed_sibling_is_structurally_derived() -> None:
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.floor import InvValue
     from sugar_lift_py_tests.ir import eq, num
 
-    site = SourceFragment.from_source("assert 2 == 2\n", "vendor.py").statements()[0]
+    class _Site:
+        filename = "vendor.py"
+        line = 1
+        col = 0
+
+    site = _Site()
     inv = InvValue(
         eq(num(2), num(2)),
         site,
@@ -386,11 +390,15 @@ def test_computed_sibling_is_structurally_derived() -> None:
 
 
 def test_identical_stated_and_computed_equality_retains_both_warrants() -> None:
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.floor import InvValue
     from sugar_lift_py_tests.ir import eq, num
 
-    site = SourceFragment.from_source("assert 2 == 2\n", "vendor.py").statements()[0]
+    class _Site:
+        filename = "vendor.py"
+        line = 1
+        col = 0
+
+    site = _Site()
     formula = eq(num(2), num(2))
     inv = InvValue(formula, site, derived_formulas=(formula,))
 

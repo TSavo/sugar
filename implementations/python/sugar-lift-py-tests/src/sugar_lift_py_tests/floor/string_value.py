@@ -5,7 +5,7 @@ import math
 from typing import TYPE_CHECKING, NoReturn, cast
 
 from .floor_value import FloorValue
-from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
+from sugar_lift_py_tests.gap.audit_row import FactoryAuditStatus
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context import FactoryBuildContext
@@ -151,7 +151,7 @@ class StringValue(FloorValue):
                     for bound in bounds
                 )
                 if step == 0:
-                    from sugar_lift_py_tests.factory import factory_panic_gap
+                    from sugar_lift_py_tests.gap.panic import factory_panic_gap
 
                     factory_panic_gap(
                         owner="StringValue.subscript",
@@ -691,13 +691,9 @@ def _call_method_gap(
     requested: str,
     fix: str,
 ) -> NoReturn:
-    from sugar_lift_py_tests.factory import (
-        FactoryAuditRow,
-        factory_panic,
-        FactoryGapInfo,
-        GapKind,
-        GapLocus,
-    )
+    from sugar_lift_py_tests.gap.panic import factory_panic
+    from sugar_lift_py_tests.gap.audit_row import FactoryAuditRow
+    from sugar_lift_py_tests.gap.info import FactoryGapInfo, GapKind, GapLocus
 
     info = FactoryGapInfo(
         owner=owner,

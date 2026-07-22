@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from sugar_lift_py_tests.factory import factory_panic_gap
+from sugar_lift_py_tests.gap.panic import factory_panic_gap
 from sugar_lift_py_tests import lift_rpc
 
 

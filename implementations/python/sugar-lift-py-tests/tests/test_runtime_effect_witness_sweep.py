@@ -72,11 +72,15 @@ def test_every_runtime_effect_constructor_wrong_twin_refutes() -> None:
         runtime_effect_evidence,
         runtime_effect_evidence_from_terms,
     )
-    from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
+    from sugar_lift_py_tests.gap.panic import FactoryPanic
     from sugar_lift_py_tests.ir import ctor, num
 
-    site = SourceFragment.from_source("effect()", "wrong_twin.py")
+    class _Site:
+        filename = "wrong_twin.py"
+        line = 1
+        col = 0
+
+    site = _Site()
     sites = list(_runtime_effect_constructor_sites())
     assert sites, "the total invariant must enumerate live constructor sites"
     for path, node in sites:
@@ -120,10 +124,14 @@ def test_runtime_effect_operand_has_no_default() -> None:
 
 def test_runtime_effect_witness_cannot_be_built_from_ground_gap_operands() -> None:
     from sugar_lift_py_tests.effect import RuntimeOperand, runtime_effect_witness
-    from sugar_lift_py_tests.factory.source_fragment import SourceFragment
     from sugar_lift_py_tests.ir import ctor, num, str_const
 
-    site = SourceFragment.from_source("x = 1", "x.py")
+    class _Site:
+        filename = "x.py"
+        line = 1
+        col = 0
+
+    site = _Site()
     for term in (
         num(0),
         str_const("no reduced floor semantics"),
@@ -145,7 +153,7 @@ def test_runtime_effect_witness_cannot_be_built_from_ground_gap_operands() -> No
 
 
 def test_no_runtime_effect_witness_helper_passes_a_string_locus_literal() -> None:
-    """String loci are fabricated addresses — the door demands SourceFragment."""
+    """String loci are fabricated addresses — the door demands RuntimeEffectSite."""
     fabricated: list[str] = []
     for path in PACKAGE.rglob("*.py"):
         tree = ast.parse(path.read_text())

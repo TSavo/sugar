@@ -31,13 +31,9 @@ class ClassValue(FloorValue):
         return value.python_isinstance(self.name, self.to_term(owner=self.name), site)
 
     def subscript(self, index, site):
-        from sugar_lift_py_tests.recognition.class_value import (
-            class_value_supports_generic_subscription,
-        )
-
-        if class_value_supports_generic_subscription(self):
-            return self.py_subscript_coordinate(index, site)
-        return super().subscript(index, site)
+        # Generic class subscript (Class[T]) is a type coordinate, not a dig.
+        # Recognition-era subscription tables are gone; emit the coordinate.
+        return self.py_subscript_coordinate(index, site)
 
     def contribution(self):
         # Splice body entries (methods, assigns) into the enclosing record.

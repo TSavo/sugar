@@ -12,7 +12,7 @@ def ground_exception_exit(*, exception_name: str, site) -> Outcome:
     from pathlib import Path
 
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.factory import factory_panic_gap
+    from sugar_lift_py_tests.gap.panic import factory_panic_gap
     from sugar_lift_py_tests.floor import ExceptionValue, RaiseValue
     from sugar_lift_py_tests.outcome import Complete
 

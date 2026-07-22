@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
+from sugar_lift_py_tests.gap.panic import FactoryPanic
 from sugar_lift_py_tests.floor import PredicateValue, SymbolicValue
 from sugar_lift_py_tests.ir import (
     Int,
