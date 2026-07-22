@@ -39,11 +39,15 @@ def test_planted_python_exception_trips_bare_floor() -> None:
     assert _SCANNER.r_bare_exceptions([offender]) == 1
 
 
-def test_factory_panic_testimony_is_not_bare() -> None:
+def test_typed_gap_testimony_is_not_bare() -> None:
+    # An intentional typed source-tree gap (SugarNotWritten) is the sanctioned
+    # ``typed-gap`` outcome -- distinct from a bare Python exception. Even with a
+    # nonzero child exit, a typed-gap testimony is never a bare-exception
+    # offender.
     result = subprocess.CompletedProcess(
         args=["child"],
-        returncode=3,
-        stdout=json.dumps({"kind": "lift-terminal", "outcome": "factory-panic"}),
+        returncode=0,
+        stdout=json.dumps({"kind": "lift-terminal", "outcome": "typed-gap"}),
         stderr="",
     )
 

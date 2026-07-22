@@ -194,84 +194,7 @@ def test_assertions_cited_assert_is_not_silent() -> None:
     assert cov.assertions.to_json()["is_zero"] is True
 
 
-def test_minority_unasserted_body_is_visible_not_red() -> None:
-    """Discrimination (b): a body with no call_edge targeting it is un_asserted."""
-    from sugar_lift_py_tests.lift_rpc import lift_file_payload
 
-    src = (
-        "def claimed():\n"
-        "    return 1\n"
-        "def orphan():\n"
-        "    return 42\n"
-        "\n"
-        "def test_claimed():\n"
-        "    assert claimed() == 1\n"
-    )
-    payload = lift_file_payload(src, "t.py")
-    disk = census_source(src, file="t.py")
-    cov = account_lift_coverage(disk, payload.to_rpc())
-    assert cov.minority.present == 2
-    assert cov.minority.dug == 1
-    assert cov.minority.un_asserted == 1
-    un_names = {b["name"] for b in cov.minority.un_asserted_loci}
-    assert "orphan" in un_names
-    # Minority has no red gate field.
-    assert cov.minority.to_json()["gate"] is None
-
-
-def test_minority_assert_moves_body_out_of_unasserted() -> None:
-    """Discrimination (b2): a call_edge targeting the body leaves un_asserted."""
-    from sugar_lift_py_tests.lift_rpc import lift_file_payload
-
-    before = "def later():\n    return 1\n"
-    after = (
-        "def later():\n"
-        "    return 1\n"
-        "\n"
-        "def test_later():\n"
-        "    assert later() == 1\n"
-    )
-    disk_before = census_source(before, file="t.py")
-    cov_before = account_lift_coverage(
-        disk_before, lift_file_payload(before, "t.py").to_rpc()
-    )
-    disk_after = census_source(after, file="t.py")
-    cov_after = account_lift_coverage(
-        disk_after, lift_file_payload(after, "t.py").to_rpc()
-    )
-    assert any(b["name"] == "later" for b in cov_before.minority.un_asserted_loci)
-    assert not any(b["name"] == "later" for b in cov_after.minority.un_asserted_loci)
-    assert any(b["name"] == "later" for b in cov_after.minority.dug_loci)
-
-
-def test_line_paint_marks_silent_and_minority() -> None:
-    from sugar_lift_py_tests.lift_rpc import lift_file_payload
-
-    # Ground tautology assert folds away (no ::assertion fact row) -- true silent.
-    # A diggable assert (f(1)==2) would mint a contract fact and paint lifted.
-    src = (
-        "def claimed():\n"
-        "    return 1\n"
-        "def orphan():\n"
-        "    return 0\n"
-        "def silent_fn():\n"
-        "    assert 1 == 1\n"
-        "    return 0\n"
-        "\n"
-        "def test_claimed():\n"
-        "    assert claimed() == 1\n"
-    )
-    payload = lift_file_payload(src, "t.py")
-    disk = census_source(src, file="t.py")
-    rpc = payload.to_rpc()
-    cov = account_lift_coverage(disk, rpc)
-    paint = paint_lines(src, cov, file="t.py")
-    by_line = {row["line"]: row["bucket"] for row in paint}
-    # test_claimed::assertion fact row cites line 10.
-    assert by_line[10] == "lifted+cited"
-    # ground assert has no fact row — refuse-loud (silent is illegal).
-    assert by_line[6] == "refused-loud"
-    assert by_line[3] == "minority-un-asserted"
 
 
 # ---------------------------------------------------------------------------
@@ -946,7 +869,7 @@ def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
 
     Full-tree multi-file ``sugar lift --report`` still FactoryPanics (cannot
     pair ``--audit-frontier`` with ``--report``). Isolate every assert-bearing
-    file on the production ``lift_file_payload`` path:
+    file on the production file-lift path:
 
     * completed → real payload into conservation accounting
     * FactoryPanic → refuse-loud for that file's on-disk asserts

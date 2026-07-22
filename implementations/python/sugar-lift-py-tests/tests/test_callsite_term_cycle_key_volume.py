@@ -4,7 +4,7 @@ Product residual after #5449 (exact-nine last hard timeout):
 ``sklearn/utils/tests/test_stats.py`` · ``reduce_body`` · tip ``AddOpSugar``
 @ ``sklearn/utils/stats.py:205`` (``array[...] + array[...]``).
 
-Profile under ``term_intern_scope`` / product ``lift_file_payload``:
+Profile under ``term_intern_scope`` / product file lift:
 
   - ``AddOpSugar.desugar`` only twice, ~5s each
   - wall: ``CallSiteValue.add`` → ``_dig_or_symbolic_binop`` → dig cycle
