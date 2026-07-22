@@ -7,7 +7,14 @@ from typing import Any, Generic, Mapping, TypeVar
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.ir import Formula as IrFormula
 from sugar_lift_py_tests.ir import Term as IrTerm
-from sugar_lift_py_tests.ir import _Atomic, _Connective, _Ctor, _Quantifier, _Var
+from sugar_lift_py_tests.ir import (
+    _Atomic,
+    _Connective,
+    _Ctor,
+    _Lambda,
+    _Quantifier,
+    _Var,
+)
 from sugar_lift_py_tests.ir import and_ as ir_and
 from sugar_lift_py_tests.ir import eq as ir_eq
 from sugar_lift_py_tests.ir import formula_to_value
@@ -173,6 +180,8 @@ def _free_vars_in_ir_term(
         result = frozenset().union(
             *(_free_vars_in_ir_term(arg, memo) for arg in ir_term.args)
         )
+    elif isinstance(ir_term, _Lambda):
+        result = _free_vars_in_ir_term(ir_term.body, memo) - {ir_term.param_name}
     else:
         result = frozenset()
     memo[id(ir_term)] = result

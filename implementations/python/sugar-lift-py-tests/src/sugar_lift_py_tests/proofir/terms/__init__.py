@@ -10,6 +10,7 @@ from sugar_lift_py_tests.ir import (
     _ConstReal,
     _ConstStr,
     _Ctor,
+    _Lambda,
     _Var,
     PrimitiveSort,
     bool_const,
@@ -168,6 +169,22 @@ def term_from_ir(ir_term: IrTerm, *, sort: Sort | None = None) -> Term[Any]:
                 *(_free_vars_in_ir_term(arg) for arg in ir_term.args)
             ),
         )
+    if isinstance(ir_term, _Lambda):
+        if sort is None:
+            sort = Sort(
+                name="LegacyLambda",
+                ir_sort=PrimitiveSort("LegacyLambda"),
+            )
+        body_free_vars = _free_vars_in_ir_term(ir_term.body)
+        free_vars = body_free_vars - {ir_term.param_name}
+        free_var_sorts = {name: sort for name in body_free_vars}
+        free_var_sorts.pop(ir_term.param_name, None)
+        return WrappedTerm(
+            ir_term,
+            sort=sort,
+            free_vars=free_vars,
+            free_var_sorts=free_var_sorts,
+        )
     proofir_construction_gap(
         owner="proofir.terms.term_from_ir",
         observed=type(ir_term).__name__,
@@ -215,6 +232,8 @@ def _free_vars_in_ir_term(ir_term: IrTerm) -> frozenset[str]:
         return frozenset({ir_term.name})
     if isinstance(ir_term, _Ctor):
         return frozenset().union(*(_free_vars_in_ir_term(arg) for arg in ir_term.args))
+    if isinstance(ir_term, _Lambda):
+        return _free_vars_in_ir_term(ir_term.body) - {ir_term.param_name}
     return frozenset()
 
 

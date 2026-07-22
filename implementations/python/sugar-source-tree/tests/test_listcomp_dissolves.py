@@ -49,9 +49,10 @@ def test_undecidable_filtered_comprehension_stays_loud():
         _fn("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n").sugar()
 
 
-def test_symbolic_comprehension_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A(xs):\n    return [x for x in xs]\n").sugar()
+def test_symbolic_comprehension_builds_coordinate():
+    t = _out("def A(xs):\n    return [x for x in xs]\n")
+    assert t.name == "py.listcomp"
+    assert t.args[0].name == "xs"
 
 
 if __name__ == "__main__":

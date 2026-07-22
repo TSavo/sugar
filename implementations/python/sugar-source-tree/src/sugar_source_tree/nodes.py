@@ -84,6 +84,7 @@ class _ConditionalRaiseRoute:
     test: "Node"
     raised_on_true: bool
     exception_name: str
+_NESTED_COMPREHENSION_TEMPLATE = object()
 
 
 @dataclass(frozen=True)
@@ -3078,13 +3079,20 @@ class ListComp(Expression):
         `[e for x in [1, 2, 3]]` is three substitutions of x into e, and the
         comprehension rewrites to the List DISPLAY of those elements. The
         comprehension was never a meaning; it was a count of rewrites."""
-        unrolled = self._try_unroll_to_display(scope)
+        unrolled = (
+            None
+            if scope.get(_NESTED_COMPREHENSION_TEMPLATE)
+            else self._try_unroll_to_display(scope)
+        )
         if unrolled is not None:
             return unrolled
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
-        new_elt, de = self._substitute_field(self.elt, inner)
+        template_scope = inner
+        if ListComp._contains_forbidden_shape(self, (self.elt,)):
+            template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
+        new_elt, de = self._substitute_field(self.elt, template_scope)
         changed = {}
         if gc:
             changed["generators"] = new_gens
@@ -3190,6 +3198,33 @@ class ListComp(Expression):
             self.unit, ShadowNode("List", self.span, slots), self.reporter
         )
 
+    def _construct_sugar(self):
+        gen = ListComp._simple_generator(self)
+        if gen is None or ListComp._contains_forbidden_shape(self, (self.elt,)):
+            return super()._construct_sugar()
+        from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
+
+        return ComprehensionSugar(
+            kind="py.listcomp",
+            target=gen.target.id,
+            iterable=gen.iter.sugar(),
+            element=self.elt.sugar(),
+            site=self.fragment,
+        )
+
+    def _simple_generator(self):
+        if len(self.generators) != 1:
+            return None
+        gen = self.generators[0]
+        if (
+            gen.is_async
+            or gen.ifs
+            or gen.target.kind != "Name"
+            or ListComp._contains_forbidden_shape(self, (gen.iter,))
+        ):
+            return None
+        return gen
+
 
 class SetComp(Expression):
     elt: Expression
@@ -3199,13 +3234,20 @@ class SetComp(Expression):
     def substitute(self, scope):
         """A comprehension: thread each generator's target, then substitute the
         element against the scope with every target masked."""
-        display = self._try_unroll_to_display(scope)
+        display = (
+            None
+            if scope.get(_NESTED_COMPREHENSION_TEMPLATE)
+            else self._try_unroll_to_display(scope)
+        )
         if display is not None:
             return display
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
-        new_elt, de = self._substitute_field(self.elt, inner)
+        template_scope = inner
+        if ListComp._contains_forbidden_shape(self, (self.elt,)):
+            template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
+        new_elt, de = self._substitute_field(self.elt, template_scope)
         changed = {}
         if gc:
             changed["generators"] = new_gens
@@ -3257,6 +3299,20 @@ class SetComp(Expression):
             self.unit, ShadowNode("Set", self.span, slots), self.reporter
         )
 
+    def _construct_sugar(self):
+        gen = ListComp._simple_generator(self)
+        if gen is None or ListComp._contains_forbidden_shape(self, (self.elt,)):
+            return super()._construct_sugar()
+        from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
+
+        return ComprehensionSugar(
+            kind="py.setcomp",
+            target=gen.target.id,
+            iterable=gen.iter.sugar(),
+            element=self.elt.sugar(),
+            site=self.fragment,
+        )
+
 
 class DictComp(Expression):
     key: Expression
@@ -3267,17 +3323,24 @@ class DictComp(Expression):
     def substitute(self, scope):
         """A dict comprehension: thread the generators, then key and value
         against the scope with every target masked."""
-        display = self._try_unroll_to_display(scope)
+        display = (
+            None
+            if scope.get(_NESTED_COMPREHENSION_TEMPLATE)
+            else self._try_unroll_to_display(scope)
+        )
         if display is not None:
             return display
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
+        template_scope = inner
+        if ListComp._contains_forbidden_shape(self, (self.key, self.value)):
+            template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
         changed = {}
         if gc:
             changed["generators"] = new_gens
         for fld in ("key", "value"):
-            new, d = self._substitute_field(getattr(self, fld), inner)
+            new, d = self._substitute_field(getattr(self, fld), template_scope)
             if d:
                 changed[fld] = new
         return self if not changed else rewrite(self, **changed)
@@ -3342,6 +3405,23 @@ class DictComp(Expression):
             self.reporter,
         )
 
+    def _construct_sugar(self):
+        gen = ListComp._simple_generator(self)
+        if gen is None or ListComp._contains_forbidden_shape(
+            self, (self.key, self.value)
+        ):
+            return super()._construct_sugar()
+        from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
+
+        return ComprehensionSugar(
+            kind="py.dictcomp",
+            target=gen.target.id,
+            iterable=gen.iter.sugar(),
+            key=self.key.sugar(),
+            element=self.value.sugar(),
+            site=self.fragment,
+        )
+
 
 class GeneratorExp(Expression):
     elt: Expression
@@ -3354,13 +3434,30 @@ class GeneratorExp(Expression):
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
-        new_elt, de = self._substitute_field(self.elt, inner)
+        template_scope = inner
+        if ListComp._contains_forbidden_shape(self, (self.elt,)):
+            template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
+        new_elt, de = self._substitute_field(self.elt, template_scope)
         changed = {}
         if gc:
             changed["generators"] = new_gens
         if de:
             changed["elt"] = new_elt
         return self if not changed else rewrite(self, **changed)
+
+    def _construct_sugar(self):
+        gen = ListComp._simple_generator(self)
+        if gen is None or ListComp._contains_forbidden_shape(self, (self.elt,)):
+            return super()._construct_sugar()
+        from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
+
+        return ComprehensionSugar(
+            kind="py.generatorexp",
+            target=gen.target.id,
+            iterable=gen.iter.sugar(),
+            element=self.elt.sugar(),
+            site=self.fragment,
+        )
 
 class Await(Expression):
     value: Expression
