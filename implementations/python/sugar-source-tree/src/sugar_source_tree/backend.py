@@ -58,9 +58,16 @@ def materialize(
     every field access on it is a fresh query through ``ref.describe()``.
     The reporter is threaded here so EVERY constructed node carries one and
     hands it on to the children it later resolves.
+
+    THE construction event IS the registration: the node registers on the roll
+    through its reporter here, so being constructed is being on the roster. A
+    node cannot come into existence off the roll -- that is what it means to be
+    an AST node.
     """
     cls = ref.resolve_type()
-    return cls(unit=unit, ref=ref, reporter=reporter)
+    node = cls(unit=unit, ref=ref, reporter=reporter)
+    reporter.register(node)
+    return node
 
 
 @dataclass(frozen=True)

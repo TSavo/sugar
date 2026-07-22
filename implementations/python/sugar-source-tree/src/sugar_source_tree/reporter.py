@@ -31,31 +31,63 @@ if TYPE_CHECKING:  # pragma: no cover
 
 @runtime_checkable
 class AuditReporter(Protocol):
-    """You may tell me a node had no sugar. I decide nothing."""
+    """The roll call every AST node carries. Construction of the node is the
+    REGISTRATION (``register`` -- the node shows up on the roll); desugaring is
+    the DISCHARGE, which answers with exactly one of ``present_fact`` /
+    ``present_inert`` (showed up) or ``report_gap`` (SugarNotWritten -- the loud
+    absent). The reporter witnesses; it decides nothing. Because the node holds
+    this, ``node.sugar()`` reads it off ``self`` and hands it to the sugar it
+    builds -- no interface is threaded through construction; it is carried."""
 
+    def register(self, node: "Node") -> None: ...
+    def present_fact(self, node: "Node") -> None: ...
+    def present_inert(self, node: "Node") -> None: ...
     def report_gap(self, node: "Node", panic: "SugarNotWritten") -> None: ...
 
 
 class NullReporter:
-    """Reports nowhere. The default a node carries when no one is auditing."""
+    """Answers nowhere. Explicitly carried where no report is being built."""
 
     __slots__ = ()
+
+    def register(self, node: "Node") -> None:
+        return None
+
+    def present_fact(self, node: "Node") -> None:
+        return None
+
+    def present_inert(self, node: "Node") -> None:
+        return None
 
     def report_gap(self, node: "Node", panic: "SugarNotWritten") -> None:
         return None
 
 
 class CollectingReporter:
-    """Accumulates every reported gap in walk order. An audit walk holds one.
+    """Accumulates the roll: every registered node, and each node's discharge.
 
-    ``gaps`` is the frontier: the (node, panic) pair for each unwritten
-    sugar the walk reached. ``len(gaps)`` is R.
+    ``registered`` is the roster (every node constructed while this reporter was
+    carried). ``gaps`` is the loud-absent discharge. ``present`` maps a node to
+    its present answer. The minority is ``registered`` minus ``present`` --
+    ``len(gaps)`` is the loud part of R; a registered node with no discharge at
+    all is the silent part, which the required interface makes unrepresentable.
     """
 
-    __slots__ = ("gaps",)
+    __slots__ = ("gaps", "registered", "present")
 
     def __init__(self) -> None:
         self.gaps: List[Tuple["Node", "SugarNotWritten"]] = []
+        self.registered: List["Node"] = []
+        self.present: dict[int, str] = {}
+
+    def register(self, node: "Node") -> None:
+        self.registered.append(node)
+
+    def present_fact(self, node: "Node") -> None:
+        self.present[id(node)] = "present-fact"
+
+    def present_inert(self, node: "Node") -> None:
+        self.present[id(node)] = "present-inert"
 
     def report_gap(self, node: "Node", panic: "SugarNotWritten") -> None:
         self.gaps.append((node, panic))
