@@ -8,7 +8,7 @@ import tempfile
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import SugarNotWritten
+from sugar_source_tree.panic import RuntimeSelectedContextManager, SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -86,8 +86,15 @@ def test_suppress_non_match_propagates():
 
 
 def test_unauthenticated_manager_stays_loud():
-    with pytest.raises(SugarNotWritten):
+    # Named residual (step 4): RuntimeSelectedContextManager, not bare
+    # SugarNotWritten — census can count resource managers separately.
+    with pytest.raises(RuntimeSelectedContextManager) as ei:
         _fn("def A(z):\n    with open(z):\n        pass\n    return z\n").sugar()
+    assert isinstance(ei.value, SugarNotWritten)
+    assert (
+        "unauthenticated context manager — exit suppression runtime-selected"
+        in ei.value.observed
+    )
 
 
 def test_as_witness_admits_and_discharges():
