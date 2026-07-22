@@ -2575,19 +2575,18 @@ class Lambda(Expression):
     _child_fields = ("params", "body")
 
     def substitute(self, scope):
-        """lambda <params>: masks its parameters for the body expression."""
+        """Mask formals and mark the result as substitution-authenticated."""
         from .shadow import rewrite
 
         bound = {p.name for p in self.params}
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
-        changed = {}
         new_params, d = self._substitute_field(self.params, scope)
-        if d:
-            changed["params"] = new_params
+        del d
         new_body, d = self._substitute_field(self.body, bs)
-        if d:
-            changed["body"] = new_body
-        return self if not changed else rewrite(self, **changed)
+        del d
+        # Always rewrite, even when the children are identical.  A ShadowNode
+        # is the construction-time testimony that capture substitution ran.
+        return rewrite(self, params=new_params, body=new_body)
 
     def _construct_sugar(self):
         """Construct only plain positional-or-keyword expression lambdas.
@@ -2595,7 +2594,9 @@ class Lambda(Expression):
         Every other binding role remains loud.  The body constructs through its
         own node so an unsupported child preserves that child's exact panic.
         """
-        if len(self.params) != 1 or any(
+        from .shadow import ShadowNode
+
+        if not isinstance(self.ref, ShadowNode) or len(self.params) != 1 or any(
             param.param_kind != "positional_or_keyword"
             or param.default is not None
             or param.annotation is not None

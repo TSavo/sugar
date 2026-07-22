@@ -11,10 +11,9 @@ from .term_value import TermValue
 class LambdaCallable(FloorValue):
     """In-source lambda floor: parameters + body SugarBody for dig/apply.
 
-    ``to_term`` is a *callable identity* coordinate
-    ``python:lambda(<param>, ..., <body>)``. The source tree has already masked
-    formals and substituted authenticated lexical captures before constructing
-    the body sugar, so its term is a faithful callable body, not reconstruction.
+    ``to_term`` is an opaque callable identity coordinate containing parameter
+    names only.  ``python:lambda`` is an ordinary ctor in ProofIR, not a binder;
+    placing the body beneath it would leak formal variables into global scope.
     """
 
     parameters: tuple[str, ...]
@@ -39,9 +38,6 @@ class LambdaCallable(FloorValue):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
 
-        from sugar_lift_py_tests.outcome import complete_value
-
-        body_value = complete_value(self.body.desugar(), owner="LambdaCallable")
         default_offset = len(self.parameters) - len(self.default_values)
         encoded_parameters = []
         for index, parameter in enumerate(self.parameters):
@@ -78,17 +74,10 @@ class LambdaCallable(FloorValue):
                 )
         if self.kwarg_parameter is not None:
             encoded_parameters.append(str_const(f"**{self.kwarg_parameter}"))
-        return ctor(
-            "python:lambda",
-            [
-                *encoded_parameters,
-                body_value.to_term(owner="LambdaCallable.body"),
-            ],
-        )
+        return ctor("python:lambda", encoded_parameters)
 
     def apply(self, value: TermValue, ctx):
         from sugar_lift_py_tests.outcome import Incomplete, complete_value
-        from sugar_lift_py_tests.temporal import bind_temporal
 
         if (
             len(self.parameters) != 1
@@ -102,17 +91,17 @@ class LambdaCallable(FloorValue):
                 f"vararg={self.vararg_parameter!r}, "
                 f"kwarg={self.kwarg_parameter!r}"
             )
-        next_ctx = bind_temporal(
-            ctx,
-            self.parameters[0],
-            value,
-            owner="LambdaCallable",
-            blame="<lambda>",
-        )
-        outcome = self.body.desugar(next_ctx)
+        outcome = self.body.desugar(ctx)
         if isinstance(outcome, Incomplete):
             return outcome
         result = complete_value(outcome, owner="LambdaCallable")
-        if not isinstance(result, TermValue):
-            raise TypeError("LambdaCallable body must reduce to TermValue")
-        return result
+        from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.ir import subst_var_in_term
+
+        return SymbolicValue(
+            subst_var_in_term(
+                result.to_term(owner="LambdaCallable.body"),
+                self.parameters[0],
+                value.to_term(owner="LambdaCallable.argument"),
+            )
+        )

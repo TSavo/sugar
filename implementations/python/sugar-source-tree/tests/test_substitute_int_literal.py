@@ -102,7 +102,10 @@ def test_binders_mask_their_bound_names():
     assert forfn.substitute({"x": _bind_target()}) is forfn
     # lambda z: z + 1 -- the parameter z is masked for the body.
     lam = next(n for n in _tree("g = lambda z: z + z\n").root.walk() if n.kind == "Lambda")
-    assert lam.substitute({"z": _bind_target()}) is lam
+    substituted_lambda = lam.substitute({"z": _bind_target()})
+    assert substituted_lambda is not lam  # shadow proves substitution ran
+    assert substituted_lambda.body.left.id == "z"
+    assert substituted_lambda.body.right.id == "z"
     # [i for i in xs] -- the comprehension loop var i is masked (no capture);
     # a free var in the element substitutes.
     c1 = next(n for n in _tree("a = [i for i in xs]\n").root.walk() if n.kind == "ListComp")
