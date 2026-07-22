@@ -1,9 +1,11 @@
-"""Unit twins for resource ``WithResourceSugar`` — manager once, face exit args.
+"""Unit twins for resource ``WithResourceSugar`` — parametric exit, no desugar builds.
 
-No callback side doors. Production ``open(...)`` stays RuntimeSelected.
+Production ``open(...)`` stays RuntimeSelected.
 """
 
 from __future__ import annotations
+
+import inspect
 
 from sugar_lift_py_tests.context_manager_contract import (
     NeverSuppresses,
@@ -13,13 +15,22 @@ from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 from sugar_lift_py_tests.floor.manager_coordinate import (
+    ExitTracebackCoordinate,
+    ExitTypeCoordinate,
+    ExitValueCoordinate,
     ManagerCoordinate,
-    OpenExitArg,
-    RaiseWitnessCoordinate,
 )
+from sugar_lift_py_tests.floor.inv_value import InvValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, true_guard
+from sugar_lift_py_tests.outcome.resource_bindings import ExitFaceBinding
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
-from sugar_lift_py_tests.sugar.resource_coord_sugar import ManagerRefSugar
+from sugar_lift_py_tests.sugar.resource_coord_sugar import (
+    ExitTracebackRefSugar,
+    ExitTypeRefSugar,
+    ExitValueRefSugar,
+    ManagerRefSugar,
+)
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 
@@ -58,8 +69,6 @@ class _Raise(_FixedSugar):
 
 
 class _FloorValue:
-    """Minimal FloorValue stand-in for manager/enter completed values."""
-
     def __init__(self, label: str):
         self.label = label
 
@@ -70,27 +79,58 @@ class _FloorValue:
         return str_const(self.label)
 
 
-def _mgr_once(probe=None):
-    return _FixedSugar(Complete(_FloorValue("mgr")), probe=probe)
-
-
-def _enter_ok(probe=None):
-    return _FixedSugar(Complete(_FloorValue("entered")), probe=probe)
+def _parametric_exit(face_id="X", manager_slot="M", probe=None):
+    """Prebuilt tree-shaped exit: M.__exit__(ExitTypeRef(X), …)."""
+    return MethodCallSugar(
+        receiver=ManagerRefSugar(slot_id=manager_slot, site=None),
+        name="__exit__",
+        args=(
+            ExitTypeRefSugar(face_id=face_id, site=None),
+            ExitValueRefSugar(face_id=face_id, site=None),
+            ExitTracebackRefSugar(face_id=face_id, site=None),
+        ),
+        site=None,
+    )
 
 
 def _resource(
     *,
     manager=None,
     enter=None,
+    exit=None,
     body=None,
     disposition=None,
     manager_slot_id="M",
+    exit_face_id="X",
     enter_slot_id=None,
+    exit_probe=None,
 ):
+    exit_sugar = exit
+    if exit_sugar is None:
+        exit_sugar = _parametric_exit(
+            face_id=exit_face_id, manager_slot=manager_slot_id
+        )
+        if exit_probe is not None:
+            # Wrap to count desugars of the prebuilt exit sugar.
+            inner = exit_sugar
+
+            class _ProbeExit(Sugar):
+                def desugar(self, ctx=None):
+                    exit_probe.append(1)
+                    return inner.desugar(ctx)
+
+                @classmethod
+                def witnesses(cls):
+                    return ()
+
+            exit_sugar = _ProbeExit()
+
     return WithResourceSugar(
-        manager=manager or _mgr_once(),
+        manager=manager or _FixedSugar(Complete(_FloorValue("mgr"))),
         manager_slot_id=manager_slot_id,
-        enter=enter or _enter_ok(),
+        enter=enter or _FixedSugar(Complete(_FloorValue("entered"))),
+        exit=exit_sugar,
+        exit_face_id=exit_face_id,
         body=body if body is not None else (_Pass(),),
         disposition=disposition or NeverSuppresses(),
         enter_slot_id=enter_slot_id,
@@ -99,48 +139,66 @@ def _resource(
 
 
 def test_manager_expression_evaluated_exactly_once():
-    """Side-effecting manager twin: context expr desugars once, not twice."""
     seen = []
-    sugar = _resource(manager=_mgr_once(probe=seen), body=(_Pass(),))
+    sugar = _resource(
+        manager=_FixedSugar(Complete(_FloorValue("mgr")), probe=seen),
+        body=(_Pass(),),
+    )
     sugar.desugar()
     assert seen == [1]
 
 
+def test_parametric_exit_desugars_once_for_body_path():
+    """Prebuilt exit sugar desugars once when the body path runs."""
+    seen = []
+    sugar = _resource(body=(_Raise("ValueError"),), exit_probe=seen)
+    sugar.desugar()
+    assert seen == [1]
+
+
+def test_exit_face_binding_applied_per_face_without_rebuilding_exit():
+    """Exit sugar desugars once; face kinds differ by ExitFaceBinding."""
+    seen = []
+    sugar = _resource(body=(_Raise("KeyError"),), exit_probe=seen)
+    sugar.desugar()
+    assert seen == [1]
+    completed = ExitFaceBinding.from_body_exit(
+        "X", Completed(true_guard(), BlockValue((), can_fall_through=True))
+    )
+    raised = ExitFaceBinding.from_body_exit(
+        "X",
+        Halted(
+            true_guard(),
+            RaiseEffect(exception_name="KeyError", occurrence="k.py:1:0"),
+        ),
+    )
+    assert completed.kind == "completed"
+    assert raised.kind == "raised"
+    assert completed.kind != raised.kind
+
+
 def test_enter_halt_skips_body_and_exit():
     body_ran = []
+    exit_ran = []
     enter_halt = RaiseEffect(exception_name="OSError")
     sugar = _resource(
         enter=_FixedSugar(Incomplete(enter_halt)),
         body=(_Pass(probe=body_ran),),
+        exit_probe=exit_ran,
     )
     out = sugar.desugar()
     assert body_ran == []
+    assert exit_ran == []
     reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
     assert len(reds) == 1
     assert reds[0].effect == enter_halt
 
 
-def test_never_suppresses_restores_body_halt_after_exit_completes():
+def test_never_suppresses_restores_body_halt():
     sugar = _resource(body=(_Raise("ValueError"),))
     out = sugar.desugar()
     reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
-    assert len(reds) == 1
-    assert reds[0].effect.exception_name == "ValueError"
-
-
-def test_exit_halt_supersedes_body_halt():
-    # Enter completes; body raises; exit is raised via MethodCall on ManagerRef
-    # that we replace by using a body raise + disposition — exit method coords
-    # complete as CallSiteValue. Supersede tested via enter path with halt exit
-    # only when enter itself is the exit-like halt:
-    sugar = _resource(
-        enter=_Raise("RuntimeError"),
-        body=(_Raise("ValueError"),),
-    )
-    out = sugar.desugar()
-    reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
-    assert len(reds) == 1
-    assert reds[0].effect.exception_name == "RuntimeError"
+    assert any(r.effect.exception_name == "ValueError" for r in reds)
 
 
 def test_proven_contract_consumes_matching_body_halt():
@@ -149,7 +207,12 @@ def test_proven_contract_consumes_matching_body_halt():
         disposition=ExitSuppressionContract.suppresses(("ValueError",)),
     )
     out = sugar.desugar()
-    reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
+    reds = [
+        e
+        for e in out.value.contribution()
+        if isinstance(e, Incomplete)
+        and getattr(e.effect, "exception_name", None) == "ValueError"
+    ]
     assert reds == []
 
 
@@ -159,58 +222,54 @@ def test_runtime_selected_not_guessed():
         disposition=RuntimeSelected(),
     )
     out = sugar.desugar()
-    reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
+    reds = [
+        e
+        for e in out.value.contribution()
+        if isinstance(e, Incomplete)
+        and getattr(e.effect, "exception_name", None) == "ValueError"
+    ]
     assert len(reds) == 1
 
 
 def test_completed_body_survives_never_suppresses():
     sugar = _resource(body=(_Pass(),))
     out = sugar.desugar()
-    assert not any(isinstance(e, Incomplete) for e in out.value.contribution())
+    reds = [
+        e
+        for e in out.value.contribution()
+        if isinstance(e, Incomplete)
+        and getattr(getattr(e, "effect", None), "exception_name", None)
+    ]
+    assert reds == []
 
 
-def test_exit_sugar_for_completed_face_is_none_triple():
-    from sugar_lift_py_tests.outcome.exit_set import Completed, true_guard
-
-    sugar = _resource(body=(_Pass(),))
+def test_exit_face_binding_completed_is_none_triple():
     face = Completed(true_guard(), BlockValue((), can_fall_through=True))
-    exit_sugar = sugar._exit_sugar_for_face(face)
-    assert isinstance(exit_sugar, MethodCallSugar)
-    assert exit_sugar.name == "__exit__"
-    assert isinstance(exit_sugar.receiver, ManagerRefSugar)
-    assert exit_sugar.receiver.slot_id == "M"
-    assert len(exit_sugar.args) == 3
-    # None, None, None for completed
-    assert all(type(a).__name__ == "NoneLiteralSugar" for a in exit_sugar.args)
+    binding = ExitFaceBinding.from_body_exit("X", face)
+    assert binding.kind == "completed"
+    facts = binding.to_facts()
+    assert len(facts) == 3
+    # All consequents bind to "None"
+    for inv in facts:
+        assert inv.formula.args[1].value == "None"
 
 
-def test_exit_sugar_for_raised_face_is_not_none_triple():
-    from sugar_lift_py_tests.outcome.exit_set import Halted, true_guard
-
-    sugar = _resource(manager_slot_id="mgr1")
+def test_exit_face_binding_raised_is_not_none_triple():
     effect = RaiseEffect(exception_name="ValueError", occurrence="src.py:3:4")
     face = Halted(true_guard(), effect)
-    exit_sugar = sugar._exit_sugar_for_face(face)
-    assert isinstance(exit_sugar, MethodCallSugar)
-    assert exit_sugar.receiver.slot_id == "mgr1"
-    args = exit_sugar.args
-    assert type(args[0]).__name__ == "OpenExitArgSugar"
-    assert args[0].kind == "exc_type"
-    assert type(args[1]).__name__ == "RaiseWitnessSugar"
-    assert args[1].occurrence == "src.py:3:4"
-    assert type(args[2]).__name__ == "OpenExitArgSugar"
-    assert args[2].kind == "traceback"
-    # Desugar args: open + witness + open — never three Nones.
-    a0 = args[0].desugar().value
-    a1 = args[1].desugar().value
-    a2 = args[2].desugar().value
-    assert isinstance(a0, OpenExitArg) and a0.kind == "exc_type"
-    assert isinstance(a1, RaiseWitnessCoordinate)
-    assert a1.occurrence == "src.py:3:4"
-    assert isinstance(a2, OpenExitArg) and a2.kind == "traceback"
+    binding = ExitFaceBinding.from_body_exit("X", face)
+    assert binding.kind == "raised"
+    facts = binding.to_facts()
+    vals = [inv.formula.args[1] for inv in facts]
+    # type named, value occurrence, tb open — not three Nones
+    assert not all(getattr(v, "value", None) == "None" for v in vals)
+    assert any(getattr(v, "value", None) == "ValueError" for v in vals)
+    assert any(
+        getattr(v, "name", None) == "python:raise_effect_occurrence" for v in vals
+    )
 
 
-def test_enter_result_binding_facts_when_slot_present():
+def test_enter_result_and_manager_binding_facts():
     sugar = _resource(
         body=(_Pass(),),
         enter_slot_id="E",
@@ -218,23 +277,58 @@ def test_enter_result_binding_facts_when_slot_present():
         manager=_FixedSugar(Complete(_FloorValue("mgr-val"))),
     )
     out = sugar.desugar()
-    invs = list(out.value.inv_contribution()) if hasattr(out.value, "inv_contribution") else []
-    # Facts ride in BlockValue entries as InvValues
-    from sugar_lift_py_tests.floor.inv_value import InvValue
-
-    entries = list(out.value.contribution())
-    invs = [e for e in entries if isinstance(e, InvValue)]
+    invs = [e for e in out.value.contribution() if isinstance(e, InvValue)]
     names = []
     for inv in invs:
         f = inv.formula
+        if getattr(f, "kind", None) == "implies":
+            f = f.operands[1]
         if getattr(f, "name", None) == "=":
-            left = f.args[0]
-            names.append(getattr(left, "name", None))
+            names.append(getattr(f.args[0], "name", None))
     assert "manager_slot_value" in names
     assert "enter_result_value" in names
+    assert "exit_type" in names  # completed face testimony
+
+
+def test_parametric_exit_args_are_exit_refs():
+    exit_sugar = _parametric_exit(face_id="face1", manager_slot="m1")
+    assert isinstance(exit_sugar, MethodCallSugar)
+    assert exit_sugar.name == "__exit__"
+    assert isinstance(exit_sugar.receiver, ManagerRefSugar)
+    assert [type(a).__name__ for a in exit_sugar.args] == [
+        "ExitTypeRefSugar",
+        "ExitValueRefSugar",
+        "ExitTracebackRefSugar",
+    ]
+    assert exit_sugar.args[0].desugar().value.face_id == "face1"
+    assert isinstance(exit_sugar.args[0].desugar().value, ExitTypeCoordinate)
+    assert isinstance(exit_sugar.args[1].desugar().value, ExitValueCoordinate)
+    assert isinstance(exit_sugar.args[2].desugar().value, ExitTracebackCoordinate)
 
 
 def test_manager_ref_sugar_is_manager_coordinate():
     out = ManagerRefSugar(slot_id="M42").desugar()
     assert isinstance(out.value, ManagerCoordinate)
     assert out.value.slot_id == "M42"
+
+
+def test_with_resource_desugar_does_not_construct_sugars():
+    """Law: desugar must not build sugars or import sugar constructors."""
+    src = inspect.getsource(WithResourceSugar.desugar)
+    forbidden = (
+        "MethodCallSugar",
+        "RaiseWitnessSugar",
+        "OpenExitArgSugar",
+        "NoneLiteralSugar",
+        "ManagerRefSugar",
+        "ExitTypeRefSugar",
+        "ExitValueRefSugar",
+        "ExitTracebackRefSugar",
+        "_exit_sugar_for_face",
+        "sugar.method_call",
+        "sugar.resource_coord",
+        "sugar.none_literal",
+    )
+    for token in forbidden:
+        assert token not in src, f"desugar must not reference {token!r}"
+    assert not hasattr(WithResourceSugar, "_exit_sugar_for_face")

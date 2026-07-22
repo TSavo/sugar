@@ -1,9 +1,9 @@
-"""Tree-native manager / enter-result / open-exit-arg coordinates.
+"""Tree-native manager / enter-result / exit-face coordinates.
 
 Manager is evaluated **once**; ``ManagerRef(M)`` is the stable receiver for
-``__enter__`` / ``__exit__``. Enter-result ``as`` uses ``EnterResultCoordinate``.
-Exceptional ``__exit__`` type/traceback holes stay ``OpenExitArg`` — never
-silently ``None``.
+``__enter__`` / ``__exit__``. Exit args are parametric
+``ExitTypeRef(X)`` / ``ExitValueRef(X)`` / ``ExitTracebackRef(X)`` — pure
+coordinates; face testimony authenticates them under guards.
 """
 
 from __future__ import annotations
@@ -40,41 +40,44 @@ class EnterResultCoordinate(FloorValue):
 
         return ctor("python:enter_result", [str_const(self.slot_id)])
 
-    def attribute(self, name, site):
-        # ``x`` itself is the enter result; no .value projection required.
-        return super().attribute(name, site)
-
 
 @dataclass(frozen=True)
-class OpenExitArg(FloorValue):
-    """Explicit red: exceptional ``__exit__`` arg not constructed.
+class ExitTypeCoordinate(FloorValue):
+    """Parametric ``__exit__`` type arg: ``python:exit_type(X)``."""
 
-    Kinds: ``exc_type`` | ``traceback``. Never invent ``None`` for these.
-    """
-
-    kind: str
+    face_id: str
     site: object = dataclass_field(compare=False, default=None)
 
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
 
-        return ctor("python:open_exit_arg", [str_const(self.kind)])
+        return ctor("python:exit_type", [str_const(self.face_id)])
 
 
 @dataclass(frozen=True)
-class RaiseWitnessCoordinate(FloorValue):
-    """Body raise witness for ``__exit__`` value arg (occurrence, not type-as-id)."""
+class ExitValueCoordinate(FloorValue):
+    """Parametric ``__exit__`` value arg: ``python:exit_value(X)``."""
 
-    occurrence: str
-    exception_name: str | None = None
+    face_id: str
     site: object = dataclass_field(compare=False, default=None)
 
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
 
-        return ctor(
-            "python:raise_effect_occurrence",
-            [str_const(self.occurrence)],
-        )
+        return ctor("python:exit_value", [str_const(self.face_id)])
+
+
+@dataclass(frozen=True)
+class ExitTracebackCoordinate(FloorValue):
+    """Parametric ``__exit__`` traceback arg: ``python:exit_traceback(X)``."""
+
+    face_id: str
+    site: object = dataclass_field(compare=False, default=None)
+
+    def to_term(self, *, owner: str):
+        del owner
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor("python:exit_traceback", [str_const(self.face_id)])

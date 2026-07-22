@@ -1,4 +1,8 @@
-"""Sugars for ManagerRef / open exit args / raise witnesses (resource with)."""
+"""Sugars for ManagerRef and parametric exit-arg refs (resource with).
+
+These are tree-materialized only. ``WithResourceSugar.desugar`` must not
+construct them.
+"""
 
 from __future__ import annotations
 
@@ -27,10 +31,10 @@ class ManagerRefSugar(Sugar):
 
 
 @dataclass(frozen=True)
-class OpenExitArgSugar(Sugar):
-    """Exceptional ``__exit__`` arg left explicitly open (type / tb / val)."""
+class ExitTypeRefSugar(Sugar):
+    """Tree ``ExitTypeRef(X)`` — pure parametric exit-type coordinate."""
 
-    kind: str
+    face_id: str
     site: object = dataclass_field(compare=False, default=None)
 
     @classmethod
@@ -39,17 +43,16 @@ class OpenExitArgSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx
-        from sugar_lift_py_tests.floor.manager_coordinate import OpenExitArg
+        from sugar_lift_py_tests.floor.manager_coordinate import ExitTypeCoordinate
 
-        return Complete(OpenExitArg(kind=self.kind, site=self.site))
+        return Complete(ExitTypeCoordinate(face_id=self.face_id, site=self.site))
 
 
 @dataclass(frozen=True)
-class RaiseWitnessSugar(Sugar):
-    """Body raise occurrence as ``__exit__`` exception-value argument."""
+class ExitValueRefSugar(Sugar):
+    """Tree ``ExitValueRef(X)`` — pure parametric exit-value coordinate."""
 
-    occurrence: str
-    exception_name: str | None = None
+    face_id: str
     site: object = dataclass_field(compare=False, default=None)
 
     @classmethod
@@ -58,12 +61,28 @@ class RaiseWitnessSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx
-        from sugar_lift_py_tests.floor.manager_coordinate import RaiseWitnessCoordinate
+        from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+
+        return Complete(ExitValueCoordinate(face_id=self.face_id, site=self.site))
+
+
+@dataclass(frozen=True)
+class ExitTracebackRefSugar(Sugar):
+    """Tree ``ExitTracebackRef(X)`` — pure parametric exit-traceback coordinate."""
+
+    face_id: str
+    site: object = dataclass_field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        del ctx
+        from sugar_lift_py_tests.floor.manager_coordinate import (
+            ExitTracebackCoordinate,
+        )
 
         return Complete(
-            RaiseWitnessCoordinate(
-                occurrence=self.occurrence,
-                exception_name=self.exception_name,
-                site=self.site,
-            )
+            ExitTracebackCoordinate(face_id=self.face_id, site=self.site)
         )
