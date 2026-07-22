@@ -81,11 +81,19 @@ def test_expects_wrong_effect_ground_false_and_incomplete_survives():
 def test_expects_unresolved_callsite_value_emits_opaque_obligation_no_absence_claim():
     site = _callsite()
     outcome = route((site,), Expects(EffectMatcher(kind="raise", name="ValueError")))
-    assert outcome.stated_facts == ()  # no InvValue fact -- no absence claimed
+    # The obligation IS a stated inv row (an InvValue -- a raw formula would
+    # crash the record); what is NOT stated is ABSENCE: the fact is the opaque
+    # py.effect.expected, never the ground-false equality.
+    assert len(outcome.stated_facts) == 1
+    assert outcome.stated_facts[0].formula == atomic(
+        "py.effect.expected", [str_const("ValueError")]
+    )
     assert site in outcome.entries
     obligation = [e for e in outcome.entries if e is not site]
     assert len(obligation) == 1
-    assert obligation[0] == atomic("py.effect.expected", [str_const("ValueError")])
+    assert obligation[0].formula == atomic(
+        "py.effect.expected", [str_const("ValueError")]
+    )
 
 
 def test_expects_unresolved_operand_callsites_on_inv_also_defers():
@@ -96,7 +104,8 @@ def test_expects_unresolved_operand_callsites_on_inv_also_defers():
     outcome = route(
         (inv_with_callsite,), Expects(EffectMatcher(kind="raise", name="ValueError"))
     )
-    assert outcome.stated_facts == ()
+    assert len(outcome.stated_facts) == 1
+    assert outcome.stated_facts[0].formula.name == "py.effect.expected"
     assert inv_with_callsite in outcome.entries
 
 

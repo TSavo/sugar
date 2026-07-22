@@ -1,0 +1,128 @@
+"""`with` under a typed contract (#5994 wiring): the membrane issues, the shared
+router routes, the node stays loud for everything unowned. The twin subset that
+is wireable today (resource expansion, `as` witnesses, warning-kind are later
+steps and stay loud)."""
+
+import tempfile
+
+import pytest
+
+from sugar_lift_python_source.source_oracle import path_source
+from sugar_source_tree.panic import SugarNotWritten
+from sugar_source_tree.tree import SourceFile
+
+
+def _val(src):
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
+        f.write(src)
+        path = f.name
+    return next(SourceFile(path_source(path)).functions()).sugar().desugar().value
+
+
+def _fn(src):
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
+        f.write(src)
+        path = f.name
+    return next(SourceFile(path_source(path)).functions())
+
+
+def test_expected_matching_raise_discharges_and_consumes():
+    v = _val(
+        "def A(z):\n    with pytest.raises(ValueError):\n        raise ValueError\n"
+        "    return z\n"
+    )
+    inv = v.invs()[0]
+    assert inv.name == "="  # ground-true eq(ValueError, ValueError)
+    assert inv.args[0].value == inv.args[1].value == "ValueError"
+    assert v.post().args[1].name == "z"  # the function completes past the with
+
+
+def test_expected_effect_absent_is_the_lying_twin():
+    v = _val(
+        "def A(z):\n    with pytest.raises(ValueError):\n        z = 1\n    return z\n"
+    )
+    inv = v.invs()[0]
+    assert inv.args[0].value == "ValueError" and inv.args[1].value == "py.effect.none"
+
+
+def test_wrong_effect_states_mismatch_and_survives():
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    v = _val(
+        "def A(z):\n    with pytest.raises(ValueError):\n        raise KeyError\n"
+        "    return z\n"
+    )
+    inv = v.invs()[0]
+    assert inv.args[1].value == "KeyError"  # the mismatch fact
+    reds = [e for e in v.record.contribution() if isinstance(e, Incomplete)]
+    assert len(reds) == 1  # KeyError did not disappear
+
+
+def test_unresolved_call_keeps_the_obligation_open():
+    v = _val(
+        "def A(z):\n    with pytest.raises(ValueError):\n        do_thing(z)\n"
+        "    return z\n"
+    )
+    assert v.invs()[0].name == "py.effect.expected"  # never an absence claim
+
+
+def test_suppress_matching_consumed():
+    v = _val(
+        "def A(z):\n    with contextlib.suppress(KeyError):\n        raise KeyError\n"
+        "    return z\n"
+    )
+    assert v.invs() == () and v.post().args[1].name == "z"
+
+
+def test_suppress_non_match_propagates():
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    v = _val(
+        "def A(z):\n    with contextlib.suppress(KeyError):\n        raise ValueError\n"
+        "    return z\n"
+    )
+    reds = [e for e in v.record.contribution() if isinstance(e, Incomplete)]
+    assert len(reds) == 1  # ValueError rides through the permission
+
+
+def test_unauthenticated_manager_stays_loud():
+    with pytest.raises(SugarNotWritten):
+        _fn("def A(z):\n    with open(z):\n        pass\n    return z\n").sugar()
+
+
+def test_as_witness_stays_loud():
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A(z):\n    with pytest.raises(ValueError) as ei:\n"
+            "        raise ValueError\n    return z\n"
+        ).sugar()
+
+
+def test_warning_kind_stays_loud():
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A(z):\n    with tm.assert_produces_warning(FutureWarning):\n"
+            "        pass\n    return z\n"
+        ).sugar()
+
+
+def test_multiple_managers_stay_loud():
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A(z):\n    with pytest.raises(ValueError), contextlib.suppress(KeyError):\n"
+            "        pass\n    return z\n"
+        ).sugar()
+
+
+if __name__ == "__main__":
+    test_expected_matching_raise_discharges_and_consumes()
+    test_expected_effect_absent_is_the_lying_twin()
+    test_wrong_effect_states_mismatch_and_survives()
+    test_unresolved_call_keeps_the_obligation_open()
+    test_suppress_matching_consumed()
+    test_suppress_non_match_propagates()
+    test_unauthenticated_manager_stays_loud()
+    test_as_witness_stays_loud()
+    test_warning_kind_stays_loud()
+    test_multiple_managers_stay_loud()
+    print("ok: with under typed contracts -- ten twins")
