@@ -177,7 +177,7 @@ if __name__ == "__main__":
     test_starred_target_stays_loud()
     test_arity_mismatch_stays_loud()
     test_jump_bearing_body_never_unrolls()
-    test_for_else_stays_loud_in_the_for_lane()
+    test_for_else_splices_after_the_unroll()
     print("ok: concrete for unrolls; symbolic/carried/tuple-target loud")
 
 
@@ -193,13 +193,12 @@ def test_jump_bearing_body_never_unrolls():
     assert "For.sugar" in str(e.value)
 
 
-def test_for_else_stays_loud_in_the_for_lane():
-    with pytest.raises(SugarNotWritten) as exc:
-        _fn(
-            "def A():\n    t = 0\n    for x in [1, 2]:\n        t = t + x\n"
-            "    else:\n        t = t + 100\n    return t\n"
-        ).sugar()
-    assert "For.sugar" in str(exc.value)
+def test_for_else_splices_after_the_unroll():
+    post = _fn(
+        "def A():\n    t = 0\n    for x in [1, 2]:\n        t = t + x\n"
+        "    else:\n        t = t + 100\n    return t\n"
+    ).sugar().desugar().value.post()
+    assert post.args[1].value == 103
 
 
 @pytest.mark.parametrize(
@@ -222,8 +221,6 @@ def test_admitted_for_shapes_leave_no_production_for_gap(src):
     "src",
     (
         "def A():\n    for x in [1, 2]:\n        break\n    return 0\n",
-        "def A():\n    for x in [1, 2]:\n        assert x == x\n"
-        "    else:\n        assert True\n    return 0\n",
         "def A(xs):\n    total = 0\n    for x in xs:\n"
         "        assert x == x\n        total = total + x\n    return total\n",
         "def A(xs):\n    total = 0\n    for a, b in xs:\n"
@@ -237,7 +234,6 @@ def test_admitted_for_shapes_leave_no_production_for_gap(src):
     ),
     ids=(
         "break",
-        "else",
         "mixed",
         "tuple-symbolic",
         "non-assert",

@@ -1316,12 +1316,11 @@ class For(Statement):
         new_iter, iter_changed = self._substitute_field(self.iter, scope)
         subst_iter = new_iter if iter_changed else self.iter
 
-        # Loop-else is a parked control-flow projection in this lane, even when
-        # the iterable is concrete. It must keep the For node loud.
+        # A concrete loop with no jump-bearing body always executes its else.
+        # The loop-control guard below leaves conditional else execution loud.
         shadowed_range = For._calls_shadowed_range(self, subst_iter, scope)
         concrete = (
             self.target.kind in ("Name", "Tuple", "List")
-            and not self.orelse
             and not self._body_has_loop_control()
             and not shadowed_range
         )
@@ -1354,6 +1353,9 @@ class For(Statement):
                     carried = {
                         k: v for k, v in iter_scope.items() if k not in target_names
                     }
+                if self.orelse:
+                    else_body, _c = self._substitute_body(self.orelse, carried)
+                    unrolled.extend(else_body)
                 return _Splice(tuple(unrolled))
 
         # Symbolic (or unsupported) loop: keep the node, mask the target AND every
