@@ -10,7 +10,6 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_lift_py_tests.recognition.native_shape import NativeShape
 
 from .floor_value import FloorValue
-from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 _FORCE_FLOOR_BUDGET = 64
 _NESTED_DIG_DEMAND_BUDGET = 8
@@ -1214,7 +1213,6 @@ def _force_floor_gap(
     fix: str,
 ) -> NoReturn:
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow,
         factory_panic,
         FactoryGapInfo,
         GapKind,
@@ -1230,18 +1228,7 @@ def _force_floor_gap(
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.PROJECTION,
     )
-    factory_panic(
-        info,
-        FactoryAuditRow(
-            role="force_floor",
-            status=FactoryAuditStatus.FLOOR_GAP,
-            observed=observed,
-            blame=target_name,
-            selected=None,
-            candidates=[],
-            message=info.message,
-        ),
-    )
+    factory_panic(info)
 
 
 def _ctx_with_curried_args(

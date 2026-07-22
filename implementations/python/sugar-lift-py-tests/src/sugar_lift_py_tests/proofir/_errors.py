@@ -1,10 +1,8 @@
 from __future__ import annotations
-from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 from typing import NoReturn
 
 from sugar_lift_py_tests.factory import (
-    FactoryAuditRow,
     factory_panic,
     FactoryGapInfo,
     GapKind,
@@ -28,15 +26,4 @@ def proofir_construction_gap(
         gap_kind=GapKind.PROOFIR,
         gap_locus=GapLocus.CONSTRUCTION_LAW,
     )
-    factory_panic(
-        info,
-        FactoryAuditRow(
-            role="proofir-construction-law",
-            status=FactoryAuditStatus.PROOFIR_GAP,
-            observed=observed,
-            blame="proofir-construction-law",
-            selected=None,
-            candidates=[requested],
-            message=info.message,
-        ),
-    )
+    factory_panic(info)

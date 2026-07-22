@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from .floor_value import FloorValue
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
-from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context import FactoryBuildContext
@@ -439,7 +438,6 @@ class ObjectValue(FloorValue):
         fix: str,
     ) -> NoReturn:
         from sugar_lift_py_tests.factory import (
-            FactoryAuditRow,
             factory_panic,
             FactoryGapInfo,
             GapKind,
@@ -459,18 +457,7 @@ class ObjectValue(FloorValue):
             ),
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role=requested,
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=str(blame),
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
 
 
 _BINARY_DUNDER_METHODS = {

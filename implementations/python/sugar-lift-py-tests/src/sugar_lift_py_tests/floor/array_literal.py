@@ -11,7 +11,6 @@ from .string_value import StringValue
 from .symbolic_value import SymbolicValue
 from .term_value import TermValue
 from .tuple_literal_value import TupleLiteralValue
-from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 
 @dataclass(frozen=True)
@@ -136,7 +135,6 @@ def _call_method_gap(
     fix: str,
 ):
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow,
         factory_panic,
         FactoryGapInfo,
         GapKind,
@@ -152,15 +150,4 @@ def _call_method_gap(
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.CONSTRUCTION,
     )
-    factory_panic(
-        info,
-        FactoryAuditRow(
-            role=requested,
-            status=FactoryAuditStatus.FLOOR_GAP,
-            observed=observed,
-            blame=blame,
-            selected=None,
-            candidates=[],
-            message=info.message,
-        ),
-    )
+    factory_panic(info)

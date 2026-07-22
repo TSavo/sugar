@@ -3,14 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from .temporal_context import TemporalContext
-from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 _DECLARED_OPERATION_MODULE = "sugar_lift_py_tests.temporal."
 
 
 def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow,
         factory_panic,
         FactoryGapInfo,
         GapKind,
@@ -33,18 +31,7 @@ def _operation_method_name(*, owner: str, blame: str, operation: object) -> str:
         gap_kind=GapKind.OPERATION,
         gap_locus=GapLocus.METHOD_NAME,
     )
-    factory_panic(
-        info,
-        FactoryAuditRow(
-            role="method_name",
-            status=FactoryAuditStatus.OPERATION_GAP,
-            observed=operation_name,
-            blame=blame,
-            selected=None,
-            candidates=[],
-            message=info.message,
-        ),
-    )
+    factory_panic(info)
 
 
 def _is_declared_operation(operation: object) -> bool:
@@ -59,7 +46,6 @@ def _missing_temporal_floor_gap(
     method_name: str,
 ):
     from sugar_lift_py_tests.factory import (
-        FactoryAuditRow,
         factory_panic,
         FactoryGapInfo,
         GapKind,
@@ -79,18 +65,7 @@ def _missing_temporal_floor_gap(
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.CONSTRUCTION,
     )
-    factory_panic(
-        info,
-        FactoryAuditRow(
-            role=method_name,
-            status=FactoryAuditStatus.FLOOR_GAP,
-            observed=observed,
-            blame=blame,
-            selected=None,
-            candidates=[],
-            message=info.message,
-        ),
-    )
+    factory_panic(info)
 
 
 def perform_temporal_operation(
@@ -112,7 +87,6 @@ def perform_temporal_operation(
                 method_name=method_name,
             )
         from sugar_lift_py_tests.factory import (
-            FactoryAuditRow,
             factory_panic,
             FactoryGapInfo,
             GapKind,
@@ -132,18 +106,7 @@ def perform_temporal_operation(
             gap_kind=GapKind.OPERATION,
             gap_locus=GapLocus.METHOD_NAME,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role=method_name,
-                status=FactoryAuditStatus.OPERATION_GAP,
-                observed=operation_name,
-                blame=blame,
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
     recorder = None if ctx is None else ctx.record_operation
     if recorder is not None:
         recorder(owner=owner, method_name=method_name, operation=operation)
