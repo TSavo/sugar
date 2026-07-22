@@ -1827,17 +1827,11 @@ class With(Statement):
         <Name>`` is admitted for Expects (step 5: matched-effect witness bound
         for the tail via substitution_binding).
 
-        Unauthenticated / RuntimeSelected managers (resource managers:
-        ``open(...)``, ``tm.ensure_clean(...)``, …) stay LOUD as the *named*
-        residual ``RuntimeSelectedContextManager`` — distinct from bare
-        ``SugarNotWritten`` so the census can count them. Temporal dissolution
-        is licensed only under a typed exit contract; we have no proof any
-        resource manager is ``NeverSuppresses`` (that requires reading
-        ``__exit__``, which we do not lift), so every unenrolled manager is
-        honestly RuntimeSelected. A normal-path-only enter/exit splice that
-        drops the exceptional edge is a different language — never written
-        here. ``NeverSuppresses`` enrollment (none yet) would gate the real
-        finally-faithful expansion; until then that arm stays unwritten loud.
+        Unauthenticated managers stay LOUD as ``RuntimeSelectedContextManager``
+        unless a SourceOracle-backed ``ExitDispositionProof`` proves every
+        completed ``__exit__`` return is exact None/False (incl. implicit None)
+        → ``NeverSuppresses`` via ``WithResourceSugar``. Generator CMs and
+        builtins (``open``) stay RuntimeSelected until their separate proofs.
         Non-Name as-targets, Suppresses+as, and multiple managers stay loud."""
         if len(self.items) != 1:
             return super()._construct_sugar()
@@ -1880,10 +1874,7 @@ class With(Statement):
                 site=self.fragment,
                 slot_id=slot_id,
             )
-        if isinstance(contract, NeverSuppresses):
-            # Manager once → ManagerRef(M); enter = M.__enter__();
-            # one parametric exit = M.__exit__(ExitTypeRef(X), …).
-            # Nothing enrolls NeverSuppresses yet.
+        def _resource_sugar(disposition):
             manager_slot = item._manager_slot_id()
             enter_node = item._make_enter_call()
             exit_node = item._make_parametric_exit_call()
@@ -1897,14 +1888,26 @@ class With(Statement):
                 exit=exit_node.sugar(),
                 exit_face_id=item._exit_face_id(),
                 body=tuple(stmt.sugar() for stmt in self.body),
-                disposition=contract,
+                disposition=disposition,
                 enter_slot_id=enter_slot,
                 site=self.fragment,
             )
-        # None from the membrane OR an explicit RuntimeSelected enrollment:
-        # exit suppression is undecidable statically. Named residual — not a
-        # bare SugarNotWritten, not a false-green dissolve.
+
+        if isinstance(contract, NeverSuppresses):
+            # Membrane-issued NeverSuppresses (if ever enrolled) uses resource path.
+            return _resource_sugar(contract)
+
+        # Unauthenticated / RuntimeSelected: try source-visible __exit__ proof
+        # before the named residual. Generator CMs (switchdir) stay loud here.
         if contract is None or isinstance(contract, RuntimeSelected):
+            from sugar_lift_py_tests.exit_disposition_proof import (
+                prove_exit_disposition_from_manager_expr,
+            )
+
+            proof = prove_exit_disposition_from_manager_expr(item.context_expr)
+            if proof is not None and proof.kind == "never_suppresses":
+                return _resource_sugar(proof.disposition())
+
             where = f"{self.unit.filename}"
             try:
                 lc = self.line_col_span()
@@ -1918,13 +1921,12 @@ class With(Statement):
                     f"runtime-selected at {where}"
                 ),
                 requested=(
-                    "a typed exit contract (NeverSuppresses with "
-                    "finally-faithful expansion, or Expects/Suppresses via "
-                    "the membrane)"
+                    "a typed exit contract (NeverSuppresses from source-visible "
+                    "__exit__ proof, or Expects/Suppresses via the membrane)"
                 ),
                 fix=(
-                    "enroll a manager only with proof of its __exit__ "
-                    "disposition; never invent a normal-path-only expansion"
+                    "prove every completed __exit__ return is exact None/False "
+                    "(incl. implicit None); never invent a normal-path-only expansion"
                 ),
             )
             self.reporter.report_gap(self, panic)
