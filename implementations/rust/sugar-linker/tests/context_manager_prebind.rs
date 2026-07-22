@@ -222,6 +222,31 @@ fn final_edge_is_pinned_to_the_exact_resolution_and_catalog() {
         "stale-resolution"
     );
 }
+
+#[test]
+fn exact_symbol_with_different_signature_stays_a_typed_gap() {
+    let member = minted("context-manager:fixture.never_closing", 14);
+    let catalog = AuthenticatedContextManagerCatalog::freeze(vec![member]).unwrap();
+    let mismatched = ContextManagerContractDemandV1::new(
+        use_site(),
+        "context-manager:fixture.never_closing".into(),
+        ImportSignatureV1 {
+            formals: vec!["value".into()],
+            sorts: vec![Sort::Primitive {
+                name: "Value".into(),
+            }],
+        },
+    );
+    let ContextManagerResolutionV1::Unresolved(gap) =
+        resolve_context_manager_demand(&mismatched, &catalog)
+    else {
+        panic!("signature-mismatch gap")
+    };
+    assert_eq!(
+        gap.kind,
+        ContextManagerResolutionGapKindV1::SignatureMismatch
+    );
+}
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};

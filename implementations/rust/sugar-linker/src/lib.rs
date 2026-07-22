@@ -532,6 +532,21 @@ impl ResolvedContractRefsV1 {
         value
     }
 
+    pub fn final_check(
+        &self,
+        catalog: &AuthenticatedContextManagerCatalog,
+    ) -> Result<(), &'static str> {
+        if &self.catalog_cid != catalog.catalog_cid() {
+            return Err("stale-resolution");
+        }
+        for resolution in self.by_use_site.values() {
+            if let ContextManagerResolutionV1::Resolved(reference) = resolution {
+                final_check_context_manager_ref(reference, catalog)?;
+            }
+        }
+        Ok(())
+    }
+
     fn identity_value(&self) -> Json {
         let rows = self
             .by_use_site

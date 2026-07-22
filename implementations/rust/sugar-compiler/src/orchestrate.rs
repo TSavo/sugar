@@ -444,6 +444,7 @@ pub fn fold_kit_to_pool(
     // 3. Declaration-only enrollment and sealing. These rows never construct
     // a body and enter the ordinary authenticated pool through the dedicated
     // context-manager member arm.
+    let mut active_cm_preconstruction = None;
     if kit.supports_rpc_method("sugar.plugin.bind_contract_refs") {
         let declaration_rows = kit
             .context_manager_declarations(workspace_root)
@@ -470,6 +471,7 @@ pub fn fold_kit_to_pool(
         let table = ResolvedContractRefsV1::new(&catalog, &demands);
         kit.bind_contract_refs(&table.to_wire_value())
             .map_err(|error| ProveFromKitError::Preconstruction(error.to_string()))?;
+        active_cm_preconstruction = Some((catalog, table));
     }
 
     // 7-8. Local semantic construction occurs only after ref installation.
@@ -477,6 +479,15 @@ pub fn fold_kit_to_pool(
     let local_pool =
         pool_from_graph_with_speaker(&local, speaker).map_err(ProveFromKitError::LocalLoad)?;
     pool.merge(local_pool);
+
+    // 9. Recheck every resolved coordinate against the exact frozen snapshot
+    // after construction. Future CM edges use the same ref-owned equality
+    // check; this pass never reselects a candidate from the enlarged pool.
+    if let Some((catalog, table)) = &active_cm_preconstruction {
+        table
+            .final_check(catalog)
+            .map_err(|error| ProveFromKitError::Preconstruction(error.into()))?;
+    }
 
     Ok(pool)
 }
