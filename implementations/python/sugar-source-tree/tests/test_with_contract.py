@@ -8,7 +8,7 @@ import tempfile
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import SugarNotWritten
+from sugar_source_tree.panic import RuntimeSelectedContextManager, SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -86,15 +86,57 @@ def test_suppress_non_match_propagates():
 
 
 def test_unauthenticated_manager_stays_loud():
-    with pytest.raises(SugarNotWritten):
+    # Named residual (step 4): RuntimeSelectedContextManager, not bare
+    # SugarNotWritten — census can count resource managers separately.
+    with pytest.raises(RuntimeSelectedContextManager) as ei:
         _fn("def A(z):\n    with open(z):\n        pass\n    return z\n").sugar()
+    assert isinstance(ei.value, SugarNotWritten)
+    assert (
+        "unauthenticated context manager — exit suppression runtime-selected"
+        in ei.value.observed
+    )
 
 
-def test_as_witness_stays_loud():
+def test_as_witness_admits_and_discharges():
+    """Step 5: Expects ``as <Name>`` is no longer loud; type obligation flows."""
+    v = _val(
+        "def A(z):\n    with pytest.raises(ValueError) as ei:\n"
+        "        raise ValueError\n    return z\n"
+    )
+    inv = v.invs()[0]
+    assert inv.name == "="
+    assert inv.args[0].value == inv.args[1].value == "ValueError"
+    assert v.post().args[1].name == "z"
+
+
+def test_as_witness_inlines_in_the_tail():
+    """Matched-effect witness is bound for the tail: ``return ei`` sees E()."""
+    v = _val(
+        "def A():\n    with pytest.raises(ValueError) as ei:\n"
+        "        raise ValueError\n    return ei\n"
+    )
+    # Type obligation still stated; post is the witness construction ValueError().
+    type_rows = [i for i in v.invs() if getattr(i, "name", "") == "="]
+    assert type_rows
+    assert type_rows[0].args[0].value == type_rows[0].args[1].value == "ValueError"
+    post = v.post().args[1]
+    assert post.name == "call:ValueError"  # E() stand-in for the effect payload
+
+
+def test_as_non_name_target_stays_loud():
     with pytest.raises(SugarNotWritten):
         _fn(
-            "def A(z):\n    with pytest.raises(ValueError) as ei:\n"
+            "def A(z):\n    with pytest.raises(ValueError) as (ei,):\n"
             "        raise ValueError\n    return z\n"
+        ).sugar()
+
+
+def test_suppresses_as_stays_loud():
+    """Suppresses+as is not a community effect-witness shape (step 5 is Expects)."""
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A(z):\n    with contextlib.suppress(KeyError) as cm:\n"
+            "        raise KeyError\n    return z\n"
         ).sugar()
 
 
@@ -124,10 +166,13 @@ if __name__ == "__main__":
     test_suppress_matching_consumed()
     test_suppress_non_match_propagates()
     test_unauthenticated_manager_stays_loud()
-    test_as_witness_stays_loud()
+    test_as_witness_admits_and_discharges()
+    test_as_witness_inlines_in_the_tail()
+    test_as_non_name_target_stays_loud()
+    test_suppresses_as_stays_loud()
     test_warning_kind_with_unresolved_call_retains_obligation()
     test_multiple_managers_stay_loud()
-    print("ok: with under typed contracts -- ten twins")
+    print("ok: with under typed contracts -- as-witness twins")
 
 
 def test_match_conjunction_type_discharged_message_undischarged():

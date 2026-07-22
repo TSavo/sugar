@@ -45,6 +45,7 @@ from .operators import (
     UnaryOperator,
 )
 from .panic import (
+    RuntimeSelectedContextManager,
     SourceTreePanic,
     SubstituteNotWritten,
     SugarNotWritten,
@@ -313,6 +314,23 @@ class Node(Typed):
         )
         return materialize(
             self.unit, ShadowNode("BinOp", self.span, slots), self.reporter
+        )
+
+    def _make_call(self, func: "Node", args: tuple = ()) -> "Node":
+        """Construct a fresh Call ``<func>(<args...>)`` as a shadow borrowing
+        this node's span. Used by Expects ``as``-witness binding: the matched
+        effect payload is the expected type/category constructed with no args
+        (a temporal stand-in for the exception/warning instance)."""
+        from .backend import Child, Children, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        slots = (
+            ("func", Child(_handle_of(func))),
+            ("args", Children(tuple(_handle_of(a) for a in args))),
+            ("keywords", Children(())),
+        )
+        return materialize(
+            self.unit, ShadowNode("Call", self.span, slots), self.reporter
         )
 
     def _substitute_body(self, statements: tuple, scope: "dict[str, Node]"):
@@ -1604,17 +1622,36 @@ class With(Statement):
     _child_fields = ("items", "body")
 
     def sugar(self):
-        """`with <manager>: <body>` -- the node consults the MEMBRANE, never a
-        vendor name (#5994). A single manager with no `as`, whose membrane-issued
-        contract is a raise-kind Expects/Suppresses, wires through the shared
-        effect router (WithContractSugar). Everything else stays LOUD: the
-        unauthenticated manager (the named residual), warning-kind matchers (no
-        WarningEffect exists to observe -- wiring would mint false absent-twins),
-        `as` witnesses (step 5), multiple managers, and resource managers (the
-        finally-faithful expansion, step 4)."""
-        if len(self.items) != 1 or self.items[0].optional_vars is not None:
+        """`with <manager> [as <name>]: <body>` -- the node consults the
+        MEMBRANE, never a vendor name (#5994). A single manager whose
+        membrane-issued contract is raise/warning Expects/Suppresses wires
+        through the shared effect router (WithContractSugar). Plain ``as
+        <Name>`` is admitted for Expects (step 5: matched-effect witness bound
+        for the tail via substitution_binding).
+
+        Unauthenticated / RuntimeSelected managers (resource managers:
+        ``open(...)``, ``tm.ensure_clean(...)``, …) stay LOUD as the *named*
+        residual ``RuntimeSelectedContextManager`` — distinct from bare
+        ``SugarNotWritten`` so the census can count them. Temporal dissolution
+        is licensed only under a typed exit contract; we have no proof any
+        resource manager is ``NeverSuppresses`` (that requires reading
+        ``__exit__``, which we do not lift), so every unenrolled manager is
+        honestly RuntimeSelected. A normal-path-only enter/exit splice that
+        drops the exceptional edge is a different language — never written
+        here. ``NeverSuppresses`` enrollment (none yet) would gate the real
+        finally-faithful expansion; until then that arm stays unwritten loud.
+        Non-Name as-targets, Suppresses+as, and multiple managers stay loud."""
+        if len(self.items) != 1:
             return super().sugar()
-        from sugar_lift_py_tests.context_manager_contract import Expects, Suppresses
+        item = self.items[0]
+        as_target = item.optional_vars
+        if as_target is not None and not isinstance(as_target, Name):
+            return super().sugar()  # only plain Name as for step 5
+        from sugar_lift_py_tests.context_manager_contract import (
+            Expects,
+            RuntimeSelected,
+            Suppresses,
+        )
         from sugar_lift_py_tests.manifest_membrane import (
             contract_for_manager,
             default_community_manifest,
@@ -1622,20 +1659,58 @@ class With(Statement):
         from sugar_lift_py_tests.sugar.with_contract_sugar import WithContractSugar
 
         contract = contract_for_manager(
-            default_community_manifest(), self.items[0].context_expr
+            default_community_manifest(), item.context_expr
         )
-        if not isinstance(contract, (Expects, Suppresses)):
-            return super().sugar()  # unauthenticated / runtime-selected: loud
-        if contract.matcher.kind not in ("raise", "warning"):
-            return super().sugar()
-        return WithContractSugar(
-            contract=contract,
-            body=tuple(stmt.sugar() for stmt in self.body),
-            site=self.fragment,
-        )
+        if isinstance(contract, (Expects, Suppresses)):
+            if contract.matcher.kind not in ("raise", "warning"):
+                return super().sugar()
+            # Suppresses+as is not a community effect-witness shape; Expects+as is.
+            if as_target is not None and not isinstance(contract, Expects):
+                return super().sugar()
+            return WithContractSugar(
+                contract=contract,
+                body=tuple(stmt.sugar() for stmt in self.body),
+                site=self.fragment,
+                as_name=as_target.id if as_target is not None else None,
+            )
+        # None from the membrane OR an explicit RuntimeSelected enrollment:
+        # exit suppression is undecidable statically. Named residual — not a
+        # bare SugarNotWritten, not a false-green dissolve.
+        if contract is None or isinstance(contract, RuntimeSelected):
+            where = f"{self.unit.filename}"
+            try:
+                lc = self.line_col_span()
+                where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
+            except SourceTreePanic:
+                pass
+            panic = RuntimeSelectedContextManager(
+                owner="With.sugar",
+                observed=(
+                    "unauthenticated context manager — exit suppression "
+                    f"runtime-selected at {where}"
+                ),
+                requested=(
+                    "a typed exit contract (NeverSuppresses with "
+                    "finally-faithful expansion, or Expects/Suppresses via "
+                    "the membrane)"
+                ),
+                fix=(
+                    "enroll a manager only with proof of its __exit__ "
+                    "disposition; never invent a normal-path-only expansion"
+                ),
+            )
+            self.reporter.report_gap(self, panic)
+            raise panic
+        # NeverSuppresses (nothing enrolls yet): finally-faithful expansion
+        # unwritten — bare SugarNotWritten until that slice lands.
+        return super().sugar()
 
     def substitute(self, scope):
-        """with ... as <vars>: binds the as-targets for the body."""
+        """with ... as <vars>: masks as-targets for the body (binding sites).
+
+        Expects ``as <Name>`` also EXPORTS a matched-effect witness for the
+        rest of the enclosing block via ``substitution_binding`` (step 5).
+        """
         from .shadow import rewrite
 
         bound = set()
@@ -1651,6 +1726,44 @@ class With(Statement):
         if d:
             changed["body"] = new_body
         return self if not changed else rewrite(self, **changed)
+
+    def substitution_binding(self, scope):
+        """Expects ``as <Name>``: bind the name for the TAIL to the matched-
+        effect witness (expected type/category constructed as ``E()``).
+
+        Only on the Expects membrane path; resource ``as`` is step 4.
+        Witness identity is the enrolled expected type expression -- the same
+        name the router discharges against the observed halt.
+        """
+        if len(self.items) != 1:
+            return None
+        ov = self.items[0].optional_vars
+        if not isinstance(ov, Name):
+            return None
+        from sugar_lift_py_tests.context_manager_contract import Expects
+        from sugar_lift_py_tests.manifest_membrane import (
+            contract_for_manager,
+            default_community_manifest,
+        )
+
+        contract = contract_for_manager(
+            default_community_manifest(), self.items[0].context_expr
+        )
+        if not isinstance(contract, Expects):
+            return None
+        if contract.matcher.kind not in ("raise", "warning"):
+            return None
+        witness = self._expects_effect_as_witness(self.items[0].context_expr)
+        if witness is None:
+            return None
+        return {ov.id: witness}
+
+    def _expects_effect_as_witness(self, context_expr: "Expression"):
+        """Temporal stand-in for the matched effect payload: ``E()`` from
+        ``raises(E, ...)`` / ``assert_produces_warning(E, ...)``."""
+        if context_expr.kind != "Call" or not context_expr.args:
+            return None
+        return self._make_call(context_expr.args[0], ())
 
 
 class AsyncWith(Statement):
@@ -1731,6 +1844,67 @@ class Try(Statement):
             if d:
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
+
+    @staticmethod
+    def _except_type_name(type_node):
+        """Structural exception type name off an ``except E`` clause: bare
+        ``Name`` -> ``"E"``, dotted ``Attribute`` chain -> ``"mod.E"``. Same
+        walk as ``Raise._exception_name`` (no desugar, no factory). Tuple types,
+        bare ``except:``, and exotic expressions return ``None`` so the sugar
+        stays LOUD rather than inventing a matcher."""
+        if type_node is None:
+            return None
+        node = type_node
+        parts = []
+        while node is not None and node.kind == "Attribute":
+            parts.append(node.attr)
+            node = node.value
+        if node is not None and node.kind == "Name":
+            parts.append(node.id)
+        if not parts:
+            return None
+        return ".".join(reversed(parts))
+
+    def sugar(self):
+        """`try: body (except E: handler)+ [else] [finally]` -- the STRUCTURAL
+        sibling of with-raises. Each ``except E`` is an EffectMatcher built
+        from the clause's type (native syntax, no membrane). The shared effect
+        router's exact kind+name match decides which handler consumes the
+        body's Incomplete(RaiseEffect). Loud residuals: bare ``except:``,
+        tuple types ``except (A, B):``, ``except E as name:`` (as-binding is a
+        parallel worker), and try with no typed handlers. ``except*`` lives on
+        TryStar and stays loud there."""
+        if not self.handlers:
+            return super().sugar()  # try/finally-only: not the except-routing core
+        handler_specs = []
+        for handler in self.handlers:
+            if handler.name is not None:
+                return super().sugar()  # `as` witness -- parallel worker; stay loud
+            if handler.type_ is None:
+                return super().sugar()  # bare except:
+            if handler.type_.kind == "Tuple":
+                return super().sugar()  # except (A, B):
+            type_name = self._except_type_name(handler.type_)
+            if type_name is None:
+                return super().sugar()  # exotic except type -- never invent a name
+            handler_specs.append((type_name, handler.body))
+
+        from sugar_lift_py_tests.context_manager_contract import EffectMatcher
+        from sugar_lift_py_tests.sugar.try_sugar import TrySugar
+
+        return TrySugar(
+            body=tuple(stmt.sugar() for stmt in self.body),
+            handlers=tuple(
+                (
+                    EffectMatcher(kind="raise", name=type_name),
+                    tuple(stmt.sugar() for stmt in body),
+                )
+                for type_name, body in handler_specs
+            ),
+            orelse=tuple(stmt.sugar() for stmt in self.orelse),
+            finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
+            site=self.fragment,
+        )
 
 
 class TryStar(Statement):
