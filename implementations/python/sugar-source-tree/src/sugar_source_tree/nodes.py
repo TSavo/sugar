@@ -1671,9 +1671,13 @@ class With(Statement):
         if len(self.items) != 1:
             return super().sugar()
         item = self.items[0]
-        as_target = item.optional_vars
-        if as_target is not None and not isinstance(as_target, Name):
-            return super().sugar()  # only plain Name as for step 5
+        if item.optional_vars is not None:
+            # ``as <name>`` stays LOUD: the honest binding is the ROUTED
+            # observed-effect witness (the payload of the Halted exit the
+            # router matches), NOT a manufactured ``E()``. That witness is
+            # produced at route time, so it needs the shared exit-set witness
+            # mechanism -- unwritten here until it lands.
+            return super().sugar()
         from sugar_lift_py_tests.context_manager_contract import (
             Expects,
             RuntimeSelected,
@@ -1691,14 +1695,10 @@ class With(Statement):
         if isinstance(contract, (Expects, Suppresses)):
             if contract.matcher.kind not in ("raise", "warning"):
                 return super().sugar()
-            # Suppresses+as is not a community effect-witness shape; Expects+as is.
-            if as_target is not None and not isinstance(contract, Expects):
-                return super().sugar()
             return WithContractSugar(
                 contract=contract,
                 body=tuple(stmt.sugar() for stmt in self.body),
                 site=self.fragment,
-                as_name=as_target.id if as_target is not None else None,
             )
         # None from the membrane OR an explicit RuntimeSelected enrollment:
         # exit suppression is undecidable statically. Named residual — not a
@@ -1735,8 +1735,10 @@ class With(Statement):
     def substitute(self, scope):
         """with ... as <vars>: masks as-targets for the body (binding sites).
 
-        Expects ``as <Name>`` also EXPORTS a matched-effect witness for the
-        rest of the enclosing block via ``substitution_binding`` (step 5).
+        No witness is EXPORTED for the tail: the honest ``as`` binding is the
+        routed observed-effect witness produced at route time (the payload of
+        the matched Halted exit), not a substitute-time stand-in -- so `as`
+        stays loud in sugar() until the shared exit-set witness lands.
         """
         from .shadow import rewrite
 
@@ -1753,44 +1755,6 @@ class With(Statement):
         if d:
             changed["body"] = new_body
         return self if not changed else rewrite(self, **changed)
-
-    def substitution_binding(self, scope):
-        """Expects ``as <Name>``: bind the name for the TAIL to the matched-
-        effect witness (expected type/category constructed as ``E()``).
-
-        Only on the Expects membrane path; resource ``as`` is step 4.
-        Witness identity is the enrolled expected type expression -- the same
-        name the router discharges against the observed halt.
-        """
-        if len(self.items) != 1:
-            return None
-        ov = self.items[0].optional_vars
-        if not isinstance(ov, Name):
-            return None
-        from sugar_lift_py_tests.context_manager_contract import Expects
-        from sugar_lift_py_tests.manifest_membrane import (
-            contract_for_manager,
-            default_community_manifest,
-        )
-
-        contract = contract_for_manager(
-            default_community_manifest(), self.items[0].context_expr
-        )
-        if not isinstance(contract, Expects):
-            return None
-        if contract.matcher.kind not in ("raise", "warning"):
-            return None
-        witness = self._expects_effect_as_witness(self.items[0].context_expr)
-        if witness is None:
-            return None
-        return {ov.id: witness}
-
-    def _expects_effect_as_witness(self, context_expr: "Expression"):
-        """Temporal stand-in for the matched effect payload: ``E()`` from
-        ``raises(E, ...)`` / ``assert_produces_warning(E, ...)``."""
-        if context_expr.kind != "Call" or not context_expr.args:
-            return None
-        return self._make_call(context_expr.args[0], ())
 
 
 class AsyncWith(Statement):
@@ -1896,16 +1860,25 @@ class Try(Statement):
         """`try: body (except E: handler)+ [else] [finally]` -- the STRUCTURAL
         sibling of with-raises. A typed clause contributes one exact router
         matcher per bare/dotted type (including each element of a tuple); a
-        bare clause contributes the widest raise matcher. ``as <name>`` is
-        substituted with the selected type's ``E()`` witness only in that
-        matching handler arm. Exotic type expressions and empty tuples stay
-        loud. ``except*`` lives on TryStar and stays loud there."""
+        bare clause contributes the widest raise matcher. Exotic type
+        expressions and empty tuples stay loud. ``except*`` lives on TryStar
+        and stays loud there.
+
+        ``except <type> as <name>`` stays LOUD: the honest binding is the
+        ROUTED observed-effect witness (the exception the router matched and
+        consumed), NOT a manufactured ``<type>()`` -- constructing the type
+        invents a constructor call that never ran and conflates the caught
+        object with the type. That witness is produced at route time, not at
+        substitute time, so it needs the shared observed-effect-witness
+        mechanism (a marker the router fills), unwritten here until it lands."""
         if not self.handlers:
             return super().sugar()  # try/finally-only: not the except-routing core
         from sugar_lift_py_tests.context_manager_contract import EffectMatcher
 
         handler_specs = []
         for handler in self.handlers:
+            if handler.name is not None:
+                return super().sugar()  # except-as: needs the routed witness, loud
             if handler.type_ is None:
                 handler_specs.append(
                     (None, tuple(stmt.sugar() for stmt in handler.body))
@@ -1921,14 +1894,10 @@ class Try(Statement):
                 type_name = self._except_type_name(type_node)
                 if type_name is None:
                     return super().sugar()  # exotic tuple elt/type -- stay loud
-                body = handler.body
-                if handler.name is not None:
-                    witness = self._make_call(type_node, ())
-                    body, _ = self._substitute_body(body, {handler.name: witness})
                 handler_specs.append(
                     (
                         EffectMatcher(kind="raise", name=type_name),
-                        tuple(stmt.sugar() for stmt in body),
+                        tuple(stmt.sugar() for stmt in handler.body),
                     )
                 )
 

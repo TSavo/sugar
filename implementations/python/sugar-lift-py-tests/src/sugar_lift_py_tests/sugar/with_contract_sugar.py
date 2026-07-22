@@ -12,13 +12,13 @@ outcome to the ONE effect router shared with Try. The contract decides:
 - ``Suppresses(matcher)``: permission -- a matching halt is consumed silently;
   absence is fine; a non-matching effect propagates.
 
-``as <Name>`` (Expects only) is a TEMPORAL bind for the enclosing block's
-tail: ``With.substitution_binding`` exports the matched-effect witness
-(``E()`` stand-in from ``raises(E)``). This sugar records ``as_name`` for
-provenance; substitute already rewrote uses of the name in the tail.
+``as <Name>`` stays LOUD at the node: the honest binding is the routed
+observed-effect witness (the payload of the matched Halted exit), produced at
+route time, never a substitute-time ``E()`` stand-in. It lands with the shared
+exit-set witness mechanism, not here.
 
-Loud at the node: unauthenticated managers, non-Name as-targets, Suppresses+as,
-multiple managers, resource expansion (step 4).
+Loud at the node: unauthenticated managers, any as-target, multiple managers,
+resource expansion (step 4).
 """
 
 from __future__ import annotations
@@ -35,7 +35,6 @@ class WithContractSugar(Sugar):
     contract: object  # Expects | Suppresses (the node guards kind)
     body: tuple  # the body statements' sugars, in source order
     site: object = dataclass_field(compare=False, default=None)
-    as_name: str | None = None  # Expects as-witness; bound temporally for the tail
 
     @classmethod
     def witnesses(cls):

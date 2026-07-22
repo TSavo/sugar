@@ -169,33 +169,31 @@ def test_finally_reduces_on_uncaught_path():
     assert "RuntimeError" in names  # finally reduced and spliced
 
 
-def test_except_as_binds_matching_raise_witness_in_handler():
-    v = _val(
-        "def A():\n"
-        "    try:\n"
-        "        raise ValueError\n"
-        "    except ValueError as error:\n"
-        "        return error\n"
-    )
-    assert _incompletes(v) == []
-    assert v.post().args[1].name == "call:ValueError"
+def test_except_as_stays_loud_until_the_routed_witness_exists():
+    # ``except E as name`` must bind the ROUTED observed-effect witness (the
+    # payload of the matched Halted exit), never a manufactured ``E()``. That
+    # witness is produced at route time, so the honest state is LOUD until the
+    # shared exit-set witness mechanism lands -- never a fabricated binding.
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ValueError\n"
+            "    except ValueError as error:\n"
+            "        return error\n"
+        ).sugar()
 
 
-def test_except_as_does_not_bind_on_uncaught_path():
-    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-
-    v = _val(
-        "def A():\n"
-        "    try:\n"
-        "        raise ValueError\n"
-        "    except KeyError as error:\n"
-        "        return error\n"
-        "    return 0\n"
-    )
-    reds = _incompletes(v)
-    assert len(reds) == 1
-    assert isinstance(reds[0].effect, RaiseEffect)
-    assert reds[0].effect.exception_name == "ValueError"
+def test_except_as_stays_loud_even_when_uncaught():
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ValueError\n"
+            "    except KeyError as error:\n"
+            "        return error\n"
+            "    return 0\n"
+        ).sugar()
 
 
 def test_tuple_except_catches_any_exactly_listed_type():
@@ -228,16 +226,17 @@ def test_tuple_except_does_not_catch_unlisted_type():
     assert reds[0].effect.exception_name == "ValueError"
 
 
-def test_tuple_except_as_binds_the_matched_type_witness():
-    v = _val(
-        "def A():\n"
-        "    try:\n"
-        "        raise ValueError\n"
-        "    except (KeyError, ValueError) as error:\n"
-        "        return error\n"
-    )
-    assert _incompletes(v) == []
-    assert v.post().args[1].name == "call:ValueError"
+def test_tuple_except_as_stays_loud():
+    # A tuple handler with ``as`` is loud for the same reason: the witness is
+    # the routed exception payload, not a constructed type.
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A():\n"
+            "    try:\n"
+            "        raise ValueError\n"
+            "    except (KeyError, ValueError) as error:\n"
+            "        return error\n"
+        ).sugar()
 
 
 def test_bare_except_catches_arbitrary_raise():

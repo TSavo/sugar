@@ -97,30 +97,26 @@ def test_unauthenticated_manager_stays_loud():
     )
 
 
-def test_as_witness_admits_and_discharges():
-    """Step 5: Expects ``as <Name>`` is no longer loud; type obligation flows."""
-    v = _val(
-        "def A(z):\n    with pytest.raises(ValueError) as ei:\n"
-        "        raise ValueError\n    return z\n"
-    )
-    inv = v.invs()[0]
-    assert inv.name == "="
-    assert inv.args[0].value == inv.args[1].value == "ValueError"
-    assert v.post().args[1].name == "z"
+def test_as_witness_stays_loud_until_the_routed_witness_exists():
+    # ``with raises(E) as ei`` must bind an ExceptionInfo observation whose
+    # ``.value`` projects the ROUTED exception witness -- never a manufactured
+    # ``E()``. That witness is produced at route time (the payload of the
+    # matched Halted exit), so ``as`` is honestly LOUD until the shared
+    # exit-set witness mechanism lands. A fabricated ``ei = ValueError()`` is
+    # the cardinal sin (a constructor call that never ran).
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A(z):\n    with pytest.raises(ValueError) as ei:\n"
+            "        raise ValueError\n    return z\n"
+        ).sugar()
 
 
-def test_as_witness_inlines_in_the_tail():
-    """Matched-effect witness is bound for the tail: ``return ei`` sees E()."""
-    v = _val(
-        "def A():\n    with pytest.raises(ValueError) as ei:\n"
-        "        raise ValueError\n    return ei\n"
-    )
-    # Type obligation still stated; post is the witness construction ValueError().
-    type_rows = [i for i in v.invs() if getattr(i, "name", "") == "="]
-    assert type_rows
-    assert type_rows[0].args[0].value == type_rows[0].args[1].value == "ValueError"
-    post = v.post().args[1]
-    assert post.name == "call:ValueError"  # E() stand-in for the effect payload
+def test_as_witness_loud_even_when_referenced_in_tail():
+    with pytest.raises(SugarNotWritten):
+        _fn(
+            "def A():\n    with pytest.raises(ValueError) as ei:\n"
+            "        raise ValueError\n    return ei\n"
+        ).sugar()
 
 
 def test_as_non_name_target_stays_loud():
