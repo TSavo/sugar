@@ -169,39 +169,109 @@ def test_finally_reduces_on_uncaught_path():
     assert "RuntimeError" in names  # finally reduced and spliced
 
 
-def test_bare_except_stays_loud():
+def test_except_as_binds_matching_raise_witness_in_handler():
+    v = _val(
+        "def A():\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except ValueError as error:\n"
+        "        return error\n"
+    )
+    assert _incompletes(v) == []
+    assert v.post().args[1].name == "call:ValueError"
+
+
+def test_except_as_does_not_bind_on_uncaught_path():
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+
+    v = _val(
+        "def A():\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except KeyError as error:\n"
+        "        return error\n"
+        "    return 0\n"
+    )
+    reds = _incompletes(v)
+    assert len(reds) == 1
+    assert isinstance(reds[0].effect, RaiseEffect)
+    assert reds[0].effect.exception_name == "ValueError"
+
+
+def test_tuple_except_catches_any_exactly_listed_type():
+    v = _val(
+        "def A(z):\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except (KeyError, ValueError):\n"
+        "        pass\n"
+        "    return z\n"
+    )
+    assert _incompletes(v) == []
+    assert v.post().args[1].name == "z"
+
+
+def test_tuple_except_does_not_catch_unlisted_type():
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+
+    v = _val(
+        "def A(z):\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except (KeyError, IndexError):\n"
+        "        pass\n"
+        "    return z\n"
+    )
+    reds = _incompletes(v)
+    assert len(reds) == 1
+    assert isinstance(reds[0].effect, RaiseEffect)
+    assert reds[0].effect.exception_name == "ValueError"
+
+
+def test_tuple_except_as_binds_the_matched_type_witness():
+    v = _val(
+        "def A():\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except (KeyError, ValueError) as error:\n"
+        "        return error\n"
+    )
+    assert _incompletes(v) == []
+    assert v.post().args[1].name == "call:ValueError"
+
+
+def test_bare_except_catches_arbitrary_raise():
+    v = _val(
+        "def A(z):\n"
+        "    try:\n"
+        "        raise ArbitraryProjectHalt\n"
+        "    except:\n"
+        "        pass\n"
+        "    return z\n"
+    )
+    assert _incompletes(v) == []
+    assert v.post().args[1].name == "z"
+
+
+def test_except_star_stays_loud():
     with pytest.raises(SugarNotWritten):
         _fn(
             "def A(z):\n"
             "    try:\n"
             "        raise ValueError\n"
-            "    except:\n"
+            "    except* ValueError:\n"
             "        pass\n"
             "    return z\n"
         ).sugar()
 
 
-def test_tuple_except_types_stay_loud():
+def test_non_name_except_type_stays_loud():
     with pytest.raises(SugarNotWritten):
         _fn(
             "def A(z):\n"
             "    try:\n"
             "        raise ValueError\n"
-            "    except (ValueError, KeyError):\n"
-            "        pass\n"
-            "    return z\n"
-        ).sugar()
-
-
-def test_as_binding_stays_loud():
-    # `except E as name:` is a parallel worker's lane -- leave loud so we do
-    # not collide on the as-witness binding.
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(z):\n"
-            "    try:\n"
-            "        raise ValueError\n"
-            "    except ValueError as e:\n"
+            "    except exception_type():\n"
             "        pass\n"
             "    return z\n"
         ).sugar()
@@ -231,8 +301,13 @@ if __name__ == "__main__":
     test_else_does_not_run_when_raise_is_caught()
     test_finally_reduces_on_caught_path()
     test_finally_reduces_on_uncaught_path()
-    test_bare_except_stays_loud()
-    test_tuple_except_types_stay_loud()
-    test_as_binding_stays_loud()
+    test_except_as_binds_matching_raise_witness_in_handler()
+    test_except_as_does_not_bind_on_uncaught_path()
+    test_tuple_except_catches_any_exactly_listed_type()
+    test_tuple_except_does_not_catch_unlisted_type()
+    test_tuple_except_as_binds_the_matched_type_witness()
+    test_bare_except_catches_arbitrary_raise()
+    test_except_star_stays_loud()
+    test_non_name_except_type_stays_loud()
     test_dotted_except_type_matches()
     print("ok: try sugar -- structural effect routing")
