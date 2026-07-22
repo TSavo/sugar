@@ -383,3 +383,42 @@ fn same_spelling_binds_only_transform_body_after_rust_parse() {
     );
     assert_eq!(free_vars(term), ["x".to_string()].into());
 }
+
+#[test]
+fn python_generator_expression_stays_lazy_after_rust_parse() {
+    let eager = document_post_term(python_comprehension_document("[f(x) for x in xs]", "xs"));
+    let lazy = document_post_term(python_comprehension_document("(f(x) for x in xs)", "xs"));
+
+    let Term::Ctor {
+        name: eager_name,
+        args: eager_args,
+    } = &eager
+    else {
+        panic!("eager comprehension must remain a constructor coordinate")
+    };
+    let Term::Ctor {
+        name: lazy_name,
+        args: lazy_args,
+    } = &lazy
+    else {
+        panic!("generator expression must remain a constructor coordinate")
+    };
+
+    assert_eq!(eager_name, "py.listcomp");
+    assert_eq!(lazy_name, "py.generatorexp");
+    assert_ne!(eager, lazy, "eager and lazy coordinates must stay distinct");
+
+    let Some(Term::Lambda { body, .. }) = lazy_args.get(1) else {
+        panic!("generator transform must remain a real lambda binder")
+    };
+    assert!(
+        matches!(body.as_ref(), Term::Ctor { name, .. } if name == "call:f"),
+        "generator creation must retain the call inside the unforced transform"
+    );
+    assert_eq!(
+        eager_args.get(1),
+        lazy_args.get(1),
+        "only the eager/lazy consumer coordinate differs"
+    );
+    assert_eq!(free_vars(lazy), ["xs".to_string()].into());
+}
