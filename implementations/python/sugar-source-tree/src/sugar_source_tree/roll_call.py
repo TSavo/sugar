@@ -65,6 +65,54 @@ class RosterEntry:
 
 
 @runtime_checkable
+class RollCall(Protocol):
+    """The WRITE side -- the discharge answers. Registration already happened
+    when the node was CONSTRUCTED (materialized from the source oracle = showing
+    up on the roll); DISCHARGE is desugaring (sugar -> fact). These three
+    methods are the three discharge outcomes: a node desugars to a fact
+    (present_fact), desugars inert (present_inert), or does not discharge --
+    SugarNotWritten, the loud gap (absent). "Registered but not discharged and
+    not loud" is unrepresentable: desugar is never a fallback, never None."""
+
+    def present_fact(self, entry: RosterEntry) -> None: ...
+    def present_inert(self, entry: RosterEntry) -> None: ...
+    def absent(self, entry: RosterEntry, gap: object) -> None: ...
+
+
+class NullRollCall:
+    """Answers nowhere. The default so construction never fails for lack of a
+    roll call; a real recorder is threaded in when the report is being built."""
+
+    def present_fact(self, entry: RosterEntry) -> None: ...
+    def present_inert(self, entry: RosterEntry) -> None: ...
+    def absent(self, entry: RosterEntry, gap: object) -> None: ...
+
+
+NULL_ROLL_CALL = NullRollCall()
+
+
+class RecordingRollCall:
+    """Collects answers into an Attendance. The write side and the read side of
+    the same data: construction fills this during the roll; the report reads the
+    resulting ``attendance()``."""
+
+    def __init__(self) -> None:
+        self._answers: dict[str, Answer] = {}
+
+    def present_fact(self, entry: RosterEntry) -> None:
+        self._answers[entry.cid] = Answer.PRESENT_FACT
+
+    def present_inert(self, entry: RosterEntry) -> None:
+        self._answers[entry.cid] = Answer.PRESENT_INERT
+
+    def absent(self, entry: RosterEntry, gap: object) -> None:
+        self._answers[entry.cid] = Answer.ABSENT
+
+    def attendance(self) -> "Attendance":
+        return MappingAttendance(dict(self._answers))
+
+
+@runtime_checkable
 class Attendance(Protocol):
     """The report INTERFACE. The one seam between the source-side report and the
     construction side. It answers for a roster entry; ``None`` means the entry
@@ -108,19 +156,20 @@ def roster_entry_for(node, kind: str, name: str) -> RosterEntry:
     )
 
 
-def function_roster(source_file) -> tuple[RosterEntry, ...]:
-    """The roster at the function accounting level: every FunctionDef /
-    AsyncFunctionDef in the file, in source order. Pure source enumeration --
-    no ``sugar()``, no reporter. This is the ``functions`` census unit: a clean
-    (present) count against this roster is exactly 'functions construct clean'.
-    """
-    from .nodes import AsyncFunctionDef, FunctionDef
+def roster(source_file) -> tuple[RosterEntry, ...]:
+    """THE roster: every node of the file, in source order, keyed by its
+    fragment CID. One construction, one roster -- every node has a fragment, so
+    every node is on the roll. Pure source enumeration: no ``sugar()``, no
+    reporter. "Functions construct clean" is a QUERY over this one roster (the
+    function nodes whose subtree is all present), never a second roster."""
+    return tuple(
+        roster_entry_for(node, node.kind, _roll_name(node))
+        for node in source_file.nodes()
+    )
 
-    entries: list[RosterEntry] = []
-    for node in source_file.nodes():
-        if isinstance(node, (FunctionDef, AsyncFunctionDef)):
-            entries.append(roster_entry_for(node, node.kind, node.name))
-    return tuple(entries)
+
+def _roll_name(node) -> str:
+    return getattr(node, "name", None) or node.kind
 
 
 @dataclass(frozen=True)
@@ -168,7 +217,7 @@ def minority_report(
     the minority is the whole function roster -- total and honest, zero
     reporters, zero construction."""
     return MinorityReport(
-        roster=function_roster(source_file),
+        roster=roster(source_file),
         attendance=attendance if attendance is not None else EmptyAttendance(),
     )
 
