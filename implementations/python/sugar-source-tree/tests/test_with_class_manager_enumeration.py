@@ -181,3 +181,100 @@ def test_same_spelling_from_distinct_source_cids_cannot_borrow_disposition(
     bad_gaps = _with_gaps(bad)
     assert len(bad_gaps) == 1
     assert type(bad_gaps[0][1]) is RuntimeSelectedContextManager
+
+
+@pytest.mark.parametrize(
+    "rebind",
+    (
+        "from suppressing import Base\n",
+        "if condition:\n"
+        "    from suppressing import Base\n",
+        "for Base in managers:\n"
+        "    pass\n",
+    ),
+    ids=("direct-import", "conditional-import", "loop-target"),
+)
+def test_rebound_base_name_is_ambiguous_and_stays_runtime_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rebind: str
+):
+    _write_module(
+        tmp_path,
+        "suppressing",
+        "class Base:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return True\n",
+    )
+    _write_module(
+        tmp_path,
+        "manager",
+        "class Base:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return False\n"
+        f"{rebind}"
+        "class Derived(Base):\n"
+        "    pass\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from manager import Derived\n"
+        "def f():\n"
+        "    with Derived():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+@pytest.mark.parametrize(
+    "manager_body",
+    (
+        "import suppressing\n"
+        "class Derived(suppressing.Base):\n"
+        "    pass\n",
+        "class Generic:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return False\n"
+        "class T: pass\n"
+        "class Derived(Generic[T]):\n"
+        "    pass\n",
+        "class Left:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return False\n"
+        "class Right:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return False\n"
+        "class Derived(Left, Right):\n"
+        "    pass\n",
+    ),
+    ids=("attribute-base", "subscript-base", "multiple-bases"),
+)
+def test_computed_or_multiple_bases_stay_runtime_selected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    manager_body: str,
+):
+    _write_module(
+        tmp_path,
+        "suppressing",
+        "class Base:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return True\n",
+    )
+    _write_module(tmp_path, "manager", manager_body)
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from manager import Derived\n"
+        "def f():\n"
+        "    with Derived():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager

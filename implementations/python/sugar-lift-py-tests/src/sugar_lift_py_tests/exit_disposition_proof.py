@@ -268,6 +268,95 @@ def _module_level_nodes(tree: ast.Module) -> Iterator[ast.AST]:
             stack.extend(node.body)
 
 
+def _direct_bound_names(node: ast.AST) -> Iterator[str]:
+    if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        yield node.name
+    elif isinstance(node, ast.Import):
+        for alias in node.names:
+            yield alias.asname or alias.name.split(".")[0]
+    elif isinstance(node, ast.ImportFrom):
+        for alias in node.names:
+            if alias.name != "*":
+                yield alias.asname or alias.name
+    elif isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                yield target.id
+    elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        yield node.target.id
+
+
+class _ModuleBindingCensus(ast.NodeVisitor):
+    """Count one spelling's module-scope bindings without entering scopes."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.bindings: list[ast.AST] = []
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        if node.name == self.name:
+            self.bindings.append(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        if node.name == self.name:
+            self.bindings.append(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        if node.name == self.name:
+            self.bindings.append(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        del node
+
+    def visit_Import(self, node: ast.Import) -> None:
+        self.bindings.extend(
+            node
+            for alias in node.names
+            if (alias.asname or alias.name.split(".")[0]) == self.name
+        )
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if any(alias.name == "*" for alias in node.names):
+            self.bindings.append(node)
+        self.bindings.extend(
+            node
+            for alias in node.names
+            if alias.name != "*" and (alias.asname or alias.name) == self.name
+        )
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, (ast.Store, ast.Del)) and node.id == self.name:
+            self.bindings.append(node)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name == self.name:
+            self.bindings.append(node)
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        if node.name == self.name:
+            self.bindings.append(node)
+        self.generic_visit(node)
+
+    def visit_MatchStar(self, node: ast.MatchStar) -> None:
+        if node.name == self.name:
+            self.bindings.append(node)
+
+
+def _has_unique_unconditional_binding(
+    tree: ast.Module, name: str, *, before: ast.ClassDef
+) -> bool:
+    """One prior direct module binding only; all ambiguity stays unproven."""
+    census = _ModuleBindingCensus(name)
+    census.visit(tree)
+    if len(census.bindings) != 1:
+        return False
+    binding = census.bindings[0]
+    if getattr(binding, "lineno", before.lineno) >= before.lineno:
+        return False
+    return any(name in set(_direct_bound_names(node)) for node in tree.body)
+
+
 def _lookup_name_in_module(
     module_name: str, name: str, *, depth: int = 0
 ) -> DefinitionMemento | None:
@@ -294,6 +383,10 @@ def _lookup_name_in_module(
                     exit_fn=exit_fn,
                 )
             if len(node.bases) != 1 or not isinstance(node.bases[0], ast.Name):
+                return None
+            if not _has_unique_unconditional_binding(
+                tree, node.bases[0].id, before=node
+            ):
                 return None
             return _lookup_name_in_module(
                 module_name, node.bases[0].id, depth=depth + 1
