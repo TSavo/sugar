@@ -296,14 +296,43 @@ class _ModuleBindingCensus(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         if node.name == self.name:
             self.bindings.append(node)
+        for expr in (*node.decorator_list, *node.bases):
+            self.visit(expr)
+        for keyword in node.keywords:
+            self.visit(keyword.value)
+        for type_param in getattr(node, "type_params", ()):
+            self.visit(type_param)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         if node.name == self.name:
             self.bindings.append(node)
+        self._visit_function_header(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         if node.name == self.name:
             self.bindings.append(node)
+        self._visit_function_header(node)
+
+    def _visit_function_header(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> None:
+        args = node.args
+        for expr in (
+            *node.decorator_list,
+            *args.defaults,
+            *(default for default in args.kw_defaults if default is not None),
+        ):
+            self.visit(expr)
+        for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+            if arg.annotation is not None:
+                self.visit(arg.annotation)
+        for arg in (args.vararg, args.kwarg):
+            if arg is not None and arg.annotation is not None:
+                self.visit(arg.annotation)
+        if node.returns is not None:
+            self.visit(node.returns)
+        for type_param in getattr(node, "type_params", ()):
+            self.visit(type_param)
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         del node
@@ -343,18 +372,16 @@ class _ModuleBindingCensus(ast.NodeVisitor):
             self.bindings.append(node)
 
 
-def _has_unique_unconditional_binding(
-    tree: ast.Module, name: str, *, before: ast.ClassDef
-) -> bool:
-    """One prior direct module binding only; all ambiguity stays unproven."""
+def _unique_unconditional_binding(tree: ast.Module, name: str) -> ast.AST | None:
+    """Return one direct module binding; all ambiguity remains unproven."""
     census = _ModuleBindingCensus(name)
     census.visit(tree)
     if len(census.bindings) != 1:
-        return False
+        return None
     binding = census.bindings[0]
-    if getattr(binding, "lineno", before.lineno) >= before.lineno:
-        return False
-    return any(name in set(_direct_bound_names(node)) for node in tree.body)
+    if not any(name in set(_direct_bound_names(node)) for node in tree.body):
+        return None
+    return binding
 
 
 def _lookup_name_in_module(
@@ -373,6 +400,8 @@ def _lookup_name_in_module(
     # computed bases remain ambiguous and therefore unproven.
     for node in _module_level_nodes(tree):
         if isinstance(node, ast.ClassDef) and node.name == name:
+            if _unique_unconditional_binding(tree, name) is not node:
+                return None
             exit_fn = _direct_class_exit(node)
             if exit_fn is not None:
                 return DefinitionMemento(
@@ -384,8 +413,10 @@ def _lookup_name_in_module(
                 )
             if len(node.bases) != 1 or not isinstance(node.bases[0], ast.Name):
                 return None
-            if not _has_unique_unconditional_binding(
-                tree, node.bases[0].id, before=node
+            binding = _unique_unconditional_binding(tree, node.bases[0].id)
+            if (
+                binding is None
+                or getattr(binding, "lineno", node.lineno) >= node.lineno
             ):
                 return None
             return _lookup_name_in_module(
