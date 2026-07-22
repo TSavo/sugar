@@ -25,3 +25,11 @@ sugar-python-factory-floor-idd = "sugar_lift_py_tests.idd.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Ship the committed community manifest(s) with the built package. Without this
+# the installed package lacks manifests/community_context_managers.json, so
+# default_community_manifest() fails to load and the membrane can no longer
+# recognize community context managers (pytest.raises, contextlib.suppress),
+# which reappear as false bare-exception rows and block files from measuring.
+[tool.setuptools.package-data]
+sugar_lift_py_tests = ["manifests/*.json"]
