@@ -10,7 +10,8 @@ fn production_kit_declaration_becomes_bodyless_signed_graph_member() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
-        .unwrap();
+        .unwrap()
+        .to_path_buf();
     let python_path = repo.join("implementations/python/sugar-lift-py-tests/src");
     let program = r#"
 import json
