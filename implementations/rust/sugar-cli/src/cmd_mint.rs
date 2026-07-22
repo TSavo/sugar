@@ -2561,6 +2561,12 @@ fn dispatch_report_lift_plugin(
     library_bindings: bool,
     report_summary: bool,
 ) -> Result<Value, String> {
+    // lift and mint are just clients of `sugar.enumerate`. If the kit speaks it,
+    // fold the report over the enumeration protocol; the legacy single-shot
+    // `lift` method path below is only for kits that do not advertise it.
+    if let Some(response) = enumeration_report_response(project_root, plugin)? {
+        return Ok(response);
+    }
     let lift_options = LiftPluginOptions {
         workspace_override: plugin.workspace_override.clone(),
         emit: plugin.emit.clone(),
@@ -2589,6 +2595,37 @@ fn dispatch_report_lift_plugin(
         .map_err(|error| error.to_string())?;
     prefix_workspace_override_source_files(&mut response, plugin.workspace_override.as_deref());
     Ok(response)
+}
+
+/// The enumeration-driven report response. lift and mint are just clients of
+/// `sugar.enumerate`: rendezvous the kit and fold the report over the
+/// enumeration protocol (`sugar_compiler::tree::fold_lift_report_response`),
+/// never the retired single-shot `lift` method. Returns `Ok(None)` when the
+/// kit does not advertise `sugar.enumerate` (fall back to the legacy dispatch).
+fn enumeration_report_response(
+    project_root: &Path,
+    plugin: &PluginEntry,
+) -> Result<Option<Value>, String> {
+    use sugar_compiler::kit::{Kit, LiftManifest};
+
+    let manifest = lift_plugin::find_manifest_for_surface(project_root, &plugin.surface)
+        .map_err(|error| format!("lift-plugin.manifest: {error}"))?;
+    let kit = Kit::rendezvous(LiftManifest::resolved(
+        plugin.surface.clone(),
+        manifest.name.clone(),
+        lift_plugin::dialect_for_surface(&plugin.surface),
+        manifest.command.clone(),
+        lift_plugin::absolute_working_dir_for_manifest(project_root, &manifest),
+        manifest.method.clone(),
+    ))
+    .map_err(|error| format!("lift.rendezvous: {error}"))?;
+    if !kit.supports_rpc_method("sugar.enumerate") {
+        return Ok(None);
+    }
+    let mut response = sugar_compiler::tree::fold_lift_report_response(&kit, project_root, &[])
+        .map_err(|error| format!("lift.path: {error}"))?;
+    prefix_workspace_override_source_files(&mut response, plugin.workspace_override.as_deref());
+    Ok(Some(response))
 }
 
 #[allow(dead_code)] // private helper of dispatch_report_lift_plugin (cmd_lift binary)
