@@ -55,6 +55,7 @@ class DefinitionMemento:
     source_cid: str
     filename: str
     exit_fn: ast.FunctionDef | ast.AsyncFunctionDef
+    determining_classes: tuple[tuple[str, str], ...]
 
 
 class ExitDispositionUnproven(Exception):
@@ -529,6 +530,7 @@ def _lookup_name_in_module(
                     source_cid=source_cid,
                     filename=filename,
                     exit_fn=exit_fn,
+                    determining_classes=((module_name, name),),
                 )
             if len(node.bases) != 1 or not isinstance(node.bases[0], ast.Name):
                 return None
@@ -538,8 +540,21 @@ def _lookup_name_in_module(
                 or getattr(binding, "lineno", node.lineno) >= node.lineno
             ):
                 return None
-            return _lookup_name_in_module(
+            inherited = _lookup_name_in_module(
                 module_name, node.bases[0].id, depth=depth + 1
+            )
+            if inherited is None:
+                return None
+            return DefinitionMemento(
+                module=inherited.module,
+                class_name=inherited.class_name,
+                source_cid=inherited.source_cid,
+                filename=inherited.filename,
+                exit_fn=inherited.exit_fn,
+                determining_classes=(
+                    (module_name, name),
+                    *inherited.determining_classes,
+                ),
             )
 
     binding = _unique_unconditional_binding(tree, name)
@@ -734,8 +749,6 @@ def resolve_definition_memento_from_manager_expr(
     )
     if "*" in coordinate_bound or head in (lexically_bound_names | coordinate_bound):
         return None
-    if _module_uses_class_unsafely(source_tree, tuple(parts)):
-        return None
     if head not in bindings:
         return None
     kind, payload, binding_node = bindings[head]
@@ -748,9 +761,9 @@ def resolve_definition_memento_from_manager_expr(
         # head is a module binding; rest are attributes into that package.
         if len(rest) != 1:
             return None
-        return _lookup_name_in_module(payload, rest[0])
+        memento = _lookup_name_in_module(payload, rest[0])
 
-    if kind == "from":
+    elif kind == "from":
         # from mod import name [as head]; rest must be empty for Class() form
         if rest:
             # from mod import pkg; pkg.Class — rare; treat payload module.attr
@@ -760,9 +773,49 @@ def resolve_definition_memento_from_manager_expr(
         if "." not in payload:
             return None
         mod, _, name = payload.rpartition(".")
-        return _lookup_name_in_module(mod, name)
+        memento = _lookup_name_in_module(mod, name)
 
-    return None
+    else:
+        return None
+
+    if memento is None:
+        return None
+
+    subject_coordinates = {tuple(parts)}
+    determining = set(memento.determining_classes)
+
+    def resolves_to(
+        class_module: str, class_name: str, target: tuple[str, str]
+    ) -> bool:
+        resolved = _lookup_name_in_module(class_module, class_name)
+        return (
+            resolved is not None
+            and resolved.determining_classes
+            and resolved.determining_classes[0] == target
+        )
+
+    for local_name, (binding_kind, binding_payload, _node) in bindings.items():
+        if binding_kind == "from" and "." in binding_payload:
+            bound_module, _, bound_name = binding_payload.rpartition(".")
+            for target in determining:
+                if (bound_module, bound_name) == target or resolves_to(
+                    bound_module, bound_name, target
+                ):
+                    subject_coordinates.add((local_name,))
+        elif binding_kind == "module":
+            for class_module, class_name in determining:
+                target = (class_module, class_name)
+                if binding_payload == class_module or resolves_to(
+                    binding_payload, class_name, target
+                ):
+                    subject_coordinates.add((local_name, class_name))
+
+    if any(
+        _module_uses_class_unsafely(source_tree, coordinate)
+        for coordinate in subject_coordinates
+    ):
+        return None
+    return memento
 
 
 def prove_exit_disposition_from_manager_expr(

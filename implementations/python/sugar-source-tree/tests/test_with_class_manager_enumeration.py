@@ -865,3 +865,72 @@ def test_manager_class_passed_to_call_stays_runtime_selected(
     gaps = _with_gaps(subject)
     assert len(gaps) == 1
     assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+@pytest.mark.parametrize(
+    "subject_body",
+    (
+        "from manager import Derived, Base\n"
+        "def _suppress(self, *args): return True\n"
+        "Base.__exit__ = _suppress\n"
+        "def f():\n"
+        "    with Derived():\n"
+        "        raise ValueError\n",
+        "import manager\n"
+        "def _suppress(self, *args): return True\n"
+        "manager.Base.__exit__ = _suppress\n"
+        "def f():\n"
+        "    with manager.Derived():\n"
+        "        raise ValueError\n",
+        "from manager import Derived, Base\n"
+        "def patch(cls): pass\n"
+        "patch(Base)\n"
+        "def f():\n"
+        "    with Derived():\n"
+        "        raise ValueError\n",
+    ),
+    ids=("base-store", "qualified-base-store", "base-call-argument"),
+)
+def test_inherited_disposition_base_use_stays_runtime_selected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    subject_body: str,
+):
+    _write_module(
+        tmp_path,
+        "manager",
+        "class Base:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return None\n"
+        "class Derived(Base): pass\n",
+    )
+    subject = _write_module(tmp_path, "subject", subject_body)
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    gaps = _with_gaps(subject)
+    assert len(gaps) == 1
+    assert type(gaps[0][1]) is RuntimeSelectedContextManager
+
+
+def test_untouched_inherited_disposition_still_proves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _write_module(
+        tmp_path,
+        "manager",
+        "class Base:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, typ, value, traceback): return None\n"
+        "class Derived(Base): pass\n",
+    )
+    subject = _write_module(
+        tmp_path,
+        "subject",
+        "from manager import Derived\n"
+        "def f():\n"
+        "    with Derived():\n"
+        "        raise ValueError\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    assert _with_gaps(subject) == []
