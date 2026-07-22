@@ -485,6 +485,11 @@ def format_report(offenders: Sequence[VendorSpecialCase]) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
     package = (
         Path(__file__).resolve().parents[1]
         / "src"

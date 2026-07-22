@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import ast
 from pathlib import Path
+import sys
 from typing import NamedTuple
 
 
@@ -343,6 +344,11 @@ def format_report(offenders: list[PanicCatchOffender]) -> str:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--kit-root",
