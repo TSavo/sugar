@@ -95,7 +95,9 @@ def _effect_continues_control_flow(effect) -> bool:
     """
     from sugar_lift_py_tests.effect import (
         AttributeAugAssignRuntimeEffect,
+        AttributeDeleteRuntimeEffect,
         AttributeStoreRuntimeEffect,
+        SubscriptDeleteRuntimeEffect,
         SubscriptStoreRuntimeEffect,
     )
 
@@ -105,5 +107,7 @@ def _effect_continues_control_flow(effect) -> bool:
             SubscriptStoreRuntimeEffect,
             AttributeStoreRuntimeEffect,
             AttributeAugAssignRuntimeEffect,
+            AttributeDeleteRuntimeEffect,
+            SubscriptDeleteRuntimeEffect,
         ),
     )
