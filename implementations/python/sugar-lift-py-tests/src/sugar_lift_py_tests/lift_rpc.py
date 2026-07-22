@@ -1666,6 +1666,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             "facts",
             "universe",
             "implications",
+            "minority",
         ):
             file_rel = _enumerate_file_of(at)
             if file_rel is None:
@@ -1709,6 +1710,26 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     msg_id,
                     [],
                     [{"memento": at, "reason": f"no such file: {file_rel}"}],
+                )
+                return
+
+            if level == "minority":
+                # The minority report over the reporter channel (the R census
+                # re-homed here, now WIRED): construction registers every node;
+                # the discharge answers present/absent. One node per file
+                # carrying the whole partition as its payload -- the visual
+                # report renders present Blue, absent (minority) Yellow.
+                from sugar_lift_py_tests import tree_enumerate as _tree
+
+                payload = _tree.minority_report_payload(full_path, file_rel)
+                node = {
+                    "memento": _degenerate_file_memento(file_rel),
+                    "audit": None,
+                    "payload": payload,
+                }
+                _send_enumerate_result(msg_id, [node], [])
+                _log_enumeration_demand(
+                    str(level), at, cache="miss", started=demand_started
                 )
                 return
 
