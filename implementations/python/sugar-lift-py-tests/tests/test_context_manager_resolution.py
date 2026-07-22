@@ -94,3 +94,29 @@ def test_malformed_table_cid_and_unsorted_ambiguity_are_loud():
     ambiguous["tableCid"] = _hash_json(identity)
     with pytest.raises(ContractRefProtocolError, match="must be sorted"):
         decode_resolved_contract_refs(ambiguous)
+
+
+def test_demand_enrollment_uses_import_coordinate_without_sugar_or_target_source(
+    tmp_path, monkeypatch
+):
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text(
+        "from dependency_that_is_not_present import manager as renamed\n"
+        "def f():\n"
+        "    with renamed():\n"
+        "        pass\n"
+    )
+    from sugar_source_tree.nodes import With
+
+    monkeypatch.setattr(
+        With,
+        "sugar",
+        lambda self: (_ for _ in ()).throw(AssertionError("demand pass constructed Sugar")),
+    )
+    rows = lift_rpc._context_manager_demand_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["targetSymbol"] == (
+        "context-manager:dependency_that_is_not_present.manager"
+    )
+    assert rows[0]["gapKind"] is None
+    assert rows[0]["useSite"]["sourceCid"].startswith("blake3-512:")

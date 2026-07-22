@@ -366,6 +366,18 @@ impl AuthenticatedContextManagerCatalog {
     }
 
     pub fn freeze_from_pool(pool: &MementoPool) -> Result<Self, String> {
+        for cid in pool.mementos.keys() {
+            let attributed = pool.member_speaker(cid).is_some();
+            let enrolled = pool
+                .bundle_members
+                .values()
+                .any(|members| members.contains(cid));
+            if !attributed || !enrolled {
+                return Err(format!(
+                    "unauthenticated-member: {cid} lacks verified pool intake testimony"
+                ));
+            }
+        }
         let members = pool
             .mementos
             .iter()

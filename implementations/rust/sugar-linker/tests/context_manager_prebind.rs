@@ -4,10 +4,10 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_types::Sort;
 use sugar_linker::{
-    final_check_context_manager_ref, resolve_context_manager_demand,
-    AuthenticatedContextManagerCatalog, Cid, ContextManagerContractDemandV1,
-    ContextManagerResolutionGapKindV1, ContextManagerResolutionV1, ResolvedContractRefsV1,
-    SourceFragmentCoordinateV1,
+    final_check_context_manager_edge, final_check_context_manager_ref,
+    resolve_context_manager_demand, AuthenticatedContextManagerCatalog, Cid,
+    ContextManagerContractDemandV1, ContextManagerEdgeV1, ContextManagerResolutionGapKindV1,
+    ContextManagerResolutionV1, ResolvedContractRefsV1, SourceFragmentCoordinateV1,
 };
 use sugar_proof_envelope::{
     ContextManagerSemanticsV1, EnterResultContractV1, ExitContractV1, ExitDispositionV1,
@@ -174,6 +174,52 @@ fn rust_owned_table_decodes_to_frozen_typed_python_refs() {
     assert_eq!(
         String::from_utf8(output.stdout).unwrap().trim(),
         table.table_cid().as_str()
+    );
+}
+
+#[test]
+fn runtime_selected_and_mutated_signed_member_never_construct_a_ref() {
+    let empty = AuthenticatedContextManagerCatalog::freeze(vec![]).unwrap();
+    let runtime = ContextManagerContractDemandV1::runtime_selected(
+        use_site(),
+        ImportSignatureV1 {
+            formals: vec![],
+            sorts: vec![],
+        },
+    );
+    let ContextManagerResolutionV1::Unresolved(gap) =
+        resolve_context_manager_demand(&runtime, &empty)
+    else {
+        panic!("runtime-selected gap")
+    };
+    assert_eq!(gap.kind, ContextManagerResolutionGapKindV1::RuntimeSelected);
+    assert!(gap.target_symbol.is_none());
+
+    let (cid, mut envelope) = minted("context-manager:fixture.never_closing", 12);
+    envelope["header"]["payload"]["exit"]["disposition"]["kind"] =
+        Json::String("unknown-disposition".into());
+    let error = AuthenticatedContextManagerCatalog::freeze(vec![(cid, envelope)]).unwrap_err();
+    assert!(
+        error.contains("attestation") || error.contains("signature"),
+        "{error}"
+    );
+}
+
+#[test]
+fn final_edge_is_pinned_to_the_exact_resolution_and_catalog() {
+    let member = minted("context-manager:fixture.never_closing", 13);
+    let catalog = AuthenticatedContextManagerCatalog::freeze(vec![member]).unwrap();
+    let ContextManagerResolutionV1::Resolved(reference) =
+        resolve_context_manager_demand(&demand("context-manager:fixture.never_closing"), &catalog)
+    else {
+        panic!("resolved")
+    };
+    let edge = ContextManagerEdgeV1::from_resolved(&reference);
+    final_check_context_manager_edge(&edge, &reference, &catalog).expect("exact pinned edge");
+    let drifted = AuthenticatedContextManagerCatalog::freeze(vec![]).unwrap();
+    assert_eq!(
+        final_check_context_manager_edge(&edge, &reference, &drifted).unwrap_err(),
+        "stale-resolution"
     );
 }
 use std::io::Write;
