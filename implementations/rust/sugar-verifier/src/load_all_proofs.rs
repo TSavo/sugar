@@ -501,6 +501,7 @@ fn load_catalog_bytes(
                     | MemberKind::Authority
                     | MemberKind::Bridge
                     | MemberKind::ClosureBinding
+                    | MemberKind::ContextManagerContract
                     | MemberKind::EffectSiteAnnotation
                     | MemberKind::FactoryWalkMemento
                     | MemberKind::Implication
@@ -569,6 +570,7 @@ fn load_catalog_bytes(
                     | MemberKind::Authority
                     | MemberKind::ClosureBinding
                     | MemberKind::Contract
+                    | MemberKind::ContextManagerContract
                     | MemberKind::EffectSiteAnnotation
                     | MemberKind::FactoryWalkMemento
                     | MemberKind::Implication

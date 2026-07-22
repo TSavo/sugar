@@ -14,7 +14,10 @@
 use std::fmt;
 use std::str::FromStr;
 
+use serde::Deserialize;
 use serde_json::Value as Json;
+use sugar_canonicalizer::{blake3_512_of, encode_jcs};
+use sugar_ir_types::Sort;
 
 use crate::proof_graph::{AtomCid, ContractBodyCid, MementoCid};
 
@@ -49,13 +52,16 @@ pub enum MemberError {
         raw: String,
     },
 
+    #[error("context-manager-contract: {0}")]
+    InvalidContextManagerContract(String),
+
     #[error("CID not present in graph: {0}")]
     UnknownCid(String),
 }
 
 // ─── Member kind ────────────────────────────────────────────────────────────
 
-pub const KNOWN_MEMBER_KINDS: &str = "aliasing-memento, assertion-surface-memento, authority, bridge, closure-binding, contract, effect-site-annotation, factory-walk-memento, implication, library-sugar-binding-entry, loop-invariant, pin-invariant, plan-memento, proof-run, source-memento, stage-receipt, try-branch, witness, witness-memento";
+pub const KNOWN_MEMBER_KINDS: &str = "aliasing-memento, assertion-surface-memento, authority, bridge, closure-binding, context-manager-contract, contract, effect-site-annotation, factory-walk-memento, implication, library-sugar-binding-entry, loop-invariant, pin-invariant, plan-memento, proof-run, source-memento, stage-receipt, try-branch, witness, witness-memento";
 
 /// Wire member kind. Strings enter and leave only at serde/display boundaries;
 /// production branching should match this enum exhaustively.
@@ -67,6 +73,7 @@ pub enum MemberKind {
     Bridge,
     ClosureBinding,
     Contract,
+    ContextManagerContract,
     EffectSiteAnnotation,
     FactoryWalkMemento,
     Implication,
@@ -91,6 +98,7 @@ impl MemberKind {
             MemberKind::Bridge => "bridge",
             MemberKind::ClosureBinding => "closure-binding",
             MemberKind::Contract => "contract",
+            MemberKind::ContextManagerContract => "context-manager-contract",
             MemberKind::EffectSiteAnnotation => "effect-site-annotation",
             MemberKind::FactoryWalkMemento => "factory-walk-memento",
             MemberKind::Implication => "implication",
@@ -125,6 +133,7 @@ impl FromStr for MemberKind {
             "bridge" => Ok(MemberKind::Bridge),
             "closure-binding" => Ok(MemberKind::ClosureBinding),
             "contract" => Ok(MemberKind::Contract),
+            "context-manager-contract" => Ok(MemberKind::ContextManagerContract),
             "effect-site-annotation" => Ok(MemberKind::EffectSiteAnnotation),
             "factory-walk-memento" => Ok(MemberKind::FactoryWalkMemento),
             "implication" => Ok(MemberKind::Implication),
@@ -878,10 +887,169 @@ impl StageReceiptMember {
 
 // ─── Member enum + parse entrypoint ──────────────────────────────────────────
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextManagerContractMember {
+    pub cid: MementoCid,
+    pub name: String,
+    pub kit: String,
+    pub bridge_source_symbol: String,
+    pub constructor_formals: Vec<String>,
+    pub constructor_sorts: Vec<Sort>,
+    pub enter_result_sort: Sort,
+    pub source_warrants: Vec<Json>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextManagerHeader {
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    kind: String,
+    cid: String,
+    name: String,
+    kit: String,
+    #[serde(rename = "bridgeSourceSymbol")]
+    bridge_source_symbol: String,
+    #[serde(rename = "constructorSignature")]
+    constructor_signature: ConstructorSignature,
+    enter: EnterContract,
+    exit: ExitContract,
+    #[serde(rename = "sourceWarrants")]
+    source_warrants: Vec<Json>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConstructorSignature {
+    formals: Vec<String>,
+    sorts: Vec<Sort>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnterContract {
+    outcome: String,
+    result: EnterResult,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnterResult {
+    kind: String,
+    projection: String,
+    sort: Sort,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExitContract {
+    outcome: String,
+    disposition: ExitDisposition,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExitDisposition {
+    kind: String,
+}
+
+impl ContextManagerContractMember {
+    fn from_value(value: &Json) -> Result<Self, MemberError> {
+        let root = value.as_object().ok_or_else(|| {
+            MemberError::InvalidContextManagerContract("layered member must be an object".into())
+        })?;
+        if root.len() != 3
+            || !root.contains_key("envelope")
+            || !root.contains_key("header")
+            || !root.contains_key("metadata")
+            || !root.get("envelope").is_some_and(Json::is_object)
+        {
+            return Err(MemberError::InvalidContextManagerContract(
+                "expected only envelope, header, and metadata layers".into(),
+            ));
+        }
+        let metadata = value
+            .get("metadata")
+            .and_then(Json::as_object)
+            .ok_or_else(|| {
+                MemberError::InvalidContextManagerContract("layered metadata is missing".into())
+            })?;
+        if !metadata.is_empty() {
+            return Err(MemberError::InvalidContextManagerContract(
+                "metadata must be empty in schema 1".into(),
+            ));
+        }
+        let raw_header = value.get("header").cloned().ok_or_else(|| {
+            MemberError::InvalidContextManagerContract("layered header is missing".into())
+        })?;
+        let header: ContextManagerHeader =
+            serde_json::from_value(raw_header.clone()).map_err(|e| {
+                MemberError::InvalidContextManagerContract(format!("malformed header: {e}"))
+            })?;
+        if header.schema_version != "1" || header.kind != "context-manager-contract" {
+            return Err(MemberError::InvalidContextManagerContract(
+                "schemaVersion/kind mismatch".into(),
+            ));
+        }
+        if header.name.is_empty() || header.kit.is_empty() || header.bridge_source_symbol.is_empty()
+        {
+            return Err(MemberError::InvalidContextManagerContract(
+                "identity fields must be non-empty".into(),
+            ));
+        }
+        if header.constructor_signature.formals.len() != header.constructor_signature.sorts.len() {
+            return Err(MemberError::InvalidContextManagerContract(
+                "constructor formals/sorts length mismatch".into(),
+            ));
+        }
+        if header.enter.outcome != "total"
+            || header.enter.result.kind != "projection"
+            || header.enter.result.projection != "enter_result"
+        {
+            return Err(MemberError::InvalidContextManagerContract(
+                "enter testimony is not total enter_result projection".into(),
+            ));
+        }
+        if header.exit.outcome != "total" || header.exit.disposition.kind != "never-suppresses" {
+            return Err(MemberError::InvalidContextManagerContract(
+                "exit testimony is not total NeverSuppresses".into(),
+            ));
+        }
+        let mut payload = raw_header;
+        payload
+            .as_object_mut()
+            .expect("decoded header is object")
+            .shift_remove("cid");
+        let derived = blake3_512_of(
+            encode_jcs(&crate::proof_graph::json_to_canonical_value(&payload)).as_bytes(),
+        );
+        if derived != header.cid {
+            return Err(MemberError::InvalidContextManagerContract(format!(
+                "content CID {} derives to {derived}",
+                header.cid
+            )));
+        }
+        let cid = MementoCid::try_parse(header.cid.clone()).map_err(|raw| {
+            MemberError::InvalidCidFormat {
+                kind: "context-manager-contract".into(),
+                field: "cid".into(),
+                raw,
+            }
+        })?;
+        Ok(Self {
+            cid,
+            name: header.name,
+            kit: header.kit,
+            bridge_source_symbol: header.bridge_source_symbol,
+            constructor_formals: header.constructor_signature.formals,
+            constructor_sorts: header.constructor_signature.sorts,
+            enter_result_sort: header.enter.result.sort,
+            source_warrants: header.source_warrants,
+        })
+    }
+}
+
 /// Typed, parsed member. One variant per known kind.
 #[derive(Debug, Clone)]
 pub enum Member {
     Contract(ContractMember),
+    ContextManagerContract(ContextManagerContractMember),
     Bridge(BridgeMember),
     Implication(ImplicationMember),
     Authority(AuthorityMember),
@@ -918,6 +1086,9 @@ impl Member {
         let nb = normalize(value)?;
         match nb.kind {
             MemberKind::Contract => Ok(Member::Contract(ContractMember::from_normalized(&nb)?)),
+            MemberKind::ContextManagerContract => Ok(Member::ContextManagerContract(
+                ContextManagerContractMember::from_value(value)?,
+            )),
             MemberKind::Bridge => Ok(Member::Bridge(BridgeMember::from_normalized(&nb)?)),
             MemberKind::Implication => Ok(Member::Implication(ImplicationMember::from_normalized(
                 &nb,
@@ -981,6 +1152,7 @@ impl Member {
     pub fn kind(&self) -> MemberKind {
         match self {
             Member::Contract(_) => MemberKind::Contract,
+            Member::ContextManagerContract(_) => MemberKind::ContextManagerContract,
             Member::Bridge(_) => MemberKind::Bridge,
             Member::Implication(_) => MemberKind::Implication,
             Member::Authority(_) => MemberKind::Authority,
@@ -1370,6 +1542,10 @@ mod tests {
             ("bridge", MemberKind::Bridge),
             ("closure-binding", MemberKind::ClosureBinding),
             ("contract", MemberKind::Contract),
+            (
+                "context-manager-contract",
+                MemberKind::ContextManagerContract,
+            ),
             ("effect-site-annotation", MemberKind::EffectSiteAnnotation),
             ("factory-walk-memento", MemberKind::FactoryWalkMemento),
             ("implication", MemberKind::Implication),

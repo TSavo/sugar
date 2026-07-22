@@ -1132,6 +1132,7 @@ fn layered_signature_header(envelope: &Json, header: &Json) -> Result<Json, Stri
         | Ok(MemberKind::Bridge)
         | Ok(MemberKind::ClosureBinding)
         | Ok(MemberKind::Contract)
+        | Ok(MemberKind::ContextManagerContract)
         | Ok(MemberKind::EffectSiteAnnotation)
         | Ok(MemberKind::FactoryWalkMemento)
         | Ok(MemberKind::Implication)

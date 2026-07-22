@@ -1142,6 +1142,7 @@ impl MementoPool {
             | Some(MemberKind::Authority)
             | Some(MemberKind::Bridge)
             | Some(MemberKind::Contract)
+            | Some(MemberKind::ContextManagerContract)
             | Some(MemberKind::EffectSiteAnnotation)
             | Some(MemberKind::FactoryWalkMemento)
             | Some(MemberKind::Implication)

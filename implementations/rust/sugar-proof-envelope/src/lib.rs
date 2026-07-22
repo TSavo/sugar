@@ -66,8 +66,8 @@ pub use sign::{
     SignatureParseError, ED25519_KEY_PREFIX, ED25519_SIG_PREFIX,
 };
 pub use typed_member::{
-    AssertionSurfaceMementoMember, AuthorityMember, BridgeMember, ContractMember,
-    EffectSiteAnnotationMember, FactoryWalkMementoMember, ImplicationMember,
+    AssertionSurfaceMementoMember, AuthorityMember, BridgeMember, ContextManagerContractMember,
+    ContractMember, EffectSiteAnnotationMember, FactoryWalkMementoMember, ImplicationMember,
     LibrarySugarBindingEntryMember, Member, MemberError, MemberKind, PlanMementoMember,
     ProofRunMember, SourceMementoMember, StageReceiptMember, WitnessClaimMember,
     WitnessMementoMember,
