@@ -170,7 +170,7 @@ class TupleValue(FloorValue):
         return Complete(
             SymbolicValue(
                 ctor(
-                    "python:mul",
+                    "python:sequence_repeat",
                     [
                         self.to_term(owner=str(site)),
                         other.to_term(owner=str(site)),

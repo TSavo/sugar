@@ -22,7 +22,7 @@ def _symbolic_result(sequence, multiplier):
     assert isinstance(outcome.value, SymbolicValue)
     term = outcome.value.term
     assert isinstance(term, _Ctor)
-    assert term.name == "python:mul"
+    assert term.name == "python:sequence_repeat"
     return term
 
 
@@ -40,7 +40,7 @@ def test_exact_constructed_integer_is_the_only_finite_repetition_path(
 
 
 @pytest.mark.parametrize("sequence_type", (ListValue, TupleValue))
-def test_unresolved_imported_constant_constructs_symbolic_multiplication(
+def test_unresolved_imported_constant_constructs_symbolic_repetition(
     sequence_type, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def no_import(*args, **kwargs):
@@ -68,14 +68,14 @@ def test_bridge_coordinate_rename_changes_only_multiplier_term(sequence_type) ->
     first_term = _symbolic_result(sequence, first)
     renamed_term = _symbolic_result(sequence, renamed)
 
-    assert first_term.name == renamed_term.name == "python:mul"
+    assert first_term.name == renamed_term.name == "python:sequence_repeat"
     assert first_term.args[0] == renamed_term.args[0]
     assert first_term.args[1] == first.term
     assert renamed_term.args[1] == renamed.term
 
 
 @pytest.mark.parametrize("sequence_type", (ListValue, TupleValue))
-def test_nested_imported_calls_remain_nested_under_universal_multiply(
+def test_nested_imported_calls_remain_nested_under_sequence_repetition(
     sequence_type,
 ) -> None:
     inner = CallSiteValue("vendor.inner", (), (), ctor("call:vendor.inner", []), None)
