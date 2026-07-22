@@ -3,9 +3,8 @@ from __future__ import annotations
 import re
 from typing import Callable, Iterable, TypeAlias, TypeVar
 
-from sugar_lift_py_tests.factory import FactoryAuditRow, GapKind
+from sugar_lift_py_tests.factory import GapKind
 from sugar_lift_py_tests.factory.factory_gap import FactoryPanic
-from sugar_lift_py_tests.factory.factory_gap_info import gap_kind_status
 
 from .audit_only_gap import AuditOnlyGap
 
@@ -56,24 +55,11 @@ def collect_factory_panic(
 
 
 def gap_from_factory_panic(label: str, panic: FactoryPanic) -> AuditOnlyGap:
-    """Structure the panic's FactoryGapInfo as an audit-only gap row."""
+    """Carry the panic's own construction testimony across the audit membrane."""
     info = panic.info.to_json()
-    audit_row = panic.audit_row
-    if audit_row is None:
-        status = gap_kind_status(panic.info.gap_kind)
-        audit_row = FactoryAuditRow(
-            role=info["requested"],
-            status=status,
-            observed=info["observed"],
-            blame=info["blame"],
-            selected=None,
-            candidates=[],
-            message=panic.info.message,
-        )
     return AuditOnlyGap(
         label=label,
         info=info,
-        audit_row=audit_row,
         message=panic.info.message,
     )
 
@@ -83,19 +69,9 @@ def _gap_from_loud_type_error(label: str, message: str) -> AuditOnlyGap | None:
     if gap_kind is None:
         return None
     info = _info_from_loud_message(label, message, gap_kind=gap_kind)
-    status = gap_kind_status(gap_kind)
     return AuditOnlyGap(
         label=label,
         info=info,
-        audit_row=FactoryAuditRow(
-            role=info["requested"],
-            status=status,
-            observed=info["observed"],
-            blame=info["blame"],
-            selected=None,
-            candidates=[],
-            message=message,
-        ),
         message=message,
     )
 

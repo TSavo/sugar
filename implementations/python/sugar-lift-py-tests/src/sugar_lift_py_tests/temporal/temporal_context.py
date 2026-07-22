@@ -9,7 +9,6 @@ from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
 
 from .temporal_binding import GuardedTemporalBinding, TemporalBinding
-from sugar_lift_py_tests.factory.factory_audit_row import FactoryAuditStatus
 
 
 @dataclass(frozen=True)
@@ -144,7 +143,6 @@ class TemporalContext:
         fix: str,
     ) -> NoReturn:
         from sugar_lift_py_tests.factory import (
-            FactoryAuditRow,
             factory_panic,
             FactoryGapInfo,
             GapKind,
@@ -160,15 +158,4 @@ class TemporalContext:
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-        factory_panic(
-            info,
-            FactoryAuditRow(
-                role=requested,
-                status=FactoryAuditStatus.FLOOR_GAP,
-                observed=observed,
-                blame=blame,
-                selected=None,
-                candidates=[],
-                message=info.message,
-            ),
-        )
+        factory_panic(info)
