@@ -422,6 +422,120 @@ pub enum ContextManagerResolutionV1 {
     Unresolved(ContextManagerResolutionGapV1),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedContractRefsV1 {
+    catalog_cid: Cid,
+    table_cid: Cid,
+    by_use_site: BTreeMap<SourceFragmentCoordinateV1, ContextManagerResolutionV1>,
+}
+
+impl ResolvedContractRefsV1 {
+    pub fn new(
+        catalog: &AuthenticatedContextManagerCatalog,
+        demands: &[ContextManagerContractDemandV1],
+    ) -> Self {
+        let by_use_site = demands
+            .iter()
+            .map(|demand| {
+                (
+                    demand.use_site.clone(),
+                    resolve_context_manager_demand(demand, catalog),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut table = Self {
+            catalog_cid: catalog.catalog_cid.clone(),
+            table_cid: Cid::from(""),
+            by_use_site,
+        };
+        table.table_cid = Cid::from(jcs_cid(&table.identity_value()));
+        table
+    }
+
+    pub fn catalog_cid(&self) -> &Cid {
+        &self.catalog_cid
+    }
+
+    pub fn table_cid(&self) -> &Cid {
+        &self.table_cid
+    }
+
+    pub fn get(
+        &self,
+        use_site: &SourceFragmentCoordinateV1,
+    ) -> Option<&ContextManagerResolutionV1> {
+        self.by_use_site.get(use_site)
+    }
+
+    pub fn to_wire_value(&self) -> Json {
+        let mut value = self.identity_value();
+        value
+            .as_object_mut()
+            .expect("table object")
+            .insert("tableCid".into(), Json::String(self.table_cid.to_string()));
+        value
+    }
+
+    fn identity_value(&self) -> Json {
+        let rows = self
+            .by_use_site
+            .iter()
+            .map(|(use_site, resolution)| {
+                serde_json::json!({
+                    "useSite": use_site,
+                    "resolution": resolution_to_json(resolution),
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "kind": "resolved-contract-refs",
+            "schemaVersion": "1",
+            "catalogCid": self.catalog_cid,
+            "byUseSite": rows,
+        })
+    }
+}
+
+fn import_signature_to_json(value: &ImportSignatureV1) -> Json {
+    serde_json::json!({"formals": value.formals, "sorts": value.sorts})
+}
+
+fn reference_to_json(value: &ContextManagerContractRefV1) -> Json {
+    serde_json::json!({
+        "kind": "context-manager-contract-ref",
+        "schemaVersion": "1",
+        "resolutionCid": value.resolution_cid,
+        "demandCid": value.demand_cid,
+        "useSite": value.use_site,
+        "catalogCid": value.catalog_cid,
+        "memberCid": value.member_cid,
+        "payloadCid": value.payload_cid,
+        "bridgeSourceSymbol": value.bridge_source_symbol,
+        "importSignature": import_signature_to_json(&value.import_signature),
+        "semantics": sugar_proof_envelope::context_manager_semantics_v1_to_json(&value.semantics),
+        "sourceWarrantCids": value.source_warrant_cids,
+    })
+}
+
+fn resolution_to_json(value: &ContextManagerResolutionV1) -> Json {
+    match value {
+        ContextManagerResolutionV1::Resolved(reference) => serde_json::json!({
+            "kind": "resolved",
+            "reference": reference_to_json(reference),
+        }),
+        ContextManagerResolutionV1::Unresolved(gap) => serde_json::json!({
+            "kind": "unresolved",
+            "gap": {
+                "demandCid": gap.demand_cid,
+                "useSite": gap.use_site,
+                "targetSymbol": gap.target_symbol,
+                "kind": gap.kind,
+                "candidateMemberCids": gap.candidate_member_cids,
+            },
+        }),
+    }
+}
+
 fn cm_gap(
     demand: &ContextManagerContractDemandV1,
     kind: ContextManagerResolutionGapKindV1,

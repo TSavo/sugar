@@ -6,7 +6,8 @@ use sugar_ir_types::Sort;
 use sugar_linker::{
     final_check_context_manager_ref, resolve_context_manager_demand,
     AuthenticatedContextManagerCatalog, Cid, ContextManagerContractDemandV1,
-    ContextManagerResolutionGapKindV1, ContextManagerResolutionV1, SourceFragmentCoordinateV1,
+    ContextManagerResolutionGapKindV1, ContextManagerResolutionV1, ResolvedContractRefsV1,
+    SourceFragmentCoordinateV1,
 };
 use sugar_proof_envelope::{
     ContextManagerSemanticsV1, EnterResultContractV1, ExitContractV1, ExitDispositionV1,
@@ -131,3 +132,50 @@ fn removing_selected_member_makes_final_check_stale_without_relinking() {
         "stale-resolution"
     );
 }
+
+#[test]
+fn rust_owned_table_decodes_to_frozen_typed_python_refs() {
+    let member = minted("context-manager:fixture.never_closing", 11);
+    let catalog = AuthenticatedContextManagerCatalog::freeze(vec![member]).unwrap();
+    let table =
+        ResolvedContractRefsV1::new(&catalog, &[demand("context-manager:fixture.never_closing")]);
+    assert_eq!(table.catalog_cid(), catalog.catalog_cid());
+    assert!(matches!(
+        table.get(&use_site()),
+        Some(ContextManagerResolutionV1::Resolved(_))
+    ));
+
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .unwrap()
+        .to_path_buf();
+    let mut child = Command::new("python3")
+        .env(
+            "PYTHONPATH",
+            repo.join("implementations/python/sugar-lift-py-tests/src"),
+        )
+        .arg("-c")
+        .arg("import json,sys; from sugar_lift_py_tests.context_manager_resolution import decode_resolved_contract_refs, ContextManagerContractRefV1; t=decode_resolved_contract_refs(json.load(sys.stdin)); v=t.require(next(iter(t.by_use_site))); assert isinstance(v, ContextManagerContractRefV1); assert v.member_cid and v.semantics.exit.disposition.kind == 'never-suppresses'; print(t.table_cid)")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    serde_json::to_writer(child.stdin.as_mut().unwrap(), &table.to_wire_value()).unwrap();
+    child.stdin.as_mut().unwrap().flush().unwrap();
+    drop(child.stdin.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        table.table_cid().as_str()
+    );
+}
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
