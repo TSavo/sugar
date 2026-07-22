@@ -226,40 +226,6 @@ def audit_file_gaps(full_path: Path):
     return sf, list(seen.values())
 
 
-def minority_report_payload(full_path: Path, file_rel: str) -> dict:
-    """The minority report for a file, as the RPC wire payload the visual report
-    renders. One roll call: construction registers every node; the discharge
-    answers present (desugared) or absent (SugarNotWritten). The payload is the
-    partition, keyed by the fragment CID (the one stable identity):
-
-      {file, R, rows: [{cid, kind, name, span, answer}]}
-
-    ``answer`` is ``present`` (Blue -- desugared to a fact) or ``absent``
-    (Yellow -- the minority, unwritten). Every source line is spanned by some
-    row, so the renderer paints every line accounted or minority -- never a
-    third, unpainted state. This is a pure view over the roll the reporter
-    collected; it consults no construction internals of its own.
-    """
-    from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.roll_call import discharge
-
-    reporter = CollectingReporter()
-    sf = SourceFile.from_path(str(full_path), reporter=reporter)
-    report = discharge(sf)
-    present_cids = {e.cid for e in report.present}
-    rows = [
-        {
-            "cid": e.cid,
-            "kind": e.kind,
-            "name": e.name,
-            "span": {"start_line": e.start_line, "start_col": e.start_col},
-            "answer": "present" if e.cid in present_cids else "absent",
-        }
-        for e in report.roster
-    ]
-    return {"file": file_rel, "R": report.R, "rows": rows}
-
-
 def function_def_memento(fn, file_rel: str):
     """The function's own SourceMemento (the def warrant payload_rows needs)."""
     from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
