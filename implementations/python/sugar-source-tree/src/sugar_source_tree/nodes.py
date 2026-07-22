@@ -178,16 +178,25 @@ class Node(Typed):
 
     unit: SourceUnit
     ref: object  # the BackendNode reference; duck-typed to avoid a cycle
-    # The audit channel, threaded at construction (backend.materialize) and
-    # handed on to every child this node resolves. Off the audit path this is
-    # the shared do-nothing NULL_REPORTER; nothing allocates, nothing changes.
-    reporter: AuditReporter = NULL_REPORTER
+    # The roll call. REQUIRED -- no default -- so a node cannot be constructed
+    # off the roll: this is what makes construction complete BY CONSTRUCTION,
+    # not by a call someone remembers to make. The constructor registers the
+    # node (``__post_init__``); every child this node resolves is constructed
+    # with the same reporter, so registration flows through the whole tree.
+    reporter: AuditReporter
 
     # Ordered names of fields holding child nodes (Node, optional
     # Node, or tuple of Node). Leaf values (str/int/...)
     # and operators are NOT children. Declared per class, in grammar order.
     # ClassVar on purpose: never a dataclass field, never instance state.
     _child_fields: ClassVar[Tuple[str, ...]] = ()
+
+    def __post_init__(self) -> None:
+        # THE construction event IS the registration. Registering here, in the
+        # constructor, means calling ``cls(...)`` at all is showing up on the
+        # roll -- there is no way to new a node without it. (register only
+        # records the reference; the node's fields stay lazy through ref.)
+        self.reporter.register(self)
 
     def __init_subclass__(cls, **kw: object) -> None:
         super().__init_subclass__(**kw)

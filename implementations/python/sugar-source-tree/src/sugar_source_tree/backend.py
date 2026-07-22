@@ -59,15 +59,14 @@ def materialize(
     The reporter is threaded here so EVERY constructed node carries one and
     hands it on to the children it later resolves.
 
-    THE construction event IS the registration: the node registers on the roll
-    through its reporter here, so being constructed is being on the roster. A
-    node cannot come into existence off the roll -- that is what it means to be
-    an AST node.
+    THE construction event IS the registration: a node registers on the roll in
+    its own constructor (``Node.__post_init__``), so being constructed is being
+    on the roster and there is no way to new a node off the roll -- that is what
+    it means to be an AST node. materialize does not register; the constructor
+    does.
     """
     cls = ref.resolve_type()
-    node = cls(unit=unit, ref=ref, reporter=reporter)
-    reporter.register(node)
-    return node
+    return cls(unit=unit, ref=ref, reporter=reporter)
 
 
 @dataclass(frozen=True)
