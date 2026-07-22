@@ -56,6 +56,7 @@ from .opaque_op_callsite import OpaqueOpCallsite
 from .predicate_value import PredicateValue
 from .raise_value import RaiseValue
 from .raises_with_value import RaisesWithValue
+from .warning_observation_value import WarningObservationValue
 from .return_value import ReturnValue
 from .scope_rebind import GuardedScopeRebind, ScopeRebind
 from .sequence_constructor import SequenceConstructor
@@ -188,6 +189,7 @@ __all__ = [
     "PredicateValue",
     "RaiseValue",
     "RaisesWithValue",
+    "WarningObservationValue",
     "ReturnValue",
     "ScopeRebind",
     "SequenceConstructor",

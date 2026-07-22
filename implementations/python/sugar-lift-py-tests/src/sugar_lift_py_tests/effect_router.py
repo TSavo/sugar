@@ -45,6 +45,7 @@ from sugar_lift_py_tests.context_manager_contract import (
     Suppresses,
 )
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.inv_value import InvValue
 from sugar_lift_py_tests.ir import atomic, eq, str_const
@@ -79,25 +80,36 @@ class RoutedOutcome:
     stated_facts: tuple = ()
 
 
-def _matching_incomplete_raise(entries: tuple, matcher: EffectMatcher):
-    """Return the (index, Incomplete) of the first Incomplete(RaiseEffect)
-    whose effect matches ``matcher`` by EXACT kind+name (pinned rule -- a
-    subclass raise is the mismatch twin, never silently matched), or None."""
-    if matcher.kind != "raise":
-        return None
-    for index, entry in enumerate(entries):
-        if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect):
-            if entry.effect.exception_name == matcher.name:
-                return index, entry
+def _observed_effect(entry):
+    if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect):
+        return "raise", entry.effect.exception_name, None, True
+    if isinstance(entry, WarningObservationValue):
+        return "warning", entry.effect.category_name, entry.effect.message, False
     return None
 
 
-def _first_incomplete_raise(entries: tuple):
+def _matching_effect(entries: tuple, matcher: EffectMatcher):
+    """Return the (index, Incomplete) of the first Incomplete(RaiseEffect)
+    whose effect matches ``matcher`` by EXACT kind+name (pinned rule -- a
+    subclass raise is the mismatch twin, never silently matched), or None."""
+    for index, entry in enumerate(entries):
+        observed = _observed_effect(entry)
+        if (
+            observed is not None
+            and observed[0] == matcher.kind
+            and observed[1] == matcher.name
+        ):
+            return index, entry, observed
+    return None
+
+
+def _first_effect_of_kind(entries: tuple, kind: str):
     """Any Incomplete(RaiseEffect) at all, matching or not (for the wrong-effect
     twin: some raise happened, just not the one that was expected)."""
     for index, entry in enumerate(entries):
-        if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect):
-            return index, entry
+        observed = _observed_effect(entry)
+        if observed is not None and observed[0] == kind:
+            return index, entry, observed
     return None
 
 
@@ -119,10 +131,10 @@ def _has_unresolved_call_coordinates(entries: tuple) -> bool:
 
 
 def _route_expects(entries: tuple, matcher: EffectMatcher) -> RoutedOutcome:
-    matching = _matching_incomplete_raise(entries, matcher)
+    matching = _matching_effect(entries, matcher)
     if matching is not None:
-        index, incomplete = matching
-        observed = str_const(incomplete.effect.exception_name)
+        index, _entry, observation = matching
+        observed = str_const(observation[1])
         # The TYPE obligation: discharged (ground-true equality; the halt is
         # the evidence, consumed). Each PAYLOAD obligation (T's conjunction
         # ruling) is its own row with its own verdict: a MessagePattern stays
@@ -132,27 +144,30 @@ def _route_expects(entries: tuple, matcher: EffectMatcher) -> RoutedOutcome:
         # neither silences the type testimony nor pretends the pattern held.
         facts = [InvValue(eq(str_const(matcher.name), observed))]
         for obligation in matcher.payload_obligations:
+            # Message absence is an explicit open obligation over the SAME
+            # effect witness.  An observed message can now state the concrete
+            # message coordinate; regex discharge remains the solver's job.
+            message = observation[2]
+            message_term = observed if message is None else str_const(message)
             facts.append(
                 InvValue(
                     atomic(
                         "py.effect.message_matches",
-                        [observed, str_const(obligation.pattern)],
+                        [message_term, str_const(obligation.pattern)],
                     )
                 )
             )
         remaining = entries[:index] + entries[index + 1 :]
-        return RoutedOutcome(
-            entries=(*remaining, *facts), stated_facts=tuple(facts)
-        )
+        return RoutedOutcome(entries=(*remaining, *facts), stated_facts=tuple(facts))
 
-    wrong = _first_incomplete_raise(entries)
+    wrong = _first_effect_of_kind(entries, matcher.kind)
     if wrong is not None:
-        _, incomplete = wrong
+        _, _entry, observation = wrong
         # Wrong effect: the type obligation is REFUTED (ground-false equality)
         # and the Incomplete is NOT consumed -- F must not disappear. Payload
         # obligations are INAPPLICABLE (their witness is the matching halt,
         # which does not exist), never independently emitted or passed.
-        fact = InvValue(eq(str_const(matcher.name), str_const(incomplete.effect.exception_name)))
+        fact = InvValue(eq(str_const(matcher.name), str_const(observation[1])))
         return RoutedOutcome(entries=(*entries, fact), stated_facts=(fact,))
 
     if _has_unresolved_call_coordinates(entries):
@@ -173,11 +188,11 @@ def _route_expects(entries: tuple, matcher: EffectMatcher) -> RoutedOutcome:
 
 
 def _route_suppresses(entries: tuple, matcher: EffectMatcher) -> RoutedOutcome:
-    matching = _matching_incomplete_raise(entries, matcher)
+    matching = _matching_effect(entries, matcher)
     if matching is None:
         # Absence is fine; non-matching effects (if any) propagate untouched.
         return RoutedOutcome(entries=entries)
-    index, _incomplete = matching
+    index, _entry, _observation = matching
     remaining = entries[:index] + entries[index + 1 :]
     return RoutedOutcome(entries=remaining)
 

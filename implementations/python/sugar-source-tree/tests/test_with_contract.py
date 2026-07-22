@@ -98,12 +98,14 @@ def test_as_witness_stays_loud():
         ).sugar()
 
 
-def test_warning_kind_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(z):\n    with tm.assert_produces_warning(FutureWarning):\n"
-            "        pass\n    return z\n"
-        ).sugar()
+def test_warning_kind_with_unresolved_call_retains_obligation():
+    v = _val(
+        "def A(z):\n    with tm.assert_produces_warning(FutureWarning):\n"
+        "        do_thing(z)\n    return z\n"
+    )
+    inv = v.invs()[0]
+    assert inv.name == "py.effect.expected"
+    assert inv.args[0].value == "FutureWarning"
 
 
 def test_multiple_managers_stay_loud():
@@ -140,7 +142,9 @@ def test_match_conjunction_type_discharged_message_undischarged():
     invs = v.invs()
     assert len(invs) == 2
     type_row = [i for i in invs if getattr(i, "name", "") == "="][0]
-    msg_row = [i for i in invs if getattr(i, "name", "") == "py.effect.message_matches"][0]
+    msg_row = [
+        i for i in invs if getattr(i, "name", "") == "py.effect.message_matches"
+    ][0]
     assert type_row.args[0].value == type_row.args[1].value == "ValueError"
     assert msg_row.args[0].value == "ValueError"  # shared observed witness
     assert msg_row.args[1].value == "bad"
@@ -158,9 +162,9 @@ def test_match_deferred_carries_the_whole_conjunction():
 
 def test_match_rejections_stay_loud():
     for src in (
-        'def A(z):\n    with pytest.raises(ValueError, match=None):\n        pass\n    return z\n',
+        "def A(z):\n    with pytest.raises(ValueError, match=None):\n        pass\n    return z\n",
         'def A(z):\n    with pytest.raises(ValueError, match="["):\n        pass\n    return z\n',
-        'def A(z):\n    with pytest.raises(ValueError, check=1):\n        pass\n    return z\n',
+        "def A(z):\n    with pytest.raises(ValueError, check=1):\n        pass\n    return z\n",
     ):
         with pytest.raises(SugarNotWritten):
             _fn(src).sugar()

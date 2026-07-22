@@ -267,8 +267,7 @@ class Node(Typed):
             return new, new is not value
         items = tuple(value)
         new_items = tuple(
-            item.substitute(scope) if isinstance(item, Node) else item
-            for item in items
+            item.substitute(scope) if isinstance(item, Node) else item for item in items
         )
         changed = any(new is not old for new, old in zip(new_items, items))
         return (new_items if changed else value), changed
@@ -290,7 +289,9 @@ class Node(Typed):
             return self
         return rewrite(self, **changed)
 
-    def substitution_binding(self, scope: "dict[str, Node]") -> "Optional[dict[str, Node]]":
+    def substitution_binding(
+        self, scope: "dict[str, Node]"
+    ) -> "Optional[dict[str, Node]]":
         """The binding this STATEMENT introduces for the rest of its block, or
         None. An assignment returns ``{name: its substituted rhs}``; an augmented
         assignment reads the OLD value from ``scope`` to build ``x OP e``;
@@ -310,7 +311,9 @@ class Node(Typed):
             ("op", OpLeaf(op)),
             ("right", Child(_handle_of(right))),
         )
-        return materialize(self.unit, ShadowNode("BinOp", self.span, slots), self.reporter)
+        return materialize(
+            self.unit, ShadowNode("BinOp", self.span, slots), self.reporter
+        )
 
     def _substitute_body(self, statements: tuple, scope: "dict[str, Node]"):
         new_items, changed, _net = self._substitute_body_tracked(statements, scope)
@@ -346,7 +349,9 @@ class Node(Typed):
             # here so the block threads each one -- the loop's carried accumulator
             # is just ordinary block-threading over the unrolled sequence. The
             # expanded statements are already substituted; thread their bindings.
-            produced = new_stmt.statements if isinstance(new_stmt, _Splice) else (new_stmt,)
+            produced = (
+                new_stmt.statements if isinstance(new_stmt, _Splice) else (new_stmt,)
+            )
             for produced_stmt in produced:
                 new_items.append(produced_stmt)
                 binding = produced_stmt.substitution_binding(scope)
@@ -471,9 +476,7 @@ class Node(Typed):
         while stack:
             node = stack.pop()
             yield node
-            stack.extend(
-                child for _, _, child in reversed(list(node.children()))
-            )
+            stack.extend(child for _, _, child in reversed(list(node.children())))
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<{self.kind} [{self.span.start},{self.span.end})>"
@@ -572,9 +575,12 @@ class Comprehension(Node):
         scope; the target binds for its own ifs. Threading across clauses is the
         enclosing comprehension's job (_substitute_generators)."""
         from .shadow import rewrite
+
         new_iter, di = self._substitute_field(self.iter, scope)
         bound = self._bound_names_in(self.target)
-        ifs_scope = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        ifs_scope = (
+            {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        )
         new_ifs, df = self._substitute_field(self.ifs, ifs_scope)
         changed = {}
         if di:
@@ -593,6 +599,7 @@ class ExceptHandler(Node):
     def substitute(self, scope):
         """except <type> as <name>: binds the exception name for the body."""
         from .shadow import rewrite
+
         bound = {self.name} if self.name else set()
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         changed = {}
@@ -613,6 +620,7 @@ class WithItem(Node):
     def substitute(self, scope):
         """Substitute the context expr; optional_vars is a binding site."""
         from .shadow import rewrite
+
         new_ctx, d = self._substitute_field(self.context_expr, scope)
         return self if not d else rewrite(self, context_expr=new_ctx)
 
@@ -639,6 +647,7 @@ class MatchCase(Node):
         (a capture bound to the match SUBJECT, threaded by ``Match.substitute``)
         are re-applied so a `case x:` body sees x = subject, not a free name."""
         from .shadow import rewrite
+
         bound = self._pattern_bound_names(self.pattern)
         inner = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         if extra_bindings:
@@ -749,9 +758,7 @@ class FunctionDef(Statement):
         # tree construction path re-enters it here.
         lc = self.line_col_span()
         where = f"{self.unit.filename}:{lc.start_line} {self.name}"
-        with reduction_span(
-            sugar="FunctionUniverse", role="construction", site=where
-        ):
+        with reduction_span(sugar="FunctionUniverse", role="construction", site=where):
             # Phase spans: the bisection instrument. A slow function names its
             # slow PHASE here; the per-statement spans inside _substitute_body
             # then name the statement. We measure; we do not guess.
@@ -797,8 +804,13 @@ class ClassDef(Statement):
         the type params then bind for the bases, keywords, and body. The body is
         threaded (a class body reads the enclosing scope; it opens no closure)."""
         from .shadow import rewrite
-        tnames = {n for tp in self.type_params
-                  for n in [getattr(tp, "name", None)] if isinstance(n, str)}
+
+        tnames = {
+            n
+            for tp in self.type_params
+            for n in [getattr(tp, "name", None)]
+            if isinstance(n, str)
+        }
         inner = {k: v for k, v in scope.items() if k not in tnames} if tnames else scope
         changed = {}
         for fld in ("decorators", "type_params"):
@@ -999,6 +1011,7 @@ class AnnAssign(Statement):
         """`<target>: <ann> = <value>` -- substitute the annotation and value;
         the target is a binding site, never substituted."""
         from .shadow import rewrite
+
         changed = {}
         for fld in ("annotation", "value"):
             new, d = self._substitute_field(getattr(self, fld), scope)
@@ -1043,8 +1056,13 @@ class TypeAlias(Statement):
         """`type <name>[<params>] = <value>` -- the type params bind for the
         value; the name is a binding site."""
         from .shadow import rewrite
-        tnames = {n for tp in self.type_params
-                  for n in [getattr(tp, "name", None)] if isinstance(n, str)}
+
+        tnames = {
+            n
+            for tp in self.type_params
+            for n in [getattr(tp, "name", None)]
+            if isinstance(n, str)
+        }
         inner = {k: v for k, v in scope.items() if k not in tnames} if tnames else scope
         changed = {}
         new_tp, d = self._substitute_field(self.type_params, scope)
@@ -1199,7 +1217,11 @@ class For(Statement):
             return None
         value = assign.value
         # value must be `<name> OP <expr involving the loop target>`.
-        if value.kind != "BinOp" or value.left.kind != "Name" or value.left.id != name.id:
+        if (
+            value.kind != "BinOp"
+            or value.left.kind != "Name"
+            or value.left.id != name.id
+        ):
             return None
         init = scope.get(name.id)
         if init is None:
@@ -1213,7 +1235,9 @@ class For(Statement):
         from .shadow import ShadowNode
 
         return materialize(
-            self.unit, ShadowNode("Name", self.span, (("id", Leaf(identifier)),)), self.reporter
+            self.unit,
+            ShadowNode("Name", self.span, (("id", Leaf(identifier)),)),
+            self.reporter,
         )
 
     def _make_call(self, func: "Node", args: tuple) -> "Node":
@@ -1225,7 +1249,9 @@ class For(Statement):
             ("args", Children(tuple(_handle_of(a) for a in args))),
             ("keywords", Children(())),
         )
-        return materialize(self.unit, ShadowNode("Call", self.span, slots), self.reporter)
+        return materialize(
+            self.unit, ShadowNode("Call", self.span, slots), self.reporter
+        )
 
     def sugar(self):
         """A loop that did NOT dissolve in substitute is symbolic: its iterable is
@@ -1326,8 +1352,10 @@ class For(Statement):
         negative bound parses as `UnaryOp(USub, Constant(n))` (cpython does
         not fold the literal), so both shapes are recognized; `bool` is
         rejected even though it subclasses `int`."""
-        if arg.kind == "Constant" and isinstance(arg.value, int) and not isinstance(
-            arg.value, bool
+        if (
+            arg.kind == "Constant"
+            and isinstance(arg.value, int)
+            and not isinstance(arg.value, bool)
         ):
             return arg.value
         if arg.kind == "UnaryOp" and arg.op.kind == "USub":
@@ -1367,7 +1395,9 @@ class For(Statement):
             ("value", Leaf(value)),
             ("literal_kind", Leaf(None)),
         )
-        return materialize(self.unit, ShadowNode("Constant", self.span, slots), self.reporter)
+        return materialize(
+            self.unit, ShadowNode("Constant", self.span, slots), self.reporter
+        )
 
 
 class AsyncFor(Statement):
@@ -1534,7 +1564,9 @@ class If(Statement):
             ("targets", Children((_handle_of(target),))),
             ("value", Child(_handle_of(value))),
         )
-        return materialize(self.unit, ShadowNode("Assign", self.span, slots), self.reporter)
+        return materialize(
+            self.unit, ShadowNode("Assign", self.span, slots), self.reporter
+        )
 
     def _make_ifexp(self, test: "Node", body: "Node", orelse: "Node") -> "Node":
         """Synthesize ``<body> if <test> else <orelse>`` as a shadow IfExp that
@@ -1547,7 +1579,9 @@ class If(Statement):
             ("test", Child(_handle_of(test))),
             ("orelse", Child(_handle_of(orelse))),
         )
-        return materialize(self.unit, ShadowNode("IfExp", self.span, slots), self.reporter)
+        return materialize(
+            self.unit, ShadowNode("IfExp", self.span, slots), self.reporter
+        )
 
     def sugar(self):
         """`if <test>: <body> [else: <orelse>]` constructs IfSugar -- the guard.
@@ -1592,8 +1626,8 @@ class With(Statement):
         )
         if not isinstance(contract, (Expects, Suppresses)):
             return super().sugar()  # unauthenticated / runtime-selected: loud
-        if contract.matcher.kind != "raise":
-            return super().sugar()  # no WarningEffect to observe yet: loud
+        if contract.matcher.kind not in ("raise", "warning"):
+            return super().sugar()
         return WithContractSugar(
             contract=contract,
             body=tuple(stmt.sugar() for stmt in self.body),
@@ -1603,6 +1637,7 @@ class With(Statement):
     def substitute(self, scope):
         """with ... as <vars>: binds the as-targets for the body."""
         from .shadow import rewrite
+
         bound = set()
         for item in self.items:
             if item.optional_vars is not None:
@@ -1945,7 +1980,11 @@ class Match(Statement):
         """The name a bare capture pattern (`case x:`) binds, or None. A capture
         is a MatchAs with no sub-pattern and a name; `case _:` (name None) is the
         wildcard and binds nothing."""
-        if pattern.kind == "MatchAs" and pattern.pattern is None and pattern.name is not None:
+        if (
+            pattern.kind == "MatchAs"
+            and pattern.pattern is None
+            and pattern.name is not None
+        ):
             return pattern.name
         return None
 
@@ -2088,6 +2127,7 @@ class Lambda(Expression):
     def substitute(self, scope):
         """lambda <params>: masks its parameters for the body expression."""
         from .shadow import rewrite
+
         bound = {p.name for p in self.params}
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         changed = {}
@@ -2184,6 +2224,7 @@ class ListComp(Expression):
         if unrolled is not None:
             return unrolled
         from .shadow import rewrite
+
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
         new_elt, de = self._substitute_field(self.elt, inner)
         changed = {}
@@ -2230,8 +2271,9 @@ class ListComp(Expression):
         from .shadow import ShadowNode, _handle_of
 
         slots = (("elts", Children(tuple(_handle_of(e) for e in elements))),)
-        return materialize(self.unit, ShadowNode("List", self.span, slots), self.reporter)
-
+        return materialize(
+            self.unit, ShadowNode("List", self.span, slots), self.reporter
+        )
 
 
 class SetComp(Expression):
@@ -2243,6 +2285,7 @@ class SetComp(Expression):
         """A comprehension: thread each generator's target, then substitute the
         element against the scope with every target masked."""
         from .shadow import rewrite
+
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
         new_elt, de = self._substitute_field(self.elt, inner)
         changed = {}
@@ -2263,6 +2306,7 @@ class DictComp(Expression):
         """A dict comprehension: thread the generators, then key and value
         against the scope with every target masked."""
         from .shadow import rewrite
+
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
         changed = {}
         if gc:
@@ -2283,6 +2327,7 @@ class GeneratorExp(Expression):
         """A comprehension: thread each generator's target, then substitute the
         element against the scope with every target masked."""
         from .shadow import rewrite
+
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
         new_elt, de = self._substitute_field(self.elt, inner)
         changed = {}

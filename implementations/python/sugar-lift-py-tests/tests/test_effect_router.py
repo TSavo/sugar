@@ -25,6 +25,8 @@ from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.inv_value import InvValue
 from sugar_lift_py_tests.ir import atomic, eq, make_var, str_const
 from sugar_lift_py_tests.outcome.incomplete import Incomplete
+from sugar_lift_py_tests.effect.warning_effect import WarningEffect
+from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
 
 
 def _raise_incomplete(name: str) -> Incomplete:
@@ -43,6 +45,10 @@ def _callsite(name: str = "f") -> CallSiteValue:
         term=make_var(f"__callsite_{name}"),
         body=None,
     )
+
+
+def _warning(name: str, message: str | None = None) -> WarningObservationValue:
+    return WarningObservationValue(WarningEffect(name, message=message))
 
 
 # --- Expects -----------------------------------------------------------
@@ -72,7 +78,9 @@ def test_expects_completion_no_coordinates_ground_false_lying_twin():
 
 def test_expects_wrong_effect_ground_false_and_incomplete_survives():
     incomplete = _raise_incomplete("KeyError")
-    outcome = route((incomplete,), Expects(EffectMatcher(kind="raise", name="ValueError")))
+    outcome = route(
+        (incomplete,), Expects(EffectMatcher(kind="raise", name="ValueError"))
+    )
     assert incomplete in outcome.entries  # F must not disappear
     fact = outcome.stated_facts[0]
     assert fact.formula == eq(str_const("ValueError"), str_const("KeyError"))
@@ -109,26 +117,54 @@ def test_expects_unresolved_operand_callsites_on_inv_also_defers():
     assert inv_with_callsite in outcome.entries
 
 
+def test_expects_matching_warning_consumes_non_halting_observation():
+    warning = _warning("FutureWarning")
+    outcome = route(
+        (warning,), Expects(EffectMatcher(kind="warning", name="FutureWarning"))
+    )
+    assert warning not in outcome.entries
+    assert outcome.stated_facts[0].formula == eq(
+        str_const("FutureWarning"), str_const("FutureWarning")
+    )
+
+
+def test_expects_wrong_warning_refutes_and_preserves_observation():
+    warning = _warning("UserWarning")
+    outcome = route(
+        (warning,), Expects(EffectMatcher(kind="warning", name="FutureWarning"))
+    )
+    assert warning in outcome.entries
+    assert outcome.stated_facts[0].formula == eq(
+        str_const("FutureWarning"), str_const("UserWarning")
+    )
+
+
 # --- Suppresses ----------------------------------------------------------
 
 
 def test_suppresses_matching_consumed_silently():
     incomplete = _raise_incomplete("ValueError")
-    outcome = route((incomplete,), Suppresses(EffectMatcher(kind="raise", name="ValueError")))
+    outcome = route(
+        (incomplete,), Suppresses(EffectMatcher(kind="raise", name="ValueError"))
+    )
     assert outcome.entries == ()
     assert outcome.stated_facts == ()
 
 
 def test_suppresses_absence_nothing_happens():
     other = _some_fact()
-    outcome = route((other,), Suppresses(EffectMatcher(kind="raise", name="ValueError")))
+    outcome = route(
+        (other,), Suppresses(EffectMatcher(kind="raise", name="ValueError"))
+    )
     assert outcome.entries == (other,)
     assert outcome.stated_facts == ()
 
 
 def test_suppresses_non_match_propagates_untouched():
     incomplete = _raise_incomplete("KeyError")
-    outcome = route((incomplete,), Suppresses(EffectMatcher(kind="raise", name="ValueError")))
+    outcome = route(
+        (incomplete,), Suppresses(EffectMatcher(kind="raise", name="ValueError"))
+    )
     assert outcome.entries == (incomplete,)
     assert outcome.stated_facts == ()
 
