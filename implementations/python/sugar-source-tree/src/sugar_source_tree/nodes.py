@@ -46,6 +46,7 @@ from .operators import (
     UnaryOperator,
 )
 from .panic import (
+    backend_defect,
     RuntimeSelectedContextManager,
     SourceTreePanic,
     SubstituteNotWritten,
@@ -1939,7 +1940,7 @@ class If(Statement):
         new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, scope)
         if d:
             changed["orelse"] = new_orelse
-        node = self if not changed else self._rewrite_with_slot(changed, slot)
+        node = self._rewrite_with_slot(changed, slot)
 
         names = set(then_net) | set(else_net)
         phis = []
@@ -2049,7 +2050,12 @@ class If(Statement):
         try:
             slot = BranchResultSlot(self.branch_result_slot_id)
         except AttributeError:
-            slot = branch_result_slot(self.test)
+            backend_defect(
+                owner="If._construct_sugar",
+                observed="If without a stored branch-result slot",
+                requested="consume the slot minted once by If.substitute",
+                fix="route every If through substitution before Sugar construction",
+            )
         return IfSugar(
             test=self.test.sugar(),
             branch_slot=slot,

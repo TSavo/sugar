@@ -7,6 +7,29 @@ from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.tree import SourceFile
 
 
+def test_unchanged_if_mints_and_stores_its_branch_slot_once(monkeypatch, tmp_path):
+    source = "def f(c):\n if c:\n  pass\n"
+    path = tmp_path / "unchanged_if.py"
+    path.write_text(source, encoding="utf-8")
+    function = next(SourceFile(path_source(path)).functions())
+
+    import sugar_source_tree.nodes as nodes
+
+    mints = 0
+    original = nodes.branch_result_slot
+
+    def counted(test):
+        nonlocal mints
+        mints += 1
+        return original(test)
+
+    monkeypatch.setattr(nodes, "branch_result_slot", counted)
+    sugar = function.sugar()
+
+    assert mints == 1
+    assert sugar.statements[0].branch_slot.slot_id.startswith("branch-result:")
+
+
 def test_effectful_condition_is_constructed_once_and_one_slot_drives_all_faces(
     monkeypatch,
 ) -> None:

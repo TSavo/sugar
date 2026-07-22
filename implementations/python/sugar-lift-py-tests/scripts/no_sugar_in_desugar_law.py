@@ -63,7 +63,12 @@ def _rel_path(root: Path, path: Path) -> str:
 
 
 def _calls_in(function: ast.FunctionDef | ast.AsyncFunctionDef):
-    """Yield executable calls in one function, excluding nested definitions."""
+    """Yield calls lexically owned by a reduction function.
+
+    Local helpers are part of the enclosing reduction implementation. Walking
+    their bodies conservatively keeps a nested ``reduce`` from becoming an
+    unmeasured construction door.
+    """
 
     class Calls(ast.NodeVisitor):
         def __init__(self) -> None:
@@ -72,16 +77,6 @@ def _calls_in(function: ast.FunctionDef | ast.AsyncFunctionDef):
         def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
             self.calls.append(node)
             self.generic_visit(node)
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-            if node is function:
-                self.generic_visit(node)
-
-        def visit_AsyncFunctionDef(  # noqa: N802
-            self, node: ast.AsyncFunctionDef
-        ) -> None:
-            if node is function:
-                self.generic_visit(node)
 
         def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
             del node
@@ -219,12 +214,11 @@ def format_report(findings: Sequence[Finding]) -> str:
 
 def discrimination_self_test() -> bool:
     planted_source = """
-class PlantedSugar:
+class PlantedNestedHelperSugar:
     def desugar(self, ctx=None):
-        return self._reduce(self.child, ctx)
-
-    def _reduce(self, node, ctx):
-        return node.sugar().desugar(ctx)
+        def reduce(node):
+            return node.sugar().desugar(ctx)
+        return reduce(self.child)
 """
     clean_source = """
 class ConstructedChildSugar:
@@ -242,6 +236,7 @@ class ConstructedChildSugar:
     return (
         r_no_sugar_in_desugar(planted) == 1
         and r_auditor_errors(planted) == 0
+        and bool(planted)
         and clean == []
     )
 
