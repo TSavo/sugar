@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -48,6 +48,8 @@ class ConstructedManagerBehaviorV1:
     receiver_state_cid: str
     formal_actual_bindings: tuple[BindingEntryV1, ...]
     source_call_frame_cid: str
+    factory_prefix: tuple[FloorValue, ...] = field(default=(), compare=False)
+    factory_prefix_cids: tuple[str, ...] = ()
 
     @property
     def preimage(self):
@@ -60,6 +62,7 @@ class ConstructedManagerBehaviorV1:
                 item.wire() for item in self.formal_actual_bindings
             ],
             "sourceCallFrameCid": self.source_call_frame_cid,
+            "factoryPrefixCids": list(self.factory_prefix_cids),
         }
 
     def __post_init__(self) -> None:
@@ -173,11 +176,21 @@ def construct_manager_behavior(
         frame = frame.bind_node_actuals(
             tuple(item.node for item in actuals),
             tuple((name, item.node) for name, item in keyword_actuals),
-            testimonies=tuple(
-                item.testimony
-                for item in (*actuals, *(item for _, item in keyword_actuals))
-            ),
         )
+        supplied = {
+            id(item.node): item.testimony
+            for item in (*actuals, *(item for _, item in keyword_actuals))
+        }
+        authenticated_entries = []
+        for entry, value in zip(frame.runtime_entries, values, strict=True):
+            testimony = supplied.get(id(entry.state))
+            if testimony is None:
+                testimony = ConstructedValueTestimonyV1.mint(
+                    entry.state.fragment,
+                    _term_content_cid(value.to_term(owner=resolved.cid)),
+                )
+            authenticated_entries.append(entry.with_testimony(testimony))
+        frame = replace(frame, runtime_entries=tuple(authenticated_entries))
     except SourceCallBindingGap as exc:
         return ManagerConstructionGapV1("call-binding", resolved.cid, str(exc))
     call = CallSiteValue(
@@ -195,12 +208,12 @@ def construct_manager_behavior(
     result = call.force_floor(
         None, owner="construct_manager_behavior", project_callsite=False
     )
-    if (
-        isinstance(result, BlockValue)
-        and len(result.statements) == 1
-        and isinstance(result.statements[0], ReturnValue)
+    factory_prefix: tuple[FloorValue, ...] = ()
+    if isinstance(result, BlockValue) and result.statements and isinstance(
+        result.statements[-1], ReturnValue
     ):
-        returned = result.statements[0].value
+        factory_prefix = result.statements[:-1]
+        returned = result.statements[-1].value
         if isinstance(returned, CallSiteValue):
             result = returned.force_floor(
                 None, owner="construct_manager_behavior returned object"
@@ -212,6 +225,10 @@ def construct_manager_behavior(
             "non-manager-result", resolved.cid, type(result).__name__
         )
     bindings = frame.runtime_entries
+    prefix_cids = tuple(
+        _term_content_cid(item.to_term(owner=resolved.cid))
+        for item in factory_prefix
+    )
     preimage = {
         "kind": "constructed-manager-behavior",
         "schemaVersion": "1",
@@ -219,6 +236,7 @@ def construct_manager_behavior(
         "receiverStateCid": result.identity,
         "formalActualBindings": [item.wire() for item in bindings],
         "sourceCallFrameCid": frame.frame_cid,
+        "factoryPrefixCids": list(prefix_cids),
     }
     return ConstructedManagerBehaviorV1(
         resolved.cid,
@@ -227,6 +245,8 @@ def construct_manager_behavior(
         result.identity,
         bindings,
         frame.frame_cid,
+        factory_prefix,
+        prefix_cids,
     )
 
 
