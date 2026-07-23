@@ -18,7 +18,9 @@ def _summary(raw: Mapping[str, Any]) -> Mapping[str, Any]:
     return nested if isinstance(nested, Mapping) else raw
 
 
-def reconcile(reports: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+def reconcile(
+    reports: Mapping[str, Mapping[str, Any]], *, expected_files: int | None = None
+) -> dict[str, Any]:
     missing = sorted(set(FLOORS) - set(reports))
     errors: list[str] = [f"missing floor: {name}" for name in missing]
     summaries: dict[str, Mapping[str, Any]] = {}
@@ -43,6 +45,18 @@ def reconcile(reports: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
             errors.append(f"{name}: empty corpus is not a measured zero")
         elif len(rows) != len(files):
             errors.append(f"{name}: per-site row conservation failure")
+        else:
+            row_files = [row.get("file") for row in rows if isinstance(row, Mapping)]
+            if (
+                len(row_files) != len(rows)
+                or any(not isinstance(file, str) for file in row_files)
+                or sorted(str(file) for file in row_files) != sorted(files)
+            ):
+                errors.append(f"{name}: per-site row identity failure")
+            if expected_files is not None and len(files) != expected_files:
+                errors.append(
+                    f"{name}: expected {expected_files} corpus files, got {len(files)}"
+                )
     manifests = {
         str(row.get("corpus", {}).get("manifestCid"))
         for row in summaries.values()
@@ -50,6 +64,13 @@ def reconcile(reports: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     }
     if len(manifests) != 1 or "None" in manifests:
         errors.append("five floors do not name one identical corpus manifest")
+    file_manifests = {
+        tuple(row.get("corpus", {}).get("files", ()))
+        for row in summaries.values()
+        if isinstance(row.get("corpus"), Mapping)
+    }
+    if len(file_manifests) != 1:
+        errors.append("five floors do not carry one identical corpus file manifest")
     totals = {
         name: dict(row.get("totals", {}))
         for name, row in summaries.items()
@@ -77,12 +98,13 @@ def main() -> int:
     for floor in FLOORS:
         parser.add_argument("--" + floor, type=Path, required=True)
     parser.add_argument("--output", type=Path, default=Path("validated-summary.json"))
+    parser.add_argument("--expected-files", type=int, default=1415)
     args = parser.parse_args()
     reports = {
         floor: json.loads(getattr(args, floor.replace("-", "_")).read_text(encoding="utf-8"))
         for floor in FLOORS
     }
-    result = reconcile(reports)
+    result = reconcile(reports, expected_files=args.expected_files)
     write_json(args.output, result)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["verdict"] == "green" else 1

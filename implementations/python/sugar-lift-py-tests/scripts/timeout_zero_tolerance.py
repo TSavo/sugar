@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from typing import Any, Mapping
 
 # Floors share ``_production_lift_child`` (this directory); make it
 # importable whether run standalone, as a child, or spec-loaded by a test.
@@ -110,17 +111,57 @@ def _run_child(path: Path, rel: str) -> int:
 
 
 def audit_paths(
-    paths: Sequence[Path], *, root: Path, file_timeout: int, workers: int
+    paths: Sequence[Path],
+    *,
+    root: Path,
+    file_timeout: int,
+    workers: int,
+    checkpoint_path: Path | None = None,
 ) -> AuditSummary:
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        rows = tuple(
-            executor.map(
-                lambda path: _run_isolated(
-                    path, root=root, file_timeout=file_timeout
+    if file_timeout > 30:
+        raise ValueError("per-file timeout may not exceed 30 seconds")
+    if checkpoint_path is not None:
+        from pandas_census_checkpoint import checkpointed_path_results
+
+        def serialize(row: ChildResult) -> Mapping[str, Any]:
+            return {
+                "category": row.category,
+                "timeoutSeconds": (
+                    row.offender.timeout_seconds if row.offender else None
                 ),
-                sorted(paths),
+            }
+
+        def deserialize(file: str, raw: Mapping[str, Any]) -> ChildResult:
+            seconds = raw.get("timeoutSeconds")
+            offender = (
+                timeout_offender(file=file, timeout_seconds=float(seconds))
+                if raw.get("category") == "timeout" and isinstance(seconds, (int, float))
+                else None
             )
+            return ChildResult(file, str(raw.get("category")), offender)
+
+        rows = checkpointed_path_results(
+            floor="timeout",
+            paths=paths,
+            root=root,
+            checkpoint_path=checkpoint_path,
+            worker=lambda path: _run_isolated(
+                path, root=root, file_timeout=file_timeout
+            ),
+            serialize=serialize,
+            deserialize=deserialize,
+            workers=workers,
         )
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            rows = tuple(
+                executor.map(
+                    lambda path: _run_isolated(
+                        path, root=root, file_timeout=file_timeout
+                    ),
+                    sorted(paths),
+                )
+            )
     return AuditSummary(
         rows=rows,
         offenders=tuple(row.offender for row in rows if row.offender is not None),
@@ -146,6 +187,7 @@ def main() -> int:
     parser.add_argument("--child-file", type=Path)
     parser.add_argument("--child-rel")
     parser.add_argument("--json", type=Path)
+    parser.add_argument("--checkpoint-jsonl", type=Path)
     args = parser.parse_args()
     if args.child_file or args.child_rel:
         if args.child_file is None or args.child_rel is None:
@@ -171,6 +213,7 @@ def main() -> int:
         root=args.repo_root,
         file_timeout=args.file_timeout,
         workers=max(1, args.workers),
+        checkpoint_path=args.checkpoint_jsonl,
     )
     rows = summary.rows
     offenders = summary.offenders

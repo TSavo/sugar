@@ -24,7 +24,7 @@ import sys
 from pathlib import Path as _P
 
 sys.path.insert(0, str(_P(__file__).resolve().parent))
-from typing import NamedTuple, Sequence
+from typing import Any, Mapping, NamedTuple, Sequence
 
 
 class NativeCrashOffender(NamedTuple):
@@ -169,18 +169,63 @@ def audit_paths(
     root: Path,
     file_timeout: int,
     workers: int,
+    checkpoint_path: Path | None = None,
 ) -> AuditSummary:
-    with ThreadPoolExecutor(max_workers=workers) as executor:
+    if file_timeout > 30:
+        raise ValueError("per-file timeout may not exceed 30 seconds")
+    if checkpoint_path is not None:
+        from pandas_census_checkpoint import checkpointed_path_results
+
+        def serialize(row: ChildResult) -> Mapping[str, Any]:
+            return {
+                "category": row.category,
+                "returncode": row.returncode,
+                "stderrTail": row.stderr_tail,
+                "signal": row.offender.signal if row.offender else None,
+            }
+
+        def deserialize(file: str, raw: Mapping[str, Any]) -> ChildResult:
+            returncode = raw.get("returncode")
+            code = int(returncode) if isinstance(returncode, int) else None
+            stderr_tail = str(raw.get("stderrTail") or "")
+            signal_name = raw.get("signal")
+            offender = (
+                NativeCrashOffender(file, code, str(signal_name), stderr_tail)
+                if raw.get("category") == "native-crash"
+                and code is not None
+                and isinstance(signal_name, str)
+                else None
+            )
+            return ChildResult(
+                file, str(raw.get("category")), code, stderr_tail, offender
+            )
+
         rows = list(
-            executor.map(
-                lambda path: _run_isolated(
-                    path,
-                    root=root,
-                    file_timeout=file_timeout,
+            checkpointed_path_results(
+                floor="native-crash",
+                paths=paths,
+                root=root,
+                checkpoint_path=checkpoint_path,
+                worker=lambda path: _run_isolated(
+                    path, root=root, file_timeout=file_timeout
                 ),
-                sorted(paths),
+                serialize=serialize,
+                deserialize=deserialize,
+                workers=workers,
             )
         )
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            rows = list(
+                executor.map(
+                    lambda path: _run_isolated(
+                        path,
+                        root=root,
+                        file_timeout=file_timeout,
+                    ),
+                    sorted(paths),
+                )
+            )
     offenders = tuple(row.offender for row in rows if row.offender is not None)
     for row in rows:
         if row.category == "timeout":
@@ -235,6 +280,7 @@ def main() -> int:
     parser.add_argument("--child-file", type=Path)
     parser.add_argument("--child-rel")
     parser.add_argument("--json", type=Path)
+    parser.add_argument("--checkpoint-jsonl", type=Path)
     args = parser.parse_args()
 
     if args.child_file or args.child_rel:
@@ -262,6 +308,7 @@ def main() -> int:
         root=args.repo_root,
         file_timeout=args.file_timeout,
         workers=max(1, args.workers),
+        checkpoint_path=args.checkpoint_jsonl,
     )
     if args.json is not None:
         from pandas_floor_summary import floor_summary, relative_files, write_json
@@ -285,8 +332,8 @@ def main() -> int:
                 "nonNativeRed": summary.non_native_red,
                 "timeouts": summary.timeouts,
             },
-            measured=summary.timeouts == 0,
-            unmeasurable_reasons=("timeout",) if summary.timeouts else (),
+            measured=len(summary.rows) == len(files),
+            unmeasurable_reasons=(),
         )
         write_json(args.json, payload)
     print(

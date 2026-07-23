@@ -159,6 +159,8 @@ def _is_fatal_category(category: str) -> bool:
 
 
 def _run_parent(args: argparse.Namespace) -> int:
+    if args.file_timeout > 30:
+        raise ValueError("per-file timeout may not exceed 30 seconds")
     packages = tuple(args.packages) or PACKAGES
     versions = {package: importlib.metadata.version(package) for package in packages}
     all_paths = [
@@ -180,20 +182,19 @@ def _run_parent(args: argparse.Namespace) -> int:
     typed_gap_classes: Counter[str] = Counter()
     typed_gap_owners: Counter[str] = Counter()
     script = Path(__file__).resolve()
+    by_rel = {
+        f"{package}/{path.relative_to(root).as_posix()}": (path, root)
+        for package, root, path in paths
+    }
 
-    for index, (package, root, path) in enumerate(paths, start=1):
+    def measure_unchecked(rel: str) -> dict[str, Any]:
+        path, _root = by_rel[rel]
         try:
             source = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             source = path.read_text(encoding="utf-8", errors="replace")
-        rel = f"{package}/{path.relative_to(root).as_posix()}"
         tree = ast.parse(source, filename=rel)
         assertion_count = sum(isinstance(node, ast.Assert) for node in ast.walk(tree))
-        assertion_counts["files_total"] += 1
-        assertion_counts["assertions_total"] += assertion_count
-        assertion_counts[
-            "files_with_assertions" if assertion_count else "files_without_assertions"
-        ] += 1
         command = [
             sys.executable,
             str(script),
@@ -226,6 +227,46 @@ def _run_parent(args: argparse.Namespace) -> int:
                 timed_out=True,
                 timeout_seconds=args.file_timeout,
             )
+        return {"assertionCount": assertion_count, "terminal": row}
+
+    def measure(rel: str) -> dict[str, Any]:
+        try:
+            return measure_unchecked(rel)
+        except Exception as error:
+            return {
+                "assertionCount": 0,
+                "terminal": {
+                    "file": rel,
+                    "category": "backend-defect",
+                    "reason": f"{type(error).__name__}: {error}",
+                },
+            }
+
+    if args.checkpoint_jsonl:
+        from pandas_census_checkpoint import Checkpoint, run_pending
+
+        checkpoint = Checkpoint(
+            floor="fatal-triage",
+            files=tuple(by_rel),
+            path=Path(args.checkpoint_jsonl),
+        )
+        journal_rows = run_pending(checkpoint, measure, workers=1)
+        measured = [dict(row["result"]) for row in journal_rows]
+    else:
+        measured = [measure(rel) for rel in sorted(by_rel)]
+
+    for index, (rel, measured_row) in enumerate(
+        zip(sorted(by_rel), measured, strict=True), start=1
+    ):
+        assertion_count = int(measured_row["assertionCount"])
+        assertion_counts["files_total"] += 1
+        assertion_counts["assertions_total"] += assertion_count
+        assertion_counts[
+            "files_with_assertions" if assertion_count else "files_without_assertions"
+        ] += 1
+        row = measured_row["terminal"]
+        if not isinstance(row, dict):
+            raise ValueError(f"invalid fatal checkpoint testimony for {rel}")
 
         category = str(row["category"])
         floor_rows.append({"file": rel, "category": category})
@@ -297,6 +338,7 @@ def main() -> int:
         "--file-timeout", type=int, default=DEFAULT_FILE_TIMEOUT_SECONDS
     )
     parser.add_argument("--output")
+    parser.add_argument("--checkpoint-jsonl")
     parser.add_argument("--child-file")
     parser.add_argument("--child-rel")
     args = parser.parse_args()

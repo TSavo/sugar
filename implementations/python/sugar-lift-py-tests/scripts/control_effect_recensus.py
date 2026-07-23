@@ -8,21 +8,13 @@ import ast
 from collections import Counter, defaultdict
 import json
 from pathlib import Path
-import signal
+import os
 import subprocess
 import sys
 import time
 from typing import Any, Callable
 
 from sugar_lift_py_tests.audit_only import collect_construction_panic
-
-
-class FileTimeout(Exception):
-    pass
-
-
-def _timeout(_signum, _frame):
-    raise FileTimeout("per-file construction timeout")
 
 
 def _coordinate(node) -> tuple[str, int, int]:
@@ -157,14 +149,7 @@ def _production_source_file(
     )
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("corpus", type=Path)
-    parser.add_argument("--repo", type=Path, default=Path.cwd())
-    parser.add_argument("--timeout", type=int, default=180)
-    parser.add_argument("--json", type=Path)
-    args = parser.parse_args()
-
+def _measure_file(path: Path, *, root: Path, relative: str) -> dict[str, Any]:
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
 
@@ -176,14 +161,160 @@ def main() -> int:
         for package, distributions in package_distributions.items()
         if len(distributions) == 1
     }
-    artifact_graph_cache = {}
+    source = path.read_text(encoding="utf-8", errors="replace")
+    tree = ast.parse(source, filename=str(path))
+    imports = _import_bindings(tree)
+    syntax: dict[tuple[str, int, int], tuple[str, ...]] = {}
+    for node in ast.walk(tree):
+        labels = _labels(node, imports)
+        if labels:
+            syntax[(type(node).__name__, node.lineno, node.col_offset)] = labels
 
+    functions_total = 0
+    functions_clean = 0
+    source_calls_total = 0
+    source_call_preconstruction: Counter[str] = Counter()
+
+    def construct_file():
+        nonlocal functions_total, functions_clean, source_calls_total
+        reporter = CollectingReporter()
+        source_file = _production_source_file(
+            path,
+            root=root,
+            reporter=reporter,
+            distribution_index=distribution_index,
+            artifact_graph_cache={},
+        )
+        from sugar_lift_py_tests.source_call_resolution import (
+            SourceCallPreconstructionRefV1,
+        )
+        from sugar_source_tree.nodes import Call
+
+        source_calls_total = sum(
+            1 for node in source_file.nodes() if isinstance(node, Call)
+        )
+        for row in source_file.unit.construction_context.source_call_resolutions.values():
+            source_call_preconstruction[
+                (
+                    f"source-visible-{row.dispatch_kind}"
+                    if isinstance(row, SourceCallPreconstructionRefV1)
+                    else row.kind
+                )
+            ] += 1
+        for function in source_file.functions():
+            functions_total += 1
+            try:
+                function.sugar()
+                functions_clean += 1
+            except SugarNotWritten:
+                pass
+        return reporter
+
+    reporter, panic_row = _collect_file_construction(relative, construct_file)
+    if panic_row is not None:
+        return {
+            "category": "construction-panic",
+            "panic": panic_row,
+            "functionsTotal": functions_total,
+            "functionsClean": functions_clean,
+            "sourceCallsTotal": source_calls_total,
+            "sourceCallPreconstruction": dict(source_call_preconstruction),
+        }
+    assert reporter is not None
+    registered = {_coordinate(node) for node in reporter.registered}
+    present = {_coordinate(node) for node in reporter.present}
+    gaps = {_coordinate(node): panic for node, panic in reporter.gaps}
+    counts: dict[str, Counter[str]] = defaultdict(Counter)
+    mechanisms: dict[str, Counter[str]] = defaultdict(Counter)
+    families: Counter[str] = Counter(kind for kind, _line, _col in gaps)
+    for (kind, line, col), labels in syntax.items():
+        key = (kind, line, col)
+        if key in gaps:
+            status = "direct-loud"
+            mechanism = type(gaps[key]).__name__
+        elif key in present:
+            status = "built"
+            mechanism = None
+        elif key in registered:
+            status = "blocked-descendant"
+            mechanism = None
+        else:
+            status = "unregistered"
+            mechanism = None
+        for label in labels:
+            counts[label][status] += 1
+            if mechanism is not None:
+                mechanisms[label][mechanism] += 1
+    return {
+        "category": "completed",
+        "functionsTotal": functions_total,
+        "functionsClean": functions_clean,
+        "sourceCallsTotal": source_calls_total,
+        "sourceCallPreconstruction": dict(source_call_preconstruction),
+        "counts": {label: dict(values) for label, values in counts.items()},
+        "mechanisms": {label: dict(values) for label, values in mechanisms.items()},
+        "families": dict(families),
+    }
+
+
+def _child_main(path: Path, *, root: Path, relative: str) -> int:
+    try:
+        row = _measure_file(path, root=root, relative=relative)
+    except Exception as error:
+        row = {
+            "category": "backend-defect",
+            "defect": {
+                "file": relative,
+                "type": type(error).__name__,
+                "message": str(error),
+            },
+        }
+    print(json.dumps({"kind": "control-effect-row", "result": row}, sort_keys=True))
+    return 0
+
+
+def _parse_child(stdout: str) -> dict[str, Any] | None:
+    for line in reversed(stdout.splitlines()):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("kind") == "control-effect-row":
+            result = value.get("result")
+            return result if isinstance(result, dict) else None
+    return None
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("corpus", type=Path, nargs="?")
+    parser.add_argument("--repo", type=Path, default=Path.cwd())
+    parser.add_argument("--commit")
+    parser.add_argument("--timeout", type=int, default=30)
+    parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--json", type=Path)
+    parser.add_argument("--checkpoint-jsonl", type=Path)
+    parser.add_argument("--child-file", type=Path)
+    parser.add_argument("--child-root", type=Path)
+    parser.add_argument("--child-rel")
+    args = parser.parse_args()
+    if args.child_file or args.child_root or args.child_rel:
+        if args.child_file is None or args.child_root is None or args.child_rel is None:
+            parser.error("child mode requires --child-file, --child-root, and --child-rel")
+        return _child_main(
+            args.child_file, root=args.child_root, relative=args.child_rel
+        )
+    if args.corpus is None:
+        parser.error("corpus is required in parent mode")
+    if args.timeout > 30:
+        parser.error("--timeout may not exceed 30 seconds")
     files = sorted(args.corpus.rglob("*.py"))
-    signal.signal(signal.SIGALRM, _timeout)
+    if not files:
+        parser.error("corpus contains no Python files")
     counts: dict[str, Counter] = defaultdict(Counter)
     mechanisms: dict[str, Counter] = defaultdict(Counter)
     families = Counter()
-    defects = []
+    defects: list[dict[str, Any]] = []
     construction_panics: list[dict[str, Any]] = []
     floor_rows: list[dict[str, Any]] = []
     files_completed = 0
@@ -192,134 +323,103 @@ def main() -> int:
     source_calls_total = 0
     source_call_preconstruction = Counter()
     started = time.time()
+    script = Path(__file__).resolve()
+    by_file = {
+        f"{args.corpus.name}/{path.relative_to(args.corpus).as_posix()}": path
+        for path in files
+    }
 
-    for index, path in enumerate(files, 1):
-        relative = str(path.relative_to(args.corpus))
+    def run_file(file: str) -> dict[str, Any]:
+        path = by_file[file]
+        relative = path.relative_to(args.corpus).as_posix()
+        env = dict(os.environ)
+        env["PYTHONFAULTHANDLER"] = "1"
         try:
-            signal.alarm(args.timeout)
-            source = path.read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(source, filename=str(path))
-            imports = _import_bindings(tree)
-            syntax = {}
-            for node in ast.walk(tree):
-                labels = _labels(node, imports)
-                if labels:
-                    syntax[(type(node).__name__, node.lineno, node.col_offset)] = labels
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--child-file",
+                    str(path),
+                    "--child-root",
+                    str(args.corpus),
+                    "--child-rel",
+                    relative,
+                ],
+                text=True,
+                capture_output=True,
+                timeout=args.timeout,
+                env=env,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return {"category": "timeout", "timeoutSeconds": args.timeout}
+        if completed.returncode < 0:
+            return {
+                "category": "native-crash",
+                "returncode": completed.returncode,
+                "signal": -completed.returncode,
+            }
+        testimony = _parse_child(completed.stdout)
+        if completed.returncode != 0 or testimony is None:
+            return {
+                "category": "backend-defect",
+                "defect": {
+                    "file": relative,
+                    "type": "ChildProtocolError",
+                    "message": completed.stderr[-2000:] or "child emitted no testimony",
+                },
+            }
+        return testimony
 
-            def construct_file():
-                nonlocal functions_total, functions_clean, source_calls_total
-                reporter = CollectingReporter()
-                source_file = _production_source_file(
-                    path,
-                    root=args.corpus,
-                    reporter=reporter,
-                    distribution_index=distribution_index,
-                    artifact_graph_cache=artifact_graph_cache,
-                )
-                from sugar_lift_py_tests.source_call_resolution import (
-                    SourceCallPreconstructionRefV1,
-                )
-                from sugar_source_tree.nodes import Call
+    if args.checkpoint_jsonl is not None:
+        from pandas_census_checkpoint import Checkpoint, run_pending
 
-                source_calls_total += sum(
-                    1 for node in source_file.nodes() if isinstance(node, Call)
-                )
-                for (
-                    row
-                ) in (
-                    source_file.unit.construction_context.source_call_resolutions.values()
-                ):
-                    source_call_preconstruction[
-                        (
-                            f"source-visible-{row.dispatch_kind}"
-                            if isinstance(row, SourceCallPreconstructionRefV1)
-                            else row.kind
-                        )
-                    ] += 1
-                for function in source_file.functions():
-                    functions_total += 1
-                    try:
-                        function.sugar()
-                        functions_clean += 1
-                    except SugarNotWritten:
-                        pass
-                return reporter
+        checkpoint = Checkpoint(
+            floor="control-effect",
+            files=tuple(by_file),
+            path=args.checkpoint_jsonl,
+        )
+        journal_rows = run_pending(
+            checkpoint, run_file, workers=max(1, args.workers)
+        )
+        measured_rows = [(row["file"], row["result"]) for row in journal_rows]
+    else:
+        measured_rows = [(file, run_file(file)) for file in sorted(by_file)]
 
-            reporter, panic_row = _collect_file_construction(relative, construct_file)
-            if panic_row is not None:
-                construction_panics.append(panic_row)
-                families["ConstructionPanic"] += 1
-                print(
-                    f"[{index}/{len(files)}] CONSTRUCTION-PANIC {relative}: "
-                    f"{panic_row['message']}",
-                    flush=True,
-                )
-                floor_rows.append(
-                    {
-                        "file": f"{args.corpus.name}/{relative}",
-                        "category": "construction-panic",
-                    }
-                )
-                continue
-            assert reporter is not None
-
-            registered = {_coordinate(node) for node in reporter.registered}
-            present = {_coordinate(node) for node in reporter.present}
-            gaps = {_coordinate(node): panic for node, panic in reporter.gaps}
-            for kind, _line, _col in gaps:
-                families[kind] += 1
-
-            for (kind, line, col), labels in syntax.items():
-                key = (kind, line, col)
-                if key in gaps:
-                    status = "direct-loud"
-                    mechanism = type(gaps[key]).__name__
-                elif key in present:
-                    status = "built"
-                    mechanism = None
-                elif key in registered:
-                    status = "blocked-descendant"
-                    mechanism = None
-                else:
-                    status = "unregistered"
-                    mechanism = None
-                for label in labels:
-                    counts[label][status] += 1
-                    if mechanism is not None:
-                        mechanisms[label][mechanism] += 1
+    for index, (file, raw) in enumerate(measured_rows, start=1):
+        row = dict(raw)
+        category = str(row.get("category"))
+        floor_rows.append({"file": file, "category": category})
+        functions_total += int(row.get("functionsTotal") or 0)
+        functions_clean += int(row.get("functionsClean") or 0)
+        source_calls_total += int(row.get("sourceCallsTotal") or 0)
+        source_call_preconstruction.update(row.get("sourceCallPreconstruction") or {})
+        for label, values in (row.get("counts") or {}).items():
+            counts[str(label)].update(values)
+        for label, values in (row.get("mechanisms") or {}).items():
+            mechanisms[str(label)].update(values)
+        families.update(row.get("families") or {})
+        if category == "completed":
             files_completed += 1
-            floor_rows.append(
-                {"file": f"{args.corpus.name}/{relative}", "category": "completed"}
-            )
-            if index % 100 == 0:
-                direct = sum(row["direct-loud"] for row in counts.values())
-                print(
-                    f"[{index}/{len(files)}] completed={files_completed} "
-                    f"direct-labelled={direct}",
-                    flush=True,
-                )
-        except Exception as exc:
+        elif category == "construction-panic":
+            panic = row.get("panic")
+            if isinstance(panic, dict):
+                construction_panics.append(panic)
+            families["ConstructionPanic"] += 1
+        else:
+            defect = row.get("defect")
             defects.append(
-                {"file": relative, "type": type(exc).__name__, "message": str(exc)}
+                dict(defect)
+                if isinstance(defect, dict)
+                else {"file": file, "type": category, "message": category}
             )
-            print(
-                f"[{index}/{len(files)}] DEFECT {type(exc).__name__} "
-                f"{relative}: {exc}",
-                flush=True,
-            )
-            floor_rows.append(
-                {
-                    "file": f"{args.corpus.name}/{relative}",
-                    "category": "unmeasurable",
-                    "reason": type(exc).__name__,
-                }
-            )
-        finally:
-            signal.alarm(0)
+        if index % 25 == 0:
+            print(f"measured {index}/{len(files)} files", flush=True)
 
     result = {
         "kind": "control-effect-construction-recensus",
-        "commit": _git_commit(args.repo),
+        "commit": args.commit or _git_commit(args.repo),
         "corpus": str(args.corpus),
         "filesTotal": len(files),
         "filesCompleted": files_completed,
@@ -351,25 +451,18 @@ def main() -> int:
     }
     from pandas_floor_summary import floor_summary
 
-    file_names = sorted(
-        f"{args.corpus.name}/{path.relative_to(args.corpus)}" for path in files
-    )
+    file_names = sorted(by_file)
     result["floorSummary"] = floor_summary(
         floor="control-effect",
         files=file_names,
         rows=floor_rows,
         totals={
-            "R_control_effect": result["R"],
+            "R_control_effect": result["R"] + len(defects),
             "constructionPanics": len(construction_panics),
-            "unmeasurable": len(defects),
+            "backendDefectsOrProcessTerminals": len(defects),
         },
-        measured=(
-            not defects and not construction_panics and files_completed == len(files)
-        ),
-        unmeasurable_reasons=(
-            (["construction-panic"] if construction_panics else [])
-            + (["defect"] if defects else [])
-        ),
+        measured=len(floor_rows) == len(files),
+        unmeasurable_reasons=(),
     )
     rendered = json.dumps(result, indent=2)
     print("=== RESULT JSON ===", flush=True)
