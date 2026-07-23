@@ -424,6 +424,40 @@ fn python_generator_expression_stays_lazy_after_rust_parse() {
 }
 
 #[test]
+fn concrete_filtered_set_and_dict_displays_survive_rust_parse() {
+    let set_term = document_post_term(python_comprehension_document(
+        "{item for item in [0, 1, 2, 3] if item > 1}",
+        "",
+    ));
+    let Term::Ctor {
+        name: set_name,
+        args: set_members,
+    } = &set_term
+    else {
+        panic!("filtered set comprehension must dissolve to a set display")
+    };
+    assert_eq!(set_name, "python:set");
+    assert_eq!(set_members.len(), 2);
+
+    let dict_term = document_post_term(python_comprehension_document(
+        "{item: item + 10 for item in [0, 1, 2, 3] if item % 2 == 0}",
+        "",
+    ));
+    let Term::Ctor {
+        name: dict_name,
+        args: dict_entries,
+    } = &dict_term
+    else {
+        panic!("filtered dict comprehension must dissolve to a dict display")
+    };
+    assert_eq!(dict_name, "python:dict");
+    assert_eq!(dict_entries.len(), 2);
+    assert!(dict_entries.iter().all(
+        |entry| matches!(entry, Term::Ctor { name, args } if name == "python:dict_entry" && args.len() == 2)
+    ));
+}
+
+#[test]
 fn nested_python_comprehension_lambdas_survive_rust_parse() {
     let term = document_post_term(python_comprehension_document(
         "[[f(x, y, z) for y in ys] for x in xs]",

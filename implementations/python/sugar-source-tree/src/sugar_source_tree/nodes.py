@@ -3534,18 +3534,29 @@ class ListComp(Expression):
             if bindings is None:
                 return None
             inner = {**scope, **bindings}
-            verdicts = []
-            for guard in gen.ifs:
-                new_guard, changed = self._substitute_field(guard, inner)
-                verdict = While._ground_truth(self, new_guard if changed else guard)
-                if verdict is None:
-                    return None
-                verdicts.append(verdict)
-            if not all(verdicts):
+            filters_pass = ListComp._ground_filters_pass(self, gen.ifs, inner)
+            if filters_pass is None:
+                return None
+            if not filters_pass:
                 continue
             new_elt, _d = self._substitute_field(self.elt, inner)
             results.append(new_elt if _d else self.elt)
         return ListComp._make_list(self, tuple(results))
+
+    def _ground_filters_pass(self, filters, scope) -> "Optional[bool]":
+        """The conjunction of constructed ground filters, or no testimony.
+
+        Every comprehension kind shares this reader. A symbolic guard yields
+        ``None`` so the enclosing node stays loud; no guard verdict is guessed.
+        """
+        verdicts = []
+        for guard in filters:
+            new_guard, changed = self._substitute_field(guard, scope)
+            verdict = While._ground_truth(self, new_guard if changed else guard)
+            if verdict is None:
+                return None
+            verdicts.append(verdict)
+        return all(verdicts)
 
     def _contains_forbidden_shape(self, roots: tuple) -> bool:
         """True for a nested comprehension or walrus in this comprehension."""
@@ -3676,11 +3687,7 @@ class SetComp(Expression):
         ):
             return None
         gen = self.generators[0]
-        if (
-            gen.is_async
-            or gen.ifs
-            or ListComp._contains_forbidden_shape(self, (gen.iter,))
-        ):
+        if gen.is_async or ListComp._contains_forbidden_shape(self, (gen.iter,)):
             return None
         new_iter, changed = self._substitute_field(gen.iter, scope)
         iterable = new_iter if changed else gen.iter
@@ -3695,7 +3702,13 @@ class SetComp(Expression):
             bindings = For._target_bindings_for(self, gen.target, element)
             if bindings is None:
                 return None
-            new_elt, changed = self._substitute_field(self.elt, {**scope, **bindings})
+            inner = {**scope, **bindings}
+            filters_pass = ListComp._ground_filters_pass(self, gen.ifs, inner)
+            if filters_pass is None:
+                return None
+            if not filters_pass:
+                continue
+            new_elt, changed = self._substitute_field(self.elt, inner)
             result = new_elt if changed else self.elt
             key = ListComp._ground_hash_key(self, result)
             if key is None:
@@ -3766,11 +3779,7 @@ class DictComp(Expression):
         ):
             return None
         gen = self.generators[0]
-        if (
-            gen.is_async
-            or gen.ifs
-            or ListComp._contains_forbidden_shape(self, (gen.iter,))
-        ):
+        if gen.is_async or ListComp._contains_forbidden_shape(self, (gen.iter,)):
             return None
         new_iter, changed = self._substitute_field(gen.iter, scope)
         iterable = new_iter if changed else gen.iter
@@ -3786,6 +3795,11 @@ class DictComp(Expression):
             if bindings is None:
                 return None
             inner = {**scope, **bindings}
+            filters_pass = ListComp._ground_filters_pass(self, gen.ifs, inner)
+            if filters_pass is None:
+                return None
+            if not filters_pass:
+                continue
             key, key_changed = self._substitute_field(self.key, inner)
             value, value_changed = self._substitute_field(self.value, inner)
             result_key = key if key_changed else self.key

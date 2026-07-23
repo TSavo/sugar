@@ -53,10 +53,40 @@ def test_dictcomp_over_concrete_range_dissolves():
     ]
 
 
+def test_filtered_dictcomp_keeps_only_ground_true_entries():
+    term = _out(
+        "def A():\n"
+        "    return {item: item + 10 for item in [0, 1, 2, 3] if item % 2 == 0}\n"
+    )
+    assert term.name == "python:dict"
+    assert [(item.args[0].value, item.args[1].value) for item in term.args] == [
+        (0, 10),
+        (2, 12),
+    ]
+
+
 def test_setcomp_over_concrete_range_dissolves():
     term = _out("def A():\n    return {x + 1 for x in range(3)}\n")
     assert term.name == "python:set"
     assert [arg.value for arg in term.args] == [1, 2, 3]
+
+
+def test_filtered_setcomp_keeps_only_ground_true_members():
+    term = _out("def A():\n" "    return {item for item in [0, 1, 2, 3] if item > 1}\n")
+    assert term.name == "python:set"
+    assert [arg.value for arg in term.args] == [2, 3]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "{item for item in [0, 1, 2, 3] if keep(item)}",
+        "{item: item + 10 for item in [0, 1, 2, 3] if keep(item)}",
+    ],
+)
+def test_filtered_set_and_dict_do_not_fabricate_symbolic_guard_verdict(source):
+    with pytest.raises(SugarNotWritten):
+        _fn(f"def A(keep):\n    return {source}\n").sugar()
 
 
 def test_setcomp_preserves_duplicate_elimination():
