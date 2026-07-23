@@ -22,6 +22,7 @@ from .binding_state import (
     ConstructedValueTestimonyV1,
     GuardedBinding,
     GuardedBindingStateV1,
+    LoopProjectedBinding,
     UnboundBinding,
     UnboundBindingStateV1,
     _constructed_preimage,
@@ -82,6 +83,20 @@ def _seal_runtime_state(state):
             guard_cid,
             cid_of_json(_state_wire(when_true)),
             cid_of_json(_state_wire(when_false)),
+        )
+    if isinstance(state, LoopProjectedBinding):
+        # A prior loop's post-state carried into a later loop. A single
+        # completion face is TOTAL: a for/while with no break exits only by
+        # NormalExhaustion, so that face's LoopBindingRef IS the unconditional
+        # post-value (the ref itself carries the completion identity). Seal it
+        # directly. A multi-face projection (a loop that can break) is a genuine
+        # multi-way join whose binary-guarded folding is not yet built -- it
+        # stays LOUD rather than guess a fallthrough and bind the wrong value.
+        if len(state.completed_faces) == 1:
+            return _seal_runtime_state(state.completed_faces[0].state)
+        raise BindingStateWireGap(
+            "multi-face loop projected binding sealing is unimplemented; "
+            "stays loud rather than fold a multi-way completion join"
         )
     raise BindingStateWireGap(
         f"live loop state has no authenticated sealed projection: "
