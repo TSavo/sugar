@@ -157,6 +157,9 @@ class SourceUnit:
     construction_cache: object = field(init=False, default=None)
     module_direct_bindings: object = field(init=False, default=None)
     function_nodes: Tuple[object, ...] = field(init=False, default=())
+    # Memo for exception_type_identity: full-module walk was ~12ms/call on
+    # asserters and dominated Raise exclusive heat under Body.If.
+    _exception_type_identity_cache: dict = field(init=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -176,6 +179,7 @@ class SourceUnit:
         object.__setattr__(self, "construction_cache", None)
         object.__setattr__(self, "module_direct_bindings", None)
         object.__setattr__(self, "function_nodes", ())
+        object.__setattr__(self, "_exception_type_identity_cache", {})
 
     def bind_typed_module(self, module: "Module") -> None:
         """Attach the already-materialized Module root (SourceFile only)."""
@@ -198,6 +202,8 @@ class SourceUnit:
                 if isinstance(node, (FunctionDef, AsyncFunctionDef))
             ),
         )
+        # Identity keys include spans against the bound module; drop stale rows.
+        object.__setattr__(self, "_exception_type_identity_cache", {})
 
     def loop_target_coordinate_for_loop(self, owner: "Node"):
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -423,18 +429,41 @@ class SourceUnit:
 
         Structural authority is the already-materialized typed Module plus the
         unit's CPython ``symtable`` (function scope flags). No second parse.
+
+        Uses the bind-time ``function_nodes`` / ``module_direct_bindings``
+        indexes (same door as ``source_allocation_definition_for_call``) and
+        memoizes by name+span — a full ``module.walk()`` per Raise was ~12ms
+        on pandas asserters and dominated Body.If → Raise exclusive heat.
         """
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
             BUILTIN_EXCEPTION_NAMES,
         )
 
-        module = self._require_typed_module("SourceUnit.exception_type_identity")
+        self._require_typed_module("SourceUnit.exception_type_identity")
         span = node.line_col_span()
+        cache_key = (
+            node.id,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+        cache = self._exception_type_identity_cache
+        if cache_key in cache:
+            return cache[cache_key]
+
+        result = self._compute_exception_type_identity(
+            node, span, BUILTIN_EXCEPTION_NAMES, ctor, str_const
+        )
+        cache[cache_key] = result
+        return result
+
+    def _compute_exception_type_identity(
+        self, node: "Name", span, builtin_names, ctor, str_const
+    ):
         containing = []
-        for candidate in module.walk():
-            if candidate.kind not in ("FunctionDef", "AsyncFunctionDef"):
-                continue
+        for candidate in self.function_nodes:
             cspan = candidate.line_col_span()
             start = (cspan.start_line, cspan.start_col)
             end = (cspan.end_line, cspan.end_col)
@@ -456,26 +485,20 @@ class SourceUnit:
                 return None
 
         bindings = []
-        for statement in module.body:
+        for statement in (self.module_direct_bindings or {}).get(node.id, ()):
             kind = statement.kind
             if kind == "ImportFrom":
                 for alias in statement.names:
                     if (alias.asname or alias.name) == node.id:
                         bindings.append(("import", statement.module, alias.name))
-            elif kind == "ClassDef" and statement.name == node.id:
+            elif kind == "ClassDef":
                 bindings.append(("class", statement))
-            elif kind in ("FunctionDef", "AsyncFunctionDef"):
-                if statement.name == node.id:
-                    bindings.append(("other",))
-            elif kind in ("Assign", "AnnAssign", "AugAssign"):
-                targets = statement.targets if kind == "Assign" else (statement.target,)
-                if any(
-                    isinstance(target, Name) and target.id == node.id
-                    for target in targets
-                ):
-                    bindings.append(("other",))
+            else:
+                # FunctionDef / AsyncFunctionDef / Assign / AnnAssign / AugAssign /
+                # Import — any non-closed exception-class binding.
+                bindings.append(("other",))
 
-        if not bindings and node.id in BUILTIN_EXCEPTION_NAMES:
+        if not bindings and node.id in builtin_names:
             return ctor(
                 "python:exception_type_identity",
                 [str_const("builtins"), str_const(node.id)],
@@ -486,7 +509,7 @@ class SourceUnit:
         if (
             binding[0] == "import"
             and binding[1] == "builtins"
-            and binding[2] in BUILTIN_EXCEPTION_NAMES
+            and binding[2] in builtin_names
         ):
             return ctor(
                 "python:exception_type_identity",
@@ -1171,10 +1194,21 @@ class Node(Typed):
         answers present here or is reported absent there: no node discharges
         silently.
         """
-        result = self._construct_sugar()
-        self.reporter.present_construction(self, result)
-        self.reporter.present_fact(self)
-        return result
+        from sugar_lift_py_tests.engine_log import reduction_span
+
+        where = f"{self.unit.filename}"
+        try:
+            lc = self.line_col_span()
+            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
+        except SourceTreePanic:
+            pass
+        with reduction_span(
+            sugar=f"{self.kind}.sugar", role="construction", site=where
+        ):
+            result = self._construct_sugar()
+            self.reporter.present_construction(self, result)
+            self.reporter.present_fact(self)
+            return result
 
     def _construct_sugar(self) -> object:
         """This node's sugar, constructed by the node itself.
@@ -3178,75 +3212,118 @@ class For(Statement):
         the body a universal `forall x in iter`); it is not lifted yet, so it
         keeps the `for` node (masking the target) and inherits the loud
         SugarNotWritten. `else` and a tuple target likewise stay loud."""
+        from sugar_lift_py_tests.engine_log import reduction_span
+
         from .shadow import rewrite
 
-        new_iter, iter_changed = self._substitute_field(self.iter, scope)
-        subst_iter = new_iter if iter_changed else self.iter
+        where = f"{self.unit.filename}"
+        try:
+            lc = self.line_col_span()
+            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
+        except SourceTreePanic:
+            pass
 
-        # `else` is unrollable too: the jump-guard means no `break` exists, and
-        # with no break the else ALWAYS runs -- it is just more block, spliced
-        # after the unrolled iterations.
-        concrete = self.target.kind in ("Name", "Tuple", "List")
-        elements = self._concrete_elements(subst_iter) if concrete else None
-        if elements is not None and len(elements) > self._UNROLL_FUEL:
-            elements = None  # past the unroll budget: the fold/universal stands
-        if elements is not None:
-            bindings = [self._target_bindings(e) for e in elements]
-            if all(b is not None for b in bindings):
-                if self._body_has_owned_loop_control():
-                    controlled = self._unroll_concrete_controlled(bindings, scope)
-                    if controlled is not None:
-                        statements, final_bindings = controlled
-                        return _Splice(statements, final_bindings)
-                    # A symbolic guard owns a jump.  It cannot be selected by
-                    # concrete unrolling and must remain a real loop below.
-                    elements = None
-            if elements is not None and all(b is not None for b in bindings):
-                target_names = self._bound_names_in(self.target)
-                unrolled: list = []
-                carried = dict(scope)  # carries loop variables across iterations
-                final_target_bindings = None
-                for element_bindings in bindings:
-                    final_target_bindings = element_bindings
-                    iter_scope = {**carried, **element_bindings}
-                    new_body, _c = self._substitute_body(self.body, iter_scope)
-                    unrolled.extend(new_body)
-                    # thread this iteration's bindings forward (the carried
-                    # fold), never the loop target's own names (rebound next
-                    # iteration).
-                    for stmt in new_body:
-                        b = stmt.substitution_binding(iter_scope)
-                        if b:
-                            iter_scope = {**iter_scope, **b}
-                    carried = {
-                        k: v for k, v in iter_scope.items() if k not in target_names
-                    }
-                if self.orelse:
-                    else_scope = (
-                        {**carried, **final_target_bindings}
-                        if final_target_bindings is not None
-                        else carried
-                    )
-                    else_body, _c = self._substitute_body(self.orelse, else_scope)
-                    unrolled.extend(else_body)
-                return _Splice(tuple(unrolled), final_target_bindings)
+        with reduction_span(
+            sugar="For.substitute", role="temporal", site=where
+        ):
+            new_iter, iter_changed = self._substitute_field(self.iter, scope)
+            subst_iter = new_iter if iter_changed else self.iter
 
-        # Symbolic (or unsupported) loop: keep the node, mask the target AND every
-        # loop-carried variable (a name the body rebinds), recurse. Masking the
-        # carried names keeps the update SYMBOLIC in the body (`total = total + x`
-        # stays, not `total = 0 + x`) so substitution_binding can read the fold;
-        # the pre-loop value seeds it from the outer scope. A symbolic loop is not
-        # a dead unroll -- it is the universal / fold over the hole.
-        bound = self._bound_names_in(self.target) | For._stmts_bound_names(self.body)
-        bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
-        changed = {}
-        if iter_changed:
-            changed["iter"] = new_iter
-        for f in ("body", "orelse"):
-            new, d = self._substitute_body(getattr(self, f), bs)
-            if d:
-                changed[f] = new
-        return self if not changed else rewrite(self, **changed)
+            # `else` is unrollable too: the jump-guard means no `break` exists, and
+            # with no break the else ALWAYS runs -- it is just more block, spliced
+            # after the unrolled iterations.
+            concrete = self.target.kind in ("Name", "Tuple", "List")
+            with reduction_span(
+                sugar="For.concrete_elements", role="temporal", site=where
+            ):
+                elements = (
+                    self._concrete_elements(subst_iter) if concrete else None
+                )
+            if elements is not None and len(elements) > self._UNROLL_FUEL:
+                elements = None  # past the unroll budget: the fold/universal stands
+            if elements is not None:
+                with reduction_span(
+                    sugar="For.unroll", role="temporal", site=where
+                ):
+                    bindings = [self._target_bindings(e) for e in elements]
+                    if all(b is not None for b in bindings):
+                        if self._body_has_owned_loop_control():
+                            controlled = self._unroll_concrete_controlled(
+                                bindings, scope
+                            )
+                            if controlled is not None:
+                                statements, final_bindings = controlled
+                                return _Splice(statements, final_bindings)
+                            # A symbolic guard owns a jump.  It cannot be selected
+                            # by concrete unrolling and must remain a real loop
+                            # below.
+                            elements = None
+                    if elements is not None and all(
+                        b is not None for b in bindings
+                    ):
+                        target_names = self._bound_names_in(self.target)
+                        unrolled: list = []
+                        carried = dict(
+                            scope
+                        )  # carries loop variables across iterations
+                        final_target_bindings = None
+                        for element_bindings in bindings:
+                            final_target_bindings = element_bindings
+                            iter_scope = {**carried, **element_bindings}
+                            new_body, _c = self._substitute_body(
+                                self.body, iter_scope
+                            )
+                            unrolled.extend(new_body)
+                            # thread this iteration's bindings forward (the
+                            # carried fold), never the loop target's own names
+                            # (rebound next iteration).
+                            for stmt in new_body:
+                                b = stmt.substitution_binding(iter_scope)
+                                if b:
+                                    iter_scope = {**iter_scope, **b}
+                            carried = {
+                                k: v
+                                for k, v in iter_scope.items()
+                                if k not in target_names
+                            }
+                        if self.orelse:
+                            else_scope = (
+                                {**carried, **final_target_bindings}
+                                if final_target_bindings is not None
+                                else carried
+                            )
+                            else_body, _c = self._substitute_body(
+                                self.orelse, else_scope
+                            )
+                            unrolled.extend(else_body)
+                        return _Splice(tuple(unrolled), final_target_bindings)
+
+            # Symbolic (or unsupported) loop: keep the node, mask the target AND
+            # every loop-carried variable (a name the body rebinds), recurse.
+            # Masking the carried names keeps the update SYMBOLIC in the body
+            # (`total = total + x` stays, not `total = 0 + x`) so
+            # substitution_binding can read the fold; the pre-loop value seeds
+            # it from the outer scope. A symbolic loop is not a dead unroll --
+            # it is the universal / fold over the hole.
+            with reduction_span(
+                sugar="For.symbolic", role="temporal", site=where
+            ):
+                bound = self._bound_names_in(self.target) | For._stmts_bound_names(
+                    self.body
+                )
+                bs = (
+                    {k: v for k, v in scope.items() if k not in bound}
+                    if bound
+                    else scope
+                )
+                changed = {}
+                if iter_changed:
+                    changed["iter"] = new_iter
+                for f in ("body", "orelse"):
+                    new, d = self._substitute_body(getattr(self, f), bs)
+                    if d:
+                        changed[f] = new
+                return self if not changed else rewrite(self, **changed)
 
     @staticmethod
     def _stmts_bound_names(statements) -> set:
@@ -3801,6 +3878,7 @@ class If(Statement):
         The test recognizes itself; each branch's statements recognize themselves.
         The guard turns each branch's stated facts into implications; the binding
         phi is substitute's job, never this."""
+        from sugar_lift_py_tests.engine_log import reduction_span
         from sugar_lift_py_tests.sugar.if_sugar import IfSugar
 
         try:
@@ -3812,11 +3890,23 @@ class If(Statement):
                 requested="consume the slot minted once by If.substitute",
                 fix="route every If through substitution before Sugar construction",
             )
+        where = f"{self.unit.filename}"
+        try:
+            lc = self.line_col_span()
+            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
+        except SourceTreePanic:
+            pass
+        with reduction_span(sugar="If.test", role="construction", site=where):
+            test = self.test.sugar()
+        with reduction_span(sugar="If.then", role="construction", site=where):
+            then_body = tuple(s.sugar() for s in self.body)
+        with reduction_span(sugar="If.else", role="construction", site=where):
+            else_body = tuple(s.sugar() for s in self.orelse)
         return IfSugar(
-            test=self.test.sugar(),
+            test=test,
             branch_slot=slot,
-            then_body=tuple(s.sugar() for s in self.body),
-            else_body=tuple(s.sugar() for s in self.orelse),
+            then_body=then_body,
+            else_body=else_body,
             site=self.fragment,
         )
 
@@ -4322,6 +4412,15 @@ class Raise(Statement):
 
     def _construct_sugar(self):
         """Build exception and explicit cause children for the halt effect."""
+        from sugar_lift_py_tests.engine_log import reduction_span
+
+        where = f"{self.unit.filename}"
+        try:
+            lc = self.line_col_span()
+            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
+        except SourceTreePanic:
+            pass
+
         if self.exc is None:
             from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
 
@@ -4342,14 +4441,22 @@ class Raise(Statement):
 
         identity = None
         mro = None
+        type_name = None
         if isinstance(self.exc, Call) and isinstance(self.exc.func, Name):
-            identity = self.unit.exception_type_identity(self.exc.func)
-            mro = self.unit.exception_type_mro(self.exc.func)
+            type_name = self.exc.func
         elif isinstance(self.exc, Name):
-            identity = self.unit.exception_type_identity(self.exc)
-            mro = self.unit.exception_type_mro(self.exc)
+            type_name = self.exc
+        if type_name is not None:
+            with reduction_span(
+                sugar="Raise.exception_type_identity",
+                role="construction",
+                site=where,
+            ):
+                identity = self.unit.exception_type_identity(type_name)
+                mro = self.unit.exception_type_mro(type_name)
 
-        exception_sugar = self.exc.sugar()
+        with reduction_span(sugar="Raise.exc.sugar", role="construction", site=where):
+            exception_sugar = self.exc.sugar()
         if identity is not None and isinstance(exception_sugar, CallSiteSugar):
             exception_sugar = replace(
                 exception_sugar,
